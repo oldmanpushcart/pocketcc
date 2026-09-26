@@ -1,0 +1,14 @@
+{
+  "name": "pocketcc",
+  "version": "0.1.0",
+  "private": true,
+  "description": "口袋控制中心 (pocketcc) — 口袋奇兵 H5 页游辅助",
+  "type": "module",
+  "scripts": {
+    "build": "node esbuild.config.mjs",
+    "watch": "node esbuild.config.mjs --watch"
+  },
+  "devDependencies": {
+    "esbuild": "^0.28.2"
+  }
+}
