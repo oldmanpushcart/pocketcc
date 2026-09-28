@@ -6,6 +6,7 @@ import './net.js';
 import './event.js';
 import './chat.js';
 import './feats/daily/chip-blessing.js';
+import './feats/daily/floatcar.js';
 import './feats/daily/titan-blessing.js';
 import './feats/daily/alliance-help.js';
 import './feats/daily/domain-treasure.js';

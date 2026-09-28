@@ -45,6 +45,7 @@ export const MENU = [
         // 日常任务只出 checkbox，详细参数一律用默认值/存量值（feature 卡片无 showFields）
         children: [
           { id: 'chipBlessing', kind: 'feature', label: '芯片祝福' },
+          { id: 'floatCar', kind: 'feature', label: '花车空投' },
           { id: 'titanBlessing', kind: 'feature', label: '泰坦祝福' },
           { id: 'allianceHelp', kind: 'feature', label: '联盟帮助' },
           { id: 'domainTreasure', kind: 'feature', label: '领域寻宝' },
