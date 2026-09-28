@@ -255,13 +255,14 @@ import { getUid } from './core/player.js';
      * 默认值对齐实发样本；opts 可透传 atData/responseData/lang/richParas/mod 等高级字段。
      * @param {string} uid 当前玩家 UID（getUid()）
      * @param {object} [opts] {mod,modPic,officialTitle,modid,atData,responseData,lang,richParas,fUid}
+     * @param {number} [chan] 生效频道号（联盟/群聊 @点名时游表另拼 mentionType/mentionUidList，缺它服务器点名解析错乱）
      * @returns {string} JSON 字符串
      */
-    function defaultCustom(uid, opts) {
+    function defaultCustom(uid, opts, chan) {
         opts = opts || {};
         var sec = serverTimeSec();
         var fUid = opts.fUid != null ? String(opts.fUid) : (getStrUid() || uid || '');
-        return JSON.stringify({
+        var o = {
             mod: opts.mod != null ? opts.mod : '',
             modPic: opts.modPic != null ? opts.modPic | 0 : 0,
             officialTitle: opts.officialTitle != null ? opts.officialTitle | 0 : -1,
@@ -273,7 +274,15 @@ import { getUid } from './core/player.js';
             fClientTime: sec,
             lang: opts.lang || 'zh_cn',
             richParas: opts.richParas || [],
-        });
+        };
+        // 游表 getCustomInfo:1576-1587 同口径：联盟(2)/群聊(5)带 @点名 时必附
+        // mentionType=2 + mentionUidList（逗号串）——服务器靠它识别点名对象，缺了会把回声 m 拼脏
+        var at = o.atData;
+        if (at && at.name && at.name.length && (chan === CHANNELS.alliance || chan === CHANNELS.group)) {
+            o.mentionType = 2;
+            o.mentionUidList = (at.uid || []).join(',');
+        }
+        return JSON.stringify(o);
     }
 
     /**
@@ -308,7 +317,7 @@ import { getUid } from './core/player.js';
             m: text,
             uid: opts.uid != null ? String(opts.uid) : '',              // 私聊目标；频道消息为空
             llm: opts.llm != null ? opts.llm : '',                       // 特殊消息载荷（表情/坐标等），纯文本留空
-            custom: opts.custom != null ? opts.custom : defaultCustom(uid, opts),
+            custom: opts.custom != null ? opts.custom : defaultCustom(uid, opts, c),
             group: opts.group != null ? opts.group : '',                 // 群聊(5)时填 roomId，其他频道为空串
         };
         return net.send(resolvePostCmd(), pack);

@@ -5,7 +5,7 @@
 // 改动即存档（storage）并实时编排（applyFeature → reactor.setConfig）。
 // 换号（UID 变化）由 player.js 走整页 reload，无需 in-place 刷新；仅登录卡死降级补载时监听 player.configs-reloaded 回写控件。
 import { createLog } from './log.js';
-import { game } from './game.js';
+import { session } from './game-api.js';
 import { storage } from './storage.js';
 import { bus } from './bus.js';
 import { getUid } from './player.js';
@@ -619,7 +619,7 @@ function wirePanel(panel) {
   });
 
   panel.querySelector('#pc-logout').addEventListener('click', () => {
-    game.get('PlatformCore').instance.userLogout();
+    session.logout(); // 游戏登出（PlatformCore 符号收口于 core/game-api.js 防腐层）
   });
 
   // 战斗模式总开关：翻态即广播 mode.change（reactor 重算门控、图标换态）。不持久化，默认日常。

@@ -55,18 +55,6 @@ import { bus } from './core/bus.js';
     /** @type {boolean} 名表是否已建 */
     var namesBuilt = false;
 
-    /**
-     * 高频噪声事件黑名单：日志开启时跳过打印（不影响订阅转发）。
-     * 注意维度：这里列的是事件名（= EventId 的“值”，即实际 emit 的字符串），不是常量名；
-     * 如 Power_UPDATE 的值是 STAR_UPDATE（EventId.js:17）。
-     * @type {Set<string>}
-     */
-    var LOG_BLACKLIST = new Set([
-        'CHANGE_SCENE', 'CHANGE_SCENE_ENABLE', 'CHANGE_SCENE_CLOUD_OVER',
-        'CURRENCY_UPDATE', 'STAR_UPDATE', 'Power_UPDATE_NEW',
-        'Building_Update', 'BattleEmArmyUpdate',   // 世界地图/战斗中按项循环发，易刷屏
-    ]);
-
     /** 对外接口面，挂到 window.pocketcc.event */
     var api = {
         install: install,
@@ -153,7 +141,7 @@ import { bus } from './core/bus.js';
         emitMine = function (name) {
             // 先让游戏自己的派发跑完（同 net 的 recvMine），再打印；任何日志异常都吞掉
             var ret = emitOrig.apply(this, arguments);
-            if (logEnabled && typeof name === 'string' && !LOG_BLACKLIST.has(name)) {
+            if (logEnabled && typeof name === 'string') {
                 try {
                     log.info('push %s', (names && names[name]) || name,
                         ...Array.prototype.slice.call(arguments, 1));

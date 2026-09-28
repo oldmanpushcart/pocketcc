@@ -5,7 +5,8 @@
  *
  * 消息条目 entry（由 chat-window 预处理好，overlay 不再懂协议）：
  *   { id, timeStr, name, self:boolean, mention:boolean, pmDir:string|null('-> 听白'等，拼进 name 后),
- *     segments: [{type:'text'|'at'|'chip', s:string, copy?:string}]（at=高亮 @片段、chip=链接占位可复制）,
+ *     segments: [{type:'text'|'at'|'chip', s:string, copy?:string, action?:object}]
+ *             （at=高亮 @片段、chip=链接占位；带 action=可跳转卡片点击走 onJump，否则点击复制 copy）,
  *     quote: {name, msg, id}|null }
  *
  * handlers 回调面：
@@ -20,6 +21,7 @@
  *   onNamePm(entry)                                         名字菜单→发起私聊（好友或判不出好友时展示）
  *   onNameAddFriend(entry)                                  名字菜单→加好友（确非好友或判不出时展示）
  *   onNameInfo(entry)                                       名字菜单→查看信息（业务层取好后调 showInfoPop）
+ *   onJump(action, entry)                                   点可跳转链接卡（坐标/行军，业务层调地图执行器）
  *   onCheckFriend(entry) -> true|false|null                 名字菜单打开时同步询问好友关系（null=判不出，两项并列）
  *   onVisibleChange(visible)                                show/hide 之后
  *   onGeomChange(geom)                                      拖拽/resize 松手后落盘
@@ -106,6 +108,8 @@ const CSS = `
   .pcw-at{color:#ffd77a;font-weight:600;}
   .pcw-chiplink{display:inline;color:#7fc4ff;border-bottom:1px dashed rgba(127,196,255,.45);cursor:pointer;}
   .pcw-chiplink:hover{color:#b4dcff;}
+    .pcw-chiplink.jump{color:#7fe0a8;border-bottom-color:rgba(127,224,168,.5);font-weight:600;}
+    .pcw-chiplink.jump:hover{color:#b6f2ce;}
   .pcw-quote{margin:1px 0 1px 12px;padding:2px 6px;border-left:2px solid rgba(255,255,255,.28);
     background:rgba(255,255,255,.05);color:#a9b6c6;font-size:12px;cursor:pointer;border-radius:0 4px 4px 0;
     white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:95%;}
@@ -148,6 +152,8 @@ const CSS = `
     max-height:240px;overflow-y:auto;padding:8px 10px;}
   .pcw-infotitle{font-size:13px;font-weight:600;color:#cfe0ff;margin:0 0 5px;word-break:break-all;}
   .pcw-inforow{font-size:12px;color:#d6dde8;line-height:1.75;word-break:break-all;}
+  .pcw-jumplink{color:#7fe0a8;font-weight:600;cursor:pointer;border-bottom:1px dashed rgba(127,224,168,.5);}
+  .pcw-jumplink:hover{color:#b6f2ce;}
   .pcw-toast{position:absolute;left:50%;top:44%;transform:translateX(-50%);max-width:86%;
     padding:5px 12px;border-radius:6px;background:rgba(8,10,14,.92);border:1px solid rgba(255,255,255,.2);
     color:#ffd0b8;font-size:12px;pointer-events:none;opacity:0;transition:opacity .2s;z-index:3;
@@ -317,10 +323,12 @@ export class ChatOverlay {
     this.#wireHead();
     this.#wireMessages();
     this.#wireInput();
-    this.#autoGrow(); // 初始即接管高度/滚动条，避免首帧因行高舍入闪出滚动条
     this.#wireResizeHandle();
     this.#wireSideDrag();
     this.#applyGeom();
+    // 初始接管高度/滚动条：必须在 applyGeom 落位之后测——窗口未定宽时 fixed 按内容收缩，
+    // 空 textarea 的 scrollHeight 会把折行的长 placeholder 计入，量出虚高定在输入框上
+    this.#autoGrow();
     // 视口变化（窗口缩放/F11 全屏等）：右上锚定——记录与视口上/右两边的距离，
     // 宽度变化时按旧右距重算 x（浮层跟着右缘走），y 不变；持续缓存 lastVW 供计算旧右距
     let resizeTimer = null;
@@ -361,7 +369,7 @@ export class ChatOverlay {
     if (!this.#win) this.mount();
     const vis = this.#win.hidden;
     this.#win.hidden = !vis;
-    if (vis) { this.#scrollBottom(); this.#notify('onVisibleChange', true); }
+    if (vis) { this.#autoGrow(); this.#scrollBottom(); this.#notify('onVisibleChange', true); }
     else this.#notify('onVisibleChange', false);
     return vis;
   }
@@ -379,6 +387,7 @@ export class ChatOverlay {
     if (!this.#win) this.mount();
     if (this.#win.hidden) {
       this.#win.hidden = false;
+      this.#autoGrow(); // 隐藏期 mount 时测量被守卫跳过，亮窗后补测一次收回默认高
       this.#scrollBottom();
       this.#notify('onVisibleChange', true);
     }
@@ -614,10 +623,16 @@ export class ChatOverlay {
         line.appendChild(at);
       } else if (seg.type === 'chip') {
         const chip = document.createElement('span');
-        chip.className = 'pcw-chiplink';
+        const jumpable = !!seg.action;
+        chip.className = 'pcw-chiplink' + (jumpable ? ' jump' : '');
         chip.textContent = seg.s;
-        chip.title = '点击复制: ' + (seg.copy != null ? seg.copy : seg.s);
-        chip.addEventListener('click', () => this.#copyText(String(seg.copy != null ? seg.copy : seg.s)));
+        if (jumpable) {
+          chip.title = '点击跳转到游戏：' + (seg.jumpHint || seg.s);
+          chip.addEventListener('click', (ev) => { ev.stopPropagation(); this.#notify('onJump', seg.action, e); });
+        } else {
+          chip.title = '点击复制: ' + (seg.copy != null ? seg.copy : seg.s);
+          chip.addEventListener('click', () => this.#copyText(String(seg.copy != null ? seg.copy : seg.s)));
+        }
         line.appendChild(chip);
       } else {
         line.appendChild(document.createTextNode(seg.s == null ? '' : String(seg.s)));
@@ -666,10 +681,18 @@ export class ChatOverlay {
     this.setQuote(null);
   }
 
-  /** textarea 随内容自动扩高（上限 120px 与 CSS max-height 一致，超出内部滚动） */
+  /** textarea 随内容自动扩高（上限 120px 与 CSS max-height 一致，超出内部滚动）。
+   * 空值不测 scrollHeight（placeholder 折行/UA 默认 rows 会污染测量），直接按行高算单行定高 */
   #autoGrow() {
     const el = this.#input;
-    if (!el || el.offsetParent === null) return; // 隐藏/未布局时 scrollHeight 测不准，跳过交给 rows 默认高
+    if (!el || el.offsetParent === null) return; // 隐藏/未布局时测不准，交给亮窗后的补测
+    const cs = getComputedStyle(el);
+    const lh = Math.ceil(parseFloat(cs.lineHeight) || (parseFloat(cs.fontSize) || 13) * 1.5);
+    if (!el.value) {
+      el.style.height = (lh + 12) + 'px'; // padding 5×2 + 上下边框 1×2
+      el.style.overflowY = 'hidden';
+      return;
+    }
     el.style.height = 'auto';
     // scrollHeight 不含上下边框（2px）：补齐后再定高，否则单行也被判定溢出、误弹滚动条
     const need = el.scrollHeight + 2;
@@ -801,15 +824,29 @@ export class ChatOverlay {
   }
 
   /**
-   * 弹出玩家信息卡（名字菜单→查看信息；业务层取到数据后调）
+   * 弹出玩家信息卡（名字菜单→查看信息；业务层取到数据后调）。
+   * 行可传字符串或 {s, action}：带 action 的行渲染为可点链接，点击关卡并回调 onJump。
    * @param {string} title 标题（昵称）
-   * @param {string[]} lines 信息行（key: value）
+   * @param {Array<string|{s:string, action:object}>} lines 信息行（key: value）
    * @returns {void}
    */
   showInfoPop(title, lines) {
     if (!this.#infoPop || !this.#win) return;
-    const rows = (lines || []).map((s) => `<div class="pcw-inforow">${esc(s)}</div>`).join('');
+    const jumpActs = [];
+    const rows = (lines || []).map((ln) => {
+      const it = (ln && typeof ln === 'object') ? ln : { s: String(ln == null ? '' : ln) };
+      if (!it.action) return `<div class="pcw-inforow">${esc(it.s)}</div>`;
+      const idx = jumpActs.push(it.action) - 1;
+      return `<div class="pcw-inforow"><span class="pcw-jumplink" data-jump="${idx}">${esc(it.s)}</span></div>`;
+    }).join('');
     this.#infoPop.innerHTML = `<div class="pcw-infotitle">${esc(title || '玩家信息')}</div>` + (rows || '<div class="pcw-inforow">（无可用信息）</div>');
+    this.#infoPop.querySelectorAll('.pcw-jumplink').forEach((el) => {
+      el.addEventListener('click', (ev) => {
+        ev.stopPropagation();
+        this.#infoPop.hidden = true;
+        this.#notify('onJump', jumpActs[+el.dataset.jump]);
+      });
+    });
     // 先亮出来再按实际渲染尺寸 clamp（固定估算值会把卡片底部截到窗口外）
     this.#infoPop.style.left = '0px';
     this.#infoPop.style.top = '0px';

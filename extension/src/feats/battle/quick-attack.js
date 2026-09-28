@@ -19,6 +19,7 @@
 import { createLog } from '../../core/log.js';
 import { game } from '../../core/game.js';
 import { reactor } from '../../core/reactor.js';
+import { isTypingTarget } from '../../core/hotkeys.js';
 import { Battle } from '../../utils/battle.js';
 
 /**
@@ -221,15 +222,13 @@ function unhookAll() {
 // ── 键盘分派 ───────────────────────────────────────────────────────────
 /**
  * 解析按键 → { digit:1..8|null, triple:boolean }。以 event.code 为主（与 Shift 无关，最稳），
- * event.key 数字/符号兜底。ctrl/alt/meta 组合、输入框焦点一律忽略。
+ * event.key 数字/符号兜底。ctrl/alt/meta 组合、以及「正在输入框打字」（core/hotkeys isTypingTarget，
+ * 已穿透 Shadow DOM 取真实焦点元素）一律忽略，热键让位给打字。
  * @param {KeyboardEvent} e
  * @returns {{digit:number|null, triple:boolean}}
  */
 function readHotkey(e) {
-    var t = e.target;
-    if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) {
-        return { digit: null, triple: false };
-    }
+    if (isTypingTarget(e)) return { digit: null, triple: false };
     if (e.ctrlKey || e.altKey || e.metaKey) return { digit: null, triple: false };
 
     var digit = 0;

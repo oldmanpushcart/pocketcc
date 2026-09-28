@@ -17,11 +17,12 @@
  * 生命周期：无场景/模式门控（浮层是辅助 UI，全场景可用）；面板 enabled 驱动 install/run。
  */
 import { createLog } from '../../core/log.js';
-import { game } from '../../core/game.js';
+import { l10n, nav, gameData, gameConf, bits } from '../../core/game-api.js';
 import { getUid } from '../../core/player.js';
 import { storage } from '../../core/storage.js';
 import { reactor } from '../../core/reactor.js';
 import { ChatOverlay, AT_ALL_LABEL } from './overlay.js';
+import { classify, CST_LABEL } from './classify.js';
 
 /** @type {ReturnType<createLog>} 模块日志器（tag=CHATWIN） */
 const log = createLog('CHATWIN');
@@ -82,34 +83,40 @@ function chanLabelOfKey(key) {
   var d = CHAN_DEFS.find((x) => x.key === p);
   if (d) return d.label;
   var n = p.charAt(0) === 'c' ? p.slice(1) : p;
-  try { // 游戏同源：chatCommon.chatToggleConfig 频道号→文案键（如 3→cross_server_system_007）再本地化
-    var cm = game.get('chatCommon');
-    if (cm && cm.getChatToggleConfig) {
-      var t = locText(cm.getChatToggleConfig(+n));
-      if (t) return t;
-    }
-  } catch (e) { /* 模块不可用走衍名 */ }
+  var t = l10n.channelName(+n); // 游戏同源：频道号→文案键（如 3→cross_server_system_007）再本地化
+  if (t) return t;
   return '频道' + n;
 }
 
 /**
- * 服务器文案键 → 游戏当前语言文本（LocalManager.getNetMsgText，与游戏对网络提示的翻译同源：
- * 支持 '<键,参数1|参数2>' 裸串形态；敏感词拒答、撤回拒绝等场景用。查不到键/模块不可用时回原文）
+ * 服务器文案键 → 游戏当前语言文本（转发 core/game-api l10n.net，支持 '<键,参数>' 裸串；查不到回原文）
  * @param {*} s 应答 data 原文（文案键或任意文本）
  * @returns {string} 译文或原文
  */
-function locText(s) {
-  s = String(s == null ? '' : s).trim();
-  if (!s) return s;
-  try {
-    var L = game.get('LocalManager').LOCAL;
-    if (!L || typeof L.getNetMsgText !== 'function') return s;
-    return String(L.getNetMsgText(s) || '') || s;
-  } catch (e) { return s; }
-}
+function locText(s) { return l10n.net(s); }
+
+/**
+ * 语言键+参数 → 游戏当前语言文本（转发 core/game-api l10n.text，与游戏 getText(key,...paras) 同源；
+ * 查不到回原文）。系统消息模板翻译（P3）与配置表 name 字段本地化均走此入口。
+ * @param {string} key 语言键
+ * @param {...*} paras 模板参数
+ * @returns {string}
+ */
+function locGetText(key) { return l10n.text.apply(null, arguments); }
+
+/**
+ * 配置表行查询（转发 core/game-api l10n.tableRow，只读；未命中返回 null）。
+ * @param {string} semantic 语义表名（emotion/emotionNew/emojiGif/item/building）
+ * @param {*} id 行 id
+ * @returns {object|null}
+ */
+function tableRow(semantic, id) { return l10n.tableRow(semantic, id); }
+
+/** 空判（对齐游戏 r.Obj.isEmpty） */
+function isEm(v) { return v == null || v === ''; }
 
 /** @type {object} 面板推入的模块配置（configure 更新） */
-var cfg = { quick: { world: true, alliance: true, pm: true, cross: true, group: false }, opacity: 75 };
+var cfg = { quick: { world: true, alliance: true, pm: true, cross: true, group: false }, opacity: 75, showDate: true };
 
 /** @type {ChatOverlay|null} 浮层视图实例 */
 var overlay = null;
@@ -207,14 +214,7 @@ function historyList(ret) {
 function myUid() { return String(getUid() || ''); }
 
 /** @returns {string} 本人 StrUid（快速登录模式下与 UID 不同，PM 的 fu/tu 用它） */
-function myStrUid() {
-  try {
-    var dc = game.get('DataCenter');
-    var s = dc && dc.DATA && dc.DATA.UserData && dc.DATA.UserData.StrUid;
-    if (s != null && s !== '') return String(s);
-  } catch (e) { }
-  return myUid();
-}
+function myStrUid() { return gameData.strUid() || myUid(); }
 
 /**
  * 时间归一：频道 t 为秒串、PM/time 为毫秒——统一成毫秒。
@@ -229,15 +229,16 @@ function toMs(t, ms) {
 }
 
 /**
- * yyyy-MM-dd HH:mm:ss 展示串（用户要求含日期秒，历史跨度大时分定位哪天）
+ * 时间展示串：cfg.showDate 为真时 'yyyy-MM-dd HH:mm:ss'（历史跨度大时定位哪天），
+ * 为假时仅 'HH:mm:ss'。秒始终展示（用户口径）。
  * @param {number} ms 毫秒时刻
  * @returns {string}
  */
 function hhmm(ms) {
   var d = new Date(ms);
   var p = (n) => (n < 10 ? '0' : '') + n;
-  return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate()) +
-    ' ' + p(d.getHours()) + ':' + p(d.getMinutes()) + ':' + p(d.getSeconds());
+  var hms = p(d.getHours()) + ':' + p(d.getMinutes()) + ':' + p(d.getSeconds());
+  return cfg.showDate ? d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate()) + ' ' + hms : hms;
 }
 
 /**
@@ -263,14 +264,29 @@ function buildEntry(raw, kind) {
   // 正文：历史项可能只有 content 无 m（游戏侧预处理口径），这里同源兼容；@编码还原 + 链接转 chip
   var text = String((norm.text != null && norm.text !== '') ? norm.text : (raw.content != null ? raw.content : ''))
     .split(AT_ALL_TOKEN).join('@' + AT_ALL_LABEL);
+  var cls = classify(raw, norm, { translate: locGetText });
   var segments;
-  if (norm.isLink) {
-    segments = linkSegments(norm, raw);
-  } else if (kind === 'pm' && /^\d+\s*,\s*\d+$/.test(text)) {
-    segments = [{ type: 'chip', s: '[位置 ' + text + ']', copy: text.replace(/\s/g, '') }];
+  if (cls.kind === 'system' || cls.kind === 'custom_system') {
+    // P3：正文是语言键模板（\x1e/\x1f/|/; 规则，UpdateData:714-730），走游戏 getText 同键翻译；
+    // 富卡片系统消息（cst∈ChatCustomSystemType）前置卡型 chip
+    segments = decodeSystemText(cls.sys, atData);
+    if (cls.kind === 'custom_system' && CST_LABEL[cls.cst]) segments = [{ type: 'chip', s: '[' + CST_LABEL[cls.cst] + ']' }].concat(segments);
+  } else if (cls.kind === 'ct') {
+    // ct 内容（红包/图片/寻人）：游戏展示文本为 getText(m)（UpdateData:732），chip 标类型 + 正文译文
+    segments = [{ type: 'chip', s: cls.label }].concat(text ? decodeAtCodes(locGetText(text), atData) : []);
+  } else if (cls.kind !== 'chat') {
+    segments = linkSegments(cls, norm);
+  } else if (kind === 'pm' && /^(\d+)\s*,\s*(\d+)$/.test(text)) {
+    var mm = /^(\d+)\s*,\s*(\d+)$/.exec(text);
+    segments = [{
+      type: 'chip', s: '[位置 ' + mm[1] + ',' + mm[2] + ']',
+      action: { type: 'pos', x: +mm[1], y: +mm[2], z: null, click: false }, jumpHint: mm[1] + ',' + mm[2],
+    }];
   } else {
-    segments = decodeAtCodes(text, atData);
+    segments = richSplit(text, custom.richParas, atData); // P4：内联表情/道具/建筑富文本 + @还原
   }
+  // P4：消息表态（reactions=[{reactionType,count}]，>99 显示 99+，chatupdate 原位合并后自动重算）
+  segments = segments.concat(reactionsSegments(raw.reactions));
   var plain = segments.map((s) => s.s).join('');
 
   // 会话键
@@ -304,28 +320,127 @@ function buildEntry(raw, kind) {
     segments,
     plain,
     quote: responseData ? { name: String(responseData.name || ''), msg: String(responseData.msg || ''), id: responseData.uuid || responseData.msgId || null } : null,
+    raw, // 保留原始项供 chatupdate 原位合并后重新 buildEntry/classify（生命周期 P2）
   };
   return { entry, key, self, otherUid: kind === 'pm' && self ? String((typeof raw.tu === 'object' ? raw.tu.uid : raw.tu) || '') : '' };
 }
 
 /**
- * 链接消息 -> chip 片段（0=位置/基地、1=战报、2=表情、3=砍价，其余兜底）
- * @param {object} norm chat.normalize 产物
- * @param {object} raw 原始项
- * @returns {object[]}
+ * 链接/特殊消息 classify 描述子 -> 渲染 chip 片段（带 action 则可跳转、否则可复制）。
+ * 位置类按 st 语义与坐标出标签；行军/集结卡出跳转 chip；表情卡查表出名字；unknown 出占位 chip。
+ * @param {object} cls classify() 产物
+ * @param {object} norm normalize 产物（裸串 link<id> 表情回退查 emotionId）
+ * @returns {object[]} segments
  */
-function linkSegments(norm, raw) {
-  var llm = norm.llm || safeParse(raw.llm) || {};
-  if (norm.linkType === 0 && llm.p) {
-    var p = llm.p;
-    var copy = p.x + ',' + p.y;
-    var label = llm.s ? '[' + llm.s + ']' : '[位置 ' + copy + ']';
-    return [{ type: 'chip', s: label, copy }];
+function linkSegments(cls, norm) {
+  // 撤回卡：置灰纯文本，无交互
+  if (cls.kind === 'revoke') return [{ type: 'chip', s: cls.label || '[已撤回]' }];
+  var label = cls.kind === 'emoji' ? emojiLabel(cls, norm) : cls.label;
+  var hint = '';
+  if (cls.action && cls.action.type === 'pos') hint = cls.action.x + ',' + cls.action.y + ' 跳转地图';
+  else if (cls.action && cls.action.type === 'march') hint = '跳转行军线';
+  return [{ type: 'chip', s: label, action: cls.action || null, jumpHint: hint || label }];
+}
+
+/**
+ * P4 表情/动图卡标题：按 parseLink:1075-1115 查表口径把 [表情]/[动图] 占位换成真名。
+ * GIF(60)→emotionGIFId 查 emoji_gif 表；IMAGE(2)→customEmotionId 提示语 / emotionId、iconID 查
+ * emotion_new 表 / iconIDs 按 '|' 分段逐查 emotion 表；裸串 link<id> 回退 norm.emotionId。
+ * @param {object} cls classify() 产物（kind==='emoji'）
+ * @param {object} norm normalize 产物
+ * @returns {string} chip 文本（查不到回退 cls.label）
+ */
+function emojiLabel(cls, norm) {
+  var llm = cls.llm || {};
+  if (cls.t === 60) {
+    var g = isEm(llm.emotionGIFId) ? null : tableRow('emojiGif', llm.emotionGIFId);
+    return g ? '[' + locGetText(g.name) + ']' : cls.label;
   }
-  if (norm.linkType === 1) return [{ type: 'chip', s: '[战报]' }];
-  if (norm.linkType === 2) return [{ type: 'chip', s: '[表情]' }];
-  if (norm.linkType === 3) return [{ type: 'chip', s: '[活动链接]' }];
-  return [{ type: 'chip', s: '[链接]' }];
+  if (!isEm(llm.customEmotionId)) return locGetText('emoji_upload_tips_07');
+  if (!isEm(llm.emotionId) || !isEm(llm.iconID)) {
+    var r1 = tableRow('emotionNew', !isEm(llm.emotionId) ? llm.emotionId : llm.iconID);
+    if (r1) return '[' + locGetText(r1.name) + ']';
+  }
+  var icons = !isEm(llm.iconIDs) ? llm.iconIDs : (!isEm(llm.iconID) ? llm.iconID : (norm && !isEm(norm.emotionId) ? norm.emotionId : null));
+  if (icons == null) return cls.label;
+  var s = '';
+  String(icons).split('|').forEach(function (h) { var r2 = tableRow('emotion', h); s += r2 ? '[' + locGetText(r2.name) + ']' : '[表情]'; });
+  return s || cls.label;
+}
+
+/**
+ * P3 系统消息模板 → 译文 segments（argsAreKeys 时参数逐个先译再代入，UpdateData:726-729）。
+ * @param {{key:string,args:string[],argsAreKeys:boolean}|null} sys classify 产物 sys 字段
+ * @param {object|null} atData custom.atData
+ * @returns {object[]} segments
+ */
+function decodeSystemText(sys, atData) {
+  if (!sys || isEm(sys.key)) return [];
+  var args = sys.args || [];
+  if (sys.argsAreKeys) args = args.map(function (a) { return locGetText(a); });
+  return decodeAtCodes(locGetText.apply(null, [sys.key].concat(args)), atData);
+}
+
+/**
+ * P4 [0:id]/[1:id]/[2:id] 富文本标签 → 游戏口径展示文本（ChatTools S()/D()/N() 同源：
+ * 表情→[名]、道具→#名#、建筑→{名}）；查不到返回 null 交调用方回退原标签。
+ * @param {number} ty CustomRichTagType（0表情/1道具/2建筑）
+ * @param {string} id 表行 id
+ * @returns {string|null}
+ */
+function richTagText(ty, id) {
+  var row = ty === 0 ? tableRow('emotionNew', id) : ty === 1 ? tableRow('item', id) : ty === 2 ? tableRow('building', id) : null;
+  if (!row) return null;
+  var nm = locGetText(row.name);
+  return ty === 0 ? '[' + nm + ']' : ty === 1 ? '#' + nm + '#' : '{' + nm + '}';
+}
+
+/**
+ * P4 内联富文本：\uf8f8 占位符按序消费 custom.richParas("type,id")，[type:id] 标签直解；
+ * 文本片段继续走 @还原。未命中查表时占位丢弃、标签保留原文（同游戏 U() 兜底）。
+ * @param {string} text 正文
+ * @param {string[]|undefined} richParas custom.richParas
+ * @param {object|null} atData custom.atData
+ * @returns {object[]} segments
+ */
+function richSplit(text, richParas, atData) {
+  if (!/\uf8f8|\[\d+:\d+\]/.test(text)) return decodeAtCodes(text, atData);
+  var out = []; var qi = 0; var last = 0; var m;
+  var re = /\uf8f8|\[(\d+):(\d+)\]/g;
+  var pushText = function (s) { if (s) out = out.concat(decodeAtCodes(s, atData)); };
+  while ((m = re.exec(text)) !== null) {
+    pushText(text.slice(last, m.index));
+    var ty; var id;
+    if (m[0] === '\uf8f8') {
+      var pr = String((richParas && richParas[qi++]) || '').split(',');
+      if (pr.length !== 2 || isEm(pr[1])) { last = re.lastIndex; continue; } // 对齐游戏 U()：非法项替空
+      ty = +pr[0]; id = pr[1];
+    } else { ty = +m[1]; id = m[2]; }
+    var txt = richTagText(ty, id);
+    pushText(txt != null ? txt : (m[0] === '\uf8f8' ? '' : '[' + ty + ':' + id + ']'));
+    last = re.lastIndex;
+  }
+  pushText(text.slice(last));
+  return out;
+}
+
+/** @type {Object<string,string>} reactionType→中文标签（真机仅实证 'like'，其余原样显示） */
+const REACT_LABEL = { like: '点赞' };
+
+/**
+ * P4 消息表态 → 尾部 chip（[{reactionType,count}] 过滤 count>0，>99 显示 99+）。
+ * @param {Array|undefined} list raw.reactions
+ * @returns {object[]} segments（无有效表态返回空数组）
+ */
+function reactionsSegments(list) {
+  if (!Array.isArray(list)) return [];
+  var parts = [];
+  for (var r of list) {
+    var n = r && +r.count || 0;
+    if (n <= 0) continue;
+    parts.push('[' + (REACT_LABEL[r.reactionType] || String(r.reactionType || '?')) + ' ×' + (n > 99 ? '99+' : n) + ']');
+  }
+  return parts.length ? [{ type: 'chip', s: parts.join(' ') }] : [];
 }
 
 /**
@@ -413,28 +528,75 @@ function ingest(kind, payload) {
   broadcastUnread();
 }
 
-/** 删除推送：按 uuid（单项/数组）从各缓冲移除 */
-function onDel(payload) {
-  var ids = new Set();
-  var arr = Array.isArray(payload) ? payload : [payload];
-  for (var p of arr) { if (p && typeof p === 'object' && p.uuid != null) ids.add(String(p.uuid)); }
-  if (!ids.size) return;
-  var touched = false;
+/**
+ * 按 uuid 原位转「撤回」占位：并入 deletedAt 后重建条目（分类层出 revoke 卡），不物理移除。
+ * 原条目不在缓冲时不凭空补入（避免造无上下文占位），返回 false。
+ * @param {string} id uuid 串
+ * @param {number} deletedAt 撤回时间戳（仅判 >0 触发 revoke 分类）
+ * @returns {boolean} 命中并重建返回 true
+ */
+function revokeInPlace(id, deletedAt) {
   for (var b of bufs.values()) {
-    var before = b.list.length;
-    b.list = b.list.filter((e) => { if (ids.has(e.id)) { b.ids.delete(e.id); return false; } return true; });
-    if (b.list.length !== before) touched = true;
+    var idx = b.list.findIndex((e) => e.id === id);
+    if (idx < 0) continue;
+    var merged = Object.assign({}, b.list[idx].raw || {}, { deletedAt: deletedAt });
+    try {
+      var r = buildEntry(merged, +merged.c === 1 ? 'pm' : 'push');
+      r.entry.id = id; // 锁回原 uuid，避免合并后 id 漂移
+      b.list[idx] = r.entry;
+      return true;
+    } catch (e) { return false; }
+  }
+  return false;
+}
+
+/**
+ * 删除/撤回推送（chatdel）：与游戏同源——带 deletedAt 的原位转「撤回」占位卡（保留气泡，
+ * 游戏 deleteChatMsg 是空存根、撤回实由 chatdel→onChatUpdate 的 deletedAt 支做原位替换），
+ * 无 deletedAt 的纯删除仍按 uuid 物理移除。单项/数组载荷均支持。
+ */
+function onDel(payload) {
+  var arr = Array.isArray(payload) ? payload : [payload];
+  var removeIds = new Set();
+  var touched = false;
+  for (var p of arr) {
+    if (!p || typeof p !== 'object' || p.uuid == null) continue;
+    if ((+p.deletedAt || 0) > 0) { if (revokeInPlace(String(p.uuid), +p.deletedAt)) touched = true; }
+    else removeIds.add(String(p.uuid));
+  }
+  if (removeIds.size) {
+    for (var b of bufs.values()) {
+      var before = b.list.length;
+      b.list = b.list.filter((e) => { if (removeIds.has(e.id)) { b.ids.delete(e.id); return false; } return true; });
+      if (b.list.length !== before) touched = true;
+    }
   }
   if (touched && overlay && overlay.isVisible()) renderActive();
 }
 
-/** 更新推送：移除旧条目后按新内容重建（best-effort，schema 未知不做强解析） */
+/**
+ * 更新推送（chatupdate）：按 uuid 原位合并补丁字段后重建条目（llm/ct/deletedAt 变化会重分类：
+ * 坐标回填→可跳转、deletedAt>0→撤回卡）。找不到原条目则当新消息入列（best-effort）。
+ */
 function onUpdate(payload) {
   var arr = Array.isArray(payload) ? payload : [payload];
   for (var p of arr) {
     if (!p || typeof p !== 'object' || p.uuid == null) continue;
-    delOne(String(p.uuid));
-    if (p.m != null || p.content != null) ingest(+p.c === 1 ? 'pm' : 'push', p);
+    var id = String(p.uuid);
+    var owner = null;
+    for (var b of bufs.values()) { for (var e of b.list) { if (e.id === id) { owner = b; break; } } if (owner) break; }
+    if (owner) {
+      var idx = owner.list.findIndex((e) => e.id === id);
+      var merged = Object.assign({}, owner.list[idx].raw || {}, p); // 补丁覆盖原 raw（不 mutate 原对象）
+      try {
+        var r = buildEntry(merged, +merged.c === 1 ? 'pm' : 'push');
+        r.entry.id = id; // 锁回原 uuid，避免合并后 id 漂移
+        owner.list[idx] = r.entry;
+        if (overlay && overlay.isVisible() && owner.key === activeKey) renderActive();
+      } catch (e2) { /* 重建失败保留原条目 */ }
+    } else {
+      if (p.m != null || p.content != null) ingest(+p.c === 1 ? 'pm' : 'push', p);
+    }
   }
 }
 
@@ -750,31 +912,51 @@ var pmInfoCache = new Map();
 
 /**
  * 私聊侧栏副行：对方基本信息（区/等级/power，用户口径不显聊天内容）；
- * 首次渲染时懒发 PLAYER_INFO(630)（仅数字 uid——StrUid 形态未实证可查），应答到达后刷侧栏。
+ * 首次渲染时入队 PLAYER_INFO(630)（仅数字 uid——StrUid 形态未实证可查），
+ * 由 servePmInfo 串行消费：同一时刻只有一个在途请求，相邻请求间隔 PM_INFO_GAP_MS，
+ * 避免点私聊 TAB 时整列会话瞬间爆发式查询冲击服务器；应答到达后刷侧栏。
  * @param {string} pk 'pm:<uid>'
  * @returns {string}
  */
 function pmInfoText(pk) {
   var ci = pmInfoCache.get(pk);
-  if (!ci) {
-    var uid = pk.slice(3);
-    var net = window.pocketcc.net;
-    if (net && /^\d+$/.test(uid)) {
-      pmInfoCache.set(pk, { state: 'pending', txt: '' });
-      net.send(CMD_PLAYER_INFO, { uid }).then((ret) => {
-        var d = safeParse(ret && ret.data);
-        if (!ret || !ret.ok || !d || typeof d !== 'object') { pmInfoCache.set(pk, { state: 'fail', txt: '' }); return; }
-        var bits = [];
-        if (d.serverId != null) bits.push('区 ' + d.serverId);
-        if (d.level != null) bits.push('Lv.' + d.level);
-        if (d.power != null) bits.push('战力 ' + fmtPower(d.power));
-        pmInfoCache.set(pk, { state: 'done', txt: bits.join(' · ') });
-        if (overlay && overlay.isVisible() && familyOf(activeKey) === 'pm') updateSide();
-      }).catch(() => { pmInfoCache.set(pk, { state: 'fail', txt: '' }); });
-    }
-    return '';
-  }
-  return ci.txt;
+  if (ci) return ci.txt;
+  if (pmInfoQueue.indexOf(pk) < 0) pmInfoQueue.push(pk); // 未入缓存且未在排队才入队（重复渲染不叠队）
+  servePmInfo();
+  return '';
+}
+
+/** @type {string[]} 待查玩家信息的会话键队列（FIFO，去重） */
+var pmInfoQueue = [];
+/** @type {boolean} 是否有在途查询（串行闸门） */
+var pmInfoServing = false;
+/** @type {number} 相邻两次查询的最小间隔 ms（串行限速，保护服务器） */
+const PM_INFO_GAP_MS = 500;
+
+/** 消费队列：每轮最多发一个 630，完成（含失败）后隔 PM_INFO_GAP_MS 再下一个 */
+function servePmInfo() {
+  if (pmInfoServing) return;
+  var pk = pmInfoQueue.shift();
+  if (!pk) return;
+  var uid = pk.slice(3);
+  var net = window.pocketcc.net;
+  if (!net || !/^\d+$/.test(uid)) { pmInfoCache.set(pk, { state: 'fail', txt: '' }); servePmInfo(); return; } // 不可查形态直接定案，不占带宽
+  pmInfoServing = true;
+  pmInfoCache.set(pk, { state: 'pending', txt: '' });
+  net.send(CMD_PLAYER_INFO, { uid }).then((ret) => {
+    var d = safeParse(ret && ret.data);
+    if (!ret || !ret.ok || !d || typeof d !== 'object') { pmInfoCache.set(pk, { state: 'fail', txt: '' }); return; }
+    var bits = [];
+    if (d.serverId != null) bits.push('区 ' + d.serverId);
+    if (d.level != null) bits.push('Lv.' + d.level);
+    if (d.power != null) bits.push('战力 ' + fmtPower(d.power));
+    pmInfoCache.set(pk, { state: 'done', txt: bits.join(' · ') });
+    if (overlay && overlay.isVisible() && familyOf(activeKey) === 'pm') updateSide();
+  }).catch(() => { pmInfoCache.set(pk, { state: 'fail', txt: '' }); })
+    .finally(() => {
+      pmInfoServing = false;
+      if (pmInfoQueue.length) setTimeout(servePmInfo, PM_INFO_GAP_MS);
+    });
 }
 
 // ─────────────────────── 频道切换与视图 ───────────────────────
@@ -886,8 +1068,9 @@ function fmtPower(v) {
 /**
  * PLAYER_INFO(630) 应答→信息行（schema 已真机实证：顶层 level/power/armyPower/allianceName/x/y…，
  * 其中 playerInfo 字段是微信绑定资料的内层 JSON 串，昵称在其 username 里；未知形态兜底标量全列）。
+ * 坐标行携带跳转 action（serverId 作跨服服号），视图层渲染为可点链接→ onJump 飞图。
  * @param {object} d 应答顶层 parse 产物
- * @returns {string[]}
+ * @returns {Array<string|{s:string, action:object}>}
  */
 function infoLines(d) {
   var lines = [];
@@ -896,7 +1079,10 @@ function infoLines(d) {
   if (d.power != null) lines.push('战力: ' + fmtPower(d.power));
   // armyPower 暂不展示：换算公式未明（用户口径）
   if (d.allianceName) lines.push('联盟: ' + d.allianceName + (d.allianceTag ? ' [' + d.allianceTag + ']' : ''));
-  if (d.x != null && d.y != null) lines.push('坐标: ' + d.x + ',' + d.y);
+  if (d.x != null && d.y != null) lines.push({
+    s: '坐标: ' + d.x + ',' + d.y + (d.serverId != null ? '@' + d.serverId : ''),
+    action: { type: 'pos', x: +d.x, y: +d.y, z: d.serverId != null ? +d.serverId : null, click: true },
+  });
   if (d.serverId != null) lines.push('服务器: ' + d.serverId);
   if (d.like != null) lines.push('获赞: ' + d.like);
   if (!lines.length) {
@@ -934,32 +1120,19 @@ async function doRevoke(entry) {
   if (!entry || !entry.self) { overlay.toast('只能撤回自己的消息'); return; }
   if (String(entry.id).indexOf('local:') === 0) { overlay.toast('消息尚未发送完成，稍后再试'); return; }
   var b = bufOf(activeKey);
-  var limit = 60;
-  try {
-    var tu = game.get('TableUtils');
-    limit = +(tu && tu.getDataConfigData && tu.getDataConfigData(630061)) || 60;
-  } catch (e) { /* 配置表取不到用默认 */ }
-  var nowSec = 0;
-  try { nowSec = +game.get('DataCenter').DATA.ServerTime || 0; } catch (e) { /* 下面兜底 */ }
-  if (!nowSec) nowSec = Math.floor(Date.now() / 1000);
+  var limit = +gameConf.dataConfig(630061) || 60; // 撤回时限配置（game-api 取不到时默认 60s）
+  var nowSec = gameData.serverTime() || Math.floor(Date.now() / 1000);
   if (nowSec - Math.floor(entry.timeMs / 1000) > limit) { overlay.toast('超过 ' + limit + ' 秒时限，不能撤回'); return; }
   var channel = b.c != null ? b.c : (activeKey.indexOf('pm:') === 0 ? 1 : chanOfKey(activeKey));
   if (channel == null) { overlay.toast('无法确定该消息的频道'); return; }
   var roomId = b.roomId || '';
   if (activeKey.indexOf('pm:') === 0) roomId = activeKey.slice(3); // 私聊房标识=对方 uid（游戏 NowChoiceKey.Id 同形）
-  var toUid = 0;
-  try {
-    var L = game.get('Long64Bit');
-    if (L && L.Int64) {
-      toUid = roomId.indexOf('_') <= 0 ? L.Int64.fromString(roomId || '0') : L.Int64.fromNumber(0);
-    } else {
-      toUid = /^\d+$/.test(roomId) ? Number(roomId) : 0; // 模块取不到时的纯数字兜底
-    }
-  } catch (e) { toUid = 0; }
+  // 游戏 revokeMsg 同源：无下划线 → Int64.fromString(roomId)，其余 → 0（game-api bits 封装）
+  var toUid = bits.int64(roomId.indexOf('_') <= 0 ? (roomId || '0') : '0');
   try {
     var ret = await net.sendPBV2(CMD_RECALL_CHAT, { roomId: roomId, uuid: String(entry.id), channel: channel, toUid: toUid });
     if (ret && ret.ok) {
-      delOne(String(entry.id));
+      revokeInPlace(String(entry.id), Date.now()); // 原位转撤回卡，与游戏观感一致（服务器 chatdel 再幂等确认）
       overlay.toast('已撤回');
     } else {
       log.info('recall rejected: %s', String(ret && ret.data).slice(0, 200));
@@ -972,17 +1145,17 @@ async function doRevoke(entry) {
 }
 
 /**
- * 好友关系同步判定（游戏内存同源：UserData.Friends Map，登录下发+push 维护，CheckIsMyFriend 口径）。
+ * 好友关系同步判定（游戏内存同源：UserData.Friends Map，登录下发+push 维护，CheckIsMyFriend 口径，
+ * 数据源经 game-api gameData.friends 探测）。
  * key 可能是数字/字符串，先 has 再转串遍历比（Map 条目为好友数、很小，开销可控）。
  * @param {object} entry 消息条目
  * @returns {boolean|null} null=判不出（无数据源异常）
  */
 function checkFriend(entry) {
   if (!entry || !entry.uid) return null;
+  var fr = gameData.friends();
+  if (!fr) return null;
   try {
-    var ud = game.get('DataCenter').DATA.UserData;
-    var fr = ud && ud.Friends;
-    if (!fr || typeof fr.has !== 'function' || typeof fr.keys !== 'function') return null;
     if (fr.has(entry.uid) || fr.has(+entry.uid)) return true;
     for (var k of fr.keys()) { if (String(k) === String(entry.uid)) return true; }
     return false;
@@ -1064,7 +1237,7 @@ async function ensureMembers() {
   var net = window.pocketcc.net;
   if (!net) return [];
   try {
-    var alliance = game.get('DataCenter').DATA.UserData.Alliance;
+    var alliance = gameData.alliance();
     var aid = alliance && alliance.Aid;
     if (!aid) return []; // 不在盟，无需查询
     var ret = await net.send(CMD_ALLIANCE_MEMBERS, { allianceId: aid }); // 透传原值，与游戏同源
@@ -1229,6 +1402,26 @@ function onKeydown(e) {
   }
 }
 
+// ─────────────────── P5 联动跳转（导航能力在 core/game-api nav，本层只出文案） ───────────────────
+
+/**
+ * 跳转执行入口：按卡片 action 调 game-api 导航；技术 err 语义键映射为用户文案。
+ * @param {object} action classify 产出/信息卡坐标行的 {type:'pos'|'march', ...}
+ * @returns {void}
+ */
+function jumpTo(action) {
+  if (!action || !overlay) return;
+  var r = action.type === 'march' ? nav.flyMarch(action)
+    : action.type === 'pos' ? nav.flyTo(action)
+      : { ok: false, err: 'nomarch' };
+  if (r.ok) {
+    overlay.toast(action.type === 'march' ? '跳转行军线' : (action.click ? '跳转并选中 ' : '定位到 ') + action.x + ',' + action.y);
+    return;
+  }
+  overlay.toast(r.err === 'unavailable' ? '世界地图导航不可用'
+    : r.err === 'nomarch' ? '该卡片暂不能直接跳转' : '跳转异常');
+}
+
 /**
  * 浮层 handlers（视图动作 -> 业务）
  * @returns {object}
@@ -1237,6 +1430,7 @@ function makeHandlers() {
   return {
     onSend: (text, atList, quote) => doSend(text, atList, quote),
     onSharePos: (x, y) => { doSharePos(x, y); },
+    onJump: (action) => { jumpTo(action); },
     onRequestAtList: () => {
       var b = bufOf(activeKey);
       var speakers = [];
@@ -1328,7 +1522,16 @@ function install(ctx) {
 }
 
 /**
- * 配置推入：快捷栏/透明度热更。
+ * 日期展示开关变更后：按 timeMs 重算各缓冲条目展示串并刷新当前视图（timeStr 已烘焙进条目）。
+ * @returns {void}
+ */
+function retimeAll() {
+  for (var b of bufs.values()) for (var e of b.list) e.timeStr = hhmm(e.timeMs);
+  if (overlay && overlay.isVisible()) renderActive();
+}
+
+/**
+ * 配置推入：快捷栏/透明度/日期展示热更。
  * @param {object} c toModuleCfg 产物
  * @returns {void}
  */
@@ -1336,7 +1539,10 @@ function configure(c) {
   if (!c) return;
   if (c.quick) cfg.quick = c.quick;
   if (c.opacity != null) cfg.opacity = c.opacity;
+  var dateToggled = c.showDate != null && !!c.showDate !== cfg.showDate;
+  if (c.showDate != null) cfg.showDate = !!c.showDate;
   if (overlay) { overlay.setOpacity(cfg.opacity); syncChannels(); }
+  if (dateToggled) retimeAll();
 }
 
 /**
@@ -1359,6 +1565,7 @@ reactor.register({
   defaults: {
     enabled: true,
     quickWorld: true, quickAlliance: true, quickPm: true, quickCross: true, quickGroup: false,
+    showDate: true,
     opacity: 75,
   },
   fields: [
@@ -1367,11 +1574,13 @@ reactor.register({
     { key: 'quickPm', label: '私聊', type: 'checkbox', section: '快捷切换栏' },
     { key: 'quickCross', label: '跨服', type: 'checkbox', section: '快捷切换栏' },
     { key: 'quickGroup', label: '群聊', type: 'checkbox', section: '快捷切换栏' },
+    { key: 'showDate', label: '时间含年月日', type: 'checkbox', section: '消息显示' },
     { key: 'opacity', label: '不透明度(%)', min: 30, step: 5 },
   ],
   toModuleCfg: function (c) {
     return {
       quick: { world: !!c.quickWorld, alliance: !!c.quickAlliance, pm: !!c.quickPm, cross: !!c.quickCross, group: !!c.quickGroup },
+      showDate: !!c.showDate,
       opacity: c.opacity,
     };
   },
