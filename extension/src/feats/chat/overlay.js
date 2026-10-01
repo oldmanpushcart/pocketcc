@@ -63,8 +63,8 @@ const CSS = `
   .pcw-close{border:none;background:transparent;color:#e8eef7;font:inherit;font-size:14px;
     cursor:pointer;padding:0 4px;opacity:.7;}
   .pcw-close:hover{opacity:1;}
-  .pcw-chips{display:flex;align-items:center;gap:4px;margin-top:6px;
-    overflow-x:auto;scrollbar-width:none;padding-bottom:6px;}
+  .pcw-chips{display:flex;align-items:center;gap:4px;margin-top:2px;
+    overflow-x:auto;scrollbar-width:none;padding:8px 0 6px;}
   .pcw-chips::-webkit-scrollbar{display:none;}
   .pcw-chip{position:relative;flex:0 0 auto;border:1px solid rgba(255,255,255,.16);border-radius:12px;
     background:transparent;color:#cdd8e6;font:inherit;font-size:12px;padding:2px 10px;cursor:pointer;
@@ -84,8 +84,14 @@ const CSS = `
   .pcw-sdrag:hover{background:rgba(120,170,255,.45);}
   .pcw-side::-webkit-scrollbar{width:5px;}
   .pcw-side::-webkit-scrollbar-thumb{background:rgba(255,255,255,.14);border-radius:3px;}
-  .pcw-main{flex:1 1 auto;min-width:0;display:flex;flex-direction:column;}
-  .pcw-conv{position:relative;padding:5px 6px;border-radius:6px;cursor:pointer;margin:1px 0;}
+  .pcw-main{flex:1 1 auto;min-width:0;display:flex;flex-direction:column;position:relative;}
+  .pcw-loadtip{flex:0 0 auto;text-align:center;font-size:11px;color:#8b98a9;padding:5px 0;letter-spacing:.5px;}
+  .pcw-newmsg{position:absolute;left:50%;bottom:12px;transform:translateX(-50%);z-index:6;background:rgba(30,40,55,.94);color:#cfe3ff;border:1px solid rgba(120,160,220,.42);border-radius:14px;padding:4px 12px;font-size:12px;line-height:1.4;font-family:inherit;outline:none;cursor:pointer;box-shadow:0 2px 8px rgba(0,0,0,.35);white-space:nowrap;}
+  .pcw-newmsg:hover{background:rgba(48,64,86,.96);}
+  .pcw-conv{position:relative;padding:5px 6px;border-radius:6px;cursor:pointer;margin:1px 0;display:flex;align-items:center;gap:7px;}
+  .pcw-convtc{flex:1 1 auto;min-width:0;}
+  .pcw-convav{flex:0 0 auto;cursor:pointer;}
+  .pcw-convav .pcw-avimg,.pcw-convav .pcw-avph{width:34px;height:34px;font-size:15px;border-radius:7px;}
   .pcw-conv:hover{background:rgba(255,255,255,.07);}
   .pcw-conv.active{background:rgba(70,140,255,.24);}
   .pcw-convt{font-size:12px;font-weight:600;color:#dbe6f3;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
@@ -97,14 +103,14 @@ const CSS = `
     user-select:text;-webkit-user-select:text;}
   .pcw-msgs::-webkit-scrollbar{width:7px;}
   .pcw-msgs::-webkit-scrollbar-thumb{background:rgba(255,255,255,.16);border-radius:4px;}
-  .pcw-row{padding:2px 4px;border-radius:5px;margin:1px 0;overflow-wrap:break-word;}
+  .pcw-row{padding:2px 4px;border-radius:5px;margin:1px 0;overflow-wrap:break-word;line-height:1.6;}
   .pcw-row:hover{background:rgba(255,255,255,.05);}
   .pcw-row.mention{background:rgba(255,190,60,.12);border-left:2px solid rgba(255,190,60,.7);}
   .pcw-time{color:#8b98a9;font-size:11px;margin-right:5px;font-variant-numeric:tabular-nums;}
   .pcw-name{color:#7fd08a;font-weight:600;}
   .pcw-name.self{color:#9ecbff;}
   .pcw-name.other{cursor:pointer;}
-  .pcw-name.other:hover{text-decoration:underline;}
+  .pcw-name.other:hover{color:#a9e7b4;}
   .pcw-at{color:#ffd77a;font-weight:600;}
   .pcw-chiplink{display:inline;color:#7fc4ff;border-bottom:1px dashed rgba(127,196,255,.45);cursor:pointer;}
   .pcw-chiplink:hover{color:#b4dcff;}
@@ -154,6 +160,11 @@ const CSS = `
   .pcw-inforow{font-size:12px;color:#d6dde8;line-height:1.75;word-break:break-all;}
   .pcw-jumplink{color:#7fe0a8;font-weight:600;cursor:pointer;border-bottom:1px dashed rgba(127,224,168,.5);}
   .pcw-jumplink:hover{color:#b6f2ce;}
+  .pcw-avimg,.pcw-avph{border-radius:8px;object-fit:cover;flex:0 0 auto;}
+  .pcw-avph{background:hsl(var(--h,210),45%,38%);color:#fff;font-weight:600;display:grid;place-items:center;}
+  .pcw-popav{display:flex;align-items:center;gap:9px;margin:0 0 7px;}
+  .pcw-popav .pcw-avimg,.pcw-popav .pcw-avph{width:52px;height:52px;font-size:22px;}
+  .pcw-popav .pcw-infotitle{margin:0;}
   .pcw-toast{position:absolute;left:50%;top:44%;transform:translateX(-50%);max-width:86%;
     padding:5px 12px;border-radius:6px;background:rgba(8,10,14,.92);border:1px solid rgba(255,255,255,.2);
     color:#ffd0b8;font-size:12px;pointer-events:none;opacity:0;transition:opacity .2s;z-index:3;
@@ -181,6 +192,35 @@ function esc(s) {
   return String(s == null ? '' : s)
     .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
+/**
+ * 头像描述子→内层 HTML：有 URL 出 <img>（尺寸/圆角由父容器 CSS 决定），无则首字母色块占位。
+ * @param {{url?:string, initial?:string, hue?:number}|null} av 头像描述子
+ * @returns {string}
+ */
+function avInner(av) {
+  if (av && av.url) {
+    return `<img class="pcw-avimg" src="${esc(av.url)}" data-avph="${esc(av.initial || '?')}" style="--h:${(av.hue | 0)}" alt="">`;
+  }
+  return `<div class="pcw-avph" style="--h:${av ? (av.hue | 0) : 210}">${esc((av && av.initial) || '?')}</div>`;
+}
+
+/**
+ * 给作用域内头像 <img> 绑 onerror：加载失败（CDN 拦截/防盗链/过期）即换为同款首字母占位。
+ * @param {ParentNode} scope 已写入 innerHTML 的容器
+ * @returns {void}
+ */
+function bindAvFallback(scope) {
+  scope.querySelectorAll('.pcw-avimg').forEach((el) => {
+    el.addEventListener('error', () => {
+      const d = document.createElement('div');
+      d.className = 'pcw-avph';
+      d.style.setProperty('--h', el.style.getPropertyValue('--h') || '210');
+      d.textContent = el.getAttribute('data-avph') || '?';
+      el.replaceWith(d);
+    });
+  });
 }
 
 /**
@@ -219,22 +259,26 @@ export class ChatOverlay {
     this.#cooldownTimer = null;
     /** @type {number|null} toast 隐藏定时器 */
     this.#toastTimer = null;
-    /** @type {boolean} 消息区是否钉底（用户未上滚时新消息自动跟随） */
+    /** @type {boolean} 消息区是否贴底（滚到最底时清「新消息」浮标） */
     this.#pinned = true;
+    /** @type {number} 未读新消息计数（他人新消息不自动滚动，底部浮标提示） */
+    this.#newMsgCount = 0;
     /** @type {boolean} 滚动到顶翻页的闸门（防惯性连触） */
     this.#topGate = false;
   }
 
-  #h; #geom; #atList; #cooldownLeft; #cooldownTimer; #toastTimer; #pinned; #topGate;
+  #h; #geom; #atList; #cooldownLeft; #cooldownTimer; #toastTimer; #pinned; #topGate; #newMsgCount;
   /** @type {HTMLElement|null} host 容器 */ #host = null;
   /** @type {ShadowRoot|null} shadow 根 */ #root = null;
   /** @type {HTMLElement|null} 窗口主体 */ #win = null;
+  /** @type {HTMLElement|null} 「N 条新消息」浮标（他人新消息不自动滚，点击跳最新） */ #newMsgPill = null;
   /** @type {HTMLElement|null} 左侧会话列表（私聊/跨服家族视图） */ #side = null;
   /** @type {HTMLElement|null} 侧栏宽度拖拽把手 */ #sdrag = null;
   /** @type {number} 侧栏当前宽度（px，随几何存档持久） */ #sideW = 170;
   /** @type {HTMLElement|null} 标题栏文本 */ #titleEl = null;
   /** @type {HTMLElement|null} 频道 chip 行 */ #chips = null;
   /** @type {HTMLElement|null} 消息滚动区 */ #msgs = null;
+  /** @type {HTMLElement|null} 顶部历史加载状态条 */ #loadTip = null;
   /** @type {HTMLElement|null} 引用条 */ #qbar = null;
   /** @type {HTMLElement|null} 输入框 */ #input = null;
   /** @type {HTMLElement|null} 发送按钮 */ #sendBtn = null;
@@ -280,7 +324,9 @@ export class ChatOverlay {
       `<div class="pcw-side"></div>` +
       `<div class="pcw-sdrag"></div>` +
       `<div class="pcw-main">` +
+      `<div class="pcw-loadtip" hidden></div>` +
       `<div class="pcw-msgs"></div>` +
+      `<button class="pcw-newmsg" type="button" hidden></button>` +
       `<div class="pcw-qbar" hidden><span class="pcw-qtext"></span><button class="pcw-qx">✕</button></div>` +
       `<div class="pcw-inputrow">` +
       `<textarea class="pcw-input" rows="1" placeholder="输入消息，Enter 发送，Shift+Enter 换行"></textarea>` +
@@ -309,6 +355,9 @@ export class ChatOverlay {
     this.#sdrag = win.querySelector('.pcw-sdrag');
     this.#titleEl = win.querySelector('.pcw-title');
     this.#msgs = win.querySelector('.pcw-msgs');
+    this.#loadTip = win.querySelector('.pcw-loadtip');
+    this.#newMsgPill = win.querySelector('.pcw-newmsg');
+    if (this.#newMsgPill) this.#newMsgPill.addEventListener('click', () => { this.#scrollBottom(); this.#clearNewMsg(); });
     this.#qbar = win.querySelector('.pcw-qbar');
     this.#input = win.querySelector('.pcw-input');
     this.#sendBtn = win.querySelector('.send');
@@ -419,14 +468,26 @@ export class ChatOverlay {
     }
     this.#side.innerHTML = items.map((c, i) =>
       `<div class="pcw-conv${c.key === active ? ' active' : ''}" data-i="${i}">` +
+      (c.avatar ? `<div class="pcw-convav" title="查看玩家信息">${avInner(c.avatar)}</div>` : '') +
+      `<div class="pcw-convtc">` +
       `<div class="pcw-convt">${esc(c.title)}</div>` +
       `<div class="pcw-convs">${esc(c.sub || '')}</div>` +
+      `</div>` +
       (c.unread ? `<span class="pcw-convb">${c.unread > 99 ? '99+' : c.unread}</span>` : '') +
       `</div>`).join('');
+    bindAvFallback(this.#side);
     Array.from(this.#side.querySelectorAll('.pcw-conv')).forEach((el) => {
       el.addEventListener('click', () => {
         const c = items[+el.dataset.i];
         if (c) this.#notify('onSideSelect', c.key);
+      });
+      const avEl = el.querySelector('.pcw-convav');
+      if (avEl) avEl.addEventListener('click', (ev) => {
+        ev.stopPropagation(); // 点头像只弹信息，不触发整行切会话
+        const c = items[+el.dataset.i];
+        if (!c) return;
+        const uid = c.key.indexOf('pm:') === 0 ? c.key.slice(3) : c.key;
+        this.#notify('onNameInfo', { uid: uid, name: c.title, self: false });
       });
     });
     this.#side.style.width = this.#sideW + 'px';
@@ -525,8 +586,9 @@ export class ChatOverlay {
    * @param {object[]} entries 预处理条目（见文件头 entry 约定）
    * @returns {void}
    */
-  renderMessages(entries) {
+  renderMessages(entries, keepScroll) {
     if (!this.#msgs) return;
+    const prevTop = this.#msgs.scrollTop; // keepScroll 用：重排前阅读位置
     const frag = document.createDocumentFragment();
     for (const e of (entries || [])) frag.appendChild(this.#buildRow(e));
     if (!frag.childNodes.length) {
@@ -536,7 +598,14 @@ export class ChatOverlay {
       frag.appendChild(tip);
     }
     this.#msgs.replaceChildren(frag);
+    if (keepScroll) {
+      // 乱序补投导致的整列重排：贴底则继续跟随最新，否则保持原阅读位置（不清浮标、不补翻页）
+      if (this.#pinned) this.#scrollBottom();
+      else this.#msgs.scrollTop = prevTop;
+      return;
+    }
     this.#pinned = true;
+    this.#clearNewMsg(); // 全量重绘（切频道/初始）已定位到最新，清浮标
     this.#scrollBottom();
     // 首屏内容不足一屏时无滚动条，滚顶翻页触发死锁：主动翻旧页补齐（业务层有 loaded/roomId/上限闸门）
     this.#fillViewport();
@@ -549,7 +618,7 @@ export class ChatOverlay {
   }
 
   /**
-   * 追加一条（实时消息；用户已上滚则不动底部）
+   * 追加一条（实时消息）：贴底（正在看最新）或自己发的 → 自动跟随到底部；已向上翻阅历史 → 不打断，仅出「N 条新消息」浮标。
    * @param {object} entry 条目
    * @returns {void}
    */
@@ -560,7 +629,24 @@ export class ChatOverlay {
     this.#msgs.appendChild(this.#buildRow(entry));
     // 限 DOM 规模：只留最近 300 个节点
     while (this.#msgs.childElementCount > 300) this.#msgs.firstElementChild.remove();
-    if (this.#pinned) this.#scrollBottom();
+    // 贴底（#pinned，正在看最新一条）或自己发的 → 自动跟随到底部；已向上翻阅 → 不打断，只累加底部浮标（点浮标或手动滚回底部才清）
+    if (entry.self || this.#pinned) { this.#pinned = true; this.#scrollBottom(); }
+    else this.#bumpNewMsg();
+  }
+
+  /** 底部「N 条新消息」浮标计数 +1 并显示（他人新消息到达、不自动滚动时） */
+  #bumpNewMsg() {
+    this.#newMsgCount++;
+    if (this.#newMsgPill) {
+      this.#newMsgPill.hidden = false;
+      this.#newMsgPill.textContent = '↓ ' + (this.#newMsgCount > 99 ? '99+' : this.#newMsgCount) + ' 条新消息';
+    }
+  }
+
+  /** 清除「新消息」浮标（用户点击浮标跳最新，或手动滚回底部时） */
+  #clearNewMsg() {
+    this.#newMsgCount = 0;
+    if (this.#newMsgPill) { this.#newMsgPill.hidden = true; this.#newMsgPill.textContent = ''; }
   }
 
   /**
@@ -582,6 +668,20 @@ export class ChatOverlay {
   /** 清空消息区 */
   clearMessages() {
     if (this.#msgs) this.#msgs.replaceChildren();
+  }
+
+  /**
+   * 顶部历史加载状态条（#msgs 前置兄弟，不参与 prepend/append）。
+   * @param {string} state 'loading' 正在加载更早 / 'end' 已加载全部 / 'error' 失败可重试 / 其他隐去
+   * @returns {void}
+   */
+  setHistoryStatus(state) {
+    if (!this.#loadTip) return;
+    const t = this.#loadTip;
+    if (state === 'loading') { t.hidden = false; t.textContent = '正在加载更早的消息…'; }
+    else if (state === 'end') { t.hidden = false; t.textContent = '— 已加载全部历史 —'; }
+    else if (state === 'error') { t.hidden = false; t.textContent = '历史加载失败，继续上滚重试'; }
+    else { t.hidden = true; t.textContent = ''; }
   }
 
   /**
@@ -828,9 +928,10 @@ export class ChatOverlay {
    * 行可传字符串或 {s, action}：带 action 的行渲染为可点链接，点击关卡并回调 onJump。
    * @param {string} title 标题（昵称）
    * @param {Array<string|{s:string, action:object}>} lines 信息行（key: value）
+   * @param {{url?:string, initial?:string, hue?:number}} [av] 头像描述子（可空：无则标题不带图）
    * @returns {void}
    */
-  showInfoPop(title, lines) {
+  showInfoPop(title, lines, av) {
     if (!this.#infoPop || !this.#win) return;
     const jumpActs = [];
     const rows = (lines || []).map((ln) => {
@@ -839,7 +940,10 @@ export class ChatOverlay {
       const idx = jumpActs.push(it.action) - 1;
       return `<div class="pcw-inforow"><span class="pcw-jumplink" data-jump="${idx}">${esc(it.s)}</span></div>`;
     }).join('');
-    this.#infoPop.innerHTML = `<div class="pcw-infotitle">${esc(title || '玩家信息')}</div>` + (rows || '<div class="pcw-inforow">（无可用信息）</div>');
+    this.#infoPop.innerHTML = (av
+      ? `<div class="pcw-popav">${avInner(av)}<div class="pcw-infotitle">${esc(title || '玩家信息')}</div></div>`
+      : `<div class="pcw-infotitle">${esc(title || '玩家信息')}</div>`) + (rows || '<div class="pcw-inforow">（无可用信息）</div>');
+    bindAvFallback(this.#infoPop);
     this.#infoPop.querySelectorAll('.pcw-jumplink').forEach((el) => {
       el.addEventListener('click', (ev) => {
         ev.stopPropagation();
@@ -1005,10 +1109,11 @@ export class ChatOverlay {
     this.#msgs.addEventListener('scroll', () => {
       const el = this.#msgs;
       this.#pinned = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
-      if (el.scrollTop < 24 && !this.#topGate) {
+      if (this.#pinned) this.#clearNewMsg(); // 用户手动滚回底部：清「新消息」浮标
+      if (el.scrollTop < 240 && !this.#topGate) { // 提前 240px 预取（不必顶到边缘），#topGate 防惯性连触
         this.#topGate = true;
         this.#notify('onLoadOlder');
-        setTimeout(() => { this.#topGate = false; }, 800);
+        setTimeout(() => { this.#topGate = false; }, 400);
       }
     });
   }
@@ -1155,14 +1260,17 @@ export class ChatOverlay {
   }
 
   /**
-   * 点引用块定位原消息（同会话已加载范围内才找得到）
+   * 点引用块定位原消息：已渲染行内直接滚动；找不到且允许按需拉取时回调
+   * handlers.onLocateMessage(id)（业务层 aroundHistory 拉取上下文并重绘后再调 jumpToMessage 二次定位）。
    * @param {string} id 目标条目 id
+   * @param {boolean} [allowLoad] 假（默认）时允许回调按需加载；jumpToMessage 传假避免无限回环
    * @returns {void}
    */
-  #jumpTo(id) {
-    if (id == null || id === '') { this.toast('原消息不在已加载范围内'); return; }
+  #jumpTo(id, allowLoad) {
+    if (id == null || id === '') { this.toast('引用未记录原消息标识，无法定位'); return; }
     let row = null;
-    try { row = this.#msgs.querySelector('[data-id="' + CSS.escape(String(id)) + '"]'); } catch (e) { row = null; }
+    // data-id 为带引号的属性值：只需转义 " 与 \，不能用 CSS.escape（那是标识符转义，会把纯数字 uuid 开头转成 \31 …导致永远匹配不到）
+    try { row = this.#msgs.querySelector('[data-id="' + String(id).replace(/["\\]/g, '\\$&') + '"]'); } catch (e) { row = null; }
     if (row) {
       row.scrollIntoView({ block: 'center' });
       const had = row.classList.contains('mention');
@@ -1170,8 +1278,17 @@ export class ChatOverlay {
         row.classList.add('mention');
         setTimeout(() => row.classList.remove('mention'), 1500);
       }
+    } else if (allowLoad !== false && this.#h.onLocateMessage) {
+      this.#h.onLocateMessage(String(id)); // 交业务层拉取未加载区间，完成后回跳 jumpToMessage
     } else this.toast('原消息不在已加载范围内');
   }
+
+  /**
+   * 二次定位（业务层 aroundHistory 拉取入缓冲并重绘后调用）：仅在当前已渲染行内查找，不再触发按需加载。
+   * @param {string} id 目标条目 id（uuid）
+   * @returns {void}
+   */
+  jumpToMessage(id) { this.#jumpTo(id, false); }
 
   /**
    * 回调派发（缺省空操作）

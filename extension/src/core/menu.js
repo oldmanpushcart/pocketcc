@@ -29,6 +29,7 @@
 export const CATEGORIES = {
   daily: '日常设置',
   battle: '战斗设置',
+  map: '地图设置',
   system: '系统设置',
 };
 
@@ -44,16 +45,22 @@ export const MENU = [
         storageKey: 'pocketcc.group.dailyTasks',
         // 日常任务只出 checkbox，详细参数一律用默认值/存量值（feature 卡片无 showFields）
         children: [
-          { id: 'chipBlessing', kind: 'feature', label: '芯片祝福' },
           { id: 'floatCar', kind: 'feature', label: '花车空投' },
           { id: 'titanBlessing', kind: 'feature', label: '泰坦祝福' },
           { id: 'allianceHelp', kind: 'feature', label: '联盟帮助' },
           { id: 'domainTreasure', kind: 'feature', label: '领域寻宝' },
+          { id: 'launchSilo', kind: 'feature', label: '占领发射井' },
           { id: 'seaTreasure', kind: 'feature', label: '海上夺宝' },
           { id: 'allianceGift', kind: 'feature', label: '联盟礼物' },
+          { id: 'allianceScience', kind: 'feature', label: '联盟科技' },
         ],
       },
       { id: 'allianceRally', kind: 'feature', label: '联盟集结', showFields: true },
+      { id: 'sourceOfWar', kind: 'feature', label: '战争之源', showFields: true },
+      { id: 'allianceBoss', kind: 'feature', label: '联盟机甲', showFields: true },
+      { id: 'citySkill', kind: 'feature', label: '城市技能', showFields: true },
+      { id: 'playerLike', kind: 'feature', label: '玩家点赞', showFields: true },
+      { id: 'mineCave', kind: 'feature', label: '次元矿洞', showFields: true },
     ],
   },
   {
@@ -62,11 +69,17 @@ export const MENU = [
     ],
   },
   {
+    id: 'map', kind: 'category', label: CATEGORIES.map, children: [
+      { id: 'globalMap', kind: 'feature', label: '全局地图', showFields: true },
+    ],
+  },
+  {
     id: 'system', kind: 'category', label: CATEGORIES.system, children: [
       { id: 'chatWindow', kind: 'feature', label: '聊天窗口', showFields: true },
       { id: 'reconnect', kind: 'feature', label: '自动重连', showFields: true },
       { id: 'netLog', kind: 'feature', label: '网络日志' },
       { id: 'eventLog', kind: 'feature', label: '事件日志' },
+      { id: 'netRecord', kind: 'feature', label: '报文录制', showFields: true },
     ],
   },
 ];

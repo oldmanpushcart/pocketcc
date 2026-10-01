@@ -1,54 +1,41 @@
 /**
- * 花车空投-按车定向探测领取（reactor 说明书形态）
+ * 花车空投-事件时间轮 + 活动组名额闸（reactor 说明书形态）
  *
- * 覆盖"花车行军投放空投箱"这一类玩法（芯片祝福 256/257 起步，配置表可扩到其他花车活动）。
- * 与 chip-blessing.js 的差异：那个是"活动推送 10912 叫醒 → 全局 8852 拿任意一个可领箱"，
- * 本 feat 是"联盟聊天发车卡叫醒 → 按该台花车的 marchIdStr 定向 8852 逐拍探测"，一台车一条流程。
+ * 架构一句话：只留一个全局定时器——**最小堆事件时间轮**按"下一个事件时刻"精确跳变，
+ * 不再每秒扫 flows；每个事件（probe/pickup/slotFree/reconcile）只存意图不存结论，
+ * 触发时刻重新验证一切前提（8852 重查、名额实时枚举），过期事件由 guard 自然作废（惰性失效）。
  *
- * 玩法节奏（现场核对）：**每 30 秒投一箱**，首箱不特殊（它就是这个 30 秒节拍的第一格，发车后 30 秒落地）；
- * 一台车可投多箱，但**只发一条**聊天卡；卡片 `expirationTime - t` = 箱数 × 180 秒（即该车窗口长度）。
- * 箱落在地图上活 1830 秒（瓦片 startSecsTime→endSecsTime 实测），所以逼我们快的是"共享次数被抢"，不是过期。
+ * 探测与领取（沿用已实证的节奏事实，详见下方"流程状态机"）：
+ *   probe(k) 到点定向 8852 问"这台车现在能领哪箱"；命中新箱 → 先看**同类型（getType）拾取行军名额**：
+ *   有名额 → 入堆 pickup（条间 ≥1s 防 902 限流）；无名额 → 入 pending，按 nextReleaseAt 迭代打点
+ *   slotFree = 最早可能释放时刻 + 安全垫（出发段行军只能按 marchArrive 先醒一次，醒来若已被返程
+ *   push 合并出 returnArriveTime 再按其重排——打点只决定"何时醒"，实时枚举决定"能不能派"）。
+ *   拍内真空按阶梯 +3s/+6s 补查（吸收落地抖动），替代旧带宽 Y 的每秒连查。
  *
- * 流程状态机（一 push 一流程，流程间互不干扰——8852 带 marchIdStr 定向，数据也独立）：
- *   发车卡到达 → 定锚 S（把服务器发车秒 t 折算成本地时刻，用 ServerTime 补推送延迟）与硬止 E（窗口长度）
- *   → 第 k 箱的落地时刻 = S + F + P·(k−1)（P=30s 箱间隔；F=30s 首箱延迟，现与 P 同值）
- *   → 第 k 拍的探测窗口 = 落地时刻前 L(=2s) 开探，带宽 Y(=10s)，即 [S + F + P·(k−1) − L, 起点 + Y]
- *   → 窗口内每 1s 发一次 8852；命中新箱立即入队派 902 并收拍，本拍记"有收获"；
- *   → 拍结算：无收获且没被"已派箱遮蔽" → missStreak++（被遮蔽时中性，见 probe 注释）；
- *   → missStreak ≥ 阈值 或 now ≥ E → 流程出队。停止判据用的是服务器"真·空"语义：
- *     阈值默认 M(=3)，但已派出的唯一箱数达到卡片推算值 N=(exp−t)/180 后降为 1（真空一拍即收摊）；
- *     没领满 N 时阈值不变，所以"漏领一箱"仍享有 M 拍保守容错——N 只做快车道，不做硬终止。
- *
- * 时间环：不为每条流程各挂 setTimeout 链，而是**一个 1s 全局 driver 扫 flows 表**（单层、步长 1s 的退化时间轮）。
- *   收益：只有一处定时器（pause/flows 空即停）、后台节流时所有流程一起延后而不是各自错乱、
- *   "每 1s 重试"就是 driver 的 tick 本身、flows 为空时零开销。
- *
- * 幂等（无需自建 TTL 记账）：
- *   1) 流程内已派坐标集合 `dispatched`——行军在路上时 8852 仍会返回同一箱，不去重就会 1s 一次连环重复派；
- *      902 被服务器拒时把坐标退回集合，留给后续拍重试。
- *   2) `mapData.marches` 在途行军判重（同坐标 + realUid==我 + marchType==getType）。
- *      ⚠️ 只瞬时让路、不把坐标写进 dispatched：一格同时只有一物但坐标会被后续箱复用（前一箱被领满
- *      20 次会提前消失），而定向 8852 回了这个坐标就说明此刻这格的箱属于本流程。
- *      ⚠️ marches 是 `new Map`，Object.values() 对 Map 返回空数组，必须走 marches.values()。
- *   3) 队列内同坐标去重 + drain 条间 1s 休眠避 902 限流（march_time_control_info001）。
- *   257 是无 armyList 的非部队行军、不占全局行军位，故不引入 canMarch 名额闸。
+ * 失败路由（名额语义定稿：活动组队列 per-type 上限恒 5，与战斗组 canMarch 名额互不占用）：
+ *   队满 world_130516 = "行军根本没发出"，箱保留（实证 8852 仍返回该箱）→ 退回 pending 等 slotFree 重排；
+ *   当日上限 mysterioustriangle_10 = 原箱不再返回（实证）→ 类型级当日熔断弃轮。
+ *   257 不占战斗组行军位（活动组行军在 push 入口被改写 uid=uid+marchId、不计 myMarchNum），
+ *   但占活动组自己的队列位——名额闸把"撞墙才知道"变成"派遣前就知道"。
  *
  * ⚠️ marchId 是 64 位雪花 id（真机样本 4857138598478209026 > 2^53），任何 Number() 转换都会静默丢精度、
  *   把查询打到别的行军上——全链路只以 string 传递（8852 请求体的字段名本身就是 marchIdStr）。
+ *   游戏还会把活动行军的 uid 改写成 `uid+marchId` 字符串，所以按 marchId 对账在途行军要用它判等。
  *
  * 网络一律走 promise 封装 window.pocketcc.net：send/sendPBV2(cmd, data) → Promise<Ret{code,data,ok}>。
  * 三条协议铁律（target=null、ensureServerResponse=false、无 clickInfo）由 net 封装内部固定，这里不再关心。
  * 8852 应答：net 封装已剥到内层，ret.data 就是 {x,y}；"无箱"有两种服务器口径（s!=0 被拒 / s=0 但 {x:0,y:0}）。
+ * 902 应答：受理时回整份 marchInfo（字符串 marchId + marchStartTime/marchArrive；返程两字段此刻必为 0，
+ *   要到回城 push 合并进游戏行军对象后才有值——这正是释放打点只能"迭代精化"、不能一次算死的原因）。
  *
  * 生命周期由 reactor 托管：install/run 两个钩子（无可调面板项，故不写 configure），scenes 门控限定 Home/NWorldMap。
- *   run 挂 newChatPush 监听；pause 摘监听、alive()=false 让 driver 与在飞流程自然收手，flows 表保留，resume 续跑。
- * 类型级当日熔断：某类花车的 902 回 `mysterioustriangle_10`（今日剩余次数不足）即记该类“今日已满”，
+ *   run 挂 newChatPush 监听；pause 摘监听、alive()=false 让堆事件与在飞流程自然收手，flows/pending 表保留，resume 续跑。
+ * 类型级当日熔断：某类花车的 902 回 `mysterioustriangle_10`（今日剩余次数不足）即记该类"今日已满"，
  *   当场收掉同类型全部流程 + 滤掉同类型待派项，后续该类型的发车卡不再建流程（跨类型互不影响，跨日自动失效）。
- * 被拒退避：同一坐标被 902 拒后按指数退避再试（上限键走熔断、不走到这里），否则会被拒的坐标每秒重派一遍。
+ * 被拒退避："目标被占/限流"类拒绝按指数退避再试（队满与上限各有专路、不走这里），否则会被拒的坐标每秒重派一遍。
  */
 import { createLog } from '../../core/log.js';
 import { game } from '../../core/game.js';
-import { createDrain } from '../../core/drain.js';
 import { reactor } from '../../core/reactor.js';
 import { l10n } from '../../core/game-api.js';
 
@@ -58,7 +45,7 @@ const log = createLog('FLOAT_CAR');
 /** @type {number} NRequestIdV2.FLOAT_PARADE_QUERY_CAN_REWARD_BAG，req {queryType:1, marchType:dropType[, marchIdStr]} → resp data={x,y} */
 const CMD_FLOAT_PARADE_QUERY_CAN_REWARD_BAG = 8852;
 
-/** @type {number} RequestId.MARCH_WORLD_POINT，世界地图行军，拾取空投用 {marchType:getType, x, y} 三键（无 armyList） */
+/** @type {number} RequestId.MARCH_WORLD_POINT，世界地图行军，拾取空投用 {marchType:getType, x, y} 三键（无 armyList）；受理时 resp 回 marchInfo */
 const CMD_MARCH_WORLD_POINT = 902;
 
 /** @type {number} ChatShareLinkType.PARADE_FLOAT_MARCH_SHARE，花车行军分享卡（llm.t），卡片只带 marchId + expirationTime，不带坐标 */
@@ -74,13 +61,26 @@ const BOX_WINDOW_SEC = 180;
 const DEFAULT_LIFE_MS = 1000 * BOX_WINDOW_SEC;
 
 /**
- * 902 拒绝载荷里“该花车类型今日领取次数已用完”的文案键（字典表：mysterioustriangle_10=今日剩余次数不足）。
- * ⚠️ 这一族键是服务端**跨活动复用**的（同族 _01 属“神秘三角”抽奖），所以：
+ * 902 拒绝载荷里"该花车类型今日领取次数已用完"的文案键（字典表：mysterioustriangle_10=今日剩余次数不足）。
+ * ⚠️ 这一族键是服务端**跨活动复用**的（同族 _01 属"神秘三角"抽奖），所以：
  * ① 只认这个精确键，其它拒绝（目标被占 / 发得太密）一律不当作上限；
  * ② 只认它出现在**本类型自己那支拾取行军的 902** 上——发车、空查、收摊都不构成上限证据
  * （每箱只有 20 次、先到先得，抢不过别人时也是 0 收获，但那不是上限）
  */
 const ERR_FLOAT_DAILY_LIMIT = 'mysterioustriangle_10';
+
+/**
+ * 902 拒绝载荷里"行军队列已满"的文案键（world_130516，真机实证报文 status=3 载荷原文）。
+ * ⚠️ 这个键在客户端被**跨场景复用**（战斗队满闸门也弹它），所以只认它出现在**本模块自己发出的
+ * 拾取 902 的拒绝应答**上；也不进 rejects 汇总/熔断通道——队满在服务器语义里是"行军根本没发出"，
+ * 箱保留、8852 仍返回（用户实证），等腾位重派即可，不构成类型级上限证据。
+ */
+const ERR_QUEUE_FULL = 'world_130516';
+
+/**
+ * 902 拒绝载荷里"发得太频繁"的限流文案键（march_time_control_info001）：走 per-key 指数退避专路。
+ */
+const ERR_RATE_LIMIT = 'march_time_control_info001';
 
 /**
  * 花车活动配置表：DROP（投放/查询用）与 GET（派遣用）是**配对关系**，必须成对写死。
@@ -97,6 +97,10 @@ const FLOATS = [
 const FLOAT_BY_DROP = {};
 for (var i = 0; i < FLOATS.length; i++) FLOAT_BY_DROP[FLOATS[i].dropType] = FLOATS[i];
 
+/** @type {Object<number,boolean>} getType 集合副本：MarchTools 符号缺失时的活动行军归属回退判据 */
+var GET_TYPE_FALLBACK = {};
+for (var g = 0; g < FLOATS.length; g++) GET_TYPE_FALLBACK[FLOATS[g].getType] = true;
+
 /**
  * 内置调优常量（面板只出启用开关，不暴露这些）
  * @type {object}
@@ -109,42 +113,61 @@ const cfg = {
     firstBoxDelayMs: 1000 * 30,
 
     /**
+     * P 每箱周期：相邻两箱落地间隔（= 窗口秒数 ÷ 箱数，真机 30 秒/箱）
+     */
+    boxPeriodMs: 1000 * 30,
+
+    /**
      * L 提前开探量：相对每箱落地时刻提前多久开始问（吸收服务器与客户端的时间抖动）
      */
     probeLeadMs: 1000 * 2,
 
     /**
-     * Y 容差带：一拍窗口内允许向后探多久，期间每 retryMs 查一次（吸收服务器与客户端的时间抖动）
+     * 拍内阶梯：相对第 k 箱落地打点的首查 + 补查偏移（吸收落地抖动），替代旧带宽 Y 的每秒连查；
+     * 末级仍真空才结算为 miss 拍
      */
-    probeBandMs: 1000 * 10,
-
-    /**
-     * 拍内重试间隔
-     */
-    retryMs: 1000,
-
-    /**
-     * P 箱间隔：相邻两箱的投放间隔 30 秒（首箱也走这同一节拍，所以 F 与 P 当前同值）
-     */
-    boxPeriodMs: 1000 * 30,
+    probeLadderMs: [0, 3000, 6000],
 
     /**
      * M 停止阈值：连续这么多拍"真·空"（既没新箱也没被已派箱遮蔽）就判定这台车没有我能领的箱了。
      * 取 3 不取 1：拍窗口是刚性网格，服务器某箱晚落几秒就会错过一拍，M≥2 才有容错；
-     * 代价是尾部空转 M×P 的墙钟（当前 90 秒），但查询次数不随 P 变大（每空拍固定 Y/1s+1 次）；
-     * 已派箱数达到卡片推算值后本阈值自动降为 1（见 stopThreshold），8 箱车实测可省掉尾部 3 拍里的 2 拍
+     * 已派箱数达到卡片推算值后本阈值自动降为 1（见 stopThreshold），8 箱车实测可省掉尾部几拍
      */
     emptyPeriodStop: 3,
 
     /**
-     * driver 步长：一个全局定时器扫全部流程，"每 1 秒重试"就是这一拍
+     * driver 步长封顶：定时器睡到下一个事件时刻，但不超过此值——对账保底醒（真机日志按它估在途名额用的
+     * 枚举判据若有边缘情况，最坏延迟一个封顶自愈）；后台节流下浏览器本就把定时器钳到 ≥1s，同阶无需特判
      */
     tickMs: 1000,
 
     /**
-     * 队列逐条消费之间的休眠毫秒：规避 902 限流（march_time_control_info001）
+     * 活动组拾取行军队列上限，**按活动类型（getType）各自计数**（用户定稿：恒为 5）。
+     * 若真机埋点显示单 type 在途 <5 仍撞 world_130516，即为跨类型共享池证据——只改 myActiveMarches
+     * 的过滤器范围（放开成全体 ACT_MARCHS），闸结构不变
      */
-    consumeInterval: 1000,
+    actQueueCap: 5,
+
+    /**
+     * slotFree 唤醒安全垫：服务器名额释放与客户端可见之间隔着 push 合并与渲染收尾（NMARCH_ENDTIME_DELAY=1s 一族），
+     * 到点早醒只会多一次空枚举，晚醒才丢吞吐，故取 1.5s 偏保守
+     */
+    slotFreeMarginMs: 1500,
+
+    /**
+     * 释放时刻字段全缺（行军对象上没有 marchArrive/returnArriveTime）时的退化轮询间隔
+     */
+    slotFreePollMs: 1000 * 5,
+
+    /**
+     * 派遣重试间隔：请求发出到下次重试的最小间隔（error 兜底重排、pickup 条间下限也用它）
+     */
+    retryMs: 1000,
+
+    /**
+     * E 前终查提前量：reconcile 事件在窗口硬止前这么久做最后一次 8852，替代旧 tailConfirmed 就地闭合逻辑
+     */
+    tailCheckLeadMs: 1000 * 10,
 
     /**
      * 同一坐标被拒后的重试退避基数：第 n 次被拒后等 base × 2^(n-1)（封顶 rejectBackoffMaxMs）再派。
@@ -166,29 +189,49 @@ var net;
 var mapData;
 /** @type {object|null} 数据中心（DATA.ServerTime 秒 + UserData.UID） */
 var dataCenter;
+/** @type {object|null} MarchTools.ACT_MARCHS 命名导出（活动行军归属判据）；缺失回退 GET_TYPE_FALLBACK */
+var actMarchs = null;
 
-/** @type {object|null} reactor 注入的上下文；alive() 反映运行态，pause 后置否让 driver 与在飞流程自然退出 */
+/** @type {object|null} reactor 注入的上下文；alive() 反映运行态，pause 后置否让堆事件与在飞流程自然收手 */
 var ctxRef = null;
 
 /** @type {Map<string,object>} 活跃探测流程：marchIdStr → flow */
 var flows = new Map();
 
+/** @type {number} 流程代际计数器：每条 flow 赋唯一 uid 并带进事件载荷——同 marchId 收摊后重建时，旧代际事件由 uid 判串台丢弃 */
+var FLOW_UID_SEQ = 0;
+
 /** @type {Set<string>} 已见过的 8852 "无箱"文案键（全局而非每流程：每拍首查必空，按车去重会把 info 刷成 debug 的量） */
 var seenEmptyKeys = new Set();
 
 /**
- * @type {Map<string,string>} floatId → 被服务器判为“今日已满”的日期。
+ * @type {Map<string,string>} floatId → 被服务器判为"今日已满"的日期。
  * 上限是**按花车类型各自计**的（现每类 10 次），跨类型不共用，故按类型记账。
  * 故意不落盘（口径同 alliance-help）：刷新页面后同类型第一台车会再撞一次（约 12 次查询 + 1 支必被拒的行军），
- * 换来的是“绝不因为一条脏记录整天停摆”
+ * 换来的是"绝不因为一条脏记录整天停摆"
  */
 var capReachedOn = new Map();
 
-/** @type {object[]} 待派遣队列（[{x,y,getType,marchId,flow}]，pause 保留、恢复续跑） */
-var queue = [];
+/**
+ * @type {object[]} 无名额时的按住区（[{flow,marchId,key,x,y,getType,queuedAt}]，pause 保留、恢复续跑）。
+ * 队满被拒 / 探到箱但同类型已满都进这里，等 slotFree 到点重查重派；flow 收摊或类型熔断时同步清除。
+ */
+var pendingPickups = [];
 
-/** @type {number|null} 唯一 driver 定时器（自重排；flows 空或 pause 即停） */
+/** @type {Set<number>} 已排了 slotFree 事件的 getType（去重，避免同一类型堆一串腾位唤醒） */
+var slotFreeScheduled = new Set();
+
+/** @type {object} 事件最小堆（模块级单例，见 EventHeap 段） */
+var heap = createEventHeap();
+
+/** @type {number} 全局 pickup 串行闸门：上一条 902 发出时刻，条间 ≥cfg.retryMs 防限流 */
+var lastPickupAt = 0;
+
+/** @type {number|null} 唯一 driver 定时器（睡到堆顶事件时刻，封顶 tickMs；pause/堆空即熄火） */
 var driverTimer = null;
+
+/** @type {number} 下一次 driver 唤醒的目标本地时刻（bump 判是否需提前重排用） */
+var driverWakeAt = 0;
 
 /** @type {boolean} install 幂等守卫 */
 var installed = false;
@@ -201,14 +244,197 @@ function aliveFn() {
     return ctxRef ? ctxRef.alive() : false;
 }
 
-/** @type {object} 串行消费器（派遣逐条 + 间隔休眠避限流） */
-var drain = createDrain({
-    log: log,
-    queue: { get: function () { return queue; } },
-    alive: aliveFn,
-    process: pickUpFlow,
-    interval: function () { return cfg.consumeInterval; },
-});
+/* ------------------------------------------------------------------ *
+ * EventHeap：二叉最小堆（事件时间轮）
+ *   事件 = {atMs, kind, flowId, payload, seq}，键序 atMs 升 → 同刻按 kind 优先级 → seq 稳定。
+ *   优先级 slotFree(0) ≥ pickup(1) > reconcile(2) > probe(3)：先腾位、有箱先发、终查在采点前。
+ *   惰性失效：弹出后过 passGuard，过期事件直接丢，不做精确删除。
+ * ------------------------------------------------------------------ */
+
+/** @type {Object<string,number>} kind → 同刻执行优先级（小者先） */
+var KIND_PRIO = { slotFree: 0, pickup: 1, reconcile: 2, probe: 3 };
+
+/**
+ * 建一个二叉最小堆（比较器：atMs → KIND_PRIO → seq）
+ * @returns {{push:function,peek:function():object|null,pop:function():object|null,size:function():number}}
+ */
+function createEventHeap() {
+    /** @type {object[]} */
+    var a = [];
+    /** @type {number} 插入序号（同刻稳定排序） */
+    var seq = 0;
+
+    /**
+     * 比较两个事件：负数表示 x 应先出
+     * @param {object} x 事件
+     * @param {object} y 事件
+     * @returns {number}
+     */
+    function less(x, y) {
+        if (x.atMs !== y.atMs) return x.atMs - y.atMs;
+        var d = (KIND_PRIO[x.kind] || 9) - (KIND_PRIO[y.kind] || 9);
+        return d !== 0 ? d : x.seq - y.seq;
+    }
+
+    /**
+     * 上浮
+     * @param {number} idx 待上浮下标
+     */
+    function siftUp(idx) {
+        while (idx > 0) {
+            var parent = (idx - 1) >> 1;
+            if (less(a[idx], a[parent]) < 0) {
+                var t = a[parent]; a[parent] = a[idx]; a[idx] = t;
+                idx = parent;
+            } else break;
+        }
+    }
+
+    /**
+     * 下沉
+     * @param {number} idx 待下沉下标
+     */
+    function siftDown(idx) {
+        var n = a.length;
+        while (true) {
+            var l = idx * 2 + 1, r = l + 1, smallest = idx;
+            if (l < n && less(a[l], a[smallest]) < 0) smallest = l;
+            if (r < n && less(a[r], a[smallest]) < 0) smallest = r;
+            if (smallest === idx) break;
+            var t = a[idx]; a[idx] = a[smallest]; a[smallest] = t;
+            idx = smallest;
+        }
+    }
+
+    return {
+        /**
+         * 入堆一个事件（自动补 seq）
+         * @param {object} ev {atMs,kind,flowId,payload}
+         */
+        push: function (ev) {
+            ev.seq = ++seq;
+            a.push(ev);
+            siftUp(a.length - 1);
+        },
+        /** @returns {object|null} 堆顶（不弹出） */
+        peek: function () { return a.length ? a[0] : null; },
+        /** @returns {object|null} 弹出堆顶 */
+        pop: function () {
+            if (!a.length) return null;
+            var top = a[0];
+            var last = a.pop();
+            if (a.length) { a[0] = last; siftDown(0); }
+            return top;
+        },
+        /** @returns {number} 当前事件数 */
+        size: function () { return a.length; },
+    };
+}
+
+/**
+ * 入堆一个事件并择机重排 driver（若它比当前唤醒更早）
+ * @param {number} atMs 目标本地时刻（ms）
+ * @param {string} kind 事件类型
+ * @param {string|null} flowId 归属流程（slotFree 传 null）
+ * @param {object} payload 事件载荷
+ */
+function pushEvent(atMs, kind, flowId, payload) {
+    heap.push({ atMs: atMs, kind: kind, flowId: flowId, payload: payload });
+    bumpDriver();
+}
+
+/* ------------------------------------------------------------------ *
+ * Driver：唯一定时器，睡到堆顶事件时刻（封顶 tickMs），到点批量弹出到期事件按序执行后重排。
+ *   pause 不重排；resume 由 run() 重新点火，陈旧事件由 passGuard 自然作废；堆空熄火。
+ * ------------------------------------------------------------------ */
+
+/**
+ * driver 点火：堆非空且未在跑就排一次。重复调用 no-op
+ */
+function startDriver() {
+    if (driverTimer != null || !heap.size()) return;
+    scheduleDriver();
+}
+
+/**
+ * driver 熄火：清唯一定时器
+ */
+function stopDriver() {
+    if (driverTimer == null) return;
+    clearTimeout(driverTimer);
+    driverTimer = null;
+}
+
+/**
+ * 排下一次唤醒：睡到 (堆顶.atMs − now)，但不超过 tickMs（保底醒）；堆空/pause 即熄火
+ */
+function scheduleDriver() {
+    if (driverTimer != null) { clearTimeout(driverTimer); driverTimer = null; }
+    if (!aliveFn() || !heap.size()) return;
+    var now = Date.now();
+    var delta = Math.min(Math.max(0, heap.peek().atMs - now), cfg.tickMs);
+    driverWakeAt = now + delta;
+    driverTimer = setTimeout(onDriverWake, delta);
+}
+
+/**
+ * 事件入堆后择机重排：仅当新堆顶比当前唤醒更早才重启定时器（避免 async 回调高频 push 抖动饿死唤醒）
+ */
+function bumpDriver() {
+    if (!heap.size()) return;
+    if (driverTimer == null) { startDriver(); return; }
+    if (heap.peek().atMs < driverWakeAt) scheduleDriver();
+}
+
+/**
+ * 到点批量弹出全部到期事件，逐个过 guard 后 dispatch；然后重排
+ */
+function onDriverWake() {
+    driverTimer = null;
+    if (!aliveFn()) return; // pause：堆原地保留，resume 时 run() 重新点火
+    var now = Date.now();
+    while (heap.size() && heap.peek().atMs <= now) {
+        var ev = heap.pop();
+        if (!passGuard(ev, now)) continue;
+        dispatch(ev);
+    }
+    scheduleDriver();
+}
+
+/**
+ * 事件弹出前的 guard（惰性失效）：过期/归属丢失即丢事件
+ * @param {object} ev 事件
+ * @param {number} now 当前本地 ms
+ * @returns {boolean} 是否仍需执行
+ */
+function passGuard(ev, now) {
+    if (!aliveFn()) return false;
+    if (ev.kind === 'slotFree') return true; // 全局腾位事件：只判 alive，pending 在 handler 内再筛
+    var f = flows.get(ev.flowId);
+    if (!f) return false;
+    if (ev.kind === 'reconcile') return true; // tail 在 E 前、expire 恰在 E，都由 handler 自校验窗口
+    return now < f.E; // probe / pickup 只在窗口内有效
+}
+
+/**
+ * 把一个到期事件路由到对应 handler（handler 皆 async，fire-and-forget，异常兜住）
+ * @param {object} ev 事件
+ */
+function dispatch(ev) {
+    var p;
+    try {
+        if (ev.kind === 'probe') p = onProbe(flows.get(ev.flowId), ev.payload);
+        else if (ev.kind === 'pickup') p = onPickup(ev.payload.item);
+        else if (ev.kind === 'slotFree') p = onSlotFree(ev.payload.getType);
+        else if (ev.kind === 'reconcile') p = onReconcile(flows.get(ev.flowId), ev.payload);
+    } catch (err) {
+        log.warn('dispatch threw. kind=%s', ev.kind, err);
+        return;
+    }
+    if (p && typeof p.catch === 'function') {
+        p.catch(function (err) { log.warn('async handler threw. kind=%s', ev.kind, err); });
+    }
+}
 
 /**
  * 当前服务器秒时刻（与聊天卡 t/expirationTime 同域，同源字段 DataCenter.DATA.ServerTime）；探不到回落到本地秒
@@ -243,6 +469,20 @@ function listMarches() {
 }
 
 /**
+ * 归属判定：本人行军的 uid 可能落在 realUid（部分活动行军 uid 被游戏改写成 uid+marchId、realUid 保留原值），
+ * 也可能只有 uid（本花车拾取行军即如此——902 应答的 marchInfo 只有 uid、无 realUid）。与 launch-silo 一致：
+ * realUid 优先、回落 uid，并统一 String 比较规避 number/string 跨域差异。⚠️ 只判 realUid 会漏数自家行军 → 名额闸恒报满格 → 盲派撞 world_130516
+ * @param {object} m marches 表条目
+ * @param {number|string} uid 本人 UID
+ * @returns {boolean}
+ */
+function isMyMarch(m, uid) {
+    if (!m || uid == null) return false;
+    var who = m.realUid != null ? m.realUid : m.uid;
+    return who != null && String(who) === String(uid);
+}
+
+/**
  * 该坐标上是否已有我的一条 getType 行军在路上（同一目标同时只允许一支；行军回程后游戏自动清除，无需自记账）
  * @param {number} x 目标横坐标
  * @param {number} y 目标纵坐标
@@ -253,12 +493,84 @@ function hasMarchAtTarget(x, y, getType) {
     var uid = dataCenter.UserData && dataCenter.UserData.UID;
     if (!uid) return false;
     return listMarches().some(function (march) {
-        return march
-            && march.realUid == uid
+        return isMyMarch(march, uid)
             && march.marchType == getType
             && march.target_tx == x
             && march.target_ty == y;
     });
+}
+
+/* ------------------------------------------------------------------ *
+ * SlotModel：活动组名额（per-type 枚举即真相，无持久账本）
+ * ------------------------------------------------------------------ */
+
+/**
+ * 该 marchType 是否属活动组行军：优先读 MarchTools.ACT_MARCHS 命名导出，缺失回退 FLOATS 的 getType 副本。
+ * 用存在性判定（!!actMarchs[type]）而非取快照 key 列表，以便热更新的新类型自动纳入
+ * @param {number} type marchType
+ * @returns {boolean}
+ */
+function isActivityMarch(type) {
+    if (actMarchs) return !!actMarchs[type];
+    return !!GET_TYPE_FALLBACK[type];
+}
+
+/**
+ * 我在某 getType 上的在途/返程未归活动行军。枚举 marches 表即真相：游戏在行军到家后自动清除，
+ * 表里存在 = 仍占活动组名额。realUid 判我（活动组 uid 被游戏改写成 uid+marchId，realUid 保留原值）
+ * @param {number} getType 拾取行军类型
+ * @returns {object[]}
+ */
+function myActiveMarches(getType) {
+    var uid = dataCenter.UserData && dataCenter.UserData.UID;
+    if (!uid) return [];
+    return listMarches().filter(function (m) {
+        return isMyMarch(m, uid) && m.marchType == getType && isActivityMarch(m.marchType);
+    });
+}
+
+/**
+ * 某 getType 当前剩余名额 = 上限 − 在途占位（clamp ≥0）
+ * @param {number} getType 拾取行军类型
+ * @returns {number}
+ */
+function freeSlots(getType) {
+    return Math.max(0, cfg.actQueueCap - myActiveMarches(getType).length);
+}
+
+/**
+ * 某 getType 最早可能释放名额的本地时刻（迭代式）：逐支取 returnArriveTime>0 ? returnArriveTime
+ * : (marchArrive>0 ? marchArrive : now+slotFreePoll)。出发段行军只能按 marchArrive 先醒一次；醒来若已被
+ * 返程 push 合并出 returnArriveTime，下一次重排自然读到它——打点只决定何时醒，枚举决定能不能派。
+ * 服务器秒域比较，整体平移入本地域
+ * @param {number} getType 拾取行军类型
+ * @returns {number} 本地 ms
+ */
+function nextReleaseAt(getType) {
+    var marches = myActiveMarches(getType);
+    if (!marches.length) return Date.now();
+    var nowSec = serverTimeSec();
+    var now = Date.now();
+    var min = Infinity;
+    for (var i = 0; i < marches.length; i++) {
+        var m = marches[i];
+        var ra = +m.returnArriveTime, ma = +m.marchArrive;
+        var relSec = ra > 0 ? ra : (ma > 0 ? ma : nowSec + cfg.slotFreePollMs / 1000);
+        if (relSec < min) min = relSec;
+    }
+    if (!isFinite(min)) return now;
+    return now + Math.max(0, (min - nowSec) * 1000);
+}
+
+/**
+ * 排一次某 getType 的腾位唤醒（同类型只留一个在途事件；到点若仍有 pending 会自续排）
+ * @param {number} getType 拾取行军类型
+ */
+function scheduleSlotFree(getType) {
+    if (slotFreeScheduled.has(getType)) return;
+    slotFreeScheduled.add(getType);
+    var at = nextReleaseAt(getType) + cfg.slotFreeMarginMs;
+    pushEvent(Math.max(Date.now(), at), 'slotFree', null, { getType: getType });
 }
 
 /**
@@ -317,48 +629,39 @@ function newFlow(seed, nowMs) {
     var lifeMs = spanSec ? spanSec * 1000 : DEFAULT_LIFE_MS;
     var expect = (spanSec && spanSec % BOX_WINDOW_SEC === 0) ? spanSec / BOX_WINDOW_SEC : 0;
 
-    var flow = {
+    return {
+        /** @type {number} 流程代际号（事件载荷带它判串台） */
+        uid: ++FLOW_UID_SEQ,
         marchId: seed.marchId,
         floatId: seed.floatId,
         dropType: seed.dropType,
         getType: seed.getType,
         S: nowMs - delaySec * 1000,
         E: nowMs - delaySec * 1000 + lifeMs,
+        /** @type {number} 当前拍号（事件 payload.k 与它比对判陈旧） */
         k: 0,
-        bandStart: 0,
-        bandEnd: 0,
-        nextQueryAt: 0,
+        /** @type {boolean} 本流程是否有 8852 在飞（串行化，防同拍重复探） */
         inFlight: false,
+        /** @type {number} 连续真·空拍计数（命中新箱清零；被遮蔽不动） */
         missStreak: 0,
-        periodGotBox: false,
-        periodShadowed: false,
-        /** @type {Set<string>} 本流程已派出的坐标（"x,y"）；902 被拒时退回。size 即已拿到的唯一箱数 */
+        /** @type {number} 本流程因无名额被按住的累计次数（收摊对账用，埋点④ slotWaits） */
+        slotWaits: 0,
+        /** @type {Set<string>} 本流程已派出的坐标（"x,y"）；902 队满/退避时退回。size 即已拿到的唯一箱数 */
         dispatched: new Set(),
         /** @type {number} 卡片推算的箱数（0=未能推算），只用于放宽收摊阈值与事后对账 */
         expect: expect,
+        /**
+         * @type {number} 刚性网格末拍号：expect>0 时=expect（卡片既给了箱数，第 N 箱后就不该再有箱），
+         * 否则 0（未能推算箱数，不启用提前收摊，退回纯 missStreak/E 判据）。
+         * 一旦观测到实领箱数超过 expect（卡片少报），当场置 0 关掉提前收摊，退回保守逐拍——错误自灭。
+         */
+        lastK: expect > 0 ? expect : 0,
         /** @type {Set<string>} 本流程 902 被拒的服务器文案键（收摊时汇总，每日上限就靠它露面） */
         rejects: new Set(),
         /** @type {Map<string,{untilMs:number,tries:number}>} 被拒坐标的重试退避（key → 下次可派时刻与已试次数） */
         rejectBackoff: new Map(),
         queries: 0,
     };
-    openPeriod(flow, 1, nowMs);
-    return flow;
-}
-
-/**
- * 打开第 k 拍的探测窗口：以第 k 箱的落地时刻为轴，提前 L 开探、向后带宽 Y
- * @param {object} flow 目标流程
- * @param {number} k 拍序号（1 起）
- * @param {number} nowMs 当前本地时刻（后台节流导致窗口起点已过时，首查直接落在 now）
- */
-function openPeriod(flow, k, nowMs) {
-    flow.k = k;
-    flow.bandStart = flow.S + cfg.firstBoxDelayMs + cfg.boxPeriodMs * (k - 1) - cfg.probeLeadMs;
-    flow.bandEnd = flow.bandStart + cfg.probeBandMs;
-    flow.nextQueryAt = Math.max(flow.bandStart, nowMs);
-    flow.periodGotBox = false;
-    flow.periodShadowed = false;
 }
 
 /**
@@ -373,47 +676,56 @@ function stopThreshold(flow) {
 }
 
 /**
- * 结算一拍并推进到下一拍：本拍没新箱也没被遮蔽 → missStreak++。达阈值则出队
+ * 第 k 拍的首个探测事件（阶梯 idx=0），并把 flow.k 钉到 k（旧拍残留事件由此判陈旧作废）
  * @param {object} flow 目标流程
- * @param {number} nowMs 当前本地时刻
- * @param {number} guard 循环安全上限（防 P≤Y 之类的病态配置死循环）
- * @returns {boolean} 该流程是否还活着
+ * @param {number} k 拍号（1 起）
  */
-function advancePeriods(flow, nowMs, guard) {
-    while (guard-- > 0 && nowMs > flow.bandEnd) {
-        if (flow.periodGotBox) flow.missStreak = 0;
-        else if (!flow.periodShadowed) flow.missStreak++;
-
-        if (flow.missStreak >= stopThreshold(flow)) {
-            dropFlow(flow, 'empty ' + flow.missStreak + ' periods');
-            return false;
-        }
-        openPeriod(flow, flow.k + 1, nowMs);
-    }
-    return true;
+function startProbeTick(flow, k) {
+    // 下一拍落地开探时刻若已越过窗口硬止，就不再排（终查/过期由 reconcile 收口）
+    var nextProbeAt = flow.S + cfg.firstBoxDelayMs + cfg.boxPeriodMs * (k - 1) - cfg.probeLeadMs;
+    if (k > 1 && nextProbeAt >= flow.E) return;
+    flow.k = k;
+    scheduleProbe(flow, k, 0);
 }
 
 /**
- * 结束一条流程：出队 + 打一行对账日志（真机看这里判断 M/P/Y 是否合适）
+ * 排第 k 拍阶梯 idx 的一次探测事件（时刻早于现在则立即可跑；floorMs 给重试设最短延后，防持续故障时 0ms 空转）
+ * @param {object} flow 目标流程
+ * @param {number} k 拍号
+ * @param {number} idx 阶梯下标（cfg.probeLadderMs）
+ * @param {number} [floorMs] 该事件最早可跑时刻（本地 ms，重排/重试用的下限）
+ */
+function scheduleProbe(flow, k, idx, floorMs) {
+    var landing = flow.S + cfg.firstBoxDelayMs + cfg.boxPeriodMs * (k - 1);
+    var at = landing - cfg.probeLeadMs + (cfg.probeLadderMs[idx] || 0);
+    if (floorMs != null && floorMs > at) at = floorMs;
+    pushEvent(Math.max(Date.now(), at), 'probe', flow.marchId, { k: k, ladderIdx: idx, uid: flow.uid });
+}
+
+/**
+ * 结束一条流程：出队 + 清其 pending + 打一行对账日志（真机看这里判断节奏是否合适）
  * @param {object} flow 目标流程
  * @param {string} reason 结束原因
  */
 function dropFlow(flow, reason) {
     flows.delete(flow.marchId);
-    log.info('flow end. marchId=%s;float=%s;reason=%s;periods=%d;boxes=%d;expect=%d;queries=%d;marchRejects=%s;pendingFlows=%d',
-        flow.marchId, flow.floatId, reason, flow.k, flow.dispatched.size, flow.expect, flow.queries,
-        flow.rejects.size ? Array.from(flow.rejects).join('|') : '-', flows.size);
+    var heldBefore = pendingPickups.length;
+    pendingPickups = pendingPickups.filter(function (it) { return it.flow !== flow; });
+    log.info('flow end. marchId=%s;float=%s;reason=%s;periods=%d;boxes=%d;expect=%d;gridEnd=%d;queries=%d;marchRejects=%s;pendingHeld=%d;slotWaits=%d;pendingFlows=%d',
+        flow.marchId, flow.floatId, reason, flow.k, flow.dispatched.size, flow.expect, flow.lastK, flow.queries,
+        flow.rejects.size ? Array.from(flow.rejects).join('|') : '-', heldBefore - pendingPickups.length,
+        flow.slotWaits || 0, flows.size);
     // 只对"实领多于推算"告警：少于推算是正常的没抢过别人（这种情况下阈值本就未被放宽，流程会走完 M 拍），
     // 而多于推算意味着 exp−t=箱数×180 这条关系改了，我们的拍网格与阈值都得重看
     if (flow.expect > 0 && flow.dispatched.size > flow.expect) {
         log.warn('more boxes than card prediction. marchId=%s;got=%d;expect=%d;life=%ds',
             flow.marchId, flow.dispatched.size, flow.expect, Math.round((flow.E - flow.S) / 1000));
     }
-    if (!flows.size) stopDriver();
+    if (!flows.size && !pendingPickups.length) stopDriver();
 }
 
 /**
- * 今日日期串（口径同 alliance-help：只用它做“跨日自动失效”，不追求服务器日界到小时）
+ * 今日日期串（口径同 alliance-help：只用它做"跨日自动失效"，不追求服务器日界到小时）
  * @returns {string} "YYYY-MM-DD"
  */
 function todayStr() {
@@ -433,7 +745,7 @@ function isCapReached(floatId) {
 }
 
 /**
- * 记下“该类型今日已满”，并当场收掉同类型的全部在飞流程与待派项：
+ * 记下"该类型今日已满"，并当场收掉同类型的全部在飞流程与待派项：
  * 上限是类型级的，再探下去每台车只会得到同一个拒绝，纯属空转。
  * 只动同类型——其他花车类型的上限各自独立
  * @param {object} flow 触发本次判定的流程
@@ -441,7 +753,7 @@ function isCapReached(floatId) {
  */
 function markCapReached(flow, data) {
     capReachedOn.set(flow.floatId, todayStr());
-    queue = queue.filter(function (item) { return item.flow.floatId !== flow.floatId; });
+    pendingPickups = pendingPickups.filter(function (it) { return it.flow.floatId !== flow.floatId; });
     var closed = 0;
     for (var entry of Array.from(flows)) {
         if (entry[1].floatId === flow.floatId) {
@@ -449,12 +761,12 @@ function markCapReached(flow, data) {
             closed++;
         }
     }
-    log.info('float type daily pickup limit reached. float=%s;date=%s;resp=%s;why=%s;flows closed=%d;queue left=%d',
-        flow.floatId, todayStr(), respText(data), whyText(data), closed, queue.length);
+    log.info('float type daily pickup limit reached. float=%s;date=%s;resp=%s;why=%s;flows closed=%d;pending left=%d',
+        flow.floatId, todayStr(), respText(data), whyText(data), closed, pendingPickups.length);
 }
 
 /**
- * newChatPush 入口：同步过滤 + 建流程。永不 throw（net/event 封装也会兜，但不依赖它）
+ * newChatPush 入口：同步过滤 + 建流程 + 铺首批事件。永不 throw（net/event 封装也会兜，但不依赖它）
  * @param {object} msg newChatPush 载荷（游戏 NetChatClient 把 socket "chatpush" 单参转出来）
  */
 function onChatPush(msg) {
@@ -482,65 +794,109 @@ function onChatPush(msg) {
 
     var flow = newFlow(seed, nowMs);
     flows.set(flow.marchId, flow);
+    startProbeTick(flow, 1);
+    // E 前终查（tail）一次；到点再排 expire 收口，替代旧 tailConfirmed/bandEnd 就地闭合
+    pushEvent(Math.max(Date.now(), flow.E - cfg.tailCheckLeadMs), 'reconcile', flow.marchId, { phase: 'tail', uid: flow.uid });
     log.info('parade flow started. marchId=%s;float=%s;delay=%ds;life=%ds;expect=%d;firstProbeIn=%ds;flows=%d',
         flow.marchId, flow.floatId, Math.round((nowMs - flow.S) / 1000),
-        Math.round((flow.E - flow.S) / 1000), flow.expect, Math.round((flow.bandStart - nowMs) / 1000), flows.size);
-    ensureDriver();
+        Math.round((flow.E - flow.S) / 1000), flow.expect,
+        Math.round((flow.S + cfg.firstBoxDelayMs + cfg.probeLadderMs[0] - cfg.probeLeadMs - nowMs) / 1000), flows.size);
+    startDriver();
 }
 
 /**
- * driver 点火：已有活跃流程就必须在跑。重复调用 no-op
+ * 一拍内的一次定向探测（probe 事件 handler）。命中新箱→按名额分派（立即 pickup / 入 pending）；
+ * 命中已派/被占/退避中→中性推下一拍；末级阶梯仍真空→记 miss 拍并结算阈值。永不 reject
+ * @param {object} flow 目标流程
+ * @param {object} payload {k, ladderIdx}
  */
-function ensureDriver() {
-    if (driverTimer != null || !flows.size) return;
-    driverTimer = setTimeout(tick, cfg.tickMs);
-}
+async function onProbe(flow, payload) {
+    if (!flow || flow.uid !== payload.uid) return; // 代际不符（同 marchId 收摊后重建）：陈旧事件丢弃
+    // 陈旧事件（本流程已推进到新拍）：payload.k 与 flow.k 不符直接丢
+    if (payload.k !== flow.k) return;
+    // 同拍在飞（理论不该发生，网络抖动兜底）：延后 retryMs 重排同事件，不并发、不 0ms 空转
+    if (flow.inFlight) { scheduleProbe(flow, payload.k, payload.ladderIdx, Date.now() + cfg.retryMs); return; }
 
-/**
- * driver 熄火：唯一定时器只有一处要清，pause / flows 空都走这里
- */
-function stopDriver() {
-    if (driverTimer == null) return;
-    clearTimeout(driverTimer);
-    driverTimer = null;
-}
+    flow.inFlight = true;
+    flow.queries++;
+    var res = await queryBox(flow.dropType, flow.marchId);
+    flow.inFlight = false;
 
-/**
- * 时间环的一格：扫一遍全部流程，到点该查的就查、窗口过期的就结算，然后自重排。
- * 单条流程抛错不影响其他流程（逐条 try）
- */
-function tick() {
-    driverTimer = null;
-    if (!aliveFn()) {
-        // pause 后不重排；resume 时 run() 会重新点火，flows 表原地保留
+    // await 期间流程可能已被结算/过期出队，也可能整个功能已 pause
+    if (!aliveFn() || flows.get(flow.marchId) !== flow) return;
+
+    var k = payload.k, j = payload.ladderIdx;
+
+    if (res.state === 'hit') {
+        var key = res.x + ',' + res.y;
+        // 命中已被自己遮蔽（已派/退避中/他支在途占位）→ 中性：不累加 missStreak，也不重复派遣
+        if (flow.dispatched.has(key) || inBackoff(flow, key) || hasMarchAtTarget(res.x, res.y, flow.getType)) {
+            if (flow.dispatched.has(key)) log.debug('box shadowed by own march. marchId=%s;owner=%s;x=%d;y=%d', flow.marchId, marchOwnerAt(key, flow.marchId), res.x, res.y);
+            else log.debug('box occupied/in-backoff, yield. marchId=%s;x=%d;y=%d', flow.marchId, res.x, res.y);
+            concludeTick(flow, k, false, false);
+            return;
+        }
+        // 命中可动新箱：认账 + 清 miss + 推进网格，再按名额决定立即派还是按住
+        flow.dispatched.add(key);
+        flow.missStreak = 0;
+        if (flow.lastK > 0 && flow.dispatched.size > flow.expect) flow.lastK = 0; // 卡片少报：关提前收摊
+        log.info('box found. marchId=%s;float=%s;x=%d;y=%d;period=%d;free=%d',
+            flow.marchId, flow.floatId, res.x, res.y, k, freeSlots(flow.getType));
+        requestPickup(flow, key, res.x, res.y);
+        concludeTick(flow, k, true, false);
         return;
     }
 
-    var nowMs = Date.now();
-    for (var entry of flows) {
-        var flow = entry[1];
-        try {
-            if (nowMs >= flow.E) {
-                dropFlow(flow, 'window expired');
-                continue;
-            }
-            if (nowMs > flow.bandEnd && !advancePeriods(flow, nowMs, 64)) continue;
-            if (!flow.inFlight && nowMs >= flow.nextQueryAt) probe(flow);
-        } catch (err) {
-            log.warn('tick threw. marchId=%s', flow.marchId, err);
+    if (res.state === 'empty') {
+        // 空因文案键只在本次会话首次出现时报一行 info：它才能分辨"没箱"与"今日 10 次已满"
+        if (res.key && !seenEmptyKeys.has(res.key)) {
+            seenEmptyKeys.add(res.key);
+            log.info('new 8852 empty reason. marchId=%s;period=%d;code=%d;resp=%s;why=%s', flow.marchId, k, res.code, res.resp, res.why);
+        } else {
+            log.debug('no box for this parade. marchId=%s;period=%d;code=%d', flow.marchId, k, res.code);
         }
+        // 阶梯未走完：补查下一级；走完仍真空：记一次 miss 拍并结算
+        if (j + 1 < cfg.probeLadderMs.length) scheduleProbe(flow, k, j + 1);
+        else concludeTick(flow, k, false, true);
+        return;
     }
-
-    if (flows.size) driverTimer = setTimeout(tick, cfg.tickMs);
+    // state==='error'：网络异常，延后 retryMs 重排同一步（不留延后会在持续故障时 0ms 空转刷屏），不改动任何计数
+    scheduleProbe(flow, k, j, Date.now() + cfg.retryMs);
 }
 
 /**
- * 反查“这个坐标上的在途行军是哪条流程派的”。游戏侧 march 记录不带发车 marchIdStr
- * （902 本身只带 {marchType,x,y}，服务器无从回写），归属只能靠各流程自己的 dispatched 集合。本函数纯为诊断：
- * 让路日志能指出挡路者，才能分清“另一台活跃车占位”与“已收摊流程的遗留行军”这两种完全不同性质的情形
+ * 一拍探测结论（无新箱命中时调用）：真空拍累加 missStreak，中性拍不动；再判两类提前收摊，最后推进网格
+ * @param {object} flow 目标流程
+ * @param {number} k 当前拍号
+ * @param {boolean} gotBox 本拍是否命中可动新箱
+ * @param {boolean} genuineMiss 是否为走完阶梯的"真·空"（遮蔽/退避等中性命中传 false）
+ */
+function concludeTick(flow, k, gotBox, genuineMiss) {
+    if (genuineMiss) flow.missStreak++;
+
+    // 刚性网格末拍：卡片既算出 N 箱，第 lastK 拍一旦没命中可动新箱就不可能再有箱 → 直接收摊（省掉尾部空转拍）
+    if (!gotBox && flow.lastK > 0 && k >= flow.lastK) { dropFlow(flow, 'grid done'); return; }
+    if (!gotBox && flow.missStreak >= stopThreshold(flow)) { dropFlow(flow, 'empty ' + flow.missStreak + ' periods'); return; }
+
+    startProbeTick(flow, k + 1);
+}
+
+/**
+ * 该坐标是否在退避窗口内（被拒后按指数退避再试，未到点前视为中性）
+ * @param {object} flow 目标流程
+ * @param {string} key 坐标键
+ * @returns {boolean}
+ */
+function inBackoff(flow, key) {
+    var b = flow.rejectBackoff.get(key);
+    return !!(b && Date.now() < b.untilMs);
+}
+
+/**
+ * 反查"这个坐标上的在途行军是哪条流程派的"（纯诊断）。游戏侧 march 记录不带发车 marchIdStr
  * @param {string} key 坐标键 "x,y"
  * @param {string} selfId 本流程 marchIdStr（不算自己）
- * @returns {string} 归属流程的 marchIdStr，查不到回 'stale'（其流程已收摊，行军还在路上）
+ * @returns {string} 归属流程的 marchIdStr，查不到回 'stale'
  */
 function marchOwnerAt(key, selfId) {
     for (var entry of flows) {
@@ -551,82 +907,217 @@ function marchOwnerAt(key, selfId) {
 }
 
 /**
- * 一拍内的一次定向探测：发 8852 问"这台车我现在能领哪箱"。
- * 三种结果分别记账：命中新箱 → 入队派遣；命中已派箱 → 本拍记"被遮蔽"（中性）；真·空 → 什么都不做，交给拍结算计数
- * @param {object} flow 目标流程
+ * 命中新箱后的派遣分派：有名额立即入堆 pickup，无名额入 pending 并排 slotFree
+ * @param {object} flow 所属流程
+ * @param {string} key 坐标键
+ * @param {number} x 横坐标
+ * @param {number} y 纵坐标
  */
-async function probe(flow) {
-    flow.inFlight = true;
-    flow.queries++;
-    // 重试节拍以"发出时刻"为起点算：若从应答到达起算，单次往返耗时会叠加进间隔（真机 RTT≈1s，
-    // 设计里的 1s 采样实测退化成 2s，10 秒容差带只采到 5 次，后半拍几乎不采样）
-    var sentAt = Date.now();
-    var res = await queryBox(flow.dropType, flow.marchId);
-    flow.inFlight = false;
+function requestPickup(flow, key, x, y) {
+    var item = { flow: flow, marchId: flow.marchId, key: key, x: x, y: y, getType: flow.getType, queuedAt: Date.now() };
+    if (freeSlots(flow.getType) > 0) {
+        pushEvent(Date.now(), 'pickup', flow.marchId, { item: item });
+    } else {
+        addPending(item);
+        flow.slotWaits++;
+        scheduleSlotFree(flow.getType);
+        log.debug('no act slot, held for pickup. marchId=%s;x=%d;y=%d;getType=%d', flow.marchId, x, y, flow.getType);
+    }
+}
 
-    // await 期间流程可能已被结算/过期出队，也可能整个功能已 pause
-    if (!aliveFn() || flows.get(flow.marchId) !== flow) return;
+/**
+ * 入 pending（去重 by key）
+ * @param {object} item 待派项
+ */
+function addPending(item) {
+    if (pendingPickups.some(function (it) { return it.key === item.key; })) return;
+    pendingPickups.push(item);
+}
 
-    flow.nextQueryAt = sentAt + cfg.retryMs;
+/**
+ * 取某 getType 仍有效的 pending 项（归属流程在飞且窗口未硬止）
+ * @param {number} getType 拾取行军类型
+ * @returns {object[]}
+ */
+function livePendingFor(getType) {
+    var now = Date.now();
+    return pendingPickups.filter(function (it) {
+        return it.getType === getType && flows.get(it.marchId) === it.flow && now < it.flow.E;
+    });
+}
 
-    if (res.state === 'hit') {
-        var key = res.x + ',' + res.y;
-        // 行军在路上、还没领到手时，8852 会持续返回同一箱：这是"被遮蔽"，不代表这台车没箱了，
-        // 也不代表该再派一次——既不能重复派遣，也不该因此累加 missStreak
-        if (flow.dispatched.has(key)) {
-            flow.periodShadowed = true;
-            log.debug('box shadowed by own march. marchId=%s;x=%d;y=%d', flow.marchId, res.x, res.y);
-            return;
+/**
+ * slotFree 事件 handler：某 getType 腾位到点 → 榨干名额。逐支重查 8852 校验箱仍在且坐标一致，
+ * 一致则立即入堆 pickup（受 pickup 条间闸门自然错开 ≥1s），不一致（被抢/消失）撤 pending 项。
+ * 循环至本轮占用名额达 freeSlots 上限或无 pending；仍有 pending 则按最新 nextReleaseAt 续排
+ * @param {number} getType 拾取行军类型
+ */
+async function onSlotFree(getType) {
+    slotFreeScheduled.delete(getType);
+    var dispatched = 0;
+    var slots = freeSlots(getType);
+    while (aliveFn() && dispatched < slots) {
+        var pend = livePendingFor(getType);
+        if (!pend.length) break;
+        // 选所属 flow 窗口最紧（E 最小）者先派，快过期的箱优先榨名额
+        var item = pend[0];
+        for (var i = 1; i < pend.length; i++) if (pend[i].flow.E < item.flow.E) item = pend[i];
+
+        pendingPickups = pendingPickups.filter(function (it) { return it !== item; });
+
+        var res = await queryBox(item.flow.dropType, item.flow.marchId);
+        if (!aliveFn() || flows.get(item.marchId) !== item.flow) return; // 期间流程收摊/pause
+
+        if (res.state === 'hit' && (res.x + ',' + res.y) === item.key) {
+            // 箱仍在且坐标一致：入堆（pickup 闸门保证条间 ≥1s）；名额已被本轮占用，dispatched 计数封顶防超发
+            pushEvent(Math.max(Date.now(), lastPickupAt + cfg.retryMs + dispatched * cfg.retryMs), 'pickup', item.marchId, { item: item });
+            dispatched++;
+        } else {
+            // 箱被抢/消失：撤 pending，坐标从已派集合退回（中性不重派）
+            item.flow.dispatched.delete(item.key);
+            log.debug('pending box vanished before dispatch. marchId=%s;x=%d;y=%d', item.marchId, item.x, item.y);
         }
-        // 被拒过的坐标按退避时间再试：服务器回“操作太频繁”时，正确的响应是放慢而不是每秒重派。
-        // 记 periodShadowed（中性）：这格确实有箱，只是在等退避，不能当作“本拍真空”去推进收摊
-        var back = flow.rejectBackoff.get(key);
-        if (back && Date.now() < back.untilMs) {
-            flow.periodShadowed = true;
-            log.debug('pickup in backoff. marchId=%s;x=%d;y=%d;retryIn=%ds;tries=%d',
-                flow.marchId, res.x, res.y, Math.round((back.untilMs - Date.now()) / 1000), back.tries);
-            return;
+    }
+    // 仍有同类型 pending（名额不够或被本轮漏掉）→ 按最新释放估算续排
+    if (livePendingFor(getType).length) scheduleSlotFree(getType);
+}
+
+/**
+ * pickup 事件 handler：派 902。全局条间闸门（≥retryMs）防 902 限流；受理则记 marchInfo 时刻（埋点①），
+ * 被拒按 errKey 路由表分派。永不 reject
+ * @param {object} item 待派项 {flow,marchId,key,x,y,getType,retriedOnce?}
+ */
+async function onPickup(item) {
+    var flow = item.flow;
+    if (!flow || flows.get(item.marchId) !== flow) return; // 归属已变（收摊/重建）
+    var now = Date.now();
+    // 条间闸门：距上条 902 不足 retryMs 就顺延自排，不并发（保留 pickup 事件语义，不阻塞堆）
+    if (now - lastPickupAt < cfg.retryMs) {
+        pushEvent(lastPickupAt + cfg.retryMs, 'pickup', item.marchId, { item: item });
+        return;
+    }
+    lastPickupAt = now;
+
+    var ret = await marchPickUp(item);
+    if (!aliveFn() || flows.get(item.marchId) !== flow) return;
+
+    if (ret.ok) {
+        var raw = ret.data;
+        var mi = (raw && (raw.marchInfo || (raw.data && raw.data.marchInfo) || raw)) || {};
+        var hasId = mi.marchId != null;
+        // 埋点①：应答自带出发/到达时刻，返程两字段此刻必为 0（回城 push 合并后才有值，见 SlotModel 迭代打点）
+        log.info('pick up march started. marchId=%s;x=%d;y=%d;code=%d;marchId64=%s;marchStart=%s;marchArrive=%s;retArrive=%s',
+            item.marchId, item.x, item.y, ret.code, hasId ? String(mi.marchId) : '-',
+            mi.marchStartTime != null ? mi.marchStartTime : '-', mi.marchArrive != null ? mi.marchArrive : '-',
+            mi.returnArriveTime != null ? mi.returnArriveTime : '0');
+        if (!hasId) {
+            // 应答形态与预期不符：吐一次原始结构，定位 marchId/回程时刻的真实路径（真机参数观测用）
+            var peek = '<unserializable>';
+            try { peek = String(JSON.stringify(raw)).slice(0, 400); } catch (e) { }
+            log.warn('pickup resp shape unexpected. keys=%s;raw=%s',
+                raw && typeof raw === 'object' ? Object.keys(raw).join('|') : typeof raw, peek);
         }
-        if (hasMarchAtTarget(res.x, res.y, flow.getType)) {
-            // 走到这里说明坐标不在本流程 dispatched 里（上一分支已判），那支在途行军是别的流程发的。
-            // 此刻只能判定"同一目标不能同时两支行军"，不能判定"这箱会被那条行军领到手"：
-            // 一格同时只有一物，但前一箱被领满 20 次提前消失后，坐标会被交叉时间段的另一箱复用，
-            // 而 8852 是按本流程 marchIdStr 定向查询的——它回了 (x,y) 就是"这格现在的箱属于我这台车"。
-            // 所以这里只瞬时让路（不写进 dispatched）：行军一落地/一消失，下一次探测（≤1s）就能补派。
-            // 写成永久认账会让本流程再也不派这个坐标，那种情形下是真丢一箱
-            flow.periodShadowed = true;
-            log.debug('box occupied by another march, yield this tick. marchId=%s;owner=%s;x=%d;y=%d',
-                flow.marchId, marchOwnerAt(key, flow.marchId), res.x, res.y);
-            return;
-        }
-        flow.periodGotBox = true;
-        flow.missStreak = 0;
-        flow.dispatched.add(key);
-        // 本拍收获即收拍：下一箱最早也在 30 秒后落地，窗口剩下的几秒只会反复取回自己那支在途行军的同一箱，白查。
-        // ⚠️ 必须用发出时刻 sentAt 而不是 Date.now()（应答到达时刻）：后者总晚一个 RTT，与 nextQueryAt=sentAt+retryMs
-        // 差不多落在同一个瞬间，于是“下一 tick 才结算”永远等不到（nowMs > bandEnd 恒为假），
-        // 只要服务器还在回这个坐标就会每秒重命中一次：回放实测拍号卡在 1、整窗撞 151 次 902
-        flow.bandEnd = sentAt;
-        log.info('box found. marchId=%s;float=%s;x=%d;y=%d;period=%d', flow.marchId, flow.floatId, res.x, res.y, flow.k);
-        enqueuePickUp(flow, res.x, res.y, key);
         return;
     }
 
-    if (res.state === 'empty') {
-        // 空因文案键只在本次会话首次出现时报一行 info：它才能分辨"没箱"与"今日 10 次已满"
-        if (res.key && !seenEmptyKeys.has(res.key)) {
-            seenEmptyKeys.add(res.key);
-            log.info('new 8852 empty reason. marchId=%s;period=%d;code=%d;resp=%s;why=%s', flow.marchId, flow.k, res.code, res.resp, res.why);
-        } else {
-            log.debug('no box for this parade. marchId=%s;period=%d;code=%d', flow.marchId, flow.k, res.code);
+    var errKey = rejectErrKey(ret.data);
+    log.warn('pick up march rejected! marchId=%s;x=%d;y=%d;code=%d;resp=%s;why=%s',
+        item.marchId, item.x, item.y, ret.code, respText(ret.data), whyText(ret.data));
+
+    // 路由表按 errKey 分派（队满不进 rejects/熔断，上限走熔断，其余走退避）
+    if (errKey === ERR_FLOAT_DAILY_LIMIT) {
+        flow.rejects.add(errKey);
+        flow.dispatched.delete(item.key);
+        markCapReached(flow, ret.data);
+        return;
+    }
+    if (errKey === ERR_QUEUE_FULL) {
+        // 队满=行军根本没发出：坐标退回 pending、不记退避、不进熔断、不进 rejects 汇总；按该 getType 打点 slotFree
+        flow.dispatched.delete(item.key);
+        logQueueFullEvidence(flow, item); // 埋点②
+        addPending(item);
+        scheduleSlotFree(item.getType);
+        return;
+    }
+
+    // 其余拒绝（含限流 march_time_control_info001 / 目标被占 / 未知键）：记 rejects，坐标退回，退避/单次重派
+    if (errKey) flow.rejects.add(errKey);
+    flow.dispatched.delete(item.key);
+    // 未知键的首次遭遇：单次立即重派，仍拒才降退避（新键发现机制）
+    if (errKey && errKey !== ERR_RATE_LIMIT && !item.retriedOnce) {
+        log.warn('unknown reject key (first hit), single retry. marchId=%s;resp=%s', item.marchId, respText(ret.data));
+        pushEvent(Date.now() + cfg.retryMs, 'pickup', item.marchId, { item: Object.assign({}, item, { retriedOnce: true }) });
+        return;
+    }
+    schedulePickupBackoff(flow, item);
+}
+
+/**
+ * 被拒后按坐标指数退避排一次重派（仍在本流程窗口内才排）
+ * @param {object} flow 目标流程
+ * @param {object} item 待派项
+ */
+function schedulePickupBackoff(flow, item) {
+    var tries = ((flow.rejectBackoff.get(item.key) || {}).tries || 0) + 1;
+    var wait = Math.min(cfg.rejectBackoffBaseMs * (1 << Math.min(tries - 1, 5)), cfg.rejectBackoffMaxMs);
+    flow.rejectBackoff.set(item.key, { untilMs: Date.now() + wait, tries: tries });
+    log.debug('pickup retry scheduled. marchId=%s;x=%d;y=%d;tries=%d;backoff=%ds',
+        flow.marchId, item.x, item.y, tries, Math.round(wait / 1000));
+    if (Date.now() + wait < flow.E) pushEvent(Date.now() + wait, 'pickup', flow.marchId, { item: item });
+}
+
+/**
+ * 埋点②：队满拒绝时打印同 getType 在途数与全体 ACT_MARCHS 在途类型分布——
+ * 若单 type <5 仍撞队满，即为跨类型共享池证据（触发名额口径重评）
+ * @param {object} flow 触发流程
+ * @param {object} item 被拒待派项
+ */
+function logQueueFullEvidence(flow, item) {
+    var sameType = myActiveMarches(flow.getType).length;
+    var uid = dataCenter.UserData && dataCenter.UserData.UID;
+    var dist = {};
+    if (uid) {
+        for (var m of listMarches()) {
+            if (!isMyMarch(m, uid) || !isActivityMarch(m.marchType)) continue;
+            dist[m.marchType] = (dist[m.marchType] || 0) + 1;
         }
     }
-    // state==='error'：网络异常，本 tick 放弃，不改动任何计数——下一次 tick 自然兜底
+    var parts = [];
+    for (var t in dist) if (Object.prototype.hasOwnProperty.call(dist, t)) parts.push(t + '=' + dist[t]);
+    log.info('queue-full evidence. marchId=%s;getType=%d;inTransit(type)=%d;cap=%d;allActMarches=%s',
+        flow.marchId, flow.getType, sameType, cfg.actQueueCap, parts.length ? parts.join(',') : '-');
+}
+
+/**
+ * reconcile 事件 handler。phase='tail'：E 前终查一次，命中仍可动新箱就照常派遣，随后排 phase='expire' 于 E。
+ * phase='expire'：窗口硬止收摊（清 pending 由 dropFlow 负责）。永不 reject
+ * @param {object} flow 目标流程
+ * @param {object} payload {phase:'tail'|'expire', uid}
+ */
+async function onReconcile(flow, payload) {
+    if (!flow || flow.uid !== payload.uid) return; // 代际不符（同 marchId 收摊后重建）：陈旧 tail/expire 不得动新流程
+    if (payload.phase === 'expire') {
+        dropFlow(flow, 'window expired');
+        return;
+    }
+    // tail：先把窗口硬止收口 expire 排上（即便随后 pause 让终查落空、return 提前，流程也一定会在 E 被清理），再终查一次
+    pushEvent(Math.max(Date.now(), flow.E), 'reconcile', flow.marchId, { phase: 'expire', uid: flow.uid });
+    var res = await queryBox(flow.dropType, flow.marchId);
+    if (!aliveFn() || flows.get(flow.marchId) !== flow) return;
+    if (res.state === 'hit') {
+        var key = res.x + ',' + res.y;
+        if (!flow.dispatched.has(key) && !inBackoff(flow, key) && !hasMarchAtTarget(res.x, res.y, flow.getType)) {
+            flow.dispatched.add(key);
+            if (flow.lastK > 0 && flow.dispatched.size > flow.expect) flow.lastK = 0;
+            log.info('box found (tail). marchId=%s;float=%s;x=%d;y=%d', flow.marchId, flow.floatId, res.x, res.y);
+            requestPickup(flow, key, res.x, res.y);
+        }
+    }
 }
 
 /**
  * 拒绝应答里的文案键（真机口径："<语言键>,<参数>"，如 "alliance_120503,10"，与 alliance-help 同源处理）。
- * code=3 本身只代表“被拒”、不携带业务含义，“今日 10 次已满”还是“没箱”只可能从这个键区分
+ * code=3 本身只代表"被拒"、不携带业务含义，"今日 10 次已满"还是"没箱"只可能从这个键区分
  * @param {*} data Ret.data
  * @returns {string|null} 不是字符串形态（空/对象）时不猜
  */
@@ -638,8 +1129,8 @@ function rejectErrKey(data) {
 
 /**
  * 服务器文案键 → 游戏当前语言文本（走 ACL 的 l10n.net，与游戏自己弹的 toast 同源）。
- * 真机实例：902 撞每日上限回的是 `mysterioustriangle_10`——“神秘三角”活动的文案族被服务端跨活动复用了，
- * 光看键名无法定性；而误把未知键当“今日已满”做熔断，代价是当天从此不再领，不可逆。
+ * 真机实例：902 撞每日上限回的是 `mysterioustriangle_10`——"神秘三角"活动的文案族被服务端跨活动复用了，
+ * 光看键名无法定性；而误把未知键当"今日已满"做熔断，代价是当天从此不再领，不可逆。
  * 查不到译文（或 l10n 不可用）回 '-'，不重复打原文
  * @param {*} data Ret.data
  * @returns {string}
@@ -686,7 +1177,7 @@ async function queryBox(dropType, marchIdStr) {
             marchIdStr: marchIdStr
         });
         var pos = ret.data;
-        // 被拒时把原载荷留下来：这是“为什么没箱”的唯一线索（每日上限？被别人领完？箱确实不在）
+        // 被拒时把原载荷留下来：这是"为什么没箱"的唯一线索（每日上限？被别人领完？箱确实不在）
         if (!ret.ok) return { state: 'empty', code: ret.code, key: rejectErrKey(pos), resp: respText(pos), why: whyText(pos) };
         if (!pos) return { state: 'empty', code: ret.code, key: null, resp: '-' };
         if (!pos.x || !pos.y) return { state: 'empty', code: ret.code, key: null, resp: respText(pos) };
@@ -698,53 +1189,8 @@ async function queryBox(dropType, marchIdStr) {
 }
 
 /**
- * 入队一支拾取派遣并点火消费。同坐标已在队列里则不重复入队（同箱两次返回的去重兜底）
- * @param {object} flow 所属流程
- * @param {number} x 箱横坐标
- * @param {number} y 箱纵坐标
- * @param {string} key 坐标键 "x,y"
- */
-function enqueuePickUp(flow, x, y, key) {
-    if (queue.some(function (item) { return item.key === key; })) {
-        log.debug('pickup already queued. x=%d;y=%d', x, y);
-        return;
-    }
-    queue.push({ x: x, y: y, key: key, getType: flow.getType, marchId: flow.marchId, flow: flow });
-    drain.consume().catch(function (err) {
-        log.warn('consume loop threw!', err);
-    });
-}
-
-/**
- * 单条派遣流程（drain 的 process）：派 902。被拒时把坐标从已派集合退回，留给后续拍重试。永不 reject
- * @param {object} item 队列项 {x,y,key,getType,marchId,flow}
- * @returns {Promise<void>}
- */
-async function pickUpFlow(item) {
-    var ret = await marchPickUp(item);
-    if (ret.ok) {
-        log.info('pick up march started. marchId=%s;x=%d;y=%d;code=%d', item.marchId, item.x, item.y, ret.code);
-        return;
-    }
-    item.flow.dispatched.delete(item.key);
-    var errKey = rejectErrKey(ret.data);
-    if (errKey) item.flow.rejects.add(errKey);
-    // resp 是服务器拒绝原文（形如 "<文案键>,<参数>"）：每日上限、目标被占、发得太密均靠它区分，不可漏打
-    log.warn('pick up march rejected! marchId=%s;x=%d;y=%d;code=%d;resp=%s;why=%s',
-        item.marchId, item.x, item.y, ret.code, respText(ret.data), whyText(ret.data));
-    // 只这个精确键才算上限，且只归给发出这支行军的花车类型（同族键被其他活动复用，不能跨类污染）
-    if (errKey === ERR_FLOAT_DAILY_LIMIT) { markCapReached(item.flow, ret.data); return; }
-    // 其余拒绝：同一坐标指数退避后再试（上限键已整天收摊，不需要退避）
-    var tries = ((item.flow.rejectBackoff.get(item.key) || {}).tries || 0) + 1;
-    var wait = Math.min(cfg.rejectBackoffBaseMs * (1 << Math.min(tries - 1, 5)), cfg.rejectBackoffMaxMs);
-    item.flow.rejectBackoff.set(item.key, { untilMs: Date.now() + wait, tries: tries });
-    log.debug('pickup retry scheduled. marchId=%s;x=%d;y=%d;tries=%d;backoff=%ds',
-        item.marchId, item.x, item.y, tries, Math.round(wait / 1000));
-}
-
-/**
  * 派拾取行军。永不 reject：发送异常回落到 CODE_NOT_SENT 的哨兵 Ret
- * @param {object} item 队列项 {x,y,getType}
+ * @param {object} item 待派项 {x,y,getType}
  * @returns {Promise<Ret>} code=902 状态码
  */
 async function marchPickUp(item) {
@@ -759,9 +1205,9 @@ async function marchPickUp(item) {
         return net.Ret.from(CODE_NOT_SENT, null);
     }
 }
-
 /**
- * 安装：取网络底座 + 世界地图数据 + 数据中心。任一依赖缺失即失败（reactor 不会激活）
+ * 安装：取网络底座 + 世界地图数据 + 数据中心（硬依赖，任一缺失即失败，reactor 不激活）；
+ * MarchTools 为软依赖，缺失只降级活动行军归属判据（回退 FLOATS getType 副本）+ warn，不阻断激活。
  * @param {object} ctx reactor 上下文
  * @returns {boolean}
  */
@@ -779,7 +1225,7 @@ function install(ctx) {
         net = null;
     }
 
-    var mods = game.requireAll(['NWorldMapData', 'DataCenter']);
+    var mods = game.requireAll(['NWorldMapData', 'DataCenter', 'MarchTools']);
 
     mapData = mods.NWorldMapData
         && mods.NWorldMapData.default
@@ -790,6 +1236,13 @@ function install(ctx) {
         && mods.DataCenter.DATA
         || missing.push('DataCenter');
 
+    // MarchTools 软依赖：命名导出 ACT_MARCHS（活动行军归属判据）；取不到只回退本地副本，不进 missing
+    actMarchs = (mods.MarchTools && (mods.MarchTools.ACT_MARCHS
+        || (mods.MarchTools.default && mods.MarchTools.default.ACT_MARCHS))) || null;
+    if (!actMarchs) {
+        log.warn('MarchTools.ACT_MARCHS missing, fallback to local getType set. missing=%s', mods.MarchTools ? 'export-shape' : 'module');
+    }
+
     if (missing.length) {
         net = null; mapData = null; dataCenter = null;
         log.warn('install failed. missing=%d;deps=%s', missing.length, missing.join(';'));
@@ -797,27 +1250,26 @@ function install(ctx) {
     }
 
     installed = true;
-    log.info('installed. floats=%s', FLOATS.map(function (f) { return f.id + '(' + f.dropType + '/' + f.getType + ')'; }).join(','));
+    log.info('installed. floats=%s;cap=%d', FLOATS.map(function (f) { return f.id + '(' + f.dropType + '/' + f.getType + ')'; }).join(','), cfg.actQueueCap);
 
     return true;
 }
 
 /**
- * 运行：挂聊天推送监听，driver 原位重启（pause 期间 flows 表保留，resume 后继续未探完的车）。
- * reactor pause 会自动摘除此处登记的触发器
+ * 运行：挂聊天推送监听，driver 原位重启（pause 期间 flows/pending/堆保留，resume 后继续未探完的车，
+ * 陈旧事件由 passGuard 自然作废）。reactor pause 会自动摘除此处登记的触发器
  * @param {object} ctx reactor 上下文
  */
 function run(ctx) {
     ctxRef = ctx;
     ctx.on.event('newChatPush', onChatPush);
-    ensureDriver();
-    log.info('started, listening event=newChatPush;flows=%d.', flows.size);
+    startDriver();
+    log.info('started, listening event=newChatPush;flows=%d;pending=%d.', flows.size, pendingPickups.length);
 }
 
 /**
  * 向 reactor 注册本功能说明书：场景限定 Home/NWorldMap，战斗模式暂停（offInCombat）。
  * 面板只出启用开关，探测节奏全部为 cfg 内置常量。
- * ⚠️ 与 chipBlessing 同开会双派（那边没有任何判重），二者取一
  */
 reactor.register({
     id: 'floatCar',

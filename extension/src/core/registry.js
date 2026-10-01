@@ -61,6 +61,26 @@ const INTERNAL_FEATURES = [
       if (event && event.setLog) event.setLog(!!(cfg && cfg.enabled));
     },
   },
+  {
+    // 报文录制（黑匣子）：internal 功能，enabled 即 net-collect 录制器的开关。开启→start(cfg) 注册
+    // net.stream 全量录制并按 flushSec 落盘；关闭→stop() 解除采集（hot path 回到零开销）。
+    // 转发地址/落盘间隔随 UID 持久化；句柄由 net-collect.js 自挂 window.pocketcc.netCollect。
+    id: 'netRecord',
+    label: '报文录制',
+    storageKey: 'pocketcc.netRecord.config',
+    internal: true,
+    defaults: { enabled: false, ingestUrl: 'http://127.0.0.1:7391/ingest', flushSec: 2, note: '' },
+    fields: [
+      { key: 'ingestUrl', type: 'string', label: '转发地址', placeholder: 'http://127.0.0.1:7391/ingest' },
+      { key: 'flushSec', type: 'number', label: '落盘间隔(秒)', min: 1, step: 1 },
+      { key: 'note', type: 'string', label: '本次标签', placeholder: '如：芯片祝福STEP2（可空）' },
+    ],
+    apply: (cfg) => {
+      const rc = window.pocketcc && window.pocketcc.netCollect;
+      if (!rc) return;
+      if (cfg && cfg.enabled) rc.start(cfg); else rc.stop();
+    },
+  },
 ];
 
 /**

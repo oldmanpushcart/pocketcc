@@ -44,7 +44,9 @@ import { bus } from './core/bus.js';
     // ── 采集（collecting）────────────────────────────────────────────
     /** @type {Array<{buf:Array, w:number, n:number, filters:Array<Function>, tap:Function|null, done:boolean, warned:boolean, stop:Function}>|null} 活动采集器；buf 为预分配环形槽；null=未启用 */
     var collectors = null;
-    /** @type {number} 全局自增序号，标注入站/发送 wrapper 两条记录路径的全局先后（并发采集器间共享） */
+    /** @type {Array<{filters:Array<Function>, tap:Function, warned:boolean}|null} 常开流式订阅者（net-collect 黑匣子用）：无环形缓冲，每条命中即 tap，直到 unstream；null=未启用 */
+    var streams = null;
+    /** @type {number} 全局自增序号，标注入站/发送 wrapper 两条记录路径的全局先后（并发采集器/流式订阅者间共享） */
     var collectSeq = 0;
     /** @type {number} capacity 缺省值；环形槽满后静默覆盖最旧条目，只保留最近 N 条 */
     const DEFAULT_COLLECT_CAPACITY = 1000;
@@ -68,7 +70,9 @@ import { bus } from './core/bus.js';
         isSending: isSending,
         setLog: setLog,
         isLogging: isLogging,
-        collecting: collecting
+        collecting: collecting,
+        stream: stream,
+        isStreaming: isStreaming
     }
 
     /**
@@ -317,12 +321,17 @@ import { bus } from './core/bus.js';
      */
     function recordSend(key, cmd, data) {
         if (cmd === heartbeatCode) return;
-        var matched = matchedCollectors('req', cmd);
-        if (!matched.length) return;
-        // 过滤全部通过后才做昂贵操作（快照）；entry 不可变，多采集器共享同一引用安全
-        var entry = makeEntry('req:' + key, cmd, null, { api: key, data: snapshot(data) });
+        var dir = 'req:' + key;
+        var matched = matchAny(collectors, 'req', cmd);
+        var smatched = matchAny(streams, 'req', cmd);
+        if (!matched.length && !smatched.length) return;
+        // 过滤全部通过后才做昂贵操作（快照）；entry 不可变，多采集器/流共享同一引用安全
+        // 发送载荷既是 raw.data，也归一化到顶层 data，与 resp/push 口径一致（分析时 data 恒为业务载荷）
+        var payload = snapshot(data);
+        var entry = makeEntry(dir, cmd, payload, { api: key, data: payload });
         for (var i = 0; i < matched.length; i++) pushTo(matched[i], entry);
         fireTaps(matched, entry);
+        fireTaps(smatched, entry);
     }
 
     /**
@@ -333,13 +342,15 @@ import { bus } from './core/bus.js';
     function recordInbound(e, t) {
         if (e.c === heartbeatCode) return;
         var dir = t === undefined ? 'push' : 'resp';
-        var matched = matchedCollectors(dir, e.c);
-        if (!matched.length) return;
+        var matched = matchAny(collectors, dir, e.c);
+        var smatched = matchAny(streams, dir, e.c);
+        if (!matched.length && !smatched.length) return;
         // 归一化口径与 dispatch/logInbound 一致：data 取 d/pbAck/pbAckV2/p；raw 存报文快照（池化对象不可直存）
         var ev = new Event(e);
-        var entry = makeEntry(dir, ev.cmd, ev.data, snapshot(e), t === undefined ? null : t);
+        var entry = makeEntry(dir, ev.cmd, ev.data, snapshot(e), t);
         for (var i = 0; i < matched.length; i++) pushTo(matched[i], entry);
         fireTaps(matched, entry);
+        fireTaps(smatched, entry);
     }
 
     /**
@@ -359,16 +370,18 @@ import { bus } from './core/bus.js';
     }
 
     /**
-     * 依次跑各采集器的 filter 链（(dir,cmd)=>boolean，只接触免费数据），返回全通过的采集器；
-     * 谓词抛异常视为不通过并按采集器告警一次，不影响真实收发
+     * 依次跑一组订阅者（采集器或流）的 filter 链（(dir,cmd)=>boolean，只接触免费数据），返回全通过的子集；
+     * 谓词抛异常视为不通过并按订阅者告警一次，不影响真实收发。list 为 null/空时返回空数组。
+     * @param {Array|null} list 订阅者列表（collectors 或 streams）
      * @param {string} dir 大类 req|resp|push
      * @param {number} cmd 命令号
-     * @returns {Array} 命中的采集器列表
+     * @returns {Array} 命中的订阅者列表
      */
-    function matchedCollectors(dir, cmd) {
+    function matchAny(list, dir, cmd) {
         var out = [];
-        for (var i = 0; i < collectors.length; i++) {
-            var c = collectors[i], ok = true;
+        if (!list) return out;
+        for (var i = 0; i < list.length; i++) {
+            var c = list[i], ok = true;
             for (var j = 0; j < c.filters.length; j++) {
                 try {
                     if (!c.filters[j](dir, cmd)) { ok = false; break; }
@@ -386,7 +399,7 @@ import { bus } from './core/bus.js';
      * 建一条采集条目（仅在至少一个采集器通过后调用，昂贵字段已在外层算好）
      * @param {string} dir 方向 req:send|req:sendPB|req:sendPBV2|resp|push
      * @param {number} cmd 命令号
-     * @param {*} data 归一化业务数据（req 为 null，载荷在 raw.data）
+     * @param {*} data 归一化业务数据（req 为发送载荷，resp/push 为应答/推送数据）
      * @param {object} raw 快照后的报文/发送载荷
      * @param {number|null} rt 应答的发包时刻 reqTime；其余为 null
      * @returns {object} 条目
@@ -521,6 +534,68 @@ import { bus } from './core/bus.js';
     }
 
     /**
+     * 常开流式订阅的构建器（与 collecting 同族 filter/tap 语义，但无环形缓冲、无一次性导出）。
+     * 供 net-collect 黑匣子驱动：每注册一个流式订阅者即挂发送 hook，每条报文经 filter 链命中后
+     * 构造 entry（含快照）并立即回调 tap——不写环、不导出，直到返回的 unstream() 被调用。
+     * 与采集器共享同一发送/入站 hook 与 makeEntry/snapshot 口径；心跳同 recordInbound/recordSend 无条件滤除。
+     * 性能不变量同 collecting：filter 只接免费 (dir,cmd)，new Event 与快照仅在至少一个订阅者通过后发生。
+     * @returns {{filter: function(Function): object, tap: function(Function): object, start: function(): function(): boolean}}
+     */
+    function stream() {
+        /** @type {Array<Function>} 过滤谓词链 */
+        var filters = [];
+        /** @type {Function|null} 实时回调（必填） */
+        var tap = null;
+        /** @type {boolean} 终端是否已调用 */
+        var started = false;
+        var b = {
+            filter: function (fn) {
+                if (started) throw new Error('pocketcc.net.stream: builder already started.');
+                if (typeof fn !== 'function') throw new Error('pocketcc.net.stream: filter requires a function.');
+                filters.push(fn);
+                return b;
+            },
+            tap: function (fn) {
+                if (started) throw new Error('pocketcc.net.stream: builder already started.');
+                if (typeof fn !== 'function') throw new Error('pocketcc.net.stream: tap requires a function.');
+                tap = fn;
+                return b;
+            },
+            /**
+             * 终端：登记流式订阅者并开始逐条回调 tap（net 未安装则拒绝，返回 no-op unstream）
+             * @returns {function(): boolean} unstream；调用即解除该订阅者并同步 hook 状态（幂等）
+             */
+            start: function () {
+                if (started) throw new Error('pocketcc.net.stream: builder already started.');
+                started = true;
+                if (!installed) { log.warn('stream: net not installed.'); return function () { return false; }; }
+                if (!tap) throw new Error('pocketcc.net.stream: tap is required.');
+                if (!namesBuilt) buildNames();
+                var s = { filters: filters, tap: tap, warned: false, done: false };
+                (streams || (streams = [])).push(s);
+                syncSendHooks();
+                return function () {
+                    if (s.done) return false;
+                    s.done = true;
+                    var i = streams ? streams.indexOf(s) : -1;
+                    if (i >= 0) streams.splice(i, 1);
+                    syncSendHooks();
+                    return true;
+                };
+            }
+        };
+        return b;
+    }
+
+    /**
+     * 当前是否有活动流式订阅者
+     * @returns {boolean}
+     */
+    function isStreaming() {
+        return !!(streams && streams.length);
+    }
+
+    /**
      * 给采集结果数组挂隐藏方法 json()：非枚举属性，对打印/序列化/遍历透明，数组仍是纯数组；
      * 输出混合格式——数组外壳带缩进换行，每个条目单行压缩，合法 JSON，配合 copy() 直达剪贴板
      * @param {Array} a 条目数组
@@ -564,7 +639,8 @@ import { bus } from './core/bus.js';
                 if (t === undefined) {
                     try { dispatch(e); } catch (err) { log.warn('dispatch cmd[%d] occur error!', e.c, err); }
                 }
-                if (collectors && collectors.length) { try { recordInbound(e, t); } catch (err) { } }
+                // 采集闸门须与发送侧 wrapSend 对称：collectors（一次性环采）或 streams（常开黑匣子）任一非空都要落入站
+                if ((collectors && collectors.length) || (streams && streams.length)) { try { recordInbound(e, t); } catch (err) { } }
             }
             return ret;
         };
@@ -586,7 +662,7 @@ import { bus } from './core/bus.js';
             return null;
         }
         var mine = function (cmd, data) {
-            if (collectors && collectors.length) recordSend(key, cmd, data);
+            if ((collectors && collectors.length) || (streams && streams.length)) recordSend(key, cmd, data);
             if (logEnabled) {
                 try {
                     // 滤心跳；sendPB/V2 降级会同步转调 this.send，inPB 置位时跳过嵌套 send 的重复打印。
@@ -605,13 +681,13 @@ import { bus } from './core/bus.js';
     }
 
     /**
-     * 发送 hook 挂载闸门：log 开启或有活动采集器时保持挂载，两者都没有即摘除。
+     * 发送 hook 挂载闸门：log 开启、或有活动采集器、或有流式订阅者时保持挂载，三者都没有即摘除。
      * 空数组也算需求（collecting().collect() 已承诺挂载、还没 stop 的采集器在 collectors 数组里），
-     * 所以只在「从未 collect 且 log 关」时返回 false，避免采集空档期被误摘。
+     * 所以只在「从未 collect/stream 且 log 关」时返回 false，避免采集空档期被误摘。
      * @returns {boolean} 当前是否应有 hook 挂载需求
      */
     function wantSendHooks() {
-        return logEnabled || !!collectors;
+        return logEnabled || !!collectors || !!streams;
     }
 
     /**
@@ -689,6 +765,7 @@ import { bus } from './core/bus.js';
         // 采集器随 hook 一起作废：stop 返回已采到的条目
         while (collectors && collectors.length) collectors[collectors.length - 1].stop();
         collectors = null;
+        streams = null;   // 流式订阅者一并清空（recvMine 已因 installed=false 不再喂数据；net-collect 待重装后自会重开）
         log.info('uninstalled.');
         return true;
     }

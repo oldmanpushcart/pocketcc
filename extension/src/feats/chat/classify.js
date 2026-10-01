@@ -77,6 +77,18 @@ export const CST_LABEL = {
   '571': '红包播报', '572': '红包MVP',
 };
 
+/**
+ * t -> 能力路由表（把「每类卡片点击能干什么」显式化，供 linkDesc 分派 + chat-window 执行）。
+ *   nav-tile    坐标卡命中 POS_TYPES 等：飞图并模拟点地块（已实证安全）
+ *   nav-move    带有效坐标但原生点击行为未实证：只飞+标记，不弹未知地块弹窗
+ *   march       行军/集结卡（marchId）：点行军线
+ *   query-battle 战报卡（t=1）：发 MAIL_QUERY{uid:fuid, mailId:mId} 纯只读查详情，绝不调游戏 OpenUI
+ * nav/march 由 POS_TYPES/MARCH_TYPES 现有集合派生；本表只显式声明需查询协议的类型（现仅战报），其余默认无动作（仅可复制）。
+ */
+export const CAPABILITY = {
+  1: 'query-battle',
+};
+
 /** 空判（对齐游戏 r.Obj.isEmpty：null/undefined/'' 视为空） */
 function isEmpty(v) { return v == null || v === ''; }
 
@@ -233,11 +245,18 @@ function linkDesc(llm, raw, norm, t, tr) {
   // 未列类型（迷兽 33/35、废土 53 等）只要带有效坐标也放开跳转，但 click:false 只飞+标记，
   // 不模拟点地块（游戏对这类卡的原生行为未实证，防误开未知弹窗）；(0,0) 假坐标（如战报）自然排除。
   let action = null;
-  if (march && !pos) action = { type: 'march', marchId: march.marchId, marchType: march.marchType };
+  if (march && !pos) action = { type: 'march', marchId: march.marchId, marchType: march.marchType, capability: 'march' };
   else if (pos && (POS_TYPES.has(t) || kind === 'pos' || kind === 'march' || t === 29 || t === 43 || t === 30))
-    action = { type: 'pos', x: pos.x, y: pos.y, z: pos.z, subMap: pos.subMap, click: true };
-  else if (march) action = { type: 'march', marchId: march.marchId, marchType: march.marchType };
-  else if (pos && pos.x > 0 && pos.y > 0) action = { type: 'pos', x: pos.x, y: pos.y, z: pos.z, subMap: pos.subMap, click: false };
+    action = { type: 'pos', x: pos.x, y: pos.y, z: pos.z, subMap: pos.subMap, click: true, capability: 'nav-tile' };
+  else if (march) action = { type: 'march', marchId: march.marchId, marchType: march.marchType, capability: 'march' };
+  else if (pos && pos.x > 0 && pos.y > 0) action = { type: 'pos', x: pos.x, y: pos.y, z: pos.z, subMap: pos.subMap, click: false, capability: 'nav-move' };
+  // 战报卡（CAPABILITY=query-battle）：真实战报分享 p=(0,0,0) 假坐标，走上面坐标分支自然落空 -> 这里给只读查询动作；
+  // 带真坐标的战报已被上面的 nav 分支捕获（对齐游戏 shareLinkPosClick：有坐标点地块、无坐标点战报）。
+  else if (CAPABILITY[t] === 'query-battle') {
+    const mId = llm.mId != null ? String(llm.mId) : (llm.mailId != null ? String(llm.mailId) : null);
+    const bUid = llm.fuid != null ? String(llm.fuid) : (llm.uid != null ? String(llm.uid) : null);
+    if (mId && bUid) action = { type: 'battle', uid: bUid, mailId: mId, capability: 'query-battle' };
+  }
 
   // 标题：位置类出「目标物 坐标」→ s 文案（经 translate 翻译，查不到回原文）→ 类型名 → t 值
   let label;

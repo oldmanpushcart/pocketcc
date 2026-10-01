@@ -4,7 +4,9 @@
  * 借用游戏自管的连接（auth/bind/故障转移/重连均不干预），只开五个面——
  *   发包：send() 文本消息走主协议 PostChatMsg(670)（真机实测口径：发送走主 socket，回声经聊天 socket 推 newChatPush）；
  *         sharePos() 发坐标分享链接（同 670，m="link" + llm 载荷）；sendEmoji() 发表情（m="link"+id + custom 载荷）；
- *   读数据：history()/unread()/markRead() 走 sendProxy 隧道拉私聊历史/查未读锚点/标已读（已破解 sign：md5(参数拼串+time)）；
+ *   读数据：history/historyRooms/olderHistory/unread/markRead 走 sendProxy 隧道拉历史/未读/标已读（已破解 sign：md5(参数拼串+time)，插入序+字母序两套）；
+ *         summary() 会话摘要+@气泡、pmList() 私聊会话列表、aroundHistory() 按 uuid 定位上下文（同 sendProxy 隧道）；
+ *         systemMessages() 走主协议 PBV2 GET_CHAT_PUSH_LIST 查服务器系统消息（fu="-1" 条目，与频道历史合并）；
  *         proxy() 为 sendProxy 的 {url,query,body} 隧道通用底层（REST 代理），Promise 化 + 超时防挂死；
  *   收信：on/off 把 EventCenter 转发的聊天推送（newChatPush 等）映射为语义 type；normalize()/parseLink() 把两种推送 schema 归一为可渲染对象；
  *   日志：setLog 期间包 sendProxy 打印出站与应答 + 订阅聊天事件打印入站，关闭即摘。
@@ -62,6 +64,9 @@ import { getUid } from './core/player.js';
     /** @type {number|null} PostChatMsg 命令号（懒查 RequestId，查不到回落真机观测值 670） */
     var postCmd = null;
 
+    /** @type {number|null} GET_CHAT_PUSH_LIST 命令号（懒查 NRequestIdV2，查不到回落源码观测值 954） */
+    var sysCmd = null;
+
     /**
      * 频道语义预设：名称 → PostChatMsg 的 c 值。
      * 真机 2026-09-26 已验证：world=0（世界）、pm=1（私聊，opts.uid 必填）、alliance=2（联盟）。
@@ -96,6 +101,11 @@ import { getUid } from './core/player.js';
         olderHistory: olderHistory,
         unread: unread,
         markRead: markRead,
+        summary: summary,
+        pmList: pmList,
+        aroundHistory: aroundHistory,
+        systemMessages: systemMessages,
+        toSysItem: toSysItem,
         normalize: normalize,
         parseLink: parseLink,
         on: on,
@@ -219,6 +229,25 @@ import { getUid } from './core/player.js';
         postCmd = (v != null) ? v : 670;
         if (v == null) log.warn('PostChatMsg not found in RequestId, fallback to observed 670.');
         return postCmd;
+    }
+
+    /**
+     * 懒解析 GET_CHAT_PUSH_LIST 命令号（NRequestIdV2 枚举；查不到回落源码观测值 954，防改版静默错发）
+     * @returns {number} 命令号
+     */
+    function resolveSysCmd() {
+        if (sysCmd != null) return sysCmd;
+        var v = null;
+        try {
+            var m = game.get('NRequestIdV2');
+            if (m) {
+                if (typeof m.GET_CHAT_PUSH_LIST === 'number') v = m.GET_CHAT_PUSH_LIST;
+                else if (m.NRequestIdV2 && typeof m.NRequestIdV2.GET_CHAT_PUSH_LIST === 'number') v = m.NRequestIdV2.GET_CHAT_PUSH_LIST;
+            }
+        } catch (e) { }
+        sysCmd = (v != null) ? v : 954;
+        if (v == null) log.warn('GET_CHAT_PUSH_LIST not found in NRequestIdV2, fallback to observed 954.');
+        return sysCmd;
     }
 
     /**
@@ -534,6 +563,107 @@ import { getUid } from './core/player.js';
         if (targetUid == null || targetUid === '') return Promise.reject(new Error('chat.markRead: targetUid required.'));
         var q = { appId: APP_ID, uid: String(getUid() || ''), to: String(targetUid), channel: opts.channel != null ? opts.channel : CHANNELS.pm };
         return apiSigned('/pm/readPm', q, { sort: false });
+    }
+
+    /**
+     * 拉频道会话摘要 + @提及（/chat/getChatHomeSummary，字母序签名，游戏 requestChannelTipInfo 同源：
+     * query={appId,uid:StrUid,roomIds:'房1;房2',time}）。房号列表缺省取游戏当前 _rooms。
+     * 用途：权威未读数/最后一条消息/@气泡——玩家未在游戏中打开过的频道也能拿到（本地 chatHeads 枚举不到）。
+     * @param {string[]|null} [roomIds] 房号数组；缺省全部已 join 房间
+     * @returns {Promise<Ret>} ret.data.data：{list:{"房号":{unreadCount,lastMessage,loadMoreMsgPoint}}, mentions:[...]}（Ret.data 为完整应答）
+     */
+    function summary(roomIds) {
+        var ids = roomIds;
+        if (!ids || !ids.length) ids = status().rooms;
+        ids = (ids || []).filter(Boolean);
+        var q = { appId: APP_ID, uid: getStrUid(), roomIds: ids.join(';') };
+        return apiSigned('/chat/getChatHomeSummary', q, { sort: true });
+    }
+
+    /**
+     * 拉私聊/置顶/转会等会话列表（/pm/loadChatList，插入序签名，游戏 getUserListFromServerByType 同源：
+     * query={appId,uid:UID,channel,time}）。无需预先知道对方 UID 即可枚举「跟谁聊过」。
+     * @param {object} [opts] {channel 会话类型：1 私聊(缺省) / 4 置顶(mod) / 8 转会，见 CHAT_CHANNEL_TYPE}
+     * @returns {Promise<Ret>} ret.data.data.list 为会话条目数组（每项含双向 fu/fp/tu/tp，自己发起时取 tu/tp；schema 同私聊推送）
+     */
+    function pmList(opts) {
+        opts = opts || {};
+        var q = { appId: APP_ID, uid: String(getUid() || ''), channel: opts.channel != null ? (opts.channel | 0) : CHANNELS.pm };
+        return apiSigned('/pm/loadChatList', q, { sort: false });
+    }
+
+    /**
+     * 定位拉取某条消息前后的历史（/chat/loadHistoryAround，字母序签名，游戏 loadHistoryAround 同源：
+     * query={appId,uid:StrUid,roomId,uuid,beforeCount,afterCount,time}）。
+     * 用途：跳到未读锚点/回应目标/撤回消息时，本地缓冲缺该段历史则按 uuid 锚点补齐上下文。
+     * @param {string} roomId 房间号（如 102_1_4336）
+     * @param {string} uuid 锚点消息 uuid（历史/推送项的 uuid 字段）
+     * @param {object} [opts] {beforeCount 锚点前拉几条（缺省 50）, afterCount 锚点后拉几条（游戏固定 50，可覆盖）}
+     * @returns {Promise<Ret>} ret.data.data.list 为上下文消息数组（schema 同 historyRooms）
+     */
+    function aroundHistory(roomId, uuid, opts) {
+        opts = opts || {};
+        if (!roomId || !uuid) return Promise.reject(new Error('chat.aroundHistory: roomId and uuid required.'));
+        var q = {
+            appId: APP_ID, uid: getStrUid(), roomId: String(roomId), uuid: String(uuid),
+            beforeCount: opts.beforeCount != null ? (opts.beforeCount | 0) : 50,
+            afterCount: opts.afterCount != null ? (opts.afterCount | 0) : 50,
+        };
+        return apiSigned('/chat/loadHistoryAround', q, { sort: true });
+    }
+
+    /**
+     * 查服务器系统消息（GET_CHAT_PUSH_LIST，主协议 PBV2 通道；游戏 requestChatSystemMsg 同源：
+     * pack={beginSecsTime,channel[,aroundBeginSec,aroundEndSec]}，应答 pbAckV2.data.infos[]）。
+     * 世界/联盟历史里 fu=="-1" 的系统条目即来自此，与聊天服务器历史合并展示；纯查询、只读安全。
+     * 已发出未应答时（net.isSending 闸门，同游戏 checkRequestIdNoRes）直接返回空数组，不并发重复请求。
+     * @param {object} [opts] {beginSecsTime 起始秒时刻（缺省当前服务器秒）, channel 频道号（缺省 -1 全部）,
+     *     aroundBeginSec/aroundEndSec 定位上下文时段（成对 >0 才带上）}
+     * @returns {Promise<Array<object>>} 已按游戏 createOneSysMsg 归一的系统消息数组（{c,m,roomId,t,uuid,uid:"-1",fu:"-1",isGameMsg,...params}），
+     *     可直接喂 normalize/classify（fu=="-1" 命中系统模板分支）；闸门/失败返回空数组
+     */
+    function systemMessages(opts) {
+        opts = opts || {};
+        var net = window.pocketcc && window.pocketcc.net;
+        if (!net) return Promise.reject(new Error('chat.systemMessages: pocketcc.net unavailable.'));
+        var cmd = resolveSysCmd();
+        if (net.isSending(cmd)) return Promise.resolve([]);   // 在途去重闸门（同游戏）
+        var pack = {
+            beginSecsTime: opts.beginSecsTime != null ? (opts.beginSecsTime | 0) : serverTimeSec(),
+            channel: opts.channel != null ? (opts.channel | 0) : -1,
+        };
+        if (opts.aroundBeginSec > 0 && opts.aroundEndSec > 0) {
+            pack.aroundBeginSec = opts.aroundBeginSec | 0;
+            pack.aroundEndSec = opts.aroundEndSec | 0;
+        }
+        return net.sendPBV2(cmd, pack).then(function (ret) {
+            var infos = (ret && ret.ok && ret.data && ret.data.infos) ? ret.data.infos : [];
+            var out = [];
+            for (var i = 0; i < infos.length; i++) out.push(toSysItem(infos[i]));
+            return out;
+        });
+    }
+
+    /**
+     * 单条系统消息 infos 项 → 归一对象（游戏 createOneSysMsg 同构：uid/fu 置 "-1"，params 摊平进顶层）。
+     * @param {object} e pbAckV2.data.infos 单项
+     * @returns {object}
+     */
+    function toSysItem(e) {
+        e = e || {};
+        var t = {
+            c: (e.channel != null ? e.channel : '') + '',
+            m: e.content,
+            roomId: e.roomId,
+            t: e.time,
+            uuid: e.uuid,
+            uid: '-1',
+            fu: '-1',
+            isGameMsg: true,
+        };
+        var ps = e.params;
+        if (ps && typeof ps === 'object') for (var k in ps) t[k] = ps[k];
+        return t;
     }
 
     /**

@@ -15,9 +15,14 @@
  * 依赖游戏运行时只「读 + 发包」，不调任何 Update/Delete 改写类方法（遵守 feat 只读+发包约束）。
  * 场景门控限 NWorldMap。属「战斗设置」：快捷战斗只在目标面板开着时按快捷键才发一波，是战斗时的手动辅助，
  * 故不声明 offInCombat（与日常行军自动化相反：战斗模式下仍照常生效）。挂钩对称可还原，功能停用即摘净。
+ *
+ * marchType 跨服漂移（无双峡谷等跨服战场实测）：注册表里存的是「本服基础值」，发包前经
+ * core/game-api.js 的 march.resolve() 按当前战场换算（游戏原生 WorldUtils.dealMarchTypeWithSpecialMarch
+ * 优先，符号漂移时降级本地兜底表 MARCH_FALLBACK）——跨服服下直接拿 13 打玩家城会被服务器拒。
  */
 import { createLog } from '../../core/log.js';
 import { game } from '../../core/game.js';
+import { march as marchApi } from '../../core/game-api.js';
 import { reactor } from '../../core/reactor.js';
 import { isTypingTarget } from '../../core/hotkeys.js';
 import { Battle } from '../../utils/battle.js';
@@ -26,17 +31,28 @@ import { Battle } from '../../utils/battle.js';
  * 可攻击面板注册表（可扩展的唯一入口）：新增一个可攻击面板 = 往此数组追加一条 spec，
  * 快捷键分派 / 面板 onShow-onDisable 钩子 / 发包 / 三连逻辑全部零改动。
  * spec: { key 场景标识, label 日志展示, cls 面板类（game.get(cls).default）,
- *         field onShow 后 tileInfo 落在组件上的字段名, marchTypes.attack NMarchType }
- * NMarchType 见 NWorldMapMarchCommon.js:22 起。
- * @type {Array<{key:string, label:string, cls:string, field:string, marchTypes:{attack:number}}>}
+ *         field onShow 后 tileInfo 落在组件上的字段名,
+ *         marchTypes.attack 本服基础 NMarchType（发包前由 marchApi.resolve 做跨服漂移换算）,
+ *         marchTypes.attackV2 可选：同面板二期实体（按 tileInfo.type 分流）的行军类型 }
+ * NMarchType 见 extracted/Script/WorldMapCommon__WorldMapCommon.js 的 MarchType 枚举。
+ * @type {Array<{key:string, label:string, cls:string, field:string, marchTypes:{attack:number, attackV2?:number}}>}
  */
 const QUICK_ATTACK_TARGETS = [
-    { key: 'city',     label: '城市',   cls: 'NWorldCityPopup',      field: 'tileInfo',  marchTypes: { attack: 13 } }, // ATTACK_PLAYER
+    { key: 'city',     label: '城市',   cls: 'NWorldCityPopup',      field: 'tileInfo',  marchTypes: { attack: 13 } }, // ATTACK_PLAYER（跨服战场经 resolve 漂移到 150/170/110/181）
     { key: 'monster',  label: '野怪',   cls: 'NWorldMapEnemy',       field: 'tileInfo',  marchTypes: { attack: 5 } },  // ATTACK_MONSTER
     { key: 'nMonster', label: '新野怪', cls: 'NWorldMapNEnemy',      field: '_tileInfo', marchTypes: { attack: 5 } },  // ATTACK_MONSTER
     { key: 'mine',     label: '矿点',   cls: 'NWorldResourcePopup',  field: 'tileInfo',  marchTypes: { attack: 3 } },  // GATHER_RESOURCE 位
-    { key: 'boss',     label: '世界BOSS', cls: 'WorldBossDetailPanel', field: 'tileInfo', marchTypes: { attack: 36 } }, // ATTACK_WORLDBOSS（WorldBossDetailPanel.js:259 d.MarchType.ATTACK_WORLDBOSS）
+    // 世界 BOSS：普通=ATTACK_WORLDBOSS(14)；BOSS_V2 实体=ATTACK_WORLD_BOSS_V2(298)，
+    // 口径同游戏 WorldBossDetailPanel._onClickAttackBtn（tileInfo.type===WorldMapEntityType.BOSS_V2）。
+    { key: 'boss',     label: '世界BOSS', cls: 'WorldBossDetailPanel', field: 'tileInfo', marchTypes: { attack: 14, attackV2: 298 } },
 ];
+
+/**
+ * marchType 兜底数值表：只在游戏枚举/判定器符号漂移时兜底（主路径向游戏运行时取名值）。
+ * 数值出处：WorldMapCommon.MarchType + WorldUtils.dealMarchTypeWithSpecialMarch 优先级链 AVA→TM→MASTER→TEAM_LEGEND。
+ * @type {{attackPlayer:number, tm:number, master:number, ava:number, teamLegend:number}}
+ */
+const MARCH_FALLBACK = { attackPlayer: 13, tm: 150, master: 170, ava: 110, teamLegend: 181 };
 
 /** @type {number} 三连次间间隔（毫秒，内置常量，不在面板配置） */
 const TRIPLE_INTERVAL_MS = 1000;
@@ -147,6 +163,8 @@ function onPanelShow(spec, comp) {
             y: tile.tileY | 0,
             serverId: tile.serverId,
             subMap: tile.subMap,
+            // 地块实体类型原值（boss 场景靠它区分普通/BOSS_V2，换算见 resolveMarchType）
+            entityType: tile.type,
         },
     };
     attachKey();
@@ -285,15 +303,16 @@ function onKeyDown(e) {
  * 一串行军流程：串行逐发、同步等待回包，永不 reject。每发前复查闸门（存活/行军槽/902 在途/兵量），
  * 发空兵或被拒即中止后续（不派空兵打世界目标）；本发回包后 sleep(tripleIntervalMs) 再发下一发。
  * @param {object} spec 场景定义
- * @param {object} target {x,y}
+ * @param {object} target {x,y,entityType}
  * @param {object[]} planList 逐项 {kind:'preset'|'minimal', index?}
  */
 async function attackFlow(spec, target, planList) {
-    var marchType = (cfg.targets[spec.key] && cfg.targets[spec.key].marchTypes.attack) | 0;
-    if (!marchType) {
+    var base = (cfg.targets[spec.key] && cfg.targets[spec.key].marchTypes.attack) | 0;
+    if (!base) {
         log.warn('no marchType configured, abort. key=%s', spec.key);
         return;
     }
+    var marchType = resolveMarchType(spec, target);
 
     for (var i = 0; i < planList.length; i++) {
         if (!aliveFn()) return;
@@ -321,11 +340,11 @@ async function attackFlow(spec, target, planList) {
         if (!aliveFn()) return;
 
         if (ret.ok) {
-            log.info('attack ok. key=%s;step=%d/%d;marchType=%d;x=%d;y=%d',
-                spec.key, i + 1, planList.length, marchType, target.x, target.y);
+            log.info('attack ok. key=%s;step=%d/%d;marchType=%d(base=%d);x=%d;y=%d',
+                spec.key, i + 1, planList.length, marchType, base, target.x, target.y);
         } else {
-            log.warn('attack rejected, abort combo. key=%s;step=%d;code=%d;data=%s',
-                spec.key, i + 1, ret.code, ret.data);
+            log.warn('attack rejected, abort combo. key=%s;step=%d;code=%d;marchType=%d;base=%d;flags=%s;data=%s',
+                spec.key, i + 1, ret.code, marchType, base, JSON.stringify(marchApi.flags()), ret.data);
             return;
         }
 
@@ -360,6 +379,21 @@ async function sendMarch(marchType, target, d) {
         log.warn('march send error. x=%d;y=%d', target.x, target.y, err);
         return net.Ret.from(CODE_NOT_SENT, null);
     }
+}
+
+/**
+ * 本次出征的 marchType：先按地块实体类型分流（boss 二期），再做跨服战场漂移换算。
+ * @param {object} spec 场景定义
+ * @param {object} target {x,y,entityType}
+ * @returns {number}
+ */
+function resolveMarchType(spec, target) {
+    var t = (cfg.targets[spec.key] && cfg.targets[spec.key].marchTypes) || {};
+    var base = t.attack | 0;
+    if (t.attackV2 && marchApi.isBossV2(target.entityType)) base = t.attackV2 | 0;
+    var resolved = marchApi.resolve(base, MARCH_FALLBACK);
+    if (resolved !== base) log.info('marchType 漂移. key=%s;base=%d->%d;flags=%s', spec.key, base, resolved, JSON.stringify(marchApi.flags()));
+    return resolved;
 }
 
 /**
@@ -453,7 +487,7 @@ function run(ctx) {
     activePanel = null;
     detachKey();
     QUICK_ATTACK_TARGETS.forEach(hookSpec);
-    log.info('started, hooks=%d.', hooks.size);
+    log.info('started, hooks=%d; battlefield=%s', hooks.size, JSON.stringify(marchApi.flags()));
 }
 
 /**

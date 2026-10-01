@@ -15,6 +15,9 @@ const log = createLog('GAME');
  * @returns {object|null} 模块导出，缺失为 null
  */
 function requireOne(name) {
+    // 空/非字符串模块名直接返回 null：__require(undefined) 会在游戏内部对 name 调 .split 抛错，
+    // 打出带整条调用栈的「require module failed」噪声（SYM 键名笔误曾触发，此处从源头拦截）。
+    if (typeof name !== 'string' || !name) return null;
     try {
         return __require(name);
     } catch (err) {

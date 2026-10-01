@@ -9,7 +9,8 @@
  *   历史：首次打开（或切到未加载频道）调 chat.historyRooms()（loadHistoryV2，游戏 _rooms 全量）扇出入各频道缓冲；
  *         滚动到顶 chat.olderHistory(roomId, 最旧 uuid) 翻页（单次进入每频道最多 25 页）；
  *         私聊会话打开时 chat.history(uid) 全量 + chat.markRead(uid)；
- *   发送：chat.send（@编码按游戏 checkAtData 口径 "@昵称"→RS序号RS + custom.atData；全体成员走 AtAllName 常量；
+ *   发送：chat.send（@编码按游戏真机口径 m 保留字面 "@昵称" + custom.atData 并列名单（checkAtData 只剪 atData、不改文本，
+ *         渲染端 formationRichMsg 靠字面 @name 上色）；全体成员走 AtAllName 常量；
  *         引用 custom.responseData={name,msg,uuid}）/ chat.sharePos；本地 5s 冷却对齐游戏 UI 层 _bCanSend；
  *         发送即插乐观条目，真回声按 同文本+self+短时窗 原位合并。
  * 快捷键：Ctrl+K 开关浮层——window 捕获阶段监听（同 F8 教训：游戏在冒泡阶段 stopPropagation，
@@ -17,7 +18,7 @@
  * 生命周期：无场景/模式门控（浮层是辅助 UI，全场景可用）；面板 enabled 驱动 install/run。
  */
 import { createLog } from '../../core/log.js';
-import { l10n, nav, gameData, gameConf, bits } from '../../core/game-api.js';
+import { l10n, nav, gameData, gameConf, bits, avatar } from '../../core/game-api.js';
 import { getUid } from '../../core/player.js';
 import { storage } from '../../core/storage.js';
 import { reactor } from '../../core/reactor.js';
@@ -39,6 +40,15 @@ const BUF_LIMIT = 600;
 const MAX_PULL_PAGES = 25;
 /** @type {string} 浮层几何存储键（UID 命名空间下） */
 const GEOM_KEY = 'pocketcc.chatWindow.geom';
+
+/** @type {string} 私聊玩家信息盘缓存键（data blob：{uid:{d,ts}}，UID 命名空间下） */
+const PM_INFO_STORE_KEY = 'pocketcc.chat.playerInfo';
+/** @type {Object<string, {d:object, ts:number}>} 玩家信息盘缓存镜像（整块写回） */
+var pmInfoStore = {};
+/** @type {boolean} 盘缓存是否已成功装载（仅读盘成功后置真，避免 UID 未就绪窗口把空快照钉死） */
+var pmInfoDiskLoaded = false;
+/** @type {number} 私聊玩家信息缓存有效期 ms（超期在点开该会话时重查） */
+const PM_INFO_TTL_MS = 3 * 24 * 3600 * 1000;
 
 /**
  * 频道定义表：key 为缓冲/视图键，c 为 PostChatMsg 频道号（私聊带 uid 位另算）。
@@ -133,6 +143,13 @@ const CMD_ADD_FRIEND = 501;
 const CMD_PLAYER_INFO = 630;
 /** @type {number} NRequestIdV2.RECALL_CHAT_MESSAGE（NRequestIdV2.js:25），撤回自己消息；游戏 revokeMsg 同源：sendPBV2 {roomId, uuid, channel, toUid}，时限配置 630061（默认 60s） */
 const CMD_RECALL_CHAT = 254;
+/** @type {number} RequestId.MAIL_QUERY（RequestId.js：e[e.MAIL_QUERY=929]），查战报邮件详情；游戏 shareLinkBattleClick 同源 {uid,mailId}，
+ *  纯只读查询（同 630 的 net.send 通道），应答体 .d 串再 parse 取 .mail */
+const CMD_MAIL_QUERY = 929;
+/** @type {number} CHAT_INFO_LIST（服务器主动推），GET_CHAT_PUSH_LIST(≈954) 的实时对应物：被攻击/主动攻击等
+ *  系统战报类消息经此推下（载荷 {header, data:{infos:[{uuid,content,roomId,time,channel,params}]}}，
+ *  infos 项与 systemMessages 拉取同构）。原仅靠进频道时 systemMessages 拉一次，故实时看不到——这里订阅补上。 */
+const CMD_CHAT_INFO_LIST = 10919;
 /** @type {number} 联盟成员缓存有效期（毫秒） */
 const MEMBERS_TTL_MS = 1000 * 60 * 10;
 
@@ -160,7 +177,7 @@ var lastSendAt = 0;
 function bufOf(key, title) {
   var b = bufs.get(key);
   if (!b) {
-    b = { key, title: title || key, c: null, roomId: '', list: [], ids: new Set(), unread: 0, loaded: false, pullPages: 0, speakers: new Map(), lastAt: 0 };
+    b = { key, title: title || key, c: null, roomId: '', list: [], ids: new Set(), unread: 0, loaded: false, pullPages: 0, speakers: new Map(), lastAt: 0, readOnce: false, lastPreview: '' };
     var d = CHAN_DEFS.find((x) => x.key === key);
     if (d) b.c = d.c;
     bufs.set(key, b);
@@ -195,6 +212,70 @@ function safeParse(s) {
   if (s == null || s === '') return null;
   if (typeof s === 'object') return s;
   try { return JSON.parse(s); } catch (e) { return null; }
+}
+
+/**
+ * 剥离 Cocos 富文本标签（<color=#xxx>…</c>、<b>/<i>/<u>/<font>/<outline>/<shadow>/<link>/<on click…>）
+ * 与残留的 \x1E/\x1F 模板分隔符，仅保留可见文本（浮层是纯文本渲染，游戏用这些标签上色）。
+ * @param {string} s 原文
+ * @returns {string} 净文本
+ */
+function stripRich(s) {
+  return String(s == null ? '' : s)
+    .replace(/<br\s*\/?>/gi, ' ')
+    .replace(/<\/?(?:color|c|b|i|u|font|outline|shadow|link|on|img|image|sprite|quad)\b[^>]*>/gi, '')
+    .replace(/<\/?[a-z][^>]*>/gi, '') // 兜底：剔除其余任何 HTML 形标签（如系统推送内联的 <img src="battle_win"/>），防漏进纯文本浮层
+    .replace(/[\u001e\u001f]/g, ' ')
+    .replace(/[ \t]{2,}/g, ' ')
+    .trim();
+}
+
+/**
+ * 对一段渲染片段逐个剔富文本（仅含 < > 或控制符的才拷贝重写，避免无谓分配）。
+ * @param {object[]} segs buildEntry 产物 segments
+ * @returns {object[]} 净片段
+ */
+function sanitizeSegments(segs) {
+  for (var i = 0; i < segs.length; i++) {
+    var sg = segs[i];
+    if (sg && typeof sg.s === 'string' && /[<>\u001e\u001f]/.test(sg.s)) {
+      var c = Object.assign({}, sg); c.s = stripRich(sg.s); segs[i] = c;
+    }
+  }
+  return segs;
+}
+
+/** @type {RegExp} 坐标链接化匹配：括号内两个 1~4 位整数（半/全角逗号、容忍空白），如 (270,452) / （3,7） */
+const COORD_LINK_RE = /[（(]\s*(\d{1,4})\s*[,，]\s*(\d{1,4})\s*[)）]/g;
+
+/**
+ * 把文本片段里 (x,y) 形式的坐标替换成可点击跳转链接（inline chip，点击仅飞图+标记、默认本服 z=null）。
+ * 只处理 type==='text' 片段；命中段切成 [前文本][坐标chip][后文本]，未命中原样。全/半角括号与逗号均识别。
+ * 已带 action 的 chip / at 片段不介入（那是链接卡，语义更明确）。无命中时直接返回原数组，避免常规消息分配。
+ * @param {object[]} segs sanitizeSegments 产物
+ * @returns {object[]} 链接化后的片段
+ */
+function linkifyCoords(segs) {
+  var out = null; // 懒建：首个命中前不拷贝，无命中路径零分配
+  for (var i = 0; i < segs.length; i++) {
+    var sg = segs[i];
+    var isText = sg && sg.type === 'text' && typeof sg.s === 'string' && (sg.s.indexOf('(') >= 0 || sg.s.indexOf('（') >= 0);
+    if (!isText) { if (out) out.push(sg); continue; }
+    var re = new RegExp(COORD_LINK_RE.source, 'g');
+    var last = 0; var m; var hit = false;
+    while ((m = re.exec(sg.s)) !== null) {
+      var x = +m[1]; var y = +m[2];
+      if (x === 0 && y === 0) continue; // (0,0) 视为非坐标占位，跳过
+      if (!out) out = segs.slice(0, i);
+      hit = true;
+      if (m.index > last) out.push({ type: 'text', s: sg.s.slice(last, m.index) });
+      out.push({ type: 'chip', s: m[0], action: { type: 'pos', x: x, y: y, z: null, subMap: null, click: false }, jumpHint: x + ',' + y });
+      last = re.lastIndex;
+    }
+    if (hit) { if (last < sg.s.length) out.push({ type: 'text', s: sg.s.slice(last) }); }
+    else if (out) out.push(sg);
+  }
+  return out || segs;
 }
 
 /**
@@ -259,6 +340,7 @@ function buildEntry(raw, kind) {
   var uid = String((norm.from && norm.from.uid) || raw.uid || (typeof raw.fu === 'object' ? raw.fu.uid : raw.fu) || '');
   var name = (norm.from && norm.from.name) || raw.u || raw.n || fp.username || f.n || '';
   if (!name) name = uid ? '玩家' + uid.slice(-4) : '?';
+  if (uid === '-1') name = ''; // 系统消息（fu/uid=="-1"）无发送者昵称，正文模板即全部
   var self = !!uid && (uid === myUid() || uid === myStrUid());
 
   // 正文：历史项可能只有 content 无 m（游戏侧预处理口径），这里同源兼容；@编码还原 + 链接转 chip
@@ -287,6 +369,8 @@ function buildEntry(raw, kind) {
   }
   // P4：消息表态（reactions=[{reactionType,count}]，>99 显示 99+，chatupdate 原位合并后自动重算）
   segments = segments.concat(reactionsSegments(raw.reactions));
+  segments = sanitizeSegments(segments); // 剔服务器富文本标签（<color=…></c> 等）与控制符，防漏进纯文本浮层
+  segments = linkifyCoords(segments); // 输出文本里的 (x,y) 坐标 → 可点击跳转链接（仅飞图+标记、默认本服）
   var plain = segments.map((s) => s.s).join('');
 
   // 会话键
@@ -339,6 +423,7 @@ function linkSegments(cls, norm) {
   var hint = '';
   if (cls.action && cls.action.type === 'pos') hint = cls.action.x + ',' + cls.action.y + ' 跳转地图';
   else if (cls.action && cls.action.type === 'march') hint = '跳转行军线';
+  else if (cls.action && cls.action.type === 'battle') hint = '查看战报详情';
   return [{ type: 'chip', s: label, action: cls.action || null, jumpHint: hint || label }];
 }
 
@@ -450,17 +535,70 @@ function reactionsSegments(list) {
  * @returns {object[]} segments
  */
 function decodeAtCodes(text, atData) {
+  // 游戏 m 保留字面 "@昵称"（atData 仅作并列上色名单）；RS序号RS 兼容旧格式/系统消息，其余文本段再按字面 @name 切
+  var names = (atData && Array.isArray(atData.name) && atData.name.length)
+    ? atData.name.map(function (nm) { return '@' + String(nm).split(AT_ALL_TOKEN).join('@' + AT_ALL_LABEL); }).filter(function (t) { return t.length > 1; })
+    : [];
   var segs = [];
+  var pushPlain = function (s) { if (s) segs = segs.concat(splitLiteralAt(s, names)); };
   var re = new RegExp(RS + '(\\d+)' + RS, 'g');
   var last = 0; var m;
   while ((m = re.exec(text)) !== null) {
-    if (m.index > last) segs.push({ type: 'text', s: text.slice(last, m.index) });
+    if (m.index > last) pushPlain(text.slice(last, m.index));
     var nm = atData && atData.name ? atData.name[+m[1]] : null;
     segs.push({ type: 'at', s: '@' + (nm != null ? String(nm).replace(AT_ALL_TOKEN, AT_ALL_LABEL) : '?') });
     last = re.lastIndex;
   }
-  if (last < text.length) segs.push({ type: 'text', s: text.slice(last) });
+  if (last < text.length) pushPlain(text.slice(last));
   return segs.length ? segs : [{ type: 'text', s: text }];
+}
+
+/**
+ * 按 atData.name 名单把文本里的字面 "@昵称" 切成 at 高亮段（长名优先，防短名抢先截断）。
+ * @param {string} s 文本片段
+ * @param {string[]} names 已带前导 @ 的昵称列表
+ * @returns {object[]} segments
+ */
+function splitLiteralAt(s, names) {
+  if (!names.length || s.indexOf('@') < 0) return [{ type: 'text', s: s }];
+  var sorted = names.slice().sort(function (a, b) { return b.length - a.length; });
+  var out = []; var buf = ''; var i = 0;
+  while (i < s.length) {
+    if (s[i] === '@') {
+      var hit = null;
+      for (var k = 0; k < sorted.length; k++) { if (s.startsWith(sorted[k], i)) { hit = sorted[k]; break; } }
+      if (hit) {
+        if (buf) { out.push({ type: 'text', s: buf }); buf = ''; }
+        out.push({ type: 'at', s: hit });
+        i += hit.length; continue;
+      }
+    }
+    buf += s[i]; i++;
+  }
+  if (buf) out.push({ type: 'text', s: buf });
+  return out.length ? out : [{ type: 'text', s: s }];
+}
+
+/**
+ * 按 timeMs 升序把条目插入缓冲（稳定：同一时刻后到者排在前到者之后，保实时到达序）。
+ * 常态实时消息时间递增 → 命中快路径直接追尾；系统播报/战报补投（10919 批量、带历史时间戳）
+ * 会乱序到达 → 二分定位插入，保证整列始终按时间排序（否则被追加到底部、把花车等实时卡顶错位）。
+ * @param {object} b 缓冲对象
+ * @param {object} entry 条目（须已含 timeMs）
+ * @returns {boolean} 是否追加在尾部（true=有序追尾，可增量渲染；false=插入到列表中部，需整列重排）
+ */
+function insertOrdered(b, entry) {
+  var list = b.list;
+  if (!list.length || entry.timeMs >= list[list.length - 1].timeMs) {
+    list.push(entry);
+    b.ids.add(entry.id);
+    return true;
+  }
+  var lo = 0; var hi = list.length;
+  while (lo < hi) { var mid = (lo + hi) >> 1; if (list[mid].timeMs <= entry.timeMs) lo = mid + 1; else hi = mid; }
+  list.splice(lo, 0, entry);
+  b.ids.add(entry.id);
+  return false;
 }
 
 /**
@@ -485,15 +623,18 @@ function pushEntry(key, entry) {
       }
     }
   }
-  b.list.push(entry);
-  b.ids.add(entry.id);
+  var atTail = insertOrdered(b, entry); // 常态追尾；系统/战报补投带历史时间戳时按时间序插入
   while (b.list.length > BUF_LIMIT) { var drop = b.list.shift(); b.ids.delete(drop.id); }
   b.lastAt = Math.max(b.lastAt, entry.timeMs);
   if (!entry.self) {
     b.speakers.set(entry.uid, entry.name); // 近期发言者（@选人数据源）
     if (overlay && !(overlay.isVisible() && key === activeKey)) b.unread++;
   }
-  if (overlay && overlay.isVisible() && key === activeKey) overlay.appendMessage(entry);
+  if (overlay && overlay.isVisible() && key === activeKey) {
+    // 追尾走增量（贴底自动跟随、否则浮标）；乱序插入按时间重排整列并保持阅读位置
+    if (atTail) overlay.appendMessage(entry);
+    else overlay.renderMessages(b.list, true);
+  }
   return true;
 }
 
@@ -600,6 +741,25 @@ function onUpdate(payload) {
   }
 }
 
+/**
+ * CHAT_INFO_LIST(10919) 实时推送：被攻击/主动攻击等系统战报消息（与 systemMessages 拉取同构的 infos）。
+ * 复用 chat.toSysItem 归一（fu="-1" 命中系统模板分支）→ ingest('push') 按 uuid 去重入相应频道缓冲
+ * （非当前频道计未读、当前频道 appendMessage 实时追底）。纯接收，不改游戏状态。
+ * @param {object} ev net Event（ev.data 形如 {header, data:{infos}}，兼容 {infos} / JSON 串）
+ * @returns {void}
+ */
+function onChatInfoList(ev) {
+  var chat = window.pocketcc.chat;
+  if (!chat || !chat.toSysItem) return;
+  var d = ev && ev.data;
+  if (typeof d === 'string') d = safeParse(d);
+  var infos = (d && d.data && d.data.infos) || (d && d.infos) || null;
+  if (!Array.isArray(infos) || !infos.length) return;
+  var sys = [];
+  for (var it of infos) { try { sys.push(chat.toSysItem(it)); } catch (e) { /* 单项脏数据跳过 */ } }
+  if (sys.length) ingest('push', sys);
+}
+
 /** 按 uuid 移除一条 */
 function delOne(id) {
   for (var b of bufs.values()) {
@@ -635,8 +795,11 @@ function renderActive() {
     var other = b.title !== b.key ? b.title : '';
     for (var e of list) e.pmDir = e.self ? ('-> ' + other) : '';
   }
+  // 切频道先重置顶部状态（在 renderMessages 前，避免覆盖随后 #fillViewport 同步触发的 loading）：私聊无翻页、频道达上限显“全部”
+  setStatus(b.key.indexOf('pm:') === 0 ? '' : (b.pullPages >= MAX_PULL_PAGES ? 'end' : ''));
   overlay.renderMessages(list);
   b.unread = 0;
+  b.readOnce = true; // 本会话已查看：后续 applySummary 不再用服务端未读覆盖（交本地增量/清零接管）
   broadcastUnread();
 }
 
@@ -652,10 +815,18 @@ async function loadChannelHistory() {
   try {
     var chat = window.pocketcc.chat;
     var ret = await chat.historyRooms();
-    absorbHistoryItems(historyList(ret));
+    // 服务器系统消息（GET_CHAT_PUSH_LIST）与 loadHistoryV2 结果同批入缓冲：合并后统一按时间升序，
+    // 避免系统条目（fu="-1"）追加到列表尾部错序（游戏 getHistoryData 在 system_chat_on_server 下同源合并）。
+    var items = historyList(ret);
+    try {
+      var sys = await chat.systemMessages({ channel: -1 });
+      if (sys && sys.length) items = items.concat(sys);
+    } catch (e) { log.warn('system messages unavailable: %s', e && e.message); }
+    absorbHistoryItems(items);
     await absorbExtraRooms();
     for (var d of CHAN_DEFS) if (d.key !== 'pm') bufOf(d.key).loaded = true;
     channelHistoryState = 'done';
+    try { await applySummary(); } catch (e) { log.warn('summary unavailable: %s', e && e.message); }
     if (overlay && overlay.isVisible()) renderActive();
   } catch (e) {
     channelHistoryState = 'idle';
@@ -714,8 +885,7 @@ async function absorbExtraRooms() {
 function pushEntrySilent(key, entry) {
   var b = bufOf(key);
   if (b.ids.has(entry.id)) return;
-  b.list.push(entry);
-  b.ids.add(entry.id);
+  insertOrdered(b, entry); // 与 pushEntry 同源：跨批次 absorb（主拉取 + 补拉房间）也按时间序合并
   while (b.list.length > BUF_LIMIT) { var drop = b.list.shift(); b.ids.delete(drop.id); }
   b.lastAt = Math.max(b.lastAt, entry.timeMs);
   if (!entry.self) b.speakers.set(entry.uid, entry.name);
@@ -731,20 +901,29 @@ async function loadOlder() {
   var b = bufOf(activeKey);
   if (b.key.indexOf('pm:') === 0) return; // 私聊历史一次性全量，无翻页
   if (!b.loaded) return;                   // 全量还没回来，先不翻
-  if (!b.roomId || b.pullPages >= MAX_PULL_PAGES) return;
+  if (!b.roomId) return;
+  if (b.pullPages >= MAX_PULL_PAGES) { setStatus('end'); return; } // 已达上限：显式告知“已加载全部”
+  // 翻页游标必须是服务器真实消息 uuid（游标即 MsgId）：跳过系统播报（uid=="-1"/isGameMsg，来自 GET_CHAT_PUSH_LIST，
+  // 其 uuid 非 loadHistoryV2 合法游标，误用会导致翻页死锁）、本地乐观条目、合成 id
   var oldest = null;
-  for (var e of b.list) if (String(e.id).indexOf('local:') !== 0 && (!oldest || e.timeMs < oldest.timeMs)) oldest = e;
+  for (var e of b.list) {
+    if (String(e.id).indexOf('local:') === 0) continue;
+    if (e.uid === '-1' || (e.raw && e.raw.isGameMsg)) continue;
+    if (!oldest || e.timeMs < oldest.timeMs) oldest = e;
+  }
   if (!oldest) return;
-  // 翻页游标必须是服务器 uuid（游标即 MsgId，游戏 askLastPageData: GroupId|MsgId），合成 id 不可用
+  // 游标首位为 'x' 的是合成 id（无服务器 uuid），不可用
   if (String(oldest.id).charAt(0) === 'x') { log.info('oldest entry has synthetic id, skip paging'); return; }
   olderInflight = true;
   b.pullPages++;
+  setStatus('loading');
   try {
     var chat = window.pocketcc.chat;
     var ret = await chat.olderHistory(b.roomId, oldest.id);
     // 被拒（code!==1）不锁死：退计次、留样本日志，下次滚顶还能重试；只有确认成功的空页才是真到头
     if (!ret || !ret.ok) {
       b.pullPages--;
+      setStatus('error');
       log.warn('older history rejected: code=%s data=%s', ret && ret.code, String(ret && ret.data).slice(0, 160));
       return;
     }
@@ -758,13 +937,88 @@ async function loadOlder() {
       } catch (e2) { }
     }
     entries.sort((x, y) => x.timeMs - y.timeMs);
+    var headMs = b.list.length ? b.list[0].timeMs : Infinity; // 插入前队首时间：判断这批旧史是否严格更旧
     var fresh = [];
-    for (var en of entries) if (!b.ids.has(en.id)) { b.list.unshift(en); b.ids.add(en.id); fresh.push(en); }
-    if (fresh.length && overlay && overlay.isVisible()) overlay.prependMessages(fresh);
-    if (!entries.length) b.pullPages = MAX_PULL_PAGES; // 确认成功的空页=真到头，锁止
+    for (var en of entries) if (!b.ids.has(en.id)) { insertOrdered(b, en); fresh.push(en); } // 按时间归并：954 系统消息可能比翻页旧史更旧，不能整块前置
+    if (fresh.length) {
+      while (b.list.length > BUF_LIMIT) { var dropOld = b.list.pop(); b.ids.delete(dropOld.id); }
+      if (overlay && overlay.isVisible() && activeKey === b.key) {
+        // 整批都早于原队首（常态）→ 增量前插保阅读位置；否则（与更旧的系统消息交错）→ 整列按时间重排
+        if (fresh[fresh.length - 1].timeMs < headMs) overlay.prependMessages(fresh);
+        else overlay.renderMessages(b.list, true);
+      }
+    }
+    if (!entries.length) { b.pullPages = MAX_PULL_PAGES; setStatus('end'); } // 确认成功的空页=真到头，锁止
+    else setStatus(b.pullPages >= MAX_PULL_PAGES ? 'end' : '');
   } catch (e) {
     log.warn('older history failed: %s', e && e.message);
+    setStatus('error');
   } finally { olderInflight = false; }
+}
+
+/** 顶部历史状态条（仅浮层可见时）：'loading'/'end'/'error'/'' 隐去 */
+function setStatus(state) { if (overlay && overlay.isVisible()) overlay.setHistoryStatus(state); }
+
+/**
+ * 引用「定位原消息」时目标不在已加载区间：用 loadHistoryAround 拉取该消息前后上下文入缓冲后二次跳转。
+ * overlay.#jumpTo 找不到行时经 handlers.onLocateMessage 回调进来。
+ * @param {string} uuid 目标消息 uuid
+ * @returns {Promise<void>}
+ */
+var locateInflight = false;
+async function locateMessage(uuid) {
+  if (locateInflight || !uuid) return;
+  var key = activeKey;
+  var b = bufOf(key);
+  var chat = window.pocketcc.chat;
+  var roomId = b.roomId;
+  if (!roomId && b.c != null) { // 缓冲未带 roomId：按频道从 chatHeads 兜底解析（world/alliance/group 固定单会话）
+    var heads = chat.chatHeads ? chat.chatHeads() : [];
+    for (var h of heads) { if (h.channel === b.c && h.id) { roomId = b.roomId = String(h.id); break; } }
+  }
+  log.info('locate: key=%s roomId=%s uuid=%s', key, roomId || '(empty)', uuid);
+  if (!roomId || !chat.aroundHistory) { if (overlay) overlay.toast('定位失败：会话房间未知'); return; }
+  locateInflight = true;
+  try {
+    var ret = await chat.aroundHistory(roomId, uuid, { beforeCount: 40, afterCount: 40 });
+    var list = historyList(ret);
+    var hit = false;
+    for (var it of list) if (String(it.uuid) === String(uuid)) { hit = true; break; }
+    log.info('locate aroundHistory: ok=%s items=%d anchorInList=%s', ret && ret.ok, list.length, hit);
+    if (!list.length) { if (overlay) overlay.toast('原消息已超期或不可加载'); return; }
+    absorbHistoryItems(list);
+    if (activeKey === key && overlay && overlay.isVisible()) { renderActive(); overlay.jumpToMessage(uuid); }
+  } catch (e) {
+    log.warn('around history locate failed: %s', e && e.message);
+    if (overlay) overlay.toast('定位失败：' + (e && e.message ? String(e.message).slice(0, 30) : '未知'));
+  } finally { locateInflight = false; }
+}
+
+/**
+ * 用 getChatHomeSummary 的服务端权威摘要补齐最后一条预览（缓冲为空时给侧栏副标题兜底 lastSub）。
+ * 注：不采用服务端 unreadCount 播种未读——频道/跨服房间无 markRead 通道，播种后 reload 会反复重现、无法真正消除；
+ * 未读仍由本地计数（pushEntry 增量 + renderActive 查看清零）接管。
+ * 仅覆盖已建缓冲且有 roomId 的会话。
+ * @returns {Promise<void>}
+ */
+async function applySummary() {
+  var chat = window.pocketcc.chat;
+  if (!chat || !chat.summary) return;
+  var ret = await chat.summary();
+  var data = ret && ret.data && ret.data.data;
+  var list = data && data.list;
+  if (!list || typeof list !== 'object') return;
+  var byRoom = new Map();
+  for (var [k, bb] of bufs) if (bb.roomId) byRoom.set(String(bb.roomId), bb);
+  var touched = false;
+  for (var rid in list) {
+    var info = list[rid];
+    if (!info || !info.lastMessage) continue;
+    var b = byRoom.get(String(rid));
+    if (!b) continue;
+    b.lastPreview = stripRich(info.lastMessage); touched = true;
+  }
+  if (touched && overlay && overlay.isVisible()) updateSide();
 }
 
 /**
@@ -852,7 +1106,8 @@ function familyOf(key) {
 /** 侧栏副行：最后一条消息预览 */
 function lastSub(b) {
   var last = b.list.length ? b.list[b.list.length - 1] : null;
-  return last ? String(last.name || '') + ': ' + String(last.plain || '').slice(0, 18) : '';
+  if (last) return String(last.name || '') + ': ' + String(last.plain || '').slice(0, 18);
+  return b.lastPreview ? String(b.lastPreview).slice(0, 24) : ''; // 缓冲未加载时用 summary 的服务端最后一条兜底
 }
 
 /**
@@ -874,7 +1129,7 @@ function updateSide() {
     for (var [k, b] of bufs) {
       if (k.indexOf('pm:') !== 0) continue;
       has.add(k);
-      items.push({ key: k, title: b.title !== k ? b.title : 'U' + k.slice(-4), sub: pmInfoText(k), unread: b.unread, ts: b.lastAt });
+      items.push({ key: k, title: b.title !== k ? b.title : 'U' + k.slice(-4), sub: pmInfoText(k), unread: b.unread, ts: b.lastAt, avatar: (pmInfoCache.get(k) || {}).av });
     }
     for (var h of heads) {
       if (h.channel !== 1 || !h.id) continue;
@@ -883,7 +1138,7 @@ function updateSide() {
       has.add(pk);
       if (h.name) bufOf(pk).title = h.name;
       var pb = bufOf(pk);
-      items.push({ key: pk, title: pb.title !== pk ? pb.title : 'U' + String(h.id).slice(-4), sub: pmInfoText(pk), unread: pb.unread, ts: pb.lastAt });
+      items.push({ key: pk, title: pb.title !== pk ? pb.title : 'U' + String(h.id).slice(-4), sub: pmInfoText(pk), unread: pb.unread, ts: pb.lastAt, avatar: (pmInfoCache.get(pk) || {}).av });
     }
   } else {
     for (var h2 of heads) {
@@ -907,23 +1162,18 @@ function updateSide() {
   overlay.setSideList(items, activeKey);
 }
 
-/** @type {Map<string, {state:string, txt:string}>} 私聊侧栏副行信息缓存（630 懒查，键=会话键；fail/pending 不重发） */
+/** @type {Map<string, {state:string, txt:string, av?:object, d?:object, ts?:number}>} 私聊侧栏副行信息缓存（键=会话键；进 TAB 不批量抓，仅点开会话/查看信息时刷新，盘缓存回填） */
 var pmInfoCache = new Map();
 
 /**
- * 私聊侧栏副行：对方基本信息（区/等级/power，用户口径不显聊天内容）；
- * 首次渲染时入队 PLAYER_INFO(630)（仅数字 uid——StrUid 形态未实证可查），
- * 由 servePmInfo 串行消费：同一时刻只有一个在途请求，相邻请求间隔 PM_INFO_GAP_MS，
- * 避免点私聊 TAB 时整列会话瞬间爆发式查询冲击服务器；应答到达后刷侧栏。
+ * 私聊侧栏副行：对方基本信息（区/等级/power，用户口径不显聊天内容）；只读缓存，
+ * 未命中不再入队（避免进私聊 TAB 整列会话批量抓 630）——改由点开该会话 / 查看信息时按需刷新。
  * @param {string} pk 'pm:<uid>'
  * @returns {string}
  */
 function pmInfoText(pk) {
   var ci = pmInfoCache.get(pk);
-  if (ci) return ci.txt;
-  if (pmInfoQueue.indexOf(pk) < 0) pmInfoQueue.push(pk); // 未入缓存且未在排队才入队（重复渲染不叠队）
-  servePmInfo();
-  return '';
+  return ci ? ci.txt : '';
 }
 
 /** @type {string[]} 待查玩家信息的会话键队列（FIFO，去重） */
@@ -946,17 +1196,152 @@ function servePmInfo() {
   net.send(CMD_PLAYER_INFO, { uid }).then((ret) => {
     var d = safeParse(ret && ret.data);
     if (!ret || !ret.ok || !d || typeof d !== 'object') { pmInfoCache.set(pk, { state: 'fail', txt: '' }); return; }
-    var bits = [];
-    if (d.serverId != null) bits.push('区 ' + d.serverId);
-    if (d.level != null) bits.push('Lv.' + d.level);
-    if (d.power != null) bits.push('战力 ' + fmtPower(d.power));
-    pmInfoCache.set(pk, { state: 'done', txt: bits.join(' · ') });
+    pmStoreSet(uid, d); // 回填内存视图缓存 + 写穿盘
     if (overlay && overlay.isVisible() && familyOf(activeKey) === 'pm') updateSide();
   }).catch(() => { pmInfoCache.set(pk, { state: 'fail', txt: '' }); })
     .finally(() => {
       pmInfoServing = false;
       if (pmInfoQueue.length) setTimeout(servePmInfo, PM_INFO_GAP_MS);
     });
+}
+
+/**
+ * 630 应答 → 侧栏副行文本（区 · 等级 · 战力），servePmInfo 与盘缓存回填共用。
+ * @param {object} d 应答顶层 parse 产物
+ * @returns {string}
+ */
+function pmBitsText(d) {
+  var b = [];
+  if (d.serverId != null) b.push('区 ' + d.serverId);
+  if (d.level != null) b.push('Lv.' + d.level);
+  if (d.power != null) b.push('战力 ' + fmtPower(d.power));
+  return b.join(' · ');
+}
+
+/**
+ * 写穿：一个玩家的 630 应答同时回填内存视图缓存（pmInfoCache）并落 data blob（整块 {uid:{d,ts}}）。
+ * 存的是完整 d，将来扩充展示字段无需重查（盘里已有）。
+ * @param {string} uid 对方 uid（非数字串直接跳过）
+ * @param {object} d 630 应答顶层 parse 产物
+ * @returns {void}
+ */
+function pmStoreSet(uid, d) {
+  uid = String(uid == null ? '' : uid);
+  if (!/^\d+$/.test(uid) || !d || typeof d !== 'object') return;
+  var ts = Date.now();
+  pmInfoStore[uid] = { d: d, ts: ts };
+  try { Promise.resolve(storage.data.set(PM_INFO_STORE_KEY, Object.assign({}, pmInfoStore))).catch(() => { }); } catch (e) { }
+  var pk = 'pm:' + uid;
+  pmInfoCache.set(pk, { state: 'done', txt: pmBitsText(d), av: resolveAvatar(d, { uid: uid, name: (bufOf(pk) && bufOf(pk).title) || '' }), d: d, ts: ts });
+}
+
+/**
+ * 装载私聊玩家信息盘缓存（仅成功读盘后定案 loaded），回填 pmInfoCache，
+ * 使进私聊 TAB 直接显缓存、不批量重抓。命名空间未就绪时 reject 不落 loaded，下次进私聊再试。
+ * @returns {Promise<void>} 读盘（或已 loaded 时的立即 resolve），供 backfillPmInfo 串接
+ */
+function loadPmInfoCache() {
+  if (pmInfoDiskLoaded) return Promise.resolve();
+  return storage.data.get(PM_INFO_STORE_KEY).then((blob) => {
+    pmInfoDiskLoaded = true;
+    if (!blob || typeof blob !== 'object') return;
+    pmInfoStore = blob;
+    for (var uid in pmInfoStore) {
+      var rec = pmInfoStore[uid];
+      if (!rec || !rec.d || typeof rec.d !== 'object') continue;
+      var pk = 'pm:' + uid;
+      var cur = pmInfoCache.get(pk);
+      if (cur && cur.state === 'done' && (cur.ts || 0) >= (rec.ts || 0)) continue; // 内存比盘新（本次已查）不覆盖
+      pmInfoCache.set(pk, { state: 'done', txt: pmBitsText(rec.d), av: resolveAvatar(rec.d, { uid: uid, name: (bufOf(pk) && bufOf(pk).title) || '' }), d: rec.d, ts: rec.ts || 0 });
+    }
+    if (overlay && overlay.isVisible() && familyOf(activeKey) === 'pm') updateSide();
+  }).catch(() => { /* 读盘失败/命名空间未就绪：下次进私聊再试 */ });
+}
+
+/**
+ * 切进某个私聊会话时按需刷新该玩家信息：缓存缺失或超过 TTL 才查，
+ * 走既有串行队列（servePmInfo），避免快速切会话爆发式查询。
+ * @param {string} key 会话键（'pm:<uid>' 才处理）
+ * @returns {void}
+ */
+function maybeRefreshPmInfo(key) {
+  if (!key || key.indexOf('pm:') !== 0) return;
+  var uid = key.slice(3);
+  if (!/^\d+$/.test(uid)) return;
+  var ci = pmInfoCache.get(key);
+  var stale = !ci || ci.state !== 'done' || (Date.now() - (ci.ts || 0) > PM_INFO_TTL_MS);
+  if (!stale) return;
+  if (pmInfoQueue.indexOf(key) < 0) pmInfoQueue.push(key);
+  servePmInfo();
+}
+
+/**
+ * 进私聊 TAB 时回填空数据：扫描全部会话（缓冲 pm: + chatHeads c=1），仅把「无 done 缓存」
+ * 的玩家入既有串行队列（servePmInfo，500ms 限速、非并行）逐个补查。盘缓存命中者不重抓，
+ * 故冷启动一次性补齐后，后续进 TAB 几乎无空位、不再批量抓。与 maybeRefreshPmInfo 共用队列去重。
+ * @returns {void}
+ */
+function backfillPmInfo() {
+  var chat = window.pocketcc.chat;
+  var keys = new Set();
+  for (var [k] of bufs) { if (k.indexOf('pm:') === 0) keys.add(k); }
+  if (chat && chat.chatHeads) {
+    for (var h of chat.chatHeads()) { if (h.channel === 1 && h.id) keys.add('pm:' + h.id); }
+  }
+  var enq = 0;
+  for (var key of keys) {
+    var uid = key.slice(3);
+    if (!/^\d+$/.test(uid)) continue; // 非数字 uid（StrUid 等）不可查，跳过不占带宽
+    var ci = pmInfoCache.get(key);
+    if (ci && ci.state === 'done') continue; // 已有（盘/本次）不重抓
+    if (ci && ci.state === 'pending') continue; // 在途
+    if (ci && ci.state === 'fail') continue; // 已定案失败，不在此重试（点开时 maybeRefreshPmInfo 再试）
+    if (pmInfoQueue.indexOf(key) < 0) { pmInfoQueue.push(key); enq++; }
+  }
+  if (enq) servePmInfo();
+}
+
+// ─────────────────────── 私聊会话枚举 (/pm/loadChatList) ───────────────────────
+
+/** @type {boolean} 是否已拉过会话列表（生命周期内枚举一次，后续靠推信增量维护） */
+var pmListFetched = false;
+/** @type {Promise<void>|null} 在途去重（避免刷侧栏时重复发） */
+var pmListPromise = null;
+
+/**
+ * 用 /pm/loadChatList 枚举全部私聊会话（含游戏 UI 未打开过的），补进 pm:<uid> 缓冲的标题/时间。
+ * 只读补全，不改游戏任何状态；对方昵称从 profile(fp/tp) 解析（自己发出的行取 tp、收到的行取 fp），
+ * 拉不到名字时保留 U尾号 占位。完成时若正停在私聊家族则刷左侧列表。
+ * @returns {Promise<void>|undefined} 无 pmList API 时返回 undefined
+ */
+function seedPmList() {
+  if (pmListFetched) return undefined;
+  if (pmListPromise) return pmListPromise;
+  var chat = window.pocketcc.chat;
+  if (!chat || !chat.pmList) return undefined;
+  pmListPromise = (async () => {
+    try {
+      var ret = await chat.pmList({ channel: 1 });
+      var list = (ret && ret.data && ret.data.data && ret.data.data.list) || [];
+      var meS = myStrUid(); var meU = myUid();
+      for (var it of list) {
+        var fu = String(it.fu || ''); var tu = String(it.tu || '');
+        var selfSent = !!fu && (fu === meS || fu === meU);
+        var other = selfSent ? tu : fu;
+        if (!other || other === meS || other === meU) continue;
+        var prof = safeParse(selfSent ? it.tp : it.fp) || {};
+        var pk = 'pm:' + other;
+        var pb = bufOf(pk);
+        if (prof.username && pb.title === pb.key) pb.title = String(prof.username);
+        pb.lastAt = Math.max(pb.lastAt, toMs(it.t != null ? it.t : null, it.time != null ? it.time : null));
+      }
+      pmListFetched = true;
+      if (overlay && overlay.isVisible() && familyOf(activeKey) === 'pm') updateSide();
+    } catch (e) {
+      log.warn('pm list seed failed: %s', e && e.message);
+    } finally { pmListPromise = null; }
+  })();
+  return pmListPromise;
 }
 
 // ─────────────────────── 频道切换与视图 ───────────────────────
@@ -982,6 +1367,10 @@ function syncChannels() {
  */
 function activateKey(key) {
   if (key === 'pm') {
+    var cacheP = loadPmInfoCache(); // 进私聊家族：先用盘缓存回填侧栏（不批量重抓）
+    var listP = seedPmList(); // 异步枚举全部私聊会话补入左侧列表（不阻塞当前 chip 选中）
+    // 盘缓存 + 会话列表都就绪后，回填空数据玩家（串行逐个，非并行）
+    Promise.all([Promise.resolve(cacheP), Promise.resolve(listP)]).then(backfillPmInfo, backfillPmInfo);
     // 私聊 chip：先用游戏会话列表（chatHeads c=1，含浮层装前会话）预建缓冲，再进最近一个
     var chat0 = window.pocketcc.chat;
     if (chat0 && chat0.chatHeads) {
@@ -1003,6 +1392,7 @@ function activateKey(key) {
     if (first && first.ts) key = first.k;
   }
   activeKey = key;
+  maybeRefreshPmInfo(key); // 切进具体私聊会话：缓存缺失/过期才刷新该一个（不批量抓）
   var ab = bufOf(key);
   ab.pullPages = 0; // 重新进入允许再拨一段旧史（MAX_PULL_PAGES 是单次进入的防 runaway 上限）
   if (overlay) { overlay.setActive(familyOf(key) || key); overlay.setTitle(viewTitle(key)); renderActive(); } // chip 高亮按家族键（pm:xxx/cross:xxx 归 pm/cross）
@@ -1052,17 +1442,40 @@ const INFO_LABELS = {
   alliance: '联盟', aid: '联盟ID', pos: '坐标', x: '坐标X', y: '坐标Y', title: '称号', pwr: '战力',
 };
 
+/** 战力/大数字单位阶梯：与游戏 NumUtils.getLargeNumberShow 完全一致 —— K,M,B,T 后接 aa..zz，每档 ×1000（下标 j 对应阈值 1000^(len-j)） */
+const POWER_UNITS = (function () {
+  var u = ['K', 'M', 'B', 'T'];
+  for (var c = 97; c <= 122; c++) u.push(String.fromCharCode(c) + String.fromCharCode(c));
+  return u;   // 长度 30
+})();
+
 /**
- * 战力紧凑显示：K（千）/M（百万）口径（用户定案；armyPower 换算公式未明，暂不展示）。
- * @param {number} v 数值
+ * 战力/大数字显示：复刻游戏 NumUtils.getLargeNumberShow 口径（逐字对齐）。
+ * 单位阶梯 K(1e3)/M(1e6)/B(1e9)/T(1e12)/aa(1e15)/bb(1e18)…每×1000 进一档。
+ * 有效数字约 3 位：尾数>100 取整、>10 留 1 位、否则留 2 位；默认向下截断（与游戏默认一致），round=true 才四舍五入。
+ * <1000：普通数字串（plain=true 时取整）；<=0 → "0"；null/空 → ""。
+ * @param {number|string} v 数值
+ * @param {boolean} [round] 是否四舍五入（游戏默认 false=截断）
+ * @param {boolean} [plain] 小于 1000 时是否取整（游戏默认 false）
  * @returns {string}
  */
-function fmtPower(v) {
-  v = +v || 0;
-  var f = (n, u) => { var s = n.toFixed(1); return (s.slice(-2) === '.0' ? s.slice(0, -2) : s) + u; };
-  if (v >= 1e6) return f(v / 1e6, 'M');
-  if (v >= 1e3) return f(v / 1e3, 'K');
-  return String(Math.round(v));
+function fmtPower(v, round, plain) {
+  if (v == null || v === '') return '';
+  v = +v;
+  if (!(v > 0)) return '0';
+  var len = POWER_UNITS.length;
+  for (var n = 0; n < len; n++) {
+    var r = 1e3;
+    for (var s = n + 1; s < len; s++) r *= 1e3;   // r = 1000^(len - n)，从大阈值往下扫，首个 v>=r 即为当档
+    if (v >= r) {
+      var l = v > 100 * r ? 0 : (v > 10 * r ? 1 : 2);
+      var unit = POWER_UNITS[len - n - 1];
+      if (round) return (v / r).toFixed(l) + unit;
+      var c = Math.pow(10, l);
+      return Math.floor(v / (r / c)) / c + unit;
+    }
+  }
+  return plain ? v.toFixed() : String(v);
 }
 
 /**
@@ -1104,6 +1517,41 @@ function infoLines(d) {
 function infoNick(d) {
   var wx = safeParse(d && d.playerInfo);
   return String((wx && (wx.username || wx.nickname)) || (d && d.nickname) || '');
+}
+
+/** @type {string[]} 头像 URL 取值优先级（复刻游戏 PlayerInfoTool.d：avatarurl‖headimgurl_custom‖headimgurl） */
+const AVATAR_KEYS = ['avatarurl', 'headimgurl_custom', 'headimgurl'];
+
+/**
+ * 630 应答→头像描述子（纯只读，不新增请求；数据即 onNameInfo/servePmInfo 已收到的那条 630）。
+ * 真机待验：头像三键在顶层 d 还是内层 playerInfo 串——两处都探；游戏的性别默认头像是本地图集精灵名
+ * （icon_man01_1 等，非 URL），渲染不了 → url 空则由视图层走首字母占位。
+ * @param {object} d PLAYER_INFO(630) 应答顶层 parse 产物
+ * @param {{uid?:string, name?:string}} [entry] 触发条目的 uid/名字（占位与配色兜底）
+ * @returns {{url:string, initial:string, hue:number}}
+ */
+function resolveAvatar(d, entry) {
+  var wx = safeParse(d && d.playerInfo);
+  var src = [wx, d]; // 内层资料串优先，其次顶层（真机键位未定，两处都探）
+  var rawVal = ''; var usedKey = '';
+  for (var i = 0; i < src.length && !rawVal; i++) {
+    var o = src[i]; if (!o || typeof o !== 'object') continue;
+    for (var k = 0; k < AVATAR_KEYS.length; k++) {
+      var v = o[AVATAR_KEYS[k]];
+      if (typeof v === 'string' && v.trim()) { rawVal = v.trim(); usedKey = AVATAR_KEYS[k]; break; }
+    }
+  }
+  // 头像字段可能是 http(s) 真实 URL（平台/用户上传），也可能是游戏自带头像图集名（hero_icon…_global 等，
+  // 非 URL，直接塑 <img> 会 404）→ 统一交 core/game-api avatar.iconUrl 换算（图集名走游戏 PathUtils.GetIconURL）。
+  var url = rawVal ? avatar.iconUrl(rawVal) : '';
+  if (usedKey) log.info('playerInfo avatar hit: %s -> %s', usedKey, url ? 'url' : 'placeholder');
+  var nick = infoNick(d) || (entry && entry.name) || '';
+  var uid = String((entry && entry.uid) || (d && d.uid) || '');
+  var initial = nick ? Array.from(nick)[0].toUpperCase() : (uid ? 'U' + uid.slice(-4) : '?');
+  var hue;
+  if (uid && /\d/.test(uid)) hue = Math.abs(parseInt(uid.slice(-6), 10) || 0) % 360;
+  else { var h = 0; var s = nick || uid || '?'; for (var j = 0; j < s.length; j++) h = (h * 31 + s.charCodeAt(j)) | 0; hue = Math.abs(h) % 360; }
+  return { url: url, initial: initial, hue: hue };
 }
 
 /**
@@ -1295,16 +1743,17 @@ function encodeAt(text, atList) {
   var atData = null;
   for (var a of (atList || [])) {
     var token = '@' + a.name;
-    if (encoded.indexOf(token) < 0) continue;
+    if (encoded.indexOf(token) < 0) continue; // 文本里已无此 @ → 不进 atData（对齐游戏 checkAtData 剪枝）
     if (a.all) {
-      encoded = encoded.split(token).join(AT_ALL_TOKEN);
+      encoded = encoded.split(token).join(AT_ALL_TOKEN); // @全体成员 → AtAllName 常量（游戏发送前 split/join 同口径）
       continue;
     }
     atData = atData || { uid: [], name: [], msgId: '' };
-    var idx = atData.uid.length;
     atData.uid.push(a.uid);
     atData.name.push(a.name);
-    encoded = encoded.replace(token, RS + idx + RS);
+    // m 保留字面 "@昵称"，不替换成 RS序号RS：游戏 sendChatInfo 发的是 editBox 原文（checkAtData 仅剪 atData、
+    // 其 RS 替换作用在局部副本上被丢弃），渲染端 formationRichMsg 靠字面 "@"+atData.name[h] 匹配上色；
+    // 若这里塞 RS序号RS，游戏匹配不到字面 @name，会把 RS 当分隔符逐段吐成「@昵称0@undefined」脏数据
   }
   return { encoded, atData };
 }
@@ -1411,6 +1860,7 @@ function onKeydown(e) {
  */
 function jumpTo(action) {
   if (!action || !overlay) return;
+  if (action.type === 'battle') { queryBattle(action); return; } // 战报卡：纯只读 MAIL_QUERY 查询 + 浮层展示（见下方 queryBattle）
   var r = action.type === 'march' ? nav.flyMarch(action)
     : action.type === 'pos' ? nav.flyTo(action)
       : { ok: false, err: 'nomarch' };
@@ -1420,6 +1870,58 @@ function jumpTo(action) {
   }
   overlay.toast(r.err === 'unavailable' ? '世界地图导航不可用'
     : r.err === 'nomarch' ? '该卡片暂不能直接跳转' : '跳转异常');
+}
+
+/** @type {boolean} 战报查询在途闸门（防连点爆发重复请求，同 servePmInfo 口径） */
+var battleInflight = false;
+
+/**
+ * 点战报卡（capability=query-battle）：发 MAIL_QUERY 纯只读查询，回包解析后在浮层展示详情。
+ * 全程不触碰游戏 OpenUI（红线）；action.uid/mailId 由 classify 从 llm.fuid/llm.mId 提取。
+ * @param {object} action {uid, mailId}
+ * @returns {Promise<void>}
+ */
+async function queryBattle(action) {
+  if (battleInflight || !overlay) return;
+  var net = window.pocketcc.net;
+  if (!net || !action || !action.uid || !action.mailId) { overlay.toast('战报暂不可查'); return; }
+  battleInflight = true;
+  try {
+    var ret = await net.send(CMD_MAIL_QUERY, { uid: action.uid, mailId: action.mailId });
+    var resp = safeParse(ret && ret.data);
+    // 游戏口径：应答 .d 是 JSON 串，parse 后取 .mail；兼容应答体直接挂 mail / 无 .d 包裹的形态
+    var inner = resp && resp.d != null ? safeParse(resp.d) : resp;
+    var mail = inner && inner.mail ? inner.mail : inner;
+    if (!ret || !ret.ok || !mail || typeof mail !== 'object') {
+      log.info('mail query empty: ok=%s respKeys=%s', ret && ret.ok, resp && Object.keys(resp).join(','));
+      overlay.toast('战报暂不可查'); return;
+    }
+    overlay.showInfoPop('战报详情', battleRows(mail));
+  } catch (e) {
+    log.warn('mail query failed: %s', e && e.message);
+    overlay.toast('战报查询失败');
+  } finally {
+    battleInflight = false;
+  }
+}
+
+/**
+ * 战报 mail 报头 -> showInfoPop 信息行（白名单渲染，不拉 rUrl）。
+ * 真机实证：MAIL_QUERY 应答仅报头（title/reportId/rUrl/rewardStatus/fromUser/rrId/fromUserInfo），
+ * 战斗明细在 rUrl 指向的限时 OSS JSON 里（易过期、需另解 schema），故只排干净报头 + 一句引导，不逐条 dump 原始键。
+ * @param {object} mail MAIL_QUERY 应答里的战报报头
+ * @returns {Array<string|{s:string, action:object}>}
+ */
+function battleRows(mail) {
+  var lines = [];
+  if (!mail || typeof mail !== 'object') return lines;
+  log.info('battle mail keys: %s', Object.keys(mail).join(','));
+  var title = pickField(mail, ['title', 'reportName', 'name', 'subject']);
+  if (title) lines.push('战报: ' + title);
+  var rid = pickField(mail, ['reportId', 'rId']);
+  if (rid) lines.push('战报编号: ' + rid);
+  lines.push('完整战斗明细请在游戏内点开查看（战报正文限时有效）');
+  return lines;
 }
 
 /**
@@ -1453,6 +1955,7 @@ function makeHandlers() {
     onSideSelect: (key) => activateKey(key),
     onLoadOlder: () => { loadOlder(); },
     onQuote: (entry) => { if (overlay) overlay.setQuote(entry); },
+    onLocateMessage: (uuid) => { locateMessage(uuid); },
     onRevoke: (entry) => { doRevoke(entry); },
     onNamePm: (entry) => {
       if (!entry || entry.self || !entry.uid) return;
@@ -1472,7 +1975,9 @@ function makeHandlers() {
           overlay.showInfoPop(entry.name || '玩家信息', ['获取失败：' + locText(String(ret && ret.data != null ? ret.data : '无应答')).slice(0, 40)]);
           return;
         }
-        overlay.showInfoPop(infoNick(d) || entry.name || '玩家信息', infoLines(d));
+        pmStoreSet(String(entry.uid), d); // 查看信息也写穿缓存（侧栏副行/头像随之更新）
+        if (overlay && overlay.isVisible() && familyOf(activeKey) === 'pm') updateSide();
+        overlay.showInfoPop(infoNick(d) || entry.name || '玩家信息', infoLines(d), resolveAvatar(d, entry));
       }).catch((e) => {
         log.warn('PlayerInfo failed: %s', e && e.message);
         overlay.showInfoPop(entry.name || '玩家信息', ['查询异常']);
@@ -1556,6 +2061,8 @@ function run(ctx) {
   ctx.on.event('chatpushpm', function (p) { ingest('pm', p); });
   ctx.on.event('chatdel', function (p) { onDel(p); });
   ctx.on.event('chatupdate', function (p) { onUpdate(p); });
+  // CHAT_INFO_LIST(10919)：被攻击/主动攻击等系统战报消息的实时推（走主协议 bus.net.<cmd>，非聊天 socket 事件）
+  ctx.on.push(CMD_CHAT_INFO_LIST, onChatInfoList);
 }
 
 reactor.register({

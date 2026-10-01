@@ -51,6 +51,9 @@ const PUSH_ALLIANCE_HELP_REGET = 10453;
  *  “当日已满”只认这个显式标记 */
 const ERR_ALLIANCE_DAILY_HELP_LIMIT = 'alliance_120503';
 
+/** @type {string} 1141 领取被拒：该自助帮助在服务器已不存在。根因——游戏把领取成功后的 DeleteSelfHelpList 绑在 UI 那次 NET.send 的回调里（AllianceHelpPanel_New2 / AllianceHelpSelectPanel_New），脚本裸发 net.send(1141) 不触发它，本地 _selfHelpList 残留满进度条目 → 每轮重复领、连撞 120518。命中即按条目签名停领 */
+const ERR_ALLIANCE_HELP_NOT_EXIST = 'alliance_120518';
+
 /** @type {string} TableName.ALLIANCE_HELP（TableName.js:29），helpNum 运行时读表行 rewards_num */
 const TABLE_NAME_ALLIANCE_HELP = 'alliance_help';
 
@@ -122,6 +125,12 @@ var ctxRef = null;
 /** @type {string|null} 服务器显式标记“当日申请已满”（alliance_120503）的日期：拒绝应答不更新本地计数，
  *  收到该标记后当日不再申请，跨日自动失效 */
 var quotaSaturatedToday = null;
+
+/** @type {Set<string>} 已领取成功、或被告知「不存在(120518)」的自助帮助条目签名集合。脚本不能调游戏 DeleteSelfHelpList 改本地数据，故用签名在本地标记「这条已领过」，避免残留的满进度条目每轮被重复领取、连撞 120518。跨日清空 */
+var doneReceived = new Set();
+
+/** @type {string|null} doneReceived 归属日期（YYYY-MM-DD），跨日自动失效 */
+var doneReceivedDay = null;
 
 /** @type {number|null} 生产轮询单定时器句柄 */
 var timer = null;
@@ -229,8 +238,15 @@ function produce() {
             // 集齐判据同游戏排序器（AllianceHelpPanel_New2.js:127）：HelpCount >= MaxCount。
             // 用 >= 不用 ===：盟友可超量帮（样本见 count:16/max:10），HelpCount 会越过 MaxCount，
             // 严格相等会漏判满进度、永不领取（真机：第10次求助集齐后不领）。
-            // 入队只存 Type，不存对象引用——push 10453 会整体重建 _selfHelpList，旧引用执行前必失效（真机：满进度迟迟不领）
-            enqueue({ kind: TASK_RECEIVE, type: full.Type });
+            // 入队只存 Type 与签名、不存对象引用——push 10453 会整体重建 _selfHelpList，旧引用执行前必失效（真机：满进度迟迟不领）
+            pruneDoneReceived();
+            var sig = selfHelpSig(full);
+            if (doneReceived.has(sig)) {
+                // 该条已在服务端领过（脚本裸发不触发游戏 UI 回调里的 DeleteSelfHelpList，本地残留满进度），不再重复领
+                log.debug('self help already received (server gone), skip. type=%s;sig=%s', full.Type, sig);
+            } else {
+                enqueue({ kind: TASK_RECEIVE, type: full.Type, sig: sig });
+            }
         } else {
             var inflight = selfHelpList[0];
             log.debug('self help in progress, wait next tick. progress=%s/%s',
@@ -476,6 +492,25 @@ function findSelfHelpByType(selfHelpList, type) {
 }
 
 /**
+ * 自助帮助条目签名：Type|Qid|RequestTime|ItemId 组合，标识「具体某一次求助请求」而非仅按 Type。
+ * 同 Type 的表行会被 push 按 Type upsert 覆盖，新一次求助的 RequestTime（服务端字段）不同 → 签名不同，
+ * 既能压掉残留条目的重复领取，又不会误封后续真正新填满的同 Type 自助帮助。
+ * @param {object} item alliance.SelfHelpList 里的一条（读游戏只读 getter）
+ * @returns {string}
+ */
+function selfHelpSig(item) {
+    return (item.Type || 0) + '|' + (item.Qid || 0) + '|' + (item.RequestTime || 0) + '|' + (item.ItemId || 0);
+}
+
+/**
+ * 跨日清空「已领条目签名」集合（新的一天条目重来）；同日累积的签名集合很小，无需额外淘汰
+ */
+function pruneDoneReceived() {
+    var today = todayStr();
+    if (doneReceivedDay !== today) { doneReceived.clear(); doneReceivedDay = today; }
+}
+
+/**
  * 获取物品持有数量
  * @param {object} item cfg.items 里的物品对象
  * @returns {number}
@@ -508,10 +543,18 @@ async function execTask(task) {
         // 不能用对象引用比较：push 会重建 _selfHelpList，引用必然失效导致任务被当陈旧丢弃、反复入队却永不领取
         var selfHelp = findSelfHelpByType(alliance.SelfHelpList, task.type);
         if (!selfHelp || selfHelp.HelpCount < selfHelp.MaxCount) return dropStale(task);
+        pruneDoneReceived();
+        var sig = task.sig || selfHelpSig(selfHelp);
+        if (doneReceived.has(sig)) return dropStale(task);   // 入队到执行之间已被领取/判定不存在
         ret = await receiveSelfHelp(selfHelp);
         if (!aliveFn()) return;
-        log.info('receive done. code=%d;progress=%s/%s',
-            ret.code, selfHelp.HelpCount, selfHelp.MaxCount);
+        // 领取成功：服务端条目已删（但本地残留，脚本不能调 DeleteSelfHelpList）；或回 120518「不存在」：本地是残留满进度条目。
+        // 两者都按签名记录，后续轮不再对同一条重复领取——这是消除「联盟帮助不存在」刷屏的关键
+        if (ret.ok || (!ret.ok && rejectErrKey(ret.data) === ERR_ALLIANCE_HELP_NOT_EXIST)) {
+            doneReceived.add(sig);
+        }
+        log.info('receive done. code=%d;sig=%s;receivedKeys=%d;progress=%s/%s',
+            ret.code, sig, doneReceived.size, selfHelp.HelpCount, selfHelp.MaxCount);
     } else if (task.kind === TASK_APPLY) {
         // 重判：计数通道已同步（防在入队到执行之间才首次同步好）、仍无在途、次数仍未用完（口径同 produce）
         if (!alliance.UpdatedSelfHelp || !isHelpCountSynced(alliance) || alliance.getSelfHelpData() || isQuotaReached(alliance)) return dropStale(task);
@@ -583,7 +626,7 @@ function receiveSelfHelp(selfHelp) {
     if (!selfHelp) {
         return Promise.resolve(net.Ret.from(CODE_NOT_SENT, null));
     }
-    // 领取成功后的删条目/计数由游戏 push 维护；脚本不手动 DeleteSelfHelpList
+    // 游戏把领取成功后的 DeleteSelfHelpList 绑在 UI 那次 NET.send 的回调里（AllianceHelpPanel_New2/SelectPanel_New），脚本裸发不触发它，本地条目会残留满进度；调用方 execTask 用 doneReceived 签名去重，避免重复领撞 120518。合规上脚本不调游戏 Delete/Update 改本地数据
     return guardedSend(
         CMD_ALLIANCE_HELP_RECEIVE,
         { type: selfHelp.Type, qid: '0' },

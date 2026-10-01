@@ -14,6 +14,18 @@ import { NS } from './core/constants.js';
     const msg = event.data;
     if (!msg || msg.__ns !== NS || msg.dir !== 'main->bridge') return;
 
+    // 报文录制落盘转发：MAIN(net-collect) → bridge → background service worker 代发 POST（绕页面 CSP）。
+    // fire-and-forget：不回发 MAIN（net-collect 不消费回执）；无接收器/后台错误只记一行，绝不阻断收发。
+    if (msg.op === 'dashcam-flush') {
+      try {
+        chrome.runtime.sendMessage({
+          type: 'dashcam-flush', url: msg.url, session: msg.session, ndjson: msg.ndjson,
+          uid: msg.uid, startTs: msg.startTs, note: msg.note, done: msg.done,
+        }, () => { void chrome.runtime.lastError; });
+      } catch (e) { console.warn('[pocketcc bridge] dashcam-flush send failed', e); }
+      return;
+    }
+
     const { id, op, key, value } = msg;
     let result;
     let error;

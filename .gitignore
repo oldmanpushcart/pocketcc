@@ -1,2 +1,7 @@
 node_modules/
 extension/dist/
+
+# 临时/工具产物（逆向探测、IDE 快照、Windows 保留名误生成）
+ref_probe.mjs
+.qoder_*
+nul
