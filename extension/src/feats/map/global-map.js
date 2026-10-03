@@ -14,7 +14,7 @@ import { createLog } from '../../core/log.js';
 import { reactor } from '../../core/reactor.js';
 import { storage } from '../../core/storage.js';
 import { worldMap, gameData } from '../../core/game-api.js';
-import { MapOverlay } from './overlay.js';
+import { MapOverlay } from './map-overlay.js';
 import { mapStore } from './store.js';
 import { getTerrainBase } from './terrain.js';
 import * as scanner from './scanner.js';

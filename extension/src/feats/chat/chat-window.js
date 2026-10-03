@@ -1,5 +1,5 @@
 /**
- * 聊天窗口 feat：半透明浮层（overlay.js）的业务层。
+ * 聊天窗口 feat：半透明浮层（chat-overlay.js）的业务层。
  * 数据全部走 pocketcc.chat（只读+发包，不触碰游戏任何状态与 UI）：
  *   接收：EventCenter 的 newChatPush/chatpushpm/chatdel/chatupdate（经 ctx.on.event 订阅，pause 自动摘）
  *         → normalize → 预处理成可渲染 entry → 按频道/会话键入环形缓冲（每键 600 条，uuid 去重）；
@@ -22,7 +22,7 @@ import { l10n, nav, gameData, gameConf, bits, avatar } from '../../core/game-api
 import { getUid } from '../../core/player.js';
 import { storage } from '../../core/storage.js';
 import { reactor } from '../../core/reactor.js';
-import { ChatOverlay, AT_ALL_LABEL } from './overlay.js';
+import { ChatOverlay, AT_ALL_LABEL } from './chat-overlay.js';
 import { classify, CST_LABEL } from './classify.js';
 
 /** @type {ReturnType<createLog>} 模块日志器（tag=CHATWIN） */
