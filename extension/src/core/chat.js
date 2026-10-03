@@ -13,9 +13,9 @@
  * 房间跟随游戏 _rooms（世界/联盟等由游戏自己 addRoom），本模块不 join/leave、不改写游戏任何状态。
  * 参照 net.js 口径：单点 hook、先跑原函数再打印、只当最外层还是自己时才还原。
  */
-import { createLog } from './core/log.js';
-import { game } from './core/game.js';
-import { getUid } from './core/player.js';
+import { createLog } from './log.js';
+import { game } from './game.js';
+import { getUid } from './player.js';
 
 (function(){
 

@@ -13,9 +13,9 @@
  * 池化对象告诫（同 net.js Event.raw）：部分游戏事件载荷是复用的 model 引用，
  * 信号/队列里只取纯值，别长期持有 ev.arguments 里的对象。
  */
-import { createLog } from './core/log.js';
-import { game } from './core/game.js';
-import { bus } from './core/bus.js';
+import { createLog } from './log.js';
+import { game } from './game.js';
+import { bus } from './bus.js';
 
 (function(){
 

@@ -1,9 +1,9 @@
 /**
  * pocketcc.net
  */
-import { createLog } from './core/log.js';
-import { game } from './core/game.js';
-import { bus } from './core/bus.js';
+import { createLog } from './log.js';
+import { game } from './game.js';
+import { bus } from './bus.js';
 
 (function(){
 

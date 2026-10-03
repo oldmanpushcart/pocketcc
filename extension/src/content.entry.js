@@ -2,10 +2,10 @@
 // feat 目录层级对齐面板菜单树（core/menu.js）：daily 日常设置（含联盟集结）/ battle 战斗设置 / map 地图设置 / chat 聊天窗口。
 // 导入顺序 = 旧 manifest content_scripts 顺序：net 先于 feat，feat 先于编排器 main；
 // 新增 feat 除在这里加 import 外，还须挂进 core/menu.js 菜单树，否则不会出现在面板。
-import './net.js';
-import './net-collect.js';
-import './event.js';
-import './chat.js';
+import './core/net.js';
+import './core/net-collect.js';
+import './core/event.js';
+import './core/chat.js';
 import './feats/daily/floatcar.js';
 import './feats/daily/titan-blessing.js';
 import './feats/daily/alliance-help.js';

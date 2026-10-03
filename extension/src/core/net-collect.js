@@ -10,9 +10,9 @@
  *   hot path 零开销；开时仅 tap 缓冲 + 定时批量 POST，派发路径不受影响。
  * 失败纪律：无接收器 / 序列化异常一律 try/catch 吞掉 + 限频告警，绝不阻断游戏真实收发。
  */
-import { createLog } from './core/log.js';
-import { NS } from './core/constants.js';
-import { getUid } from './core/player.js';
+import { createLog } from './log.js';
+import { NS } from './constants.js';
+import { getUid } from './player.js';
 
 (function () {
 
