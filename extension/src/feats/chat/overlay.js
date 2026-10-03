@@ -157,9 +157,14 @@ const CSS = `
   .pcw-infopop{left:auto;top:auto;right:auto;bottom:auto;min-width:170px;max-width:250px;
     max-height:240px;overflow-y:auto;padding:8px 10px;}
   .pcw-infotitle{font-size:13px;font-weight:600;color:#cfe0ff;margin:0 0 5px;word-break:break-all;}
-  .pcw-inforow{font-size:12px;color:#d6dde8;line-height:1.75;word-break:break-all;}
+  .pcw-inforow{font-size:12px;color:#d6dde8;line-height:1.75;word-break:break-all;
+      /* 游戏页的 user-select:none 会继承进 shadow，信息行显式放开供手动选中 */
+      user-select:text;-webkit-user-select:text;}
   .pcw-jumplink{color:#7fe0a8;font-weight:600;cursor:pointer;border-bottom:1px dashed rgba(127,224,168,.5);}
   .pcw-jumplink:hover{color:#b6f2ce;}
+  .pcw-copylink{color:#9fd0ff;font-weight:600;cursor:pointer;border-bottom:1px dashed rgba(159,208,255,.5);}
+  .pcw-copylink:hover{color:#cfe6ff;}
+  .pcw-copylink::after{content:' ⧉';font-weight:400;opacity:.7;}
   .pcw-avimg,.pcw-avph{border-radius:8px;object-fit:cover;flex:0 0 auto;}
   .pcw-avph{background:hsl(var(--h,210),45%,38%);color:#fff;font-weight:600;display:grid;place-items:center;}
   .pcw-popav{display:flex;align-items:center;gap:9px;margin:0 0 7px;}
@@ -925,9 +930,10 @@ export class ChatOverlay {
 
   /**
    * 弹出玩家信息卡（名字菜单→查看信息；业务层取到数据后调）。
-   * 行可传字符串或 {s, action}：带 action 的行渲染为可点链接，点击关卡并回调 onJump。
+   * 行可传字符串或 {s, action} / {s, copy}：带 action 渲染为跳转链接（点击关卡并回调 onJump）；
+   * 带 copy 渲染为复制链接（点击复制 copy 文本、不关卡，复用 #copyText 的 toast 反馈）。
    * @param {string} title 标题（昵称）
-   * @param {Array<string|{s:string, action:object}>} lines 信息行（key: value）
+   * @param {Array<string|{s:string, action?:object, copy?:string}>} lines 信息行（key: value）
    * @param {{url?:string, initial?:string, hue?:number}} [av] 头像描述子（可空：无则标题不带图）
    * @returns {void}
    */
@@ -936,6 +942,7 @@ export class ChatOverlay {
     const jumpActs = [];
     const rows = (lines || []).map((ln) => {
       const it = (ln && typeof ln === 'object') ? ln : { s: String(ln == null ? '' : ln) };
+      if (it.copy) return `<div class="pcw-inforow"><span class="pcw-copylink" data-copy="${esc(String(it.copy))}">${esc(it.s)}</span></div>`;
       if (!it.action) return `<div class="pcw-inforow">${esc(it.s)}</div>`;
       const idx = jumpActs.push(it.action) - 1;
       return `<div class="pcw-inforow"><span class="pcw-jumplink" data-jump="${idx}">${esc(it.s)}</span></div>`;
@@ -949,6 +956,13 @@ export class ChatOverlay {
         ev.stopPropagation();
         this.#infoPop.hidden = true;
         this.#notify('onJump', jumpActs[+el.dataset.jump]);
+      });
+    });
+    // 复制行：只复制不关卡片（方便继续看/复制其他行），反馈走 #copyText 自带的 toast
+    this.#infoPop.querySelectorAll('.pcw-copylink').forEach((el) => {
+      el.addEventListener('click', (ev) => {
+        ev.stopPropagation();
+        this.#copyText(el.dataset.copy || '');
       });
     });
     // 先亮出来再按实际渲染尺寸 clamp（固定估算值会把卡片底部截到窗口外）

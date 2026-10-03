@@ -1483,9 +1483,10 @@ function fmtPower(v, round, plain) {
  * 其中 playerInfo 字段是微信绑定资料的内层 JSON 串，昵称在其 username 里；未知形态兜底标量全列）。
  * 坐标行携带跳转 action（serverId 作跨服服号），视图层渲染为可点链接→ onJump 飞图。
  * @param {object} d 应答顶层 parse 产物
- * @returns {Array<string|{s:string, action:object}>}
+ * @param {string} [uid] 查询目标玩家 UID（应答顶层无 uid 字段时的兜底）
+ * @returns {Array<string|{s:string, action?:object, copy?:string}>}
  */
-function infoLines(d) {
+function infoLines(d, uid) {
   var lines = [];
   if (!d || typeof d !== 'object') return lines;
   if (d.level != null) lines.push('等级: ' + d.level);
@@ -1499,13 +1500,18 @@ function infoLines(d) {
   if (d.serverId != null) lines.push('服务器: ' + d.serverId);
   if (d.like != null) lines.push('获赞: ' + d.like);
   if (!lines.length) {
+    // 兜底：已知字段全缺（协议漂移/异常应答）时标量全列；在 UID 行插入前判定，防其恒在把兜底挤成死代码
     for (var k in d) {
       if (lines.length >= 14) break;
+      if (k === 'uid') continue; // UID 另有专行，避免重复
       var v = d[k];
       if (v == null || typeof v === 'object') continue;
       lines.push((INFO_LABELS[k] || INFO_LABELS[k.toLowerCase()] || k) + ': ' + String(v));
     }
   }
+  var shownUid = d.uid != null ? String(d.uid) : (uid != null && uid !== '' ? String(uid) : '');
+  // UID 行带 copy 动作 → 视图层渲染为复制链接（点击即拷、不关卡片）；14 位数字串直显，禁止 Number 化防精度丢失
+  if (shownUid) lines.unshift({ s: 'UID: ' + shownUid, copy: shownUid });
   return lines;
 }
 
@@ -1977,7 +1983,7 @@ function makeHandlers() {
         }
         pmStoreSet(String(entry.uid), d); // 查看信息也写穿缓存（侧栏副行/头像随之更新）
         if (overlay && overlay.isVisible() && familyOf(activeKey) === 'pm') updateSide();
-        overlay.showInfoPop(infoNick(d) || entry.name || '玩家信息', infoLines(d), resolveAvatar(d, entry));
+        overlay.showInfoPop(infoNick(d) || entry.name || '玩家信息', infoLines(d, entry.uid), resolveAvatar(d, entry));
       }).catch((e) => {
         log.warn('PlayerInfo failed: %s', e && e.message);
         overlay.showInfoPop(entry.name || '玩家信息', ['查询异常']);

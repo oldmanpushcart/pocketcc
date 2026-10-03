@@ -715,13 +715,33 @@ import { getUid } from './core/player.js';
             isLink: false, linkType: null, llm: null, emotionId: null,
             raw: msg,
         };
+        // f/fu/tu 存在 JSON 字符串形态（真机历史项与部分推送同构于 chat-window buildEntry 的 safeParse 兜底）：
+        // 不解析则 from.uid 取空，下游按 UID 的白名单/回声判定会静默失效
+        var asObj = function (v) {
+            if (v == null) return {};
+            if (typeof v === 'object') return v;
+            try { return JSON.parse(v) || {}; } catch (e) { return {}; }
+        };
         if (kind === 'pm') {
-            var fu = msg.fu || {}, tu = msg.tu || {};
-            out.from = { uid: fu.uid != null ? String(fu.uid) : '', name: fu.n || '', face: fu.f != null ? fu.f : null, server: fu.s != null ? fu.s : null, lang: fu.lang, fUid: fu.fUid };
-            out.to = { uid: tu.uid != null ? String(tu.uid) : '', name: tu.n || '', face: tu.f != null ? tu.f : null };
+            var fu = asObj(msg.fu), tu = asObj(msg.tu);
+            out.from = { uid: fu.uid != null ? String(fu.uid) : (msg.uid != null ? String(msg.uid) : ''), name: fu.n || '', face: fu.f != null ? fu.f : null, server: fu.s != null ? fu.s : null, lang: fu.lang, fUid: fu.fUid };
+            out.to = { uid: tu.uid != null ? String(tu.uid) : (typeof msg.tu === 'string' || typeof msg.tu === 'number' ? String(msg.tu) : ''), name: tu.n || '', face: tu.f != null ? tu.f : null };
         } else {
-            var f = msg.f || {};
-            out.from = { uid: f.uid != null ? String(f.uid) : '', name: msg.u || '', face: f.f != null ? f.f : null, server: f.s != null ? f.s : null, lang: f.lang, fUid: f.fUid };
+            // 联盟/群聊等频道的 newChatPush 实推项里没有 f 对象（实证报文）：发件人在顶层
+            // uid/fu（字符串 UID），昵称在 fp（JSON 串的 username），需逐级兜底才能拿到 from.uid
+            var f = asObj(msg.f);
+            var fp = asObj(msg.fp);
+            var uidV = f.uid != null ? String(f.uid)
+                : msg.uid != null ? String(msg.uid)
+                : (typeof msg.fu === 'string' || typeof msg.fu === 'number') ? String(msg.fu) : '';
+            out.from = {
+                uid: uidV,
+                name: msg.u || f.n || fp.username || fp.nickname || '',
+                face: f.f != null ? f.f : null,
+                server: f.s != null ? f.s : null,
+                lang: f.lang != null ? f.lang : (fp.lang),
+                fUid: f.fUid != null ? f.fUid : (msg.fu != null && uidV === String(msg.fu) ? String(msg.fu) : undefined),
+            };
         }
         out.isSelf = !!myUid && out.from.uid === myUid;
         var link = parseLink(out.text, msg.llm);

@@ -1,0 +1,1054 @@
+/**
+ * 自动下田（autoFarm）- 日常 feat：按规则行维持「普通资源田 + 联盟机械田（资源塔）」的在途采集
+ *
+ * 用户口径（一行 = 一个田位）：选田类型(金/粮/油/雷神) + 田等级 + ☑只下机械田 + 预设部队(1~16：1~8 战斗预设、9~16 采集预设)。
+ * 取田优先级：田等级 <6 时一律优先机械田（6 级田没有机械田）——先从「联盟机械田活表」按家族命中、按「剩余存活时间」降序（充足优先），并定点 901 确认仍在才下田。
+ *   ☐只下机械田（未勾）→ 机械田没有（未命中/快结束/已毁/探针失败）时回退按类型+等级搜普通田；☑只下机械田 → 只看机械田，没有则本行不下（绝不回退普通田）。
+ * 雷神矿(family16) 田等级上限 3 级（面板联动封顶）。每行维持 1 条在途采集；缺位（到家/被撤/阵亡）即唤醒补派。
+ * 一个矿（含机械田）只能一支部队驻扎：探索到的候选点若已在本人行军表中（去程/到达/采集中）则跳过（返程已让出矿位、不计）。
+ * 补派前查全局出征队列名额，不足只等待、不主动撤田（撤田语义保留给「占领发射井」feat，
+ * 其撤田造成的缺位会由 10019 回城唤醒自动补回）。本轮无合格候选 → 空闲降频等下个唤醒周期。
+ *
+ * 候选来源（两份 dashcam 录制 + extracted 逆向源码交叉实证）：
+ *   普通田 —— 服务端搜索 WORLD_SEARCH_MONSTER(906)：请求 {minLevel, maxLevel, groupType, pointType:2}，
+ *        应答 {point:{r:{itemId,amount,expireTime,ownerId('0'=无主),aid}, x, y, pointType:4}}，服务端直接返回一个可采点。
+ *        groupType = RESOURCE 表里 (家族, 等级) 对应行的 id；家族 = floor(id/100)（1油/5粮/7金/16雷神），
+ *        等级取该行 .level 字段（实证：id 506 的 level=5、1603 的 level=3——不是 itemId%100）。
+ *   机械田 —— 联盟记录发现（视口无关，覆盖全联盟任意地点）：一次性发 ALLIANCE_RECORD_DATA(1193) 全量 +
+ *        订阅 push PUSH_ALLIANCE_RECORD(10452)，把「建造 N级<设施>完毕」记录解析成 {x,y,family,level,ts(建成时刻≈btime)}（设施名→家族：
+ *        采金=金7/炼油=油1/谷仓=粮5/提纯=雷神16，与 RES_FAMILY_BY_TOWER 的 bid 家族一致；坐标取渲染文本末个 "(x,y)"）灌进活表；
+ *        实证塔存活 <10h，故只收 10h 内记录、超期老化剔除。剩余存活时间 = ts + MAP_BUILDING[bid].duration − serverTime（零额外发包）。
+ *        摧毁无记录 → 下田前按剩余时间降序对候选定点 901 GET_WORLD_INFO 确认该点仍是本盟已建成资源塔
+ *        （pointType24 & st=3 & aid=本盟 & bid 家族匹配）才发 902；剩余不足 MECH_MIN_REMAIN_SEC 的「快结束」塔直接剔除；探到已毁即移出活表+拉黑、换下一候选。
+ *        容量闸：901 无驻军字段，故对存在性通过的候选再发 1034 GET_TOWERINFO{id} 取 army_size，配 MAP_BUILDING[bid].force_capacity 判满
+ *        （army_size≥上限=已采满、与游戏 NWorldTowerPopup 同口径 force_capacity−army_size≤0）→ 跳过换下一候选（不拉黑，稍后可能有队返采腾出空间），避免向满塔发 902 吃拒。
+ *   902  MARCH_WORLD_POINT 下田：普通田 marchType=3，机械田 marchType=26；载荷只需 {marchType,x,y,army…}（服务器按坐标定位点），
+ *        形状照抄录制（含 break:0）。902 被拒零成本，拉黑该点换下一候选。
+ *   10019 USER_MARCH_INFO push：state=4（ARRIVED_HOME）到家才释放名额，作「缺位即唤醒」的触发源。
+ *
+ * 账本：storage.data['autoFarm'] 按 UID 隔离，rowIdx → [{marchId,x,y,marchType}]，每行至多 1 条；902 成功即记、
+ * 在途消失即销；重开页面后按 marchType 3/26 认领现存采集行军（mapData.marches 条目坐标取扁平 target_tx/target_ty、状态取 marchState）回填账本，避免重复下田。
+ * 在途核对依赖 mapData.marches：主城场景可能未就绪 → 与 UserData.myMarchNum 交叉判定，不一致时本轮不做写操作。
+ *
+ * 生命周期由 reactor 托管：scenes 限定 Home/NWorldMap，战斗模式暂停（offInCombat）；
+ * 触发源（run 点火 / 10019 回城 / 配置变更 / 兜底定时）全部汇入 triggerCycle，在飞合并为一次补扫。
+ */
+import { createLog } from '../../core/log.js';
+import { game } from '../../core/game.js';
+import { gameData, l10n } from '../../core/game-api.js';
+import { reactor } from '../../core/reactor.js';
+import { storage } from '../../core/storage.js';
+import { Battle } from '../../utils/battle.js';
+import { CMD_GET_WORLD_INFO } from '../map/map-meta.js';
+
+/** @type {ReturnType<createLog>} 模块日志器（tag=AUTO-FARM） */
+const log = createLog('AUTO-FARM');
+
+/** @type {number} RequestId.MARCH_WORLD_POINT：世界地图行军（下田） */
+const CMD_MARCH_WORLD_POINT = 902;
+/** @type {number} RequestId.WORLD_SEARCH_MONSTER：服务端按 (家族,等级) 搜索一个可采资源点 */
+const CMD_WORLD_SEARCH_MONSTER = 906;
+/** @type {number} push USER_MARCH_INFO：本人行军状态更新（state=4 到家 → 缺位唤醒） */
+const PUSH_USER_MARCH_INFO = 10019;
+
+/** @type {number} 行军类型：普通资源田采集（NMarchType.GATHER_RESOURCE） */
+const KIND_FARM = 3;
+/** @type {number} 行军类型：联盟机械田（资源塔）采集（枚举名 ATTACK_TOWER，复用值 26） */
+const KIND_TOWER = 26;
+/** @type {number} 实体类型：资源塔（NWorldMapEntityType.ResourceTower = 901 pointType = 24） */
+const POINT_TYPE_TOWER = 24;
+/** @type {number} TowerState.COMPLETE：塔建造完成、可采集 */
+const TOWER_STATE_COMPLETE = 3;
+/** @type {number} 906 搜索分类 pointType：资源 tab（1野怪/2资源/3集结/4国宝） */
+const SEARCH_POINT_TYPE_RESOURCE = 2;
+/** @type {number} 行军状态：RETURNING（NMarchState=3 返程，已让出矿位——目标点占用判定须排除） */
+const MARCH_STATE_RETURNING = 3;
+/** @type {number} 行军状态：ARRIVED_HOME（部队到家、名额已释放） */
+const MARCH_STATE_ARRIVED_HOME = 4;
+/** @type {number} RequestId.ALLIANCE_RECORD_DATA：全量拉联盟记录（含「建筑」机械田建造事件，视口无关） */
+const CMD_ALLIANCE_RECORD_DATA = 1193;
+/** @type {number} RequestId.GET_TOWERINFO：查资源塔详情（应答 army_size=当前驻军兵力，配 MAP_BUILDING[bid].force_capacity 判满） */
+const CMD_GET_TOWERINFO = 1034;
+/** @type {number} push PUSH_ALLIANCE_RECORD：联盟记录增量推送（新建成机械田即时并入活表） */
+const PUSH_ALLIANCE_RECORD = 10452;
+/** @type {number} 机械田记录/活表最大年龄（秒）：实证塔存活 <10h，超期视为已毁不再下田 */
+const MECH_MAX_AGE_SEC = 10 * 3600;
+/** @type {number} 单轮每行机械田存在性探针上限（候选过多时限流，超出本轮回退普通田、下轮再试） */
+const MECH_PROBE_CAP = 6;
+/**
+ * @type {number} 机械田最小剩余存活时间（秒）：排序后剩余不足此值的塔视为「快结束」直接剔除，
+ * 免得派兵跑到一个将到期（甚至往返路上就消失）的田上。仅在能查到存活时长时生效。
+ */
+const MECH_MIN_REMAIN_SEC = 10 * 60;
+
+/** @type {number[]} 合法资源家族编码：1 石油 / 5 粮食 / 7 金矿 / 16 雷神 */
+const RES_FAMILIES = [1, 5, 7, 16];
+/**
+ * 塔家族（floor(bid/1000)）→ 资源家族编码反查表（51 金塔 / 52 油塔 / 53 粮塔 / 71 雷神塔）。
+ * @type {Object<number,number>}
+ */
+const RES_FAMILY_BY_TOWER = { 51: 7, 52: 1, 53: 5, 71: 16 };
+/**
+ * 联盟记录文本里的设施名 → 资源家族编码（与 RES_FAMILY_BY_TOWER 的 bid 家族口径一致）：
+ * 采金=金矿(7) / 炼油=石油(1) / 谷仓=粮食(5) / 提纯=雷神(16)。仅匹配中文（本工具面向国服）。
+ * @type {Object<string,number>}
+ */
+const FACILITY_FAMILY = { '采金': 7, '炼油': 1, '谷仓': 5, '提纯': 16 };
+/**
+ * 资源家族编码 → 塔 bid 前缀（RES_FAMILY_BY_TOWER 的反向）：金(7)→51 / 油(1)→52 / 粮(5)→53 / 雷神(16)→71，
+ * 供由 (family,level) 反推 bid（= 前缀·1000+等级）去 MAP_BUILDING 表查存活时长 duration。
+ * @type {Object<number,number>}
+ */
+const TOWER_PREFIX_BY_FAMILY = { 7: 51, 1: 52, 5: 53, 16: 71 };
+
+/** @type {string} 账本逻辑键（storage.data 下，UID 前缀隔离） */
+const LEDGER_NAME = 'autoFarm';
+
+/**
+ * 内置调优常量（面板不暴露；active/idle 两档兜底定时同 domain-treasure 惯例）
+ * @type {object}
+ */
+const cfg = {
+    /** 仍有缺位未补上时的兜底扫描间隔（毫秒）：1 分钟 */
+    activeScanInterval: 1000 * 60,
+    /** 全部田位都在途时的兜底间隔（毫秒）：10 分钟（正常靠 10019 唤醒，这里只是断推兜底） */
+    idleScanInterval: 1000 * 60 * 10,
+    /** 逐条 902 之间的休眠（毫秒）：防 marches 入表延迟导致同轮超发 */
+    marchInterval: 1000 * 5,
+    /** 推送唤醒补扫的最小间隔（毫秒）：合并突发回城推送 */
+    pushScanMinGap: 1000 * 4,
+};
+
+/** @type {object|null} 网络底座（promise 封装 pocketcc.net） */
+var net;
+/** @type {object|null} DataCenter.DATA（UserData 名额/等级/服务器时间） */
+var dataCenter;
+/** @type {object|null} NWorldMapData.instance（marches：本人在外行军表；entities：世界地图实体缓存） */
+var mapData;
+
+/** @type {object|null} reactor 注入的上下文；alive() 反映运行态 */
+var ctxRef = null;
+/** @type {boolean} 周期在飞闸门，防重入 */
+var scanning = false;
+/** @type {boolean} 在飞期间来了新触发，置位，本轮结束后补扫一次 */
+var scanPending = false;
+/** @type {number|null} 兜底定时器；pause 后 alive()=false，到点空转不再自重排 */
+var scanTimer = null;
+/** @type {number} 上次推送唤醒的墙钟时刻（毫秒），合并突发 */
+var lastPushWakeAt = 0;
+/** @type {boolean} 上轮是否仍有缺位未补（决定 active/idle 两档兜底间隔） */
+var backlogActive = false;
+
+/**
+ * 本地被拒/不合格点黑名单（"x,y" 键，run 时清空）：902 被拒零成本，拉黑后换下一候选，
+ * 避免每个周期都在同一个不可下点上吃拒。
+ * @type {Set<string>}
+ */
+var blacklist = new Set();
+
+/**
+ * 联盟机械田活表：坐标键 "x,y" → {x,y,family,level,ts(秒)}。
+ * 来源 = 1193 全量 + 10452 推送解析出的「建造 N级设施完毕」记录；下田前逐个定点 901 确认仍在，
+ * 探到已毁即移出并拉黑；每条 ts 超 MECH_MAX_AGE_SEC 由 pruneMechLive 老化剔除（塔存活 <10h）。
+ * @type {Map<string, {x:number,y:number,family:number,level:number,ts:number}>}
+ */
+var mechLive = new Map();
+/** @type {boolean} 是否已跑过一次 1193 全量（未跑前机械田本轮回退普通田） */
+var mechLoaded = false;
+/** @type {Promise|null} 1193 全量在飞 promise（单飞去重；await 者共享同一 promise，确保首轮真正等到机械田落地再选点，不再空返回） */
+var mechLoading = null;
+
+/**
+ * 本地账本：rowIdx（字符串键）→ [{marchId:string, x:number, y:number, marchType:number}]，每行至多 1 条。
+ * 902 成功即记；在途核对发现 marchId 消失/坐标无对应行军即销。storage.data 持久化，跨页面刷新认领回填。
+ * @type {Object<string, Array<object>>}
+ */
+var ledger = {};
+/** @type {boolean} 账本是否已从盘读回（未读回前不做写操作，防拿空账本重复下田） */
+var ledgerLoaded = false;
+/** @type {boolean} 账本读盘在飞标记（单飞，防并发触发重复读盘） */
+var ledgerLoading = false;
+
+/** @type {Object<string, number>} (family_level) → groupType 缓存（RESOURCE 表页面生命周期内不变） */
+var groupTypeCache = {};
+/** @type {Object<number, number>} bid → 塔存活时长秒缓存（MAP_BUILDING.duration，页面生命周期内不变；查不到存 0） */
+var towerLifeCache = {};
+/** @type {Object<number, number>} bid → 塔驻军容量上限缓存（MAP_BUILDING.force_capacity，页面生命周期内不变；查不到存 0） */
+var towerCapCache = {};
+
+/** @type {boolean} install 幂等守卫 */
+var installed = false;
+
+/** @type {object} 模块配置（configure 灌入）：rules 为归一化后的行数组 */
+var MCFG = { rules: [] };
+
+/**
+ * 功能是否仍在运行（定时器与在飞流程的存活判定）
+ * @returns {boolean}
+ */
+function aliveFn() {
+    return ctxRef ? ctxRef.alive() : false;
+}
+
+/**
+ * 等待毫秒（负值钳到 0）
+ * @param {number} ms 时长
+ * @returns {Promise<void>}
+ */
+function sleep(ms) {
+    return new Promise(function (resolve) { setTimeout(resolve, Math.max(0, ms | 0)); });
+}
+
+/**
+ * 应答 data 归一化：旧 JSON 链路 data 常为字符串，兜底已解析对象。
+ * @param {*} d net.Ret.data
+ * @returns {object|null}
+ */
+function parseData(d) {
+    if (d == null) return null;
+    if (typeof d === 'object') return d;
+    if (typeof d === 'string') {
+        try { return JSON.parse(d); } catch (err) { return null; }
+    }
+    return null;
+}
+
+/** @returns {object} DataCenter.DATA.UserData（读不到回空对象） */
+function userData() {
+    return (dataCenter && dataCenter.UserData) || {};
+}
+
+/**
+ * marches 是否已就绪：NWorldMapData.instance.marches 有键即就绪。
+ * 主城场景该表可能为空/未同步；与 UserData.myMarchNum 交叉——总在外为 0 时空表即真相（可安全派）。
+ * @param {number} outTotal UserData.myMarchNum（本人全部在外行军数）
+ * @returns {boolean}
+ */
+function marchesUsable(outTotal) {
+    var m = mapData && mapData.marches;
+    if (m && Object.keys(m).length) return true;
+    return outTotal <= 0;
+}
+
+/**
+ * 遍历本人 marches 条目（值对象），过滤掉空/非本人。
+ * 本人判定：realUid（部分行军被游戏改写 uid）优先，回落 uid。口径照抄 launch-silo。
+ * @returns {object[]} 本人行军条目数组
+ */
+function myMarchList() {
+    var m = mapData && mapData.marches;
+    if (!m) return [];
+    var uid = String(userData().UID);
+    var out = [];
+    for (var k in m) {
+        if (!Object.prototype.hasOwnProperty.call(m, k)) continue;
+        var march = m[k];
+        if (!march) continue;
+        var who = march.realUid != null ? march.realUid : march.uid;
+        if (String(who) === uid) out.push(march);
+    }
+    return out;
+}
+
+/**
+ * 行军条目目标点 (tx,ty)：优先读扁平 target_tx/target_ty——mapData.marches 条目由 NWorldMapMarchModel
+ * 把 marchInfo.target 摊平成 target_tx/target_ty/target_tk…（无 target 子对象）；回落嵌套 target.tx/ty
+ * （兼容直接传协议 marchInfo 的调用路径）。取不到回 null。
+ * @param {object} mg 行军条目
+ * @returns {{tx:number,ty:number}|null}
+ */
+function marchTarget(mg) {
+    if (!mg) return null;
+    if (mg.target_tx != null && mg.target_ty != null) return { tx: mg.target_tx | 0, ty: mg.target_ty | 0 };
+    var t = mg.target;
+    if (t && t.tx != null && t.ty != null) return { tx: t.tx | 0, ty: t.ty | 0 };
+    return null;
+}
+
+/**
+ * 行军条目状态：优先 marchState（marches 摊平字段名 = marchInfo.state，同一套 NMarchState），
+ * 回落 state（直接传协议 marchInfo 时的字段名）。与 MARCH_STATE_* 常量对齐。
+ * @param {object} mg 行军条目
+ * @returns {number}
+ */
+function marchStateOf(mg) {
+    if (!mg) return 0;
+    return (mg.marchState != null ? mg.marchState : mg.state) | 0;
+}
+
+/**
+ * 本人全部「非返程」行军已占用的目标点集合（"tx,ty" 键）。
+ * 普通田只能一支部队驻扎、机械田（建筑）虽允许多队驻采，但本器不为省名额而让自己两支队伍抢同一塔，
+ * 故一律把本人已在途点预规为占用：去程/到达/采集中都算占位，唯独返程（marchState=RETURNING）已让出矿位不计。
+ * @param {object[]} marches myMarchList() 结果（mapData.marches 条目）
+ * @returns {Set<string>} 占用点键集合
+ */
+function occupiedPointSet(marches) {
+    var s = new Set();
+    for (var i = 0; i < marches.length; i++) {
+        var mg = marches[i];
+        if (marchStateOf(mg) === MARCH_STATE_RETURNING) continue;
+        var tp = marchTarget(mg);
+        if (tp) s.add(tp.tx + ',' + tp.ty);
+    }
+    return s;
+}
+
+// ── 规则归一 ────────────────────────────────────────────────────────
+/**
+ * 面板原始 rules → 归一化行数组（钳值 + 类型对齐）。
+ * @param {Array<object>} raw
+ * @returns {Array<{enabled:boolean,family:number,level:number,mechOnly:boolean,preset:number}>}
+ */
+function normalizeRules(raw) {
+    var out = [];
+    var list = Array.isArray(raw) ? raw : [];
+    for (var i = 0; i < list.length; i++) {
+        var r = list[i] || {};
+        var fam = RES_FAMILIES.indexOf(r.family | 0) >= 0 ? r.family | 0 : 7;
+        var maxLv = fam === 16 ? 3 : 6;   // 雷神矿最高 3 级，其余 1~6
+        out.push({
+            enabled: !!r.enabled,
+            family: fam,
+            level: Math.max(1, Math.min(maxLv, r.level | 0)) || 5,
+            mechOnly: !!r.mechOnly,
+            preset: Math.max(1, Math.min(16, r.preset | 0) || 1),
+        });
+    }
+    return out;
+}
+
+/**
+ * 面板预设号（1~16）→ Battle 预设 (index, type)：1~8 为战斗预设（type=0，index=本身），
+ * 9~16 为采集预设（type=1，index=预设号-8）。与 battle.js 的 getPreMarchByIndex(index-1, type) 口径对齐。
+ * @param {number} p 面板预设号（1~16）
+ * @returns {{index:number,type:number}}
+ */
+function presetArgs(p) {
+    var n = p | 0;
+    if (n >= 9) return { index: n - 8, type: 1 };
+    return { index: Math.max(1, n), type: 0 };
+}
+
+// ── 账本持久化 ──────────────────────────────────────────────────────
+/**
+ * 从盘读回账本（单飞；读失败不置 loaded、保留下次重试机会——同 alliance-rally dailyState 语义）。
+ * @returns {Promise<void>}
+ */
+function loadLedger() {
+    if (ledgerLoaded || ledgerLoading) return Promise.resolve();
+    ledgerLoading = true;
+    return Promise.resolve(storage.data.get(LEDGER_NAME)).then(function (saved) {
+        ledgerLoading = false;
+        if (saved && typeof saved === 'object') ledger = saved;
+        ledgerLoaded = true;
+    }).catch(function (err) {
+        ledgerLoading = false;
+        log.warn('load ledger failed, retry next cycle. %s', err && err.message);
+    });
+}
+
+/** 账本落盘（fire-and-forget，失败仅 warn，内存账本仍是本轮真相） */
+function persistLedger() {
+    if (!ledgerLoaded) return;
+    Promise.resolve(storage.data.set(LEDGER_NAME, ledger)).catch(function (err) {
+        log.warn('persist ledger failed.', err);
+    });
+}
+
+// ── 在途核对 ────────────────────────────────────────────────────────
+/**
+ * 用当前 marches 实况修剪/回填账本：
+ *   1) 行号越界（规则行被删/改）→ 该键整体作废；
+ *   2) 条目 marchId 仍在本人行军表、或（marchId 缺失时）坐标仍有对应采集行军（marchType 3/26）→ 保留；否则删除；
+ *   3) 认领孤儿：marchType 3/26 的采集行军未被任何账本行引用 → 回填到第一个缺位的启用行
+ *      （跨页面刷新不重复下田；手动下的田也算数；一行普通/机械皆可，故只按「是否采集行军」认领；
+ *       marches 摊平条目无 targetType 字段，故仅凭 marchType 3/26 判定，坐标取扁平 target_tx/target_ty）。
+ * @param {object[]} marches myMarchList() 结果
+ * @param {object[]} allRules 全部规则行（含未启用，下标即规则行 rowIdx）
+ * @returns {boolean} 账本是否发生变化（需要落盘）
+ */
+function reconcileLedger(marches, allRules) {
+    var changed = false;
+    var liveIds = {};
+    var liveCoord = {};
+    for (var i = 0; i < marches.length; i++) {
+        var mg = marches[i];
+        if (mg.marchId != null) liveIds[String(mg.marchId)] = mg;
+        var tp = marchTarget(mg);
+        if (tp) liveCoord[tp.tx + ',' + tp.ty] = mg;
+    }
+    var isGather = function (mt) { return mt === KIND_FARM || mt === KIND_TOWER; };
+    // 1)+2) 逐行修剪
+    for (var key in ledger) {
+        if (!Object.prototype.hasOwnProperty.call(ledger, key)) continue;
+        var idx = +key;
+        if (!(idx >= 0 && idx < allRules.length)) { delete ledger[key]; changed = true; continue; }
+        var keep = [];
+        var arr = Array.isArray(ledger[key]) ? ledger[key] : [];
+        for (var n = 0; n < arr.length; n++) {
+            var e = arr[n] || {};
+            var mg2 = (e.marchId && liveIds[String(e.marchId)]) || liveCoord[(e.x + ',' + e.y)];
+            if (mg2 && isGather(mg2.marchType | 0)) keep.push(e);
+        }
+        if (keep.length !== arr.length) changed = true;
+        if (keep.length) ledger[key] = keep; else delete ledger[key];
+    }
+    // 3) 认领孤儿采集行军
+    var claimed = {};
+    for (var k2 in ledger) {
+        var a2 = ledger[k2] || [];
+        for (var q = 0; q < a2.length; q++) if (a2[q].marchId) claimed[String(a2[q].marchId)] = 1;
+    }
+    for (var s = 0; s < marches.length; s++) {
+        var ms = marches[s];
+        var mt = ms.marchType | 0;
+        if (!isGather(mt)) continue;   // marches 条目无 targetType，marchType 3/26 已足以判定资源采集行军
+        var tp2 = marchTarget(ms);
+        if (!tp2) continue;
+        var mid = String(ms.marchId);
+        if (claimed[mid]) continue;
+        var filled = -1;
+        for (var r2 = 0; r2 < allRules.length; r2++) {
+            if (allRules[r2].enabled && !(ledger[r2] && ledger[r2].length)) { filled = r2; break; }
+        }
+        if (filled < 0) continue;
+        ledger[filled] = [{ marchId: mid, x: tp2.tx, y: tp2.ty, marchType: mt }];
+        claimed[mid] = 1;
+        changed = true;
+        log.debug('adopt orphan gather march. row=%d marchId=%s mt=%d', filled, mid, mt);
+    }
+    return changed;
+}
+
+// ── 候选来源 ────────────────────────────────────────────────────────
+/**
+ * (家族, 等级) → groupType（RESOURCE 表行 id）：家族 = floor(id/100)，等级取该行 .level 字段（非 id%100）。
+ * 首次扫表命中即缓存；找不到返回 0（调用方据此放弃本行普通田搜索）。
+ * @param {number} family 资源家族编码（1油/5粮/7金/16雷神）
+ * @param {number} level 田等级（1~6）
+ * @returns {number} RESOURCE 行 id，未命中 0
+ */
+function findGroupType(family, level) {
+    var ck = family + '_' + level;
+    if (groupTypeCache[ck] != null) return groupTypeCache[ck];
+    var rows = l10n.tableRows('RESOURCE') || [];
+    var gid = 0;
+    for (var i = 0; i < rows.length; i++) {
+        var row = rows[i];
+        if (!row) continue;
+        var id = Number(row.id) || 0;
+        if (!id || Math.floor(id / 100) !== family) continue;
+        if ((Number(row.level) || 0) !== level) continue;
+        gid = id;
+        break;
+    }
+    if (gid) groupTypeCache[ck] = gid;
+    return gid;
+}
+
+// ── 联盟机械田发现（记录解析 + 存在性探针） ──────────────────────────
+/**
+ * 复刻联盟记录文本渲染（AllianceRecordController.dealOneObj 口径）：
+ *   按 specId 查 alliance_information 表拿模板 .text，params 里含 RS(0x1e) 的子参数各自 getText(d[1])，
+ *   再交给 l10n.text（LOCAL.getText）拼成最终中文串。失败回空串（调用方据此跳过）。
+ * @param {object} e 记录对象 {specId, params[]}
+ * @returns {string} 渲染后的记录文本
+ */
+function renderRecordMsg(e) {
+    var o = l10n.tableRow('alliance_information', e.specId);
+    if (!o || !o.text) return '';
+    var raw = Array.isArray(e.params) ? e.params : [];
+    var RS = String.fromCharCode(30);
+    var args = [];
+    for (var i = 0; i < raw.length; i++) {
+        var p = String(raw[i] == null ? '' : raw[i]);
+        var d = p.indexOf(RS) >= 0 ? p.split(RS) : null;
+        args.push(d && d.length > 1 ? l10n.text(d[1]) : p);
+    }
+    try { return String(l10n.text.apply(null, [o.text].concat(args)) || ''); } catch (err) { return ''; }
+}
+
+/**
+ * 单条联盟记录 → 机械田活表条目：只收「建造 N级<设施>完毕」且 sendTime 在 10h 内的记录，
+ * 从渲染文本提 family/level/坐标（末个 "(x,y)"）灌进 mechLive。命中返回 true。
+ * @param {object} e 记录对象 {specId, params[], sendTime(秒)}
+ * @returns {boolean} 是否并入了一条机械田
+ */
+function ingestMechRecord(e) {
+    if (!e || e.specId == null) return false;
+    var ts = Number(e.sendTime) || 0;
+    if (ts > 1e11) ts = Math.floor(ts / 1000);   // ms→s 兜底
+    var now = gameData.serverTime();
+    if (!ts || (now && now - ts > MECH_MAX_AGE_SEC)) return false;
+    var msg = renderRecordMsg(e);
+    if (!msg || msg.indexOf('建造') < 0 || msg.indexOf('完毕') < 0) return false;
+    var fm = msg.match(/(\d+)\s*级\s*(采金|炼油|谷仓|提纯)\s*设施/);
+    if (!fm) return false;
+    var family = FACILITY_FAMILY[fm[2]];
+    if (!family) return false;
+    var level = Number(fm[1]) || 0;
+    var cm = msg.match(/\((\d+)\s*[，,]\s*(\d+)\)/g);
+    if (!cm || !cm.length) return false;
+    var last = cm[cm.length - 1].match(/(\d+)\s*[，,]\s*(\d+)/);
+    var x = Number(last[1]) || 0, y = Number(last[2]) || 0;
+    if (!x && !y) return false;
+    mechLive.set(x + ',' + y, { x: x, y: y, family: family, level: level, ts: ts });
+    return true;
+}
+
+/**
+ * 全量拉联盟记录（1193，视口无关）→ 解析灌入活表。单飞（mechLoading），永不 reject。
+ * @returns {Promise<void>}
+ */
+function loadMechRecords() {
+    if (mechLoading) return mechLoading;   // 已在飞：返回同一 promise，让 await 的调用方（cyclePass 首轮）真正等到落地，而非空返回
+    mechLoading = net.send(CMD_ALLIANCE_RECORD_DATA, {}).then(function (ret) {
+        mechLoading = null;
+        if (!ret || !ret.ok) return;
+        var d = parseData(ret.data) || {};
+        var arr = Array.isArray(d.ret) ? d.ret : (Array.isArray(d.list) ? d.list : null);
+        if (!arr) return;
+        var added = 0;
+        for (var i = 0; i < arr.length; i++) { try { if (ingestMechRecord(arr[i])) added++; } catch (err) { } }
+        mechLoaded = true;
+        log.info('alliance mech records loaded: %d tower hit, live=%d.', added, mechLive.size);
+    }).catch(function (err) { mechLoading = null; log.debug('1193 load failed, retry next cycle. %s', err && err.message); });
+    return mechLoading;
+}
+
+/** 老化剔除：活表里 ts 超 MECH_MAX_AGE_SEC 的条目（塔存活 <10h，超期视为已毁）。 */
+function pruneMechLive() {
+    var now = gameData.serverTime(); if (!now) return;
+    mechLive.forEach(function (c, key) { if (now - (c.ts || 0) > MECH_MAX_AGE_SEC) mechLive.delete(key); });
+}
+
+/**
+ * (家族,等级) → 塔 bid：前缀·1000 + 等级（实证 71003=雷神 3 级、52006=油 6 级）。无对应前缀回 0。
+ * @param {number} family 资源家族编码
+ * @param {number} level 塔等级
+ * @returns {number}
+ */
+function towerBidForLevel(family, level) {
+    var pre = TOWER_PREFIX_BY_FAMILY[family];
+    return pre ? (pre * 1000 + (level | 0)) : 0;
+}
+
+/**
+ * 资源塔存活时长（秒）：MAP_BUILDING[bid].duration——游戏 NWorldTowerPopup 的 leftTime 同源字段
+ * （leftTime = duration − (serverTime − btime)）。表未就绪/字段缺失回 0（调用方降级按 ts 新度排）。
+ * @param {number} family 资源家族编码
+ * @param {number} level 塔等级
+ * @returns {number}
+ */
+function towerLifespanSec(family, level) {
+    var bid = towerBidForLevel(family, level);
+    if (!bid) return 0;
+    if (towerLifeCache[bid] != null) return towerLifeCache[bid];
+    var r = l10n.tableRow('MAP_BUILDING', bid);
+    var life = r ? Number(r.duration) || 0 : 0;
+    towerLifeCache[bid] = life;
+    return life;
+}
+
+/**
+ * 定点 901 存在性探针：查 (x,y) 是否仍是「本盟已建成、家族匹配」的资源塔。
+ * 命中时一并带回塔 id（b.id 字符串，防 Int64 截断）与 bid，供调用方发 1034 查容量。
+ * 永不 reject。@returns {Promise<{status:'ok'|'gone'|'error', id?:string, bid?:number}>} error=请求失败（本行本轮回退普通田）
+ */
+function probeMechTower(x, y, wantFamily) {
+    var u = userData();
+    var body = { x: x, y: y, k: u.ServerId | 0, rid: 0, width: 20, height: 20, marchInfo: false, viewLevel: 1 };
+    return net.send(CMD_GET_WORLD_INFO, body).then(function (ret) {
+        if (!ret || !ret.ok) return { status: 'error' };
+        var d = parseData(ret.data) || {};
+        var list = Array.isArray(d.pointList) ? d.pointList : [];
+        var myAid = gameData.myAid();
+        for (var i = 0; i < list.length; i++) {
+            var p = list[i];
+            if (!p || (p.x | 0) !== x || (p.y | 0) !== y) continue;
+            if ((p.pointType | 0) !== POINT_TYPE_TOWER) return { status: 'gone' };
+            var b = p.b || {};
+            if ((Number(b.st) || 0) !== TOWER_STATE_COMPLETE) return { status: 'gone' };
+            if (myAid && Number(b.aid) !== myAid) return { status: 'gone' };
+            if (wantFamily && RES_FAMILY_BY_TOWER[Math.floor((Number(b.bid) || 0) / 1000)] !== wantFamily) return { status: 'gone' };
+            return { status: 'ok', id: b.id != null ? String(b.id) : null, bid: Number(b.bid) || 0 };
+        }
+        return { status: 'gone' };
+    }).catch(function () { return { status: 'error' }; });
+}
+
+/**
+ * 资源塔驻军容量上限（force_capacity）：MAP_BUILDING[bid].force_capacity（游戏 NWorldTowerPopup 判满同源字段，
+ * 满判据 = force_capacity − army_size ≤ 0）。表未就绪/字段缺失回 0（调用方据此跳过容量闸）。
+ * @param {number} bid 塔 bid（901 的 b.bid）
+ * @returns {number}
+ */
+function towerForceCapacity(bid) {
+    if (!bid) return 0;
+    if (towerCapCache[bid] != null) return towerCapCache[bid];
+    var r = l10n.tableRow('MAP_BUILDING', bid);
+    var cap = r ? Number(r.force_capacity) || 0 : 0;
+    towerCapCache[bid] = cap;
+    return cap;
+}
+
+/**
+ * 资源塔当前驻军兵力 army_size（1034 GET_TOWERINFO {id}，id 取 901 的 b.id 字符串，防 Int64 截断）。
+ * 永不 reject；请求失败/无字段回 -1（调用方按「未知」不拦，交由 902 结果兜底）。
+ * @param {string} id 塔 id（字符串）
+ * @returns {Promise<number>}
+ */
+function towerArmySize(id) {
+    if (!id) return Promise.resolve(-1);
+    return net.send(CMD_GET_TOWERINFO, { id: id }).then(function (ret) {
+        if (!ret || !ret.ok) return -1;
+        var d = parseData(ret.data) || {};
+        var n = Number(d.army_size);
+        return isFinite(n) ? n : -1;
+    }).catch(function () { return -1; });
+}
+
+/**
+ * 为一行挑联盟机械田：活表按家族命中 → 按「剩余存活时间」降序（充足优先，等级高作次键）
+ *   ——剩余时间 = 建成时刻 ts(≈btime) + 存活时长 duration − serverTime，均本地算、零额外发包；
+ * → 剔除剩余 < MECH_MIN_REMAIN_SEC 的「快结束」塔（仅存活时长可查时生效）→ 逐个定点 901 确认仍在，
+ * 再对存在性通过的候选发 1034 查 army_size 配 force_capacity 过容量闸（满则跳过、不拉黑）才返回；
+ * 探到已毁即移出活表+拉黑换下一候选；探针失败/容量未知不拦/超上限/无候选回 null（调用方回退普通田）。
+ * @param {object} row 归一化规则行
+ * @param {Set<string>} taken 本轮已派点键
+ * @returns {Promise<{x:number,y:number,marchType:number}|null>}
+ */
+async function pickMechTower(row, taken) {
+    var now = gameData.serverTime();
+    var scored = [];
+    mechLive.forEach(function (c) {
+        if (c.family !== row.family) return;
+        var key = c.x + ',' + c.y;
+        if (blacklist.has(key) || taken.has(key)) return;
+        var life = towerLifespanSec(c.family, c.level);
+        var hasLife = life > 0 && !!now;
+        // 剩余时间（秒）：能查到存活时长则用 ts+life-now；否则退化为 ts 新度（大=新建=剩余多）
+        var remain = hasLife ? (c.ts + life - now) : (c.ts || 0);
+        scored.push({ c: c, remain: remain, hasLife: hasLife });
+    });
+    // 存活时长全可查时才按绝对剩余剔除快结束的塔；部分不可查时不误杀（仅靠排序优先）
+    if (scored.length && scored.every(function (s) { return s.hasLife; })) {
+        scored = scored.filter(function (s) { return s.remain >= MECH_MIN_REMAIN_SEC; });
+    }
+    scored.sort(function (a, b) { return (b.remain - a.remain) || (b.c.level - a.c.level); });
+    var probed = 0;
+    for (var i = 0; i < scored.length; i++) {
+        var c = scored[i].c; var key = c.x + ',' + c.y;
+        if (probed >= MECH_PROBE_CAP) break;
+        probed++;
+        var pr = await probeMechTower(c.x, c.y, row.family);
+        if (pr.status === 'error') return null;
+        if (pr.status === 'gone') { mechLive.delete(key); blacklist.add(key); continue; }
+        // 容量闸：塔存在且已建成，但可能已被采满（army_size ≥ force_capacity）→ 902 必被拒。
+        // 本地查 force_capacity，可查则发 1034 取 army_size 比对；满则跳过本候选（不拉黑——稍后可能有队返采腾出空间）。
+        var cap = towerForceCapacity(pr.bid);
+        if (cap > 0 && pr.id) {
+            var cur = await towerArmySize(pr.id);
+            if (!aliveFn()) return null;
+            if (cur >= 0 && cur >= cap) {
+                log.debug('mech tower full, skip. x=%d y=%d army=%d cap=%d', c.x, c.y, cur, cap);
+                continue;
+            }
+        }
+        return { x: c.x, y: c.y, marchType: KIND_TOWER };
+    }
+    return null;
+}
+
+/**
+ * 为一行搜一个普通田（906，服务端返回一个可采点）。永不 reject。
+ * @param {object} row 归一化规则行
+ * @param {Set<string>} taken 本轮已派点键
+ * @returns {Promise<{x:number,y:number,marchType:number}|null>}
+ */
+async function pickNormalFarm(row, taken) {
+    var gid = findGroupType(row.family, row.level);
+    if (!gid) {
+        log.warn('no RESOURCE row for family=%d level=%d, skip normal search.', row.family, row.level);
+        return null;
+    }
+    var ret;
+    try {
+        ret = await net.send(CMD_WORLD_SEARCH_MONSTER, {
+            minLevel: row.level, maxLevel: row.level, groupType: gid, pointType: SEARCH_POINT_TYPE_RESOURCE,
+        });
+    } catch (err) {
+        log.debug('906 search send failed. %s', err && err.message);
+        return null;
+    }
+    if (!ret || !ret.ok) return null;
+    var d = parseData(ret.data) || {};
+    var pt = d.point || (Array.isArray(d.pointList) ? d.pointList[0] : null);
+    if (!pt || pt.x == null || pt.y == null) return null;
+    var key = (pt.x | 0) + ',' + (pt.y | 0);
+    if (blacklist.has(key) || taken.has(key)) return null;
+    var r = pt.r || {};
+    if (r.ownerId != null && String(r.ownerId) !== '0') return null;
+    if ((Number(r.amount) || 0) <= 0) return null;
+    return { x: pt.x | 0, y: pt.y | 0, marchType: KIND_FARM };
+}
+
+// ── 派发 ────────────────────────────────────────────────────────────
+/**
+ * 下田 902：marchType=候选带回来的类型（3 普通田 / 26 机械田），载荷形状照抄录制（含 break:0）。永不 reject。
+ * @param {{x:number,y:number}} coord 目标点
+ * @param {number} marchType 行军类型（3 普通田 / 26 机械田）
+ * @param {object} plan MarchData（5 字段）
+ * @returns {Promise<object>} net.Ret
+ */
+async function sendFarm(coord, marchType, plan) {
+    try {
+        return await net.send(CMD_MARCH_WORLD_POINT, {
+            marchType: marchType,
+            x: coord.x,
+            y: coord.y,
+            armyList: plan.armyListNew,
+            armyListNew: plan.armyListNew,
+            heroList: plan.heroList,
+            trapList: plan.trapList,
+            break: 0,
+            formation: 0,
+            formationV2: plan.formationV2,
+            extraArmy: plan.extraArmy,
+        });
+    } catch (err) {
+        log.warn('902 send error. x=%d;y=%d', coord.x, coord.y, err);
+        return net.Ret.from(-1, null);
+    }
+}
+
+// ── 周期引擎 ────────────────────────────────────────────────────────
+/**
+ * 兜底定时器武装：自重排一次 triggerCycle；pause 后 alive()=false，到点空转不再自重排。
+ * @param {number} delay 延迟（毫秒）
+ */
+function scheduleCycle(delay) {
+    if (!aliveFn()) return;
+    if (scanTimer) clearTimeout(scanTimer);
+    scanTimer = setTimeout(function () {
+        scanTimer = null;
+        if (aliveFn()) triggerCycle();
+    }, Math.max(0, delay));
+}
+
+/**
+ * 周期触发汇入口：run 点火 / 10019 回城 / 配置变更 / 兜底定时都走这里。
+ * 在飞时不并发进入，只置 scanPending，本轮结束后补扫一次。
+ */
+function triggerCycle() {
+    if (!aliveFn()) return;
+    if (!ledgerLoaded) {   // 账本未从盘读回前不派：防拿空账本重复下田；读回成功后自会续一轮
+        loadLedger().then(function () {
+            if (!aliveFn()) return;
+            if (ledgerLoaded) triggerCycle();
+            else scheduleCycle(cfg.activeScanInterval);  // 读回失败：降速重试，不留紧密循环
+        });
+        return;
+    }
+    if (scanning) {
+        scanPending = true;
+        return;
+    }
+    doCycle().catch(function (err) {
+        log.warn('cycle threw.', err);
+    });
+}
+
+/**
+ * 单轮周期主体：在途核对 → 找缺位行 → 名额闸门 → 逐行取田（☑机械田先本地机械、无则搜普通田）→ 派发。
+ * 早退路径只置 backlogActive 后正常返回（分档重排由 doCycle 末尾统一做，绝不能在定时重排前 return）。
+ * @returns {Promise<void>}
+ */
+async function cyclePass() {
+    var all = MCFG.rules || [];
+    var rules = [];
+    var ruleIdx = [];
+    for (var i = 0; i < all.length; i++) if (all[i].enabled) { rules.push(all[i]); ruleIdx.push(i); }
+    if (!rules.length) { backlogActive = false; return; }
+
+    var u = userData();
+    var outTotal = u.myMarchNum | 0;
+    if (!marchesUsable(outTotal)) {
+        log.debug('march data not ready (Home?), skip write ops this cycle.');
+        backlogActive = true;
+        return;
+    }
+
+    // 在途核对 + 缺位行（账本键=规则行原始下标）
+    var marches = myMarchList();
+    if (reconcileLedger(marches, all)) persistLedger();
+    var missingPos = [];  // 缺位行在 rules（启用行数组）中的下标
+    for (var m = 0; m < rules.length; m++) {
+        if (!(ledger[ruleIdx[m]] && ledger[ruleIdx[m]].length)) missingPos.push(m);
+    }
+    if (!missingPos.length) {
+        backlogActive = false;
+        return;
+    }
+
+    // 名额闸门：无空位只等下个唤醒周期（不主动撤田——撤田语义保留给占领发射井 feat）
+    var free = (u.myMarchNumMAX | 0) - outTotal;
+    if (free <= 0) {
+        log.debug('no free march slot, wait for arrival wake. missing=%d', missingPos.length);
+        backlogActive = true;
+        return;
+    }
+
+    // 点占用表：一个矿（含机械田）只能一支部队驻扎，把本人全部「非返程」行军的目标点预规为占用（种子进 taken）；
+    // pickMechTower/pickNormalFarm 的 taken 过滤会自动跳过这些点（本轮派发成功的点也会并入）。
+    var taken = occupiedPointSet(marches);
+    pruneMechLive();
+    var dispatched = 0;
+    for (var t = 0; t < missingPos.length; t++) {
+        if (!aliveFn()) return;
+        if (free <= 0) { log.debug('slot exhausted mid-cycle, remaining=%d', missingPos.length - t); break; }
+        var row = rules[missingPos[t]];
+        var rawIdx = ruleIdx[missingPos[t]];
+        if (net.isSending(CMD_MARCH_WORLD_POINT)) { backlogActive = true; break; }
+
+        // 取田：6 级田没有机械田（不涉机械，直接搜普通田）；其余等级一律优先机械田——先从联盟机械田活表按家族命中、
+        // 按剩余存活时间降序、定点 901 确认仍在才下；☑只下机械田(row.mechOnly) 则机械田没有即跳过本行、绝不回退普通田，未☑则没有再搜普通田（906）。
+        var cand = null;
+        var mechApplicable = row.level < 6;
+        if (mechApplicable) {
+            if (!mechLoaded) { await loadMechRecords(); if (!aliveFn()) return; }
+            cand = await pickMechTower(row, taken);
+            if (!aliveFn()) return;
+        }
+        if (!cand && (!mechApplicable || !row.mechOnly)) {
+            if (net.isSending(CMD_WORLD_SEARCH_MONSTER)) { backlogActive = true; break; }
+            cand = await pickNormalFarm(row, taken);
+            if (!aliveFn()) return;
+        }
+        if (!cand) {
+            log.debug('no candidate for row %d (family=%d level=%d mechOnly=%s).', rawIdx, row.family, row.level, !!row.mechOnly);
+            continue;
+        }
+
+        var ck = cand.x + ',' + cand.y;
+        // 面板预设号 1~16：1~8→战斗预设(type=0)，9~16→采集预设(type=1、index 减 8）
+        var pa = presetArgs(row.preset);
+        var plan = new Battle().plan().preset(pa.index, pa.type).build();
+        if (!plan.armyListNew.length) {
+            log.warn('row %d preset #%d(%s#%d) has no dispatchable army, skip row.', rawIdx, row.preset, pa.type ? '采集' : '战斗', pa.index);
+            continue;
+        }
+        var ret = await sendFarm(cand, cand.marchType, plan);
+        if (!aliveFn()) return;
+        if (ret.ok) {
+            taken.add(ck);
+            var d = parseData(ret.data) || {};
+            var mid = d.marchInfo && d.marchInfo.marchId != null ? String(d.marchInfo.marchId)
+                : (d.marchId != null ? String(d.marchId) : '');
+            ledger[rawIdx] = [{ marchId: mid, x: cand.x, y: cand.y, marchType: cand.marchType }];
+            persistLedger();
+            free--;
+            dispatched++;
+            log.info('farm march ok. row=%d kind=%d x=%d y=%d marchId=%s', rawIdx, cand.marchType, cand.x, cand.y, mid || '?');
+        } else {
+            blacklist.add(ck);   // 被拒零成本：拉黑换下一候选
+            log.warn('farm march rejected. row=%d kind=%d x=%d y=%d code=%s', rawIdx, cand.marchType, cand.x, cand.y, ret.code);
+        }
+        if (t < missingPos.length - 1) await sleep(cfg.marchInterval);
+    }
+    backlogActive = missingPos.length > dispatched;
+}
+
+/**
+ * 单轮周期外壳：在飞标记 + 主体 + 分档重排（主体任何早退/抛异常都会走到这里重排，绝不停摆）。
+ * 永不 reject。
+ * @returns {Promise<void>}
+ */
+async function doCycle() {
+    scanning = true;
+    try {
+        await cyclePass();
+    } finally {
+        scanning = false;
+    }
+
+    if (!aliveFn()) return;
+    if (scanPending) {
+        scanPending = false;
+        triggerCycle();
+        return;
+    }
+    scheduleCycle(backlogActive ? cfg.activeScanInterval : cfg.idleScanInterval);
+}
+
+// ── 推送入口 ────────────────────────────────────────────────────────
+/**
+ * 推送唤醒（去抖）：距上次补扫 < pushScanMinGap 则忽略，靠兜底定时收尾。
+ */
+function pushWake() {
+    if (!aliveFn()) return;
+    var wall = Date.now();
+    if (wall - lastPushWakeAt < cfg.pushScanMinGap) return;
+    lastPushWakeAt = wall;
+    triggerCycle();
+}
+
+/**
+ * 10019 本人行军状态：采集行军 state=4 到家 → 该行缺位 → 唤醒补派。
+ * 非回城状态的推送忽略（名额未释放，派了也吃拒）。
+ * @param {object} ev net 推送事件（载荷在 ev.data）
+ */
+function onMarchUpdate(ev) {
+    if (!aliveFn()) return;
+    var d = ev && ev.data;
+    var mi = d && d.marchInfo;
+    if (!mi) return;
+    if ((mi.state | 0) !== MARCH_STATE_ARRIVED_HOME) return;
+    pushWake();
+}
+
+/**
+ * 10452 联盟记录增量推送：新建成机械田即时入活表；命中则唤醒补扫（新田可能填补某行缺位）。
+ * payload 外层结构未知，做容错：d / d.ret / 单条（d.specId）/ d.data。
+ * @param {object} ev net 推送事件（载荷在 ev.data）
+ */
+function onAllianceRecordPush(ev) {
+    if (!aliveFn()) return;
+    var d = ev && ev.data; if (!d) return;
+    var arr = Array.isArray(d) ? d : (Array.isArray(d.ret) ? d.ret : [d.specId != null ? d : (d.data || d)]);
+    var hit = false;
+    for (var i = 0; i < arr.length; i++) { try { if (ingestMechRecord(arr[i])) hit = true; } catch (err) { } }
+    if (hit) pushWake();
+}
+
+// ── 生命周期 ────────────────────────────────────────────────────────
+/**
+ * 安装：取网络底座 + 数据中心 + 地图数据（entities/marches 都在 NWorldMapData.instance 上）。
+ * 任一缺失即失败（reactor 不会激活）。
+ * @param {object} ctx reactor 上下文
+ * @returns {boolean}
+ */
+function install(ctx) {
+    ctxRef = ctx;
+    if (installed) return true;
+
+    var missing = [];
+
+    net = ctx.net;
+    if (!net.install()) {
+        missing.push('pocketcc.net');
+        net = null;
+    }
+
+    var dc = game.get('DataCenter');
+    dataCenter = (dc && dc.DATA) || (missing.push('DataCenter'), null);
+
+    var nmd = game.get('NWorldMapData');
+    mapData = (nmd && nmd.default && nmd.default.instance) || (missing.push('NWorldMapData'), null);
+
+    if (missing.length) {
+        net = null; dataCenter = null; mapData = null;
+        log.warn('install failed. missing=%s', missing.join(';'));
+        return false;
+    }
+
+    installed = true;
+    log.info('installed.');
+    return true;
+}
+
+/**
+ * 配置灌入：归一化 rules；规则行删减后同步作废越界账本行；运行中即时唤醒一轮让新规则生效。
+ * @param {object} partial reactor 推送的面板配置
+ * @returns {object} MCFG
+ */
+function configure(partial) {
+    if (!partial) return MCFG;
+    if (partial.rules != null) MCFG.rules = normalizeRules(partial.rules);
+    if (ledgerLoaded) {
+        var pruned = false;
+        for (var key in ledger) {
+            if (Object.prototype.hasOwnProperty.call(ledger, key) && !(+key >= 0 && +key < MCFG.rules.length)) {
+                delete ledger[key];
+                pruned = true;
+            }
+        }
+        if (pruned) persistLedger();
+    }
+    if (installed && aliveFn()) triggerCycle();
+    return MCFG;
+}
+
+/**
+ * 运行：复位状态 → 挂 10019 监听 → 账本读回后点火。
+ * pause 后 alive()=false 定时器自然停摆；resume（scene/mode 恢复）重新点火补扫。
+ * @param {object} ctx reactor 上下文
+ */
+function run(ctx) {
+    ctxRef = ctx;
+    scanning = false;
+    scanPending = false;
+    backlogActive = false;
+    lastPushWakeAt = 0;
+    ledgerLoaded = false;
+    ledgerLoading = false;
+    ledger = {};
+    blacklist = new Set();
+    mechLive = new Map();
+    mechLoaded = false;
+    mechLoading = null;
+    ctx.on.push(PUSH_USER_MARCH_INFO, onMarchUpdate);
+    ctx.on.push(PUSH_ALLIANCE_RECORD, onAllianceRecordPush);
+    log.info('started (rules=%d rows).', MCFG.rules.length);
+    loadMechRecords();
+    triggerCycle();
+}
+
+/**
+ * 田位规则字段选项（farmrules 控件的下拉数据源）。
+ * familyOptions 顺序按用户列举（金/粮/油/雷神）；level 1~6；preset 1~16（1~8 战斗预设 / 9~16 采集预设，调 API 时拆回 index+type）。
+ * @type {object}
+ */
+var RULE_OPTS = {
+    familyOptions: [
+        { value: 7, label: '金矿' },
+        { value: 5, label: '粮食' },
+        { value: 1, label: '石油' },
+        { value: 16, label: '雷神' },
+    ],
+    levelOptions: (function () {
+        var a = [];
+        for (var lv = 1; lv <= 6; lv++) a.push({ value: lv, label: lv + ' 级' });
+        return a;
+    })(),
+    presetOptions: (function () {
+        var a = [];
+        for (var n = 1; n <= 8; n++) a.push({ value: n, label: '战斗' + n });
+        for (var g = 9; g <= 16; g++) a.push({ value: g, label: '采集' + (g - 8) });
+        return a;
+    })(),
+};
+
+reactor.register({
+    id: 'autoFarm',
+    label: '自动下田',
+    storageKey: 'pocketcc.feat.autoFarm',
+    scenes: ['Home', 'NWorldMap'],
+    offInCombat: true,
+    defaults: { enabled: false, rules: [] },
+    fields: [
+        {
+            key: 'rules', label: '下田规则', type: 'farmrules', section: '规则',
+            familyOptions: RULE_OPTS.familyOptions,
+            levelOptions: RULE_OPTS.levelOptions,
+            presetOptions: RULE_OPTS.presetOptions,
+        },
+    ],
+    toModuleCfg: function (c) {
+        return { rules: normalizeRules(c.rules) };
+    },
+    install: install,
+    configure: configure,
+    run: run,
+});

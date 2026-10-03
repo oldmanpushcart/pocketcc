@@ -1,12 +1,26 @@
 /**
- * 键盘绑定公共设施：全项目「绑裸键」功能共用的输入焦点守卫。
+ * 键盘公共设施：输入焦点守卫 + 全局「裸键」热键注册表。
  *
- * 为什么需要它（而非各 feat 自己看 e.target）：辅助浮层（控制面板、聊天窗）都挂在 Shadow DOM 内，
- * 挂在 document/window 级的 keydown 监听拿到的 e.target 会被事件重定向（retargeting）成 shadow host，
- * 看不到里层真正聚焦的 <textarea>/<input>——于是「在浮层输入框打字」被误判成「在画布按热键」而触发
- * 绑键功能（实测：先选中单位露出快捷攻击面板，再在聊天框打字，数字键会误发攻击）。key 事件 composed:true，
- * e.composedPath()[0] 能穿透 shadow 边界拿到真实目标元素，故以此为准。收口于此，各 feat 复用，避免重踩。
+ * 为什么收口成一张注册表（而非各 feat 各自 window.addEventListener、各写一遍闸门）：
+ * - 快捷键不是某个 feat 的私有物，而是全局输入层：所有绑键共用同一套闸门（打字让位、Ctrl/Alt/Meta 放行、
+ *   场景白名单、命中即 preventDefault+stopPropagation），改一处约定即全量生效；
+ * - 全局仅一个 window 捕获监听（捕获阶段优先于游戏画布 keydown 冒泡阶段的 stopPropagation，不受焦点位置影响——
+ *   沿用 F8 修复经验），按注册顺序分派，避免多个监听各跑一遍；
+ * - 注册时按 key + 场景做冲突检测，防未来手抖撞键；
+ * - list() 把当前全部绑定暴露给面板「快捷键一览」。
+ *
+ * 消费约定：handler 返回 false = 本次不消费（不拦截默认、不阻断冒泡，按键透传给游戏与后续绑定，
+ * 如战斗面板快捷键「面板不在场」时让位于快捷战斗的 1-8）；其余（含无返回）= 已消费，注册表统一
+ * preventDefault + stopPropagation 并停止遍历。场景门控用 scene-watcher 的 getCurrentScene()，
+ * 与 reactor 的 scene 门控同一真相源（离开白名单场景即不触发，等价旧 feat 的 ctx.alive() 早退）。
  */
+import { createLog } from './log.js';
+import { getCurrentScene } from './scene-watcher.js';
+
+/** @type {ReturnType<createLog>} 模块日志器（tag=HOTKEY） */
+const log = createLog('HOTKEY');
+
+// ─────────────────────── 输入焦点守卫 ───────────────────────
 
 /**
  * 非文本类 <input> 的 type 集合：这些控件聚焦时不算「正在打字」（如按钮聚焦下按数字仍应触发热键）。
@@ -17,6 +31,9 @@ const NON_TEXT_INPUT = new Set(['button', 'submit', 'reset', 'checkbox', 'radio'
 
 /**
  * 判定「此刻焦点是否在可文字输入元素里」，供绑键功能决定是否让位于打字。
+ * 辅助浮层（控制面板、聊天窗）都挂在 Shadow DOM 内，挂在 window/document 的 keydown 拿到的 e.target
+ * 会被事件重定向成 shadow host，看不到里层真正聚焦的 <textarea>/<input>；key 事件 composed:true，
+ * e.composedPath()[0] 能穿透 shadow 边界拿到真实目标元素，故以此为准。
  * @param {KeyboardEvent} e 键盘事件
  * @returns {boolean} true=正在文本输入，绑键功能应跳过本次按键（热键让位给打字）
  */
@@ -28,4 +45,175 @@ export function isTypingTarget(e) {
   if (t.isContentEditable) return true;
   if (t.tagName === 'INPUT') return !NON_TEXT_INPUT.has((t.type || 'text').toLowerCase());
   return false;
+}
+
+// ─────────────────────── 热键注册表 ───────────────────────
+
+/**
+ * @typedef {object} HotkeyBinding 一条热键绑定
+ * @property {string} id 唯一 id（重复注册拒绝）
+ * @property {function(KeyboardEvent):boolean} handler 命中且场景放行时调用；返回 false=不消费(透传)，其余=已消费
+ * @property {string[]} [keys] 匹配的 event.code 列表（如 ['KeyB']、['Tab']、['Digit1'..]）；缺 match 时按其默认匹配
+ * @property {function(KeyboardEvent):boolean} [match] 自定义匹配（如战斗面板 1-8/G 需正则判定），缺省用 keys
+ * @property {string[]} [scenes] 场景白名单（对齐 scene-watcher 场景名）；缺省=所有场景放行
+ * @property {string} [label] 面板「快捷键一览」显示的功能名
+ * @property {string} [display] 面板显示键名（缺省用 keys 拼接）
+ * @property {string} [where] 面板显示的生效场景（人话，如「基地/大世界」）
+ */
+
+/** @type {Map<string,HotkeyBinding>} 绑定表：id -> binding（Map 保序，即分派优先级 = 注册顺序） */
+const bindings = new Map();
+/**
+ * 展示型键位登记表：id -> {id,display,label,where}。
+ * 用于「行为不在本注册表分派、由各 feat 自带监听处理」的快捷键（如 F8 模式切换、Ctrl+K/M 浮层开关——
+ * 它们带修饰键或依赖 feat 生命周期，不宜纳入统一 dispatch），仅登记进「快捷键一览」供面板展示。
+ * @type {Map<string,{id:string,display:string,label:string,where:string}>}
+ */
+const docs = new Map();
+/** @type {boolean} 全局 window 捕获监听是否已挂（首次 bind 时挂一次） */
+let listening = false;
+
+/**
+ * 默认匹配：主判 event.code（与大小写/Shift 无关，最稳），并对 Key<字母> 兼容 event.key 单字符兜底。
+ * 绑定了自定义 match 的交给 match。
+ * @param {HotkeyBinding} binding 绑定
+ * @param {KeyboardEvent} e 键盘事件
+ * @returns {boolean}
+ */
+function matchKey(binding, e) {
+    if (binding.match) return binding.match(e);
+    var keys = binding.keys || [];
+    for (var i = 0; i < keys.length; i++) {
+        var t = keys[i];
+        if (e.code === t) return true;
+        if (/^Key[A-Z]$/.test(t) && typeof e.key === 'string' && e.key.length === 1 &&
+            e.key.toLowerCase() === t.charAt(3).toLowerCase()) return true;
+    }
+    return false;
+}
+
+/**
+ * 场景门控：未声明 scenes（或空）= 所有场景放行；否则当前场景须命中白名单（与 reactor scene 门控同源）。
+ * @param {HotkeyBinding} binding 绑定
+ * @returns {boolean}
+ */
+function sceneAllow(binding) {
+    var sc = binding.scenes;
+    if (!sc || !sc.length) return true;
+    return sc.indexOf(getCurrentScene()) !== -1;
+}
+
+/**
+ * 全局 keydown 分派：打字/修饰键闸门 → 按注册顺序找首个「匹配且场景放行且消费」的绑定，
+ * 命中即 preventDefault + stopPropagation 并停止；handler 返回 false 视为未消费，继续看后续绑定。
+ * @param {KeyboardEvent} e 键盘事件
+ */
+function dispatch(e) {
+    if (isTypingTarget(e)) return;
+    if (e.ctrlKey || e.altKey || e.metaKey) return;
+    var iter = bindings.values();
+    for (var step = iter.next(); !step.done; step = iter.next()) {
+        var b = step.value;
+        if (!matchKey(b, e) || !sceneAllow(b)) continue;
+        var consumed;
+        try { consumed = b.handler(e); }
+        catch (err) { log.warn('handler %s threw: %s', b.id, err && err.message); continue; }
+        if (consumed === false) continue;   // 不消费：透传，继续看后续绑定
+        e.preventDefault();
+        e.stopPropagation();
+        return;
+    }
+}
+
+/**
+ * key 维度是否可能与既有绑定撞键（自定义 match 无法可靠比对，跳过）。
+ * @param {HotkeyBinding} a @param {HotkeyBinding} b
+ * @returns {boolean}
+ */
+function keyOverlap(a, b) {
+    if (a.match || b.match) return false;
+    var ka = a.keys || []; var kb = b.keys || [];
+    return ka.some(function (k) { return kb.indexOf(k) !== -1; });
+}
+/**
+ * 场景维度是否与既有绑定重叠（任一未声明场景=全域，视为重叠）。
+ * @param {HotkeyBinding} a @param {HotkeyBinding} b
+ * @returns {boolean}
+ */
+function sceneOverlap(a, b) {
+    var sa = a.scenes; var sb = b.scenes;
+    if (!sa || !sa.length) return true;
+    if (!sb || !sb.length) return true;
+    return sa.some(function (s) { return sb.indexOf(s) !== -1; });
+}
+
+/**
+ * 注册一条热键绑定（各 feats/hotkey/* 模块 import 时调用，早于任何按键）。幂等：同 id 拒绝重复。
+ * 首次注册时挂全局 window 捕获监听。key+场景撞键会 warn（不阻断，方便开发期发现）。
+ * @param {HotkeyBinding} binding 绑定声明
+ */
+export function bind(binding) {
+    if (!binding || typeof binding.id !== 'string' || typeof binding.handler !== 'function') {
+        log.warn('bind: invalid binding'); return;
+    }
+    if (bindings.has(binding.id)) { log.warn('bind: duplicate id %s', binding.id); return; }
+    var iter = bindings.values();
+    for (var step = iter.next(); !step.done; step = iter.next()) {
+        var ex = step.value;
+        if (keyOverlap(ex, binding) && sceneOverlap(ex, binding))
+            log.warn('bind: key conflict between %s and %s', binding.id, ex.id);
+    }
+    bindings.set(binding.id, binding);
+    if (!listening) { window.addEventListener('keydown', dispatch, true); listening = true; }
+}
+
+/**
+ * 注销一条热键绑定（预留：目前热键常驻，不摘全局监听，只删该条）。
+ * @param {string} id 绑定 id
+ */
+export function unbind(id) { bindings.delete(id); }
+
+/**
+ * @typedef {object} HotkeyDoc 展示型键位（不参与 dispatch，仅进「快捷键一览」）
+ * @property {string} id 唯一 id（与 bind 的 id 共用命名空间，避免重复展示）
+ * @property {string} display 显示键名（如「F8」「Ctrl+K」）
+ * @property {string} label 功能名
+ * @property {string} [where] 生效范围人话描述（如「全域」）
+ */
+
+/**
+ * 登记一条「展示型」键位：其按键行为由其它子系统自行监听（app 级 F8、带修饰键的浮层开关等），
+ * 本注册表不分派、不拦截，仅把它并入 list() 让面板「快捷键一览」完整可见。幂等：同 id 覆盖。
+ * @param {HotkeyDoc} entry 键位说明
+ */
+export function doc(entry) {
+    if (!entry || typeof entry.id !== 'string') { log.warn('doc: invalid entry'); return; }
+    if (bindings.has(entry.id)) { log.warn('doc: id %s already a bound hotkey, skip', entry.id); return; }
+    docs.set(entry.id, {
+        id: entry.id,
+        display: entry.display || entry.id,
+        label: entry.label || entry.id,
+        where: entry.where || '',
+    });
+}
+
+/**
+ * 当前全部键位（展示型在前 + 注册表分派型在后），供面板「快捷键一览」渲染。
+ * group：'global'=展示型（全域/浮层开关），'game'=注册表统一分派的游戏内裸键；面板据此分组。
+ * @returns {Array<{id:string, display:string, label:string, where:string, group:string}>}
+ */
+export function list() {
+    var out = [];
+    // 展示型键位置前（全域/浮层类总开关），其后接注册表统一分派的游戏裸键
+    docs.forEach(function (d) { out.push(Object.assign({ group: 'global' }, d)); });
+    bindings.forEach(function (b) {
+        out.push({
+            id: b.id,
+            display: b.display || (b.keys || []).join('/'),
+            label: b.label || b.id,
+            where: b.where || '',
+            group: 'game',
+        });
+    });
+    return out;
 }

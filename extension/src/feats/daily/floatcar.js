@@ -38,6 +38,7 @@ import { createLog } from '../../core/log.js';
 import { game } from '../../core/game.js';
 import { reactor } from '../../core/reactor.js';
 import { l10n } from '../../core/game-api.js';
+import { payloadOf } from '../../core/net-payload.js';
 
 /** @type {ReturnType<createLog>} 模块日志器（tag=FLOAT_CAR） */
 const log = createLog('FLOAT_CAR');
@@ -1002,7 +1003,9 @@ async function onPickup(item) {
     if (!aliveFn() || flows.get(item.marchId) !== flow) return;
 
     if (ret.ok) {
-        var raw = ret.data;
+        // 902 走旧 JSON 链路（net.send），受理时应答是整包 JSON 文本、被拒才是 "语言键,参数" 裸串；
+        // payloadOf 归一化后再取 marchInfo，否则字符串取属性恒 undefined，会误报 shape unexpected 且埋点①拿不到时刻
+        var raw = payloadOf(ret);
         var mi = (raw && (raw.marchInfo || (raw.data && raw.data.marchInfo) || raw)) || {};
         var hasId = mi.marchId != null;
         // 埋点①：应答自带出发/到达时刻，返程两字段此刻必为 0（回城 push 合并后才有值，见 SlotModel 迭代打点）
@@ -1013,9 +1016,9 @@ async function onPickup(item) {
         if (!hasId) {
             // 应答形态与预期不符：吐一次原始结构，定位 marchId/回程时刻的真实路径（真机参数观测用）
             var peek = '<unserializable>';
-            try { peek = String(JSON.stringify(raw)).slice(0, 400); } catch (e) { }
-            log.warn('pickup resp shape unexpected. keys=%s;raw=%s',
-                raw && typeof raw === 'object' ? Object.keys(raw).join('|') : typeof raw, peek);
+            try { peek = String(typeof raw === 'string' ? raw : JSON.stringify(raw)).slice(0, 400); } catch (e) { }
+            var shape = typeof raw === 'string' ? 'string' : (raw && typeof raw === 'object' ? Object.keys(raw).join('|') : typeof raw);
+            log.warn('pickup resp shape unexpected. keys=%s;raw=%s', shape, peek);
         }
         return;
     }

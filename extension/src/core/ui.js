@@ -13,6 +13,7 @@ import { configs, findFeature, saveFeature, saveGroup, applyFeature } from './re
 import { iconSVG } from './icon-svg.js';
 import { isCombat, setCombatMode } from './mode.js';
 import { MENU, collectFeatureIds } from './menu.js';
+import { list as hotkeyList } from './hotkeys.js';
 
 /** @type {ReturnType<createLog>} 模块日志器（tag=CORE） */
 const logCore = createLog('CORE');
@@ -144,6 +145,22 @@ const PANEL_CSS = `
       color:#ff9c9c;font:inherit;font-size:14px;line-height:22px;cursor:pointer;}
     .pc-uli .pc-udel:hover{color:#ff6b6b;}
     .pc-uli .pc-udisp{flex:1 1 auto;width:auto;min-width:0;}
+    /* 领取优先级清单字段（type:'sortlist'，遗迹奖励）：整池奖励摆出、行不可增删只能整行拖拽调序。
+       无删除按钮（全员参与），松手才按 DOM 顺序回写（见 mountSortList）。 */
+    .pc-slist{display:flex;flex-direction:column;gap:4px;width:100%;margin:2px 0 6px;}
+    .pc-slisttop{display:flex;align-items:center;justify-content:space-between;gap:8px;}
+    .pc-srows{display:flex;flex-direction:column;gap:4px;width:100%;}
+    .pc-srow{display:flex;align-items:center;gap:6px;width:100%;cursor:grab;touch-action:none;-webkit-user-select:none;user-select:none;}
+    .pc-shandle{flex:0 0 auto;width:12px;text-align:center;opacity:.4;font-size:14px;line-height:1;letter-spacing:-2px;cursor:grab;}
+    .pc-srow.pc-sdragging{opacity:.35;}
+    .pc-srows.pc-sgrabbing,.pc-srows.pc-sgrabbing .pc-sname{cursor:grabbing;}
+    .pc-srank{flex:0 0 auto;width:18px;text-align:right;opacity:.6;font-variant-numeric:tabular-nums;}
+    .pc-sname{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:left;
+      padding:3px 6px;border-radius:6px;border:1px solid rgba(255,255,255,.12);background:rgba(255,255,255,.05);color:#e8eef7;}
+    .pc-smove{flex:0 0 auto;width:22px;height:22px;padding:0;border-radius:6px;cursor:pointer;
+      border:1px solid rgba(255,255,255,.22);background:transparent;color:#cfe8ff;font:inherit;font-size:14px;line-height:20px;}
+    .pc-smove:hover{background:rgba(255,255,255,.1);}
+    .pc-smove:disabled{opacity:.3;cursor:default;}
     .pc-row input[type=checkbox]{width:16px;height:16px;cursor:pointer;flex:0 0 auto;}
     .pc-row select.pc-fsel{max-width:150px;flex:0 0 auto;padding:3px 6px;border-radius:6px;
       border:1px solid rgba(255,255,255,.25);background:rgba(20,26,38,.9);color:#e8eef7;font:inherit;}
@@ -197,6 +214,18 @@ const PANEL_CSS = `
       font-size:12px;font-weight:600;color:#cfe8ff;letter-spacing:.5px;}
     .pc-fsec:first-child{margin-top:2px;padding-top:0;border-top:none;}
     .pc-empty{opacity:.5;font-size:12px;padding:4px 0;}
+    /* 快捷键一览卡（方案 C：分组 + 键帽精修）：不复用 .pc-row（其 >span{flex:1} 会抢宽导致换行/错位）。
+       行内负外边距 + padding 让 hover 高亮能铺到卡片内边沿；键帽立体（渐变+底边阴影）、键名列右对齐贴齐功能名、场景做小胶囊 */
+    .pc-hkrow{display:flex;align-items:center;gap:10px;margin:0 -6px;padding:5px 6px;border-radius:6px;transition:background .12s;}
+    .pc-hkrow:hover{background:rgba(255,255,255,.06);}
+    .pc-hkrow .pc-hkk{flex:0 0 62px;text-align:right;}
+    .pc-hkrow .pc-hkk kbd{display:inline-block;padding:2px 7px;border-radius:6px;font:inherit;font-size:12px;white-space:nowrap;color:#dcefff;
+      background:linear-gradient(180deg,rgba(255,255,255,.18),rgba(255,255,255,.05));
+      border:1px solid rgba(255,255,255,.24);border-bottom-width:2px;box-shadow:0 1px 0 rgba(0,0,0,.35);}
+    .pc-hkrow .pc-hkl{flex:1 1 auto;min-width:0;}
+    .pc-hkrow .pc-hkw{flex:0 0 auto;font-size:10px;opacity:.5;text-align:right;background:rgba(255,255,255,.06);border-radius:10px;padding:1px 8px;}
+    .pc-hkgrp{font-size:11px;opacity:.55;letter-spacing:.5px;margin:8px 0 2px;padding:0 6px;}
+    .pc-hkgrp:first-child{margin-top:2px;}
     .pc-btn{margin-top:10px;width:100%;padding:7px 0;border-radius:8px;cursor:pointer;
       border:1px solid rgba(255,255,255,.2);background:rgba(255,255,255,.08);color:#e8eef7;
       font:inherit;transition:background .15s;}
@@ -225,6 +254,27 @@ const PANEL_CSS = `
     .pc-mrstar{font-size:15px;line-height:1;cursor:pointer;color:rgba(255,255,255,.3);transition:transform .1s,color .1s;}
     .pc-mrstar.on{color:#ffcf4d;text-shadow:0 0 6px rgba(255,207,77,.5);}
     .pc-mrstar:hover{transform:scale(1.18);}
+    /* 下田规则字段（type:'farmrules'，自动下田：每行=一个田位；田类型/种类/等级/预设下拉 + 行开关/删除）。
+       行盒可换行（窄卡放得下 6 个控件），× 与标题行＋右对齐；骨架同 minerules，交互走面板级事件委托（见 wirePanel）。 */
+    .pc-frule{display:flex;flex-direction:column;gap:6px;width:100%;margin:2px 0 6px;}
+    .pc-fruletop{display:flex;align-items:center;justify-content:space-between;gap:8px;}
+    .pc-fradd{flex:0 0 auto;width:22px;height:20px;padding:0;border-radius:6px;cursor:pointer;
+      border:1px dashed rgba(255,255,255,.28);background:transparent;color:#cfe8ff;font:inherit;font-size:14px;line-height:18px;}
+    .pc-fradd:hover{background:rgba(255,255,255,.1);}
+    .pc-frmain{display:flex;align-items:center;justify-content:space-between;gap:10px;}
+    .pc-frbox{display:flex;flex:1 1 auto;flex-wrap:wrap;align-items:center;gap:6px;min-width:0;padding:6px 9px;
+      border:1px solid rgba(255,255,255,.12);border-radius:8px;background:rgba(255,255,255,.03);}
+    .pc-frsel{padding:3px 5px;border-radius:6px;border:1px solid rgba(255,255,255,.25);
+      background:rgba(20,26,38,.9);color:#e8eef7;font:inherit;min-width:0;}
+    .pc-frmech{display:inline-flex;align-items:center;gap:3px;cursor:pointer;font-size:12px;color:#cfe3ff;}
+    .pc-frmechdis{opacity:.4;cursor:not-allowed;}
+    .pc-frmechin{width:14px;height:14px;margin:0;cursor:pointer;accent-color:#4a9eff;}
+    .pc-frdel{flex:0 0 auto;width:22px;height:24px;padding:0;border:none;background:transparent;
+      color:#ff9c9c;font:inherit;font-size:16px;line-height:24px;cursor:pointer;text-align:center;}
+    .pc-frdel:hover{color:#ff6b6b;}
+    .pc-frtoggle{flex:0 0 auto;display:inline-flex;align-items:center;cursor:pointer;}
+    .pc-fron{width:15px;height:15px;margin:0;cursor:pointer;accent-color:#4a9eff;}
+    .pc-frrow.off .pc-frbox{opacity:.45;}
   `;
 
 /**
@@ -338,6 +388,46 @@ function mineRulesInnerHTML(list, fd, cfg) {
 }
 
 /**
+ * 下田规则字段（type:'farmrules'，自动下田）内层 HTML：标题行（含右上＋）+ 若干田位行。
+ * 每行一个盒子：田类型▾(金/粮/油/雷神) + 田等级▾(雷神上限 3 级、其余 1~6) + ☑只下机械田 + 预设部队▾(1~16：1~8 战斗预设 / 9~16 采集预设)，
+ * 行尾启用勾选 + × 删除（同 minerules 的「配好后手动勾上才生效」语义）。family/level 会联动其它控件（雷神封顶 3 级、选 6 级田则禁用机械田），改动后整行重刷。
+ * 选项均由 fd 提供（familyOptions/levelOptions/presetOptions）；行增删/改值由 wirePanel 事件委托接。
+ * @param {Array<{enabled:boolean,family:number,level:number,mechOnly:boolean,preset:number}>} list 当前田位规则表
+ * @param {object} fd 字段描述符（label / 各 Options / hint）
+ * @returns {string}
+ */
+function farmRulesInnerHTML(list, fd) {
+  const optsHTML = (opts, sel) => (opts || []).map((o) =>
+    `<option value="${o.value}"${Number(o.value) === sel ? ' selected' : ''}>${escAttr(String(o.label))}</option>`).join('');
+  const rows = (Array.isArray(list) ? list : []).map((r, i) => {
+    const act = !!r.enabled;
+    const fam = Number(r.family) || 7;
+    const maxLv = fam === 16 ? 3 : 6;                    // 雷神矿田等级上限 3 级
+    const lv = Math.min(maxLv, Math.max(1, Number(r.level) || 5));
+    const levelOpts = (fd.levelOptions || []).filter((o) => Number(o.value) <= maxLv);
+    const mechApplicable = lv < 6;                        // 6 级田没有机械田
+    const mech = !!r.mechOnly && mechApplicable;
+    return `<div class="pc-frrow${act ? '' : ' off'}" data-fidx="${i}">` +
+      `<div class="pc-frmain">` +
+        `<div class="pc-frbox">` +
+          `<select class="pc-frsel" data-part="family" title="田类型">${optsHTML(fd.familyOptions, fam)}</select>` +
+          `<select class="pc-frsel" data-part="level" title="田等级（雷神上限 3 级；6 级田无机械田）">${optsHTML(levelOpts, lv)}</select>` +
+          `<label class="pc-frmech${mechApplicable ? '' : ' pc-frmechdis'}" title="只下机械田：勾选=只看机械田（没有则本行不下、不回退普通田）；不勾选=优先机械田、机械田没有才下普通田。6 级田没有机械田"><input type="checkbox" class="pc-frmechin" data-part="mechOnly"${mech ? ' checked' : ''}${mechApplicable ? '' : ' disabled'}><span>只下机械田</span></label>` +
+          `<select class="pc-frsel" data-part="preset" title="预设部队（1~8 战斗 / 9~16 采集）">${optsHTML(fd.presetOptions, Number(r.preset) || 1)}</select>` +
+        `</div>` +
+        `<label class="pc-frtoggle" title="勾选后本行田位才生效"><input type="checkbox" class="pc-fron" data-part="enabled"${act ? ' checked' : ''}></label>` +
+        `<button class="pc-frdel" type="button" title="删除此田位">×</button>` +
+      `</div></div>`;
+  }).join('');
+  return `<div class="pc-fruletop">` +
+      `<span class="pc-rngtitle">${escAttr(fd.label || '下田规则')}</span>` +
+      `<button class="pc-fradd" type="button" title="添加一个田位">＋</button>` +
+    `</div>` +
+    (rows || '<div class="pc-rnghint">未添加行 = 不下田；添加后需勾选本行才生效</div>') +
+    (fd.hint ? `<div class="pc-rnghint">${escAttr(fd.hint)}</div>` : '');
+}
+
+/**
  * 区间规则字段（type:'ranges'）内层 HTML：列头 + 若干 `[ from ~ to ) → count ×` 行 + 标题行右侧的「＋」。
  * 列头与数据行共用 rngRow 模板（括号类格子在列头只隐藏），否则三列无法逐列对齐；行号挂在 .pc-rngrow[data-ridx]，
  * 委托时靠它定位，不能用 querySelectorAll('.pc-rngrow') 的下标（会把列头行算进去，整体偏一位）。
@@ -373,29 +463,31 @@ function rangesInnerHTML(list, fd) {
  * 好友清单字段（type:'uidlist'）内层 HTML：标题行（含右上＋，达上限置 disabled）+ 若干 UID 行 + 上限 hint。
  * 每行是一个 .pc-uidwrap.pc-uli[data-uidx=i]（复用城市技能 UID 控件的视觉与显示↔输入态），行尾带 × 删除；
  * 与标量 UID 行的区别：值落在 configs[fid].friends[i].{uid,name}，故行不带 data-ukey/nkey，靠 data-uidx 定位。
+ * 行的称呼名词由 fd.itemLabel 定制（玩家点赞缺省「好友」，奉旨出征为「执政官」）。
  * @param {Array<{uid:string, name:string}>} list 当前好友清单
- * @param {object} fd 字段描述符（label / max / placeholder / hint 可选）
+ * @param {object} fd 字段描述符（label / max / placeholder / hint / itemLabel 可选；itemLabel 行的称呼名词，缺省「好友」）
  * @returns {string}
  */
 function uidListInnerHTML(list, fd) {
   const arr = Array.isArray(list) ? list : [];
   const max = fd.max || 10;
   const ph = escAttr(fd.placeholder || '');
+  const item = escAttr(fd.itemLabel || '好友');
   const rows = arr.map((it, i) => {
     const uidV = String((it && it.uid) || '');
     const nmV = String((it && it.name) || '');
     return `<div class="pc-uidwrap pc-uli" data-uidx="${i}">` +
-      `<div class="pc-row"><span>好友 ${i + 1}</span>` +
+      `<div class="pc-row"><span>${item} ${i + 1}</span>` +
       `<span class="pc-udisp" title="点击编辑 UID"><span class="pc-uedit">✎</span><span class="pc-uname">${escAttr(nmV || uidV)}</span></span>` +
       `<input type="text" class="pc-uinput" inputmode="numeric" hidden placeholder="${ph}">` +
-      `<button class="pc-udel" type="button" title="删除此好友">×</button>` +
+      `<button class="pc-udel" type="button" title="删除此${item}">×</button>` +
       `</div><div class="pc-uhint" hidden></div></div>`;
   }).join('');
   return `<div class="pc-ulisttop">` +
-      `<span class="pc-rngtitle">${fd.label || '好友清单'}</span>` +
-      `<button class="pc-ulistadd" type="button" title="添加好友"${arr.length >= max ? ' disabled' : ''}>＋</button>` +
+      `<span class="pc-rngtitle">${fd.label || (item + '清单')}</span>` +
+      `<button class="pc-ulistadd" type="button" title="添加${item}"${arr.length >= max ? ' disabled' : ''}>＋</button>` +
     `</div>` +
-    (rows || '<div class="pc-rnghint">无好友，点右上＋添加</div>') +
+    (rows || `<div class="pc-rnghint">无${item}，点右上＋添加</div>`) +
     `<div class="pc-rnghint">${fd.hint || ('最多 ' + max + ' 个；点＋添加，×删除')}</div>`;
 }
 
@@ -443,6 +535,137 @@ function mountUidList(box) {
 
   // 每行 UID 控件：复用 setupUidField 的状态机，但读写 friends[idx].{uid,name}
   box.querySelectorAll('.pc-uli').forEach((wrap) => setupUidListRow(wrap, f, arr));
+}
+
+/**
+ * 领取优先级清单行标签：若 fd.resolve(el) 可用则解析为道具名×数量串（与面板同源）；
+ * 否则直接将元素本身作为标签（池元素为道具名/itemId 时即原样显示）。
+ * @param {object} fd 字段描述符（可带 resolve(el)=>[{name,id,count}]）
+ * @param {string|number} el 池元素（道具名字符串，或道具 itemId）
+ * @returns {string}
+ */
+function sortListLabel(fd, id) {
+  try {
+    if (fd && typeof fd.resolve === 'function') {
+      const items = fd.resolve(id);
+      if (Array.isArray(items) && items.length) {
+        return items.map((it) => (it && (it.name || ('#' + it.id))) + (it && it.count > 1 ? ' ×' + it.count : '')).join('、');
+      }
+    }
+  } catch (e) { /* 符号缺失/解析异常 → 回退原值 */ }
+  return String(id);
+}
+
+/**
+ * 领取优先级清单字段（type:'sortlist'）内层 HTML：标题行 + 若干 `[拖拽手柄 序号 名称]` 行 + hint。
+ * 行不可增删（整池全员参与），只能整行拖拽换位，序数组下标即优先级（越靠上越优先）。
+ * @param {Array<string|number>} list 当前顺序（道具名或奖励配置 id 数组）
+ * @param {object} fd 字段描述符（label / hint / resolve 可选）
+ * @returns {string}
+ */
+function sortListInnerHTML(list, fd) {
+  const arr = Array.isArray(list) ? list : [];
+  const rows = arr.map((id, i) => {
+    const label = sortListLabel(fd, id);
+    return `<div class="pc-srow" data-sidx="${i}" data-skey="${escAttr(String(id))}">` +
+      `<span class="pc-shandle" title="按住拖拽调整顺序">⣿</span>` +
+      `<span class="pc-srank">${i + 1}</span>` +
+      `<span class="pc-sname" title="${escAttr(label)}">${escAttr(label)}</span>` +
+      `</div>`;
+  }).join('');
+  return `<div class="pc-slisttop">` +
+      `<span class="pc-rngtitle">${escAttr(fd.label || '领取优先级')}</span>` +
+      `<span class="pc-rnghint">拖动调整顺序</span>` +
+    `</div>` +
+    `<div class="pc-srows">` + (rows || '<div class="pc-rnghint">礼品池为空</div>') + `</div>` +
+    `<div class="pc-rnghint">${escAttr(fd.hint || '拖动调整顺序，顺序靠前优先领取')}</div>`;
+}
+
+/**
+ * 装配领取优先级清单容器（.pc-slist）：整行 pointer 拖拽交换 order 位（已去掉 ↑/↓ 按钮）。
+ * 拖拽中就地移动真实行节点、只刷序号；move/up 监听挂 window（指针移出面板也不丢），并对 box.__pcSDragging
+ * 置位以让 refreshTexts 期间的整块重刷跳过（防 ui.refresh 打断拖拽）；松手才按 DOM 顺序回写 arr → 重刷 + 重绑 + 持久化热更。
+ * configs[fid][key] 若仍是 descriptor defaults 本体先浅拷，避免就地交换污染 defaults。
+ * @param {HTMLElement} box .pc-slist 容器
+ */
+function mountSortList(box) {
+  const fid = box.dataset.id;
+  const f = findFeature(fid);
+  if (!f) return;
+  const fd = f.fields.find((x) => x.key === box.dataset.skey);
+  if (!fd) return;
+  if (box.__pcSDragging) return;   // 拖拽进行中：跳过重刷，避免 ui.refresh 摧毁被拖行
+  const c = configs[fid];
+  if (!Array.isArray(c[fd.key])) c[fd.key] = Array.isArray(f.defaults[fd.key]) ? f.defaults[fd.key].slice() : [];
+  else if (c[fd.key] === f.defaults[fd.key]) c[fd.key] = c[fd.key].slice();
+  const arr = c[fd.key];
+  const valByStr = new Map();
+  arr.forEach((v) => valByStr.set(String(v), v));
+
+  const rowsWrap = () => box.querySelector('.pc-srows');
+  const rowEls = () => Array.prototype.slice.call(box.querySelectorAll('.pc-srows .pc-srow'));
+
+  // 拖拽中就地更新序号（不整块重刷，保住被拖的行节点）
+  const refreshRanks = () => {
+    rowEls().forEach((r, i) => {
+      const rk = r.querySelector('.pc-srank'); if (rk) rk.textContent = i + 1;
+    });
+  };
+  // 松手收尾：按当前 DOM 顺序回写 arr → 清拖拽标志 → 重刷 + 重绑 → 持久化热更（configure 即重建优先级 Map，下一轮生效）
+  const commitFromDom = () => {
+    const order = rowEls().map((r) => { const k = r.dataset.skey; return valByStr.has(k) ? valByStr.get(k) : (isFinite(+k) ? +k : k); });
+    arr.length = 0; order.forEach((v) => arr.push(v));
+    box.__pcSDragging = false;
+    box.innerHTML = sortListInnerHTML(arr, fd);
+    bind();
+    saveFeature(f); applyFeature(f);
+  };
+
+  const onRowDown = (e) => {
+    if (e.pointerType === 'mouse' && e.button !== 0) return;
+    const row = e.currentTarget;
+    const wrap = rowsWrap(); if (!wrap) return;
+    e.preventDefault();
+    box.__pcSDragging = true;
+    const pid = e.pointerId, startY = e.clientY;
+    let moved = false;
+    try { row.setPointerCapture(pid); } catch (err) { /* 不支持则靠 window 冒泡兑底 */ }
+    const onMove = (ev) => {
+      if (!moved) {
+        if (Math.abs(ev.clientY - startY) < 4) return;
+        moved = true; row.classList.add('pc-sdragging'); wrap.classList.add('pc-sgrabbing');
+      }
+      ev.preventDefault();
+      const others = rowEls().filter((r) => r !== row);
+      let placed = false;
+      for (const r of others) {
+        const rect = r.getBoundingClientRect();
+        if (ev.clientY < rect.top + rect.height / 2) { wrap.insertBefore(row, r); placed = true; break; }
+      }
+      if (!placed) wrap.appendChild(row);
+      refreshRanks();
+    };
+    const onUp = () => {
+      try { row.releasePointerCapture(pid); } catch (err) { /* ignore */ }
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onUp);
+      window.removeEventListener('pointercancel', onUp);
+      row.classList.remove('pc-sdragging'); wrap.classList.remove('pc-sgrabbing');
+      if (moved) commitFromDom();
+      else box.__pcSDragging = false;
+    };
+    // 监听挂 window：即使指针移出面板/落到游戏画布，move/up 仍持续送达（比只挂 row 稳）
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', onUp);
+    window.addEventListener('pointercancel', onUp);
+  };
+
+  const bind = () => {
+    box.querySelectorAll('.pc-srows .pc-srow').forEach((row) => row.addEventListener('pointerdown', onRowDown));
+  };
+
+  box.innerHTML = sortListInnerHTML(arr, fd);
+  bind();
 }
 
 /**
@@ -722,6 +945,10 @@ function buildFieldsHTML(fid, f) {
       // 好友清单（玩家点赞）：动态增删的 UID 行，整行返回（不套 pc-row），容器带 fid/key 供 mountUidList 重绑
       return sec + `<div class="pc-ulist" data-id="${fid}" data-akey="${fd.key}">` +
         uidListInnerHTML(c[fd.key], fd) + `</div>`;
+    } else if (fd.type === 'sortlist') {
+      // 领取优先级清单（遗迹奖励）：整池奖励行不可增删只能 ↑/↓ 调序，整行返回，容器带 fid/key 供 mountSortList 重刷+重绑
+      return sec + `<div class="pc-slist" data-id="${fid}" data-skey="${fd.key}">` +
+        sortListInnerHTML(c[fd.key], fd) + `</div>`;
     } else if (fd.type === 'multiopts') {
       // 多选开关组（次元矿洞矿种）：整行返回，选项由 fd.options(cfg) 动态求值（可为函数或常量数组）
       return sec + `<div class="pc-mopts" data-id="${fid}" data-mkey="${fd.key}">` +
@@ -730,6 +957,10 @@ function buildFieldsHTML(fid, f) {
       // 采集规则（次元矿洞）：整行返回（不套 pc-row），行可增删，容器带 fid/key 供委托与重刷
       return sec + `<div class="pc-mrule" data-id="${fid}" data-mrkey="${fd.key}">` +
         mineRulesInnerHTML(c[fd.key], fd, c) + `</div>`;
+    } else if (fd.type === 'farmrules') {
+      // 下田规则（自动下田）：整行返回，田位行可增删，容器带 fid/key 供委托与重刷（同 minerules）
+      return sec + `<div class="pc-frule" data-id="${fid}" data-frkey="${fd.key}">` +
+        farmRulesInnerHTML(c[fd.key], fd) + `</div>`;
     } else {
       row = `<label class="pc-row"><span>${fd.label}</span>` +
         `<input type="number" data-id="${fid}" data-key="${fd.key}" min="${fd.min}" step="${fd.step}" value="${c[fd.key]}"></label>`;
@@ -775,6 +1006,33 @@ function renderFeatureCard(node) {
     `<div class="pc-sec-body" hidden>${fields || '<div class="pc-empty">无可调参数</div>'}</div></div>`;
 }
 
+/**
+ * 只读信息卡「快捷键一览」：渲染 core/hotkeys.js list() 当前全部键位（立体键帽 + 功能名 + 场景胶囊）。
+ * 按 list() 的 group 分两段：'global'（展示型全域/浮层开关）与 'game'（注册表分派的游戏内裸键），各带小标题。
+ * 非 feature：不可开关、不进存储；默认展开（.open + body 不带 hidden），点标题行仍可折叠（wirePanel 通用折叠）。
+ * @param {object} node menu.js hotkeys 节点
+ * @returns {string}
+ */
+function renderHotkeysCard(node) {
+  const items = hotkeyList();
+  const row = function (h) {
+    return `<div class="pc-hkrow"><span class="pc-hkk"><kbd>${escAttr(h.display)}</kbd></span>` +
+      `<span class="pc-hkl">${escAttr(h.label)}</span>` +
+      (h.where ? `<span class="pc-hkw">${escAttr(h.where)}</span>` : '') + `</div>`;
+  };
+  // 分组顺序固定：全局/浮层开关在前，游戏内操作在后；group 缺省归 game
+  const groups = [['global', '全局 · 浮层开关'], ['game', '游戏内操作']];
+  let body = '';
+  groups.forEach(function (g) {
+    const rows = items.filter(function (h) { return (h.group || 'game') === g[0]; });
+    if (!rows.length) return;
+    body += `<div class="pc-hkgrp">${escAttr(g[1])}</div>` + rows.map(row).join('');
+  });
+  return `<div class="pc-sec open" data-hk="1">` +
+    cardHead(node.label || '快捷键一览', '', true) +
+    `<div class="pc-sec-body">${body || '<div class="pc-empty">暂无快捷键</div>'}</div></div>`;
+}
+
 /** @type {string} 挂「登出 / 换号」按钮的类别 id（账号级操作，归入系统设置） */
 const LOGOUT_PANE_ID = 'system';
 /**
@@ -784,7 +1042,7 @@ const LOGOUT_PANE_ID = 'system';
  * @returns {string}
  */
 function renderCategoryPane(cat, active) {
-  const cards = (cat.children || []).map((n) => (n.kind === 'group' ? renderGroupCard(n) : renderFeatureCard(n))).join('');
+  const cards = (cat.children || []).map((n) => (n.kind === 'group' ? renderGroupCard(n) : n.kind === 'hotkeys' ? renderHotkeysCard(n) : renderFeatureCard(n))).join('');
   const extra = cat.id === LOGOUT_PANE_ID
     ? `<button class="pc-btn" id="pc-logout">登出 / 换号</button>` : '';
   return `<div class="pc-pane" data-pane="${cat.id}"${active ? '' : ' hidden'}>${cards || '<div class="pc-empty">无内容</div>'}${extra}</div>`;
@@ -863,6 +1121,8 @@ function syncControls(panel) {
   });
   // 好友清单：整块重刷 + 重绑（同 ranges，行数可增删）
   panel.querySelectorAll('.pc-ulist').forEach(mountUidList);
+  // 领取优先级清单：整块重刷 + 重绑（行不可增删但 ↑/↓ 交换后序号/disabled 态会变）
+  panel.querySelectorAll('.pc-slist').forEach(mountSortList);
   // 多选开关组：整块重刷内层（选项动态枚举、选中态为 number[]，不能只回写单个值）
   panel.querySelectorAll('.pc-mopts').forEach((box) => {
     const f = findFeature(box.dataset.id);
@@ -878,6 +1138,14 @@ function syncControls(panel) {
     const fd = f.fields.find((x) => x.key === box.dataset.mrkey);
     if (!fd) return;
     box.innerHTML = mineRulesInnerHTML(configs[f.id][fd.key], fd, configs[f.id]);
+  });
+  // 下田规则：整块重刷内层（行可增删且行形状随田类型变，同 minerules）
+  panel.querySelectorAll('.pc-frule').forEach((box) => {
+    const f = findFeature(box.dataset.id);
+    if (!f) return;
+    const fd = f.fields.find((x) => x.key === box.dataset.frkey);
+    if (!fd) return;
+    box.innerHTML = farmRulesInnerHTML(configs[f.id][fd.key], fd);
   });
   refreshTexts(panel);
 }
@@ -1242,6 +1510,9 @@ function wirePanel(panel) {
   // 好友清单字段（type:'uidlist'，玩家点赞）：逐容器装配（行状态机 + ＋/× 增删，见 mountUidList）。
   panel.querySelectorAll('.pc-ulist').forEach(mountUidList);
 
+  // 领取优先级清单字段（type:'sortlist'，遗迹奖励）：逐容器装配（↑/↓ 交换相邻位，见 mountSortList）。
+  panel.querySelectorAll('.pc-slist').forEach(mountSortList);
+
   panel.querySelector('#pc-logout').addEventListener('click', () => {
     session.logout(); // 游戏登出（PlatformCore 符号收口于 core/game-api.js 防腐层）
   });
@@ -1425,6 +1696,82 @@ function wirePanel(panel) {
       t.list.push({ type: first ? Number(first.value) : 0, level: maxLv, star: maxStar, enabled: false });
     }
     t.box.innerHTML = mineRulesInnerHTML(t.list, t.fd, t.cfg);
+    saveFeature(t.f); applyFeature(t.f);
+  });
+
+  // 下田规则字段（type:'farmrules'，自动下田）：田类型/田等级/预设部队下拉 + ☑只下机械田开关，行可增删，
+  // 同 minerules 走面板级事件委托；family/level 改动会联动其它控件（雷神封顶 3 级、选 6 级田禁用机械田）需整行重刷，preset 行形状不变。
+  const frTarget = (el) => {
+    const box = el && el.closest ? el.closest('.pc-frule') : null;
+    if (!box) return null;
+    const f = findFeature(box.dataset.id);
+    if (!f) return null;
+    const fd = f.fields.find((x) => x.key === box.dataset.frkey);
+    if (!fd) return null;
+    const c = configs[f.id];
+    if (!Array.isArray(c[fd.key])) c[fd.key] = [];
+    // 首次改动先浅拷一份，避免就地 push/splice 污染 descriptor defaults（同 minerules）
+    if (c[fd.key] === f.defaults[fd.key]) c[fd.key] = c[fd.key].map((r) => ({ ...r }));
+    return { f, fd, box, list: c[fd.key] };
+  };
+  const frIdx = (el) => {
+    const row = el && el.closest ? el.closest('.pc-frrow[data-fidx]') : null;
+    return row ? +row.dataset.fidx : -1;
+  };
+  panel.addEventListener('change', (e) => {
+    const el = e.target;
+    if (!el.classList) return;
+    // 行生效开关：勾选才让本田位参与派发；重刷以更新置灰态
+    if (el.classList.contains('pc-fron')) {
+      const t0 = frTarget(el);
+      if (!t0) return;
+      const i0 = frIdx(el);
+      if (i0 < 0 || i0 >= t0.list.length) return;
+      t0.list[i0].enabled = !!el.checked;
+      t0.box.innerHTML = farmRulesInnerHTML(t0.list, t0.fd);
+      saveFeature(t0.f); applyFeature(t0.f);
+      return;
+    }
+    // ☑只下机械田开关：勾选后本行只看机械田（没有则不下、不回退普通田）；行形状不变，无需重刷
+    if (el.classList.contains('pc-frmechin')) {
+      const t = frTarget(el);
+      if (!t) return;
+      const idx = frIdx(el);
+      if (idx < 0 || idx >= t.list.length) return;
+      t.list[idx].mechOnly = !!el.checked;
+      saveFeature(t.f); applyFeature(t.f);
+      return;
+    }
+    if (!el.classList.contains('pc-frsel')) return;
+    const t = frTarget(el);
+    if (!t) return;
+    const idx = frIdx(el);
+    if (idx < 0 || idx >= t.list.length) return;
+    const part = el.dataset.part;
+    t.list[idx][part] = parseInt(el.value, 10) || 0;
+    // family/level 联动其它控件（雷神等级封顶 3、选 6 级田禁用机械田）→ 就地归一后整行重刷；preset 行形状不变无需重刷
+    if (part === 'family' || part === 'level') {
+      const row = t.list[idx];
+      if ((Number(row.family) || 7) === 16 && (Number(row.level) || 0) > 3) row.level = 3;
+      if ((Number(row.level) || 0) >= 6) row.mechOnly = false;
+      t.box.innerHTML = farmRulesInnerHTML(t.list, t.fd);
+    }
+    saveFeature(t.f); applyFeature(t.f);
+  });
+  // 增删行：新行默认金矿 5 级、不勾「只下机械田」、预设 1（战斗预设），默认不勾选（配好后手动勾上才生效，同 minerules）
+  panel.addEventListener('click', (e) => {
+    const del = e.target.closest ? e.target.closest('.pc-frdel') : null;
+    const add = e.target.closest ? e.target.closest('.pc-fradd') : null;
+    if (!del && !add) return;
+    const t = frTarget(del || add);
+    if (!t) return;
+    if (del) {
+      const idx = frIdx(del);
+      if (idx >= 0 && idx < t.list.length) t.list.splice(idx, 1);
+    } else {
+      t.list.push({ enabled: false, family: 7, level: 5, mechOnly: false, preset: 1 });
+    }
+    t.box.innerHTML = farmRulesInnerHTML(t.list, t.fd);
     saveFeature(t.f); applyFeature(t.f);
   });
 

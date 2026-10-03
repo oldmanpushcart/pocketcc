@@ -14,7 +14,7 @@
 /**
  * @typedef {object} MenuNode 菜单节点
  * @property {string} id 节点 id（类别/组/功能）
- * @property {string} kind 节点类型：category | group | feature
+ * @property {string} kind 节点类型：category | group | feature | hotkeys
  * @property {string} [label] 展示标签（category/group 自带；feature 为面板标签覆写）
  * @property {MenuNode[]} [children] 子节点（category -> 卡片，group -> 子项）
  * @property {boolean} [showFields] feature 为真时面板渲染 descriptor 的详细字段
@@ -61,11 +61,14 @@ export const MENU = [
       { id: 'citySkill', kind: 'feature', label: '城市技能', showFields: true },
       { id: 'playerLike', kind: 'feature', label: '玩家点赞', showFields: true },
       { id: 'mineCave', kind: 'feature', label: '次元矿洞', showFields: true },
+      { id: 'autoFarm', kind: 'feature', label: '自动下田', showFields: true },
+      { id: 'relicReward', kind: 'feature', label: '遗迹奖励', showFields: true },
     ],
   },
   {
     id: 'battle', kind: 'category', label: CATEGORIES.battle, children: [
       { id: 'quickAttack', kind: 'feature', label: '快捷战斗' },
+      { id: 'imperialDecree', kind: 'feature', label: '奉旨出征', showFields: true },
     ],
   },
   {
@@ -80,6 +83,8 @@ export const MENU = [
       { id: 'netLog', kind: 'feature', label: '网络日志' },
       { id: 'eventLog', kind: 'feature', label: '事件日志' },
       { id: 'netRecord', kind: 'feature', label: '报文录制', showFields: true },
+      // 只读信息卡：渲染 core/hotkeys.js 注册表的当前全部绑键（非 feature，不可开关、不进存储）
+      { id: 'hotkeyGuide', kind: 'hotkeys', label: '快捷键一览' },
     ],
   },
 ];

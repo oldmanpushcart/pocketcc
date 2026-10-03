@@ -22,7 +22,9 @@
  *   全局行军名额读 UserData.myMarchNumMAX - myMarchNum（跨场景可靠，勿只依赖 mapData.marches）。
  *   仅当「需驻军且名额不足」才撤田；撤几个＝名额缺口（要几个撤几个）；撤回不立即释放名额，须返程 state=4 到家才释放，
  *   故本轮撤回后不阻塞等待——名额释放由下一轮扫描（10019 回城唤醒 / 兜底定时）自然补派。
- *   "田"＝资源采集行军：判据 target.targetType===4（资源田），涵盖 marchType 3/26，显式排除驻井 35 与领域寻宝挖矿 180。
+ *   "田"＝资源采集行军：mapData.marches 条目由 NWorldMapMarchModel 把协议 marchInfo 摊平（状态字段 marchState、
+ *   坐标扁平 target_tx/target_ty、itemId 扁平、**无 target 子对象、无 targetType**），故撤田判据以 marchType 3/26 为准
+ *   （普通田 3 / 机械田 26），显式排除驻井 35 与领域寻宝挖矿 180；命中已驻井同理读扁平 itemId/target_tx/target_ty。
  *
  * 生命周期由 reactor 托管：install/run 两个钩子，scenes 门控限定 Home/NWorldMap，战斗模式暂停（offInCombat）。
  *   驻军/撤田/领积分均为内置默认行为，无面板可调项（面板仅出 enabled 勾选）。
@@ -66,8 +68,6 @@ const MARCH_TYPE_DOMAIN_TREASURE = 180;
 
 /** @type {number} 行军状态：ARRIVED_HOME（NMarchState=4，部队已到家、名额已释放） */
 const MARCH_STATE_ARRIVED_HOME = 4;
-/** @type {number} 目标实体类型：资源田（撤田判据；驻井=10、领域寻宝矿≠4，天然排除） */
-const TARGET_TYPE_RESOURCE_FIELD = 4;
 
 /** @type {number} DataConfig：个人积分档位表（"num,rewardId|num,rewardId|..."，num=积分门槛） */
 const CFG_TIERS_KEY = 130118;
@@ -199,7 +199,35 @@ function myMarchList() {
 }
 
 /**
- * 是否已有一条驻本井的行军（marchType=35 且目标命中该井）：命中 itemId 或坐标。
+ * 行军条目目标点 (tx,ty)：mapData.marches 条目由 NWorldMapMarchModel 把 marchInfo.target 摊平成扁平
+ * target_tx/target_ty（无 target 子对象）；回落嵌套 target.tx/ty（兼容直接传协议 marchInfo 的调用路径）。取不到回 null。
+ * @param {object} mg 行军条目
+ * @returns {{tx:number,ty:number}|null}
+ */
+function marchTarget(mg) {
+    if (!mg) return null;
+    if (mg.target_tx != null && mg.target_ty != null) return { tx: mg.target_tx | 0, ty: mg.target_ty | 0 };
+    var t = mg.target;
+    if (t && t.tx != null && t.ty != null) return { tx: t.tx | 0, ty: t.ty | 0 };
+    return null;
+}
+
+/**
+ * 行军条目目标 itemId：扁平 itemId（=marchInfo.target.itemId）优先，回落嵌套 target.itemId。命中已驻井判据用。
+ * @param {object} mg 行军条目
+ * @returns {number|null}
+ */
+function marchItemId(mg) {
+    if (!mg) return null;
+    if (mg.itemId != null) return Number(mg.itemId);
+    var t = mg.target;
+    if (t && t.itemId != null) return Number(t.itemId);
+    return null;
+}
+
+/**
+ * 是否已有一条驻本井的行军（marchType=35 且目标命中该井）：命中 itemId 或坐标（均走摊平字段）。
+ * 关键：mapData.marches 无嵌套 target，若读 march.target.itemId/tx/ty 会恒取 undefined → 误判「没驻」而每轮重复增援。
  * @param {number} siloId 井配置 id（4001~4004）
  * @param {{x:number,y:number}} coord 井坐标
  * @returns {boolean}
@@ -209,16 +237,17 @@ function hasGarrisonMarchFor(siloId, coord) {
     for (var i = 0; i < list.length; i++) {
         var march = list[i];
         if ((march.marchType | 0) !== MARCH_TYPE_GUN_FIGHT) continue;
-        var tgt = march.target || {};
-        if (tgt.itemId != null && Number(tgt.itemId) === siloId) return true;
-        if (coord && Number(tgt.tx) === coord.x && Number(tgt.ty) === coord.y) return true;
+        var itemId = marchItemId(march);
+        if (itemId != null && itemId === siloId) return true;
+        var tgt = marchTarget(march);
+        if (tgt && coord && tgt.tx === coord.x && tgt.ty === coord.y) return true;
     }
     return false;
 }
 
 /**
- * 是否"资源采集田"行军（撤田候选）：target.targetType===4 为主判据（涵盖 marchType 3/26），
- * 显式排除驻井(35)与领域寻宝挖矿(180)；已在返程/待撤集合(pendingRecall)的跳过。
+ * 是否"资源采集田"行军（撤田候选）：marches 摊平后无 targetType，改以 marchType 3/26 为主判据
+ * （普通田 3 / 机械田 26）；显式排除驻井(35)与领域寻宝挖矿(180)；已在待撤集合(pendingRecall)的跳过。
  * @param {object} march 行军条目
  * @returns {boolean}
  */
@@ -227,9 +256,7 @@ function isRecallableFarmMarch(march) {
     if (mt === MARCH_TYPE_GUN_FIGHT || mt === MARCH_TYPE_DOMAIN_TREASURE) return false;
     var mid = String(march.marchId);
     if (pendingRecall.has(mid)) return false;
-    var tgt = march.target || {};
-    var tt = tgt.targetType | 0;
-    return tt === TARGET_TYPE_RESOURCE_FIELD || mt === 3 || mt === 26;
+    return mt === 3 || mt === 26;
 }
 
 /**

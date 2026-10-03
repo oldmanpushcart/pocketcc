@@ -4,13 +4,18 @@
  * 网络一律走 promise 封装 window.pocketcc.net：send(cmd, data) → Promise<Ret{code,data,ok}>，isSending(cmd) 查在途。
  * 三条协议铁律（target=null、ensureServerResponse=false、无 clickInfo）由 net 封装内部固定，这里不再关心。
  *
- * 判据（口径同游戏面板 updatePageRedPoint / initToggleDefaultPage，见 references/联盟礼物.md、AllianceGiftPanel.js）：
- *   读内存模型 DATA.UserData.Alliance.AllianceGiftData.RedPointObj —— 形如 {1: 普通可领数, 2: 稀有可领数}。
- *   某个 type 计数 > 0 即有该类礼物可领，无需自己解析 5015 分页报文。
+ * 判据（口径同游戏面板 updatePageRedPoint / onReceiveBoxClick，见 references/联盟礼物.md、AllianceGiftPanel.js）：
+ *   读内存模型 DATA.UserData.Alliance.AllianceGiftData 两字段：
+ *     - RedPointObj（形如 {1: 普通可领数, 2: 稀有可领数}）→ 某 type>0 即该类 1177 可领；
+ *     - AlGiftList（珍藏奖励 id 数组，如 [900122,900122]）→ length>0 即 1178 可领。
+ *   两字段都由 5014 应答 / 10442 push 一次刷完（push 同时带 typeNumMap 与 userInfo.alGiftRewards），
+ *   脚本不自建 5015 分页解析。
  *
  * 领取（见 references/联盟礼物.md）：
  *   req send Receive_Alliance_Gift_Small_All(1177) {type:1 普通 / 2 稀有} → 一键领完该类全部可领礼物。
- *   普通/稀有各一个开关，独立判定、独立发送。
+ *   req send Receive_Alliance_Gift_Big(1178) {} → 领 1 箱"联盟珍藏礼物"（游戏 onReceiveBoxClick 就是这个语义，
+ *   一次一箱），剩余靠下轮 busy 逐箱清完。
+ *   普通/稀有/珍藏各一个开关，独立判据、独立发送；三者共用同一条 busy/idle 定时链与 10442 唤醒。
  *
  * 触发模型：
  *   1) 轮询为主（联盟礼物无可靠的"有礼物"专用推送语义可依赖，口径同联盟帮助——生产者轮询，不纯事件驱动）；
@@ -19,7 +24,8 @@
  *      一次唤醒风暴只发一次复查（wake 在途时后续 push 忽略），防风暴期反复重置定时把检查无限后移；
  *   3) busy/idle 两档降频：本轮真领到了东西用 busyInterval 勤扫（RedPointObj 由服务器回执刷新，需短间隔复核），
  *      没东西可领降 idleInterval 防空转刷 1177。零点礼物风暴期节奏严格锁定在 busyInterval，与 push 频率解耦；
- *   4) 1177 发送按 type 设最小间隔闸门：同类距上次成功发送不足 busyInterval 直接跳过（批量结算，攒一批再领），
+ *   4) 1177 按 type、1178 单 key 'big'，各设最小间隔闸门：同类距上次成功发送不足 busyInterval 直接跳过
+ *      （1177 批量结算攒一批再领 / 1178 一 tick 只领 1 箱避免同刻连发被限流，剩余靠下轮 busy 续领），
  *      被拒不记闸门、下轮可重试。
  *
  * 重入闸门：单定时器 + claiming 标志保证同一时刻只有一轮检查在飞（含 1177 await）；
@@ -38,6 +44,9 @@ const log = createLog('ALLIANCE_GIFT');
 /** @type {number} RequestId.Receive_Alliance_Gift_Small_All（RequestId.js:408），一键领取某类联盟礼物，载荷 {type} */
 const CMD_RECEIVE_GIFT_ALL = 1177;
 
+/** @type {number} RequestId.Receive_Alliance_Gift_Big（RequestId.js:409），领 1 箱联盟珍藏礼物，载荷 {} */
+const CMD_RECEIVE_GIFT_BIG = 1178;
+
 /** @type {number} ResponseId.PUSH_ALLIANCE_GIFT_INFO（ResponseId.js:192），联盟礼物信息更新推送；仅作唤醒源，不读载荷 */
 const CMD_PUSH_ALLIANCE_GIFT_INFO = 10442;
 
@@ -46,6 +55,9 @@ const GIFT_TYPE_NORMAL = 1;
 
 /** @type {number} AllianceGiftType.RARE_GIFT（AllianceGiftData.js:281），稀有礼物 */
 const GIFT_TYPE_RARE = 2;
+
+/** @type {string} lastClaimAt 里珍藏礼物（1178 无 type 参数）的记账 key */
+const GIFT_KEY_BIG = 'big';
 
 /** @type {number} 领完一类到下一类之间的间隔，规避 1177 过快被服务器限流 */
 const CLAIM_GAP_MS = 1000 * 2;
@@ -64,6 +76,9 @@ const cfg = {
 
     /** 稀有礼物自动领取开关 */
     rare: { enabled: true },
+
+    /** 珍藏礼物自动领取开关（判据 AllianceGiftData.AlGiftList.length>0；1178 一次一箱，跨 tick busy 逐箱清完） */
+    big: { enabled: true },
 
     /**
      * 有礼物时间隔：本轮真领到了东西时用（默认15秒），勤扫趁 RedPointObj 刷新后继续领剩下的
@@ -126,14 +141,32 @@ function sleep(ms) {
 // ─────────────────────────── 数据读取 ───────────────────────────
 
 /**
- * 取联盟礼物数据的红点计数对象 RedPointObj（{1:普通数,2:稀有数}）
+ * 取联盟礼物数据本体 AllianceGiftData（RedPointObj / AlGiftList 两个判据字段的共同宿主）
  * 不在联盟 / 数据未就绪时返回 null（调用方据此判 0，不崩）
  * @returns {object|null}
  */
-function getRedPointObj() {
+function getGiftData() {
     var alliance = data && data.UserData && data.UserData.Alliance;
-    var giftData = alliance && alliance.AllianceGiftData;
+    return (alliance && alliance.AllianceGiftData) || null;
+}
+
+/**
+ * 取 1177 判据字段 RedPointObj（{1:普通数, 2:稀有数}）
+ * @returns {object|null}
+ */
+function getRedPointObj() {
+    var giftData = getGiftData();
     return (giftData && giftData.RedPointObj) || null;
+}
+
+/**
+ * 取 1178 判据字段 AlGiftList（珍藏奖励 id 数组，如 [900122,900122]）
+ * 游戏 AllianceGiftPanel.onReceiveBoxClick 就是判 length>0
+ * @returns {Array|null}
+ */
+function getAlGiftList() {
+    var giftData = getGiftData();
+    return (giftData && giftData.AlGiftList) || null;
 }
 
 /**
@@ -210,6 +243,16 @@ async function tick() {
         if (cfg.rare.enabled && countOf(red, GIFT_TYPE_RARE) > 0) {
             if (await claimType(GIFT_TYPE_RARE, 'rare')) {
                 didClaim = true;
+                await sleep(CLAIM_GAP_MS);
+                if (!aliveFn()) return;
+            }
+        }
+
+        // 珍藏礼物：判据 AlGiftList.length>0；1178 一次一箱，剩余靠下轮 busy 续领（同 tick 不连发，规避限流）
+        if (cfg.big.enabled) {
+            var list = getAlGiftList();
+            if (list && list.length > 0) {
+                if (await claimBig()) didClaim = true;
             }
         }
     } finally {
@@ -250,6 +293,37 @@ async function claimType(type, label) {
         return false;
     } catch (err) {
         log.warn('receive %s gift error.', label, err);
+        return false;
+    }
+}
+
+/**
+ * 领取 1 箱联盟珍藏礼物（1178，载荷 {}）。永不 reject；返回是否领取成功。
+ * 与 claimType 同一闸门风格：isSending 防重 + 单 key 'big' 的最小间隔闸门（防零点风暴把 1178 高频打出去被限流）；
+ * 被拒/出错不记闸门，下轮照常重试。
+ * 结果单一出口在此打日志：成功 info（带上原 AlGiftList 长度）、被拒 warn（带 code）
+ * @returns {Promise<boolean>} 是否领取成功
+ */
+async function claimBig() {
+    if (net.isSending(CMD_RECEIVE_GIFT_BIG)) {
+        return false;
+    }
+    if (Date.now() - (lastClaimAt[GIFT_KEY_BIG] || 0) < cfg.busyInterval) {
+        log.debug('skip big claim: min-interval gate.');
+        return false;
+    }
+    var pending = (getAlGiftList() || []).length;
+    try {
+        var ret = await net.send(CMD_RECEIVE_GIFT_BIG, {});
+        if (ret.ok) {
+            lastClaimAt[GIFT_KEY_BIG] = Date.now();
+            log.info('receive big gift ok. wasPending=%d', pending);
+            return true;
+        }
+        log.warn('receive big gift rejected. code=%d', ret.code);
+        return false;
+    } catch (err) {
+        log.warn('receive big gift error.', err);
         return false;
     }
 }

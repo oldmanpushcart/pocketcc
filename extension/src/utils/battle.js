@@ -15,11 +15,19 @@
  * 未指定任何来源（plan().build() 既不 preset 也不 minimal）、或 preset 读取失败时，同样部队派空。
  *
  * preset 出征前做过滤（口径见分析文档的取数接口）：剔除已派出的部队（普通兵可用额度、
- *   机甲战斗状态）、已派出的英雄（不在可派遣名单）、已出征的军阵（置 0）。minimal 无需过滤。
+ *   机甲战斗状态）、已派出的英雄（不在可派遣名单）、已出征的军阵（置 0）。
+ *
+ * 每格上阵数走「实时重算」而非直接采纳预设 Num（见 recalcFromPreset）：预设里的数字是
+ *   保存那一刻的上限，而真实上限由 Buff 池（城皮/VIP/科技…）+ 英雄统率加成 + 等级格子数
+ *   + 当前可派兵池共同决定，这些因素穷举不完，故交回游戏自带的重算器算。
+ *   重算器不可用（符号漂移 / subpack2 未接管）时降级到手写过滤口径。
+ *
+ * minimal 无需过滤（只派 1 个最低级兵，不碰上限）。
  *
  * 依赖游戏运行时模块，全部经 core/game.js 薄封装软获取；缺失即返回 null，各查询入口自行兜底。
  */
 import { game } from '../core/game.js';
+import { battlePreset } from '../core/game-api.js';
 import { createLog } from '../core/log.js';
 
 /** @type {ReturnType<createLog>} 模块日志器（tag=BATTLE） */
@@ -274,6 +282,80 @@ function filterHeroIds(heroIds) {
 }
 
 /**
+ * 首选路径：把每格上阵数交回游戏自带的重算器实时算（battlePreset.recalc）。
+ *
+ * 为何必须实时算：预设 Num 是保存那一刻的值，而真实上限 =
+ *   1 + floor(add/cells) + (add % cells > pos ? 1 : 0)，
+ *   add = Buff(BattleArmyAddNum=153) 全量聚合（城皮技能/VIP/科技/活动等一律收敛于此）
+ *       + 英雄统率加成（随出征英雄变），cells 随等级解锁。
+ * 再叠加"可派兵池按格逐个消耗"——同一份预设实测可派 250（兵全在家）或 126（部分兵在外，
+ * 且尾部两格拿不满 16→15），这种逐格递减的分配结果任何手写公式都复现不出来。
+ *
+ * 四条实证约束：
+ *   - 重算器语义是「发满」（给 1 支也会补到格上限）→ 与预设 Num 取小，保住"预设故意少摆"的语义；
+ *   - 兵池按 armyInfo 数组顺序消耗 → 必须按 pos 升序喂入，否则分配与面板不一致；
+ *   - 未知 formationV2 不被纠正（只把补位容量算成 0）→ 军阵在途判定仍需本地兜底；
+ *   - 重算器就地改写传入对象 → 只喂自建副本，绝不传 PresetMarchData 本体。
+ *
+ * @param {object[]} rawArmys 预设 Armys 原始数组
+ * @param {number[]} rawHeroIds 预设 HeroIds
+ * @param {number} formationV2 预设军阵
+ * @param {object[]|object} extraRaw 预设 extraArmy
+ * @returns {object|null} {armys, heroIds, formationV2, extraArmy}；重算能力不可用返回 null（调用方降级）
+ */
+function recalcFromPreset(rawArmys, rawHeroIds, formationV2, extraRaw) {
+    if (!battlePreset.ok()) return null;
+    var srcByPos = {};
+    var armyInfo = [];
+    (rawArmys || []).forEach(function (item) {
+        if (!item || !item.ArmyId) return;
+        var pos = item.Pos | 0;
+        srcByPos[pos] = item;   // 重算后按 pos 找回原条目，带回 skinId/heroCap 等游戏不认的字段
+        armyInfo.push({ armyId: item.ArmyId, num: item.Num | 0, pos: pos, heroCap: item.heroCap || 0 });
+    });
+    if (!armyInfo.length) return null;
+    armyInfo.sort(function (a, b) { return a.pos - b.pos; });
+    var extra = toExtraArmy(extraRaw);
+    var entry = {
+        index: 0,
+        formation: 0,
+        formationV2: formationV2 | 0,
+        heroIds: (rawHeroIds || []).slice(),
+        armyInfo: armyInfo,
+        extraArmy: extra.armyId ? extra : null,
+    };
+    if (battlePreset.recalc(entry) === null) return null;
+
+    var armys = [];
+    (entry.armyInfo || []).forEach(function (a) {
+        var src = srcByPos[a.pos];
+        var live = a.num | 0;
+        // 发满语义 → 与预设取小；src 缺失（理论上不会）时直接采纳实时值
+        if (src && src.Num != null) live = Math.min(live, src.Num | 0);
+        if (live <= 0) return;
+        armys.push(toArmyEntry({
+            ArmyId: a.armyId,       // 机甲条目的 armyId 会被游戏按当前 armyType 换算，取返回值
+            Pos: a.pos,
+            Num: live,
+            heroCap: src && src.heroCap,
+            skinId: src && src.skinId,
+        }));
+    });
+    var extraArmy = {};
+    if (entry.extraArmy && entry.extraArmy.armyId) {
+        var liveExtra = entry.extraArmy.armyNum | 0;            // 无补位容量时游戏已把 extraArmy 置 null
+        if ((extra.armyNum | 0) > 0) liveExtra = Math.min(liveExtra, extra.armyNum | 0);
+        if (liveExtra > 0) extraArmy = { armyId: entry.extraArmy.armyId, armyNum: liveExtra };
+    }
+    return {
+        armys: armys,
+        heroIds: toHeroList(entry.heroIds),                     // 游戏已按"可派遣 + 数量上限"截断
+        formationV2: entry.formationV2 | 0,
+        extraArmy: extraArmy,
+    };
+}
+
+/**
  * 从预设队伍构造行军数据。
  * @param {number} [index=0] 预设索引（0 起）
  * @param {number} [type=0]  预设类型：0 战斗 / 1 采集
@@ -291,11 +373,32 @@ function buildFromPreset(index, type) {
     }
 
     // 预设对象既有 getter（Armys/HeroIds/extraArmy）也有下划线私有字段，二者取其一兜底
-    // 出征过滤：剔除已派出的部队（普通兵可用额度、机甲战斗状态）与英雄（不在可派遣名单）
-    var armys = filterArmys(preset.Armys || preset._Armys);
-    var heroList = toHeroList(filterHeroIds(preset.HeroIds || preset._HeroIds));
-    var extraArmy = toExtraArmy(preset.extraArmy || preset._extraArmy);
+    var rawArmys = preset.Armys || preset._Armys;
+    var rawHeroIds = preset.HeroIds || preset._HeroIds;
+    var rawExtra = preset.extraArmy || preset._extraArmy;
     var formationV2 = (ctl.getFormationV2ByIndex && ctl.getFormationV2ByIndex(index, type)) || 0;
+
+    // 首选：交游戏实时重算每格可派数（含可派兵池逐格消耗、英雄可派截断、补位容量）
+    var live = recalcFromPreset(rawArmys, rawHeroIds, formationV2, rawExtra);
+    if (live) {
+        // 重算器不校验非法军阵（实证：乱填 id 原样保留），在途判定仍由本地兜一层
+        if (live.formationV2 && isFormationMarching(live.formationV2)) live.formationV2 = 0;
+        log.debug('preset#%d(type=%d) live-recalc -> %d/%d slots, hero=%d, formationV2=%d, extra=%d',
+            index + 1, type, live.armys.length, (rawArmys || []).length,
+            live.heroIds.length, live.formationV2, (live.extraArmy.armyId || 0));
+        return {
+            armyListNew: live.armys,
+            heroList: live.heroIds,
+            trapList: [],               // 预设不含陷阱
+            formationV2: live.formationV2,
+            extraArmy: live.extraArmy,
+        };
+    }
+
+    // 降级（重算器符号不可用）：出征过滤——剔除已派出的部队（普通兵可用额度、机甲战斗状态）与英雄（不在可派遣名单）
+    var armys = filterArmys(rawArmys);
+    var heroList = toHeroList(filterHeroIds(rawHeroIds));
+    var extraArmy = toExtraArmy(rawExtra);
     // 军阵已出征则不可再用，置 0
     if (formationV2 && isFormationMarching(formationV2)) formationV2 = 0;
 
@@ -433,4 +536,6 @@ export const battle = {
     buildMinimal: buildMinimal,
     query: query,
     PRESET_TYPE: PRESET_TYPE,
+    /** 实时重算是否可用（false 时 buildFromPreset 走手写过滤降级） */
+    liveRecalcOk() { return battlePreset.ok(); },
 };

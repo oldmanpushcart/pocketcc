@@ -41,11 +41,16 @@ const SYM = {
     pathUtils: 'PathUtils',        // 资源路径换算（游戏自带头像图集名 → headpic CDN URL）
     gameDefine: 'GameDefine',      // 全局枚举汇出（FunctionKey/EnergyType 等，CommonJS 直挂 exports）
     worldSiteCtrl: 'AllianceWorldSiteController', // 联盟遗迹（要塞）控制器门面，具名导出，实例在 _instance/instance
+    rewardCtrl: 'RewardController',      // 奖励配置解析器，ES 命名空间具名导出（无 .default），静态 Instance.getRewardsArrById 把奖励配置 id 解成道具清单
     terrainModel: 'NWorldMapTerrainModel', // 离线地形查询单例：getTerrain/getAreaByWorldMap/isBlock/cols/rows
     mapCommon: 'NWorldMapCommon',           // 常量枚举：allMapInfos（按 mapType 的 rows/cols/subMap）、NWorldMapSettings
     mapData: 'NWorldMapData',               // 数据单例：mapFiles[mapType]、currentMapFile（注：mapType 不在此，在 NWorldMapCoreBiz，经 terrainModel.currentMapType 读）
     mapAssets: 'NWorldMapAssets',           // 地形图集资源表：NMapAssets[mapType] = {terrainTexture, tileMap(tileId→[frameName]), waterIds, hillIds, terrainScale}
     vassetCache: 'VirtualAssetCache',       // 资源缓存：getSpriteFrameFromAtlas(name, atlas)→cc.SpriteFrame(rect/texture.nativeUrl)、getSpriteAtlasFromCache
+    marchStorage: 'MarchStorageController', // 出征档案门面：getInstance() 由 subpack2 启动接管（Subpack2Main.main → initMarchStorageController）注入 Real 实现
+    procedureManager: 'ProcedureManager', // 场景程序管理器（PROCE 单例）：Run(PROCE.Home/PROCE.NewWorld) 切场景，与主界面「世界/回城」按钮同源
+    uiManager: 'UIManager',               // UI 管理器门面（default.Instance().OpenUI(UIDataInfo.xxx) 打开原生面板）
+    uiDataInfo: 'UIDataInfo',             // 面板描述符注册表（UIDataInfo.<PanelName> → UIDataInfoClass 实例）
   },
   /** 新图单例属性链：module[cls][inst]，枚举对象 module[goType] */
   newMap: { cls: 'NWorldMapTodoController', inst: 'instance', goType: 'NWorldMapGoType' },
@@ -60,7 +65,7 @@ const SYM = {
     mineCave: 'mine_cave', mineCaveLevel: 'mine_cave_level', mineCaveInteraction: 'mine_cave_interaction',
   },
   /** UserData 子对象上的数据成员名（属性链符号，Alliance.<name>） */
-  dataProps: { allianceBoss: 'AllianceBossData', allianceScience: 'scienceData' },
+  dataProps: { allianceBoss: 'AllianceBossData', allianceScience: 'scienceData', worldCoord: 'WorldCoord' },
   /** 行军/地块枚举成员名（只记名字，数值运行时向游戏枚举对象取） */
   marchEnum: {
     obj: 'MarchType',                                 // WorldMapCommon 导出：新旧图同一张 MarchType 表
@@ -72,7 +77,13 @@ const SYM = {
     attackWorldBoss: 'ATTACK_WORLDBOSS',              // 14 普通世界 boss
     attackWorldBossV2: 'ATTACK_WORLD_BOSS_V2'         // 298 bossV2 世界 boss
   },
-  entityEnum: { obj: 'WorldMapEntityType', bossV2: 'BOSS_V2' },
+  entityEnum: { obj: 'WorldMapEntityType', boss: 'BOSS', bossV2: 'BOSS_V2' },
+  /** ProcedureManager.PROCE 单例上的场景程序成员名（各 Procedure 自带 sceneName，Run 时按 sceneName 判断是否切换） */
+  procedures: { home: 'Home', newWorld: 'NewWorld' },
+  /** 场景节点名（cc.director.getScene().name 口径，SceneName 枚举实证：HOME="Home"、NEWWORLD="NWorldMap"、WORLD="WorldMap"） */
+  sceneNames: { home: 'Home', newWorld: 'NWorldMap' },
+  /** 语义面板名 → UIDataInfo 注册表成员名（运行时符号，面板随版本漂移时单点维护） */
+  uiPanels: { bag: 'BagPanel' },
 };
 
 /** @type {Map<string, *>} 惰性探测的成功缓存（页面生命周期与游戏版本一致，缓存后无需重探） */
@@ -124,6 +135,15 @@ function tableNameEnum() { return probe(SYM.modules.tableName + '.TableName', ()
 
 /** UserData 对象引用缓存（Friends/Alliance/StrUid 为其上属性，读值仍实时） */
 function userData() { return probe('DataCenter.UserData', () => { var m = game.get(SYM.modules.dataCenter); return (m && m.DATA && m.DATA.UserData) || null; }); }
+
+/** 场景程序管理器单例（ProcedureManager.PROCE）；PROCE.Home/NewWorld 由 ProcedureManagerInit 惰性挂上，成员每次实时读 */
+function proce() { return probe('ProcedureManager.PROCE', () => { var m = game.get(SYM.modules.procedureManager); return (m && m.PROCE) || null; }); }
+
+/** UI 管理器门面类（UIManager.default，其静态 Instance() 返回真实接管单例或未接管兜底桩；此处只缓存类、实例每次实时取，避免缓存到兜底桩） */
+function uiMgrClass() { return probe(SYM.modules.uiManager + '.default', () => { var m = game.get(SYM.modules.uiManager); return (m && m.default) || null; }); }
+
+/** UIDataInfo 面板描述符注册表对象（成员名→UIDataInfoClass 实例；对象引用稳定，面板由各模块惰性追加，读成员实时） */
+function uiRegistry() { return probe(SYM.modules.uiDataInfo + '.UIDataInfo', () => { var m = game.get(SYM.modules.uiDataInfo); return (m && m.UIDataInfo) || null; }); }
 
 // ─────────────────────── 本地化 / 配置表 ───────────────────────
 
@@ -315,6 +335,17 @@ export const march = {
     return !!(E && entityType != null && entityType === E[SYM.entityEnum.bossV2]);
   },
   /**
+   * 地块实体类型是否普通世界 boss（一期，行军类型 ATTACK_WORLDBOSS=14）。
+   * 成员缺失（符号漂移）时恒 false——宁可回「无可攻打目标」也不猜服务器契约。
+   * @param {*} entityType tileInfo.type / 901 pointType 原值
+   * @returns {boolean}
+   */
+  isBoss(entityType) {
+    var E = entityEnum();
+    var v = E && E[SYM.entityEnum.boss];
+    return !!(E && typeof v === 'number' && entityType != null && entityType === v);
+  },
+  /**
    * 基础 marchType → 当前战场实际 marchType（等价游戏 WorldUtils.getMarchTypeByBattleData 的换算分支）。
    * @param {number} base 基础 marchType（本服口径，如 ATTACK_PLAYER=13）
    * @param {{attackPlayer?:number, tm?:number, master?:number, ava?:number, teamLegend?:number}} fb
@@ -377,6 +408,15 @@ export const gameData = {
   myPid() { try { return Number(userData() && userData().UID) || 0; } catch (e) { return 0; } },
   /** 本人联盟 aid（=UserData.Alliance.Aid，与地图 p.aid 同源）；未入盟/取不到返回 0 */
   myAid() { try { var a = userData() && userData().Alliance; return Number(a && a.Aid) || 0; } catch (e) { return 0; } },
+  /**
+   * 本人基地世界坐标（UserData.WorldCoord，口径同 NWorldMapUIComponent 的小地图定位）。
+   * @returns {{x:number, y:number}|null} 取不到/字段不全返回 null
+   */
+  myWorldPos() {
+    var c = userData() && userData().WorldCoord;
+    if (!c || c.x == null || c.y == null) return null;
+    return { x: c.x | 0, y: c.y | 0 };
+  },
   /**
    * 道具背包持有量（UserData.getItemAmount，只读）。机甲碎片 3200001 等都走这里。
    * @param {number} itemId 道具 id
@@ -630,6 +670,86 @@ export const gameData = {
     }
     return out;
   },
+
+  // ─────────────────────── 遗迹奖励领取（只读，供 feats/daily/relic-reward.js） ───────────────────────
+  /**
+   * 奖励配置 id → 道具清单（只读，经 RewardController.Instance.getRewardsArrById 实时解析，与游戏面板同源）。
+   * RewardController 是 ES 命名空间具名导出（exports.RewardController=类，无 .default），故不能 ns() 解包；
+   * Instance 是类上的静态单例访问器，getRewardsArrById 为其实例方法。符号缺失/解析失败返回 []。
+   * @param {number|string} rewardId 奖励配置 id（如 8301745，即 1825 应答 select[] 里的值）
+   * @returns {Array<{type:number,id:number,count:number,name:string}>} 道具清单；不可用返回 []
+   */
+  rewardItems(rewardId) {
+    var C = probe(SYM.modules.rewardCtrl, function () {
+      var m = game.get(SYM.modules.rewardCtrl);
+      var K = m && (m.RewardController || (m.default && m.default.RewardController));
+      return (K && K.Instance && typeof K.Instance.getRewardsArrById === 'function') ? K : null;
+    });
+    if (!C || !C.Instance) return [];
+    try {
+      var arr = C.Instance.getRewardsArrById(Number(rewardId));
+      return Array.isArray(arr) ? arr : [];
+    } catch (e) { return []; }
+  },
+  /**
+   * 本盟指定等级/功能的道具遗迹候选快照（全程零发包，只读合成）。
+   * 遗迹清单权威源：UserData.getWorldSiteArrayBy(盟 id)（只筛 Owner.Aid==盟 id，地图/登录时填充，始终可用）；
+   * 按 DistrictData.stronghold_level==level && DistrictData.function==funType 过滤（2 级道具= level 2、funType 4=ITEM）。
+   * 窗口态（select/have/joinTime/endTime/cfgId）来自 AllianceWorldSiteController.instance.myItemSiteData[wonderId]——
+   *   该表仅由游戏自身的 1070/1825 应答填充（脚本直发不经游戏回调、不回写它），故可能缺省/陈旧；缺条目时
+   *   select/have 为 undefined、ready=false，调用方（feat）须自行发 1825 拿权威值再判。
+   * ready 口径同游戏红点 getItemWorldSiteRed：sp_fortress_item[cfgId].choose_num - have.length > 0 且
+   *   ServerTime - joinTime > join_time（入盟冷却）且 otherToday != 1。
+   * @param {number} level 要塞等级（2 = 道具遗迹本功能关注）
+   * @param {number} funType WorldSiteFunType 数值（4 = ITEM 道具）
+   * @returns {Array<{wonderId:number,cfgId:number,name:string,chooseNum:number,joinSec:number,select:Array<number>|undefined,have:Array<number>|undefined,joinTime:number,endTime:number,ready:boolean,leftTimes:number}>}
+   */
+  relicRewardSites(level, funType) {
+    var u = userData();
+    if (!u || typeof u.getWorldSiteArrayBy !== 'function') return [];
+    var aid = Number(u.Alliance && u.Alliance.Aid) || 0;
+    if (aid <= 0) return [];
+    var inst = probe('AllianceWorldSiteController.itemInst', function () {
+      var m = game.get(SYM.modules.worldSiteCtrl);
+      var C = m && (m.AllianceWorldSiteController || (m.default && m.default.AllianceWorldSiteController));
+      var it = (C && C._instance) || (C && C.instance);
+      return (it && it.myItemSiteData) ? it : null;
+    });
+    var mine = (inst && inst.myItemSiteData) || {};
+    var now = gameData.serverTime();
+    var out = [];
+    var sites;
+    try { sites = u.getWorldSiteArrayBy(aid) || []; } catch (e) { return []; }
+    for (var i = 0; i < sites.length; i++) {
+      var s = sites[i];
+      var dd = s && s.DistrictData;
+      if (!dd || Number(dd.stronghold_level) !== level || Number(dd.function) !== funType) continue;
+      var wonderId = Number(s.Id) || 0;
+      if (!wonderId) continue;
+      var d = mine[wonderId];
+      var cfgId = d ? Number(d.id) || 0 : 0;
+      var row = cfgId ? l10n.tableRow('sp_fortress_item', cfgId) : null;
+      var chooseNum = row ? Number(row.choose_num) || 0 : 0;
+      var joinSec = row ? Number(row.join_time) || 0 : 0;
+      var have = d && Array.isArray(d.have) ? d.have : undefined;
+      var left = (row && have) ? (chooseNum - have.length) : 0;
+      var ready = !!(row && have && d) && Number(d.otherToday) !== 1 && left > 0 && (now - Number(d.joinTime || 0)) > joinSec;
+      out.push({
+        wonderId: wonderId,
+        cfgId: cfgId,
+        name: String((s && (s.SiteName || s.SiteDefaultName)) || ''),
+        chooseNum: chooseNum,
+        joinSec: joinSec,
+        select: d && Array.isArray(d.select) ? d.select : undefined,
+        have: have,
+        joinTime: d ? Number(d.joinTime) || 0 : 0,
+        endTime: d ? Number(d.endTime) || 0 : 0,
+        ready: ready,
+        leftTimes: left > 0 ? left : 0,
+      });
+    }
+    return out;
+  },
 };
 
 /** 资源路径换算器 PathUtils（ES 命名空间下取 .default 类；静态方法 GetIconURL） */
@@ -639,6 +759,63 @@ function pathUtils() {
     return (P && typeof P.GetIconURL === 'function') ? P : null;
   });
 }
+
+/** 出征档案重算器单例（MarchStorageController.getInstance()）；门面未接管或方法名漂移时返回 null */
+function marchStorage() {
+  return probe('MarchStorageController.instance', () => {
+    var m = game.get(SYM.modules.marchStorage);
+    var C = m && (m.MarchStorageController || (m.default && m.default.MarchStorageController));
+    var inst = C && C.getInstance && C.getInstance();
+    return (inst && typeof inst.checkPreMarchExtraList === 'function') ? inst : null;
+  });
+}
+
+/**
+ * 出征档案实时重算能力：把「每格能派多少兵」这件事交回游戏自己算。
+ * 游戏侧公式（RealMarchStorageController.getMaxCoutByPos，实证）：
+ *   普通格 = 1 + floor(add/cells) + (add % cells > pos ? 1 : 0)，
+ *     add = Buff(BattleArmyAddNum=153) 全量聚合（城皮/VIP/科技等一律收敛于此）
+ *         + HeroController.getMarchHeroArmyAdd(heroIds)（英雄统率×配置20006 + 技能 153 加成）
+ *     cells = FunctionOn(monster_battle_replace) ? 按等级查 960600/960601 : 5
+ *   补位格(pos=30) = 军阵 buff ReplenishArmyCount(useFormationV2Id=formationV2)
+ * 之所以用它而不是自己套公式：加成因素（城皮技能、英雄技能、VIP、科技、活动…）穷举不完，
+ * 而该路径不读 CurBattleData / myMaxArmysNum（这两个是战斗面板打开时才写的残留态），Home 场景同样准。
+ */
+export const battlePreset = {
+  /** 重算能力是否可用（subpack2 已接管且方法在场） */
+  ok() { return !!marchStorage(); },
+  /**
+   * 让游戏重算一份出征档案的每格上阵数。**只改写传入的 entry（必须是自建副本）**，不触碰游戏数据。
+   * entry 会被就地改写：armyInfo[].num 重写为实时值（num<=0 的条目被剔除）、heroIds 截断为可派遣名单、
+   * 军阵在途名额用尽时 formationV2 打回 0、extraArmy 无补位容量时置 null。
+   * @param {object} entry {armyInfo:[{armyId,num,pos,heroCap}], heroIds:[id], formationV2, extraArmy:{armyId,armyNum}|null}
+   * @param {boolean} [checkMarch=true] true=按可派遣口径（兵不在外征战、英雄可派、军阵有剩余名额）
+   * @returns {object|null} 改写后的 entry；符号缺失或游戏抛错返回 null（调用方自行降级）
+   */
+  recalc(entry, checkMarch) {
+    var inst = marchStorage();
+    if (!inst || !entry) return null;
+    try {
+      inst.checkPreMarchExtraList([entry], { checkMarch: checkMarch !== false });
+      return entry;
+    } catch (e) {
+      log.warn('battlePreset.recalc threw —— 出征档案重算器不可用（符号漂移？），调用方将走降级口径', e);
+      return null;
+    }
+  },
+  /**
+   * 单格实时上限（调试/对照用，不改写任何东西）。
+   * @param {number} pos 0 基格子索引（补位格传 30）
+   * @param {number} formationV2 军阵 id（补位格容量由它决定）
+   * @param {number[]} heroIds 出征英雄 id 列表
+   * @returns {number|null} 上限；符号缺失返回 null
+   */
+  posMax(pos, formationV2, heroIds) {
+    var inst = marchStorage();
+    if (!inst || typeof inst.getMaxCoutByPos !== 'function') return null;
+    try { return inst.getMaxCoutByPos(pos | 0, formationV2 | 0, heroIds || []) | 0; } catch (e) { return null; }
+  },
+};
 
 /**
  * 头像资源能力（只读）：把 630 应答里的头像字段原值转成可加载的图片 URL。游戏两种头像：
@@ -698,6 +875,85 @@ export const session = {
     var p = probe('PlatformCore.instance', () => { var m = game.get(SYM.modules.platformCore); return (m && m.instance) || null; });
     if (!p || typeof p.userLogout !== 'function') return;
     p.userLogout();
+  },
+};
+
+// ─────────────────────── 场景切换 / 原生 UI 面板 ───────────────────────
+
+/**
+ * 场景切换能力：基地城市(Home) ↔ 大世界(NWorldMap)，走游戏原生 ProcedureManager（PROCE.Run），
+ * 与主界面「世界 / 回城」按钮同一条路径。只触发原生切换，不改写游戏数据（只读+调用红线）。
+ */
+export const scene = {
+  /** 当前场景节点名（cc.director.getScene().name）；引擎未就绪返回 '' */
+  name() { try { var s = cc.director.getScene(); return (s && s.name) || ''; } catch (e) { return ''; } },
+  /** 回基地（切到 Home 场景） */
+  goHome() {
+    var p = proce();
+    if (!p || !p[SYM.procedures.home]) return { ok: false, err: 'unavailable' };
+    try { p.Run(p[SYM.procedures.home]); return { ok: true }; }
+    catch (e) { log.warn('scene.goHome failed: %s', e && e.message); return { ok: false, err: 'failed' }; }
+  },
+  /** 进大世界（切到 NWorldMap 场景） */
+  goWorld() {
+    var p = proce();
+    if (!p || !p[SYM.procedures.newWorld]) return { ok: false, err: 'unavailable' };
+    try { p.Run(p[SYM.procedures.newWorld]); return { ok: true }; }
+    catch (e) { log.warn('scene.goWorld failed: %s', e && e.message); return { ok: false, err: 'failed' }; }
+  },
+  /** 基地↔大世界互切：按当前场景决定去向；两者之外的场景不处理（返回 wrongscene） */
+  toggleHomeWorld() {
+    var cur = this.name();
+    if (cur === SYM.sceneNames.newWorld) return this.goHome();
+    if (cur === SYM.sceneNames.home) return this.goWorld();
+    return { ok: false, err: 'wrongscene', scene: cur };
+  },
+};
+
+/**
+ * 原生 UI 面板打开能力：调用游戏 UIManager.Instance().OpenUI(描述符)，与主界面各功能按钮同源。
+ * 仅触发原生开窗，不改写游戏数据。
+ */
+export const ui = {
+  /**
+   * 按语义面板名打开面板（semantic 经 SYM.uiPanels 映射到 UIDataInfo 注册表成员名）。
+   * @param {string} semantic 语义名（如 'bag'）
+   * @param {...*} args 传给游戏 OpenUI 的后续参数（如背包分页 index、目标道具）
+   * @returns {{ok:boolean, err?:string}}
+   */
+  open(semantic) {
+    var reg = uiRegistry();
+    var member = reg && SYM.uiPanels[semantic];
+    var info = member && reg[member];
+    if (!info) return { ok: false, err: 'unavailable' };
+    var C = uiMgrClass();
+    var mgr = C && typeof C.Instance === 'function' ? C.Instance() : null;
+    if (!mgr || typeof mgr.OpenUI !== 'function') return { ok: false, err: 'unavailable' };
+    var args = Array.prototype.slice.call(arguments, 1);
+    try { mgr.OpenUI.apply(mgr, [info].concat(args)); return { ok: true }; }
+    catch (e) { log.warn('ui.open(%s) failed: %s', semantic, e && e.message); return { ok: false, err: 'failed' }; }
+  },
+  /** 打开道具背包（B 键用） */
+  openBag() { return this.open('bag'); },
+  /**
+   * 关闭当前顶层弹窗（Q 键用）：读游戏原生 UIManager.Instance().CurrentUIDataInfo（最近打开、即栈顶的面板描述符），
+   * 非空则调 CloseUI(描述符)（走面板自身关闭链路，等价 back 键/点遮罩）；回退 Close(name)。
+   * 无弹窗在场（CurrentUIDataInfo 为空，如干净的大本营/世界地图）返回 {ok:false,err:'nothing'}。
+   * @returns {{ok:boolean, err?:string, name?:string}}
+   */
+  closeTop() {
+    var C = uiMgrClass();
+    var mgr = C && typeof C.Instance === 'function' ? C.Instance() : null;
+    if (!mgr || typeof mgr.CloseUI !== 'function') return { ok: false, err: 'unavailable' };
+    var cur = mgr.CurrentUIDataInfo;
+    if (!cur || !cur.name) return { ok: false, err: 'nothing' };
+    var nm = cur.name;
+    try { mgr.CloseUI(cur); return { ok: true, name: nm }; }
+    catch (e) {
+      try { if (typeof mgr.Close === 'function') { mgr.Close(nm); return { ok: true, name: nm }; } } catch (e2) { }
+      log.warn('ui.closeTop(%s) failed: %s', nm, e && e.message);
+      return { ok: false, err: 'failed' };
+    }
   },
 };
 
@@ -1160,4 +1416,4 @@ export const worldMap = {
  * 逆向时 `pocketcc.api.march.flags()` 看战场判定器是否解析成功、
  * `pocketcc.api.march.resolve(13)` 看基础 marchType 在当前战场漂成哪个值（无需等到活动图里复现）。
  */
-export const debug = { SYM, probe, ns, game, l10n, nav, march, gameData, gameConf, bits, session, avatar, worldMap };
+export const debug = { SYM, probe, ns, game, l10n, nav, march, gameData, gameConf, bits, session, avatar, worldMap, battlePreset, scene, ui };
