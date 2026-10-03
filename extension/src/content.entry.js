@@ -1,6 +1,6 @@
 // MAIN world 入口：按依赖顺序导入模块（IIFE 副作用执行），末尾拼接 curated 调试面。
 // feat 目录层级对齐面板菜单树（core/menu.js）：daily 日常设置（含联盟集结）/ battle 战斗设置 / map 地图设置 / chat 聊天窗口。
-// 导入顺序 = 旧 manifest content_scripts 顺序：net 先于 feat，feat 先于编排器 main；
+// 导入顺序 = 旧 manifest content_scripts 顺序：net 先于 feat，feat 先于编排器 boot；
 // 新增 feat 除在这里加 import 外，还须挂进 core/menu.js 菜单树，否则不会出现在面板。
 import './core/net.js';
 import './core/net-collect.js';
@@ -34,7 +34,7 @@ import './feats/hotkey/open-bag.js';
 import './feats/hotkey/close-popup.js';
 import './feats/hotkey/battle-panel.js';
 import './feats/hotkey/aux-docs.js';   // 展示型键位（F8/Ctrl+K/Ctrl+M，行为在各 feat，仅登记进「快捷键一览」）
-import './main.js';
+import './boot.js';
 
 import { bus } from './core/bus.js';
 import { game } from './core/game.js';

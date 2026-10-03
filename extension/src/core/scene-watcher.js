@@ -24,7 +24,7 @@ function onLaunch() {
 
 /**
  * 挂场景监听 + 注册 scene 门控 + 补一次当前场景。幂等：重复调用只生效一次。
- * cc.Director.EVENT_AFTER_SCENE_LAUNCH 的可用性已由 main.js deferInit 真机验证。
+ * cc.Director.EVENT_AFTER_SCENE_LAUNCH 的可用性已由 boot.js deferInit 真机验证。
  */
 export function startSceneWatcher() {
     if (started) return;

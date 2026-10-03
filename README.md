@@ -41,16 +41,19 @@ pocketcc/
    ├─ assets/                  manifest 图标（16/48/128 三档 PNG）
    ├─ dist/                    esbuild 产物（gitignore）
    └─ src/
-      ├─ content.entry.js      MAIN 入口；import 顺序即加载顺序：net → feats → main
+      ├─ content.entry.js      MAIN 入口；import 顺序即加载顺序：net → feats → boot
       ├─ bridge.js             ISOLATED 入口（chrome.storage 代理）
-      ├─ main.js               纯编排器（场景监视/自动登录/重连 hook/启动闸/UI 挂载）
-      ├─ net.js                网络底座
+      ├─ boot.js               纯编排器（场景监视/自动登录/重连 hook/启动闸/UI 挂载）
       ├─ feats/                功能模块（目录层级对齐面板菜单树，均向 reactor 注册说明书）
       │  ├─ daily/              日常设置：chip-blessing / titan-blessing / alliance-help /
       │  │                      domain-treasure / sea-treasure / alliance-gift / alliance-rally
       │  └─ battle/              战斗设置：quick-attack
       ├─ utils/                功能间共享工具（battle.js 行军发包构造、quick-attack.js 目标注册表）
       └─ core/
+         ├─ net.js            网络底座（window.pocketcc.net）
+         ├─ event.js          EventCenter 封装（window.pocketcc.event）
+         ├─ chat.js           聊天通道薄封装（window.pocketcc.chat）
+         ├─ net-collect.js    报文黑匣子流式录制（window.pocketcc.netCollect）
          ├─ bus.js             EventBus（单例、emit 恒同步）
          ├─ reactor.js         两层模型 + 可注册门控
          ├─ menu.js            面板菜单树（类别 TAB→组/功能卡片）单一真相，组闸门语义在此声明

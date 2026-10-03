@@ -142,7 +142,7 @@ function markConnected() {
 
 /**
  * hook NetMgr 的断线/连接入口（showPanel / setWaitStatus / onConnect），驱动上面的状态机。
- * 由 main.js 在配置就绪后调用一次。
+ * 由 boot.js 在配置就绪后调用一次。
  */
 export function installReconnectHooks() {
   const net = game.get('NetMgr').NET;
@@ -205,10 +205,10 @@ function startLivenessWatch() {
 
 // ─────────────────────────── 登录成功信号 ───────────────────────────
 //   仅用于「会话健康」——清零重连计数 + 广播 healthy + 启动活性监视。
-//   功能启动不挂这里（见 main.js watchHomeMapReady）：LOGIN_SUCCESS 只代表 net 登录态就绪，主城场景可能仍在加载。
+//   功能启动不挂这里（见 boot.js watchHomeMapReady）：LOGIN_SUCCESS 只代表 net 登录态就绪，主城场景可能仍在加载。
 /**
  * 监听登录成功（FWSMvc LOGIN_SUCCESS）：清零重连计数、广播健康、首次启动活性监视。
- * 功能启动不挂这里（见 main.js watchHomeMapReady）。
+ * 功能启动不挂这里（见 boot.js watchHomeMapReady）。
  */
 export function watchLoginSuccess() {
   const FWSMvc = game.get('FWSMvc');

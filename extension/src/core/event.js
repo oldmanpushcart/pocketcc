@@ -354,6 +354,6 @@ import { bus } from './bus.js';
 
     window.pocketcc = window.pocketcc || {};
     window.pocketcc.event = api;
-    // 扩展内不自启：由 main.js 在场景就绪后调用 install()（与 net.install 同一时机）
+    // 扩展内不自启：由 boot.js 在场景就绪后调用 install()（与 net.install 同一时机）
 
 })();

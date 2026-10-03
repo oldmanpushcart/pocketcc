@@ -116,7 +116,7 @@ import { getUid } from './player.js';
 
     /**
      * 安装：取 NetChatClient 单例并校验关键方法在场。模块在页面加载期即注册，无场景时机依赖；
-     * 各 API 首用时懒兜底 install（同 event.on 模式），main.js 不显式调用。
+     * 各 API 首用时懒兜底 install（同 event.on 模式），boot.js 不显式调用。
      * @returns {boolean} 安装成功
      */
     function install() {

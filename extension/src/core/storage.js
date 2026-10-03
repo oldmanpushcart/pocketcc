@@ -6,7 +6,7 @@ const log = createLog('STORAGE');
 
 // MAIN world 无 chrome.*，经 ISOLATED 的 bridge.js 用 postMessage 代理读写 chrome.storage.local。
 // 请求-应答用自增 id 关联；监听 bridge->main 回执，resolve/reject 对应 pending。
-// 模块级即挂监听（bundle 每次干净页面只评估一次，等价于原 main.js body 内的挂载时机）。
+// 模块级即挂监听（bundle 每次干净页面只评估一次，等价于原 boot.js body 内的挂载时机）。
 // 配置按玩家 UID 隔离：UID 就绪后 player.js 调 setNamespace 设前缀，此后所有读写自动拼前缀；
 // 前缀未设（UID 未知窗口期）写丢弃、读直接 reject——「没权限读」绝不能伪装成「盘上是空的」，
 // 否则那份空快照会被 loadBlob 固化，等 UID 到位后整块写回，把该存储键下已有的真实数据覆盖清空。

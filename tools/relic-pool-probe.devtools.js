@@ -11,7 +11,7 @@
  * 运行前提（都满足才有效）：
  *   1. 已加载 pocketcc 扩展并登录进游戏，处于主世界（MAIN world）控制台上下文（DevTools 默认即可）；
  *   2. 已加入联盟（否则查不到本盟遗迹）；
- *   3. 在网络 Home / 世界地图场景（net 已由 main.js install）。
+ *   3. 在网络 Home / 世界地图场景（net 已由 boot.js install）。
  *
  * 口径与 feat 完全一致：遗迹筛选 stronghold_level==2 && function==4；候选道具名取
  *   RewardController.Instance.getRewardsArrById(配置id)[0].name（feat 也是按 items[0].name 匹配）。

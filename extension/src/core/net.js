@@ -917,6 +917,6 @@ import { bus } from './bus.js';
 
     window.pocketcc = window.pocketcc || {};
     window.pocketcc.net = api;
-    // 扩展内不自启：由 main.js 在登录成功、场景就绪后调用 install()
+    // 扩展内不自启：由 boot.js 在登录成功、场景就绪后调用 install()
 
 })();

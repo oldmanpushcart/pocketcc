@@ -1,5 +1,5 @@
 // 隔离世界脚本：扩展中唯一能访问 chrome.* API 的地方。
-// MAIN world 的 main.js 无法调用 chrome.storage，故通过 window.postMessage 代理读写。
+// MAIN world 的 boot.js 无法调用 chrome.storage，故通过 window.postMessage 代理读写。
 import { NS } from './core/constants.js';
 
 (() => {
