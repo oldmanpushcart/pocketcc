@@ -651,7 +651,7 @@ async function donateFlow(boss, preloaded) {
             plan -= 1;
             log.info('free donate ok. todayTime=%d;donated=%d', info.todayTime, donatedOf(boss.bossId));
         } else {
-            log.warn('free donate rejected (already used?). code=%d;data=%s', freeRet.code, freeRet.data);
+            log.info('free donate rejected (already used?). code=%d;data=%s', freeRet.code, freeRet.data);
         }
         if (plan <= 0) return;
         await sleep(DONATE_GAP_MS);          // 同 cmd 连发会撞频控
@@ -661,7 +661,7 @@ async function donateFlow(boss, preloaded) {
     // 付费捐：其余从背包扣，不够就本轮放弃（不做部分捐赠）
     var have = gameData.itemAmount(ITEM_SHARD);
     if (have < plan) {
-        log.warn('shard not enough, give up this round. need=%d;have=%d', plan, have);
+        log.debug('shard not enough, give up this round. need=%d;have=%d', plan, have);
         return;
     }
 
@@ -672,7 +672,7 @@ async function donateFlow(boss, preloaded) {
         log.info('donate ok. count=%d;bossId=%d;num=%d;shard %d->%d;left=%d',
             plan, boss.bossId, t.need, have, gameData.itemAmount(ITEM_SHARD), donateLeft(boss.bossId));
     } else {
-        log.warn('donate rejected. count=%d;code=%d;data=%s', plan, paid.code, paid.data);
+        log.info('donate rejected. count=%d;code=%d;data=%s', plan, paid.code, paid.data);
     }
 }
 
@@ -736,7 +736,7 @@ async function attackFlow(boss) {
     // 预设部队 → armyListNew/heroList/trapList/formationV2/extraArmy（已按可派额度与军阵状态过滤）
     var plan = new Battle().plan().preset(cfg.preset).build();
     if (!plan.armyListNew.length) {
-        log.warn('preset %d has no dispatchable army, skip. bossId=%d', cfg.preset, boss.bossId);
+        log.debug('preset %d has no dispatchable army, skip. bossId=%d', cfg.preset, boss.bossId);
         return;
     }
 
@@ -750,7 +750,7 @@ async function attackFlow(boss) {
             boss.bossId, boss.state, cfg.preset, plan.armyListNew.length, boss.x, boss.y);
     } else {
         // 被拒不落账：多半是行军槽/体力/服务器换态瞬间的时序问题，下轮再补；持续失败由慢查档自然收敛
-        log.warn('attack rejected. bossId=%d;x=%d;y=%d;code=%d;data=%s', boss.bossId, boss.x, boss.y, ret.code, ret.data);
+        log.info('attack rejected. bossId=%d;x=%d;y=%d;code=%d;data=%s', boss.bossId, boss.x, boss.y, ret.code, ret.data);
     }
 }
 

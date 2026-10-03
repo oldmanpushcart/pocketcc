@@ -343,7 +343,7 @@ async function attackFlow(spec, target, planList) {
             log.info('attack ok. key=%s;step=%d/%d;marchType=%d(base=%d);x=%d;y=%d',
                 spec.key, i + 1, planList.length, marchType, base, target.x, target.y);
         } else {
-            log.warn('attack rejected, abort combo. key=%s;step=%d;code=%d;marchType=%d;base=%d;flags=%s;data=%s',
+            log.info('attack rejected, abort combo. key=%s;step=%d;code=%d;marchType=%d;base=%d;flags=%s;data=%s',
                 spec.key, i + 1, ret.code, marchType, base, JSON.stringify(marchApi.flags()), ret.data);
             return;
         }

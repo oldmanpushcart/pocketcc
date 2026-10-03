@@ -138,7 +138,7 @@ async function pickUpFlow(ev) {
     if (ret.ok) {
         log.info('pick up march started. x=%d;y=%d;code=%d', pos.x, pos.y, ret.code);
     } else {
-        log.warn('pick up march rejected! x=%d;y=%d;code=%d', pos.x, pos.y, ret.code);
+        log.info('pick up march rejected. x=%d;y=%d;code=%d', pos.x, pos.y, ret.code);
     }
 }
 

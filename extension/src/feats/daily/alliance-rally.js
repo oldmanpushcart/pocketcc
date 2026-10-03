@@ -89,6 +89,12 @@ var dailyStateLoaded = false;
 var dailyStateSaving = false;
 /** @type {number} 落盘世代号：看门狗复位闸门后，迟到的旧回执不得再去动新一轮的闸门 */
 var saveSeq = 0;
+/**
+ * 今日已播报过「达每日上限」的目标集（键 `date|key`）：每目标每天只 info 一次、之后静默，
+ * 避免打满后每次集结 push 都刷一行。内存态，日期拼进键里故跨天自然失效。
+ * @type {Set<string>}
+ */
+var limitAnnounced = new Set();
 
 /** @type {Set<string>} 已安排加入（定时在飞 / 请求在途）的 teamId 集合，防同一条集结重复加入 */
 var pendingTeamIds = new Set();
@@ -160,8 +166,13 @@ function onAssemblyCreated(ev) {
 
     // 每日参与上限闸门（dailyLimit=0 意味无限）
     if (isDailyLimitReached(target.key)) {
-        log.info('daily limit reached, skip. target=%s;teamId=%s;count=%d/%d',
-            target.label, teamId, dailyState.counts[target.key] | 0, tcfg.dailyLimit);
+        // 已达上限是预期的空闲态：每目标每天只在首次命中时播报一行（生命周期），之后 push 静默返回，不刷日志
+        var announceKey = dailyState.date + '|' + target.key;
+        if (!limitAnnounced.has(announceKey)) {
+            limitAnnounced.add(announceKey);
+            log.info('daily limit reached, going idle today. target=%s;count=%d/%d (further skips muted)',
+                target.label, dailyState.counts[target.key] | 0, tcfg.dailyLimit);
+        }
         return;
     }
 
@@ -375,7 +386,8 @@ async function joinFlow(key, teamId, expireTime) {
             log.info('join ok. target=%s;teamId=%s;armyId=%d;today=%d',
                 key, teamId, marchData.armyListNew[0].armyId, dailyState.counts[key] | 0);
         } else {
-            log.warn('join rejected. target=%s;teamId=%s;code=%d', key, teamId, ret.code);
+            // 加入被拒（目标已满/已过期/不可加入等 code=3）属预期业务态，非错误：降为 info（真实网络失败另由 sendJoin 的 join send error warn 兜底）
+            log.info('join rejected. target=%s;teamId=%s;code=%d', key, teamId, ret.code);
         }
     } finally {
         pendingTeamIds.delete(teamId);

@@ -336,7 +336,7 @@ async function digFlow(mine) {
      */
     if (ret.code === 3 && ret.data === ERR_MINE_TIME_NOT_ENOUGH) {
         blacklist.add(mineKey(mine.x, mine.y));
-        log.warn('dig rejected, mine blacklisted. x=%d;y=%d;code=%d;data=%s',
+        log.info('dig rejected, mine blacklisted. x=%d;y=%d;code=%d;data=%s',
             mine.x, mine.y, ret.code, ret.data);
         return;
     }
@@ -347,13 +347,13 @@ async function digFlow(mine) {
      * 遇到这种情况，主动退让：清空队列，consume 循环随即结束 → afterConsume 重排。
      */
     if (ret.code === 3 && ret.data === ERR_MARCH_QUEUE_FULL) {
-        log.warn('dig rejected, march queue full (server), retreat. x=%d;y=%d;code=%d;data=%s',
+        log.info('dig rejected, march queue full (server), retreat. x=%d;y=%d;code=%d;data=%s',
             mine.x, mine.y, ret.code, ret.data);
         queue.length = 0;
         return;
     }
 
-    log.warn('dig rejected. x=%d;y=%d;code=%d;data=%s', mine.x, mine.y, ret.code, ret.data);
+    log.info('dig rejected. x=%d;y=%d;code=%d;data=%s', mine.x, mine.y, ret.code, ret.data);
 }
 
 
@@ -392,7 +392,7 @@ async function loadingDomainTreasureActivityMines(activity) {
 
         // 请求失败：原样带上 8623 的 code 回传，data=null，供调用方进一步判断
         if (!ret.ok || !ret.data) {
-            log.warn('loading mines failed. activityId=%d;code=%d', activity.id, ret.code);
+            log.info('loading mines rejected (activity closed?). activityId=%d;code=%d', activity.id, ret.code);
             return net.Ret.from(ret.code, null);
         }
 

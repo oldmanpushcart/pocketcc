@@ -414,7 +414,7 @@ export class StealEngine {
     async #execPack(task) {
         var ret = await this.#env.ask(CMD_HELP_PACK, { id: task.id, uid: task.uid }, 'pack');
         if (ret.ok) { log.debug('pack ok. id=%s', idKey(task.id)); }
-        else { this.#packBlockedToday.add(idKey(task.id) + '|' + task.uid); log.warn('pack rejected. code=%d;msg=%s', ret.code, rejectText(ret.data)); }
+        else { this.#packBlockedToday.add(idKey(task.id) + '|' + task.uid); log.info('pack rejected. code=%d;msg=%s', ret.code, rejectText(ret.data)); }
     }
     async #execHelp(task) {
         var ret = await this.#env.ask(CMD_HELP, { id: task.id, uid: task.uid }, 'help');

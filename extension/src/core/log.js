@@ -1,5 +1,9 @@
 // 统一控制台日志：[POCKETCC://<MODULE>] <message>，message 一律英文（UI 文案不在此列）。
-// 三级 info/debug/warn 语义：info=生命周期与关键动作，debug=逐条调度，warn=异常/被拒。
+// 三级 info/debug/warn 语义：
+//   info  = 生命周期、关键动作，以及**可预期的业务拒绝**（服务器对已成形请求返回的 code≠0：限额/已满/阶段锁/目标被抢/时序竞争等正常游戏态）。
+//   debug = 逐条调度细节。
+//   warn  = **真异常**：抛错、发送失败/未发出（CODE_NOT_SENT）、应答畸形/不可解析、依赖或配置缺失、未知枚举首次遭遇。
+//   ——即：「服务器说当前不能做」不是错误，走 info；只有「我们没能正确发出/收到/理解」才走 warn。
 //
 // fmt 若含 printf 占位（%s/%d/%i/%f/%%），本模块**自己完成替换**，不再依赖浏览器 console 的格式化：
 //   真机踩坑——游戏页/上报链路拿到的日志里 "%s/%d" 原样残留、参数被追加在尾部（如 auto-farm/floatcar 的 warn），
@@ -9,9 +13,9 @@
 
 /**
  * @typedef {object} Logger
- * @property {function(string, ...*):void} info 生命周期与关键动作
+ * @property {function(string, ...*):void} info 生命周期/关键动作 + 可预期业务拒绝
  * @property {function(string, ...*):void} debug 逐条调度细节
- * @property {function(string, ...*):void} warn 异常/被拒
+ * @property {function(string, ...*):void} warn 真异常（抛错/未发出/畸形/依赖缺失/未知枚举首遇）
  */
 
 /** %s 的取值串化：字符串原样、对象 JSON、其余 String()；失败降级 String，绝不抛 */

@@ -289,7 +289,7 @@ async function claimType(type, label) {
             log.info('receive %s gift ok. wasPending=%d', label, pending);
             return true;
         }
-        log.warn('receive %s gift rejected. code=%d', label, ret.code);
+        log.info('receive %s gift rejected. code=%d', label, ret.code);
         return false;
     } catch (err) {
         log.warn('receive %s gift error.', label, err);
@@ -320,7 +320,7 @@ async function claimBig() {
             log.info('receive big gift ok. wasPending=%d', pending);
             return true;
         }
-        log.warn('receive big gift rejected. code=%d', ret.code);
+        log.info('receive big gift rejected. code=%d', ret.code);
         return false;
     } catch (err) {
         log.warn('receive big gift error.', err);

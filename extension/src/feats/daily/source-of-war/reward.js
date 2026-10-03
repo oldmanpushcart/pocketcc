@@ -222,7 +222,7 @@ export class RewardFlow {
                 log.info('claim reward already-claimed (code=3), mark claimed. tier=%d;data=%s', tier, safeStringify(ret.data));
             } else {
                 if (self.claimRejected.tiers.indexOf(tier) === -1) self.claimRejected.tiers.push(tier);
-                log.warn('claim reward rejected. tier=%d;code=%d;data=%s', tier, ret.code, safeStringify(ret.data));
+                log.info('claim reward rejected. tier=%d;code=%d;data=%s', tier, ret.code, safeStringify(ret.data));
             }
         }
         if (changed) bus.emit('ui.refresh');

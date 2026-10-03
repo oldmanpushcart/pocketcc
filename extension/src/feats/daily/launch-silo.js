@@ -412,7 +412,7 @@ async function sendRecall(marchId) {
             pendingRecall.add(String(marchId));
             log.info('recall farm march ok. marchId=%s', marchId);
         } else {
-            log.warn('recall farm march rejected. marchId=%s;code=%d;data=%s', marchId, ret.code, ret.data);
+            log.info('recall farm march rejected. marchId=%s;code=%d;data=%s', marchId, ret.code, ret.data);
         }
     } catch (err) {
         log.warn('recall send error. marchId=%s', marchId, err);
@@ -443,7 +443,7 @@ async function claimRewards() {
             got.push(num);                          // 本地补记，防本轮重复发同一档
             log.info('claim ok. score=%d;total=%d', num, total);
         } else {
-            log.warn('claim rejected. score=%d;code=%d;data=%s', num, ret.code, ret.data);
+            log.info('claim rejected. score=%d;code=%d;data=%s', num, ret.code, ret.data);
         }
         if (i < thresholds.length - 1) await sleep(cfg.claimInterval);
     }
@@ -513,7 +513,7 @@ async function garrisonPass(list) {
 
         var plan = new Battle().plan().minimal().build();
         if (!plan.armyListNew.length) {
-            log.warn('no dispatchable army, skip garrison. silo=%d', wanted[k].id);
+            log.debug('no dispatchable army, skip garrison. silo=%d', wanted[k].id);
             return;
         }
         var ret = await sendGarrison(wanted[k], plan);
@@ -521,7 +521,7 @@ async function garrisonPass(list) {
         if (ret.ok) {
             log.info('garrison ok. silo=%d;x=%d;y=%d', wanted[k].id, wanted[k].x, wanted[k].y);
         } else {
-            log.warn('garrison rejected. silo=%d;x=%d;y=%d;code=%d;data=%s',
+            log.info('garrison rejected. silo=%d;x=%d;y=%d;code=%d;data=%s',
                 wanted[k].id, wanted[k].x, wanted[k].y, ret.code, ret.data);
         }
         if (k < wanted.length - 1) await sleep(cfg.marchInterval);

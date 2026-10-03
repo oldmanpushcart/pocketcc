@@ -78,6 +78,9 @@ const SCIENCE_RECOVER_SEC = 1800;
 /** @type {number} 遗迹池自然恢复周期（秒，抓包实证 restoreSec=3600）；同上兜底 */
 const RELIC_RECOVER_SEC = 3600;
 
+/** @type {number} 遗迹链「阶段性全局禁用」（跨战区 KVK 等）识别后的静默冷却（毫秒）：期内不再发 1067，避免每 tick 撞墙刷 warn；到点或 resume 后自然重试一枚 */
+const RELIC_BAN_COOLDOWN_MS = 1000 * 60 * 30;
+
 /** @type {number} 遗迹单捐链的枚间隔（毫秒）：同 cmd 频控的安全间距（抓包实证 40ms 也能吞下，保守取 600） */
 const RELIC_GAP_MS = 600;
 
@@ -113,6 +116,9 @@ var tickTimer = null;
 
 /** @type {number} 连续被服务器拒绝次数，达 3 次后退到巡检档；成功即清零 */
 var rejectStreak = 0;
+
+/** @type {number} 遗迹链阶段性禁用（跨战区等）静默截止戳（Date.now 口径）；0=无冷却。独立于 rejectStreak，避免污染科技排程 */
+var relicBanUntil = 0;
 
 /** @type {object} 各能量池上次观测到的点数（type→point），用于只认“点数回升”的恢复推送、忽略捐赠消耗回执推送 */
 var lastEnergyPoint = {};
@@ -320,15 +326,54 @@ async function donateScience(sc) {
             log.info('science donate ok. sid=%d(%s);#%d;addExp=%s;honor(+)%s;crit=%s',
                 target.id, target.recommended ? '推荐' : '顺位首项', done, res.payload.addExp, res.payload.addPoint, !!res.payload.crit);
         } else {
-            rejectStreak++;
             // 服务器拒绝带字典键载荷（'<键,参数>' 格式），l10n.net 翻成人话便于定位是哪道闸没过
-            log.warn('science donate rejected (streak #%d). sid=%d;num=1;code=%d;msg=%s',
-                rejectStreak, target.id, res.code, l10n.net(res.data));
+            rejectStreak++;
+            var smsg = l10n.net(res.data);
+            if (isExpectedReject(res)) {
+                // 次数不足/荣誉已满/跨战区等「当前本就不能做」的可预期拒绝：降级 info，不占 ⚠️ 面板；退避与回点唤醒不变
+                log.info('science donate skipped (expected). sid=%d;num=1;code=%d;msg=%s', target.id, res.code, smsg);
+            } else {
+                log.warn('science donate rejected (streak #%d). sid=%d;num=1;code=%d;msg=%s', rejectStreak, target.id, res.code, smsg);
+            }
             break;   // 任一枚被拒即收手，交下轮/排程
         }
         if (i < energy.point - 1) await sleep(SCIENCE_DONATE_GAP_MS);
     }
     return { donated: done > 0, energy: done > 0 ? (gameData.energy(poolType) || energy) : energy };
+}
+
+/**
+ * 判定一条遗迹被拒应答是否属于「阶段性全局禁用」——典型是跨战区（KVK）期间要塞（WorldSite）捐赠被服务端整锁。
+ * 与「目标级/参数级」拒绝区分：前者重试无意义，应静默冷却而非计入 rejectStreak、逐 tick 刷 warn。
+ * 判据：优先看裸键前缀（'<键,参数>' 的键含 cross_server/cross_zone），译文兜底（zh 玩家）。
+ * @param {object} res sendRaw 归一化结果 {code,data,...}
+ * @returns {boolean}
+ */
+function isRelicPhaseBan(res) {
+    var raw = res && res.data;
+    if (raw == null) return false;
+    var key = String(raw).split(',')[0].trim();
+    if (key.indexOf('cross_server') >= 0 || key.indexOf('cross_zone') >= 0) return true;
+    var zh = l10n.net(raw);
+    return zh.indexOf('跨战区') >= 0 || zh.indexOf('跨服') >= 0;
+}
+
+/**
+ * 判定一条被拒应答是否属于「可预期的游戏态拒绝」——次数不足 / 荣誉已满 / 已达上限 / 跨战区等，
+ * 即「当前本就不能做」而非插件发错。这类降级为 info，不占面板 ⚠️ 问题位；未知拒绝仍按 warn 暴露。
+ * 判据：裸键前缀含 cross_server/cross_zone，或译文含相应关键字（zh 玩家口径）。
+ * @param {object} res sendRaw 归一化结果 {code,data,...}
+ * @returns {boolean}
+ */
+function isExpectedReject(res) {
+    var raw = res && res.data;
+    if (raw == null) return false;
+    var key = String(raw).split(',')[0].trim();
+    if (key.indexOf('cross_server') >= 0 || key.indexOf('cross_zone') >= 0) return true;
+    var zh = l10n.net(raw);
+    return zh.indexOf('跨战区') >= 0 || zh.indexOf('跨服') >= 0
+        || zh.indexOf('次数不足') >= 0 || zh.indexOf('荣誉已满') >= 0
+        || zh.indexOf('已达上限') >= 0 || zh.indexOf('达到上限') >= 0;
 }
 
 /**
@@ -343,6 +388,8 @@ async function donateRelic() {
     var energy = gameData.energy(ENERGY_RELIC);
     if (!energy) return { donated: false, energy: null };
     if (energy.point <= 0) return { donated: false, energy: energy };
+    // 阶段性全局禁用（如跨战区）静默期内：直接跳过、不发包，避免每 tick 重复撞墙刷日志
+    if (relicBanUntil && Date.now() < relicBanUntil) return { donated: false, energy: energy };
 
     // 目标由 ACL 合成：推荐位要塞非自身可捐（满级/经验已满）则已自动回退首个可捐要塞
     if (!rl.donateTarget) {
@@ -362,9 +409,20 @@ async function donateRelic() {
         var res = await sendDonateRelic(target.id);
         if (!aliveFn()) break;
         if (!(res.ok && res.payload && res.payload.curPoint != null)) {
+            // 跨战区等阶段性全局禁用：重试无意义，独立静默冷却并降级为 info，不计入 rejectStreak（免得污染科技排程/两链互相掩盖）
+            if (isRelicPhaseBan(res)) {
+                relicBanUntil = Date.now() + RELIC_BAN_COOLDOWN_MS;
+                log.info('relic donate locked by phase ban. site=%d;code=%d;msg=%s;pause=%dmin',
+                    target.id, res.code, l10n.net(res.data), RELIC_BAN_COOLDOWN_MS / 60000);
+                break;
+            }
             rejectStreak++;
-            log.warn('relic donate rejected (streak #%d). site=%d;code=%d;msg=%s',
-                rejectStreak, target.id, res.code, l10n.net(res.data));
+            var rmsg = l10n.net(res.data);
+            if (isExpectedReject(res)) {
+                log.info('relic donate skipped (expected). site=%d;code=%d;msg=%s', target.id, res.code, rmsg);
+            } else {
+                log.warn('relic donate rejected (streak #%d). site=%d;code=%d;msg=%s', rejectStreak, target.id, res.code, rmsg);
+            }
             break;
         }
         rejectStreak = 0;
@@ -402,6 +460,7 @@ function run(ctx) {
     ctxRef = ctx;
     ticking = false;
     rejectStreak = 0;
+    relicBanUntil = 0;
     log.info('started.');
 
     // 以当前点数作为基准：自家捐赠带来的 point 递减推送会因“非回升”被过滤，不再触捐

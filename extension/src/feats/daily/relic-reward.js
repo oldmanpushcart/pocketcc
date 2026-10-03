@@ -276,7 +276,7 @@ async function claimSite(site) {
     var q = await sendRaw(CMD_QUERY, { wonderId: wonderId });
     if (!aliveFn()) return;
     if (!q.ok || !q.payload) {
-        if (q.code !== CODE_NOT_SENT) log.warn('relic query rejected. site=%d;code=%d;data=%s', wonderId, q.code, safeStringify(q.data));
+        if (q.code !== CODE_NOT_SENT) log.info('relic query rejected. site=%d;code=%d;data=%s', wonderId, q.code, safeStringify(q.data));
         return;
     }
     var d = q.payload;
@@ -335,7 +335,7 @@ async function claimSite(site) {
         } else if (r.code === CODE_NOT_SENT) {
             break;   // 在途/超时：本轮此遗迹收手，留给下次唤醒/轮询
         } else {
-            log.warn('relic claim rejected, blacklist today. site=%d;idx=%d;code=%d;data=%s', wonderId, c.idx, r.code, safeStringify(r.data));
+            log.info('relic claim rejected, blacklist today. site=%d;idx=%d;code=%d;data=%s', wonderId, c.idx, r.code, safeStringify(r.data));
             await rejectToday(wonderId);
             return;
         }

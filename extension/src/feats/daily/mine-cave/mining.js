@@ -433,18 +433,18 @@ export class MiningEngine {
         if (ret.ok && ret.data && Number(ret.data.isOk) === 1) {
             log.info('occupy ok. id=%s heroes=%s', idKey(task.id), sel.heroes.join(','));
         } else if (ret.code === 3 && ret.data) {
-            log.warn('occupy business-rejected code=3 msg=%s; abandon occupy this round.', rejectText(ret.data));
+            log.info('occupy business-rejected code=3 msg=%s; abandon occupy this round.', rejectText(ret.data));
             this.#abandonOccupy = true;
         } else {
             this.#blockedToday.add(idKey(task.id) + '|' + task.uid);
-            log.warn('occupy rejected code=%d msg=%s', ret.code, rejectText(ret.data));
+            log.info('occupy rejected code=%d msg=%s', ret.code, rejectText(ret.data));
         }
     }
 
     async #execRefresh() {
         var ret = await this.#env.ask(CMD_REFRESH, { isAll: 1 }, 'refresh');
         if (ret.ok && ret.data) log.info('refresh ok. todayRefreshNum=%s', ret.data.todayRefreshNum);
-        else log.warn('refresh rejected. code=%d msg=%s', ret.code, rejectText(ret.data));
+        else log.info('refresh rejected. code=%d msg=%s', ret.code, rejectText(ret.data));
     }
 
     async #pickHeroesFor(task) {

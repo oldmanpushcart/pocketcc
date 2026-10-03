@@ -311,7 +311,7 @@ async function attackFlow(boss) {
         return;
     }
 
-    log.warn('attack march rejected. bossId=%d;x=%d;y=%d;code=%d;data=%s',
+    log.info('attack march rejected. bossId=%d;x=%d;y=%d;code=%d;data=%s',
         boss.bossId, boss.x, boss.y, ret.code, ret.data);
 }
 
@@ -365,7 +365,7 @@ async function loadingBosses(activity) {
 
         // 请求失败：原样带上 3756 的 code 回传，data=null，供调用方进一步判断
         if (!ret.ok || !ret.data) {
-            log.warn('loading bosses failed. activityId=%d;code=%d', activity.id, ret.code);
+            log.info('loading bosses rejected (activity closed?). activityId=%d;code=%d', activity.id, ret.code);
             return net.Ret.from(ret.code, null);
         }
 

@@ -263,7 +263,7 @@ function produce() {
     }
 
     if (isQuotaReached(alliance)) {
-        log.debug('self help quota used (local count or server explicit saturation), idle.');
+        // 自用/日额已满（本地计数或服务器显式饱和）：预期空闲态，静默返回即可，无需刷日志
         return;
     }
 
@@ -600,7 +600,7 @@ async function guardedSend(cmd, payload, label) {
     try {
         var ret = await net.send(cmd, payload);
         if (!ret.ok) {
-            log.warn('%s rejected! code=%d', label, ret.code);
+            log.info('%s rejected. code=%d', label, ret.code);
         }
         return ret;
     } catch (err) {

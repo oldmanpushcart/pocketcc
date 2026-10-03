@@ -412,7 +412,7 @@ async function sendLike(uid) {
             log.info('like daily limit reached, stop till reset. uid=%s;selfTodayCanLikeNum=%s', uid, d.selfTodayCanLikeNum);
             return 'limit';
         }
-        log.warn('like rejected. uid=%s;code=%d', uid, ret.code);
+        log.info('like rejected. uid=%s;code=%d', uid, ret.code);
         return 'rejected';
     } catch (err) {
         log.warn('like error.', err);

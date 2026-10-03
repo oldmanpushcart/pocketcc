@@ -532,7 +532,7 @@ export class AttackFlow {
         // 预设部队 → 5 字段行军数据（armyListNew/heroList/trapList/formationV2/extraArmy），已按可派额度过滤
         var plan = new Battle().plan().preset(preset).build();
         if (!plan.armyListNew.length) {
-            log.warn('preset %d has no dispatchable army, skip. bossId=%d', preset, boss.bossId);
+            log.debug('preset %d has no dispatchable army, skip. bossId=%d', preset, boss.bossId);
             return;
         }
 
@@ -548,7 +548,7 @@ export class AttackFlow {
             log.info('energy insufficient (server), abandon this round. bossId=%d;code=%d;data=%s',
                 boss.bossId, ret.code, ret.data);
         } else {
-            log.warn('attack rejected. bossId=%d;x=%d;y=%d;code=%d;data=%s', boss.bossId, boss.x, boss.y, ret.code, safeStringify(ret.data));
+            log.info('attack rejected. bossId=%d;x=%d;y=%d;code=%d;data=%s', boss.bossId, boss.x, boss.y, ret.code, safeStringify(ret.data));
         }
     }
 

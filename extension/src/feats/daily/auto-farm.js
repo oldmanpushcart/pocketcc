@@ -810,6 +810,17 @@ async function cyclePass() {
         if (free <= 0) { log.debug('slot exhausted mid-cycle, remaining=%d', missingPos.length - t); break; }
         var row = rules[missingPos[t]];
         var rawIdx = ruleIdx[missingPos[t]];
+
+        // 先算该行预设部队可用否（纯本地读预设 + 剔除已出征，零发包）：armyListNew 为空多半意味着
+        // 这支部队已在外（正是在下田/采集中）——本行其实已被占用，静默 debug 跳过，既不发 901/906 徒劳搜田、
+        // 也不刷 ⚠️；部队回城后 armyListNew 复出不空，下一轮自然补派。
+        var pa = presetArgs(row.preset);
+        var plan = new Battle().plan().preset(pa.index, pa.type).build();
+        if (!plan.armyListNew.length) {
+            log.debug('row %d preset #%d(%s#%d) army already out (farming?), skip without searching.',
+                rawIdx, row.preset, pa.type ? '采集' : '战斗', pa.index);
+            continue;
+        }
         if (net.isSending(CMD_MARCH_WORLD_POINT)) { backlogActive = true; break; }
 
         // 取田：6 级田没有机械田（不涉机械，直接搜普通田）；其余等级一律优先机械田——先从联盟机械田活表按家族命中、
@@ -832,13 +843,6 @@ async function cyclePass() {
         }
 
         var ck = cand.x + ',' + cand.y;
-        // 面板预设号 1~16：1~8→战斗预设(type=0)，9~16→采集预设(type=1、index 减 8）
-        var pa = presetArgs(row.preset);
-        var plan = new Battle().plan().preset(pa.index, pa.type).build();
-        if (!plan.armyListNew.length) {
-            log.warn('row %d preset #%d(%s#%d) has no dispatchable army, skip row.', rawIdx, row.preset, pa.type ? '采集' : '战斗', pa.index);
-            continue;
-        }
         var ret = await sendFarm(cand, cand.marchType, plan);
         if (!aliveFn()) return;
         if (ret.ok) {
@@ -853,7 +857,8 @@ async function cyclePass() {
             log.info('farm march ok. row=%d kind=%d x=%d y=%d marchId=%s', rawIdx, cand.marchType, cand.x, cand.y, mid || '?');
         } else {
             blacklist.add(ck);   // 被拒零成本：拉黑换下一候选
-            log.warn('farm march rejected. row=%d kind=%d x=%d y=%d code=%s', rawIdx, cand.marchType, cand.x, cand.y, ret.code);
+            // 下田 902 被服务器拒（点被别人抢/已失效等）属采集循环里的预期竞争态，非错误 → info
+            log.info('farm march rejected. row=%d kind=%d x=%d y=%d code=%s', rawIdx, cand.marchType, cand.x, cand.y, ret.code);
         }
         if (t < missingPos.length - 1) await sleep(cfg.marchInterval);
     }

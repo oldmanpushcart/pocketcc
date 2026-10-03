@@ -1024,7 +1024,9 @@ async function onPickup(item) {
     }
 
     var errKey = rejectErrKey(ret.data);
-    log.warn('pick up march rejected! marchId=%s;x=%d;y=%d;code=%d;resp=%s;why=%s',
+    // 服务器对成形领车请求的结构化拒绝（限流/目标被占/队满/日限额等）属预期业务态 → info；
+    // 未知键首遇仍由下方 1051 的 warn 单独报警（新枚举发现机制），不丢信号。
+    log.info('pick up march rejected. marchId=%s;x=%d;y=%d;code=%d;resp=%s;why=%s',
         item.marchId, item.x, item.y, ret.code, respText(ret.data), whyText(ret.data));
 
     // 路由表按 errKey 分派（队满不进 rejects/熔断，上限走熔断，其余走退避）

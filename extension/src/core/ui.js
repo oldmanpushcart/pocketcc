@@ -33,26 +33,26 @@ const PANEL_CSS = `
       cursor:pointer;user-select:none;touch-action:none;
       z-index:2147483647;}
     .pc-icon svg{position:relative;z-index:1;
-      filter:drop-shadow(0 0 8px rgba(47,155,255,.5)) drop-shadow(0 2px 5px rgba(0,0,0,.55));transition:filter .15s;}
-    .pc-icon:hover svg{filter:drop-shadow(0 0 11px rgba(47,155,255,.75)) drop-shadow(0 2px 5px rgba(0,0,0,.55)) brightness(1.15);}
-    .pc-icon.combat svg{filter:drop-shadow(0 0 10px rgba(255,59,48,.75)) drop-shadow(0 2px 5px rgba(0,0,0,.55));}
+      filter:drop-shadow(0 0 10px rgba(47,155,255,.7)) drop-shadow(0 2px 5px rgba(0,0,0,.55));transition:filter .15s;}
+    .pc-icon:hover svg{filter:drop-shadow(0 0 13px rgba(47,155,255,.9)) drop-shadow(0 2px 5px rgba(0,0,0,.55)) brightness(1.2);}
+    .pc-icon.combat svg{filter:drop-shadow(0 0 12px rgba(255,59,48,.95)) drop-shadow(0 2px 5px rgba(0,0,0,.55));}
     /* 光晕层必须明显大于图标：亮带半径要落在不透明圆盘（约 21px）之外，否则整圈被圆盘盖住。 */
     .pc-halo{position:absolute;left:50%;top:50%;width:190%;height:190%;
       transform:translate(-50%,-50%);border-radius:50%;pointer-events:none;z-index:0;
       background:radial-gradient(circle closest-side,
-        rgba(90,175,255,0) 0 50%, rgba(90,175,255,.5) 70%,
-        rgba(90,175,255,.9) 82%, rgba(90,175,255,0) 100%);
+        rgba(110,190,255,0) 0 50%, rgba(110,190,255,.7) 70%,
+        rgba(140,205,255,1) 82%, rgba(110,190,255,0) 100%);
       filter:blur(6px);
       animation:pc-breathe-daily 3.4s ease-out infinite;}
     .pc-icon.combat .pc-halo{
       background:radial-gradient(circle closest-side,
-        rgba(255,70,45,0) 0 50%, rgba(255,70,45,.55) 70%,
-        rgba(255,70,45,1) 82%, rgba(255,70,45,0) 100%);
+        rgba(255,95,65,0) 0 50%, rgba(255,95,65,.75) 70%,
+        rgba(255,130,100,1) 82%, rgba(255,95,65,0) 100%);
       filter:blur(7px);
       animation:pc-breathe-combat 1.1s ease-out infinite;}
     @keyframes pc-breathe-daily{
       0%{transform:translate(-50%,-50%) scale(.9);opacity:0;}
-      18%{opacity:.85;}
+      18%{opacity:1;}
       100%{transform:translate(-50%,-50%) scale(1.3);opacity:0;}}
     @keyframes pc-breathe-combat{
       0%{transform:translate(-50%,-50%) scale(.9);opacity:0;}

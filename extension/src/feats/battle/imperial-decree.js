@@ -313,7 +313,7 @@ async function dispatch(chat, order) {
         log.info('decree done. x=%d;y=%d;preset=%d;marchType=%d(base=%d)', order.x, order.y, order.preset, marchType, base);
         reply(chat, order, '得令');
     } else {
-        log.warn('decree rejected. x=%d;y=%d;code=%d;data=%s', order.x, order.y, ret.code, ret.data);
+        log.info('decree rejected. x=%d;y=%d;code=%d;data=%s', order.x, order.y, ret.code, ret.data);
         reply(chat, order, failureText(ret));
     }
 }
@@ -411,7 +411,7 @@ function reply(chat, order, conclusion) {
         // 频道消息 670 应答：成功 data 是 '{"success":1,...}' JSON 串，业务拒时为裸串
         var parsed = safeParse(ret && ret.data);
         if (!ret || !ret.ok || (parsed && parsed.success !== 1)) {
-            log.warn('reply rejected. chan=%s;code=%s;data=%s', opts.c, ret && ret.code, ret && ret.data);
+            log.info('reply rejected. chan=%s;code=%s;data=%s', opts.c, ret && ret.code, ret && ret.data);
         }
     }).catch(function (err) {
         log.warn('reply threw. chan=%s', opts.c, err);

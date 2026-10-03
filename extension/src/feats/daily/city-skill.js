@@ -324,7 +324,7 @@ async function gift(skinId, uid, map) {
             return 'ok';
         }
         bumpFail(skinId);
-        log.warn('gift city skin rejected, backoff. skinId=%d;targetUid=%s;code=%d', skinId, uid, ret.code);
+        log.info('gift city skin rejected, backoff. skinId=%d;targetUid=%s;code=%d', skinId, uid, ret.code);
         return 'rejected';
     } catch (err) {
         bumpFail(skinId);
