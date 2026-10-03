@@ -15,7 +15,7 @@ import { game } from '../../core/game.js';
 import { reactor } from '../../core/reactor.js';
 import { storage } from '../../core/storage.js';
 import { bus } from '../../core/bus.js';
-import { Battle } from '../../utils/battle.js';
+import { Battle } from '../../core/battle.js';
 
 /** @type {ReturnType<createLog>} 模块日志器（tag=ALLIANCE_RALLY） */
 const log = createLog('ALLIANCE_RALLY');

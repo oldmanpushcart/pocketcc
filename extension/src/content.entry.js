@@ -39,7 +39,7 @@ import './boot.js';
 import { bus } from './core/bus.js';
 import { game } from './core/game.js';
 import { debug as gameApi } from './core/game-api.js';
-import { battle } from './utils/battle.js';
+import { battle } from './core/battle.js';
 import { storage } from './core/storage.js';
 import { reactor } from './core/reactor.js';
 

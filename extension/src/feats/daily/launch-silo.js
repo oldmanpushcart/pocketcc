@@ -34,7 +34,7 @@ import { createLog } from '../../core/log.js';
 import { game } from '../../core/game.js';
 import { l10n, gameConf, gameData } from '../../core/game-api.js';
 import { reactor } from '../../core/reactor.js';
-import { Battle } from '../../utils/battle.js';
+import { Battle } from '../../core/battle.js';
 
 /** @type {ReturnType<createLog>} 模块日志器（tag=LAUNCH-SILO） */
 const log = createLog('LAUNCH-SILO');

@@ -38,7 +38,7 @@ import { game } from '../../core/game.js';
 import { gameData, l10n } from '../../core/game-api.js';
 import { reactor } from '../../core/reactor.js';
 import { storage } from '../../core/storage.js';
-import { Battle } from '../../utils/battle.js';
+import { Battle } from '../../core/battle.js';
 import { CMD_GET_WORLD_INFO } from '../map/map-meta.js';
 
 /** @type {ReturnType<createLog>} 模块日志器（tag=AUTO-FARM） */

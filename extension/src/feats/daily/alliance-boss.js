@@ -31,7 +31,7 @@
  *   2) ALLIANCE_BOSS_DONATE(1161) {count} → {ret,reward,bossInfo:{allianceBoss,todayTime,todayFree},count}；
  *      count:0 = 免费捐一枚（不扣碎片），count:n = 扣 n 枚碎片；
  *   3) MARCH_WORLD_POINT(902) {marchType:18,x,y,armyList…} → 派兵攻打，坐标取本地 allianceBoss.x/y。
- *      载荷构造与「快捷攻击」「战争之源」同源：Battle().plan().preset(1..8).build()（见 utils/battle.js）。
+ *      载荷构造与「快捷攻击」「战争之源」同源：Battle().plan().preset(1..8).build()（见 core/battle.js）。
  *
  * marchType 18 不漂移（源码实证，同 298 的处置）：WorldUtils.dealMarchTypeWithSpecialMarch 只改写
  *   ATTACK_PLAYER / THRONE / WORLD_SITE 三支，specialMarchList 也不含机甲，battleMarchType[BattleType.AllianceBoss]
@@ -58,7 +58,7 @@ import { game } from '../../core/game.js';
 import { storage } from '../../core/storage.js';
 import { l10n, gameData, gameConf } from '../../core/game-api.js';
 import { reactor } from '../../core/reactor.js';
-import { Battle } from '../../utils/battle.js';
+import { Battle } from '../../core/battle.js';
 
 /** @type {ReturnType<createLog>} 模块日志器（tag=ALLIANCE-BOSS） */
 const log = createLog('ALLIANCE-BOSS');

@@ -26,9 +26,9 @@
  *
  * 依赖游戏运行时模块，全部经 core/game.js 薄封装软获取；缺失即返回 null，各查询入口自行兜底。
  */
-import { game } from '../core/game.js';
-import { battlePreset } from '../core/game-api.js';
-import { createLog } from '../core/log.js';
+import { game } from './game.js';
+import { battlePreset } from './game-api.js';
+import { createLog } from './log.js';
 
 /** @type {ReturnType<createLog>} 模块日志器（tag=BATTLE） */
 const log = createLog('BATTLE');

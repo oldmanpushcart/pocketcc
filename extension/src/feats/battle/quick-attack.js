@@ -25,7 +25,7 @@ import { game } from '../../core/game.js';
 import { march as marchApi } from '../../core/game-api.js';
 import { reactor } from '../../core/reactor.js';
 import { isTypingTarget } from '../../core/hotkeys.js';
-import { Battle } from '../../utils/battle.js';
+import { Battle } from '../../core/battle.js';
 
 /**
  * 可攻击面板注册表（可扩展的唯一入口）：新增一个可攻击面板 = 往此数组追加一条 spec，

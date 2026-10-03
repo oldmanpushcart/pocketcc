@@ -9,7 +9,7 @@
  * 协议（均为旧 JSON net.send）：
  *   1) 9956（GET_BOSS_INFO_V2）{} → 应答 data 为 JSON 串需 parse：{reason,finishTime,alive,bossId,x,y,lv,costEnergy}；
  *      alive=1 才是「当前有可打 BOSS」的权威信号（非窗口期/目标已消失不为 1），reason>0 跨服战期禁止攻打。
- *   2) 902（MARCH_WORLD_POINT）{marchType:298,x,y,armyList...} → 派该预设部队攻打；载荷与「快捷攻击」同源（utils/battle.js）。
+ *   2) 902（MARCH_WORLD_POINT）{marchType:298,x,y,armyList...} → 派该预设部队攻打；载荷与「快捷攻击」同源（core/battle.js）。
  *
  * 调度（不轮询）：在场期间以回包 finishTime 为在场截止（liveUntil）每 TICK_INTERVAL 慢扫补派；
  *   另订阅本人行军 10019（USER_MARCH_INFO）只认 state===4 回城即补扫；不在场靠本地日程排睡到下一窗口起点+WARMUP_DELAY。
@@ -22,7 +22,7 @@ import { bus } from '../../../core/bus.js';
 import { storage } from '../../../core/storage.js';
 import { l10n, gameConf } from '../../../core/game-api.js';
 import { isCombat } from '../../../core/mode.js';
-import { Battle } from '../../../utils/battle.js';
+import { Battle } from '../../../core/battle.js';
 import { todayStr, safeStringify } from './util.js';
 
 /** @type {ReturnType<createLog>} 模块日志器（tag 与领奖链一致，便于聚合阅读） */
