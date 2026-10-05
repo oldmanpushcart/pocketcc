@@ -19,6 +19,7 @@
 import { createLog } from '../../core/log.js';
 import { game } from '../../core/game.js';
 import { reactor } from '../../core/reactor.js';
+import { march } from '../../core/march.js';
 
 /** @type {ReturnType<createLog>} 模块日志器（tag=DOMAIN-TREASURE-MINER） */
 const log = createLog('DOMAIN-TREASURE-MINER');
@@ -76,7 +77,7 @@ const cfg = {
 
     /**
      * 挖矿间隔：默认5秒（消费逐条之间的休眠）
-     * 承重约束：必须大于"行军入表延迟"。每条派前现判名额读的是 marches，刚派那条要等游戏写进 marches 才数得到。
+     * 承重约束：必须大于“行军入表延迟”。每条派前现判名额读的是 856（本人全量行军），刚派那条要等服务器写入后才数得到。
      * 调太小会在入表前连派、尝试超过 para6——超出的会被服务器拒（领域寻宝 902 被拒零成本），不会真超发，只多刷 rejected 日志。
      */
     digInterval: 1000 * 5,
@@ -90,10 +91,6 @@ const EMPTY_STREAK_IDLE = 2;
 var net;
 /** @type {object|null} 活动控制器（aid 反查活动、活动列表/开启判定） */
 var activityCtl;
-/** @type {object|null} 地图数据（NWorldMapData.instance.marches，判在途行军数） */
-var mapData;
-/** @type {object|null} 数据中心（UID） */
-var dataCenter;
 
 /** @type {object|null} reactor 注入的上下文；alive() 反映运行态，pause 后置否让定时器与在飞流程自然退出 */
 var ctxRef = null;
@@ -196,7 +193,7 @@ async function doScan() {
         }
 
         // 活动行军队列不足：满员就不必白发一个 8623。这是"有活干、暂时派不下"，非空扫，清零保持活跃档勤复查名额
-        if (!isDomainTreasureActivityMarchEnough(activity)) {
+        if (!(await isDomainTreasureActivityMarchEnough(activity))) {
             log.debug('not enough march slots.');
             queue.length = 0;
             emptyStreak = 0;
@@ -244,7 +241,7 @@ async function consume() {
     try {
         while (queue.length && aliveFn()) {
             // 名额满：停止本轮消费，等下一轮扫描重新判
-            if (!isDomainTreasureActivityMarchEnough(scanActivity)) {
+            if (!(await isDomainTreasureActivityMarchEnough(scanActivity))) {
                 log.debug('march slots full, drain stopped.');
                 queue.length = 0;
                 break;
@@ -442,8 +439,8 @@ function pruneBlacklist(list) {
 
 
 /**
- * 挖矿
- * 永不 reject：闸门未放开 / 发送异常都回落到 CODE_NOT_SENT 的哨兵 Ret，调度靠它排下一条，不回调就整链停摆
+ * 挖矿（零部队九键 body，含 ext:{}）
+ * 永不 reject：闸门未放开（isSending(902)）回哨兵 Ret；发送异常由 core/march.pickUp 内部回 Ret(NOT_SENT)
  * @param {object} mine 矿洞信息
  * @returns {Promise<Ret>} 整个 902 的 Ret，code=902 状态码，data=成功载荷或 null
  */
@@ -451,44 +448,25 @@ async function diggingDomainTreasureActivityMine(mine) {
     if (!mine || net.isSending(CMD_MARCH_WORLD_POINT)) {
         return net.Ret.from(CODE_NOT_SENT, null);
     }
-
-    try {
-        // 8 键载荷见知识文档；ensureServerResponse=false 由 net 封装固定（902 重发＝重复派遣白吃名额）
-        var ret = await net.send(CMD_MARCH_WORLD_POINT, {
-            marchType: MARCH_TYPE,
-            x: mine.x,
-            y: mine.y,
-            armyList: [],
-            armyListNew: [],
-            heroList: [],
-            trapList: [],
-            ext: {}
-        });
-
-        // 被拒不在这里打日志：digFlow 是结果的单一出口（一次派遣只打一条，带 data 错误标识）
-        return ret;
-
-    } catch (err) {
-        log.warn('digging error. x=%d;y=%d', mine.x, mine.y, err);
-        return net.Ret.from(CODE_NOT_SENT, null);
-    }
+    // 零部队九键（armyList:[]…ext:{}）走 core/march.pickUp（与泰坦祝福同口径）；被拒日志仍由 digFlow 单出口
+    return march.pickUp({ marchType: MARCH_TYPE, target: { x: mine.x, y: mine.y }, ext: {} });
 }
 
 /**
  * 活动行军名额是否还够派一条：上限 para6 > 我在途的领域寻宝行军数
  * 扫描前作闸门、消费段每条派前现判，直到 false（满员）或矿列表派空
+ * 在途行军数走 core/march.list()（856 本人全量行军，视口无关；Home 亦不再读空）
  * @param {object} activity 活动信息
- * @returns {boolean}
+ * @returns {Promise<boolean>}
  */
-function isDomainTreasureActivityMarchEnough(activity) {
+async function isDomainTreasureActivityMarchEnough(activity) {
     var maxMarchNum = Number(activity && activity.para6) || 0;
-    var marcheNum = Object.values(mapData.marches)
-        .filter(function (march) {
-            return march
-                && march.marchType == MARCH_TYPE
-                && march.realUid == dataCenter.UserData.UID;
-        })
-        .length;
+    if (maxMarchNum <= 0) return false;
+    var marches = await march.list();
+    var marcheNum = 0;
+    for (var i = 0; i < marches.length; i++) {
+        if (marches[i].type === MARCH_TYPE) marcheNum++;
+    }
     return marcheNum < maxMarchNum;
 }
 
@@ -511,24 +489,15 @@ function install(ctx) {
         net = null;
     }
 
-    var mods = game.requireAll(['ActivityController', 'NWorldMapData', 'DataCenter']);
+    var mods = game.requireAll(['ActivityController']);
 
     activityCtl = mods.ActivityController
         && mods.ActivityController.ActivityController
         && mods.ActivityController.ActivityController.Instance
         || missing.push('ActivityController');
 
-    mapData = mods.NWorldMapData
-        && mods.NWorldMapData.default
-        && mods.NWorldMapData.default.instance
-        || missing.push('NWorldMapData');
-
-    dataCenter = mods.DataCenter
-        && mods.DataCenter.DATA
-        || missing.push('DataCenter');
-
     if (missing.length) {
-        net = null; activityCtl = null; mapData = null; dataCenter = null;
+        net = null; activityCtl = null;
         log.warn('install failed. missing=%d;deps=%s', missing.length, missing.join(';'));
         return false;
     }

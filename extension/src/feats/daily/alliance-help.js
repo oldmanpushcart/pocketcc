@@ -27,6 +27,7 @@ import { createLog } from '../../core/log.js';
 import { game } from '../../core/game.js';
 import { createDrain } from '../../core/drain.js';
 import { reactor } from '../../core/reactor.js';
+import { item } from '../../core/item.js';
 
 /** @type {ReturnType<createLog>} 模块日志器（tag=ALLIANCE_HELP） */
 const log = createLog('ALLIANCE_HELP');
@@ -511,12 +512,12 @@ function pruneDoneReceived() {
 }
 
 /**
- * 获取物品持有数量
- * @param {object} item cfg.items 里的物品对象
+ * 获取物品持有数量（走 core/item.js 唯一入口，带 try/catch + Number 强转，读不到回 0）。
+ * @param {object} it cfg.items 里的物品对象
  * @returns {number}
  */
-function getItemAmount(item) {
-    return data.UserData.getItemAmount(item.reward);
+function getItemAmount(it) {
+    return item.amount(it.reward);
 }
 
 // ─────────────────────────── 消费者 ───────────────────────────

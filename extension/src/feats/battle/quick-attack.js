@@ -26,6 +26,7 @@ import { march as marchApi } from '../../core/game-api.js';
 import { reactor } from '../../core/reactor.js';
 import { isTypingTarget } from '../../core/hotkeys.js';
 import { Battle } from '../../core/battle.js';
+import { march } from '../../core/march.js';
 
 /**
  * 可攻击面板注册表（可扩展的唯一入口）：新增一个可攻击面板 = 往此数组追加一条 spec，
@@ -73,11 +74,8 @@ function buildModuleCfg() {
 /** @type {ReturnType<createLog>} 模块日志器（tag=QUICK_ATTACK） */
 const log = createLog('QUICK_ATTACK');
 
-/** @type {number} RequestId.MARCH_WORLD_POINT，世界地图行军请求 */
+/** @type {number} RequestId.MARCH_WORLD_POINT：世界地图行军；仅用于发攻前的同 cmd 在途频控（发送走 core/march.attack） */
 const CMD_MARCH_WORLD_POINT = 902;
-
-/** @type {number} 非服务器返回的哨兵 code：发送异常时用，与真实 s 码区分开 */
-const CODE_NOT_SENT = -1;
 
 /** @type {object|null} 网络底座（install 时取） */
 var net;
@@ -317,7 +315,7 @@ async function attackFlow(spec, target, planList) {
     for (var i = 0; i < planList.length; i++) {
         if (!aliveFn()) return;
 
-        if (!canMarch()) {
+        if (!march.canMarch()) {
             log.info('no free march slot, abort. key=%s;step=%d', spec.key, i + 1);
             return;
         }
@@ -336,7 +334,7 @@ async function attackFlow(spec, target, planList) {
             return;
         }
 
-        var ret = await sendMarch(marchType, target, marchData);
+        var ret = await march.attack({ marchType: marchType, target: target, data: marchData });
         if (!aliveFn()) return;
 
         if (ret.ok) {
@@ -355,33 +353,6 @@ async function attackFlow(spec, target, planList) {
 }
 
 /**
- * 发 902 行军，载荷对齐游戏 start_commonMarch 口径。永不 reject。
- * @param {number} marchType 行军类型
- * @param {object} target {x,y,serverId,subMap}
- * @param {object} d MarchData（5 字段）
- * @returns {Promise<object>} net.Ret
- */
-async function sendMarch(marchType, target, d) {
-    try {
-        return await net.send(CMD_MARCH_WORLD_POINT, {
-            marchType: marchType,
-            x: target.x,
-            y: target.y,
-            armyList: d.armyListNew,
-            armyListNew: d.armyListNew,
-            heroList: d.heroList,
-            trapList: d.trapList,
-            formation: 0,
-            formationV2: d.formationV2,
-            extraArmy: d.extraArmy,
-        });
-    } catch (err) {
-        log.warn('march send error. x=%d;y=%d', target.x, target.y, err);
-        return net.Ret.from(CODE_NOT_SENT, null);
-    }
-}
-
-/**
  * 本次出征的 marchType：先按地块实体类型分流（boss 二期），再做跨服战场漂移换算。
  * @param {object} spec 场景定义
  * @param {object} target {x,y,entityType}
@@ -394,15 +365,6 @@ function resolveMarchType(spec, target) {
     var resolved = marchApi.resolve(base, MARCH_FALLBACK);
     if (resolved !== base) log.info('marchType 漂移. key=%s;base=%d->%d;flags=%s', spec.key, base, resolved, JSON.stringify(marchApi.flags()));
     return resolved;
-}
-
-/**
- * 全局行军槽是否可用（口径同竞对 canMarch：myMarchNumMAX - myMarchNum >= 1）
- * @returns {boolean}
- */
-function canMarch() {
-    var u = dataCenter.UserData || {};
-    return (u.myMarchNumMAX | 0) - (u.myMarchNum | 0) >= 1;
 }
 
 /**

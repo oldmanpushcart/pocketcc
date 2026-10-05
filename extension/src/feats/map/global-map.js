@@ -1,10 +1,14 @@
 /**
  * 全局地图 feat（reactor 说明书形态）：把 map 子模块编排成一个功能——
- *   overlay（浮层壳 + MapView）｜scanner（雷达扫图）｜store（运行态 + 持久化）｜terrain（色块底图）。
+ *   overlay（浮层壳 + MapView）｜scanner（雷达扫图）｜store（运行态 + 分桶持久化）｜terrain（色块底图）。
  *
- * 交互模型：面板启用 → install 建浮层、挂 Ctrl+M 热键、异步读回持久数据并铺底图；
+ * 交互模型：面板启用 → install 建浮层、挂 Ctrl+M 热键（**不读实体数据**）；
+ *   浮层第一次打开 → 懒加载当前视角桶（只读本区那一片，落盘数据再大也不占内存）；
  *   浮层「开始扫描」→ scanner 建蛇形块队列、drain 串行发 901 逐块入库、点亮雷达块并更新进度；
- *   中途/扫完落盘（storage.data，跨浏览器刷新复用，避免反复扫图给服务器施压）。
+ *   中途/扫完落盘（按视角桶分键，UID 命名空间下的独立键，跨浏览器刷新复用）。
+ *
+ * 内存纪律：store 同一时刻只驻留**一个**视角桶。视角切区时先把旧桶落盘、再从内存丢弃，
+ *   然后只读入新区的桶——切区/开图都不会让全图数据累积在内存里。
  *
  * 门控：scenes:['NWorldMap']——扫图（发 901）严格 gate 在世界地图态（非地图态发 901 是否受理未实证，见方案「待验证」）；
  *   浮层本身是辅助 UI，install 不受门控、可在任意场景展示已存数据；扫描动作另用 ctx.alive() 兜一道。
@@ -44,6 +48,10 @@ var shieldTimer = null;
 var startBlock = null;
 /** @type {number} 列表刷新节流时戳 */
 var listThrottleT = 0;
+/** @type {boolean} 是否已成功懒加载过至少一次（未成功前每次开浮层都重试，UID 未到等不算成功） */
+var dataBooted = false;
+/** @type {number} 换桶请求世代号（加载期间又切区时，只认最后一次的结果） */
+var loadSeq = 0;
 
 /**
  * 当前视角桶：优先游戏实时视角号（盟决/观战/切区时为被看区），回退在飞扫描服号。
@@ -51,6 +59,14 @@ var listThrottleT = 0;
  */
 function activeVk() {
   return (worldMap.viewServerId && worldMap.viewServerId()) || scanner.currentK() || 0;
+}
+
+/**
+ * 该驻留哪个桶：视角区 → 本服号 → 0（与 scanner.start 的取号顺序一致，扫/读同源）。
+ * @returns {number}
+ */
+function targetVk() {
+  return activeVk() || (worldMap.serverId && worldMap.serverId()) || 0;
 }
 
 /**
@@ -89,6 +105,7 @@ function applyView(vk) {
 
 /**
  * 视角切区：与当前桶不同才动作；在飞扫描先停（扫描目标已不是视角区）。
+ * 切区即换桶：先切视图（徽标/状态立刻跟手），再把新区换入内存（旧桶落盘后丢弃）。
  * @param {number} k 新区服号
  */
 function onViewChange(k) {
@@ -99,7 +116,9 @@ function onViewChange(k) {
     if (overlay) { overlay.setProgress(scanner.progress(), `已存 ${mapStore.size(nk)} 点`); overlay.toast('已切区，扫描停止'); }
   }
   applyView(nk);
-  if (overlay) overlay.toast(nk ? '视角切到 区 ' + nk : '视角服号未知，显示全部区');
+  if (overlay) overlay.toast(nk ? '视角切到 区 ' + nk : '视角服号未知，维持当前已载入区的数据');
+  // 服号未知（0）时不去读空桶：继续用已驻留的那片，避免画面突然打空
+  if (dataBooted && nk) ensureBucket(nk);
 }
 
 /** 可见期视角轮询（2s）：面板开着时才能看见地图，此刻才需跟随 */
@@ -194,14 +213,49 @@ function buildTerrainBase() {
   tb.build((cv) => { if (overlay) overlay.setTerrain(cv); });
 }
 
-/** 读回持久数据并刷新视图（旧档按本服号归桶；完成后应用当前视角） */
-function loadPersisted() {
-  mapStore.load(worldMap.serverId() || 0).then(() => {
-    if (!overlay) return;
+/**
+ * 懒加载：把指定视角桶换入内存（store 内单桶驻留——旧桶先落盘再丢弃，只读目标桶那一片），
+ * 完成后应用视图。加载是异步的，用世代号丢弃「加载期间又切了区」的迟到结果。
+ * @param {number} vk 视角桶服号
+ * @returns {Promise<void>}
+ */
+function ensureBucket(vk) {
+  const bvk = vk | 0;
+  const seq = ++loadSeq;
+  if (overlay) overlay.setStatus(`正在载入 ${bvk ? '区 ' + bvk : '本区'} 数据…`);
+  return mapStore.useBucket(bvk).then(() => {
+    if (seq !== loadSeq || !overlay) return;                 // 期间又切区，本次作废（最后一次会自己收尾）
     const view = overlay.view;
-    if (view) { view.cols = mapStore.meta.cols || view.cols; view.rows = mapStore.meta.rows || view.rows; }
-    applyView(activeVk());
-  }).catch(() => { });
+    if (view) {
+      view.cols = mapStore.meta.cols || view.cols;           // 尺寸以索引记录为准（与扫描/网格同源）
+      view.rows = mapStore.meta.rows || view.rows;
+    }
+    if (mapStore.indexLoaded) dataBooted = true;             // 索引就绪才算booted成功；否则下次开浮层再试
+    applyView(bvk);
+  }).catch((err) => {
+    log.warn('bucket load failed: %s', err && err.message);
+    if (seq === loadSeq && overlay) overlay.setStatus('数据载入失败（重开浮层可重试）');
+  });
+}
+
+/**
+ * 面板「清空全部区数据」：停扫描 → 等旧落盘写完 → 清内存与盘（索引 + 所有已知桶的实体键）
+ * → 重新懒加载当前视角桶（盘上已无，得到空桶承接下次扫描）。
+ * 必须先在 persist 链上排一笔空操作等它：scanner.stop() 内部也发了一笔落盘，跟删除竞态就刚刚删完又被写回。
+ * @returns {Promise<void>}
+ */
+async function clearAllBuckets() {
+  if (scanner.isRunning()) scanner.stop();
+  const bk = mapStore.meta.buckets;
+  const zones = Object.keys(bk).length;
+  const total = Object.keys(bk).reduce((a, k) => a + (bk[k].count | 0), 0);
+  await mapStore.persist();                       // 排到链尾：等 stop 那笔落盘真正写完
+  await mapStore.clearPersisted();
+  log.info('cleared all. zones=%d points=%d', zones, total);
+  if (!overlay) return;                           // 浮层未建（功能未启用）：盘已清，无需重铺视图
+  if (overlay.view) overlay.view.markEntitiesDirty();
+  overlay.toast(`已清空全部区数据（${zones} 区 · ${total} 点）`);
+  ensureBucket(targetVk());
 }
 
 /** 开始/重扫一轮（仅世界地图态放行） */
@@ -210,7 +264,15 @@ function startScan() {
   if (scanner.isRunning()) return;
   // 定标网格绑定 viewLevel=1（回点窗按该档实测标定）：开扫前强制锁回，防旧配置残留其他档位
   cfg.viewLevel = 1;
-  const started = scanner.start(ctxRef, Object.assign({}, cfg, { k: activeVk(), startBlock: startBlock || undefined }), {
+  // 桶号与驻留桶一致（targetVk 与 scanner 取号同源）：扫的就写进内存里驻留的那个桶。
+  // 未驻留（懒加载未完或期间切了区）则先补加载，本次不发起——否则写会因串桶守卫被丢弃。
+  const vk = targetVk();
+  if (!mapStore.isResident(vk)) {
+    if (overlay) { overlay.toast('本区数据载入中，请稍候再试'); }
+    ensureBucket(vk);
+    return;
+  }
+  const started = scanner.start(ctxRef, Object.assign({}, cfg, { k: vk, startBlock: startBlock || undefined }), {
     onBlock: (b, added) => {
       if (!overlay) return;
       const view = overlay.view;
@@ -309,9 +371,16 @@ function makeHandlers() {
       if (visible) {
         startVkPoll();
         if (overlay && overlay.view && overlay.view.shieldMode && overlay.view.shieldMode !== 'off') startShieldTimer();
-        const vk = activeVk();
-        if (vk !== lastVk) onViewChange(vk); else refreshBucket(vk);
-      } else { stopVkPoll(); stopShieldTimer(); }
+        const vk = targetVk();
+        // 首次可见才读盘（懒加载）；之后按区差异跟随，未变则只刷进度/新鲜度文案
+        if (!dataBooted) ensureBucket(vk);
+        else if (vk !== lastVk) onViewChange(vk);
+        else refreshBucket(vk);
+      } else {
+        stopVkPoll(); stopShieldTimer();
+        // 收起时补一笔落盘：现在只序列化当前驻留桶，是百 KB 级而不是全图，代价可忽略
+        Promise.resolve(mapStore.persist()).catch(() => { });
+      }
     },
     onGeomChange: (geom) => { try { Promise.resolve(storage.set(GEOM_KEY, geom)).catch(() => { }); } catch (e) { } },
   };
@@ -354,8 +423,10 @@ function install(ctx) {
     if (evName) ctx.on.event(evName, (k) => onViewChange(k));
     else log.warn('EventId.SERVER_VIEW_CHANGE missing, rely on visible-time poll.');
   } catch (e) { log.warn('subscribe SERVER_VIEW_CHANGE failed: %s', e && e.message); }
-  loadPersisted();
+  // 实体数据不在此读盘（懒加载：浮层首次可见才走 ensureBucket）；底图是纯程序化噪声，无数据也能铺
   buildTerrainBase();
+  // 先把徽标/尺寸/过滤就位（内存空，渲染自然为空；读盘完成后 ensureBucket 会再应用一次）
+  applyView(targetVk());
   // 几何存档：读盘失败（命名空间未设等）静默用默认
   storage.get(GEOM_KEY).then((g) => { if (g && overlay) overlay.setGeom(g); }).catch(() => { });
   installed = true;
@@ -414,6 +485,10 @@ reactor.register({
     { key: 'jitterMs', label: '停留抖动(毫秒)', min: 0, step: 100, section: '扫描节奏' },
     { key: 'ttlHours', label: '数据有效期(小时)', min: 1, step: 1, section: '持久化' },
     { key: 'showMarch', label: '记录行军', type: 'checkbox', section: '持久化' },
+    {
+      key: 'clearAllBtn', type: 'button', section: '持久化', label: '清空全部区数据（内存 + 磁盘）',
+      busyText: '清理中…', onClick: clearAllBuckets,
+    },
     {
       key: 'subs', type: 'multiopts', label: '显示单位类型', section: '类型筛选',
       options: FILTER_TREE.reduce((a, c) => { for (const s of c.subs) a.push({ value: s.key, label: c.label + '·' + s.label }); return a; }, []),

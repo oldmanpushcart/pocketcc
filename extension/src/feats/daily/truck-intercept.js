@@ -43,6 +43,7 @@ import { storage } from '../../core/storage.js';
 import { reactor } from '../../core/reactor.js';
 import { Battle } from '../../core/battle.js';
 import { l10n, gameData } from '../../core/game-api.js';
+import { item } from '../../core/item.js';
 
 /** @type {ReturnType<createLog>} 模块日志器（tag=TRUCK-INTERCEPT） */
 const log = createLog('TRUCK-INTERCEPT');
@@ -103,14 +104,6 @@ const DATA_NAME_STATS = 'truckIntercept.stats';
  * @type {number[]}
  */
 const TRUCK_ITEM_POOL = [820016, 69359, 1600029, 2300003];
-
-/**
- * itemId → 中文道具名（面板展示与日志用；照字典表 item_name/loc 键静态登记，仅这 4 个池内物品需要）。
- * @type {Object<number,string>}
- */
-const ITEM_LABELS = {
-    820016: '高级催化剂', 69359: '中级重装芯片宝箱', 1600029: '职业道具自选宝箱', 2300003: '橙色万能碎片',
-};
 
 /**
  * 内置调优常量（面板只出优先级/编队，不暴露这些间隔）。
@@ -820,7 +813,7 @@ function buildCandidates(list) {
             var bp = Number(view.battlePower) || 0;
             if (bp && bp > my.power * ratio.counter) continue;
         }
-        var cand = { view: view, key: key, rank: m.rank, itemId: m.itemId, itemName: ITEM_LABELS[m.itemId] || ('道具' + m.itemId), spec: spec, grade: spec.grade };
+        var cand = { view: view, key: key, rank: m.rank, itemId: m.itemId, itemName: item.label(m.itemId), spec: spec, grade: spec.grade };
         if (attackable(cand)) cands.push(cand);
     }
     cands.sort(function (a, b) { return a.rank - b.rank; });
@@ -1092,7 +1085,7 @@ reactor.register({
             key: 'order', type: 'sortlist', checkable: true, offKey: 'off',
             label: '目标物品',
             hint: '勾选要拦截的物品，越靠上优先级越高；命中其一即视为可打目标',
-            resolve: function (id) { var nm = ITEM_LABELS[id]; return nm ? [{ id: Number(id), name: nm }] : null; },
+            resolve: item.sortResolve,
         },
         { key: 'preset', label: '攻击部队', section: '拦截编队', type: 'select', options: presetOptions },
         {

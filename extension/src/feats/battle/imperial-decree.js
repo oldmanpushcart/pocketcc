@@ -30,16 +30,14 @@ import { gameData, l10n, march as marchApi } from '../../core/game-api.js';
 import { getUid } from '../../core/player.js';
 import { reactor } from '../../core/reactor.js';
 import { Battle } from '../../core/battle.js';
+import { march } from '../../core/march.js';
 import { CMD_GET_WORLD_INFO, SERVER } from '../map/map-meta.js';
 
 /** @type {ReturnType<createLog>} 模块日志器（tag=IMPERIAL_DECREE） */
 const log = createLog('IMPERIAL_DECREE');
 
-/** @type {number} RequestId.MARCH_WORLD_POINT，世界地图行军请求 */
+/** @type {number} RequestId.MARCH_WORLD_POINT：世界地图行军；仅用于发攻前的同 cmd 在途频控（发送走 core/march.attack） */
 const CMD_MARCH_WORLD_POINT = 902;
-
-/** @type {number} 非服务器返回的哨兵 code：发送异常/在途闸门未放开时用，与真实 s 码区分开 */
-const CODE_NOT_SENT = -1;
 
 /** @type {RegExp} 旨令格式 X:Y #N（方括号无要求，带了也照收）：兼容全角括号/全角冒号；
  *  X/Y 1~4 位、N 1~2 位；靠 "#数字" 作为必选锚点降低误命率 */
@@ -266,7 +264,7 @@ async function execFlow(order) {
  */
 async function dispatch(chat, order) {
     // 1) 行军名额闸门（口径同快捷攻击：myMarchNumMAX - myMarchNum >= 1）
-    if (!canMarch()) {
+    if (!march.canMarch()) {
         log.info('no free march slot, reject. x=%d;y=%d', order.x, order.y);
         reply(chat, order, '行军队列已满，无法出征');
         return;
@@ -306,7 +304,7 @@ async function dispatch(chat, order) {
         reply(chat, order, '行军指令繁忙，请稍候重发');
         return;
     }
-    var ret = await sendMarch(marchType, order, marchData);
+    var ret = await march.attack({ marchType: marchType, target: { x: order.x, y: order.y }, data: marchData });
     if (!aliveFn()) return;                                 // 已暂停：结果不再复旨（新激活补扫语义不适用旨令）
 
     if (ret.ok) {
@@ -350,40 +348,13 @@ async function probeTarget(x, y) {
 }
 
 /**
- * 发 902 行军，载荷对齐游戏 start_commonMarch 口径（同快捷攻击 sendMarch）。永不 reject。
- * @param {number} marchType 行军类型（已漂移换算）
- * @param {object} order 旨令 {x,y}
- * @param {object} d MarchData（5 字段）
- * @returns {Promise<object>} net.Ret
- */
-async function sendMarch(marchType, order, d) {
-    try {
-        return await net.send(CMD_MARCH_WORLD_POINT, {
-            marchType: marchType,
-            x: order.x,
-            y: order.y,
-            armyList: d.armyListNew,
-            armyListNew: d.armyListNew,
-            heroList: d.heroList,
-            trapList: d.trapList,
-            formation: 0,
-            formationV2: d.formationV2,
-            extraArmy: d.extraArmy,
-        });
-    } catch (err) {
-        log.warn('march send error. x=%d;y=%d', order.x, order.y, err);
-        return net.Ret.from(CODE_NOT_SENT, null);
-    }
-}
-
-/**
  * 失败拒因 → 中文译文（服务器裸串 '<键,参数>' 走游戏 getNetMsgText 同源翻译；
  * 查不到译文/无载荷时降级带 code 的兜底文案）。
  * @param {object} ret net.Ret
  * @returns {string}
  */
 function failureText(ret) {
-    if (ret.code === CODE_NOT_SENT) return '出征失败：发送超时或未发出';
+    if (ret.code === march.NOT_SENT) return '出征失败：发送超时或未发出';
     var rawStr = String(ret.data == null ? '' : ret.data).trim();
     var zh = rawStr ? l10n.net(rawStr) : '';
     if (!zh || zh === rawStr) return '出征失败（code=' + ret.code + '）';
@@ -416,15 +387,6 @@ function reply(chat, order, conclusion) {
     }).catch(function (err) {
         log.warn('reply threw. chan=%s', opts.c, err);
     });
-}
-
-/**
- * 全局行军槽是否可用（口径同快捷攻击 canMarch：myMarchNumMAX - myMarchNum >= 1）
- * @returns {boolean}
- */
-function canMarch() {
-    var u = (dataCenter && dataCenter.UserData) || {};
-    return (u.myMarchNumMAX | 0) - (u.myMarchNum | 0) >= 1;
 }
 
 /**

@@ -19,22 +19,22 @@
  *   井坐标：1055 list 不含坐标，须按 id 读配置表 tableThrone（新图 THRONE_v2、旧图 THRONE，行含 pos_x/pos_y）。
  *
  * 队列与撤田（用户明确口径）：
- *   全局行军名额读 UserData.myMarchNumMAX - myMarchNum（跨场景可靠，勿只依赖 mapData.marches）。
+ *   全局行军名额读 UserData.myMarchNumMAX - myMarchNum（跨场景可靠，走 core/march.freeSlots）。
  *   仅当「需驻军且名额不足」才撤田；撤几个＝名额缺口（要几个撤几个）；撤回不立即释放名额，须返程 state=4 到家才释放，
- *   故本轮撤回后不阻塞等待——名额释放由下一轮扫描（10019 回城唤醒 / 兜底定时）自然补派。
- *   "田"＝资源采集行军：mapData.marches 条目由 NWorldMapMarchModel 把协议 marchInfo 摊平（状态字段 marchState、
- *   坐标扁平 target_tx/target_ty、itemId 扁平、**无 target 子对象、无 targetType**），故撤田判据以 marchType 3/26 为准
- *   （普通田 3 / 机械田 26），显式排除驻井 35 与领域寻宝挖矿 180；命中已驻井同理读扁平 itemId/target_tx/target_ty。
+ *   故本轮撤回后不阻塞等待——名额释放由下一轮扫描（march.onHomeReturn 回城唤醒 / 兜底定时）自然补派。
+ *   "田"＝资源采集行军：判据以 marchType 3/26 为准（普通田 3 / 机械田 26），显式排除驻井 35 与领域寻宝挖矿 180；
+ *   命中已驻井同理取归一化 March.target.itemId/x/y（摊平/嵌套差异已由 march.js 抹平）。
  *
  * 生命周期由 reactor 托管：install/run 两个钩子，scenes 门控限定 Home/NWorldMap，战斗模式暂停（offInCombat）。
  *   驻军/撤田/领积分均为内置默认行为，无面板可调项（面板仅出 enabled 勾选）。
- *   驻军/撤田需读 mapData.marches（NWorldMapData.instance.marches）：主城场景该表可能未就绪 → 判为空且有在外行军时跳过本轮写操作，避免误判重复增援。
+ *   驻军/撤田读本人行军走 core/march.list()（封装 856 GET_ALL_MY_MARCH_INFO，视口无关、Home 亦有全量；不再依赖 mapData.marches）。
  */
 import { createLog } from '../../core/log.js';
 import { game } from '../../core/game.js';
 import { l10n, gameConf, gameData } from '../../core/game-api.js';
 import { reactor } from '../../core/reactor.js';
 import { Battle } from '../../core/battle.js';
+import { march } from '../../core/march.js';
 
 /** @type {ReturnType<createLog>} 模块日志器（tag=LAUNCH-SILO） */
 const log = createLog('LAUNCH-SILO');
@@ -45,17 +45,13 @@ const CMD_GET_GUN_FIGHT_INFO = 1055;
 const CMD_GET_GUN_FIGHT_USER_INFO = 1057;
 /** @type {number} RequestId.GET_GUN_FIGHT_USER_REWARD：领取某档位积分奖励（JSON send，{score:num}） */
 const CMD_GET_GUN_FIGHT_USER_REWARD = 1058;
-/** @type {number} RequestId.MARCH_WORLD_POINT：世界地图行军（驻军） */
+/** @type {number} RequestId.MARCH_WORLD_POINT：世界地图行军（驻军）——仅用于发驻军前的同 cmd 在途频控 */
 const CMD_MARCH_WORLD_POINT = 902;
-/** @type {number} RequestId.RECALL_MARCH：撤回单条行军（{marchId}） */
-const CMD_RECALL_MARCH = 904;
 
 /** @type {number} ResponseId.PUSH_GUN_FIGHT_INFO（=11017）：单井归属/占领增量推送 */
 const PUSH_GUN_FIGHT_INFO = 11017;
 /** @type {number} ResponseId.PUSH_GUN_FIGHT_REWARD_INFO（=10029）：个人积分/已领档位刷新推送 */
 const PUSH_GUN_FIGHT_REWARD_INFO = 10029;
-/** @type {number} push USER_MARCH_INFO：本人行军状态更新（含回城 ARRIVED_HOME），作「名额释放即补派」的唤醒信号 */
-const PUSH_USER_MARCH_INFO = 10019;
 
 /**
  * 行军类型：驻军发射井（MarchType.GUN_FIGHT=35，WorldMapCommon/NWorldMapMarchCommon 枚举）。
@@ -63,11 +59,8 @@ const PUSH_USER_MARCH_INFO = 10019;
  * @type {number}
  */
 const MARCH_TYPE_GUN_FIGHT = 35;
-/** @type {number} 行军类型：领域寻宝挖矿（绝不纳入撤田候选） */
+/** @type {number} 行军类型：领域寻宝挖矿（永不纳入撤田候选） */
 const MARCH_TYPE_DOMAIN_TREASURE = 180;
-
-/** @type {number} 行军状态：ARRIVED_HOME（NMarchState=4，部队已到家、名额已释放） */
-const MARCH_STATE_ARRIVED_HOME = 4;
 
 /** @type {number} DataConfig：个人积分档位表（"num,rewardId|num,rewardId|..."，num=积分门槛） */
 const CFG_TIERS_KEY = 130118;
@@ -98,10 +91,8 @@ const cfg = {
 
 /** @type {object|null} 网络底座（promise 封装 pocketcc.net） */
 var net;
-/** @type {object|null} DataCenter.DATA（读 UserData 行军名额/联盟 aid/UID/服务器时间） */
+/** @type {object|null} DataCenter.DATA（读 UserData 联盟 aid/UID/服务器时间） */
 var dataCenter;
-/** @type {object|null} NWorldMapData.instance（读 marches：本人在外行军表，撤田/判已驻用） */
-var mapData;
 
 /** @type {object|null} reactor 注入的上下文；alive() 反映运行态，pause 后置否让定时器与在飞流程自然退出 */
 var ctxRef = null;
@@ -168,120 +159,59 @@ function serverNow() {
 }
 
 // ── 行军表读取（本人 marches）────────────────────────────────────────
+// 本人行军统一走 core/march.list()（856 权威源，返回归一化 March[]，视口无关、Home 亦有全量）：
+//   March = { id:str, type, state, isOccupying, target:{x,y,itemId}, raw }。摊平/嵌套/Int64 三坑已由 march.js 抹平。
 /**
- * marches 是否已就绪：NWorldMapData.instance.marches 有键即就绪。
- * 主城场景该表可能为空/未同步 → 未就绪时不做写操作（驻军/撤田），避免把「读不到自家驻军」误判成「没驻」而重复增援。
- * @returns {boolean}
- */
-function marchesReady() {
-    var m = mapData && mapData.marches;
-    return !!(m && Object.keys(m).length);
-}
-
-/**
- * 遍历本人 marches 条目（值对象），过滤掉空/非本人。
- * 本人判定：realUid（部分活动行军被游戏改写 uid=原uid+marchId、realUid=原uid）优先，回落 uid。
- * @returns {object[]} 本人行军条目数组
- */
-function myMarchList() {
-    var m = mapData && mapData.marches;
-    if (!m) return [];
-    var uid = String(userData().UID);
-    var out = [];
-    for (var k in m) {
-        if (!Object.prototype.hasOwnProperty.call(m, k)) continue;
-        var march = m[k];
-        if (!march) continue;
-        var who = march.realUid != null ? march.realUid : march.uid;
-        if (String(who) === uid) out.push(march);
-    }
-    return out;
-}
-
-/**
- * 行军条目目标点 (tx,ty)：mapData.marches 条目由 NWorldMapMarchModel 把 marchInfo.target 摊平成扁平
- * target_tx/target_ty（无 target 子对象）；回落嵌套 target.tx/ty（兼容直接传协议 marchInfo 的调用路径）。取不到回 null。
- * @param {object} mg 行军条目
- * @returns {{tx:number,ty:number}|null}
- */
-function marchTarget(mg) {
-    if (!mg) return null;
-    if (mg.target_tx != null && mg.target_ty != null) return { tx: mg.target_tx | 0, ty: mg.target_ty | 0 };
-    var t = mg.target;
-    if (t && t.tx != null && t.ty != null) return { tx: t.tx | 0, ty: t.ty | 0 };
-    return null;
-}
-
-/**
- * 行军条目目标 itemId：扁平 itemId（=marchInfo.target.itemId）优先，回落嵌套 target.itemId。命中已驻井判据用。
- * @param {object} mg 行军条目
- * @returns {number|null}
- */
-function marchItemId(mg) {
-    if (!mg) return null;
-    if (mg.itemId != null) return Number(mg.itemId);
-    var t = mg.target;
-    if (t && t.itemId != null) return Number(t.itemId);
-    return null;
-}
-
-/**
- * 是否已有一条驻本井的行军（marchType=35 且目标命中该井）：命中 itemId 或坐标（均走摊平字段）。
- * 关键：mapData.marches 无嵌套 target，若读 march.target.itemId/tx/ty 会恒取 undefined → 误判「没驻」而每轮重复增援。
+ * 是否已有一条驻本井的行军（marchType=35 且目标命中该井）：命中 itemId 或坐标。
  * @param {number} siloId 井配置 id（4001~4004）
  * @param {{x:number,y:number}} coord 井坐标
+ * @param {object[]} myMarches march.list() 结果
  * @returns {boolean}
  */
-function hasGarrisonMarchFor(siloId, coord) {
-    var list = myMarchList();
-    for (var i = 0; i < list.length; i++) {
-        var march = list[i];
-        if ((march.marchType | 0) !== MARCH_TYPE_GUN_FIGHT) continue;
-        var itemId = marchItemId(march);
-        if (itemId != null && itemId === siloId) return true;
-        var tgt = marchTarget(march);
-        if (tgt && coord && tgt.tx === coord.x && tgt.ty === coord.y) return true;
+function hasGarrisonMarchFor(siloId, coord, myMarches) {
+    for (var i = 0; i < myMarches.length; i++) {
+        var m = myMarches[i];
+        if ((m.type | 0) !== MARCH_TYPE_GUN_FIGHT) continue;
+        if (m.target.itemId && m.target.itemId === siloId) return true;
+        if (coord && m.target.x === coord.x && m.target.y === coord.y) return true;
     }
     return false;
 }
 
 /**
- * 是否"资源采集田"行军（撤田候选）：marches 摊平后无 targetType，改以 marchType 3/26 为主判据
- * （普通田 3 / 机械田 26）；显式排除驻井(35)与领域寻宝挖矿(180)；已在待撤集合(pendingRecall)的跳过。
- * @param {object} march 行军条目
+ * 是否"资源采集田"行军（撤田候选）：以 marchType 3/26 为主判据（普通田 3 / 机械田 26）；
+ * 显式排除驻井(35)与领域寻宝挖矿(180)；已在待撤集合(pendingRecall)的跳过。
+ * @param {object} m 归一化 March
  * @returns {boolean}
  */
-function isRecallableFarmMarch(march) {
-    var mt = march.marchType | 0;
+function isRecallableFarmMarch(m) {
+    var mt = m.type | 0;
     if (mt === MARCH_TYPE_GUN_FIGHT || mt === MARCH_TYPE_DOMAIN_TREASURE) return false;
-    var mid = String(march.marchId);
-    if (pendingRecall.has(mid)) return false;
+    if (pendingRecall.has(m.id)) return false;
     return mt === 3 || mt === 26;
 }
 
 /**
- * 取至多 limit 条可撤的田行军（marchId 原值）。
+ * 取至多 limit 条可撤的田行军（marchId 字符串，已 >2^53 安全）。
  * @param {number} limit 需要的名额缺口
- * @returns {Array<{marchId:*}>}
+ * @param {object[]} myMarches march.list() 结果
+ * @returns {Array<{marchId:string}>}
  */
-function pickRecallableFarmMarches(limit) {
+function pickRecallableFarmMarches(limit, myMarches) {
     var out = [];
-    var list = myMarchList();
-    for (var i = 0; i < list.length && out.length < limit; i++) {
-        if (isRecallableFarmMarch(list[i])) out.push({ marchId: list[i].marchId });
+    for (var i = 0; i < myMarches.length && out.length < limit; i++) {
+        if (isRecallableFarmMarch(myMarches[i])) out.push({ marchId: myMarches[i].id });
     }
     return out;
 }
 
 /**
- * 全局行军名额缺口：需要 needed 条驻军时，缺几个 = needed - 当前空闲。
+ * 全局行军名额缺口：需要 needed 条驻军时，缺几个 = needed - 当前空闲（core/march.freeSlots，读 UserData）。
  * @param {number} needed 期望驻军的井数（已扣除已在驻的）
  * @returns {number} 需要腾出的名额数（<=0 表示名额够）
  */
 function slotDeficit(needed) {
-    var u = userData();
-    var free = (u.myMarchNumMAX | 0) - (u.myMarchNum | 0);
-    return needed - free;
+    return needed - march.freeSlots();
 }
 
 // ── 井坐标（tableThrone）─────────────────────────────────────────────
@@ -381,41 +311,21 @@ async function sendClaim(num) {
  * @returns {Promise<object>} net.Ret
  */
 async function sendGarrison(coord, plan) {
-    try {
-        return await net.send(CMD_MARCH_WORLD_POINT, {
-            marchType: MARCH_TYPE_GUN_FIGHT,
-            x: coord.x,
-            y: coord.y,
-            armyList: plan.armyListNew,
-            armyListNew: plan.armyListNew,
-            heroList: plan.heroList,
-            trapList: plan.trapList,
-            formation: 0,
-            formationV2: plan.formationV2,
-            extraArmy: plan.extraArmy,
-        });
-    } catch (err) {
-        log.warn('garrison send error. x=%d;y=%d', coord.x, coord.y, err);
-        return net.Ret.from(CODE_NOT_SENT, null);
-    }
+    return await march.attack({ marchType: MARCH_TYPE_GUN_FIGHT, target: { x: coord.x, y: coord.y }, data: plan });
 }
 
 /**
- * 撤回一条行军（904 {marchId}）。永不 reject；成功即记入 pendingRecall（名额返程后才释放）。
- * @param {*} marchId 行军 id
+ * 撤回一条行军（core/march.recall → 904 {marchId}）。永不 reject；成功即记入 pendingRecall（名额返程后才释放）。
+ * @param {string} marchId 行军 id
  * @returns {Promise<void>}
  */
 async function sendRecall(marchId) {
-    try {
-        var ret = await net.send(CMD_RECALL_MARCH, { marchId: marchId });
-        if (ret.ok) {
-            pendingRecall.add(String(marchId));
-            log.info('recall farm march ok. marchId=%s', marchId);
-        } else {
-            log.info('recall farm march rejected. marchId=%s;code=%d;data=%s', marchId, ret.code, ret.data);
-        }
-    } catch (err) {
-        log.warn('recall send error. marchId=%s', marchId, err);
+    var ret = await march.recall(marchId);
+    if (ret.ok) {
+        pendingRecall.add(String(marchId));
+        log.info('recall farm march ok. marchId=%s', marchId);
+    } else {
+        log.info('recall farm march rejected. marchId=%s;code=%d;data=%s', marchId, ret.code, ret.data);
     }
 }
 
@@ -463,11 +373,9 @@ async function garrisonPass(list) {
         log.debug('no alliance, skip garrison.');
         return;
     }
-    // marches 未就绪（主城场景）：不做写操作，避免把「读不到自家驻军」误判成「没驻」而重复增援
-    if (!marchesReady()) {
-        log.debug('march data not ready (Home?), skip garrison this cycle.');
-        return;
-    }
+    // 本人行军权威源（core/march.list 封装 856）：视口无关、Home 亦有全量，取代旧 mapData.marches（Home 读空会误判「没驻」而重复增援）
+    var myMarches = await march.list();
+    if (!aliveFn()) return;
 
     // 需要驻的井：归属本联盟 && 我尚无驻军行军 && 坐标可读
     var wanted = [];
@@ -479,7 +387,7 @@ async function garrisonPass(list) {
             log.debug('silo coord unavailable, skip. id=%s', silo.id);
             continue;
         }
-        if (hasGarrisonMarchFor(Number(silo.id), coord)) continue;   // 已在驻：跳过
+        if (hasGarrisonMarchFor(Number(silo.id), coord, myMarches)) continue;   // 已在驻：跳过
         wanted.push({ id: Number(silo.id), x: coord.x, y: coord.y });
     }
     if (!wanted.length) return;
@@ -487,7 +395,7 @@ async function garrisonPass(list) {
     // 撤田腾队列：仅当名额不足且开启撤田。缺口 = 待驻数 - 空闲名额；要几个撤几个（已在途/返程的去重由 pendingRecall 保证）
     var deficit = slotDeficit(wanted.length);
     if (deficit > 0) {
-        var picks = pickRecallableFarmMarches(deficit);
+        var picks = pickRecallableFarmMarches(deficit, myMarches);
         if (picks.length) {
             log.info('slots short by %d, recalling %d farm march(s).', deficit, picks.length);
             for (var j = 0; j < picks.length; j++) {
@@ -613,26 +521,27 @@ function onRewardPush() {
 }
 
 /**
- * 10019 本人行军状态：仅认「我方某条已撤田行军 state=4 到家」——该 marchId 出 pendingRecall，
- * 名额已释放，唤醒补扫把空出来的名额用于驻军（非回城/非撤田的推送忽略）。
- * @param {object} ev net 推送事件（载荷在 ev.data）
+ * 行军到家（march.onHomeReturn 复播，state→ARRIVED_HOME 边沿）：仅认「我方某条已撤田行军」——
+ * 该 marchId 出 pendingRecall，名额已释放，唤醒补扫把空出的名额用于驻军。
+ * 全局单点订阅的代价：march.js 常驻 10019，feat 暂停仍会收到复播 → 回调内自判 alive 为硬约束。
+ * @param {object} m 归一化 March
  */
-function onMarchUpdate(ev) {
+function onMarchArrivedHome(m) {
     if (!aliveFn()) return;
-    var d = ev && ev.data;
-    var mi = d && d.marchInfo;
-    if (!mi) return;
-    if ((mi.state | 0) !== MARCH_STATE_ARRIVED_HOME) return;
-    var mid = String(mi.marchId);
-    if (!pendingRecall.has(mid)) return;   // 不是我们撤的田（如驻军/其它行军回城），不唤醒
+    var mid = m && m.id;
+    if (!mid || !pendingRecall.has(mid)) return;   // 不是我们撤的田（如驻军/其它行军回城），不唤醒
     pendingRecall.delete(mid);
     log.debug('recalled farm march arrived home (marchId=%s), slot freed.', mid);
     pushWake();
 }
 
+/** @type {Function|null} march.onHomeReturn 退订句柄（防 resume 重激活重复注册） */
+var offHomeReturn = null;
+
 // ── 生命周期 ─────────────────────────────────────────────────────────
 /**
- * 安装：取网络底座 + 数据中心 + 地图数据。任一缺失即失败（reactor 不会激活）。
+ * 安装：取网络底座 + 数据中心。任一缺失即失败（reactor 不会激活）。
+ * 本人行军改走 core/march.list()（856），不再依赖 NWorldMapData。
  * @param {object} ctx reactor 上下文
  * @returns {boolean}
  */
@@ -651,11 +560,8 @@ function install(ctx) {
     var dc = game.get('DataCenter');
     dataCenter = (dc && dc.DATA) || (missing.push('DataCenter'), null);
 
-    var nmd = game.get('NWorldMapData');
-    mapData = (nmd && nmd.default && nmd.default.instance) || (missing.push('NWorldMapData'), null);
-
     if (missing.length) {
-        net = null; dataCenter = null; mapData = null;
+        net = null; dataCenter = null;
         log.warn('install failed. missing=%s', missing.join(';'));
         return false;
     }
@@ -680,7 +586,8 @@ function run(ctx) {
     coordCache = {};
     ctx.on.push(PUSH_GUN_FIGHT_INFO, onGunFightInfoPush);
     ctx.on.push(PUSH_GUN_FIGHT_REWARD_INFO, onRewardPush);
-    ctx.on.push(PUSH_USER_MARCH_INFO, onMarchUpdate);
+    if (offHomeReturn) offHomeReturn();   // 先退再挂，防 resume 重激活重复注册
+    offHomeReturn = march.onHomeReturn(onMarchArrivedHome);
     log.info('started (驻军+领积分+撤田腾队列 内置默认).');
     triggerScan();
 }

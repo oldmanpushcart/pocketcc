@@ -20,7 +20,7 @@
  *
  * 数据源分级（「优先本地数据」的落地口径）：
  *   读本地（游戏 AllianceBossData，由 push 10435 / 1160 / 1161 应答刷新）：state / bossId / x / y / exp / hp / endTime；
- *   读本地：碎片持有 gameData.itemAmount(3200001)；每日上限与入盟门槛走 gameConf.dataConfig(25008/25009)；
+ *   读本地：碎片持有 item.amount(3200001)（经 core/item.js 唯一入口）；每日上限与入盟门槛走 gameConf.dataConfig(25008/25009)；
  *   必须发包：todayTime / todayFree —— 这俩由 AllianceBossData.updateData 的 `null != e.todayTime` 守卫单独维护，
  *     而 push 10435 载荷里没有（只有 allianceBoss 一块），未开过面板时恒为构造默认 0 → 判免费只能问 1160。
  *   必须自建：「本轮是否已攻打」——游戏侧无此口径（FinishedIds 只喂 _passIdPool 做型号解锁，
@@ -59,6 +59,8 @@ import { storage } from '../../core/storage.js';
 import { l10n, gameData, gameConf } from '../../core/game-api.js';
 import { reactor } from '../../core/reactor.js';
 import { Battle } from '../../core/battle.js';
+import { march } from '../../core/march.js';
+import { item } from '../../core/item.js';
 
 /** @type {ReturnType<createLog>} 模块日志器（tag=ALLIANCE-BOSS） */
 const log = createLog('ALLIANCE-BOSS');
@@ -513,31 +515,8 @@ async function sendDonate(count) {
 }
 
 /**
- * 派兵攻打机甲（902，marchType=18）。载荷对齐游戏 start_commonMarch 与「战争之源」口径。永不 reject。
- * @param {object} boss {x,y}
- * @param {object} d Battle().build() 产出的 5 字段行军数据
- * @returns {Promise<object>} net.Ret
+ * 派兵攻打机甲统一走 core/march.attack（902，marchType=18）；载荷与「快捷攻击」同源（core/battle.js）。
  */
-async function sendMarch(boss, d) {
-    try {
-        return await net.send(CMD_MARCH_WORLD_POINT, {
-            marchType: MARCH_TYPE,
-            x: boss.x,
-            y: boss.y,
-            armyList: d.armyListNew,
-            armyListNew: d.armyListNew,
-            heroList: d.heroList,
-            trapList: d.trapList,
-            break: 0,
-            formation: 0,
-            formationV2: d.formationV2,
-            extraArmy: d.extraArmy,
-        });
-    } catch (err) {
-        log.warn('march send error. x=%d;y=%d', boss.x, boss.y, err);
-        return net.Ret.from(CODE_NOT_SENT, null);
-    }
-}
 
 // ── 主流程 ────────────────────────────────────────────────────────────
 /**
@@ -659,7 +638,7 @@ async function donateFlow(boss, preloaded) {
     }
 
     // 付费捐：其余从背包扣，不够就本轮放弃（不做部分捐赠）
-    var have = gameData.itemAmount(ITEM_SHARD);
+    var have = item.amount(ITEM_SHARD);
     if (have < plan) {
         log.debug('shard not enough, give up this round. need=%d;have=%d', plan, have);
         return;
@@ -670,7 +649,7 @@ async function donateFlow(boss, preloaded) {
     if (paid.ok) {
         bumpDonated(boss.bossId, plan);
         log.info('donate ok. count=%d;bossId=%d;num=%d;shard %d->%d;left=%d',
-            plan, boss.bossId, t.need, have, gameData.itemAmount(ITEM_SHARD), donateLeft(boss.bossId));
+            plan, boss.bossId, t.need, have, item.amount(ITEM_SHARD), donateLeft(boss.bossId));
     } else {
         log.info('donate rejected. count=%d;code=%d;data=%s', plan, paid.code, paid.data);
     }
@@ -727,7 +706,7 @@ async function attackFlow(boss) {
         log.debug('boss tile not on my server, skip. pointSid=%d;serverId=%d', boss.pointSid, serverId);
         return;
     }
-    if ((u.myMarchNumMAX | 0) - (u.myMarchNum | 0) < 1) {
+    if (!march.canMarch()) {
         log.debug('no free march slot, wait next check.');
         return;
     }
@@ -740,7 +719,7 @@ async function attackFlow(boss) {
         return;
     }
 
-    var ret = await sendMarch(boss, plan);
+    var ret = await march.attack({ marchType: MARCH_TYPE, target: { x: boss.x, y: boss.y }, data: plan });
     if (!aliveFn()) return;
 
     if (ret.ok) {
@@ -852,7 +831,7 @@ reactor.register({
             },
             {
                 key: 'shardOwned', label: '碎片持有', section: '捐献碎片', type: 'text',
-                get: function () { return String(gameData.itemAmount(ITEM_SHARD)); },
+                get: function () { return String(item.amount(ITEM_SHARD)); },
             },
             { key: 'preset', label: '攻击部队', section: '攻打', type: 'select', options: options },
             {

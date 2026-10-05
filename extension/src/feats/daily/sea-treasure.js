@@ -28,6 +28,7 @@
 import { createLog } from '../../core/log.js';
 import { game } from '../../core/game.js';
 import { reactor } from '../../core/reactor.js';
+import { march } from '../../core/march.js';
 
 /** @type {ReturnType<createLog>} 模块日志器（tag=SEA-TREASURE） */
 const log = createLog('SEA-TREASURE');
@@ -92,10 +93,6 @@ const EMPTY_STREAK_IDLE = 2;
 var net;
 /** @type {object|null} 活动控制器（aid 反查活动、活动列表/开启判定） */
 var activityCtl;
-/** @type {object|null} 世界地图数据（读我的在途行军列表 marches） */
-var mapData;
-/** @type {object|null} 数据中心（取本机 UID 过滤我的行军） */
-var dataCenter;
 
 /** @type {object|null} reactor 注入的上下文；alive() 反映运行态，pause 后置否让定时器与在飞流程自然退出 */
 var ctxRef = null;
@@ -297,8 +294,8 @@ function isSeaTreasureAid(aid) {
  * @returns {Promise<void>}
  */
 async function attackFlow(boss) {
-    // 同一目标同一时间只能有一个行军，已在途中则跳过
-    if (hasMarchAtTarget(boss.x, boss.y)) {
+    // 同一目标同一时间只能有一个行军，已在途中则跳过（在途核对走 core/march.list，856 本人全量、视口无关）
+    if (await hasMarchAtTarget(boss.x, boss.y)) {
         log.debug('target already has march in flight, skip. bossId=%d;x=%d;y=%d', boss.bossId, boss.x, boss.y);
         return;
     }
@@ -316,23 +313,16 @@ async function attackFlow(boss) {
 }
 
 /**
- * 检查目标坐标 (x,y) 是否已被我的行军占用（同 marchType=178 且 target_tx/target_ty 匹配）。
- * 口径同领域夺宝挖矿：遍历 mapData.marches，按 realUid + marchType + target_tx/target_ty 判定。
+ * 检查目标坐标 (x,y) 是否已被我的行军占用（同 marchType=178 且目标坐标匹配）。
+ * 口径改走 core/march.list()（封装 856 本人全量行军，视口无关、Home 亦有）；不再读 mapData.marches（Home 读空会误判没占而重复派）。856 已是本人，无需再过滤 uid。
  * @param {number} x 目标 pointX
  * @param {number} y 目标 pointY
- * @returns {boolean}
+ * @returns {Promise<boolean>}
  */
-function hasMarchAtTarget(x, y) {
-    var uid = dataCenter.UserData && dataCenter.UserData.UID;
-    if (!uid) return false;
-    var marches = mapData.marches;
-    if (!marches) return false;
-    return Object.values(marches).some(function (march) {
-        return march
-            && march.realUid == uid
-            && march.marchType == MARCH_TYPE
-            && march.target_tx == x
-            && march.target_ty == y;
+async function hasMarchAtTarget(x, y) {
+    var marches = await march.list();
+    return marches.some(function (m) {
+        return m.type === MARCH_TYPE && m.target.x === x && m.target.y === y;
     });
 }
 
@@ -401,19 +391,8 @@ async function marchAttack(boss) {
         return net.Ret.from(CODE_NOT_SENT, null);
     }
 
-    try {
-        var ret = await net.send(CMD_MARCH_WORLD_POINT, {
-            marchType: MARCH_TYPE,
-            x: boss.x,
-            y: boss.y,
-        });
-
-        // 被拒不在这里打日志：attackFlow 是结果的单一出口（一次攻打只打一条，带 data 错误标识）
-        return ret;
-    } catch (err) {
-        log.warn('march attack error. x=%d;y=%d', boss.x, boss.y, err);
-        return net.Ret.from(CODE_NOT_SENT, null);
-    }
+    // 零部队三键（{marchType,x,y}）走 core/march.pickUp；被拒日志仍由 attackFlow 单出口
+    return march.pickUp({ marchType: MARCH_TYPE, target: { x: boss.x, y: boss.y } });
 }
 
 /**
@@ -435,24 +414,15 @@ function install(ctx) {
         net = null;
     }
 
-    var mods = game.requireAll(['ActivityController', 'NWorldMapData', 'DataCenter']);
+    var mods = game.requireAll(['ActivityController']);
 
     activityCtl = mods.ActivityController
         && mods.ActivityController.ActivityController
         && mods.ActivityController.ActivityController.Instance
         || missing.push('ActivityController');
 
-    mapData = mods.NWorldMapData
-        && mods.NWorldMapData.default
-        && mods.NWorldMapData.default.instance
-        || missing.push('NWorldMapData');
-
-    dataCenter = mods.DataCenter
-        && mods.DataCenter.DATA
-        || missing.push('DataCenter');
-
     if (missing.length) {
-        net = null; activityCtl = null; mapData = null; dataCenter = null;
+        net = null; activityCtl = null;
         log.warn('install failed. missing=%d;deps=%s', missing.length, missing.join(';'));
         return false;
     }

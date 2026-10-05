@@ -23,6 +23,7 @@ import { storage } from '../../../core/storage.js';
 import { l10n, gameConf } from '../../../core/game-api.js';
 import { isCombat } from '../../../core/mode.js';
 import { Battle } from '../../../core/battle.js';
+import { march } from '../../../core/march.js';
 import { todayStr, safeStringify } from './util.js';
 
 /** @type {ReturnType<createLog>} 模块日志器（tag 与领奖链一致，便于聚合阅读） */
@@ -31,19 +32,8 @@ const log = createLog('SOURCE-OF-WAR');
 /** @type {number} RequestId.GET_BOSS_INFO_V2，查询当前战争之源 BOSS（旧 JSON send）→ {bossId,id,x,y,reason} */
 const CMD_GET_BOSS_INFO_V2 = 9956;
 
-/** @type {number} RequestId.MARCH_WORLD_POINT，世界地图行军；攻打 BOSS_V2 用 marchType=298 */
+/** @type {number} RequestId.MARCH_WORLD_POINT，世界地图行军；仅用于发攻前的同 cmd 在途频控（发送走 core/march.attack） */
 const CMD_MARCH_WORLD_POINT = 902;
-
-/** @type {number} push USER_MARCH_INFO：本人行军状态更新（含到/回城 ARRIVED_HOME），作「回城即补派」的唤醒信号 */
-const PUSH_USER_MARCH_INFO = 10019;
-
-/**
- * 行军状态：ARRIVED_HOME（部队已回到家、重新可派）。
- * 定义：NMarchState（subpack2/NWorldMapMarchCommon）：INIT0/MARCHING1/ARRIVED2/RETURNING3/ARRIVED_HOME4…
- * 10019 在出发/到达/返程都会推，只有 state===4 才是「回城可再派」，其余状态补扫只会空跑。
- * @type {number}
- */
-const MARCH_STATE_ARRIVED_HOME = 4;
 
 /**
  * 行军类型：ATTACK_WORLD_BOSS_V2（战争之源二期世界 BOSS）
@@ -90,9 +80,6 @@ const PUSH_SCAN_MIN_GAP = 1000 * 5;
 /** @type {number} 跨日重排余量（毫秒）：零点后半小时再看当日日程，避开零点数据未就绪 */
 const DAY_ROLL_BUFFER = 1000 * 60 * 30;
 
-/** @type {number} 非服务器返回的哨兵 code（预留，与真实 s 码区分） */
-const CODE_NOT_SENT = -1;
-
 /**
  * 攻打一次战争之源的体力消耗兜底值（最后兜底）。
  * 实证优先取 9956 应答的 costEnergy（普遍=5），其次 BOSS 表 cost_energy；两者都取不到才用此值。
@@ -138,8 +125,10 @@ export class AttackFlow {
         this.dailyState = { date: '', count: 0 };
         /** @type {boolean} 持久态是否已读回 */
         this.dailyStateLoaded = false;
-        // push 回调需绑 this（ctx.on.push 传入的即此绑定引用）
-        this.onMarchUpdate = this.onMarchUpdate.bind(this);
+        // march.onHomeReturn 复播回调需绑 this（全局单点订阅、非 ctx 级）
+        this.onHomeArrived = this.onHomeArrived.bind(this);
+        /** @type {Function|null} march.onHomeReturn 退订句柄（防重激活重复注册） */
+        this._offHomeReturn = null;
     }
 
     /** @returns {object} 网络底座 */ get net() { return this.env.getNet(); }
@@ -341,35 +330,22 @@ export class AttackFlow {
     }
 
     /**
-     * 判断一条 10019 USER_MARCH_INFO 推送是否是「我方战争之源 BOSS 行军刚刚回到家」。
-     * 真机报文实证结构：{ marchInfo:{ state, marchType:298, uid, marchId, armyType, ... }, heroStateInfo:{ state, marchType }, target, armyInfoList, ... }。
-     * 权威位取 marchInfo：state===4(ARRIVED_HOME) 才是回城可再派，marchType===298 才属本玩法（其它行军回城不唤醒，免空跑）。
-     * 读不到（结构漂移）即返回 false，回落常规 tick，绝不错触发攻打。
-     * @param {object} d ev.data（已 JSON 解析）
-     * @returns {boolean}
+     * 行军到家复播（march.onHomeReturn，state→ARRIVED_HOME 边沿）：BOSS 行军（marchType=298）回城即补派下一次。
+     * 全局单点订阅的代价：march.js 常驻 10019，feat 暂停仍会收到复播 → 回调内自判 alive 为硬约束；
+     * 只认 m.type===298（其它行军回城不唤醒，免空跑）；自持 min-gap 节流（march.js 不代管）。
+     * 只在场窗口（liveUntil 未到）且额度未满、无扫描在飞时才补扫；补扫仍走 scanOnce 全套闸门。
+     * @param {object} m 归一化 March
      */
-    isBossMarchArrivedHome(d) {
-        var mi = d && d.marchInfo;
-        if (!mi) return false;
-        return (mi.state | 0) === MARCH_STATE_ARRIVED_HOME && (mi.marchType | 0) === MARCH_TYPE;
-    }
-
-    /**
-     * 本人行军状态推送（10019）回调：部队回城（state===4）即补派下一次，省掉干等 tick。
-     * 只在场窗口（liveUntil 未到）且额度未满、无扫描在飞时才补扫；非回城状态（出发/到达/返程）直接忽略。
-     * 补扫仍走 scanOnce 全套闸门（alive/体力/行军槽/可派兵），不满足就自然跳过、回落到常规 tick。
-     * @param {object} ev net 推送事件（载荷在 ev.data）
-     */
-    onMarchUpdate(ev) {
+    onHomeArrived(m) {
         if (!this.alive() || this.scanning) return;
+        if ((m && m.type | 0) !== MARCH_TYPE) return;   // 只认本玩法 BOSS 行军（298）回城
         var now = +(this.dc && this.dc.ServerTime) || 0;
         if (!(now > 0 && this.liveUntil > now)) return;   // 不在场窗口，不因无关行军空转
         if (this.quotaLeft() <= 0) return;
-        if (!this.isBossMarchArrivedHome(ev && ev.data)) return;   // 只认 marchInfo.marchType===298 && state===4（本玩法行军回城），其余推送忽略
         var wall = Date.now();
         if (wall - this.lastPushScanAt < PUSH_SCAN_MIN_GAP) return;
         this.lastPushScanAt = wall;
-        log.debug('march arrived home (state=4) in live window, early re-scan.');
+        log.debug('boss march arrived home in live window, early re-scan.');
         this.triggerScan();
     }
 
@@ -521,8 +497,8 @@ export class AttackFlow {
             return;
         }
 
-        // 全局行军槽：无空位则本轮放过（在途行军会占位），下个 tick 再补
-        if ((u.myMarchNumMAX | 0) - (u.myMarchNum | 0) < 1) {
+        // 全局行军槽（core/march.canMarch，读 UserData）：无空位则本轮放过（在途行军会占位），下个 tick 再补
+        if (!march.canMarch()) {
             log.debug('no free march slot, wait next tick.');
             return;
         }
@@ -536,7 +512,7 @@ export class AttackFlow {
             return;
         }
 
-        var ret = await this.sendMarch(boss, plan);
+        var ret = await march.attack({ marchType: MARCH_TYPE, target: { x: boss.x, y: boss.y }, data: plan });
         if (!this.alive()) return;
 
         if (ret.ok) {
@@ -553,33 +529,7 @@ export class AttackFlow {
     }
 
     /**
-     * 派兵攻打 BOSS（902 行军）。载荷对齐「快捷攻击」的 start_commonMarch 口径。永不 reject。
-     * @param {object} boss {x,y}
-     * @param {object} d MarchData（5 字段）
-     * @returns {Promise<object>} net.Ret
-     */
-    async sendMarch(boss, d) {
-        try {
-            return await this.net.send(CMD_MARCH_WORLD_POINT, {
-                marchType: MARCH_TYPE,
-                x: boss.x,
-                y: boss.y,
-                armyList: d.armyListNew,
-                armyListNew: d.armyListNew,
-                heroList: d.heroList,
-                trapList: d.trapList,
-                formation: 0,
-                formationV2: d.formationV2,
-                extraArmy: d.extraArmy,
-            });
-        } catch (err) {
-            log.warn('march send error. x=%d;y=%d', boss.x, boss.y, err);
-            return this.net.Ret.from(CODE_NOT_SENT, null);
-        }
-    }
-
-    /**
-     * 起攻打链：复位在场/在飞态 → 订阅 10019 行军推送 → 读回当日额度 → 首个 tick 立即跑（判位/攻打）。
+     * 起攻打链：复位在场/在飞态 → 挂 march.onHomeReturn 到家唤醒 → 读回当日额度 → 首个 tick 立即跑（判位/攻打）。
      * @param {object} ctx reactor 上下文
      * @returns {Promise<void>}
      */
@@ -588,8 +538,9 @@ export class AttackFlow {
         this.liveUntil = 0;   // 清在场标记，首次扫描重新以 9956 回包 alive/finishTime 认定
         this.lastPushScanAt = 0;
         log.info('attack started, marchType=%d;dailyLimit=%d', MARCH_TYPE, DAILY_LIMIT);
-        // 订阅本人行军状态推送：在场窗口内部队一回城就补派下一次（退订由 reactor 在 pause 统一摘除）
-        ctx.on.push(PUSH_USER_MARCH_INFO, this.onMarchUpdate);
+        // BOSS 行军到家即补派下一次（全局单点 10019；先退再挂防 resume 重激活重复注册）
+        if (this._offHomeReturn) this._offHomeReturn();
+        this._offHomeReturn = march.onHomeReturn(this.onHomeArrived);
         await this.loadDaily();
         if (!this.alive()) return;
         if (this.quotaLeft() <= 0) {

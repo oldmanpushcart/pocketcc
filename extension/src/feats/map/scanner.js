@@ -126,8 +126,13 @@ async function processBlock(b) {
     return;
   }
   const data = safeParse(ret.data) || {};
-  // 服号自愈：开局视角号取到 0 时，用应答回显的 k 补上，后续块沿用（桶标同用 curK，轮次改发）
-  if (!curK && data.k) { curK = data.k | 0; curRound = mapStore.beginRound(curK); }
+  // 服号自愈：开局视角号取到 0 时，用应答回显的 k 补上，后续块沿用（桶标同用 curK，轮次改发）。
+  // 换桶号需驻留桶内存为空才允许（retarget）——否则已入库的点会算到另一个桶键下；
+  // 不允许就沿用 0 桶继续，宁可桶号不精确，也不能让本批数据被单桶驻留守卫丢弃。
+  if (!curK && data.k) {
+    const healK = data.k | 0;
+    if (mapStore.retarget(healK)) { curK = healK; curRound = mapStore.beginRound(curK); }
+  }
   const list = Array.isArray(data.pointList) ? data.pointList : [];
   let added = 0;
   for (const p of list) if (mapStore.upsertPoint(p, curK, curRound)) added++;
@@ -145,7 +150,7 @@ async function processBlock(b) {
   doneCount++;
   if (hooks.onBlock) { try { hooks.onBlock(b, added, doneCount, totalCount); } catch (e) { } }
   if (hooks.onProgress) { try { hooks.onProgress(doneCount, totalCount); } catch (e) { } }
-  // 周期落盘：每 10 块一次（全量序列化开销随点数增长，避免每块都写）
+  // 周期落盘：每 10 块一次（只序列化当前驻留桶，开销随桶长而非全图长）
   if (doneCount % 10 === 0) Promise.resolve(mapStore.persist()).catch(() => { });
   if (doneCount >= totalCount) finish();
 }

@@ -752,6 +752,16 @@ export const gameData = {
     }
     return out;
   },
+  /**
+   * 本人行军名额快照（UserData.myMarchNum 已用 / myMarchNumMAX 上限，服务端跨场景同步、比 mapData.marches 可靠）。
+   * 只读、无副作用；数据源缺失回 {used:0,max:0}（上层 freeSlots 据此算 0，不主动拦）。
+   * @returns {{used:number, max:number}}
+   */
+  marchCount() {
+    var u = userData();
+    if (!u) return { used: 0, max: 0 };
+    return { used: Number(u.myMarchNum) || 0, max: Number(u.myMarchNumMAX) || 0 };
+  },
 };
 
 /** 资源路径换算器 PathUtils（ES 命名空间下取 .default 类；静态方法 GetIconURL） */

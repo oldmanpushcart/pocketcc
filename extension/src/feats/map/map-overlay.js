@@ -285,7 +285,7 @@ export class MapOverlay {
       `<button class="pcg-btn act-zin">＋</button>` +
       `<button class="pcg-btn act-zout">－</button>` +
       `<button class="pcg-btn act-grid" title="切换坐标网格">网格</button>` +
-      `<button class="pcg-btn act-clear" title="清空全部已扫点位（含持久数据）">清空</button>` +
+      `<button class="pcg-btn act-clear" title="清空本区已扫点位（含持久数据，不动其他区）">清空</button>` +
       `<span class="pcg-prog"><span class="pcg-text">未扫描</span><span class="pcg-track"><span class="pcg-fill"></span></span></span>` +
       `</div>` +
       `<div class="pcg-legend">${legend}</div>` +

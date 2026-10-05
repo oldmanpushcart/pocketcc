@@ -40,6 +40,7 @@ import { gameData, l10n } from '../../core/game-api.js';
 import { reactor } from '../../core/reactor.js';
 import { storage } from '../../core/storage.js';
 import { Battle } from '../../core/battle.js';
+import { march } from '../../core/march.js';
 import { CMD_GET_WORLD_INFO } from '../map/map-meta.js';
 
 /** @type {ReturnType<createLog>} 模块日志器（tag=AUTO-FARM） */
@@ -54,8 +55,6 @@ const CMD_MARCH_WORLD_POINT = 902;
 const ERR_RATE_LIMIT = 'march_time_control_info001';
 /** @type {number} RequestId.WORLD_SEARCH_MONSTER：服务端按 (家族,等级) 搜索一个可采资源点 */
 const CMD_WORLD_SEARCH_MONSTER = 906;
-/** @type {number} push USER_MARCH_INFO：本人行军状态更新（state=4 到家 → 缺位唤醒） */
-const PUSH_USER_MARCH_INFO = 10019;
 
 /** @type {number} 行军类型：普通资源田采集（NMarchType.GATHER_RESOURCE） */
 const KIND_FARM = 3;
@@ -67,16 +66,10 @@ const POINT_TYPE_TOWER = 24;
 const TOWER_STATE_COMPLETE = 3;
 /** @type {number} 906 搜索分类 pointType：资源 tab（1野怪/2资源/3集结/4国宝） */
 const SEARCH_POINT_TYPE_RESOURCE = 2;
-/** @type {number} 行军状态：RETURNING（NMarchState=3 返程，已让出矿位——目标点占用判定须排除） */
-const MARCH_STATE_RETURNING = 3;
-/** @type {number} 行军状态：ARRIVED_HOME（部队到家、名额已释放） */
-const MARCH_STATE_ARRIVED_HOME = 4;
 /** @type {number} RequestId.ALLIANCE_RECORD_DATA：全量拉联盟记录（含「建筑」机械田建造事件，视口无关） */
 const CMD_ALLIANCE_RECORD_DATA = 1193;
 /** @type {number} RequestId.GET_TOWERINFO：查资源塔详情（应答 army_size=当前驻军兵力，配 MAP_BUILDING[bid].force_capacity 判满） */
 const CMD_GET_TOWERINFO = 1034;
-/** @type {number} RequestId.GET_ALL_MY_MARCH_INFO：全量拉本人行军（视口无关，Home 亦有；占用/账本核对权威源） */
-const CMD_GET_ALL_MY_MARCH_INFO = 856;
 /** @type {number} push PUSH_ALLIANCE_RECORD：联盟记录增量推送（新建成机械田即时并入活表） */
 const PUSH_ALLIANCE_RECORD = 10452;
 /** @type {number} 机械田记录/活表最大年龄（秒）：实证塔存活 <10h，超期视为已毁不再下田 */
@@ -135,8 +128,6 @@ const cfg = {
 var net;
 /** @type {object|null} DataCenter.DATA（UserData 名额/等级/服务器时间） */
 var dataCenter;
-/** @type {object|null} NWorldMapData.instance（marches：本人在外行军表；entities：世界地图实体缓存） */
-var mapData;
 
 /** @type {object|null} reactor 注入的上下文；alive() 反映运行态 */
 var ctxRef = null;
@@ -246,37 +237,25 @@ function userData() {
 
 /**
  * 取本人全部采集行军（marchType 3/26）作为占用/账本核对的权威源。
- * 走 856 GET_ALL_MY_MARCH_INFO：服务端全量，视口无关，Home 场景同样返回（实证：Home 下 mapData.marches 为空，
- *   856 仍返回 4 条在采行军）。应答 data 为 JSON 字符串，marchId 为字符串（>2^53，按串处理避免精度丢失），
- *   目标世界坐标取 marchInfo.target.tx/ty（与 901/906 候选同口径，Home 与世界地图取值一致）。
- * 永不 reject：失败返回 null，调用方本轮不派不销，等下一轮唤醒。
- * @returns {Promise<Array<{marchId:string,x:number,y:number,marchType:number,state:number,itemId:number}>|null>}
+ * 走 core/march.list()（封装 856 GET_ALL_MY_MARCH_INFO）：服务端全量、视口无关，Home 场景同样返回。
+ * 归一化：marchId 一律字符串（>2^53 安全），占用判定取 m.isOccupying（state 非返程/到家）。
+ * 永不 reject：失败时 march.list() 回 []（本轮视作无在途，由 freeSlots/preset-out 闸门兼底）。
+ * @returns {Promise<Array<{marchId:string,x:number,y:number,marchType:number,state:number,occupying:boolean}>>}
  */
-async function fetchMyMarches() {
-    var ret;
-    try { ret = await net.send(CMD_GET_ALL_MY_MARCH_INFO, {}); }
-    catch (err) { log.debug('856 get-all-my-march send failed. %s', err && err.message); return null; }
-    if (!ret || !ret.ok) return null;
-    var d = parseData(ret.data) || {};
-    var arr = Array.isArray(d.marches) ? d.marches : (Array.isArray(d.ret) ? d.ret : null);
-    if (!Array.isArray(arr)) return null;   // 结构非预期 → 视作无权威源，本轮不写
-    var uid = String(userData().UID);
+async function fetchMyFarmMarches() {
+    var ms = await march.list();
     var out = [];
-    for (var i = 0; i < arr.length; i++) {
-        var it = arr[i] || {};
-        var mi = it.marchInfo || {};
-        if (String(mi.uid) !== uid) continue;
-        var mt = mi.marchType | 0;
+    for (var i = 0; i < ms.length; i++) {
+        var m = ms[i];
+        var mt = m.type | 0;
         if (mt !== KIND_FARM && mt !== KIND_TOWER) continue;
-        var tgt = mi.target || {};
-        if (tgt.tx == null || tgt.ty == null) continue;
         out.push({
-            marchId: mi.marchId != null ? String(mi.marchId) : '',
-            x: tgt.tx | 0,
-            y: tgt.ty | 0,
+            marchId: m.id,
+            x: m.target.x,
+            y: m.target.y,
             marchType: mt,
-            state: mi.state | 0,
-            itemId: (it.target && it.target.itemId) || mi.itemId || 0,
+            state: m.state,
+            occupying: m.isOccupying,
         });
     }
     return out;
@@ -286,14 +265,14 @@ async function fetchMyMarches() {
  * 本人全部「非返程/到家」行军已占用的目标点集合（"x,y" 键，来自 856 权威行军）。
  * 普通田只能一支部队驻扎、机械田虽允许多队驻采，但本器不让自己的两支队伍抢同一塔，故一律把本人已在途点预规为占用：
  * 去程/到达/采集中都算占位，唯返程（RETURNING=3）与到家（ARRIVED_HOME=4）已让出矿位不计。
- * @param {object[]} marches fetchMyMarches() 结果（条目自带 x/y/state）
+ * @param {object[]} marches fetchMyFarmMarches() 结果（条目自带 x/y/state）
  * @returns {Set<string>} 占用点键集合
  */
 function occupiedPointSet(marches) {
     var s = new Set();
     for (var i = 0; i < marches.length; i++) {
         var mg = marches[i];
-        if (mg.state === MARCH_STATE_RETURNING || mg.state === MARCH_STATE_ARRIVED_HOME) continue;
+        if (!mg.occupying) continue;
         if (mg.x == null || mg.y == null) continue;
         s.add(mg.x + ',' + mg.y);
     }
@@ -369,7 +348,7 @@ function persistLedger() {
  *      （856 是全量真相，缺席即代表该队已回家/消失）→ 移除，该行随之变回缺位（marchId 缺失时按坐标兜底）；
  *   3) 认领孤儿：856 中存在（在途/在采）但未被任何账本行引用的采集行军（marchType 3/26）→ 回填到第一个缺位行
  *      （跨页面刷新/重启不重复下田；手动下的田也算数）。
- * @param {object[]} marches fetchMyMarches() 结果
+ * @param {object[]} marches fetchMyFarmMarches() 结果
  * @param {object[]} allRules 全部规则行（含未启用，下标即规则行 rowIdx）
  * @returns {boolean} 账本是否发生变化（需要落盘）
  */
@@ -379,7 +358,7 @@ function reconcileLedger(marches, allRules) {
     var liveCoord = {};
     for (var i = 0; i < marches.length; i++) {
         var mg = marches[i];
-        if (mg.state === MARCH_STATE_RETURNING || mg.state === MARCH_STATE_ARRIVED_HOME) continue;  // 已让位，不计在途
+        if (!mg.occupying) continue;  // 已让位（返程/到家），不计在途
         if (mg.marchId) liveIds[mg.marchId] = mg;
         if (mg.x != null && mg.y != null) liveCoord[mg.x + ',' + mg.y] = mg;
     }
@@ -407,7 +386,7 @@ function reconcileLedger(marches, allRules) {
     }
     for (var s = 0; s < marches.length; s++) {
         var ms = marches[s];
-        if (ms.state === MARCH_STATE_RETURNING || ms.state === MARCH_STATE_ARRIVED_HOME) continue;
+        if (!ms.occupying) continue;
         var mt = ms.marchType | 0;
         if (!isGather(mt)) continue;   // 856 条目按 marchType 3/26 判定采集行军
         if (ms.x == null || ms.y == null) continue;
@@ -703,31 +682,15 @@ async function pickNormalFarm(row, taken) {
 
 // ── 派发 ────────────────────────────────────────────────────────────
 /**
- * 下田 902：marchType=候选带回来的类型（3 普通田 / 26 机械田），载荷形状照抄录制（含 break:0）。永不 reject。
+ * 下田 902：marchType=候选带回来的类型（3 普通田 / 26 机械田），经 core/march.attack 统一发送。
+ * 永不 reject（march.attack 内部 catch → code=NOT_SENT）。
  * @param {{x:number,y:number}} coord 目标点
  * @param {number} marchType 行军类型（3 普通田 / 26 机械田）
  * @param {object} plan MarchData（5 字段）
  * @returns {Promise<object>} net.Ret
  */
 async function sendFarm(coord, marchType, plan) {
-    try {
-        return await net.send(CMD_MARCH_WORLD_POINT, {
-            marchType: marchType,
-            x: coord.x,
-            y: coord.y,
-            armyList: plan.armyListNew,
-            armyListNew: plan.armyListNew,
-            heroList: plan.heroList,
-            trapList: plan.trapList,
-            break: 0,
-            formation: 0,
-            formationV2: plan.formationV2,
-            extraArmy: plan.extraArmy,
-        });
-    } catch (err) {
-        log.warn('902 send error. x=%d;y=%d', coord.x, coord.y, err);
-        return net.Ret.from(-1, null);
-    }
+    return await march.attack({ marchType: marchType, target: { x: coord.x, y: coord.y }, data: plan });
 }
 
 // ── 周期引擎 ────────────────────────────────────────────────────────
@@ -779,15 +742,10 @@ async function cyclePass() {
     for (var i = 0; i < all.length; i++) { rules.push(all[i]); ruleIdx.push(i); }   // 行存在即生效，无行级 enabled 过滤
     if (!rules.length) { backlogActive = false; return; }
 
-    // 权威行军源：856 GET_ALL_MY_MARCH_INFO（视口无关，Home 亦有全量；mapData.marches 在 Home 为空、
-    // 进出世界地图会被清空重建，不作真相来源）。取不到（网络/结构异常）→ 本轮不派不销，等下一轮唤醒。
-    var marches = await fetchMyMarches();
+    // 权威行军源：core/march.list()（封装 856，视口无关、Home 亦有全量）。march.list() 失败回 []（「未知不拦」）：
+    // 即便瞬时拉空，预设部队已在外者 armyListNew 为空会静默跳过，不会重复下田；回城后自然补齐。
+    var marches = await fetchMyFarmMarches();
     if (!aliveFn()) return;
-    if (!marches) {
-        log.debug('my-marches(856) unavailable, skip write ops this cycle.');
-        backlogActive = true;
-        return;
-    }
 
     // 在途核对 + 缺位行（账本键=规则行原始下标，锚定 856 权威行军：marchId 缺席即已回家/消失 → 销位）
     if (reconcileLedger(marches, all)) persistLedger();
@@ -800,12 +758,10 @@ async function cyclePass() {
         return;
     }
 
-    // 名额闸门（myMarchNum 服务端同步、跨场景可靠）：无空位只等下个唤醒周期（不主动撤田——撤田语义保留给占领发射井 feat）
-    var u = userData();
-    var outTotal = u.myMarchNum | 0;
-    var free = (u.myMarchNumMAX | 0) - outTotal;
+    // 名额闸门（core/march.freeSlots，读 UserData 服务端同步、跨场景可靠）：无空位只等下个唤醒周期（不主动撤田——撤田语义保留给占领发射井 feat）
+    var free = march.freeSlots();
     if (free <= 0) {
-        log.debug('no free march slot, wait for arrival wake. missing=%d out=%d', missingPos.length, outTotal);
+        log.debug('no free march slot, wait for arrival wake. missing=%d', missingPos.length);
         backlogActive = true;
         return;
     }
@@ -937,22 +893,24 @@ function pushWake() {
 }
 
 /**
- * 10019 本人行军状态：采集行军 state=4 到家 → 该行缺位 → 唤醒补派。
- * 非回城状态的推送忽略（名额未释放，派了也吃拒）。
+ * 采集行军到家（march.onHomeReturn 复播，state→ARRIVED_HOME 边沿）→ 该行缺位 → 唤醒补派。
+ * 全局单点订阅的代价：march.js 常驻 10019，feat 暂停仍会收到复播 → 回调内自判 alive 为硬约束；
+ * 只认采集类行军（marchType 3/26）回城，其它行军回城不唤醒（免空跑）。
  *
- * 副防线（英雄释放延迟）：state=4 推送处理时 UserData 兵池已立即刷新，但
+ * 副防线（英雄释放延迟）：回城复播时 UserData 兵池已立即刷新，但
  * HeroController.getHaveHeroCanMarchList() 依赖独立的英雄释放推送，通常晚 1~2s 到达。
  * 此处故意延迟 1.5s 再唤醒，给英雄推送落地的时间窗口；主防线见 cyclePass 的 presetHasHeroes 守卫。
- * @param {object} ev net 推送事件（载荷在 ev.data）
+ * @param {object} m 归一化 March
  */
-function onMarchUpdate(ev) {
+function onFarmMarchHome(m) {
     if (!aliveFn()) return;
-    var d = ev && ev.data;
-    var mi = d && d.marchInfo;
-    if (!mi) return;
-    if ((mi.state | 0) !== MARCH_STATE_ARRIVED_HOME) return;
+    var mt = m && (m.type | 0);
+    if (mt !== KIND_FARM && mt !== KIND_TOWER) return;   // 只认采集行军回城
     setTimeout(function () { if (aliveFn()) pushWake(); }, 1500);
 }
+
+/** @type {Function|null} march.onHomeReturn 退订句柄（防 resume 重激活重复注册） */
+var offHomeReturn = null;
 
 /**
  * 10452 联盟记录增量推送：新建成机械田即时入活表；命中则唤醒补扫（新田可能填补某行缺位）。
@@ -970,7 +928,7 @@ function onAllianceRecordPush(ev) {
 
 // ── 生命周期 ────────────────────────────────────────────────────────
 /**
- * 安装：取网络底座 + 数据中心 + 地图数据（entities/marches 都在 NWorldMapData.instance 上）。
+ * 安装：取网络底座 + 数据中心（本人行军改走 core/march.list()，不再依赖 NWorldMapData）。
  * 任一缺失即失败（reactor 不会激活）。
  * @param {object} ctx reactor 上下文
  * @returns {boolean}
@@ -990,11 +948,8 @@ function install(ctx) {
     var dc = game.get('DataCenter');
     dataCenter = (dc && dc.DATA) || (missing.push('DataCenter'), null);
 
-    var nmd = game.get('NWorldMapData');
-    mapData = (nmd && nmd.default && nmd.default.instance) || (missing.push('NWorldMapData'), null);
-
     if (missing.length) {
-        net = null; dataCenter = null; mapData = null;
+        net = null; dataCenter = null;
         log.warn('install failed. missing=%s', missing.join(';'));
         return false;
     }
@@ -1045,8 +1000,9 @@ function run(ctx) {
     mechLive = new Map();
     mechLoaded = false;
     mechLoading = null;
-    ctx.on.push(PUSH_USER_MARCH_INFO, onMarchUpdate);
     ctx.on.push(PUSH_ALLIANCE_RECORD, onAllianceRecordPush);
+    if (offHomeReturn) offHomeReturn();   // 先退再挂，防 resume 重激活重复注册
+    offHomeReturn = march.onHomeReturn(onFarmMarchHome);
     log.info('started (rules=%d rows).', MCFG.rules.length);
     loadMechRecords();
     triggerCycle();

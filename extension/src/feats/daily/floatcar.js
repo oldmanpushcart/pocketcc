@@ -39,15 +39,13 @@ import { game } from '../../core/game.js';
 import { reactor } from '../../core/reactor.js';
 import { l10n } from '../../core/game-api.js';
 import { payloadOf } from '../../core/net-payload.js';
+import { march } from '../../core/march.js';
 
 /** @type {ReturnType<createLog>} 模块日志器（tag=FLOAT_CAR） */
 const log = createLog('FLOAT_CAR');
 
 /** @type {number} NRequestIdV2.FLOAT_PARADE_QUERY_CAN_REWARD_BAG，req {queryType:1, marchType:dropType[, marchIdStr]} → resp data={x,y} */
 const CMD_FLOAT_PARADE_QUERY_CAN_REWARD_BAG = 8852;
-
-/** @type {number} RequestId.MARCH_WORLD_POINT，世界地图行军，拾取空投用 {marchType:getType, x, y} 三键（无 armyList）；受理时 resp 回 marchInfo */
-const CMD_MARCH_WORLD_POINT = 902;
 
 /** @type {number} ChatShareLinkType.PARADE_FLOAT_MARCH_SHARE，花车行军分享卡（llm.t），卡片只带 marchId + expirationTime，不带坐标 */
 const SHARE_LINK_PARADE_FLOAT_MARCH = 38;
@@ -186,9 +184,7 @@ const cfg = {
 
 /** @type {object|null} 网络底座（promise 封装 pocketcc.net） */
 var net;
-/** @type {object|null} 世界地图数据（读我的在途行军列表 marches，是 Map） */
-var mapData;
-/** @type {object|null} 数据中心（DATA.ServerTime 秒 + UserData.UID） */
+/** @type {object|null} 数据中心（DATA.ServerTime 秒） */
 var dataCenter;
 /** @type {object|null} MarchTools.ACT_MARCHS 命名导出（活动行军归属判据）；缺失回退 GET_TYPE_FALLBACK */
 var actMarchs = null;
@@ -448,39 +444,13 @@ function serverTimeSec() {
 }
 
 /**
- * 我的在途行军列表。⚠️ NWorldMapData.marches 是 `new Map`，
- * 对 Map 用 Object.values() 会拿到空数组、判重永远不命中，故先走可迭代接口。
- * 这里用鸭子类型（有 values() 且有 size）而不是 instanceof Map：跨 realm 的 Map 实例过不了 instanceof
- * @returns {object[]}
+ * 我的在途行军列表（归一化 March[]）。走 core/march.list({cache:true}) 快照读：856 播种 + 10019 边沿实时维护 + TTL 兑底刷新，
+ * 稳态零网络、视口无关、Home 亦有全量（取代旧 mapData.marches 的 Map 枚举，修 Home 读空漏计在途 → 超发/重复拾取）。
+ * 快照已是本人全量，无需再按 uid 过滤（旧 isMyMarch 由此退役）。March = {id,type,state,isOccupying,target:{x,y,itemId},raw}
+ * @returns {Promise<object[]>}
  */
 function listMarches() {
-    var marches = mapData && mapData.marches;
-    if (!marches) return [];
-    if (typeof marches.values === 'function' && typeof marches.size === 'number') {
-        var out = [];
-        var it = marches.values();
-        for (var step = it.next(); !step.done; step = it.next()) out.push(step.value);
-        return out;
-    }
-    var list = [];
-    for (var k in marches) {
-        if (Object.prototype.hasOwnProperty.call(marches, k)) list.push(marches[k]);
-    }
-    return list;
-}
-
-/**
- * 归属判定：本人行军的 uid 可能落在 realUid（部分活动行军 uid 被游戏改写成 uid+marchId、realUid 保留原值），
- * 也可能只有 uid（本花车拾取行军即如此——902 应答的 marchInfo 只有 uid、无 realUid）。与 launch-silo 一致：
- * realUid 优先、回落 uid，并统一 String 比较规避 number/string 跨域差异。⚠️ 只判 realUid 会漏数自家行军 → 名额闸恒报满格 → 盲派撞 world_130516
- * @param {object} m marches 表条目
- * @param {number|string} uid 本人 UID
- * @returns {boolean}
- */
-function isMyMarch(m, uid) {
-    if (!m || uid == null) return false;
-    var who = m.realUid != null ? m.realUid : m.uid;
-    return who != null && String(who) === String(uid);
+    return march.list({ cache: true });
 }
 
 /**
@@ -488,16 +458,12 @@ function isMyMarch(m, uid) {
  * @param {number} x 目标横坐标
  * @param {number} y 目标纵坐标
  * @param {number} getType 拾取行军类型
- * @returns {boolean}
+ * @returns {Promise<boolean>}
  */
-function hasMarchAtTarget(x, y, getType) {
-    var uid = dataCenter.UserData && dataCenter.UserData.UID;
-    if (!uid) return false;
-    return listMarches().some(function (march) {
-        return isMyMarch(march, uid)
-            && march.marchType == getType
-            && march.target_tx == x
-            && march.target_ty == y;
+async function hasMarchAtTarget(x, y, getType) {
+    var marches = await listMarches();
+    return marches.some(function (m) {
+        return m.type == getType && m.target.x == x && m.target.y == y;
     });
 }
 
@@ -517,26 +483,26 @@ function isActivityMarch(type) {
 }
 
 /**
- * 我在某 getType 上的在途/返程未归活动行军。枚举 marches 表即真相：游戏在行军到家后自动清除，
- * 表里存在 = 仍占活动组名额。realUid 判我（活动组 uid 被游戏改写成 uid+marchId，realUid 保留原值）
+ * 我在某 getType 上的在途/返程未归活动行军。march.list({cache:true}) 快照即真相：到家(ARRIVED_HOME)自动出表，
+ * 表里存在 = 仍占活动组名额（含返程，与旧「表里存在即占位」口径一致，不按 state 再筛）。快照已本人全量。
  * @param {number} getType 拾取行军类型
- * @returns {object[]}
+ * @returns {Promise<object[]>}
  */
-function myActiveMarches(getType) {
-    var uid = dataCenter.UserData && dataCenter.UserData.UID;
-    if (!uid) return [];
-    return listMarches().filter(function (m) {
-        return isMyMarch(m, uid) && m.marchType == getType && isActivityMarch(m.marchType);
+async function myActiveMarches(getType) {
+    var marches = await listMarches();
+    return marches.filter(function (m) {
+        return m.type == getType && isActivityMarch(m.type);
     });
 }
 
 /**
  * 某 getType 当前剩余名额 = 上限 − 在途占位（clamp ≥0）
  * @param {number} getType 拾取行军类型
- * @returns {number}
+ * @returns {Promise<number>}
  */
-function freeSlots(getType) {
-    return Math.max(0, cfg.actQueueCap - myActiveMarches(getType).length);
+async function freeSlots(getType) {
+    var marches = await myActiveMarches(getType);
+    return Math.max(0, cfg.actQueueCap - marches.length);
 }
 
 /**
@@ -545,17 +511,18 @@ function freeSlots(getType) {
  * 返程 push 合并出 returnArriveTime，下一次重排自然读到它——打点只决定何时醒，枚举决定能不能派。
  * 服务器秒域比较，整体平移入本地域
  * @param {number} getType 拾取行军类型
- * @returns {number} 本地 ms
+ * @returns {Promise<number>} 本地 ms
  */
-function nextReleaseAt(getType) {
-    var marches = myActiveMarches(getType);
+async function nextReleaseAt(getType) {
+    var marches = await myActiveMarches(getType);
     if (!marches.length) return Date.now();
     var nowSec = serverTimeSec();
     var now = Date.now();
     var min = Infinity;
     for (var i = 0; i < marches.length; i++) {
-        var m = marches[i];
-        var ra = +m.returnArriveTime, ma = +m.marchArrive;
+        // 到家时刻优先读客户端派生字段（raw 命中即精确唤醒）；856/10019 快照条目常无此字段 → NaN>0 假 → 回退 slotFreePollMs 轮询唤醒
+        var raw = marches[i].raw || {};
+        var ra = +raw.returnArriveTime, ma = +raw.marchArrive;
         var relSec = ra > 0 ? ra : (ma > 0 ? ma : nowSec + cfg.slotFreePollMs / 1000);
         if (relSec < min) min = relSec;
     }
@@ -567,10 +534,10 @@ function nextReleaseAt(getType) {
  * 排一次某 getType 的腾位唤醒（同类型只留一个在途事件；到点若仍有 pending 会自续排）
  * @param {number} getType 拾取行军类型
  */
-function scheduleSlotFree(getType) {
+async function scheduleSlotFree(getType) {
     if (slotFreeScheduled.has(getType)) return;
     slotFreeScheduled.add(getType);
-    var at = nextReleaseAt(getType) + cfg.slotFreeMarginMs;
+    var at = await nextReleaseAt(getType) + cfg.slotFreeMarginMs;
     pushEvent(Math.max(Date.now(), at), 'slotFree', null, { getType: getType });
 }
 
@@ -831,7 +798,7 @@ async function onProbe(flow, payload) {
     if (res.state === 'hit') {
         var key = res.x + ',' + res.y;
         // 命中已被自己遮蔽（已派/退避中/他支在途占位）→ 中性：不累加 missStreak，也不重复派遣
-        if (flow.dispatched.has(key) || inBackoff(flow, key) || hasMarchAtTarget(res.x, res.y, flow.getType)) {
+        if (flow.dispatched.has(key) || inBackoff(flow, key) || (await hasMarchAtTarget(res.x, res.y, flow.getType))) {
             if (flow.dispatched.has(key)) log.debug('box shadowed by own march. marchId=%s;owner=%s;x=%d;y=%d', flow.marchId, marchOwnerAt(key, flow.marchId), res.x, res.y);
             else log.debug('box occupied/in-backoff, yield. marchId=%s;x=%d;y=%d', flow.marchId, res.x, res.y);
             concludeTick(flow, k, false, false);
@@ -842,8 +809,8 @@ async function onProbe(flow, payload) {
         flow.missStreak = 0;
         if (flow.lastK > 0 && flow.dispatched.size > flow.expect) flow.lastK = 0; // 卡片少报：关提前收摊
         log.info('box found. marchId=%s;float=%s;x=%d;y=%d;period=%d;free=%d',
-            flow.marchId, flow.floatId, res.x, res.y, k, freeSlots(flow.getType));
-        requestPickup(flow, key, res.x, res.y);
+            flow.marchId, flow.floatId, res.x, res.y, k, await freeSlots(flow.getType));
+        await requestPickup(flow, key, res.x, res.y);
         concludeTick(flow, k, true, false);
         return;
     }
@@ -914,14 +881,14 @@ function marchOwnerAt(key, selfId) {
  * @param {number} x 横坐标
  * @param {number} y 纵坐标
  */
-function requestPickup(flow, key, x, y) {
+async function requestPickup(flow, key, x, y) {
     var item = { flow: flow, marchId: flow.marchId, key: key, x: x, y: y, getType: flow.getType, queuedAt: Date.now() };
-    if (freeSlots(flow.getType) > 0) {
+    if ((await freeSlots(flow.getType)) > 0) {
         pushEvent(Date.now(), 'pickup', flow.marchId, { item: item });
     } else {
         addPending(item);
         flow.slotWaits++;
-        scheduleSlotFree(flow.getType);
+        await scheduleSlotFree(flow.getType);
         log.debug('no act slot, held for pickup. marchId=%s;x=%d;y=%d;getType=%d', flow.marchId, x, y, flow.getType);
     }
 }
@@ -956,7 +923,7 @@ function livePendingFor(getType) {
 async function onSlotFree(getType) {
     slotFreeScheduled.delete(getType);
     var dispatched = 0;
-    var slots = freeSlots(getType);
+    var slots = await freeSlots(getType);
     while (aliveFn() && dispatched < slots) {
         var pend = livePendingFor(getType);
         if (!pend.length) break;
@@ -980,7 +947,7 @@ async function onSlotFree(getType) {
         }
     }
     // 仍有同类型 pending（名额不够或被本轮漏掉）→ 按最新释放估算续排
-    if (livePendingFor(getType).length) scheduleSlotFree(getType);
+    if (livePendingFor(getType).length) await scheduleSlotFree(getType);
 }
 
 /**
@@ -1039,9 +1006,9 @@ async function onPickup(item) {
     if (errKey === ERR_QUEUE_FULL) {
         // 队满=行军根本没发出：坐标退回 pending、不记退避、不进熔断、不进 rejects 汇总；按该 getType 打点 slotFree
         flow.dispatched.delete(item.key);
-        logQueueFullEvidence(flow, item); // 埋点②
+        await logQueueFullEvidence(flow, item); // 埋点②
         addPending(item);
-        scheduleSlotFree(item.getType);
+        await scheduleSlotFree(item.getType);
         return;
     }
 
@@ -1077,15 +1044,12 @@ function schedulePickupBackoff(flow, item) {
  * @param {object} flow 触发流程
  * @param {object} item 被拒待派项
  */
-function logQueueFullEvidence(flow, item) {
-    var sameType = myActiveMarches(flow.getType).length;
-    var uid = dataCenter.UserData && dataCenter.UserData.UID;
+async function logQueueFullEvidence(flow, item) {
+    var sameType = (await myActiveMarches(flow.getType)).length;
     var dist = {};
-    if (uid) {
-        for (var m of listMarches()) {
-            if (!isMyMarch(m, uid) || !isActivityMarch(m.marchType)) continue;
-            dist[m.marchType] = (dist[m.marchType] || 0) + 1;
-        }
+    for (var m of await listMarches()) {
+        if (!isActivityMarch(m.type)) continue;
+        dist[m.type] = (dist[m.type] || 0) + 1;
     }
     var parts = [];
     for (var t in dist) if (Object.prototype.hasOwnProperty.call(dist, t)) parts.push(t + '=' + dist[t]);
@@ -1111,11 +1075,11 @@ async function onReconcile(flow, payload) {
     if (!aliveFn() || flows.get(flow.marchId) !== flow) return;
     if (res.state === 'hit') {
         var key = res.x + ',' + res.y;
-        if (!flow.dispatched.has(key) && !inBackoff(flow, key) && !hasMarchAtTarget(res.x, res.y, flow.getType)) {
+        if (!flow.dispatched.has(key) && !inBackoff(flow, key) && !(await hasMarchAtTarget(res.x, res.y, flow.getType))) {
             flow.dispatched.add(key);
             if (flow.lastK > 0 && flow.dispatched.size > flow.expect) flow.lastK = 0;
             log.info('box found (tail). marchId=%s;float=%s;x=%d;y=%d', flow.marchId, flow.floatId, res.x, res.y);
-            requestPickup(flow, key, res.x, res.y);
+            await requestPickup(flow, key, res.x, res.y);
         }
     }
 }
@@ -1199,19 +1163,11 @@ async function queryBox(dropType, marchIdStr) {
  * @returns {Promise<Ret>} code=902 状态码
  */
 async function marchPickUp(item) {
-    try {
-        return await net.send(CMD_MARCH_WORLD_POINT, {
-            marchType: item.getType,
-            x: item.x,
-            y: item.y
-        });
-    } catch (err) {
-        log.warn('march error! x=%d;y=%d', item.x, item.y, err);
-        return net.Ret.from(CODE_NOT_SENT, null);
-    }
+    // 零部队三键（{marchType:getType,x,y}，无 armyList）走 core/march.pickUp；频控由本 feat 的 retryMs/drain 自持
+    return march.pickUp({ marchType: item.getType, target: { x: item.x, y: item.y } });
 }
 /**
- * 安装：取网络底座 + 世界地图数据 + 数据中心（硬依赖，任一缺失即失败，reactor 不激活）；
+ * 安装：取网络底座 + 数据中心（ServerTime）（硬依赖，任一缺失即失败，reactor 不激活）；行军列表改走 core/march.list({cache:true}) 快照，不再依赖 NWorldMapData；
  * MarchTools 为软依赖，缺失只降级活动行军归属判据（回退 FLOATS getType 副本）+ warn，不阻断激活。
  * @param {object} ctx reactor 上下文
  * @returns {boolean}
@@ -1230,12 +1186,7 @@ function install(ctx) {
         net = null;
     }
 
-    var mods = game.requireAll(['NWorldMapData', 'DataCenter', 'MarchTools']);
-
-    mapData = mods.NWorldMapData
-        && mods.NWorldMapData.default
-        && mods.NWorldMapData.default.instance
-        || missing.push('NWorldMapData');
+    var mods = game.requireAll(['DataCenter', 'MarchTools']);
 
     dataCenter = mods.DataCenter
         && mods.DataCenter.DATA
@@ -1249,7 +1200,7 @@ function install(ctx) {
     }
 
     if (missing.length) {
-        net = null; mapData = null; dataCenter = null;
+        net = null; dataCenter = null;
         log.warn('install failed. missing=%d;deps=%s', missing.length, missing.join(';'));
         return false;
     }

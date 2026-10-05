@@ -163,7 +163,24 @@ async function blobSet(blobKey, name, value) {
     });
 }
 
-/** 存储入口，挂到 window.pocketcc.storage（配置 blob / 数据 blob / 绕过前缀的 raw 通道） */
+/**
+ * 独立键读写（UID 前缀下、脱离两块 blob）：给大体量且需按需分片的业务数据用，
+ * 例如全局地图按视角桶切分的实体（一个桶一个键，只读需要的那片）。
+ * 与 blobGet/blobSet 的区别：
+ *   ① 不进取 `blobs` 内存缓存——读回的值只归调用方持有，用完即可被 GC，不会长期常驻一份副本；
+ *   ② 一次读写只碰那一个键，不会被同 blob 内其他键的数据连带拉回/整块回写（写放大与体积无关）。
+ * 写/删按 key 走串行队列（队列名加 slot: 前缀，与 blob 的队列互不干扰）。
+ * @param {string} name 命名空间下的逻辑键
+ * @param {*} [value] 待写入值；调用 remove 时省略
+ * @param {'get'|'set'|'remove'} op 操作类型
+ * @returns {Promise<*>}
+ */
+function slot(op, name, value) {
+    if (op === 'get') return call('get', name);
+    return enqueue('slot:' + name, () => call(op, name, value));
+}
+
+/** 存储入口，挂到 window.pocketcc.storage（配置 blob / 数据 blob / 独立键 / 绕过前缀的 raw 通道） */
 export const storage = {
     // 配置 blob 逻辑读写：key 沿用调用点原有的字面 storageKey（如 'pocketcc.feat.allianceRally'）。
     get: (key) => blobGet(CONFIG_KEY, key),
@@ -176,6 +193,12 @@ export const storage = {
         get: (name) => blobGet(DATA_KEY, name),
         set: (name, value) => blobSet(DATA_KEY, name, value),
         remove: (name) => blobSet(DATA_KEY, name, undefined),
+    },
+    // 独立键通道（仍在 UID 前缀下）：大体量数据分键存取，不牵连共享 blob 里的其他 feat。
+    slot: {
+        get: (name) => slot('get', name),
+        set: (name, value) => slot('set', name, value),
+        remove: (name) => slot('remove', name),
     },
     // 绕过 UID 前缀 + 绕过 blob：仅 migrateLegacyKeys / 图标位置旧全局键认领用。
     getRaw: (key) => call('get', key, undefined, true),

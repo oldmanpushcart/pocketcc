@@ -12,8 +12,10 @@
 | 文档 | 模块 | 一句话职责 |
 |---|---|---|
 | [core/battle.md](core/battle.md) | `src/core/battle.js` | 行军发包载荷构造（三场景：快速/普通/活动派兵） |
+| [core/march.md](core/march.md) | `src/core/march.js` | 行军统一抽象（取列表/名额/发撤/生命周期），归一 8 个 feat |
+| [core/item.md](core/item.md) | `src/core/item.js` | 物品查询/标识薄工具层（持有量/中文名/奖励解析），收口 4 个 feat |
 
-（规划中：core/march.md、core/player.md——后续同类 API 改动时补。）
+（规划中：core/player.md——后续同类 API 改动时补。）
 
 ## 统一模板（八节）
 

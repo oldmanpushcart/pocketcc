@@ -15,7 +15,7 @@
  *   ServerTime - joinTime > join_time（入盟冷却）。otherToday 仅存在于 1070 条目、1825 应答缺省视为 undefined（不拦截）。
  *   候选匹配：have 未含、且 select[idx] 解析出的主道具 itemId 在优先级池内（不在池内者不领，不当最低优先级处理），按 rank 升序逐个领。
  *   注意：getRewardsArrById().name 返回的是未翻译的本地化键（如 "107068"/"item_name3300001"）而非中文名，故匹配一律走 itemId(.id)，
- *   道具名仅用于面板/日志展示（查 ITEM_LABELS；缺登记时回退 l10n.text(locKey)）。
+ *   道具名仅用于面板/日志展示（走 core/item.js 的 label：登记表 → l10n.text(locKey) → "道具 <id>"）。
  *
  * 权威态：本地 myItemSiteData 只由游戏自身 1070/1825 应答填充（脚本直发不经游戏回调、不回写它），故每次扫描都自行
  *   发 1825 取权威 select/have（防跨设备/他人领取假象），结果落本模块 mirror（面板状态与领取循环共读它）。
@@ -34,6 +34,7 @@ import { bus } from '../../core/bus.js';
 import { storage } from '../../core/storage.js';
 import { reactor } from '../../core/reactor.js';
 import { l10n, gameData } from '../../core/game-api.js';
+import { item } from '../../core/item.js';
 
 /** @type {ReturnType<createLog>} 模块日志器（tag=RELIC-REWARD） */
 const log = createLog('RELIC-REWARD');
@@ -59,17 +60,6 @@ const L2_ITEM_POOL = [
     600002, 3300001, 500001, 2300002, 2560001, 1700013, 323001,
     3610009, 1600029, 1700402, 99910001, 99910101, 2800000,
 ];
-
-/**
- * itemId → 中文道具名（面板展示与日志用）。getRewardsArrById().name 返回未翻译 loc 键不能直接展示，故照攻略静态登记。
- * @type {Object<number,string>}
- */
-const ITEM_LABELS = {
-    600002: '大体力药剂', 3300001: '金币砰砰宝箱', 500001: '训练加速1小时', 2300002: '紫色万能碎片',
-    2560001: '技能抽卡券', 1700013: '3级强化部件宝箱', 323001: '核心建筑设计图', 3610009: '科技道具自选箱',
-    1600029: '职业道具自选宝箱', 1700402: '绿色材料随机箱', 99910001: '元素反应器零件', 99910101: '元素宝箱',
-    2800000: '军阵通用手册',
-};
 
 /** @type {number} 全天低频轮询间隔（毫秒）：漏扫/领取瞬断最迟一个周期内补 */
 const POLL_INTERVAL = 1000 * 60 * 10;
@@ -171,18 +161,6 @@ function fmtHMS(sec) {
 }
 
 // ── 优先级（configure / rankMap） ────────────────────────────────────────
-/**
- * itemId → 中文展示名：先查攻略登记表 ITEM_LABELS；缺登记则回退 l10n 翻译（rewardItems().name 实为 loc 键）或 itemId 串。
- * @param {number} itemId 主道具 itemId
- * @param {string} [rawName] 该道具 rewardItems().name（未翻译 loc 键），缺登记时兜底翻译用
- * @returns {string}
- */
-function itemLabel(itemId, rawName) {
-    if (ITEM_LABELS[itemId]) return ITEM_LABELS[itemId];
-    if (rawName) { var t = l10n.text(rawName); if (t && t !== String(rawName)) return t; }
-    return '道具 ' + itemId;
-}
-
 /**
  * 池驱动升档迁移：保留 incoming 中仍在池内的 itemId（维持其相对顺序），再追加池中未出现的 itemId 到末尾，丢弃池中已消失的 itemId。
  * @param {*} raw 面板/存档的 order 原值（可能是非数组，或旧版字符串名——Number 转换后自然被丢弃）
@@ -292,12 +270,10 @@ async function claimSite(site) {
     var selectIds = [];
     var selectNames = [];
     for (var si = 0; si < select.length; si++) {
-        var items = gameData.rewardItems(select[si]);
-        var itId = (items && items.length && items[0]) ? Number(items[0].id) || 0 : 0;
-        var rawNm = (items && items.length && items[0] && items[0].name) ? String(items[0].name) : '';
-        if (!itId) log.debug('reward cfg %d unresolvable item (site=%d).', select[si], wonderId);
-        selectIds.push(itId);
-        selectNames.push(itId ? itemLabel(itId, rawNm) : '');
+        var r = item.fromReward(select[si]);
+        if (!r.itemId) log.debug('reward cfg %d unresolvable item (site=%d).', select[si], wonderId);
+        selectIds.push(r.itemId);
+        selectNames.push(r.itemId ? item.label(r.itemId, r.rawName) : '');
     }
     mirror[wonderId] = { cfgId: cfgId, name: String(site.name || ''), select: select, selectIds: selectIds, selectNames: selectNames, have: have, joinTime: joinTime, endTime: endTime, chooseNum: chooseNum, joinSec: joinSec };
 
@@ -443,7 +419,7 @@ reactor.register({
         {
             key: 'order', type: 'sortlist', label: '远古遗迹-道具 · 领取优先级',
             hint: '拖动调整顺序，顺序靠前优先领取',
-            resolve: function (id) { var nm = ITEM_LABELS[id]; return nm ? [{ id: Number(id), name: nm }] : null; },
+            resolve: item.sortResolve,
         },
     ],
     toModuleCfg: function (c) { return { order: Array.isArray(c.order) ? c.order.slice() : L2_ITEM_POOL.slice() }; },

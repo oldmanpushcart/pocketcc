@@ -40,6 +40,7 @@ import { createLog } from '../../core/log.js';
 import { createDrain } from '../../core/drain.js';
 import { reactor } from '../../core/reactor.js';
 import { getUid } from '../../core/player.js';
+import { march } from '../../core/march.js';
 
 /** @type {ReturnType<createLog>} 模块日志器（tag=TITAN_BLESSING） */
 const log = createLog('TITAN_BLESSING');
@@ -59,17 +60,11 @@ const CMD_PUSH_GIFT_CLEAR = 13228;
 /** @type {number} NRequestIdV2.HERO_EQUIP_WISH_FIND_BOX（NRequestIdV2.js:1374），载荷 {activityId}，应答 data={serverId,x,y}（值已真机验证） */
 const CMD_HERO_EQUIP_WISH_FIND_BOX = 9595;
 
-/** @type {number} RequestId.MARCH_WORLD_POINT（RequestId.js:188），载荷 {marchType,x,y,...}，派拾取行军（值已真机验证） */
-const CMD_MARCH_WORLD_POINT = 902;
-
 /** @type {number} 泰坦祝福活动 type；同一 push 载荷 showUiType="ActivityTitanBlessing"（见 泰坦藏宝图资料整理.md），无独立枚举，值已真机验证 */
 const ACTIVITY_TYPE_TITAN_BLESSING = 271;
 
 /** @type {number} NMarchType.Titan_Blessing_Gift（NWorldMapMarchCommon.js:141），泰坦祝福拾取行军类型，902 派遣用（值已真机验证） */
 const MARCH_TYPE_TITAN_BLESSING_GIFT = 143;
-
-/** @type {number} 非服务器返回的哨兵 code：发送异常时用，与真实 s 码区分开 */
-const CODE_NOT_SENT = -1;
 
 /** @type {number} 队列逐条消费之间的休眠毫秒（固定调优常量，不在面板暴露）：规避 902 限流（march_time_control_info001） */
 const CONSUME_INTERVAL_MS = 1000;
@@ -457,28 +452,13 @@ async function queryBoxPosition() {
 }
 
 /**
- * 派拾取行军。永不 reject：发送异常回落到 CODE_NOT_SENT 的哨兵 Ret
+ * 派拾取行军（零部队九键 body，含 ext:{}）→ 走 core/march.pickUp；永不 reject（异常回 Ret(NOT_SENT)）
  * @param {number} x 箱子坐标
  * @param {number} y 箱子坐标
  * @returns {Promise<Ret>} code=902 状态码
  */
 async function marchPickUp(x, y) {
-    try {
-        var ret = await net.send(CMD_MARCH_WORLD_POINT, {
-            marchType: MARCH_TYPE_TITAN_BLESSING_GIFT,
-            x: x,
-            y: y,
-            armyList: [],
-            armyListNew: [],
-            heroList: [],
-            trapList: [],
-            ext: {}
-        });
-        return ret;
-    } catch (err) {
-        log.warn('march error! x=%d;y=%d', x, y, err);
-        return net.Ret.from(CODE_NOT_SENT, null);
-    }
+    return march.pickUp({ marchType: MARCH_TYPE_TITAN_BLESSING_GIFT, target: { x: x, y: y }, ext: {} });
 }
 
 /**

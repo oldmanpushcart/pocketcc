@@ -16,6 +16,7 @@ import { reactor } from '../../core/reactor.js';
 import { storage } from '../../core/storage.js';
 import { bus } from '../../core/bus.js';
 import { Battle } from '../../core/battle.js';
+import { march } from '../../core/march.js';
 
 /** @type {ReturnType<createLog>} 模块日志器（tag=ALLIANCE_RALLY） */
 const log = createLog('ALLIANCE_RALLY');
@@ -158,8 +159,8 @@ function onAssemblyCreated(ev) {
         return;
     }
 
-    // 全局行军闸门（口径同竞对 canMarch）
-    if (!canMarch()) {
+    // 全局行军闸门（core/march.canMarch）
+    if (!march.canMarch()) {
         log.info('no free march slot, skip. target=%s;teamId=%s', target.label, teamId);
         return;
     }
@@ -191,15 +192,6 @@ function onAssemblyCreated(ev) {
 function isOwnRally(d) {
     var uid = dataCenter.UserData && dataCenter.UserData.UID;
     return uid != null && String(d.leaderUid) === String(uid);
-}
-
-/**
- * 全局行军槽是否可用（口径同竞对 canMarch：myMarchNumMAX - myMarchNum >= 1）
- * @returns {boolean}
- */
-function canMarch() {
-    var u = dataCenter.UserData || {};
-    return (u.myMarchNumMAX | 0) - (u.myMarchNum | 0) >= 1;
 }
 
 /**
@@ -363,7 +355,7 @@ async function joinFlow(key, teamId, expireTime) {
         }
 
         // 行军闸门复查
-        if (!canMarch()) {
+        if (!march.canMarch()) {
             log.info('no march slot (recheck), abandon. target=%s;teamId=%s', key, teamId);
             return;
         }
