@@ -328,7 +328,7 @@ async function attackFlow(spec, target, planList) {
 
         var step = planList[i];
         var plan = new Battle().plan();
-        if (step.kind === 'preset') plan.preset(step.index); else plan.minimal();
+        if (step.kind === 'preset') plan.preset(step.index).adjust(); else plan.minimal();
         var marchData = plan.build();
 
         if (!marchData.armyListNew.length) {

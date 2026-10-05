@@ -63,6 +63,7 @@ export const MENU = [
       { id: 'mineCave', kind: 'feature', label: '次元矿洞', showFields: true },
       { id: 'autoFarm', kind: 'feature', label: '自动下田', showFields: true },
       { id: 'relicReward', kind: 'feature', label: '遗迹奖励', showFields: true },
+      { id: 'truckIntercept', kind: 'feature', label: '卡车争夺', showFields: true },
     ],
   },
   {

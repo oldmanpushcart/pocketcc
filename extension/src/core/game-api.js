@@ -408,6 +408,8 @@ export const gameData = {
   myPid() { try { return Number(userData() && userData().UID) || 0; } catch (e) { return 0; } },
   /** 本人联盟 aid（=UserData.Alliance.Aid，与地图 p.aid 同源）；未入盟/取不到返回 0 */
   myAid() { try { var a = userData() && userData().Alliance; return Number(a && a.Aid) || 0; } catch (e) { return 0; } },
+  /** 本人主城/账号等级（=UserData.Level，功能 open_level 门槛判据同源）；取不到返回 0 */
+  level() { try { return Number(userData() && userData().Level) || 0; } catch (e) { return 0; } },
   /**
    * 本人基地世界坐标（UserData.WorldCoord，口径同 NWorldMapUIComponent 的小地图定位）。
    * @returns {{x:number, y:number}|null} 取不到/字段不全返回 null

@@ -87,6 +87,13 @@ const RELIC_GAP_MS = 600;
 /** @type {number} 科技单捐链的枚间隔（毫秒）：num 固定 1、逐枚发，同 cmd 频控的安全间距 */
 const SCIENCE_DONATE_GAP_MS = 600;
 
+/**
+ * @type {number} 科技单 tick 的连捐枚数上限（二次防御）：通用池 4 / 遗迹池 7 本就 pointMax≈10，
+ * 但 sid 10900 的建筑池 6 余量可能很大（一次性捕获的 energy.point 无界），故把单次突发锁到 10 枚；
+ * 未捐完的余量靠 donated→CHAIN_GAP_MS 复查自然续捐，既不会一次刷屏上百条，也不影响把能量花光。
+ */
+const SCIENCE_LOOP_MAX_PER_TICK = 10;
+
 /** @type {number} 本轮捐成功后短隔复查（毫秒）：金币不足/池未花光时续捐 */
 const CHAIN_GAP_MS = 2500;
 
@@ -122,6 +129,24 @@ var relicBanUntil = 0;
 
 /** @type {object} 各能量池上次观测到的点数（type→point），用于只认“点数回升”的恢复推送、忽略捐赠消耗回执推送 */
 var lastEnergyPoint = {};
+
+/**
+ * @type {string} 荣誉已封顶的本地日期戳（dayKey 口径）；命中当天则科技/遗迹两链当日停捐。
+ * 之所以自己记：我们只发包、不走游戏应答处理，游戏侧 donateDailyHonor 不会被我们的捐包刷新，
+ * sc.dailyHonor>=sc.honorCap 这道闸在直发路径下形同虚设——一旦荣誉封顶，捐包仍会被服务端接但
+ * addPoint=0（荣誉不再增长、纯浪费），叠加 sid 10900 的建筑池 6 余量大 → 逐枚连捐循环刷屏。
+ * 改以「应答 addPoint==0」这一服务端事实作为封顶信号，命中即记当日并停捐，跨零点自动失效。
+ */
+var honorCappedDay = '';
+
+/**
+ * 本地日键（年-月-日），用于 honorCappedDay 的“当日停捐、次日自然解禁”判定。
+ * @returns {string}
+ */
+function dayKey() {
+    var d = new Date();
+    return d.getFullYear() + '-' + (d.getMonth() + 1) + '-' + d.getDate();
+}
 
 /**
  * 功能是否仍在运行（定时器与在飞流程的存活判定）
@@ -264,6 +289,13 @@ async function tickBody() {
         return null;
     }
 
+    // 荣誉当日已封顶（上一轮从应答 addPoint==0 实测）：科技/遗迹两链都靠同一荣誉计数，直接停捐到次日。
+    // 返回 null 走巡检档（不发包），避免每 tick 拿大池反复连捐刷屏。
+    if (honorCappedDay && honorCappedDay === dayKey()) {
+        log.debug('donate honor capped today (server addPoint=0), skip until reset.');
+        return null;
+    }
+
     // 荣誉到顶必停（用户定案的硬闸，不配置）：两条链路共用此计数，取不到上限则不设此闸
     if (sc.honorCap > 0 && sc.dailyHonor >= sc.honorCap) {
         log.debug('daily honor capped (%d/%d), skip today.', sc.dailyHonor, sc.honorCap);
@@ -312,7 +344,9 @@ async function donateScience(sc) {
 
     var cost = sc.costCoin;
     var done = 0;
-    for (var i = 0; i < energy.point; i++) {
+    // 单 tick 突发锁到 SCIENCE_LOOP_MAX_PER_TICK 枚（建筑池 6 可能很大）；未捐完靠 donated→CHAIN_GAP 复查续捐
+    var loopMax = Math.min(energy.point, SCIENCE_LOOP_MAX_PER_TICK);
+    for (var i = 0; i < loopMax; i++) {
         if (!aliveFn()) break;
         if (cost > 0 && gameData.coins() < cost) {
             log.debug('science: coin not enough. cost=%d;coins=%d', cost, gameData.coins());
@@ -323,8 +357,16 @@ async function donateScience(sc) {
         if (res.ok && res.payload && res.payload.sid != null) {
             rejectStreak = 0;
             done++;
+            var addPt = Number(res.payload.addPoint) || 0;
             log.info('science donate ok. sid=%d(%s);#%d;addExp=%s;honor(+)%s;crit=%s',
-                target.id, target.recommended ? '推荐' : '顺位首项', done, res.payload.addExp, res.payload.addPoint, !!res.payload.crit);
+                target.id, target.recommended ? '推荐' : '顺位首项', done, res.payload.addExp, addPt, !!res.payload.crit);
+            // 服务端回 addPoint==0：今日荣誉已封顶（正常捐一枚 addPoint=50），再捐只烧金币不出荣誉。
+            // 记当日封顶使两链停捐并跳出循环，从根上消除“大池逐枚连捐 + 荣誉门失效”的刷屏。
+            if (addPt === 0) {
+                honorCappedDay = dayKey();
+                log.info('science: honor capped by server (addPoint=0). stop donating for today.');
+                break;
+            }
         } else {
             // 服务器拒绝带字典键载荷（'<键,参数>' 格式），l10n.net 翻成人话便于定位是哪道闸没过
             rejectStreak++;
@@ -337,7 +379,7 @@ async function donateScience(sc) {
             }
             break;   // 任一枚被拒即收手，交下轮/排程
         }
-        if (i < energy.point - 1) await sleep(SCIENCE_DONATE_GAP_MS);
+        if (i < loopMax - 1) await sleep(SCIENCE_DONATE_GAP_MS);
     }
     return { donated: done > 0, energy: done > 0 ? (gameData.energy(poolType) || energy) : energy };
 }

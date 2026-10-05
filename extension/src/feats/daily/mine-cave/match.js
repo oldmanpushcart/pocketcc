@@ -4,16 +4,15 @@
  */
 import { gameData } from '../../../core/game-api.js';
 
-// 已勾选（enabled=true）的规则；未勾选视为草稿、不参与匹配。
-// 旧存档缺 enabled 字段 → 视为未勾选（与面板/toModuleCfg 口径一致）。
+// 行存在即生效（面板已移除行级 enabled 勾选）：过滤掉空项，返回全部规则。
 export function activeRules(rules) {
     var out = [];
     if (!rules) return out;
-    for (var i = 0; i < rules.length; i++) if (rules[i] && rules[i].enabled) out.push(rules[i]);
+    for (var i = 0; i < rules.length; i++) if (rules[i]) out.push(rules[i]);
     return out;
 }
 
-// 某矿种规格是否命中「任一已勾选规则」。无已勾选规则 = 不采（返回 false）。
+// 某矿种规格是否命中「任一规则」。无规则 = 不采（返回 false）。
 // type/level/star 各维度 0 = 该维度不限；非 0 必须精确相等。口径同游戏 MineCaveHomeMineItem。
 export function matchSpec(specId, rules) {
     var spec = gameData.mineSpec(specId);

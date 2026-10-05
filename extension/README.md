@@ -69,6 +69,7 @@ MAIN core/net-collect.js  ──postMessage──▶  bridge.js  ──chrome.ru
 
 ```
 extension/
+├─ docs/                     核心 API 设计文档（一模块一篇：职责边界/取舍/契约/降级），见 [docs/README](docs/README.md)
 ├─ manifest.json             MV3 清单（只引用 dist/*）
 ├─ assets/                   图标 16/48/128 三档 PNG
 ├─ dist/                     esbuild 产物（gitignore，不入库）

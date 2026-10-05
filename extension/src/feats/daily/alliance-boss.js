@@ -31,7 +31,7 @@
  *   2) ALLIANCE_BOSS_DONATE(1161) {count} → {ret,reward,bossInfo:{allianceBoss,todayTime,todayFree},count}；
  *      count:0 = 免费捐一枚（不扣碎片），count:n = 扣 n 枚碎片；
  *   3) MARCH_WORLD_POINT(902) {marchType:18,x,y,armyList…} → 派兵攻打，坐标取本地 allianceBoss.x/y。
- *      载荷构造与「快捷攻击」「战争之源」同源：Battle().plan().preset(1..8).build()（见 core/battle.js）。
+ *      载荷构造与「快捷攻击」「战争之源」同源：Battle().plan().preset(1..8).adjust().build()（见 core/battle.js）。
  *
  * marchType 18 不漂移（源码实证，同 298 的处置）：WorldUtils.dealMarchTypeWithSpecialMarch 只改写
  *   ATTACK_PLAYER / THRONE / WORLD_SITE 三支，specialMarchList 也不含机甲，battleMarchType[BattleType.AllianceBoss]
@@ -734,7 +734,7 @@ async function attackFlow(boss) {
     if (net.isSending(CMD_MARCH_WORLD_POINT)) return;
 
     // 预设部队 → armyListNew/heroList/trapList/formationV2/extraArmy（已按可派额度与军阵状态过滤）
-    var plan = new Battle().plan().preset(cfg.preset).build();
+    var plan = new Battle().plan().preset(cfg.preset).adjust().build();
     if (!plan.armyListNew.length) {
         log.debug('preset %d has no dispatchable army, skip. bossId=%d', cfg.preset, boss.bossId);
         return;

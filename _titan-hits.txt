@@ -1,0 +1,105 @@
+total lines 1086
+cmd histogram: 10007x510 10018x310 902x24 9595x24 10019x24 10919x23 10904x21 12000x16 10028x15 10453x15 13226x12 10264x11 10001x9 10402x9 13227x9 901x6 1001x6 6001x6 13228x6 1083x4 10054x4 12003x4 12004x4 12002x3 3504x2 7503x2 10427x2 12001x2 10052x1 10363x1 10452x1
+---- hits 51
+=== seq 54 dir push cmd 13226 Push_Titan_Blessing_Gift ts 1791132928629
+  data: {"uid":"15591127683312","playerInfo":"{\"nationalflag\":48,\"gender\":0,\"avatarurl\":\"hero_icon232_global\",\"nickname\":\"\",\"headimgurl\":\"\",\"cn\":1,\"usergender\":0,\"username\":\"书院⛰️大山\"}","x":345,"y":495,"endTime":1791154529063}
+=== seq 56 dir push cmd 13226 Push_Titan_Blessing_Gift ts 1791132928633
+  data: {"uid":"15591127683312","playerInfo":"{\"nationalflag\":48,\"gender\":0,\"avatarurl\":\"hero_icon232_global\",\"nickname\":\"\",\"headimgurl\":\"\",\"cn\":1,\"usergender\":0,\"username\":\"书院⛰️大山\"}","x":352,"y":496,"endTime":1791154529065}
+=== seq 58 dir push cmd 13226 Push_Titan_Blessing_Gift ts 1791132928634
+  data: {"uid":"15591127683312","playerInfo":"{\"nationalflag\":48,\"gender\":0,\"avatarurl\":\"hero_icon232_global\",\"nickname\":\"\",\"headimgurl\":\"\",\"cn\":1,\"usergender\":0,\"username\":\"书院⛰️大山\"}","x":335,"y":501,"endTime":1791154529067}
+=== seq 60 dir req:sendPBV2 cmd 9595 HERO_EQUIP_WISH_FIND_BOX ts 1791132928636
+  data: {"activityId":81200400}
+=== seq 64 dir resp cmd 9595 HERO_EQUIP_WISH_FIND_BOX ts 1791132928705
+  data: {"header":{"ts":1791132929,"s":0},"data":{"serverId":4336,"x":335,"y":501}}
+=== seq 105 dir req:sendPBV2 cmd 9595 HERO_EQUIP_WISH_FIND_BOX ts 1791132929759
+  data: {"activityId":81200400}
+=== seq 107 dir resp cmd 9595 HERO_EQUIP_WISH_FIND_BOX ts 1791132929825
+  data: {"header":{"ts":1791132930,"s":0},"data":{"serverId":4336,"x":345,"y":495}}
+=== seq 132 dir req:sendPBV2 cmd 9595 HERO_EQUIP_WISH_FIND_BOX ts 1791132930919
+  data: {"activityId":81200400}
+=== seq 134 dir resp cmd 9595 HERO_EQUIP_WISH_FIND_BOX ts 1791132930973
+  data: {"header":{"ts":1791132931,"s":0},"data":{"serverId":4336,"x":352,"y":496}}
+=== seq 198 dir push cmd 13226 Push_Titan_Blessing_Gift ts 1791132935419
+  data: {"uid":"15596092231920","playerInfo":"{\"nationalflag\":48,\"gender\":0,\"avatarurl\":\"hero_icon122_global\",\"nickname\":\"\",\"headimgurl\":\"\",\"cn\":1,\"usergender\":0,\"username\":\"书院🍭阿凯\"}","x":357,"y":491,"endTime":1791154535822}
+=== seq 200 dir push cmd 13226 Push_Titan_Blessing_Gift ts 1791132935421
+  data: {"uid":"15596092231920","playerInfo":"{\"nationalflag\":48,\"gender\":0,\"avatarurl\":\"hero_icon122_global\",\"nickname\":\"\",\"headimgurl\":\"\",\"cn\":1,\"usergender\":0,\"username\":\"书院🍭阿凯\"}","x":360,"y":500,"endTime":1791154535823}
+=== seq 203 dir push cmd 13226 Push_Titan_Blessing_Gift ts 1791132935422
+  data: {"uid":"15596092231920","playerInfo":"{\"nationalflag\":48,\"gender\":0,\"avatarurl\":\"hero_icon122_global\",\"nickname\":\"\",\"headimgurl\":\"\",\"cn\":1,\"usergender\":0,\"username\":\"书院🍭阿凯\"}","x":364,"y":494,"endTime":1791154535825}
+=== seq 205 dir req:sendPBV2 cmd 9595 HERO_EQUIP_WISH_FIND_BOX ts 1791132935423
+  data: {"activityId":81200400}
+=== seq 209 dir resp cmd 9595 HERO_EQUIP_WISH_FIND_BOX ts 1791132935496
+  data: {"header":{"ts":1791132935,"s":0},"data":{"serverId":4336,"x":357,"y":491}}
+=== seq 231 dir req:sendPBV2 cmd 9595 HERO_EQUIP_WISH_FIND_BOX ts 1791132936616
+  data: {"activityId":81200400}
+=== seq 232 dir resp cmd 9595 HERO_EQUIP_WISH_FIND_BOX ts 1791132936678
+  data: {"header":{"ts":1791132937,"s":0},"data":{"serverId":4336,"x":364,"y":494}}
+=== seq 254 dir req:sendPBV2 cmd 9595 HERO_EQUIP_WISH_FIND_BOX ts 1791132937753
+  data: {"activityId":81200400}
+=== seq 260 dir resp cmd 9595 HERO_EQUIP_WISH_FIND_BOX ts 1791132937815
+  data: {"header":{"ts":1791132938,"s":0},"data":{"serverId":4336,"x":360,"y":500}}
+=== seq 350 dir push cmd 13227 Push_World_Titan_Blessing_Reward_Get ts 1791132945035
+  data: {"reward":{"chips":[],"resource":{"cab_res":0,"kvk_tec_coin":0,"voucher":0,"honor":0,"metal":0,"soil":0,"csb_res":0,"kvk_merit":0,"gold":0,"thor_elements":0,"kvk_task_coin":0,"oil":0,"kvk_tec_res":0,"alliance_coin":0,"coal":0,"wood":0,"military":0,"expedition_coin":0,"jungong":0,"coin":0},"goldBrick":0,"hero":[],"hero_level_star":[],"giftExp":0,"giftKey":0,"hero_level_star_split":[],"build":[],"enigmaBeast":[],"armys":[],"exp":0,"items":[{"itemId":62908,"itemCount":2}],"herosplit":[],"energy":0},"uuid":"4870548766108803081"}
+=== seq 387 dir push cmd 13227 Push_World_Titan_Blessing_Reward_Get ts 1791132947560
+  data: {"reward":{"chips":[],"resource":{"cab_res":0,"kvk_tec_coin":0,"voucher":0,"honor":0,"metal":0,"soil":0,"csb_res":0,"kvk_merit":0,"gold":0,"thor_elements":0,"kvk_task_coin":0,"oil":0,"kvk_tec_res":0,"alliance_coin":0,"coal":0,"wood":0,"military":0,"expedition_coin":0,"jungong":0,"coin":0},"goldBrick":0,"hero":[],"hero_level_star":[],"giftExp":0,"giftKey":0,"hero_level_star_split":[],"build":[],"enigmaBeast":[],"armys":[],"exp":0,"items":[{"itemId":62908,"itemCount":2}],"herosplit":[],"energy":0},"uuid":"4870548879472451586"}
+=== seq 397 dir push cmd 13228 Push_World_Titan_Blessing_Gift_Clear ts 1791132947856
+  data: {"uuid":"4870548879472451586"}
+=== seq 400 dir push cmd 13226 Push_Titan_Blessing_Gift ts 1791132948290
+  data: {"uid":"7978870704750","playerInfo":"{\"nationalflag\":48,\"gender\":0,\"avatarurl\":null,\"nickname\":\"\",\"headimgurl\":\"https://thirdwx.qlogo.cn/mmopen/vi_32/l7V1Ss2ql2IZxJyEUJjewI4lehJrYJ6dATj0g9HhmYUDTr9zMu5icaMCTEwXtY2HHeiaghRRaTxSjNXTdEK6BoVrcaTUlczKATlfFOL0CTG6Y/132\",\"cn\":0,\"usergender\":1,\"username\":\"书院🏝️西瓜皮\"}","x":365,"y":487,"endTime":1791154548740}
+=== seq 402 dir push cmd 13226 Push_Titan_Blessing_Gift ts 1791132948345
+  data: {"uid":"7978870704750","playerInfo":"{\"nationalflag\":48,\"gender\":0,\"avatarurl\":null,\"nickname\":\"\",\"headimgurl\":\"https://thirdwx.qlogo.cn/mmopen/vi_32/l7V1Ss2ql2IZxJyEUJjewI4lehJrYJ6dATj0g9HhmYUDTr9zMu5icaMCTEwXtY2HHeiaghRRaTxSjNXTdEK6BoVrcaTUlczKATlfFOL0CTG6Y/132\",\"cn\":0,\"usergender\":1,\"username\":\"书院🏝️西瓜皮\"}","x":361,"y":489,"endTime":1791154548742}
+=== seq 404 dir push cmd 13226 Push_Titan_Blessing_Gift ts 1791132948346
+  data: {"uid":"7978870704750","playerInfo":"{\"nationalflag\":48,\"gender\":0,\"avatarurl\":null,\"nickname\":\"\",\"headimgurl\":\"https://thirdwx.qlogo.cn/mmopen/vi_32/l7V1Ss2ql2IZxJyEUJjewI4lehJrYJ6dATj0g9HhmYUDTr9zMu5icaMCTEwXtY2HHeiaghRRaTxSjNXTdEK6BoVrcaTUlczKATlfFOL0CTG6Y/132\",\"cn\":0,\"usergender\":1,\"username\":\"书院🏝️西瓜皮\"}","x":367,"y":493,"endTime":1791154548744}
+=== seq 408 dir req:sendPBV2 cmd 9595 HERO_EQUIP_WISH_FIND_BOX ts 1791132948348
+  data: {"activityId":81200400}
+=== seq 414 dir resp cmd 9595 HERO_EQUIP_WISH_FIND_BOX ts 1791132948413
+  data: {"header":{"ts":1791132948,"s":0},"data":{"serverId":4336,"x":365,"y":487}}
+=== seq 445 dir req:sendPBV2 cmd 9595 HERO_EQUIP_WISH_FIND_BOX ts 1791132949514
+  data: {"activityId":81200400}
+=== seq 448 dir resp cmd 9595 HERO_EQUIP_WISH_FIND_BOX ts 1791132949575
+  data: {"header":{"ts":1791132949,"s":0},"data":{"serverId":4336,"x":361,"y":489}}
+=== seq 479 dir req:sendPBV2 cmd 9595 HERO_EQUIP_WISH_FIND_BOX ts 1791132950651
+  data: {"activityId":81200400}
+=== seq 480 dir resp cmd 9595 HERO_EQUIP_WISH_FIND_BOX ts 1791132950711
+  data: {"header":{"ts":1791132951,"s":0},"data":{"serverId":4336,"x":367,"y":493}}
+=== seq 581 dir push cmd 13227 Push_World_Titan_Blessing_Reward_Get ts 1791132956738
+  data: {"reward":{"chips":[],"resource":{"cab_res":0,"kvk_tec_coin":0,"voucher":0,"honor":0,"metal":0,"soil":0,"csb_res":0,"kvk_merit":0,"gold":0,"thor_elements":0,"kvk_task_coin":0,"oil":0,"kvk_tec_res":0,"alliance_coin":0,"coal":0,"wood":0,"military":0,"expedition_coin":0,"jungong":0,"coin":0},"goldBrick":0,"hero":[],"hero_level_star":[],"giftExp":0,"giftKey":0,"hero_level_star_split":[],"build":[],"enigmaBeast":[],"armys":[],"exp":0,"items":[{"itemId":79200003,"itemCount":1}],"herosplit":[],"energy":0},"uuid":"4870548879522783233"}
+=== seq 606 dir push cmd 13226 Push_Titan_Blessing_Gift ts 1791132958883
+  data: {"uid":"14996750209175","playerInfo":"{\"nationalflag\":48,\"gender\":0,\"avatarurl\":\"hero_icon173_global\",\"nickname\":\"\",\"headimgurl\":\"\",\"cn\":1,\"usergender\":1,\"username\":\"书院💞淡定\"}","x":351,"y":475,"endTime":1791154559312}
+=== seq 608 dir push cmd 13226 Push_Titan_Blessing_Gift ts 1791132958885
+  data: {"uid":"14996750209175","playerInfo":"{\"nationalflag\":48,\"gender\":0,\"avatarurl\":\"hero_icon173_global\",\"nickname\":\"\",\"headimgurl\":\"\",\"cn\":1,\"usergender\":1,\"username\":\"书院💞淡定\"}","x":348,"y":478,"endTime":1791154559315}
+=== seq 610 dir push cmd 13226 Push_Titan_Blessing_Gift ts 1791132958886
+  data: {"uid":"14996750209175","playerInfo":"{\"nationalflag\":48,\"gender\":0,\"avatarurl\":\"hero_icon173_global\",\"nickname\":\"\",\"headimgurl\":\"\",\"cn\":1,\"usergender\":1,\"username\":\"书院💞淡定\"}","x":352,"y":458,"endTime":1791154559316}
+=== seq 612 dir req:sendPBV2 cmd 9595 HERO_EQUIP_WISH_FIND_BOX ts 1791132958888
+  data: {"activityId":81200400}
+=== seq 618 dir resp cmd 9595 HERO_EQUIP_WISH_FIND_BOX ts 1791132958948
+  data: {"header":{"ts":1791132959,"s":0},"data":{"serverId":4336,"x":348,"y":478}}
+=== seq 648 dir req:sendPBV2 cmd 9595 HERO_EQUIP_WISH_FIND_BOX ts 1791132960065
+  data: {"activityId":81200400}
+=== seq 649 dir resp cmd 9595 HERO_EQUIP_WISH_FIND_BOX ts 1791132960124
+  data: {"header":{"ts":1791132960,"s":0},"data":{"serverId":4336,"x":352,"y":458}}
+=== seq 669 dir req:sendPBV2 cmd 9595 HERO_EQUIP_WISH_FIND_BOX ts 1791132961194
+  data: {"activityId":81200400}
+=== seq 671 dir resp cmd 9595 HERO_EQUIP_WISH_FIND_BOX ts 1791132961258
+  data: {"header":{"ts":1791132961,"s":0},"data":{"serverId":4336,"x":351,"y":475}}
+=== seq 712 dir push cmd 13227 Push_World_Titan_Blessing_Reward_Get ts 1791132963000
+  data: {"reward":{"chips":[],"resource":{"cab_res":0,"kvk_tec_coin":0,"voucher":0,"honor":0,"metal":0,"soil":0,"csb_res":0,"kvk_merit":0,"gold":0,"thor_elements":0,"kvk_task_coin":0,"oil":0,"kvk_tec_res":0,"alliance_coin":0,"coal":0,"wood":0,"military":0,"expedition_coin":0,"jungong":0,"coin":0},"goldBrick":0,"hero":[],"hero_level_star":[],"giftExp":0,"giftKey":0,"hero_level_star_split":[],"build":[],"enigmaBeast":[],"armys":[],"exp":0,"items":[{"itemId":62910,"itemCount":1}],"herosplit":[],"energy":0},"uuid":"4870549273619587079"}
+=== seq 727 dir push cmd 13227 Push_World_Titan_Blessing_Reward_Get ts 1791132963610
+  data: {"reward":{"chips":[],"resource":{"cab_res":0,"kvk_tec_coin":0,"voucher":0,"honor":0,"metal":0,"soil":0,"csb_res":0,"kvk_merit":0,"gold":0,"thor_elements":0,"kvk_task_coin":0,"oil":0,"kvk_tec_res":0,"alliance_coin":0,"coal":0,"wood":0,"military":0,"expedition_coin":0,"jungong":0,"coin":0},"goldBrick":0,"hero":[],"hero_level_star":[],"giftExp":0,"giftKey":0,"hero_level_star_split":[],"build":[],"enigmaBeast":[],"armys":[],"exp":0,"items":[{"itemId":820016,"itemCount":1}],"herosplit":[],"energy":0},"uuid":"4870549096234082306"}
+=== seq 739 dir push cmd 13228 Push_World_Titan_Blessing_Gift_Clear ts 1791132963955
+  data: {"uuid":"4870549096234082306"}
+=== seq 750 dir push cmd 13228 Push_World_Titan_Blessing_Gift_Clear ts 1791132964445
+  data: {"uuid":"4870549096200527879"}
+=== seq 754 dir push cmd 13227 Push_World_Titan_Blessing_Reward_Get ts 1791132964446
+  data: {"reward":{"chips":[],"resource":{"cab_res":0,"kvk_tec_coin":0,"voucher":0,"honor":0,"metal":0,"soil":0,"csb_res":0,"kvk_merit":0,"gold":0,"thor_elements":0,"kvk_task_coin":0,"oil":0,"kvk_tec_res":0,"alliance_coin":0,"coal":0,"wood":0,"military":0,"expedition_coin":0,"jungong":0,"coin":0},"goldBrick":0,"hero":[],"hero_level_star":[],"giftExp":0,"giftKey":0,"hero_level_star_split":[],"build":[],"enigmaBeast":[],"armys":[],"exp":0,"items":[{"itemId":820015,"itemCount":1}],"herosplit":[],"energy":0},"uuid":"4870549096200527879"}
+=== seq 773 dir push cmd 13227 Push_World_Titan_Blessing_Reward_Get ts 1791132965295
+  data: {"reward":{"chips":[],"resource":{"cab_res":0,"kvk_tec_coin":0,"voucher":0,"honor":0,"metal":0,"soil":0,"csb_res":0,"kvk_merit":0,"gold":0,"thor_elements":0,"kvk_task_coin":0,"oil":0,"kvk_tec_res":0,"alliance_coin":0,"coal":0,"wood":0,"military":0,"expedition_coin":0,"jungong":0,"coin":0},"goldBrick":0,"hero":[],"hero_level_star":[],"giftExp":0,"giftKey":0,"hero_level_star_split":[],"build":[],"enigmaBeast":[],"armys":[],"exp":0,"items":[{"itemId":820015,"itemCount":1}],"herosplit":[],"energy":0},"uuid":"4870549273569255431"}
+=== seq 821 dir push cmd 13228 Push_World_Titan_Blessing_Gift_Clear ts 1791132967645
+  data: {"uuid":"4870549273569255431"}
+=== seq 825 dir push cmd 13228 Push_World_Titan_Blessing_Gift_Clear ts 1791132967701
+  data: {"uuid":"4870549273619587079"}
+=== seq 900 dir push cmd 13227 Push_World_Titan_Blessing_Reward_Get ts 1791132972743
+  data: {"reward":{"chips":[],"resource":{"cab_res":0,"kvk_tec_coin":0,"voucher":0,"honor":0,"metal":0,"soil":0,"csb_res":0,"kvk_merit":0,"gold":0,"thor_elements":0,"kvk_task_coin":0,"oil":0,"kvk_tec_res":0,"alliance_coin":0,"coal":0,"wood":0,"military":0,"expedition_coin":0,"jungong":0,"coin":0},"goldBrick":0,"hero":[],"hero_level_star":[],"giftExp":0,"giftKey":0,"hero_level_star_split":[],"build":[],"enigmaBeast":[],"armys":[],"exp":0,"items":[{"itemId":820015,"itemCount":1}],"herosplit":[],"energy":0},"uuid":"4870549096267636743"}
+=== seq 968 dir push cmd 13227 Push_World_Titan_Blessing_Reward_Get ts 1791132978158
+  data: {"reward":{"chips":[],"resource":{"cab_res":0,"kvk_tec_coin":0,"voucher":0,"honor":0,"metal":0,"soil":0,"csb_res":0,"kvk_merit":0,"gold":0,"thor_elements":0,"kvk_task_coin":0,"oil":0,"kvk_tec_res":0,"alliance_coin":0,"coal":0,"wood":0,"military":0,"expedition_coin":0,"jungong":0,"coin":0},"goldBrick":0,"hero":[],"hero_level_star":[],"giftExp":0,"giftKey":0,"hero_level_star_split":[],"build":[],"enigmaBeast":[],"armys":[],"exp":0,"items":[{"itemId":62908,"itemCount":2}],"herosplit":[],"energy":0},"uuid":"4870549273636364297"}
+=== seq 1004 dir push cmd 13228 Push_World_Titan_Blessing_Gift_Clear ts 1791132981515
+  data: {"uuid":"4870549273636364297"}

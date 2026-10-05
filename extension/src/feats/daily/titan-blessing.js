@@ -4,26 +4,57 @@
  * 网络一律走 promise 封装 window.pocketcc.net：send/sendPBV2(cmd, data) → Promise<Ret{code,data,ok}>，isSending(cmd) 查在途。
  * 三条协议铁律（target=null、ensureServerResponse=false、无 clickInfo）由 net 封装内部固定，这里不再关心。
  *
- * 事件驱动，无轮询：服务器推 10904（PUSH_ONE_ACTIVITY 整条活动）→ 是泰坦祝福且 extra.hasRed
- *   → 入队 → 串行消费：9595 查箱子坐标 → 902 派拾取行军。
- * 领一个箱子后服务器会再推一条 10904（hasRed 翻 false 表示领完，见 泰坦藏宝图资料整理.md「领取前/后的回复」），
- *   靠这条再推驱动下一轮，跳过一轮不丢事件。
- * 额度上限：extra.totalNum=本期已领、extra.left=本期剩余可领（两者之和=本期总量）；left<=0 即本期触顶，打日志跳过但保留监听，等下一轮活动 left 回升后继续。
- * 与芯片祝福不同：本功能只用 push 载荷自带的 type/extra/id 判定，无需 ActivityController，故 install 只依赖 net。
- * 队列 + 消费间隔：902 过快会被服务器限流（code=3, data="march_time_control_info001"），逐条之间休眠规避。
+ * 报文事实（实证 20261005T005510-泰坦祝福.ndjson + 客户端 WorldTiTanBlessingTreasurePop / NWorldMapTileClickUtils）：
+ *   13226 PUSH_TITAN_BLESSING_GIFT = 新箱广播，载荷 {uid(字符串), playerInfo, x, y, endTime(ms)}，一次送礼成簇推 3 条（3 只箱）。
+ *     ⚠️ 自己发出的箱也照样推给自己（实录 uid 即本人），故必须自己判归属，否则 902 必被服务器拒 → 死循环刷屏。
+ *   13227 PUSH_WORLD_TITAN_BLESSING_REWARD_GET = 本人领取到账，载荷 {reward, uuid}（有 uuid 无坐标）。
+ *   13228 PUSH_WORLD_TITAN_BLESSING_GIFT_CLEAR = 箱子消失，载荷 {uuid}（有 uuid 无坐标，被本盟任何人领走/到期都推）。
+ *   10904 PUSH_ONE_ACTIVITY = 整条活动推送，extra 是对象（非字符串），含 hasRed/left/totalNum/rec_other_record{uuid:领取ms}。
+ *   9595 HERO_EQUIP_WISH_FIND_BOX = 查一只可领箱，应答仅 {serverId,x,y}，不带归属信息 → 单靠它无法滤掉自己的箱。
+ *   三条推送的字段互斥（uuid 与坐标从不同时出现），因此「哪只箱领过了」只能由本模块按 "x,y" 自建台账。
+ *   时间线实证：每簇「13226×3 → 902×3」中 902 的坐标与 13226 逐条相等（主链无需 9595）；
+ *   且同一簇会伴随 3 条 10904 hasRed=true（活动推送按箱计数），故兜底链必须自带去重与冷却，否则每簇白打 3 次 9595。
+ *   另有独立的 10904 hasRed=false（left 逐次 -1）＝本人领取到账通知，不驱动流程。
  *
+ * 游戏侧本地闸（我们裸发包不走，能纯客户端复刻的就自己复刻，否则白派 + 刷屏）：
+ *   ① uid ≠ 本人 → 主链入口直接拦（已证实自己发的也推给自己）；
+ *   ② 箱子属本盟（allianceId == 本人 Aid）→ 13226/9595 载荷里都没有盟信息，不预探；
+ *     真越了界服务器会拒，由「连拒 3 次即拉黑该坐标」兜住，不会刷屏；
+ *   ③ 同一只箱 10 秒内只能点一次 → 消费间隔 1s + 台账一次一派已天然满足。
+ *
+ * 两链驱动：
+ *   主链：13226 → 判本人/判台账/判拉黑 → 坐标现成，直接 902（不再发 9595）；入队即记台账。
+ *   兜底链：10904 且 extra.hasRed → 单槽去重 + 冷却 → 入队 → 9595 查坐标 → 过台账闸 → 902。
+ *     保留只为覆盖「脚本启动前联盟已有的箱」；activityId 从 10904 载荷里锁存（实录 81200400，9595 必需）。
+ *   台账清理：13228（箱子消失）推来时按 uuid 精确出队、无 uuid 时按派兵顺序 FIFO 出一条，
+ *     兜底 TTL 用 13226 的 endTime 到期自动剔除。这样即便 9595 反复报同一只不可领的箱，也不会重复派。
+ *
+ * 额度上限：extra.totalNum=本期已领、extra.left=本期剩余可领；left<=0 即本期触顶，置 claimLimitReached 闸门，
+ *   主链/兜底链/消费三处一并停派并清空残留队列（否则领满后盟友每发一只箱都会被派出去又被服务器拒 → 死循环刷屏）；
+ *   触顶日志只在 false→true 转变时打一行（一簇 3 条 10904 不再刷 3 行），下一轮 left 回升自动复位续领。
+ * 队列 + 消费间隔：902 过快会被服务器限流（code=3, data="march_time_control_info001"），逐条之间休眠规避。
  * 生命周期由 reactor 托管：install/configure/run 三个钩子，scenes 门控限定 Home/NWorldMap。
- *   run 挂 10904 监听；reactor pause 时摘监听、置 alive=false，队列保留，恢复后续跑。
+ *   run 挂 10904/13226/13227/13228 监听；reactor pause 时摘监听、置 alive=false，队列保留，恢复后续跑。
  */
 import { createLog } from '../../core/log.js';
 import { createDrain } from '../../core/drain.js';
 import { reactor } from '../../core/reactor.js';
+import { getUid } from '../../core/player.js';
 
 /** @type {ReturnType<createLog>} 模块日志器（tag=TITAN_BLESSING） */
 const log = createLog('TITAN_BLESSING');
 
 /** @type {number} ResponseId.PUSH_ONE_ACTIVITY（ResponseId.js:158），整条活动推送，载荷含 type/extra/id */
 const CMD_PUSH_ONE_ACTIVITY = 10904;
+
+/** @type {number} ResponseId.Push_Titan_Blessing_Gift=13226，新箱广播（客户端 EventId 别名 TitanBlessTreasureRefresh），载荷 {uid,playerInfo,x,y,endTime} */
+const CMD_PUSH_GIFT = 13226;
+
+/** @type {number} ResponseId.Push_World_Titan_Blessing_Reward_Get=13227，本人领取到账，载荷 {reward,uuid} */
+const CMD_PUSH_REWARD_GET = 13227;
+
+/** @type {number} ResponseId.Push_World_Titan_Blessing_Gift_Clear=13228，箱子消失，载荷 {uuid} */
+const CMD_PUSH_GIFT_CLEAR = 13228;
 
 /** @type {number} NRequestIdV2.HERO_EQUIP_WISH_FIND_BOX（NRequestIdV2.js:1374），载荷 {activityId}，应答 data={serverId,x,y}（值已真机验证） */
 const CMD_HERO_EQUIP_WISH_FIND_BOX = 9595;
@@ -43,6 +74,15 @@ const CODE_NOT_SENT = -1;
 /** @type {number} 队列逐条消费之间的休眠毫秒（固定调优常量，不在面板暴露）：规避 902 限流（march_time_control_info001） */
 const CONSUME_INTERVAL_MS = 1000;
 
+/** @type {number} 同一坐标连续被拒达此数即本会话拉黑（防字段口径意外导致重复派） */
+const REJECT_STREAK_BLACKLIST = 3;
+
+/** @type {number} 台账 TTL 兜底毫秒：13226 未到 endTime 前的最长保留（箱到期消失却漏收 13228 时用） */
+const LEDGER_FALLBACK_TTL_MS = 6 * 60 * 60 * 1000;
+
+/** @type {number} 兜底链（9595）两次查箱之间的最小间隔毫秒：活动推送按箱计数，一簇能推 3 条 */
+const FALLBACK_SCAN_COOLDOWN_MS = 5000;
+
 /**
  * 模块内部配置：{ consumeInterval:number(ms) }。面板仅出启用开关，此值为内置常量。
  * @type {object}
@@ -55,8 +95,41 @@ var net;
 /** @type {object|null} reactor 注入的上下文；alive() 反映运行态，pause 后置否让在飞流程自然退出 */
 var ctxRef = null;
 
-/** @type {object[]} 待消费的 10904 push 事件队列（pause 保留、恢复续跑） */
+/** @type {object[]} 待消费的拾取事件队列（pause 保留、恢复续跑）：{src:'gift'|'activity', x?, y?, activityId?} */
 var queue = [];
+
+/**
+ * 坐标台账："x,y" → {uuid:string|null, endTime:number(ms,0=未知), sent:boolean}。
+ * 语义 = 「这只箱本会话已处理过，不再重复派」。清理靠 13228（按 uuid 精确，无 uuid 时 FIFO 出队）与 TTL 到期。
+ * ⚠️ uuid 是雪花量级（>2^53），只按字符串存，绝不做 Number()。
+ * @type {Map<string, object>}
+ */
+var ledger = new Map();
+
+/** @type {string[]} 已派兵但尚未确认消失的坐标键，按入队顺序（13228 不带坐标，只能靠它做 FIFO 出队） */
+var pendingKeys = [];
+
+/** @type {Object<string, number>} 坐标键 → 连续被拒次数（达 REJECT_STREAK_BLACKLIST 即转写进 rejected） */
+var rejectStreak = {};
+
+/** @type {Object<string, number>} 坐标键 → 拉黑时刻（连续被拒达阈后本会话不再重派，直到台账项被 13228/TTL 清掉时一并解除） */
+var rejected = {};
+
+/** @type {number} 最近一次从 10904 锁存到的活动 id（9595 必需参数；实录 81200400），0=还没见过泰坦祝福推送 */
+var activityId = 0;
+
+/** @type {boolean} 兜底链单槽去重：已有一颗「待查箱」种子在队里就不再重复入队 */
+var fallbackPending = false;
+
+/** @type {number} 兜底链上次实际查箱的时刻（ms），配合 FALLBACK_SCAN_COOLDOWN_MS 限频 */
+var fallbackScanAt = 0;
+
+/**
+ * 本期领取额度是否已触顶（由 10904 的 extra.left 驱动：<=0 置真、>0 复位）。
+ * 为真时主链/兜底链/消费三处一律不再派兵——领满后服务器对每只箱都拒，不拦就是死循环刷屏。
+ * @type {boolean}
+ */
+var claimLimitReached = false;
 
 /** @type {boolean} install 幂等守卫 */
 var installed = false;
@@ -67,6 +140,207 @@ var installed = false;
  */
 function aliveFn() {
     return ctxRef ? ctxRef.alive() : false;
+}
+
+/** @type {string} 本人 UID（字符串口径，与 13226 载荷的 uid 同源；未就绪为 ''） */
+function myUid() {
+    return String(getUid() || '');
+}
+
+/**
+ * 坐标键
+ * @param {number} x
+ * @param {number} y
+ * @returns {string}
+ */
+function posKey(x, y) {
+    return (x | 0) + ',' + (y | 0);
+}
+
+/**
+ * 台账是否已含该坐标（已派过/已领/已拉黑）
+ * @param {string} key
+ * @returns {boolean}
+ */
+function seenPos(key) {
+    return ledger.has(key);
+}
+
+/**
+ * 剔除到期与无主条目：箱endTime（13226 带来）已过即删；未知 endTime 的按兜底 TTL 老化。
+ * 顺带清掉已不在台账里的 pendingKeys，防数组无界增长。
+ * @returns {void}
+ */
+function purgeLedger() {
+    var now = Date.now();
+    var alive = {};
+    ledger.forEach(function (rec, key) {
+        var expiry = rec.endTime > 0 ? rec.endTime : rec.at + LEDGER_FALLBACK_TTL_MS;
+        if (now < expiry) alive[key] = 1;
+        else ledger.delete(key);
+    });
+    pendingKeys = pendingKeys.filter(function (k) { return !!alive[k]; });
+    Object.keys(rejectStreak).forEach(function (k) { if (!alive[k]) delete rejectStreak[k]; });
+    Object.keys(rejected).forEach(function (k) { if (!alive[k]) delete rejected[k]; });
+}
+
+/**
+ * 记入台账并登记待消失队列（主链入队时就调，让后续重复推送/兜底链查回同一坐标能被立即拦住）
+ * @param {string} key "x,y"
+ * @param {number} endTime 箱到期毫秒时间戳（13226 的 endTime；未知传 0）
+ * @param {boolean} sent 是否已派过兵（派兵后置真，仅供日志与 FIFO 优先级参考）
+ * @returns {void}
+ */
+function markLedger(key, endTime, sent) {
+    var rec = ledger.get(key) || {};
+    rec.endTime = endTime > 0 ? endTime : (rec.endTime || 0);
+    rec.at = rec.at || Date.now();
+    if (sent) rec.sent = true;
+    ledger.set(key, rec);
+    if (pendingKeys.indexOf(key) < 0) pendingKeys.push(key);
+}
+
+/**
+ * 13228 到账的清理：uuid 已知就精确删，未知按最早入队的已派坐标 FIFO 出一条。
+ * 泰坦祝福的箱一次只会被一只行军领走，我们的派兵顺序与服务器消失顺序实践中一致；
+ * 错位只会让某只箱少一次重试机会，TTL 与下一条推送都会自愈，不影响正确性。
+ * @param {string} uuid 箱子唯一标识（字符串，勿转数字）
+ * @returns {void}
+ */
+function clearByUuid(uuid) {
+    if (uuid) {
+        var hitKey = null;
+        ledger.forEach(function (rec, key) { if (rec.uuid === uuid) hitKey = key; });
+        if (hitKey) {
+            ledger.delete(hitKey);
+            pendingKeys = pendingKeys.filter(function (k) { return k !== hitKey; });
+            delete rejectStreak[hitKey];
+            delete rejected[hitKey];
+            log.debug('box cleared by uuid. key=%s;uuid=%s', hitKey, uuid);
+            return;
+        }
+    }
+    var key = pendingKeys.shift();
+    if (key) {
+        ledger.delete(key);
+        delete rejectStreak[key];
+        delete rejected[key];
+        log.debug('box cleared by fifo. key=%s;uuid=%s', key, uuid || 'n/a');
+    }
+}
+
+/**
+ * 10904 推送入口（兜底链 + 额度信号源）：同步过滤 + 入队，listener 本身永不 throw。
+ * 注意 10904 是 PUSH_ONE_ACTIVITY，任何活动都会推它，故必先按 type 认出泰坦祝福再判其余字段。
+ * 分支：非泰坦祝福→静默忽略；锁存 activityId；用 extra.left 刷新额度闸门（触顶清队列、只在 false→true 转变打一行日志）；
+ * hasRed=false＝本人领取到账通知，忽略；hasRed=true 且额度未满 → 单槽 + 冷却后入队（实录一簇推 3 条，不去重就白打 3 次 9595）。
+ * @param {object} ev net.on 事件 {cmd, status, data, ord, ts, raw}
+ */
+function onActivityPush(ev) {
+    if (!aliveFn()) return;
+
+    var data = ev && ev.data;
+    if (!data || data.type !== ACTIVITY_TYPE_TITAN_BLESSING) return;
+
+    if (data.id) activityId = data.id;
+
+    var extra = data.extra || {};
+
+    // 本期领取额度闸门：left<=0 即触顶。仅在状态翻转时打日志（否则一簇 3 条推=刷 3 行）。
+    // 触顶即清空残留队列（已入队但未派的箱不再派），并置闸让主链/消费一并停手；
+    // 不停监听——下一轮活动 left 回升，闸门自动复位
+    var reached = extra.left <= 0;
+    if (reached !== claimLimitReached) {
+        claimLimitReached = reached;
+        if (reached) {
+            log.info('period claim limit reached, stop picking. left=%s;totalNum=%s', extra.left, extra.totalNum);
+            queue.length = 0;
+            fallbackPending = false;
+        } else {
+            log.info('claim quota refreshed, resume picking. left=%s', extra.left);
+        }
+    }
+    if (reached) return;
+
+    // hasRed == false，表示这是一条领取完成的通知，可以忽略。
+    if (!extra.hasRed) {
+        return;
+    }
+
+    if (fallbackPending || Date.now() - fallbackScanAt < FALLBACK_SCAN_COOLDOWN_MS) return;
+    fallbackPending = true;
+
+    log.debug('activity push (fallback), enqueue. id=%d;left=%s', data.id, extra.left);
+    queue.push({ src: 'activity' });
+    kick();
+}
+
+/**
+ * 13226 新箱广播入口（主链）：坐标与发送人都在载荷里，判完直接入队，省掉一次 9595。
+ * 两道闸：本人发的箱 → 丢（实录证实自己发的也推给自己，不拦就是 902 被拒死循环）；台账已有该坐标 → 丢。
+ * 入队即记台账（不等到派兵）：同一坐标紧随其后的重复推送、以及兜底链 9595 查回同一只箱，都会被这道闸拦住。
+ * @param {object} ev net 事件，ev.data={uid:string, playerInfo:string, x, y, endTime:ms}
+ */
+function onGiftPush(ev) {
+    if (!aliveFn()) return;
+
+    var d = ev && ev.data;
+    if (!d || !isFinite(d.x) || !isFinite(d.y)) return;
+
+    // 额度闸门：本期已领满，任何新箱派过去都会被服务器拒（left 由 10904 刷新，一簇必到，够及时）
+    if (claimLimitReached) return;
+
+    var key = posKey(d.x, d.y);
+    // 两侧都 String()：推送里 uid 是字符串，getUid() 也是字符串口径；切勿用 gameData.myPid()（Number 会丢精度）
+    if (String(d.uid) === myUid()) {
+        log.debug('gift skip. reason=self; key=%s;uid=%s', key, d.uid);
+        return;
+    }
+    if (seenPos(key)) {
+        log.debug('gift skip. reason=already-handled; key=%s', key);
+        return;
+    }
+    // 被服务器连拒达阈的坐标本会话不再重派（防字段口径意外退化成刷屏）
+    if (rejected[key]) {
+        log.debug('gift skip. reason=blacklisted; key=%s', key);
+        return;
+    }
+
+    markLedger(key, d.endTime > 0 ? d.endTime : 0, false);
+    log.debug('gift push received (main), enqueue. key=%s;from=%s', key, d.uid);
+    queue.push({ src: 'gift', x: d.x | 0, y: d.y | 0 });
+    kick();
+}
+
+/**
+ * 13227 本人领取到账：仅作日志对账，不驱动流程（领取确认已由 13228 负责台账出队）。
+ * @param {object} ev net 事件，ev.data={reward, uuid}
+ */
+function onRewardPush(ev) {
+    var d = ev && ev.data;
+    if (!d || !d.uuid) return;
+    var items = (d.reward && d.reward.items) || [];
+    log.info('reward received. uuid=%s;items=%d', d.uuid, items.length);
+}
+
+/**
+ * 13228 箱子消失：台账出队，该坐标重新允许被派（本盟盟友领走也算，消失即腾位）。
+ * @param {object} ev net 事件，ev.data={uuid}
+ */
+function onGiftClearPush(ev) {
+    if (!aliveFn()) return;
+    var d = ev && ev.data;
+    clearByUuid(d && d.uuid ? String(d.uuid) : '');
+}
+
+/**
+ * 触发消费；若已有循环在跑则立即返回，由该循环兜底取走新入队事件
+ * @returns {void}
+ */
+function kick() {
+    drain.consume().catch(function (err) {
+        log.warn('consume loop threw!', err);
+    });
 }
 
 /** @type {object} 串行消费器（队列逐条拾取 + 间隔休眠避限流） */
@@ -91,73 +365,90 @@ function configure(partial) {
 }
 
 /**
- * 10904 推送入口：同步过滤 + 入队，listener 本身永不 throw（net 封装也会兜，但不依赖它）。
- * 注意 10904 是 PUSH_ONE_ACTIVITY，任何活动都会推它，故必先按 type 认出泰坦祝福再判其余字段。
- * 三分支：非泰坦祝福→静默忽略；extra.left<=0（本期额度触顶）→打一行日志跳过（监听保留，等下一轮）；无 hasRed→跳过本轮。
- * @param {object} ev net.on 事件 {cmd, status, data, ord, ts, raw}
- */
-function onActivityPush(ev) {
-    if (!aliveFn()) return;
-
-    var data = ev && ev.data;
-    if (!data || data.type !== ACTIVITY_TYPE_TITAN_BLESSING) return;
-
-    var extra = data.extra || {};
-
-    // 本期领取额度耗尽（totalNum 已领 + left 剩余 = 本期总量）：触顶，本轮跳过。
-    // 不停监听——本期结束后活动会开下一轮，届时 left 回升、hasRed 转真，仍由本监听接管
-    if (extra.left <= 0) {
-        log.info('period claim limit reached, skip. left=%s;totalNum=%s', extra.left, extra.totalNum);
-        return;
-    }
-
-    // hasRed == false，表示这是一条领取完成的通知，可以忽略。
-    if (!extra.hasRed) {
-        return;
-    }
-
-    log.info('airdrop available push received, enqueue. id=%d;left=%d;pending=%d', data.id, extra.left, queue.length + 1);
-    queue.push(ev);
-    // 触发消费；若已有循环在跑则立即返回，由该循环兜底取走新入队事件
-    drain.consume().catch(function (err) {
-        log.warn('consume loop threw!', err);
-    });
-}
-
-/**
- * 单条拾取流程（drain 的 process）：查箱子坐标 → 派拾取行军。永不 reject
- * @param {object} ev 入队的 10904 push 事件
+ * 单条拾取流程（drain 的 process）：主链直接用坐标派兵；兜底链先 9595 查坐标再派。永不 reject
+ * @param {object} ev 入队事件 {src:'gift'|'activity', x?, y?}
  * @returns {Promise<void>}
  */
 async function pickUpFlow(ev) {
-    var pos = await queryBoxPosition(ev.data.id);
-    if (!aliveFn() || !pos) return;
-
-    var ret = await marchPickUp(pos);
+    purgeLedger();
     if (!aliveFn()) return;
-    if (ret.ok) {
-        log.info('pick up march started. x=%d;y=%d;code=%d', pos.x, pos.y, ret.code);
+    // 额度闸门（与入队闸双保险）：入队后、派兵前才收到 left<=0 的竞态靠这道拦住
+    if (claimLimitReached) return;
+
+    var key, endTime = 0;
+    if (ev.src === 'gift') {
+        key = posKey(ev.x, ev.y);
+        var rec = ledger.get(key);
+        endTime = (rec && rec.endTime) || 0;
+        if (rejected[key]) {
+            log.debug('pick up skip. reason=blacklisted; key=%s', key);
+            return;
+        }
     } else {
-        log.info('pick up march rejected. x=%d;y=%d;code=%d', pos.x, pos.y, ret.code);
+        // 兜底链：本簇新箱已由主链处理时，9595 查回的坐标会被下面的台账闸拦住（不派、不刷屏）
+        fallbackPending = false;
+        fallbackScanAt = Date.now();
+        if (!activityId) {
+            log.debug('find box skip. reason=no-activity-id');
+            return;
+        }
+        var pos = await queryBoxPosition();
+        if (!aliveFn() || !pos) return;
+        key = posKey(pos.x, pos.y);
+        ev.x = pos.x;
+        ev.y = pos.y;
     }
+
+    // 台账闸只拦兜底链（它无坐标、靠 9595 反查，可能查回主链已处理的箱）；
+    // 主链在入队时已记台账并过了闸，这里再查会把自己拦住
+    if (ev.src !== 'gift' && seenPos(key)) {
+        log.debug('pick up skip. reason=already-handled; key=%s;src=%s', key, ev.src);
+        return;
+    }
+
+    markLedger(key, endTime, true);
+    var ret = await marchPickUp(ev.x, ev.y);
+    if (!aliveFn()) return;
+
+    if (ret.ok) {
+        log.info('pick up march started. key=%s;src=%s;code=%d', key, ev.src, ret.code);
+        delete rejectStreak[key];
+        return;
+    }
+    log.info('pick up march rejected. key=%s;src=%s;reason=code-%d;streak=%d',
+        key, ev.src, ret.code, bumpReject(key));
 }
 
 /**
- * 查可领取的空投箱坐标（游戏 onClickTitanBlessing 同款请求，见 泰坦藏宝图资料整理.md）。
+ * 被拒计数：达阈值即拉黑本会话不再重派（箱消失或 TTL 到期时随台账一起解除）
+ * @param {string} key "x,y"
+ * @returns {number} 当前连续被拒次数
+ */
+function bumpReject(key) {
+    var n = (rejectStreak[key] || 0) + 1;
+    rejectStreak[key] = n;
+    if (n >= REJECT_STREAK_BLACKLIST) {
+        rejected[key] = Date.now();
+        log.info('coordinate blacklisted for this session. key=%s;streak=%d', key, n);
+    }
+    return n;
+}
+
+/**
+ * 查可领取的空投箱坐标（兜底链专用；游戏 onClickTitanBlessing 同款请求，见 泰坦藏宝图资料整理.md）。
  * 永不 reject：发送异常 / 无箱子都返回 null。
  * 无箱子口径：s!=0，或 s=0 但 data={x:0,y:0}
- * @param {number} activityId push 载荷里的活动 id
- * @returns {Promise<object|null>} {x,y} 或 null
+ * @returns {Promise<object|null>} {x,y,serverId} 或 null
  */
-async function queryBoxPosition(activityId) {
+async function queryBoxPosition() {
     try {
         var ret = await net.sendPBV2(CMD_HERO_EQUIP_WISH_FIND_BOX, { activityId: activityId });
         var pos = ret.data;
         if (!ret.ok || !pos || (pos.x === 0 && pos.y === 0)) {
-            log.debug('no box to receive. code=%d', ret.code);
+            log.debug('find box empty. reason=no-box; activityId=%d;code=%d', activityId, ret.code);
             return null;
         }
-        log.info('box found. x=%d;y=%d', pos.x, pos.y);
+        log.debug('box found. x=%d;y=%d;serverId=%s', pos.x, pos.y, pos.serverId);
         return pos;
     } catch (err) {
         log.warn('query box error!', err);
@@ -167,15 +458,16 @@ async function queryBoxPosition(activityId) {
 
 /**
  * 派拾取行军。永不 reject：发送异常回落到 CODE_NOT_SENT 的哨兵 Ret
- * @param {object} pos 箱子坐标 {x,y}
+ * @param {number} x 箱子坐标
+ * @param {number} y 箱子坐标
  * @returns {Promise<Ret>} code=902 状态码
  */
-async function marchPickUp(pos) {
+async function marchPickUp(x, y) {
     try {
         var ret = await net.send(CMD_MARCH_WORLD_POINT, {
             marchType: MARCH_TYPE_TITAN_BLESSING_GIFT,
-            x: pos.x,
-            y: pos.y,
+            x: x,
+            y: y,
             armyList: [],
             armyListNew: [],
             heroList: [],
@@ -184,7 +476,7 @@ async function marchPickUp(pos) {
         });
         return ret;
     } catch (err) {
-        log.warn('march error! x=%d;y=%d', pos.x, pos.y, err);
+        log.warn('march error! x=%d;y=%d', x, y, err);
         return net.Ret.from(CODE_NOT_SENT, null);
     }
 }
@@ -221,14 +513,29 @@ function install(ctx) {
 }
 
 /**
- * 运行：挂 10904 监听。不补查历史推送——装上之前的箱子等下一条推送或手动点游戏按钮。
+ * 运行：挂 13226（主链）+ 10904（兜底）+ 13227/13228（到账日志与台账清理）监听。
+ * 不做启动补查：9595 需要 activityId（只从 10904 载荷锁存），而联盟已有箱必然伴随 hasRed=true 的活动推送，
+ * 兜底链会在那条推送上自动跑一次——所覆盖的正是「脚本启动前联盟已有的箱」。
  * reactor pause 会自动摘除此处登记的触发器。
  * @param {object} ctx reactor 上下文
  */
 function run(ctx) {
     ctxRef = ctx;
+    ctx.on.push(CMD_PUSH_GIFT, onGiftPush);
     ctx.on.push(CMD_PUSH_ONE_ACTIVITY, onActivityPush);
-    log.info('started, listening push cmd=%d.', CMD_PUSH_ONE_ACTIVITY);
+    ctx.on.push(CMD_PUSH_REWARD_GET, onRewardPush);
+    ctx.on.push(CMD_PUSH_GIFT_CLEAR, onGiftClearPush);
+
+    ledger = new Map();
+    pendingKeys = [];
+    rejectStreak = {};
+    rejected = {};
+    fallbackPending = false;
+    fallbackScanAt = 0;
+    claimLimitReached = false;
+
+    log.info('started, listening push cmd=%d(main);%d(fallback);%d;%d(ledger).',
+        CMD_PUSH_GIFT, CMD_PUSH_ONE_ACTIVITY, CMD_PUSH_REWARD_GET, CMD_PUSH_GIFT_CLEAR);
 }
 
 /**

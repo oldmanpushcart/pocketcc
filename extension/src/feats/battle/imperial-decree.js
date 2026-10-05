@@ -273,7 +273,7 @@ async function dispatch(chat, order) {
     }
 
     // 2) 预设部队造行军数据（Battle 预设号 1 起，内部减 1）
-    var marchData = new Battle().plan().preset(order.preset).build();
+    var marchData = new Battle().plan().preset(order.preset).adjust().build();
     if (!marchData.armyListNew.length) {
         log.info('preset empty, reject. preset=%d;x=%d;y=%d', order.preset, order.x, order.y);
         reply(chat, order, '预设 #' + order.preset + ' 无兵可派');

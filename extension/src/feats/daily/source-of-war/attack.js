@@ -530,7 +530,7 @@ export class AttackFlow {
         if (this.net.isSending(CMD_MARCH_WORLD_POINT)) return;
 
         // 预设部队 → 5 字段行军数据（armyListNew/heroList/trapList/formationV2/extraArmy），已按可派额度过滤
-        var plan = new Battle().plan().preset(preset).build();
+        var plan = new Battle().plan().preset(preset).adjust().build();
         if (!plan.armyListNew.length) {
             log.debug('preset %d has no dispatchable army, skip. bossId=%d', preset, boss.bossId);
             return;

@@ -23,7 +23,7 @@ const log = createLog('MINE-CAVE');
 const CODE_NOT_SENT = -1; // ask 未真正发出（同号在途/发送异常）的伪码
 
 // ─────────── 共享运行时 ───────────
-var MCFG = { rules: [] };   // 采集规则：每条 {type,level,star,enabled}；enabled=false 视为草稿，不匹配
+var MCFG = { rules: [] };   // 采集规则：每条 {type,level,star}；行存在即生效（已无行级 enabled 草稿门）
 var net, data, ctxRef = null;
 var installed = false;
 
@@ -142,7 +142,6 @@ reactor.register({
                 type: Math.max(0, r.type | 0),
                 level: Math.max(0, r.level | 0),
                 star: Math.max(0, r.star | 0),
-                enabled: !!r.enabled,
             });
         }
         return { rules: rules };

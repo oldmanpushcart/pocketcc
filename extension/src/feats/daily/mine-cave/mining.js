@@ -56,7 +56,7 @@ const PUSH_DEBOUNCE_MS = 3000;
  * @property {function(number,object,string):Promise<{ok:boolean,code:number,data:*}>} ask 统一发包壳
  * @property {function(number,number):number} cfgSeg 读 dataConfig 分段值
  * @property {function():boolean} alive 当前是否应继续运行
- * @property {function():Array<{type:number,level:number,star:number,enabled:boolean}>} getRules 当前采集规则集
+ * @property {function():Array<{type:number,level:number,star:number}>} getRules 当前采集规则集（行存在即生效）
  * @property {function():*} getData DataCenter.DATA 持有者
  * @property {function():boolean} inAlliance 是否结在同盟
  * @property {function():number} myUid 自己 UID（数字）
