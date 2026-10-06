@@ -42,11 +42,12 @@
  *   日常任务形态：面板只出启用开关，无字段无配置（fields=[]，toModuleCfg 返回空）。
  *
  * 生命周期由 reactor 托管：install/run 两钩子（日常任务无配置可推），scenes 限 Home/NWorldMap，战斗模式暂停；
- *   单一在飞闸门 ticking 防重入；pause 后 alive()=false 让定时器与在飞流程自然退出。
+ *   调度交给 core/cycle.js：单飞闸门、推触合并、异常 fallback 重排均内置；pause 后 alive()=false 让 cycle 自然停摆。
  */
 import { createLog } from '../../core/log.js';
 import { l10n, gameData } from '../../core/game-api.js';
 import { reactor } from '../../core/reactor.js';
+import { createCycle } from '../../core/cycle.js';
 
 /** @type {ReturnType<createLog>} 模块日志器（tag=ALLIANCE-SCIENCE） */
 const log = createLog('ALLIANCE-SCIENCE');
@@ -115,12 +116,6 @@ var net;
 /** @type {object|null} reactor 注入的上下文；alive() 反映运行态，pause 后置否让在飞流程自然退出 */
 var ctxRef = null;
 
-/** @type {boolean} 单轮检查在飞闸门（含 1144/1067 的 await），防并发进入 */
-var ticking = false;
-
-/** @type {number|null} 排程定时器（回点唤醒 / 慢查 / 巡检共用一个） */
-var tickTimer = null;
-
 /** @type {number} 连续被服务器拒绝次数，达 3 次后退到巡检档；成功即清零 */
 var rejectStreak = 0;
 
@@ -158,37 +153,38 @@ function aliveFn() {
 
 // ── 排程 ──────────────────────────────────────────────────────────────
 /**
- * 排下一次检查：刚捐过短隔续查 > 任一池有余量慢查 > 两池回点精准唤醒 > 巡检档。永不静默停摆。
- * @param {number} [delayMs] 显式延迟（毫秒）；缺省据本轮快照推导
+ * 下一拍择时：刚捐过短隔续查 > 任一池有余量慢查 > 两池回点精准唤醒 > 巡检档。返回值交给 cycle 排下次。
  * @param {object} [snap] 本轮 {donated, sciEnergy, relEnergy} 判定结果（缺省按闲档）
+ * @returns {number} 毫秒
  */
-function scheduleNext(delayMs, snap) {
-    if (!aliveFn()) return;
-    if (tickTimer) clearTimeout(tickTimer);
-
-    var ms = delayMs;
-    if (ms == null) {
-        var pools = [];
-        if (snap) {
-            if (snap.sciEnergy) pools.push({ e: snap.sciEnergy, fallbackSec: SCIENCE_RECOVER_SEC });
-            if (snap.relEnergy) pools.push({ e: snap.relEnergy, fallbackSec: RELIC_RECOVER_SEC });
-        }
-        if (snap && snap.donated) ms = CHAIN_GAP_MS;
-        else if (pools.some((x) => x.e.point > 0)) ms = rejectStreak >= 3 ? IDLE_TICK_MS : BUSY_TICK_MS;
-        else if (pools.length) {
-            // 两池都空：按较早的回点唤醒；getter 没给秒数的池按各自整周期兜底，防 0 延迟热循环
-            ms = Math.min.apply(null, pools.map((x) => (x.e.nextRecoverSec > 0 ? x.e.nextRecoverSec : x.fallbackSec) * 1000)) + RECOVER_BUFFER_MS;
-        } else ms = rejectStreak >= 3 ? IDLE_TICK_MS * 2 : IDLE_TICK_MS;
-        // 回点唤醒封顶到巡检档倍数，避免超长定时器（离线错过 push 10021 也由它自愈）
-        if (ms > IDLE_TICK_MS * 8) ms = IDLE_TICK_MS * 8;
+function nextTickDelay(snap) {
+    var ms;
+    var pools = [];
+    if (snap) {
+        if (snap.sciEnergy) pools.push({ e: snap.sciEnergy, fallbackSec: SCIENCE_RECOVER_SEC });
+        if (snap.relEnergy) pools.push({ e: snap.relEnergy, fallbackSec: RELIC_RECOVER_SEC });
     }
-
+    if (snap && snap.donated) ms = CHAIN_GAP_MS;
+    else if (pools.some((x) => x.e.point > 0)) ms = rejectStreak >= 3 ? IDLE_TICK_MS : BUSY_TICK_MS;
+    else if (pools.length) {
+        // 两池都空：按较早的回点唤醒；getter 没给秒数的池按各自整周期兜底，防 0 延迟热循环
+        ms = Math.min.apply(null, pools.map((x) => (x.e.nextRecoverSec > 0 ? x.e.nextRecoverSec : x.fallbackSec) * 1000)) + RECOVER_BUFFER_MS;
+    } else ms = rejectStreak >= 3 ? IDLE_TICK_MS * 2 : IDLE_TICK_MS;
+    // 回点唤醒封顶到巡检档倍数，避免超长定时器（离线错过 push 10021 也由它自愈）
+    if (ms > IDLE_TICK_MS * 8) ms = IDLE_TICK_MS * 8;
     log.debug('next check in %d s', Math.round(ms / 1000));
-    tickTimer = setTimeout(function () {
-        tickTimer = null;
-        if (aliveFn()) triggerTick();
-    }, Math.max(0, ms));
+    return ms;
 }
+
+/** cycle 单轮：跑一次 tickBody → 若期间攒下推触就立即补扫 → 否则按 snap 择下拍。 */
+async function cycleRun() {
+    var snap = await tickBody();
+    if (!aliveFn()) return 0;
+    if (cycle.pending) return 0;
+    return nextTickDelay(snap || undefined);
+}
+
+const cycle = createCycle({ log: log, alive: aliveFn, run: cycleRun, fallback: IDLE_TICK_MS });
 
 // ── 发包 ──────────────────────────────────────────────────────────────
 /**
@@ -251,33 +247,6 @@ async function sendRaw(cmd, body) {
 }
 
 // ── 主流程 ────────────────────────────────────────────────────────────
-/**
- * 检查触发汇入口：run 点火 / 排程定时器 / push 10430 / push 10432 / push 10021 都走这里。在飞时不并发进入
- */
-function triggerTick() {
-    if (!aliveFn() || ticking) return;
-    tickOnce().catch(function (err) {
-        log.warn('tick threw.', err);
-    });
-}
-
-/**
- * 单轮：取本地快照 → 闸门逐条过 → 两条链路各发一程 → 排下一次。永不 reject。
- * 排程放在 finally：中途 return 的分支（不在盟/无目标/闸门未过）也必须重排，
- * 否则一次抖动就把功能静默钉死到下次面板改动。
- * @returns {Promise<void>}
- */
-async function tickOnce() {
-    ticking = true;
-    var snap = null;
-    try {
-        snap = await tickBody();
-    } finally {
-        ticking = false;
-        if (aliveFn()) scheduleNext(null, snap || undefined);
-    }
-}
-
 /**
  * 单轮主体：本地数据 → 荣誉闸 → 科技链 → 遗迹链。
  * @returns {Promise<object|null>} 排程线索 {donated, sciEnergy, relEnergy}；数据不可用返回 null（走闲档）
@@ -500,7 +469,6 @@ function install(ctx) {
  */
 function run(ctx) {
     ctxRef = ctx;
-    ticking = false;
     rejectStreak = 0;
     relicBanUntil = 0;
     log.info('started.');
@@ -513,7 +481,7 @@ function run(ctx) {
 
     // 能量池推送 10021：只在点数“回升”（自然回点）时唤醒捐赠。
     // 抓包实证：每捐一次会把 point 往下扣并同样推一条 10021（reason=alliance_donate/WONDER_DONATE_*），
-    // 一次捐光 10 点会连推 10 条递减——若不看方向逐条 triggerTick，就是“捐→被推→再捐”的自我反馈风暴。
+    // 一次捐光 10 点会连推 10 条递减——若不看方向逐条 cycle.kick，就是“捐→被推→再捐”的自我反馈风暴。
     // 捐赠额度只能靠回点产生，10430/10432（列表/荣誉变更）不新增额度，故不再订阅它们做轮询。
     ctx.on.push(CMD_PUSH_ENERGY, function (ev) {
         var d = ev && ev.data;
@@ -524,10 +492,10 @@ function run(ctx) {
         lastEnergyPoint[type] = pt;
         if (prev != null && pt <= prev) return;   // 持平/下降：非回升（多为消耗回执），忽略
         log.debug('push 10021 energy type=%s recovered (%s→%s), tick.', type, prev, pt);
-        triggerTick();
+        cycle.kick();
     });
 
-    scheduleNext(0);   // 首个 tick 立即跑：加载时多半已错过推送，本地态直接可用
+    cycle.kick();   // 首个 tick 立即跑：加载时多半已错过推送，本地态直接可用
 }
 
 /**

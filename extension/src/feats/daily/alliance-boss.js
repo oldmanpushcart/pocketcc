@@ -49,7 +49,7 @@
  *   攻打还需行军槽 >= 1、902/1161 不在途（NetMgr 按 cmd 频控，连发同 cmd 会被吞）。
  *
  * 生命周期由 reactor 托管：install/configure/run 三钩子，scenes 限 Home/NWorldMap，战斗模式暂停。
- *   单一在飞闸门 ticking 防重入；pause 后 alive()=false 让定时器与在飞流程自然退出，resume 重新排程。
+ *   单飞闸门 / 触发合并 / 择时重排收口到 core/cycle；pause 后 alive()=false 让 cycle 自然停摆，resume 重新 kick。
  *   合规：全程只读游戏数据 + 直发协议，不调用游戏的 Update* 改写本地态。
  */
 import { createLog } from '../../core/log.js';
@@ -61,6 +61,7 @@ import { reactor } from '../../core/reactor.js';
 import { Battle } from '../../core/battle.js';
 import { march } from '../../core/march.js';
 import { item } from '../../core/item.js';
+import { createCycle } from '../../core/cycle.js';
 
 /** @type {ReturnType<createLog>} 模块日志器（tag=ALLIANCE-BOSS） */
 const log = createLog('ALLIANCE-BOSS');
@@ -132,10 +133,7 @@ var dataCenter;
 /** @type {object|null} reactor 注入的上下文；alive() 反映运行态，pause 后置否让在飞流程自然退出 */
 var ctxRef = null;
 
-/** @type {boolean} 单轮检查在飞闸门（含 1160/1161/902 的 await），防并发进入 */
-var ticking = false;
-/** @type {number|null} 排程定时器（到点唤醒 / 慢查共用一个）；pause 后到点空转不再自重排 */
-var tickTimer = null;
+/** 检查单飞闸门 / 触发合并 / 排程定时器（到点唤醒 / 慢查共用）均收口到 core/cycle（见下方 cycle 实例）。 */
 /** @type {number} 连续冷启动补查（1160）失败次数，达 3 次后退到长间隔；查到即清零 */
 var coldMisses = 0;
 
@@ -412,27 +410,32 @@ function flipDelayMs() {
 }
 
 /**
- * 排下一次检查：有活可干走慢查档，状态翻转点精准到点唤醒，其余退到巡检档。永不静默停摆。
- * @param {number} [delayMs] 显式延迟（毫秒）；缺省据本地态推导
+ * 下一拍间隔：有活可干走慢查档；状态翻转点（summonTime/endTime）精准到点唤醒；
+ * 其余退到巡检档，连续冷启动补查失败达 3 次（coldMisses）退到更长冷启档。决策留 feat，交 cycle 择时。
+ * @returns {number} 毫秒
  */
-function scheduleNext(delayMs) {
-    if (!aliveFn()) return;
-    if (tickTimer) clearTimeout(tickTimer);
-
+function nextTickDelay() {
     var snap = gameData.allianceBoss();
-    var ms = delayMs;
-    if (ms == null) {
-        var working = (snap && snap.state === STATE.DONATING && hasDonateWork(snap.bossId))
-            || (snap && isAttackable(snap.state) && cfg.preset > 0 && !hasAttacked(snap.bossId));
-        ms = working ? BUSY_TICK_MS : (flipDelayMs() || (coldMisses >= 3 ? COLD_BACKOFF_MS : IDLE_TICK_MS));
-    }
-
+    var working = (snap && snap.state === STATE.DONATING && hasDonateWork(snap.bossId))
+        || (snap && isAttackable(snap.state) && cfg.preset > 0 && !hasAttacked(snap.bossId));
+    var ms = working ? BUSY_TICK_MS : (flipDelayMs() || (coldMisses >= 3 ? COLD_BACKOFF_MS : IDLE_TICK_MS));
     log.debug('next check in %d s', Math.round(ms / 1000));
-    tickTimer = setTimeout(function () {
-        tickTimer = null;
-        if (aliveFn()) triggerTick();
-    }, Math.max(0, ms));
+    return ms;
 }
+
+/**
+ * 单轮调和主体（core/cycle 承载单飞闸门 + 触发合并 + 绝不停摆）：跑一轮 tickBody → 返回下拍间隔。
+ * 在飞期间攒下的 push（cycle.pending）优先立即补扫（状态翻转是权威信号，不该等整轮询），否则按 nextTickDelay 择档。
+ * @returns {Promise<number>}
+ */
+async function cycleRun() {
+    await tickBody();
+    if (cycle.pending) return 0;
+    return nextTickDelay();
+}
+
+/** @type {{kick: function(), pending: boolean}} 调和循环驱动器（fallback 取 IDLE_TICK_MS，防异常停摆） */
+const cycle = createCycle({ log: log, alive: aliveFn, run: cycleRun, fallback: IDLE_TICK_MS });
 
 // ── 发包 ──────────────────────────────────────────────────────────────
 /**
@@ -520,33 +523,7 @@ async function sendDonate(count) {
 
 // ── 主流程 ────────────────────────────────────────────────────────────
 /**
- * 检查触发汇入口：run 点火 / 排程定时器 / push 10435 都走这里。在飞时不并发进入
- */
-function triggerTick() {
-    if (!aliveFn() || ticking) return;
-    tickOnce().catch(function (err) {
-        log.warn('tick threw.', err);
-    });
-}
-
-/**
- * 单轮：取本地态（未填充则补发 1160）→ 按 state 分流捐/打 → 排下一次。永不 reject。
- * 排程放在 finally：冷启动 1160 失配 / 在飞中被 pause 等提前 return 的分支也必须重排，
- * 否则一次抖动就把整个功能静默钉死到下次面板改动。
- * @returns {Promise<void>}
- */
-async function tickOnce() {
-    ticking = true;
-    try {
-        await tickBody();
-    } finally {
-        ticking = false;
-        if (aliveFn()) scheduleNext();
-    }
-}
-
-/**
- * 单轮主体：本地态 → 冷启动补查 → 捐/打分流。
+ * 单轮主体：本地态 → 冷启动补查 → 捐/打分流。永不 reject（cycle 另兜一层 fallback 防异常停摆）。
  * @returns {Promise<void>}
  */
 async function tickBody() {
@@ -777,13 +754,12 @@ function install(ctx) {
 }
 
 /**
- * 运行：复位在飞态 → 读回当日记账 → 订阅 push 10435 → 立即查一次（错过通知的补位）。
- * pause 后 alive()=false，定时器与在飞流程自然退出；resume 重新订阅并再查一轮。
+ * 运行：读回当日记账 → 订阅 push 10435 → 立即查一次（错过通知的补位，后续由 cycle 择时重排）。
+ * pause 后 alive()=false，cycle 自然停摆；resume 重新订阅并再 kick 一轮。
  * @param {object} ctx reactor 上下文
  */
 async function run(ctx) {
     ctxRef = ctx;
-    ticking = false;
     log.info('started;marchType=%d;donateRules=%d;preset=%d', MARCH_TYPE, (cfg.donateRules || []).length, cfg.preset);
 
     await loadDaily();
@@ -792,10 +768,10 @@ async function run(ctx) {
     // pause 已摘掉上轮的订阅，这里每次激活重挂一次（不设幂等标记，否则 resume 后收不到通知）
     ctx.on.push(CMD_PUSH_ALLIANCE_BOSS, function (ev) {
         log.debug('push 10435 arrived. state=%s', ev && ev.data && ev.data.allianceBoss && ev.data.allianceBoss.state);
-        triggerTick();
+        cycle.kick();
     });
 
-    scheduleNext(0);   // 首个 tick 立即跑：加载时多半已错过捐献/开打通知
+    cycle.kick();   // 首个 tick 立即跑：加载时多半已错过捐献/开打通知
 }
 
 /**

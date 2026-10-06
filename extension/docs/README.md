@@ -14,8 +14,11 @@
 | [core/battle.md](core/battle.md) | `src/core/battle.js` | 行军发包载荷构造（三场景：快速/普通/活动派兵） |
 | [core/march.md](core/march.md) | `src/core/march.js` | 行军统一抽象（取列表/名额/发撤/生命周期），归一 8 个 feat |
 | [core/item.md](core/item.md) | `src/core/item.js` | 物品查询/标识薄工具层（持有量/中文名/奖励解析），收口 4 个 feat |
+| [core/cycle.md](core/cycle.md) | `src/core/cycle.js` | A 原语：电平调和循环驱动器（单飞/合并/绝不停摆），已收口 P0 四 feat |
 
 （规划中：core/player.md——后续同类 API 改动时补。）
+
+> 另见：[`feat-控制模式归类.md`](feat-控制模式归类.md) —— 非单篇 API，而是全 feat「控制结构选型」的单一真相（A/B/C/E 四族归类 + 30 秒决策树 + 逐条重构顺序）。
 
 ## 统一模板（八节）
 

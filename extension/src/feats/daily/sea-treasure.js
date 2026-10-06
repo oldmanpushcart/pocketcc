@@ -14,21 +14,22 @@
  *
  * 生产端三个触发源（同领域夺宝口径）：
  *   1) 推送 10912；2) run() 启动即主动扫一次；3) 兜底定时（active/idle 两档，连续空扫降频）防漏推。
- *   触发汇入 triggerScan：扫描/消费在飞时只置 scanPending，本轮结束后补扫一次（多条推送合并成一次）。
+ *   触发一律汇入 cycle.kick（core/cycle 调和循环）：一轮（生产+消费）在飞时只置 pending，本轮结束后补扫一次（多条推送合并成一次）。
  *   生产 doScan：找活动 → 拉 3756 → 过滤可攻打 boss（myLeftAttackTimes>0 且未过期）→ 整批替换 queue → 交消费。
- *   消费 consume：consuming 闸门保证单循环，逐条 shift → attackFlow 派 902 → 每条间 sleep(marchInterval)；排空后 afterConsume 重排。
+ *   消费 consume（并入 cycleRun 的一轮）：逐条 shift → attackFlow 派 902 → 每条间 sleep(marchInterval)；排空即结束本轮，由 cycle 按 nextScanInterval 重排。
  *   出击前闸门 hasMarchAtTarget：同一目标（x,y）同一时间只能有一个在途行军，故派 902 前查我的行军列表，
  *     目标坐标已被一条 marchType=178 行军占用时，即便 myLeftAttackTimes 仍有数值也本轮先放过，等这条行军结束再由下轮补打。
  *   零部队行军不占用全局行军队列上限，故无名额闸门（不引入 canMarch）；仅逐条间限流防 902 被服务器限流。
  *
  * 生命周期由 reactor 托管：install/configure/run 三个钩子，scenes 门控限定 Home/NWorldMap。
- *   consume 有"scanPending 补扫 + afterConsume 重排"的独有逻辑，不套 createDrain，原样保留在本文件。
- *   兜底定时器是功能内部生产逻辑，pause 后 alive()=false 自然停摆，resume 时 run 复位状态并重新点火。
+ *   consume 逐条派遣的限流逻辑（每条间 sleep marchInterval）不套 createDrain，作为 cycleRun 一轮的后半段原样保留在本文件。
+ *   兜底定时器（active/idle 两档）由 cycle 承载，pause 后 alive()=false 自然停摆，resume 时 run 复位状态并重新点火。
  */
 import { createLog } from '../../core/log.js';
 import { game } from '../../core/game.js';
 import { reactor } from '../../core/reactor.js';
 import { march } from '../../core/march.js';
+import { createCycle } from '../../core/cycle.js';
 
 /** @type {ReturnType<createLog>} 模块日志器（tag=SEA-TREASURE） */
 const log = createLog('SEA-TREASURE');
@@ -99,14 +100,10 @@ var ctxRef = null;
 
 /** @type {object[]} 本轮扫描过滤出的可攻打 boss（[{x,y,bossId,left}]），consume 逐条 shift */
 var queue = [];
-/** @type {boolean} 消费闸门：同时只有一个 consume 循环 */
-var consuming = false;
-/** @type {boolean} 生产闸门：同时只有一个 doScan 在飞（含 3756 await） */
-var scanning = false;
-/** @type {boolean} 扫描/消费在飞时来了新触发（推送/run），置位；本轮结束后补扫一次 */
-var scanPending = false;
-/** @type {number|null} 兜底定时器；pause 后到点空转不再自重排 */
-var scanTimer = null;
+/**
+ * 消费/生产在飞闸门与兜底定时器均收口到 core/cycle（见下方 cycle 实例）：
+ * consume 不再是独立循环入口（并入 cycleRun 的一轮），故 consuming/scanning/scanPending/scanTimer 随之消失。
+ */
 /** @type {number} 连续空扫计数：发现 boss 即清零，达到 EMPTY_STREAK_IDLE 转 idle 间隔 */
 var emptyStreak = 0;
 
@@ -131,41 +128,28 @@ function sleep(ms) {
 }
 
 /**
- * 兜底定时器武装器：自重排一次 triggerScan；pause 后 alive()=false，到点空转不再自重排
- * @param {number} delay 延迟(毫秒)
+ * 单轮调和主体（core/cycle 承载单飞闸门 + 触发合并 + 绝不停摆）：生产 doScan → 消费 consume → 返回下拍间隔。
+ * 决策仍归本 feat：在飞期间攒下触发（cycle.pending）优先立即补扫，否则按 emptyStreak 选 active/idle 两档。
+ * @returns {Promise<number>}
  */
-function scheduleScan(delay) {
-    if (!aliveFn()) return;
-    if (scanTimer) clearTimeout(scanTimer);
-    scanTimer = setTimeout(function () {
-        scanTimer = null;
-        if (aliveFn()) triggerScan();
-    }, Math.max(0, delay));
+async function cycleRun() {
+    await doScan();
+    if (!aliveFn()) return 0;   // pause 中途：consume 不再进入，cycle 在 alive 检查处自然停摆
+    await consume();
+    if (cycle.pending) return 0;
+    return nextScanInterval();
 }
 
-/**
- * 扫描触发汇入口：推送 / run / 兜底定时都走这里。
- * 扫描或消费在飞时不并发进入，只置 scanPending，由本轮 afterConsume 补扫（多条触发合并成一次）
- */
-function triggerScan() {
-    if (!aliveFn()) return;
-    if (scanning || consuming) {
-        scanPending = true;
-        return;
-    }
-    doScan().catch(function (err) {
-        log.warn('scan threw.', err);
-    });
-}
+/** @type {{kick: function(), pending: boolean}} 调和循环驱动器（fallback 取 active 档，防异常停摆） */
+const cycle = createCycle({ log: log, alive: aliveFn, run: cycleRun, fallback: cfg.activeScanInterval });
 
 /**
  * 生产端：找活动 → 拉 3756 → 过滤可攻打 boss → 整批替换 queue → 交消费。永不 reject。
  * @returns {Promise<void>}
  */
 async function doScan() {
-    scanning = true;
     try {
-        // 活动并未开启：清空队列，交 afterConsume 排兜底。算一次空扫（没 boss 可检测）
+        // 活动并未开启：清空队列，交下拍兜底。算一次空扫（没 boss 可检测）
         var activity = getSeaTreasureActivity();
         if (!activity) {
             log.debug('no activity found.');
@@ -193,41 +177,25 @@ async function doScan() {
         log.warn('scan error.', err);
         queue.length = 0;
         emptyStreak++;
-    } finally {
-        scanning = false;
     }
-
-    if (!aliveFn()) return;
-    // 即便队列空也进 consume：它空转一圈后由 afterConsume 统一重排，触发源单一
-    consume().catch(function (err) {
-        log.warn('consume loop threw.', err);
-    });
 }
 
 /**
- * 消费端：串行消费队列，consuming 闸门防重入；每条之间休眠 marchInterval（队列空则不空等）。永不 reject。
+ * 消费端（作为 cycleRun 一轮的后半段）：串行消费队列，每条之间休眠 marchInterval（队列空则不空等）。
  * @returns {Promise<void>}
  */
 async function consume() {
-    if (consuming) return;
-    consuming = true;
-    try {
-        while (queue.length && aliveFn()) {
-            var boss = queue.shift();
-            try {
-                await attackFlow(boss);
-            } catch (err) {
-                log.warn('attack flow threw.', err);
-            }
-            if (queue.length && aliveFn()) {
-                await sleep(cfg.marchInterval);
-            }
+    while (queue.length && aliveFn()) {
+        var boss = queue.shift();
+        try {
+            await attackFlow(boss);
+        } catch (err) {
+            log.warn('attack flow threw.', err);
         }
-    } finally {
-        consuming = false;
+        if (queue.length && aliveFn()) {
+            await sleep(cfg.marchInterval);
+        }
     }
-    if (!aliveFn()) return;
-    afterConsume();
 }
 
 /**
@@ -237,18 +205,6 @@ async function consume() {
  */
 function nextScanInterval() {
     return emptyStreak >= EMPTY_STREAK_IDLE ? cfg.idleScanInterval : cfg.activeScanInterval;
-}
-
-/**
- * 一轮消费收尾：在飞期间攒下的触发（scanPending）优先补扫，否则武装兜底定时
- */
-function afterConsume() {
-    if (scanPending) {
-        scanPending = false;
-        triggerScan();
-        return;
-    }
-    scheduleScan(nextScanInterval());
 }
 
 /**
@@ -272,7 +228,7 @@ function onActivityExtraPush(ev) {
     }
 
     log.info('activity extra push received, trigger scan. aid=%d', aid);
-    triggerScan();
+    cycle.kick();
 }
 
 /**
@@ -435,20 +391,17 @@ function install(ctx) {
 
 /**
  * 运行：复位调度状态，挂 10912 监听，主动扫一次（之后由推送 / 兜底定时驱动）。
- * reactor pause 置 alive=false 后定时器自然停摆；resume 重新复位点火（scheduleScan 先 clearTimeout 单定时器，不会重复）。
+ * reactor pause 置 alive=false 后定时器自然停摆；resume 重新复位点火（cycle.kick 内部先清旧定时器，不会重复）。
  * @param {object} ctx reactor 上下文
  */
 function run(ctx) {
     ctxRef = ctx;
-    consuming = false;
-    scanning = false;
-    scanPending = false;
     emptyStreak = 0;
     queue = [];
     ctx.on.push(CMD_PUSH_ONE_ACTIVITY_EXTRA, onActivityExtraPush);
     log.info('started, listening push cmd=%d.', CMD_PUSH_ONE_ACTIVITY_EXTRA);
-    // 启动即主动查一次；本轮结束后 afterConsume 会武装兜底定时
-    triggerScan();
+    // 启动即主动查一次；本轮结束后 cycle 会武装兜底定时
+    cycle.kick();
 }
 
 /**

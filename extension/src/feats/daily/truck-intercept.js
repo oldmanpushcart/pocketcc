@@ -44,6 +44,7 @@ import { reactor } from '../../core/reactor.js';
 import { Battle } from '../../core/battle.js';
 import { l10n, gameData } from '../../core/game-api.js';
 import { item } from '../../core/item.js';
+import { createCycle } from '../../core/cycle.js';
 
 /** @type {ReturnType<createLog>} 模块日志器（tag=TRUCK-INTERCEPT） */
 const log = createLog('TRUCK-INTERCEPT');
@@ -201,14 +202,6 @@ var daily = { used: 0, maxDaily: 0, sameTruckMax: 0, openLevel: 0, refreshMs: 0 
 
 /** @type {object[]} 本轮刷出的可打候选（{view,key,rank,itemId,itemName,lootMax,failMax}），consume 逐条 shift */
 var queue = [];
-/** @type {boolean} 刷列表在飞闸门（含 6473/6474/6486 await） */
-var scanning = false;
-/** @type {boolean} 消费闸门：同时只有一个 consume 循环 */
-var consuming = false;
-/** @type {boolean} 刷/消在飞时来了新触发，置位；本轮结束后补刷一次 */
-var scanPending = false;
-/** @type {number|null} 兜底/翻轮排程定时器 */
-var scanTimer = null;
 /** @type {number} 上次 6474 发出时刻（本地 ms），reloadGap 节流 */
 var lastReloadAt = 0;
 /** @type {boolean} 列表是否已开过一次（决定首发 6473 还是后续 6474） */
@@ -319,12 +312,13 @@ function configure(partial) {
     if (nextCap !== refreshCap || nextPreset !== refreshPreset) {
         refreshCap = nextCap; refreshPreset = nextPreset;
         slotCounts = allocateSlots(REFRESH_PRESETS[refreshPreset], refreshCap);
-        // 时刻表变了：已排的兜底定时器按新表重排（格点幂等、不补刷），不让旧间隔挂到本轮结束才生效
-        if (scanTimer && aliveFn()) scheduleScan(planNextRefresh());
+        // 时刻表变了：kick 立即跑一轮落到新表（睡眠中被打断、在飞时合并为 pending，本轮尾返 0 补扫）；
+        // 格点仍幂等——nextGridPointMs 只取未来格点、不回填已错过点，这次即时刷多出的一次往返由 reloadGap 节流 + refreshUsed≥cap 总闸封顶。
+        if (aliveFn()) cycle.kick();
     }
     rankMap = new Map();
     for (var i = 0; i < order.length; i++) rankMap.set(order[i], i);
-    if (threatOn && aliveFn() && (presetIdx !== prevPreset || !my.ready)) triggerScan();   // 换攻击预设/尚未探到：唤醒一轮刷新展示快照（配额耗尽也能探）
+    if (threatOn && (presetIdx !== prevPreset || !my.ready)) cycle.kick();   // 换攻击预设/尚未探到：唤醒一轮刷新展示快照（配额耗尽也能探）
     prevPreset = presetIdx;
     bus.emit('ui.refresh');   // 阈值/开关变更后即时重算面板“可打上限”展示
 }
@@ -744,7 +738,6 @@ async function lootFlow(cand) {
  * @returns {Promise<void>}
  */
 async function doScan() {
-    scanning = true;
     try {
         await fetchRefresh();
         if (!aliveFn()) return;
@@ -779,11 +772,7 @@ async function doScan() {
     } catch (err) {
         log.warn('scan error.', err);
         queue.length = 0;
-    } finally {
-        scanning = false;
     }
-    if (!aliveFn()) return;
-    consume().catch(function (err) { log.warn('consume loop threw.', err); });
 }
 
 /**
@@ -850,32 +839,24 @@ async function refineThreat(cands) {
 
 // ── 消费 ────────────────────────────────────────────────────────────────
 /**
- * 串行消费候选队列：逐条 lootFlow（内部打到不能打为止），consuming 闸门防重入。永不 reject。
+ * 串行消费候选队列：逐条 lootFlow（内部打到不能打为止）。重入防护交给 cycle 内部单飞闸门（在飞时外部 kick 只合并为 pending，不会并发进入本函数）。永不 reject。
  * @returns {Promise<void>}
  */
 async function consume() {
-    if (consuming) return;
-    consuming = true;
     var rejectStreak = 0;
-    try {
-        while (queue.length && aliveFn()) {
-            if (dailyLeft() <= 0) { log.debug('daily loot exhausted, drain stopped.'); queue.length = 0; break; }
-            var cand = queue.shift();
-            var res;
-            try { res = await lootFlow(cand); } catch (err) { log.warn('loot flow threw.', err); }
-            // 连续两台不同车被服务器硬拒（非在途哨兵）→ 判为全局闸门（配额耗尽/功能未开/系统繁忙），
-            // 立即清空本轮队列停摆，避免逐车撞限额并把当天所有目标车误拉黑（对齐撞限额刷屏既有教训）。
-            if (res === 'blacklisted') {
-                if (++rejectStreak >= 2) { log.info('consecutive server rejects (%d), likely a global gate; halt queue this round.', rejectStreak); queue.length = 0; break; }
-            } else {
-                rejectStreak = 0;
-            }
+    while (queue.length && aliveFn()) {
+        if (dailyLeft() <= 0) { log.debug('daily loot exhausted, drain stopped.'); queue.length = 0; break; }
+        var cand = queue.shift();
+        var res;
+        try { res = await lootFlow(cand); } catch (err) { log.warn('loot flow threw.', err); }
+        // 连续两台不同车被服务器硬拒（非在途哨兵）→ 判为全局闸门（配额耗尽/功能未开/系统繁忙），
+        // 立即清空本轮队列停摆，避免逐车撞限额并把当天所有目标车误拉黑（对齐撞限额刷屏既有教训）。
+        if (res === 'blacklisted') {
+            if (++rejectStreak >= 2) { log.info('consecutive server rejects (%d), likely a global gate; halt queue this round.', rejectStreak); queue.length = 0; break; }
+        } else {
+            rejectStreak = 0;
         }
-    } finally {
-        consuming = false;
     }
-    if (!aliveFn()) return;
-    try { afterConsume(); } catch (err) { log.warn('afterConsume threw.', err); scheduleScan(cfg.idleRefresh); }
 }
 
 /**
@@ -987,34 +968,20 @@ function planNextRefresh() {
 }
 
 /**
- * 一轮消费收尾：在飞攒下的触发（scanPending）优先补刷，否则武装兜底定时
+ * cycle 单轮：doScan → consume → 若期间攒下推触就立即补扫，否则按时刻表 planNextRefresh 择下拍。
+ * doScan/consume 内部已自吞异常；cycle 另兜一层 fallback(activeRefresh) 作为停摆护栏。
+ * @returns {Promise<number>} 下拍 delay（毫秒）；0 = 立即再跑（alive=false 或 pending 补扫）。
  */
-function afterConsume() {
-    if (scanPending) { scanPending = false; triggerScan(); return; }
-    scheduleScan(planNextRefresh());
+async function cycleRun() {
+    await doScan();
+    if (!aliveFn()) return 0;
+    await consume();
+    if (!aliveFn()) return 0;
+    if (cycle.pending) return 0;
+    return planNextRefresh();
 }
 
-/**
- * 兜底定时器武装器：自重排一次 triggerScan；pause 后 alive()=false，到点空转不再自重排
- * @param {number} delay
- */
-function scheduleScan(delay) {
-    if (!aliveFn()) return;
-    if (scanTimer) clearTimeout(scanTimer);
-    scanTimer = setTimeout(function () {
-        scanTimer = null;
-        if (aliveFn()) triggerScan();
-    }, Math.max(1000, delay));
-}
-
-/**
- * 刷新触发汇入口：run 点火 / 21551 push / 兜底定时都走这里。在飞时不并发进入，只置 scanPending。
- */
-function triggerScan() {
-    if (!aliveFn()) return;
-    if (scanning || consuming) { scanPending = true; return; }
-    doScan().catch(function (err) { log.warn('scan threw.', err); });
-}
+const cycle = createCycle({ log: log, alive: aliveFn, run: cycleRun, fallback: cfg.activeRefresh });
 
 /**
  * 21551 推送入口：同步配额；若从「耗尽」恢复到有次数则提前唤醒刷列表。listener 永不 throw。
@@ -1029,7 +996,7 @@ function onRefreshPush(ev) {
     if (!d || typeof d !== 'object') return;
     var before = dailyLeft();
     applyRefresh(d);
-    if (before <= 0 && dailyLeft() > 0) { log.info('loot quota restored by push, wake scan.'); triggerScan(); }
+    if (before <= 0 && dailyLeft() > 0) { log.info('loot quota restored by push, wake scan.'); cycle.kick(); }
 }
 
 // ── 生命周期 ─────────────────────────────────────────────────────────────
@@ -1047,17 +1014,15 @@ function install(ctx) {
 }
 
 /**
- * 运行：复位在飞态与兜底定时器 → 挂 21551 push 订阅 → 读回当日拉黑 → 点火即刷一轮 → 后续由 afterConsume 排兜底/翻轮。
+ * 运行：复位列表开态与重随机时间戳 → 挂 21551 push 订阅 → 读回当日拉黑 → 点火即刷一轮 → 后续由 cycle 根据 planNextRefresh 择下拍。
  * @param {object} ctx
  */
 function run(ctx) {
     ctxRef = ctx;
-    scanning = false; consuming = false; scanPending = false;
     listOpened = false; lastReloadAt = 0;
-    if (scanTimer) { clearTimeout(scanTimer); scanTimer = null; }   // 复位上轮排的兜底定时器，防 resume 后残留定时器多刷一轮误判空刷
     ctx.on.push(CMD_REFRESH_PUSH, onRefreshPush);   // 订阅须挂 run：pause 会统一摘 triggers，install 只跑一次不重挂
     log.info('started.');
-    Promise.all([loadBlocked(), loadStats()]).then(function () { if (aliveFn()) triggerScan(); });
+    Promise.all([loadBlocked(), loadStats()]).then(function () { if (aliveFn()) cycle.kick(); });
 }
 
 /**

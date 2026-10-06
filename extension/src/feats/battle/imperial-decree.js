@@ -289,9 +289,10 @@ async function dispatch(chat, order) {
         return;
     }
 
-    // 4) marchType：pointType 基础值 + BOSS 运行时枚举分流 + 跨服漂移换算
+    // 4) marchType：pointType 基础值 + BOSS 两型经游戏 MarchType 枚举取名值（成员名收在 game-api SYM）+ 跨服漂移换算
     var base = ATTACK_BY_POINT_TYPE[point.pointType];
-    if (base == null) base = marchApi.isBossV2(point.pointType) ? 298 : (marchApi.isBoss(point.pointType) ? 14 : null);
+    if (base == null && marchApi.isBossV2(point.pointType)) base = marchApi.typeOf('attackWorldBossV2', 298);
+    else if (base == null && marchApi.isBoss(point.pointType)) base = marchApi.typeOf('attackWorldBoss', 14);
     if (base == null) {
         log.info('point not attackable. x=%d;y=%d;pointType=%d', order.x, order.y, point.pointType);
         reply(chat, order, '目标 (' + order.x + ',' + order.y + ') 无可攻打对象');

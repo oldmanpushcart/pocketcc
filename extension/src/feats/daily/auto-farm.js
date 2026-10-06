@@ -32,7 +32,7 @@
  * 在途核对 / 占用判定均以 856 全量本人行军为权威源（视口无关，Home 场景亦有；mapData.marches 在 Home 为空、进出世界地图被清空重建，故不作真相）。
  *
  * 生命周期由 reactor 托管：scenes 限定 Home/NWorldMap，战斗模式暂停（offInCombat）；
- * 触发源（run 点火 / 10019 回城 / 配置变更 / 兜底定时）全部汇入 triggerCycle，在飞合并为一次补扫。
+ * 触发源（run 点火 / 10019 回城 / 配置变更 / 兜底定时）全部汇入 cycle.kick，在飞合并为一次补扫。
  */
 import { createLog } from '../../core/log.js';
 import { game } from '../../core/game.js';
@@ -41,6 +41,7 @@ import { reactor } from '../../core/reactor.js';
 import { storage } from '../../core/storage.js';
 import { Battle } from '../../core/battle.js';
 import { march } from '../../core/march.js';
+import { createCycle } from '../../core/cycle.js';
 import { CMD_GET_WORLD_INFO } from '../map/map-meta.js';
 
 /** @type {ReturnType<createLog>} 模块日志器（tag=AUTO-FARM） */
@@ -131,12 +132,10 @@ var dataCenter;
 
 /** @type {object|null} reactor 注入的上下文；alive() 反映运行态 */
 var ctxRef = null;
-/** @type {boolean} 周期在飞闸门，防重入 */
-var scanning = false;
-/** @type {boolean} 在飞期间来了新触发，置位，本轮结束后补扫一次 */
-var scanPending = false;
-/** @type {number|null} 兜底定时器；pause 后 alive()=false，到点空转不再自重排 */
-var scanTimer = null;
+/**
+ * 周期单飞闸门 / 触发合并 / 兜底定时器均收口到 core/cycle（见文件末 cycle 实例）；
+ * feat 只保留「下拍间隔」决策所需的两个业务态：backlogActive（两档）与 rateLimitStreak（退避）。
+ */
 /** @type {number} 上次推送唤醒的墙钟时刻（毫秒），合并突发 */
 var lastPushWakeAt = 0;
 /** @type {boolean} 上轮是否仍有缺位未补（决定 active/idle 两档兜底间隔） */
@@ -693,46 +692,34 @@ async function sendFarm(coord, marchType, plan) {
     return await march.attack({ marchType: marchType, target: { x: coord.x, y: coord.y }, data: plan });
 }
 
-// ── 周期引擎 ────────────────────────────────────────────────────────
+// ── 周期引擎（core/cycle 调和循环：单飞闸门 + 触发合并 + 绝不停摆均由 cycle 承载）──
 /**
- * 兜底定时器武装：自重排一次 triggerCycle；pause 后 alive()=false，到点空转不再自重排。
- * @param {number} delay 延迟（毫秒）
+ * 单轮调和主体：账本读回 → cyclePass → 返回下拍间隔（毫秒；<=0=立即补扫）。
+ * 下一拍睡多久的决策仍归本 feat（限流退避 / 触发合并 / active-idle 两档），cycle 只按返回值择时重排。
+ * @returns {Promise<number>}
  */
-function scheduleCycle(delay) {
-    if (!aliveFn()) return;
-    if (scanTimer) clearTimeout(scanTimer);
-    scanTimer = setTimeout(function () {
-        scanTimer = null;
-        if (aliveFn()) triggerCycle();
-    }, Math.max(0, delay));
+async function cycleRun() {
+    // 账本未从盘读回前不派：防拿空账本重复下田；读回失败返回 active 档、下拍重试（不留紧密循环）
+    if (!ledgerLoaded) {
+        await loadLedger();
+        if (!ledgerLoaded) return cfg.activeScanInterval;
+    }
+    await cyclePass();
+    // 撞 902 全局限流的指数退避优先：丢弃本轮在飞期间排队的触发（不立刻再 burst），交退避定时统一重试
+    if (rateLimitStreak > 0) {
+        return Math.min(cfg.rateLimitBackoffMs * (1 << Math.min(rateLimitStreak - 1, 5)), cfg.rateLimitBackoffMaxMs);
+    }
+    // 本轮在飞期间来了外部触发（回城 / 配置 / 推送）→ 立即补扫一轮（合并语义，靠 cycle.pending 感知）
+    if (cycle.pending) return 0;
+    return backlogActive ? cfg.activeScanInterval : cfg.idleScanInterval;
 }
 
-/**
- * 周期触发汇入口：run 点火 / 10019 回城 / 配置变更 / 兜底定时都走这里。
- * 在飞时不并发进入，只置 scanPending，本轮结束后补扫一次。
- */
-function triggerCycle() {
-    if (!aliveFn()) return;
-    if (!ledgerLoaded) {   // 账本未从盘读回前不派：防拿空账本重复下田；读回成功后自会续一轮
-        loadLedger().then(function () {
-            if (!aliveFn()) return;
-            if (ledgerLoaded) triggerCycle();
-            else scheduleCycle(cfg.activeScanInterval);  // 读回失败：降速重试，不留紧密循环
-        });
-        return;
-    }
-    if (scanning) {
-        scanPending = true;
-        return;
-    }
-    doCycle().catch(function (err) {
-        log.warn('cycle threw.', err);
-    });
-}
+/** @type {{kick: function(), pending: boolean}} 调和循环驱动器（fallback 取 active 档，防异常停摆/空转） */
+const cycle = createCycle({ log: log, alive: aliveFn, run: cycleRun, fallback: cfg.activeScanInterval });
 
 /**
  * 单轮周期主体：在途核对 → 找缺位行 → 名额闸门 → 逐行取田（☑机械田先本地机械、无则搜普通田）→ 派发。
- * 早退路径只置 backlogActive 后正常返回（分档重排由 doCycle 末尾统一做，绝不能在定时重排前 return）。
+ * 早退路径只置 backlogActive 后正常返回（两档重排由 cycleRun 末尾统一返回值决定，cycle 保证无论何种出口都会重排下一拍）。
  * @returns {Promise<void>}
  */
 async function cyclePass() {
@@ -850,36 +837,6 @@ async function cyclePass() {
     backlogActive = missingPos.length > dispatched;
 }
 
-/**
- * 单轮周期外壳：在飞标记 + 主体 + 分档重排（主体任何早退/抛异常都会走到这里重排，绝不停摆）。
- * 永不 reject。
- * @returns {Promise<void>}
- */
-async function doCycle() {
-    scanning = true;
-    try {
-        await cyclePass();
-    } finally {
-        scanning = false;
-    }
-
-    if (!aliveFn()) return;
-    // 撞限流退避优先：连续 streak 次指数退避（封顶）。中止后不因在飞期间排队的 push 唤醒立刻再 burst，
-    // 故丢弃 scanPending、交给退避定时统一重试；成功受理后 streak 归零才回到常规两档。
-    if (rateLimitStreak > 0) {
-        scanPending = false;
-        var wait = Math.min(cfg.rateLimitBackoffMs * (1 << Math.min(rateLimitStreak - 1, 5)), cfg.rateLimitBackoffMaxMs);
-        scheduleCycle(wait);
-        return;
-    }
-    if (scanPending) {
-        scanPending = false;
-        triggerCycle();
-        return;
-    }
-    scheduleCycle(backlogActive ? cfg.activeScanInterval : cfg.idleScanInterval);
-}
-
 // ── 推送入口 ────────────────────────────────────────────────────────
 /**
  * 推送唤醒（去抖）：距上次补扫 < pushScanMinGap 则忽略，靠兜底定时收尾。
@@ -889,7 +846,7 @@ function pushWake() {
     var wall = Date.now();
     if (wall - lastPushWakeAt < cfg.pushScanMinGap) return;
     lastPushWakeAt = wall;
-    triggerCycle();
+    cycle.kick();
 }
 
 /**
@@ -977,7 +934,7 @@ function configure(partial) {
         }
         if (pruned) persistLedger();
     }
-    if (installed && aliveFn()) triggerCycle();
+    if (installed && aliveFn()) cycle.kick();
     return MCFG;
 }
 
@@ -988,8 +945,6 @@ function configure(partial) {
  */
 function run(ctx) {
     ctxRef = ctx;
-    scanning = false;
-    scanPending = false;
     backlogActive = false;
     rateLimitStreak = 0;
     lastPushWakeAt = 0;
@@ -1005,7 +960,7 @@ function run(ctx) {
     offHomeReturn = march.onHomeReturn(onFarmMarchHome);
     log.info('started (rules=%d rows).', MCFG.rules.length);
     loadMechRecords();
-    triggerCycle();
+    cycle.kick();
 }
 
 /**

@@ -35,6 +35,7 @@ import { l10n, gameConf, gameData } from '../../core/game-api.js';
 import { reactor } from '../../core/reactor.js';
 import { Battle } from '../../core/battle.js';
 import { march } from '../../core/march.js';
+import { createCycle } from '../../core/cycle.js';
 
 /** @type {ReturnType<createLog>} 模块日志器（tag=LAUNCH-SILO） */
 const log = createLog('LAUNCH-SILO');
@@ -97,12 +98,10 @@ var dataCenter;
 /** @type {object|null} reactor 注入的上下文；alive() 反映运行态，pause 后置否让定时器与在飞流程自然退出 */
 var ctxRef = null;
 
-/** @type {boolean} 扫描在飞闸门（含 1055/902 await），防重入 */
-var scanning = false;
-/** @type {boolean} 在飞期间来了新触发（推送），置位，本轮结束后补扫一次 */
-var scanPending = false;
-/** @type {number|null} 兜底定时器；pause 后到点空转不再自重排 */
-var scanTimer = null;
+/**
+ * 扫描单飞闸门 / 触发合并 / 兜底定时器均收口到 core/cycle（见下方 cycle 实例）；
+ * feat 只保留活动窗口态 inWindow（决定 active/idle 两档）供 cycleRun 返回下拍间隔。
+ */
 /** @type {number} 上次因推送补扫的墙钟时刻（毫秒），合并突发 */
 var lastPushScanAt = 0;
 /** @type {boolean} 当前是否在活动窗口内（决定 active/idle 扫描档） */
@@ -438,65 +437,30 @@ async function garrisonPass(list) {
 
 // ── 扫描调度 ─────────────────────────────────────────────────────────
 /**
- * 兜底定时器武装：自重排一次 triggerScan；pause 后 alive()=false，到点空转不再自重排。
- * @param {number} delay 延迟（毫秒）
+ * 单轮扫描主体（core/cycle 调和循环：单飞闸门 + 触发合并 + 绝不停摆均由 cycle 承载）：
+ * 1055 判活动窗口 → 窗口内按需领奖 + 驻军 → 返回下拍间隔（毫秒；<=0=立即补扫）。
+ * 非窗口只探活、不发写包；与旧 doScan 末尾同序：在飞期间有补扫→立即再扫；否则按窗口档位兜底。
+ * @returns {Promise<number>}
  */
-function scheduleScan(delay) {
-    if (!aliveFn()) return;
-    if (scanTimer) clearTimeout(scanTimer);
-    scanTimer = setTimeout(function () {
-        scanTimer = null;
-        if (aliveFn()) triggerScan();
-    }, Math.max(0, delay));
-}
-
-/**
- * 扫描触发汇入口：推送 / run / 兜底定时都走这里。在飞时不并发进入，只置 scanPending，本轮结束后补扫。
- */
-function triggerScan() {
-    if (!aliveFn()) return;
-    if (scanning) {
-        scanPending = true;
-        return;
-    }
-    doScan().catch(function (err) {
-        log.warn('scan threw.', err);
-    });
-}
-
-/**
- * 单轮扫描：1055 判活动窗口 → 窗口内按需领奖 + 驻军 → 排下一次。非窗口只探活、不发写包。永不 reject。
- * @returns {Promise<void>}
- */
-async function doScan() {
-    scanning = true;
-    try {
-        var info = await requestInfo();
-        if (!aliveFn()) return;
-
-        var now = (info && Number(info.cur)) || serverNow();
-        inWindow = !!(info && Number(info.start) <= now && now < Number(info.end));
-        if (!inWindow) {
-            log.debug('activity not open, idle.');
-            return;
-        }
-
+async function cycleRun() {
+    var info = await requestInfo();
+    if (!aliveFn()) return 0;   // pause 中途：cycle 会在 alive 检查处自然停摆
+    var now = (info && Number(info.cur)) || serverNow();
+    inWindow = !!(info && Number(info.start) <= now && now < Number(info.end));
+    if (!inWindow) {
+        log.debug('activity not open, idle.');
+    } else {
         var list = (info && info.list) || [];
         await claimRewards();
-        if (!aliveFn()) return;
+        if (!aliveFn()) return 0;
         await garrisonPass(list);
-    } finally {
-        scanning = false;
     }
-
-    if (!aliveFn()) return;
-    if (scanPending) {
-        scanPending = false;
-        triggerScan();
-        return;
-    }
-    scheduleScan(inWindow ? cfg.activeScanInterval : cfg.idleScanInterval);
+    if (cycle.pending) return 0;
+    return inWindow ? cfg.activeScanInterval : cfg.idleScanInterval;
 }
+
+/** @type {{kick: function(), pending: boolean}} 调和循环驱动器（fallback 取 active 档，防异常停摆） */
+const cycle = createCycle({ log: log, alive: aliveFn, run: cycleRun, fallback: cfg.activeScanInterval });
 
 // ── 推送入口 ─────────────────────────────────────────────────────────
 /**
@@ -507,7 +471,7 @@ function pushWake() {
     var wall = Date.now();
     if (wall - lastPushScanAt < cfg.pushScanMinGap) return;
     lastPushScanAt = wall;
-    triggerScan();
+    cycle.kick();
 }
 
 /** 11017 单井归属/占领变化：可能刚变成我盟所有 → 补扫驻军。 */
@@ -573,13 +537,11 @@ function install(ctx) {
 
 /**
  * 运行：复位状态 → 挂 11017/10029/10019 监听 → 主动扫一次。
- * pause 后 alive()=false 定时器自然停摆；resume 重新复位点火（scheduleScan 先 clearTimeout，不重复）。
+ * pause 后 alive()=false 定时器自然停摆；resume 重新复位点火（cycle.kick 内部先清旧定时器，不重复）。
  * @param {object} ctx reactor 上下文
  */
 function run(ctx) {
     ctxRef = ctx;
-    scanning = false;
-    scanPending = false;
     inWindow = false;
     lastPushScanAt = 0;
     pendingRecall.clear();
@@ -589,7 +551,7 @@ function run(ctx) {
     if (offHomeReturn) offHomeReturn();   // 先退再挂，防 resume 重激活重复注册
     offHomeReturn = march.onHomeReturn(onMarchArrivedHome);
     log.info('started (驻军+领积分+撤田腾队列 内置默认).');
-    triggerScan();
+    cycle.kick();
 }
 
 /**

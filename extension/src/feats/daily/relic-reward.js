@@ -22,8 +22,9 @@
  *
  * 拒绝处理：领取被非 0 码拒绝 → 该遗迹当日拉黑（落 storage.data，跨日清空），防刷屏（对齐「被拒当日拉黑」既有教训）。
  *
- * 触发：run 点火即扫一轮，随后 POLL_INTERVAL 低频轮询；并按 mirror 里最近的 endTime +FLIP_BUFFER_MS 收拢下次轮询拍，
- *   覆盖「一天开 2 次」的新窗口（不用干等整轮询拍）。单一在飞闸门 scanning 防重入；alive()=false 时循环自然退出。
+ * 触发：run 点火即扫一轮，随后由 core/cycle 调和循环低频轮询（单飞闸门 + 触发合并 + 绝不停摆均收口 cycle）；
+ *   下拍间隔 = min(POLL_INTERVAL, mirror 里最近 endTime +FLIP_BUFFER_MS)，覆盖「一天开 2 次」的新窗口（不用干等整轮询拍）。
+ *   alive()=false 时 cycle 自然停摆，resume 重新 kick。
  *
  * 合规：只读游戏数据（经 game-api ACL）+ 直发 1825/1826，不调用游戏 Update/Delete 改写本地态、不 OpenUI、不模拟点击。
  *   纯发包、不派行军，不受战斗模式门控（同联盟帮助口径，不设 offInCombat）；生命周期由 reactor 托管，pause 摘触发器、
@@ -35,6 +36,7 @@ import { storage } from '../../core/storage.js';
 import { reactor } from '../../core/reactor.js';
 import { l10n, gameData } from '../../core/game-api.js';
 import { item } from '../../core/item.js';
+import { createCycle } from '../../core/cycle.js';
 
 /** @type {ReturnType<createLog>} 模块日志器（tag=RELIC-REWARD） */
 const log = createLog('RELIC-REWARD');
@@ -76,10 +78,7 @@ const DATA_NAME = 'relicReward.rejected';
 var net;
 /** @type {object|null} reactor 上下文；alive() 反映运行态，pause 后置否让在飞流程自然退出 */
 var ctxRef = null;
-/** @type {boolean} 单轮扫描在飞闸门（含 1825/1826 的 await），防重入 */
-var scanning = false;
-/** @type {number|null} 轮询/翻轮共用排程定时器 */
-var pollTimer = null;
+/** 扫描单飞闸门 / 触发合并 / 轮询与翻轮排程定时器均收口到 core/cycle（见下方 cycle 实例）。 */
 /** @type {number[]} 当前领取优先级顺序（道具 itemId，靠前者优先），configure 从面板配置写入 */
 var order = L2_ITEM_POOL.slice();
 /** @type {Map<number,number>} itemId → rank（order 下标），O(1) 匹配与排序 */
@@ -339,26 +338,11 @@ async function scanOnce() {
 }
 
 /**
- * 扫描触发汇入口：run 点火 / 排程定时器到点都走这里。在飞时不并发进入。
- */
-function triggerScan() {
-    if (!aliveFn() || scanning) return;
-    scanning = true;
-    scanOnce().catch(function (err) {
-        log.warn('scan threw.', err);
-    }).then(function () {
-        scanning = false;
-        if (aliveFn()) scheduleNext();
-    });
-}
-
-/**
- * 排下一轮扫描：默认 POLL_INTERVAL；若 mirror 里有更近的 endTime，收敛到「到点 +FLIP_BUFFER_MS」那拍
+ * 下一轮轮询间隔：默认 POLL_INTERVAL；若 mirror 里有更近的 endTime，收敛到「到点 +FLIP_BUFFER_MS」那拍
  *   （覆盖一天开 2 次的新窗口，不用干等整轮询）。封顶不低于 1s 防热循环。
+ * @returns {number} 毫秒
  */
-function scheduleNext() {
-    if (!aliveFn()) return;
-    if (pollTimer) clearTimeout(pollTimer);
+function nextPollDelay() {
     var nowMs = gameData.serverTime() * 1000;
     var ms = POLL_INTERVAL;
     for (var w in mirror) {
@@ -366,11 +350,21 @@ function scheduleNext() {
         if (et > nowMs && et - nowMs < ms) ms = et - nowMs;
     }
     log.debug('next scan in %d s', Math.round(ms / 1000));
-    pollTimer = setTimeout(function () {
-        pollTimer = null;
-        if (aliveFn()) triggerScan();
-    }, Math.max(1000, ms));
+    return Math.max(1000, ms);
 }
+
+/**
+ * 单轮调和主体（core/cycle 承载单飞闸门 + 触发合并 + 绝不停摆）：扫一轮 → 返回下拍间隔。
+ * @returns {Promise<number>}
+ */
+async function cycleRun() {
+    await scanOnce();
+    if (cycle.pending) return 0;
+    return nextPollDelay();
+}
+
+/** @type {{kick: function(), pending: boolean}} 调和循环驱动器（fallback 取 POLL_INTERVAL，防异常停摆） */
+const cycle = createCycle({ log: log, alive: aliveFn, run: cycleRun, fallback: POLL_INTERVAL });
 
 // ── 生命周期 ─────────────────────────────────────────────────────────────
 /**
@@ -391,16 +385,15 @@ function install(ctx) {
 }
 
 /**
- * 运行：复位在飞态 → 读回当日拉黑 → 点火即扫一轮（本地多半已有遗迹态）→ 排低频轮询/翻轮。
- * pause 后 alive()=false，定时器到点空转、在飞 await 回来即止；resume 重跑本函数补扫一轮。
+ * 运行：读回当日拉黑 → 点火即扫一轮（本地多半已有遗迹态）→ 后续由 cycle 按 nextPollDelay 择时重排。
+ * pause 后 alive()=false，cycle 睡醒不再重排、在飞 await 回来即止；resume 重跑本函数补扫一轮。
  * @param {object} ctx reactor 上下文
  */
 function run(ctx) {
     ctxRef = ctx;
-    scanning = false;
     log.info('started.');
     loadRejected().then(function () {
-        if (aliveFn()) triggerScan();   // 首拍立即扫；triggerScan 末尾排后续
+        if (aliveFn()) cycle.kick();   // 首拍立即扫；后续由 cycle 按 nextPollDelay 择时重排
     });
 }
 

@@ -24,8 +24,8 @@
  *   3) 清单为空 / 全是空 UID → 降 idleInterval 兜底复查（清单随时会加上）；
  *   4) 被拒 / 异常 → 按阶梯退避（UID 填错等永久性失败不再无限狂发），改配置即清零复活。
  *
- * 重入闸门：单定时器 + ticking 标志保证同一时刻只有一轮检查在飞（含 3821 await）；
- *   pause 后 alive()=false，挂着的定时器到点空转一次不再自重排，resume 时 run 复位并重新点火。
+ * 调度由 core/cycle.js 提供：单飞闸门、configure 推触合并、异常 fallback 重排均内置；
+ *   pause 后 alive()=false，cycle 自然停摆，resume 时 run 重新 kick。当日计数的读盘/落盘单飞闸门与本块无关，保留在 feat 侧。
  *
  * 生命周期由 reactor 托管：install/configure/run 三个钩子，scenes 门控限定 Home/NWorldMap，战斗态暂停。
  *   合规：只读 + 发包，绝不改写游戏本地数据（点赞回执由游戏自身经 push 落地）。
@@ -33,6 +33,7 @@
 import { createLog } from '../../core/log.js';
 import { game } from '../../core/game.js';
 import { reactor } from '../../core/reactor.js';
+import { createCycle } from '../../core/cycle.js';
 import { storage } from '../../core/storage.js';
 import { bus } from '../../core/bus.js';
 
@@ -107,12 +108,6 @@ var net;
 /** @type {object|null} reactor 注入的上下文；alive() 反映运行态，pause 后置否让在飞流程自然退出 */
 var ctxRef = null;
 
-/** @type {number|null} 单定时器句柄；pause 后到点空转一次不再自重排 */
-var timer = null;
-
-/** @type {boolean} 检查闸门：同时只跑一轮 tick（含 3821 await），防重入 */
-var ticking = false;
-
 /** @type {boolean} install 幂等守卫 */
 var installed = false;
 
@@ -153,9 +148,9 @@ function aliveFn() {
 
 /**
  * 注入模块配置（来自 toModuleCfg）：好友清单 {uid, name}。运行中改动即热更。
- * 任何配置变更都清空失败退避，并把休眠中的定时器立即踢醒：否则「先开功能、后加好友」时，
+ * 任何配置变更都清空失败退避，并 kick cycle 把睡梦中的下一拍提前：否则「先开功能、后加好友」时，
  *   清单为空那一轮已排到 idleInterval（最长 10 分钟）兜底复查，新加的好友要干等到点才开点。
- * 在飞的那一轮由 ticking 闸门挡住不会重入，它结束时自会按节奏重排，schedule(0) 只是提前唤醒空转的定时器。
+ * 在飞的那一轮由 cycle 内部单飞闸门自动合并（cycle.pending=true → 本轮结束后 tick 返 0 立即补扫）。
  * @param {object} partial {friends:Array<{uid:string, name:string}>}
  * @returns {object} 当前 {friends}
  */
@@ -167,7 +162,7 @@ function configure(partial) {
     }
     failState = null;
     cursor = 0;
-    if (aliveFn()) schedule(0);
+    if (aliveFn()) cycle.kick();
     return { friends: friends };
 }
 
@@ -350,22 +345,7 @@ function msToNextReset() {
     return Math.min(ms, MAX_RESET_WAKE_MS);
 }
 
-/**
- * 单定时器武装器：到点跑一次 tick；pause 后 alive()=false 不再武装
- * @param {number} delay 延迟(毫秒)
- */
-function schedule(delay) {
-    if (!aliveFn()) return;
-    if (timer) clearTimeout(timer);
-    timer = setTimeout(function () {
-        timer = null;
-        if (!aliveFn()) return;
-        tick().catch(function (err) {
-            log.warn('tick threw, reschedule.', err);
-            schedule(cfg.idleInterval);
-        });
-    }, Math.max(0, delay));
-}
+// (cycle 直接接 tick()) —— 旧 单定时器武装器 schedule(delay) 已删
 
 // ─────────────────────────── 发包 ───────────────────────────
 
@@ -435,86 +415,71 @@ function bumpFail() {
 // ─────────────────────────── 检查 + 点赞 ───────────────────────────
 
 /**
- * 一轮检查：跳日归零 → 判额度/清单/退避 → 给轮转到的好友发一个赞 → 按结果重排。永不 reject。
- * @returns {Promise<void>}
+ * cycle 单轮：跳日归零 → 判额度/清单/退避 → 给轮转到的好友发一个赞 → 按结果返回下拍 delay。
+ * 异常不会报出：sendLike/bumpFail 都已自堆；cycle 另兜一层 fallback(idle) 作为防御护栏。
+ * @returns {Promise<number>} 下拍 delay（毫秒）；0 = 立即再跑（alive=false 或 pending 补扫）。
  */
 async function tick() {
-    if (ticking) return;
-    ticking = true;
-    try {
-        ensureDailyLoaded();
-        rollDateIfNeeded();
-        if (!aliveFn()) return;
+    ensureDailyLoaded();
+    rollDateIfNeeded();
+    if (!aliveFn()) return 0;
 
-        // 清单为空（或全是空 UID）：本轮不点，降 idle 兜底复查（清单随时会加上）
-        var hasUid = false;
-        for (var i = 0; i < friends.length; i++) {
-            if (friends[i] && friends[i].uid) { hasUid = true; break; }
-        }
-        if (!hasUid) {
-            schedule(cfg.idleInterval);
-            return;
-        }
+    // 清单为空（或全是空 UID）：本轮不点，降 idle 兜底复查（清单随时会加上）
+    var hasUid = false;
+    for (var i = 0; i < friends.length; i++) {
+        if (friends[i] && friends[i].uid) { hasUid = true; break; }
+    }
+    if (!hasUid) return cfg.idleInterval;
 
-        // 当日计数读盘闸门：未读回前 daily.used 还是内存初值，拿去判额度形同虚设
-        //（刷新后盘上已点到 7、内存 0 → 每次刷新都会多冲一次赞），暂缓发包并短间隔重试
-        if (!dailyReady()) {
-            log.debug('hold like: daily state not loaded from disk yet (memory used is not authoritative).');
-            schedule(cfg.retryInterval);
-            return;
-        }
+    // 当日计数读盘闸门：未读回前 daily.used 还是内存初值，拿去判额度形同虚设
+    //（刷新后盘上已点到 7、内存 0 → 每次刷新都会多冲一次赞），暂缓发包并短间隔重试
+    if (!dailyReady()) {
+        log.debug('hold like: daily state not loaded from disk yet (memory used is not authoritative).');
+        return cfg.retryInterval;
+    }
 
-        // 当日额度已用尽（含玩家自己点掉的）：睡到下次重置
-        if (daily.used >= LIKE_DAILY_MAX) {
-            log.debug('daily like quota used (%d/%d), sleep to next reset.', daily.used, LIKE_DAILY_MAX);
-            schedule(Math.min(msToNextReset(), cfg.idleInterval));
-            return;
-        }
+    // 当日额度已用尽（含玩家自己点掉的）：睡到下次重置
+    if (daily.used >= LIKE_DAILY_MAX) {
+        log.debug('daily like quota used (%d/%d), sleep to next reset.', daily.used, LIKE_DAILY_MAX);
+        return Math.min(msToNextReset(), cfg.idleInterval);
+    }
 
-        // 退避闸门：上次失败后未到重试点，本轮不碰
-        var now = Date.now();
-        if (failState && now < failState.notBeforeMs) {
-            schedule(Math.min(failState.notBeforeMs - now, cfg.idleInterval));
-            return;
-        }
+    // 退避闸门：上次失败后未到重试点，本轮不碰
+    var now = Date.now();
+    if (failState && now < failState.notBeforeMs) {
+        return Math.min(failState.notBeforeMs - now, cfg.idleInterval);
+    }
 
-        // 轮转取下一个有 UID 的好友（清单一律以面板配置为准，cursor 只决定起点）
-        var idx = -1;
-        for (var j = 0; j < friends.length; j++) {
-            var k = (cursor + j) % friends.length;
-            if (friends[k] && friends[k].uid) { idx = k; break; }
-        }
-        if (idx < 0) {
-            schedule(cfg.idleInterval);
-            return;
-        }
-        cursor = (idx + 1) % friends.length;
+    // 轮转取下一个有 UID 的好友（清单一律以面板配置为准，cursor 只决定起点）
+    var idx = -1;
+    for (var j = 0; j < friends.length; j++) {
+        var k = (cursor + j) % friends.length;
+        if (friends[k] && friends[k].uid) { idx = k; break; }
+    }
+    if (idx < 0) return cfg.idleInterval;
+    cursor = (idx + 1) % friends.length;
 
-        var r = await sendLike(friends[idx].uid);
-        if (!aliveFn()) return;
-        switch (r) {
-            case 'ok':
-                schedule(LIKE_GAP_MS);
-                break;
-            case 'limit':
-                schedule(Math.min(msToNextReset(), cfg.idleInterval));
-                break;
-            case 'inflight':
-                // 同一次点赞的应答还在途（多半是游戏自己在发）：等满最小唤醒间隔再来看结果，不计失败退避
-                schedule(MIN_WAKE_MS);
-                break;
-            default: {
-                // rejected / error：按阶梯退避（UID 填错等永久性失败不再无限狂发）
-                var retryAt = bumpFail();
-                var wait = Math.max(0, retryAt - Date.now());
-                log.warn('like failed, backoff %dms.', wait);
-                schedule(Math.min(wait, cfg.idleInterval));
-            }
+    var r = await sendLike(friends[idx].uid);
+    if (!aliveFn()) return 0;
+    if (cycle.pending) return 0;   // 本轮在飞时又触发了 configure→立即补扫
+
+    switch (r) {
+        case 'ok': return LIKE_GAP_MS;
+        case 'limit': return Math.min(msToNextReset(), cfg.idleInterval);
+        case 'inflight':
+            // 同一次点赞的应答还在途（多半是游戏自己在发）：等满最小唤醒间隔再来看结果，不计失败退避
+            return MIN_WAKE_MS;
+        default: {
+            // rejected / error：按阶梯退避（UID 填错等永久性失败不再无限狂发）
+            var retryAt = bumpFail();
+            var wait = Math.max(0, retryAt - Date.now());
+            log.warn('like failed, backoff %dms.', wait);
+            return Math.min(wait, cfg.idleInterval);
         }
-    } finally {
-        ticking = false;
     }
 }
+
+const cycle = createCycle({ log: log, alive: aliveFn, run: tick, fallback: cfg.idleInterval });
 
 // ─────────────────────────── 生命周期 ───────────────────────────
 
@@ -562,14 +527,13 @@ function install(ctx) {
  */
 function run(ctx) {
     ctxRef = ctx;
-    ticking = false;
     cursor = 0;
     failState = null;
     ensureDailyLoaded();
     // 计数不在这里打：读盘异步、此刻 daily.used 仍是初值，报了会误导；真实额度首 tick 闸门自会核
     log.info('started, %d friend(s).', friends.length);
-    // 启动即查一次；本轮结束后 tick 末尾按节奏 / 重置点 / idle 武装下一轮
-    schedule(0);
+    // 启动即查一次；本轮结束后 tick 末尾按节奏 / 重置点 / idle 返给 cycle arm
+    cycle.kick();
 }
 
 /**

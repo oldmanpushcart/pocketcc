@@ -26,14 +26,15 @@
  *   3) 未拥有 / UID 未填 → 本轮跳过，降 idleInterval 兜底复查（皮肤随时可能购买）；
  *   4) 本轮真赠出去 → busy 短间隔续跑（另一技能可能也待赠）。
  *
- * 重入闸门：单定时器 + ticking 标志保证同一时刻只有一轮检查在飞（含 1752/1753 await）；
- *   pause 后 alive()=false，挂着的定时器到点空转一次不再自重排，resume 时 run 复位并重新点火。
+ * 调度由 core/cycle.js 提供单飞闸门与异常 fallback（tick 内部 1752/1753 均已自内堆异常，cycle 仅作为防御兼停摆护栏）；
+ *   pause 后 alive()=false，cycle 自然停摆，resume 时 run 重新 kick。
  *
  * 生命周期由 reactor 托管：install/configure/run 三个钩子，scenes 门控限定 Home/NWorldMap，战斗态暂停。
  */
 import { createLog } from '../../core/log.js';
 import { game } from '../../core/game.js';
 import { reactor } from '../../core/reactor.js';
+import { createCycle } from '../../core/cycle.js';
 
 /** @type {ReturnType<createLog>} 模块日志器（tag=CITY_SKILL） */
 const log = createLog('CITY_SKILL');
@@ -93,12 +94,6 @@ var net;
 
 /** @type {object|null} reactor 注入的上下文；alive() 反映运行态，pause 后置否让在飞检查自然退出 */
 var ctxRef = null;
-
-/** @type {number|null} 单定时器句柄；pause 后到点空转一次不再自重排 */
-var timer = null;
-
-/** @type {boolean} 检查闸门：同时只跑一轮 tick（含 1752/1753 await），防重入 */
-var ticking = false;
 
 /** @type {boolean} install 幂等守卫 */
 var installed = false;
@@ -192,111 +187,88 @@ function skillState(skinId, map) {
     return { endTime: 0, dailyCnt: 0 };
 }
 
-// ─────────────────────────── 调度 ───────────────────────────
-
-/**
- * 单定时器武装器：到点跑一次 tick；pause 后 alive()=false 不再武装
- * @param {number} delay 延迟(毫秒)
- */
-function schedule(delay) {
-    if (!aliveFn()) return;
-    if (timer) clearTimeout(timer);
-    timer = setTimeout(function () {
-        timer = null;
-        if (!aliveFn()) return;
-        tick().catch(function (err) {
-            log.warn('tick threw, reschedule.', err);
-            schedule(cfg.idleInterval);
-        });
-    }, Math.max(0, delay));
-}
+// ─────────────────────────── 调度（已交给 cycle） ───────────────────────────
 
 // ─────────────────────────── 检查 + 赠送 ───────────────────────────
 
 /**
- * 一轮检查：1752 拉冷却 → 逐个启用的技能判拥有/就绪 → 就绪则赠 → 按最近唤醒点(冷却/退避)重排。永不 reject。
- * 排程统一到「墙上毫秒」口径（wakes 数组）：冷却/次数用 (serverSec - serverTime)*1000 + now 换算，退避直接取 notBeforeMs。
- * @returns {Promise<void>}
+ * cycle 单轮：1752 拉冷却 → 逐个启用的技能判拥有/就绪 → 就绪则赠 → 返回下拍 delay（毫秒），交给 cycle arm。
+ * 排程统一到「墙上毫秒」口径（wakes 数组）：冷却用 (endTime-serverTime)*1000 + now 换算，退避直接取 notBeforeMs。
+ * 本函数内 refreshSkillData / gift 都自内堆异常（永不 reject）；cycle 另兜一层 fallback 作为防御护栏。
+ * @returns {Promise<number>} 下拍 delay（毫秒）；0 = 立即再跑（alive=false 或 pending 补扫）。
  */
 async function tick() {
-    if (ticking) return;
-    ticking = true;
     var now = Date.now();
     var serverTime = (data && data.ServerTime) || 0;
     var wakes = [];        // 各技能下次应复查的绝对墙上时刻(毫秒)
     var didGift = false;
-    try {
-        var map = await refreshSkillData();
-        if (!aliveFn()) return;
+    var map = await refreshSkillData();
+    if (!aliveFn()) return 0;
 
-        for (var i = 0; i < skills.length; i++) {
-            var s = skills[i];
-            // 未启用 / 未填 UID → 本轮跳过（降 idle）。这两行是静默分支，补日志便于定位「配置没填上」。
-            if (!s.enabled) {
-                log.debug('skip skin %d: disabled.', s.skinId);
-                continue;
-            }
-            if (!s.uid) {
-                log.debug('skip skin %d: uid empty.', s.skinId);
-                continue;
-            }
-
-            // 退避闸门：上次赠送失败后未到重试点，本轮不碰，只把重试点纳入排程
-            var fs = failState[s.skinId];
-            if (fs && now < fs.notBeforeMs) { wakes.push(fs.notBeforeMs); continue; }
-
-            if (!ownsSkin(s.skinId, serverTime)) {
-                log.debug('skip skin %d: not owned.', s.skinId);
-                continue;
-            }
-
-            var st = skillState(s.skinId, map);
-            var cdOver = st.endTime <= serverTime;
-
-            // 就绪只看冷却：无每日次数限制，同日可用多次（dailyCnt 不参与门控）
-            if (cdOver) {
-                var r = await gift(s.skinId, s.uid, map);
-                now = Date.now();
-                if (r === 'ok') {
-                    didGift = true;
-                    await sleep(GIFT_GAP_MS);
-                    if (!aliveFn()) return;
-                    now = Date.now();
-                    serverTime = (data && data.ServerTime) || serverTime;
-                    continue;
-                }
-                if (r === 'inflight') { wakes.push(now + GIFT_GAP_MS); continue; }
-                // rejected / error：gift() 已按阶梯 bumpFail，把退避重试点纳入排程（不再无限狂发）
-                var fs2 = failState[s.skinId];
-                if (fs2) wakes.push(fs2.notBeforeMs);
-                continue;
-            }
-
-            // 未就绪：仅冷却未到，按 endTime 精确排下次复查。server 秒差换算成墙上毫秒
-            log.debug('skin %d owned but cooling down: endTime=%d > serverTime=%d (in %ds).',
-                s.skinId, st.endTime, serverTime, Math.max(0, st.endTime - serverTime));
-            wakes.push(now + Math.max(0, (st.endTime - serverTime)) * 1000 + CD_BUFFER_MS);
+    for (var i = 0; i < skills.length; i++) {
+        var s = skills[i];
+        // 未启用 / 未填 UID → 本轮跳过（降 idle）。这两行是静默分支，补日志便于定位「配置没填上」。
+        if (!s.enabled) {
+            log.debug('skip skin %d: disabled.', s.skinId);
+            continue;
         }
-    } finally {
-        ticking = false;
+        if (!s.uid) {
+            log.debug('skip skin %d: uid empty.', s.skinId);
+            continue;
+        }
+
+        // 退避闸门：上次赠送失败后未到重试点，本轮不碰，只把重试点纳入排程
+        var fs = failState[s.skinId];
+        if (fs && now < fs.notBeforeMs) { wakes.push(fs.notBeforeMs); continue; }
+
+        if (!ownsSkin(s.skinId, serverTime)) {
+            log.debug('skip skin %d: not owned.', s.skinId);
+            continue;
+        }
+
+        var st = skillState(s.skinId, map);
+        var cdOver = st.endTime <= serverTime;
+
+        // 就绪只看冷却：无每日次数限制，同日可用多次（dailyCnt 不参与门控）
+        if (cdOver) {
+            var r = await gift(s.skinId, s.uid, map);
+            now = Date.now();
+            if (r === 'ok') {
+                didGift = true;
+                await sleep(GIFT_GAP_MS);
+                if (!aliveFn()) return 0;
+                now = Date.now();
+                serverTime = (data && data.ServerTime) || serverTime;
+                continue;
+            }
+            if (r === 'inflight') { wakes.push(now + GIFT_GAP_MS); continue; }
+            // rejected / error：gift() 已按阶梯 bumpFail，把退避重试点纳入排程（不再无限狂发）
+            var fs2 = failState[s.skinId];
+            if (fs2) wakes.push(fs2.notBeforeMs);
+            continue;
+        }
+
+        // 未就绪：仅冷却未到，按 endTime 精确排下次复查。server 秒差换算成墙上毫秒
+        log.debug('skin %d owned but cooling down: endTime=%d > serverTime=%d (in %ds).',
+            s.skinId, st.endTime, serverTime, Math.max(0, st.endTime - serverTime));
+        wakes.push(now + Math.max(0, (st.endTime - serverTime)) * 1000 + CD_BUFFER_MS);
     }
 
-    if (!aliveFn()) return;
+    if (!aliveFn()) return 0;
+    if (cycle.pending) return 0;   // 本轮在飞时又触发 configure→立即补扫
     now = Date.now();
 
-    if (didGift) {
-        schedule(cfg.busyInterval);
-        return;
-    }
+    if (didGift) return cfg.busyInterval;
     if (wakes.length) {
         var minWake = Math.min.apply(null, wakes);
         var delay = minWake - now;
         // 夹在 [MIN_WAKE_MS, idleInterval]：长冷却/长退避也至少每 idleInterval 复查一次（读请求，兜住时钟漂移/状态变化）
-        schedule(Math.min(Math.max(delay, MIN_WAKE_MS), cfg.idleInterval));
-        return;
+        return Math.min(Math.max(delay, MIN_WAKE_MS), cfg.idleInterval);
     }
-    schedule(cfg.idleInterval);
+    return cfg.idleInterval;
 }
+
+const cycle = createCycle({ log: log, alive: aliveFn, run: tick, fallback: cfg.idleInterval });
 
 /**
  * 赠送一个技能给指定 UID（1753）。永不 reject；返回结果状态，供 tick 决定是否退避。
@@ -392,10 +364,9 @@ function install(ctx) {
  */
 function run(ctx) {
     ctxRef = ctx;
-    ticking = false;
     log.info('started, %d skill(s).', skills.length);
-    // 启动即查一次；本轮结束后 tick 末尾按到期点 / idle 武装下一轮
-    schedule(0);
+    // 启动即查一次；本轮结束后 tick 末尾按到期点 / idle 返给 cycle arm
+    cycle.kick();
 }
 
 /**

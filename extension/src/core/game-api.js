@@ -44,9 +44,6 @@ const SYM = {
     rewardCtrl: 'RewardController',      // 奖励配置解析器，ES 命名空间具名导出（无 .default），静态 Instance.getRewardsArrById 把奖励配置 id 解成道具清单
     terrainModel: 'NWorldMapTerrainModel', // 离线地形查询单例：getTerrain/getAreaByWorldMap/isBlock/cols/rows
     mapCommon: 'NWorldMapCommon',           // 常量枚举：allMapInfos（按 mapType 的 rows/cols/subMap）、NWorldMapSettings
-    mapData: 'NWorldMapData',               // 数据单例：mapFiles[mapType]、currentMapFile（注：mapType 不在此，在 NWorldMapCoreBiz，经 terrainModel.currentMapType 读）
-    mapAssets: 'NWorldMapAssets',           // 地形图集资源表：NMapAssets[mapType] = {terrainTexture, tileMap(tileId→[frameName]), waterIds, hillIds, terrainScale}
-    vassetCache: 'VirtualAssetCache',       // 资源缓存：getSpriteFrameFromAtlas(name, atlas)→cc.SpriteFrame(rect/texture.nativeUrl)、getSpriteAtlasFromCache
     marchStorage: 'MarchStorageController', // 出征档案门面：getInstance() 由 subpack2 启动接管（Subpack2Main.main → initMarchStorageController）注入 Real 实现
     procedureManager: 'ProcedureManager', // 场景程序管理器（PROCE 单例）：Run(PROCE.Home/PROCE.NewWorld) 切场景，与主界面「世界/回城」按钮同源
     uiManager: 'UIManager',               // UI 管理器门面（default.Instance().OpenUI(UIDataInfo.xxx) 打开原生面板）
@@ -64,7 +61,7 @@ const SYM = {
     // 次元矿洞三张表（TableName.mine_cave/_level/_interaction，报告 §6 实证；成员名与值同名小写）
     mineCave: 'mine_cave', mineCaveLevel: 'mine_cave_level', mineCaveInteraction: 'mine_cave_interaction',
   },
-  /** UserData 子对象上的数据成员名（属性链符号，Alliance.<name>） */
+  /** UserData 子对象上的数据成员名（属性链符号，Alliance.<name>；WorldCoord 为 UserData 直属成员，myWorldPos 经 SYM 引用） */
   dataProps: { allianceBoss: 'AllianceBossData', allianceScience: 'scienceData', worldCoord: 'WorldCoord' },
   /** 行军/地块枚举成员名（只记名字，数值运行时向游戏枚举对象取） */
   marchEnum: {
@@ -74,8 +71,8 @@ const SYM = {
     masterAttackPlayer: 'MASTER_ATTACK_PLAYER',       // 170 王者对战
     avaAttackPlayer: 'AVA_ATTACK_PLAYER',             // 110 新跨服战场
     teamLegendAttackPlayer: 'TEAM_LEGEND_ATTACK_PLAYER', // 181 军团传奇
-    attackWorldBoss: 'ATTACK_WORLDBOSS',              // 14 普通世界 boss
-    attackWorldBossV2: 'ATTACK_WORLD_BOSS_V2'         // 298 bossV2 世界 boss
+    attackWorldBoss: 'ATTACK_WORLDBOSS',              // 14 普通世界 boss（quick-attack/imperial-decree 经 typeOf 取名值）
+    attackWorldBossV2: 'ATTACK_WORLD_BOSS_V2'         // 298 bossV2 世界 boss（同上；source-of-war 本地写死 298 未走此）
   },
   entityEnum: { obj: 'WorldMapEntityType', boss: 'BOSS', bossV2: 'BOSS_V2' },
   /** ProcedureManager.PROCE 单例上的场景程序成员名（各 Procedure 自带 sceneName，Run 时按 sceneName 判断是否切换） */
@@ -148,8 +145,6 @@ function uiRegistry() { return probe(SYM.modules.uiDataInfo + '.UIDataInfo', () 
 // ─────────────────────── 本地化 / 配置表 ───────────────────────
 
 export const l10n = {
-  /** 翻译能力是否可用 */
-  ok() { return !!LOCAL(); },
   /**
    * 语言键+参数 → 游戏当前语言文本（与游戏 getText(key,...paras) 同源；查不到回键原文）。
    * @param {string} key 语言键
@@ -245,10 +240,7 @@ function mapTodo() {
  * （'unavailable'=协调器缺失 | 'failed'=执行异常 | 'nomarch'=该卡不支持直跳），文案归业务层。
  */
 export const nav = {
-  /** 导航能力是否可用 */
-  ok() { return !!mapTodo(); },
-  /**
-   * 坐标飞行：click=true 且有 JUMP_TO_TILE_CLICK → 飞完模拟点地块（弹城市弹窗），否则 MOVE_TO 只飞+标记。
+  /** 坐标飞行：click=true 且有 JUMP_TO_TILE_CLICK → 飞完模拟点地块（弹城市弹窗），否则 MOVE_TO 只飞+标记。
    * opts 全字段兜底 s/k/z（新图读 k||s、旧图读 z），跨服服号放 z；子服号 subMap 有值才传
    * （新图 game2displayWithServerLimit(x,y,serverId,subMap) 跨服换算需要，缺省游戏回退本服子服）。
    * @param {{x:number, y:number, z:number|null, subMap?:number|null, click:boolean}} action
@@ -316,6 +308,8 @@ function worldMarchUtils() {
 export const march = {
   /**
    * 枚举成员名 → 数值（运行时向游戏枚举对象取，取不到回 fallback）。
+   * 对外供 feats 以游戏枚举为权威源取名值（如 quick-attack/imperial-decree 的世界 BOSS 行军类型），
+   * resolve 内部换算亦经此。
    * @param {string} member SYM.marchEnum 里的成员名（如 'tmAttackPlayer'）
    * @param {number} fallback 游戏符号缺失时的兜底数值（可能过期，仅作降级）
    * @returns {number}
@@ -391,8 +385,6 @@ export const march = {
 // ─────────────────────── 玩家/游戏数据（只读） ───────────────────────
 
 export const gameData = {
-  /** 数据源是否可用 */
-  ok() { return !!userData(); },
   /** 当前服务器时间（秒），实时取值不缓存；取不到返回 0 */
   serverTime() { try { return +game.get(SYM.modules.dataCenter).DATA.ServerTime || 0; } catch (e) { return 0; } },
   /** 本人 StrUid（快速登录模式下与数字 UID 不同）；取不到返回 '' */
@@ -415,7 +407,7 @@ export const gameData = {
    * @returns {{x:number, y:number}|null} 取不到/字段不全返回 null
    */
   myWorldPos() {
-    var c = userData() && userData().WorldCoord;
+    var c = userData() && userData()[SYM.dataProps.worldCoord];
     if (!c || c.x == null || c.y == null) return null;
     return { x: c.x | 0, y: c.y | 0 };
   },
@@ -815,18 +807,6 @@ export const battlePreset = {
       return null;
     }
   },
-  /**
-   * 单格实时上限（调试/对照用，不改写任何东西）。
-   * @param {number} pos 0 基格子索引（补位格传 30）
-   * @param {number} formationV2 军阵 id（补位格容量由它决定）
-   * @param {number[]} heroIds 出征英雄 id 列表
-   * @returns {number|null} 上限；符号缺失返回 null
-   */
-  posMax(pos, formationV2, heroIds) {
-    var inst = marchStorage();
-    if (!inst || typeof inst.getMaxCoutByPos !== 'function') return null;
-    try { return inst.getMaxCoutByPos(pos | 0, formationV2 | 0, heroIds || []) | 0; } catch (e) { return null; }
-  },
 };
 
 /**
@@ -895,29 +875,33 @@ export const session = {
 /**
  * 场景切换能力：基地城市(Home) ↔ 大世界(NWorldMap)，走游戏原生 ProcedureManager（PROCE.Run），
  * 与主界面「世界 / 回城」按钮同一条路径。只触发原生切换，不改写游戏数据（只读+调用红线）。
+ * 对外只暴露 scene.name() 与互切 toggleHomeWorld()；单切不单独暴露（热键只用互切，
+ * 回城类需求走 nav.flyTo 坐标飞行，语义不同）。
  */
+/** 切到 Home 场景（内部） */
+function goHomeScene() {
+  var p = proce();
+  if (!p || !p[SYM.procedures.home]) return { ok: false, err: 'unavailable' };
+  try { p.Run(p[SYM.procedures.home]); return { ok: true }; }
+  catch (e) { log.warn('goHome failed: %s', e && e.message); return { ok: false, err: 'failed' }; }
+}
+
+/** 切到 NWorldMap 场景（内部） */
+function goWorldScene() {
+  var p = proce();
+  if (!p || !p[SYM.procedures.newWorld]) return { ok: false, err: 'unavailable' };
+  try { p.Run(p[SYM.procedures.newWorld]); return { ok: true }; }
+  catch (e) { log.warn('goWorld failed: %s', e && e.message); return { ok: false, err: 'failed' }; }
+}
+
 export const scene = {
   /** 当前场景节点名（cc.director.getScene().name）；引擎未就绪返回 '' */
   name() { try { var s = cc.director.getScene(); return (s && s.name) || ''; } catch (e) { return ''; } },
-  /** 回基地（切到 Home 场景） */
-  goHome() {
-    var p = proce();
-    if (!p || !p[SYM.procedures.home]) return { ok: false, err: 'unavailable' };
-    try { p.Run(p[SYM.procedures.home]); return { ok: true }; }
-    catch (e) { log.warn('scene.goHome failed: %s', e && e.message); return { ok: false, err: 'failed' }; }
-  },
-  /** 进大世界（切到 NWorldMap 场景） */
-  goWorld() {
-    var p = proce();
-    if (!p || !p[SYM.procedures.newWorld]) return { ok: false, err: 'unavailable' };
-    try { p.Run(p[SYM.procedures.newWorld]); return { ok: true }; }
-    catch (e) { log.warn('scene.goWorld failed: %s', e && e.message); return { ok: false, err: 'failed' }; }
-  },
-  /** 基地↔大世界互切：按当前场景决定去向；两者之外的场景不处理（返回 wrongscene） */
+  /** 基地↔大世界互切：按当前场景决定去向（走内部 goHomeScene/goWorldScene）；两者之外的场景不处理（返回 wrongscene） */
   toggleHomeWorld() {
     var cur = this.name();
-    if (cur === SYM.sceneNames.newWorld) return this.goHome();
-    if (cur === SYM.sceneNames.home) return this.goWorld();
+    if (cur === SYM.sceneNames.newWorld) return goHomeScene();
+    if (cur === SYM.sceneNames.home) return goWorldScene();
     return { ok: false, err: 'wrongscene', scene: cur };
   },
 };
@@ -990,7 +974,7 @@ export const worldMap = {
   /**
    * 当前地图类型（决定用哪张 mapFiles 与 allMapInfos 尺寸档）；取不到返回 0。
    * 首选地形模型自带 getter currentMapType（源码里它 = NWorldMapCoreBiz.mapType，随场景实时、
-   * 且模块引用已在 terrainModel 就绪时解析）；mapType 并不挂在 NWorldMapData 上（那是 currentMapFile 源）。
+   * 且模块引用已在 terrainModel 就绪时解析）。
    * @returns {number}
    */
   mapType() {
@@ -1043,389 +1027,11 @@ export const worldMap = {
     } catch (e) { }
     return this.serverId();
   },
-  /**
-   * 【调试探针】扫描 Cocos 场景，查清「抓取游戏实时小地图」所需的三个事实：
-   *   ① 小地图相机是否离屏到可读的 RenderTexture（camera.targetTexture）；
-   *   ② 主 canvas 的 WebGL 是否 preserveDrawingBuffer（决定能否直接 toDataURL/readPixels）；
-   *   ③ 小地图节点的名字/屏幕矩形（供 readPixels 裁剪）。
-   * 控制台：pocketcc.gameApi.worldMap.probeMinimap()（需先进入世界地图、小地图可见）
-   * @returns {object} 汇总（同时 console.table 打印）
-   */
-  probeMinimap() {
-    var out = { cc: !!window.cc, cameras: [], miniNodes: [], bigSprites: [], canvas: null, gl: null, error: null };
-    try {
-      var cc = window.cc;
-      if (!cc || !cc.director) { out.error = 'no cc/director'; return out; }
-      var scene = cc.director.getScene();
-      if (!scene) { out.error = 'no scene (不在游戏场景?)'; return out; }
-      var path = [];
-      (function walk(node) {
-        if (!node) return;
-        path.push(node.name || '?');
-        try {
-          if (cc.Camera && node.getComponent && node.getComponent(cc.Camera)) {
-            var cam = node.getComponent(cc.Camera);
-            var rt = cam.targetTexture || null;
-            out.cameras.push({
-              path: path.join('/'), enabled: !!cam.enabled, clearFlags: cam.clearFlags,
-              visibility: cam.visibility, hasTargetTexture: !!rt,
-              rtSize: rt ? (rt.width + 'x' + rt.height) : null,
-            });
-          }
-          // 大尺寸 Sprite 纹理：若存在烘焙好的静态地图底图，会在这里暴露（名字含 map 的优先看）
-          if (cc.Sprite && node.getComponent && node.getComponent(cc.Sprite) && out.bigSprites.length < 80) {
-            var sf = node.getComponent(cc.Sprite).spriteFrame;
-            var tex = sf && sf.getTexture && sf.getTexture();
-            if (tex && tex.width >= 256 && tex.height >= 256) {
-              out.bigSprites.push({ path: path.join('/'), name: node.name, tex: tex.width + 'x' + tex.height });
-            }
-          }
-          var cs = node.getContentSize && node.getContentSize();
-          var nm = (node.name || '').toLowerCase();
-          if (cs && cs.width > 60 && cs.width <= 640 && Math.abs(cs.width - cs.height) < 120 &&
-              (nm.indexOf('mini') >= 0 || nm.indexOf('map') >= 0 || nm.indexOf('小地图') >= 0)) {
-            var bb = node.getBoundingBoxToWorld ? node.getBoundingBoxToWorld() : null;
-            out.miniNodes.push({
-              path: path.join('/'), name: node.name, active: !!node.active,
-              size: Math.round(cs.width) + 'x' + Math.round(cs.height),
-              worldRect: bb ? [Math.round(bb.x), Math.round(bb.y), Math.round(bb.width), Math.round(bb.height)] : null,
-            });
-          }
-        } catch (e) { /* 单节点异常不影响遍历 */ }
-        var ch = node.children;
-        if (ch) for (var i = 0; i < ch.length; i++) walk(ch[i]);
-        path.pop();
-      })(scene);
-      var canvas = (cc.game && cc.game.canvas) || document.querySelector('#GameCanvas') || document.querySelector('canvas');
-      if (canvas) {
-        out.canvas = { id: canvas.id, w: canvas.width, h: canvas.height, cssW: canvas.clientWidth, cssH: canvas.clientHeight };
-        try {
-          var gl = canvas.getContext('webgl2') || canvas.getContext('webgl') || canvas.getContext('experimental-webgl');
-          out.gl = gl ? { ok: true, preserveDrawingBuffer: !!(gl.getContextAttributes && gl.getContextAttributes().preserveDrawingBuffer) } : { ok: false };
-        } catch (e) { out.gl = { ok: false, err: String(e && e.message) }; }
-      }
-      console.log('%c[pocketcc] probeMinimap', 'color:#4a9fff;font-weight:bold', out);
-      if (out.cameras.length) console.table(out.cameras);
-      if (out.miniNodes.length) console.table(out.miniNodes);
-      if (out.bigSprites.length) console.table(out.bigSprites);
-      console.log('[pocketcc] canvas=', out.canvas, 'gl=', out.gl);
-    } catch (e) { out.error = String((e && (e.stack || e.message)) || e); }
-    return out;
-  },
-  /**
-   * 【调试探针】尝试把「静态纹理」blit 成 dataURL，验证抓取游戏地形底图的可行性。
-   * 思路：小地图节点(minimap)子树里的 cc.Sprite 若引用的是已加载的静态图集贴图，
-   *   其 texture._image / texture.image（HTMLImageElement|ImageBitmap|canvas）是被保留的，
-   *   可直接 drawImage 到 2D canvas 再 toDataURL —— 与 preserveDrawingBuffer 无关。
-   * 控制台：pocketcc.gameApi.worldMap.grabTerrain()（需先进入世界地图、小地图可见）
-   * @param {boolean} [preview] 默认 true：把抓到的最大纹理弹成 <img> 预览，便于肉眼确认。
-   * @returns {object} { found:[{path,name,texW,texH,imgType,ok,len}], bestPath, bestLen, error }
-   */
-  grabTerrain(preview) {
-    var out = { found: [], error: null };
-    try {
-      var cc = window.cc;
-      if (!cc || !cc.director) { out.error = 'no cc/director'; return out; }
-      var scene = cc.director.getScene();
-      if (!scene) { out.error = 'no scene (不在世界地图场景?)'; return out; }
-      if (preview === undefined) preview = true;
-      // Cocos 3.x 上传 GPU 后释放了 CPU 侧图（drawImage 报 detached），gfx 纹理类名又被混淆（挖不到 WebGLTexture）。
-      // 但贴图本来就是静态 PNG（nativeUrl），直接用 <img crossOrigin> 重新加载再 drawImage 即可（命中 HTTP 缓存）。
-      var panel = null;
-      if (preview) {
-        panel = document.createElement('div');
-        panel.style.cssText = 'position:fixed;left:16px;top:110px;z-index:2147483647;background:#0d1117;padding:8px;border:2px solid #4a9fff;max-width:470px;max-height:82vh;overflow:auto;font:12px monospace;color:#cfe3ff;box-shadow:0 8px 40px rgba(0,0,0,.6)';
-        var hd = document.createElement('div'); hd.textContent = 'grabTerrain — 异步加载中…（点此关闭）'; hd.style.cssText = 'cursor:pointer;margin-bottom:6px'; hd.onclick = function () { panel.remove(); };
-        panel.appendChild(hd); document.body.appendChild(panel);
-      }
-      var base = (typeof document !== 'undefined' && document.baseURI) ? document.baseURI : location.href;
-      var urlVariants = function (raw) {
-        var arr = []; if (!raw) return arr; arr.push(raw);
-        try { arr.push(new URL(raw, base).href); } catch (e) {}
-        try { arr.push(location.protocol + '//' + location.host + '/' + String(raw).replace(/^\/+/, '')); } catch (e) {}
-        try { if (cc.assetManager && cc.assetManager.remoteServerRoot) arr.push(cc.assetManager.remoteServerRoot + raw); } catch (e) {}
-        var seen = {}, u = []; for (var i = 0; i < arr.length; i++) { if (arr[i] && !seen[arr[i]]) { seen[arr[i]] = 1; u.push(arr[i]); } } return u;
-      };
-      var tryLoad = function (urls, i, rec, done) {
-        if (i >= urls.length) { rec.imgType = 'IMG_ERR'; rec.err = rec.lastErr || 'all urls failed'; if (panel) { var e0 = document.createElement('div'); e0.style.cssText = 'color:#ff8f8f;margin:2px 0'; e0.textContent = (rec.name || '') + ' ✗ ' + (rec.err || ''); panel.appendChild(e0); } done(); return; }
-        var img = new Image(); img.crossOrigin = 'anonymous';
-        img.onload = function () {
-          try {
-            var w = img.naturalWidth || img.width, h = img.naturalHeight || img.height;
-            var c = document.createElement('canvas'); c.width = w; c.height = h;
-            c.getContext('2d').drawImage(img, 0, 0, w, h);
-            var durl = c.toDataURL('image/png');
-            rec.imgType = 'IMG_OK'; rec.usedUrl = urls[i]; rec.len = durl.length; rec.ok = true; rec.imgW = w; rec.imgH = h;
-            if (panel) { var one = document.createElement('div'); one.style.cssText = 'margin-bottom:8px';
-              var lab = document.createElement('div'); lab.style.cssText = 'color:#8fd0ff;margin:2px 0';
-              lab.textContent = (rec.name || '') + ' ' + w + 'x' + h + ' (' + Math.round(durl.length / 1024) + 'KB) · ' + rec.path.split('/').slice(-2).join('/');
-              var im2 = document.createElement('img'); im2.src = durl; im2.style.cssText = 'max-width:430px;max-height:430px;display:block;image-rendering:pixelated;border:1px solid #333';
-              one.appendChild(lab); one.appendChild(im2); panel.appendChild(one);
-            }
-            done();
-          } catch (e) { rec.imgType = 'TAINTED'; rec.err = String(e && e.message); done(); }
-        };
-        img.onerror = function () { rec.lastErr = 'err@' + urls[i]; tryLoad(urls, i + 1, rec, done); };
-        img.src = urls[i];
-      };
-      var path = [];
-      var seenTex = [];
-      (function walk(node) {
-        if (!node) return;
-        path.push(node.name || '?');
-        try {
-          var inMini = path.join('/').toLowerCase().indexOf('minimap') >= 0;
-          if (inMini && cc.Sprite && node.getComponent) {
-            var sp = node.getComponent(cc.Sprite);
-            var sf = sp && sp.spriteFrame;
-            var tex = sf && sf.getTexture && sf.getTexture();
-            if (tex && tex.width >= 256 && tex.height >= 256 && seenTex.indexOf(tex) < 0) {
-              seenTex.push(tex);
-              out.found.push({
-                path: path.join('/'), name: node.name, texW: tex.width, texH: tex.height,
-                rawUrl: tex.nativeUrl || tex._nativeUrl || null, imgType: 'PENDING', ok: false, len: 0,
-              });
-            }
-          }
-        } catch (e) { /* ignore single node */ }
-        var ch = node.children;
-        if (ch) for (var i = 0; i < ch.length; i++) walk(ch[i]);
-        path.pop();
-      })(scene);
-      console.log('%c[pocketcc] grabTerrain', 'color:#4a9fff;font-weight:bold', out.found);
-      if (out.found.length) console.table(out.found.map(function (r) { return { name: r.name, tex: r.texW + 'x' + r.texH, url: r.rawUrl }; }));
-      out.found.forEach(function (rec) { tryLoad(urlVariants(rec.rawUrl), 0, rec, function () { console.log('[pocketcc] loaded', rec.name, rec.imgType, rec.usedUrl || rec.err || ''); }); });
-      if (panel && !out.found.length) { var e1 = document.createElement('div'); e1.textContent = '未发现 minimap 下 ≥256 的纹理'; panel.appendChild(e1); }
-    } catch (e) { out.error = String((e && (e.stack || e.message)) || e); }
-    return { found: out.found.map(function (r) { return { path: r.path, name: r.name, url: r.rawUrl, imgType: r.imgType, ok: r.ok }; }), error: out.error };
-  },
-  /**
-   * 【调试探针】抓取游戏当前渲染到屏幕的那一帧（真实世界地图外观）。
-   * 关键：Cocos 3.x 的 cc.Director.EVENT_AFTER_DRAW 在引擎画完、浏览器合成/清屏「之前」同步触发，
-   *   此刻对「默认帧缓冲」readPixels 能拿到真实合成结果——与 preserveDrawingBuffer 无关，
-   *   也绕开「单张纹理被 detached / gfx 句柄被混淆」两条死路（我们读的是整屏合成，不是某张纹理）。
-   * 用法：进到世界地图、把地图缩放到想复刻的视野，控制台执行 pocketcc.gameApi.worldMap.grabScreen()
-   *   下一帧弹出整屏截图预览，dataURL 暂存到 window.__pocketccScreen。
-   * @param {object} [opt] { x,y,w,h } 可选裁剪（CSS 像素，原点左上）；默认整屏。
-   * @returns {object} { scheduled, note, error }
-   */
-  grabScreen(opt) {
-    var out = { scheduled: false, error: null };
-    try {
-      var cc = window.cc;
-      if (!cc || !cc.director) { out.error = 'no cc/director'; return out; }
-      if (!cc.Director || !cc.Director.EVENT_AFTER_DRAW) { out.error = 'no cc.Director.EVENT_AFTER_DRAW'; return out; }
-      var cnv = (cc.game && cc.game.canvas) || document.querySelector('#GameCanvas') || document.querySelector('canvas');
-      var gl = cnv && (cnv.getContext('webgl2') || cnv.getContext('webgl'));
-      if (!gl) { out.error = 'no webgl context'; return out; }
-      opt = opt || {};
-      var dpr = (window.devicePixelRatio || 1);
-      var handler = function () {
-        try { cc.director.off(cc.Director.EVENT_AFTER_DRAW, handler); } catch (e) {}
-        try {
-          var DW = gl.drawingBufferWidth, DH = gl.drawingBufferHeight;
-          var cw = opt.w ? Math.round(opt.w * dpr) : DW;
-          var chh = opt.h ? Math.round(opt.h * dpr) : DH;
-          var cx = opt.x != null ? Math.round(opt.x * dpr) : 0;
-          var cyCss = opt.y != null ? Math.round(opt.y * dpr) : 0;
-          cx = Math.max(0, Math.min(DW - 1, cx));
-          cw = Math.max(1, Math.min(DW - cx, cw)); chh = Math.max(1, Math.min(DH, chh));
-          var cy = Math.max(0, Math.min(DH - chh, DH - cyCss - chh));
-          var prevFB = gl.getParameter(gl.FRAMEBUFFER_BINDING);
-          gl.bindFramebuffer(gl.FRAMEBUFFER, null);
-          var px = new Uint8Array(cw * chh * 4);
-          gl.readPixels(cx, cy, cw, chh, gl.RGBA, gl.UNSIGNED_BYTE, px);
-          if (prevFB) gl.bindFramebuffer(gl.FRAMEBUFFER, prevFB);
-          var c = document.createElement('canvas'); c.width = cw; c.height = chh;
-          var ctx = c.getContext('2d'); var imgd = ctx.createImageData(cw, chh);
-          for (var y = 0; y < chh; y++) { var src = (chh - 1 - y) * cw * 4, dst = y * cw * 4; imgd.data.set(px.subarray(src, src + cw * 4), dst); }
-          ctx.putImageData(imgd, 0, 0);
-          var url = c.toDataURL('image/png');
-          window.__pocketccScreen = url;
-          var nonzero = 0; for (var i = 0; i < px.length; i += 4) { if (px[i] || px[i + 1] || px[i + 2]) { nonzero = 1; break; } }
-          console.log('%c[pocketcc] grabScreen', 'color:#4a9fff;font-weight:bold', { w: cw, h: chh, kb: Math.round(url.length / 1024), blank: !nonzero });
-          var panel = document.createElement('div');
-          panel.style.cssText = 'position:fixed;left:16px;top:110px;z-index:2147483647;background:#0d1117;padding:8px;border:2px solid #4a9fff;max-width:60vw;max-height:86vh;overflow:auto;font:12px monospace;color:#cfe3ff;box-shadow:0 8px 40px rgba(0,0,0,.6)';
-          var hd = document.createElement('div'); hd.style.cssText = 'cursor:pointer;margin-bottom:6px';
-          hd.textContent = 'grabScreen — ' + cw + 'x' + chh + (nonzero ? '' : '  (全黑：AFTER_DRAW 早于最终合成，需换 hook)') + ' · 点此关闭';
-          hd.onclick = function () { panel.remove(); };
-          var im = document.createElement('img'); im.src = url; im.style.cssText = 'max-width:100%;display:block;border:1px solid #333';
-          panel.appendChild(hd); panel.appendChild(im); document.body.appendChild(panel);
-        } catch (e) { console.warn('[pocketcc] grabScreen readPixels failed', e); }
-      };
-      cc.director.on(cc.Director.EVENT_AFTER_DRAW, handler);
-      out.scheduled = true;
-      out.note = 'capturing on next after-draw frame; keep the world map visible';
-    } catch (e) { out.error = String((e && (e.stack || e.message)) || e); }
-    return out;
-  },
-  /**
-   * 【调试探针】判定「从 mapFile per-cell 数据重建真实地形底图」的可行性（需先进入世界地图）。
-   *   实证结论（源码）：地形/装饰/阻挡都是 mapFiles[mapType].blocks[].levels[zoom].cells[layer]
-   *   的逐格数据（layer: terrain=0/addon=1/area=2/block=3），经 NWorldMapTerrainModel 的
-   *   getTerrain/getAddon/isBlock(cellX,cellY,scale) 读取；tileId→biome 名走 NMapAssets[type]
-   *   .tileTextureMap.get(1)（地形）、.get(2)（装饰），名里含 desert/snow/water/forest/volcano/dx/th 等
-   *   即生物群系类别（mapType=202 的 tileMap 为空，名字全在 tileTextureMap，故必须用它解析）。
-   *   本探针一次性回官：mapFile 是否已加载 + blocks 结构 + 逐格 terrain/block/addon 覆盖分布
-   *   + 每类 biome 占比 + top tileId→biome 名。控制台：pocketcc.gameApi.worldMap.probeTerrainData()
-   * @returns {object} 汇总（同时 console.table 打印 topTiles / topAddons）
-   */
-  probeTerrainData() {
-    var out = { error: null };
-    try {
-      var mapType = this.mapType();
-      out.mapType = mapType;
-      var model = this.terrainModel();
-      out.hasModel = !!model;
-      var mc = ns(game.get(SYM.modules.mapCommon));
-      var infos = mc && (mc.allMapInfos || (mc.NWorldMapCommon && mc.NWorldMapCommon.allMapInfos));
-      var S = mc && (mc.NWorldMapSettings || (mc.NWorldMapCommon && mc.NWorldMapCommon.NWorldMapSettings));
-      var info = infos && infos[mapType];
-      out.info = info ? { cols: info.cols, rows: info.rows, terrainNum: info.terrainNum, settings: info.settings } : null;
-      if (S && info) out.settings = {
-        outline: !!(info.settings & S.outline), terrainTiled: !!(info.settings & S.terrainTiled),
-        newTerrain: !!(info.settings & S.newTerrain), newTerrainV2: !!(info.settings & S.newTerrainV2),
-        haveDefaultTerrain: !!(info.settings & S.haveDefaultTerrain), borderTerrain: !!(info.settings & S.borderTerrain),
-      };
-      // mapFile 原始结构（blocks / levels / cells 各层字节长度）
-      var md = ns(game.get(SYM.modules.mapData));
-      var inst = md && (md.instance || (md.NWorldMapData && md.NWorldMapData.instance));
-      var mf = inst && inst.mapFiles && inst.mapFiles[mapType];
-      out.mapFileLoaded = !!mf;
-      if (mf) {
-        out.mapFile = {
-          ver: mf.ver, blockCount: mf.blocks && mf.blocks.length,
-          blocks: (mf.blocks || []).map(function (b) {
-            var lv = {};
-            if (b.levels && b.levels.forEach) b.levels.forEach(function (l, z) {
-              var cl = [];
-              if (l.cells) for (var k in l.cells) { var arr = l.cells[k]; cl.push('L' + k + ':' + (arr && arr.length)); }
-              lv['zoom' + z] = cl.join(' ');
-            });
-            return { cols: b.cols, rows: b.rows, posMode: b.posMode, posModeArgs: (b.posModeArgs || []).slice(0, 10), levels: lv, mountain: (b.mountain || []).length };
-          }),
-        };
-      }
-      var cols = (info && info.cols) || (this.size() && this.size().cols) || 408;
-      var rows = (info && info.rows) || (this.size() && this.size().rows) || 952;
-      out.dims = { cols: cols, rows: rows };
-      // assets：优先 tileTextureMap（202 在此），退化 tileMap
-      var ma = game.get(SYM.modules.mapAssets);
-      var NMapAssets = ma && (ma.NMapAssets || (ma.default && ma.default.NMapAssets));
-      var assets = NMapAssets && NMapAssets[mapType];
-      var tt1 = assets && assets.tileTextureMap && assets.tileTextureMap.get ? assets.tileTextureMap.get(1) : null;
-      var tt2 = assets && assets.tileTextureMap && assets.tileTextureMap.get ? assets.tileTextureMap.get(2) : null;
-      var biomeOf = function (tid) { var e = (tt1 && tt1.get(tid)) || (assets && assets.tileMap && assets.tileMap.get(tid)); return (e && e[0]) || null; };
-      var addonOf = function (aid) { var e = (tt2 && tt2.get(aid)) || (assets && assets.tileMap && assets.tileMap.get(aid)); return (e && e[0]) || null; };
-      var cat = function (name) { if (!name) return 'none'; var n = String(name).toLowerCase();
-        if (n.indexOf('water') >= 0) return 'water';
-        if (n.indexOf('snow') >= 0) return 'snow';
-        if (n.indexOf('volcano') >= 0) return 'volcano';
-        if (n.indexOf('desert') >= 0) return 'desert';
-        if (n.indexOf('forest') >= 0) return 'forest';
-        if (n.indexOf('dx') >= 0) return 'dx';
-        if (n.indexOf('th1') >= 0 || n.indexOf('th2') >= 0) return 'grass';
-        if (n.indexOf('default') >= 0) return 'default';
-        return 'other'; };
-      // 全网格抽样：terrain / block / addon 覆盖 + biome 类别直方图
-      var hist = {}, catHist = {}, addonHist = {}, total = 0, nonZero = 0, blockCnt = 0, addonCnt = 0;
-      var step = Math.max(1, Math.floor(Math.min(cols, rows) / 60));
-      if (model && typeof model.getTerrain === 'function') {
-        for (var y = 0; y < rows; y += step) for (var x = 0; x < cols; x += step) {
-          var tid; try { tid = model.getTerrain(x, y, 1) | 0; } catch (e) { tid = -999; }
-          total++; if (tid) nonZero++;
-          hist[tid] = (hist[tid] || 0) + 1;
-          var c = cat(biomeOf(tid)); catHist[c] = (catHist[c] || 0) + 1;
-          try { if (typeof model.isBlock === 'function' && model.isBlock(x, y)) blockCnt++; } catch (e) { }
-          try { if (typeof model.getAddon === 'function') { var aid = model.getAddon(x, y, 1) | 0; if (aid) { addonCnt++; var an = addonOf(aid) || ('#' + aid); addonHist[an] = (addonHist[an] || 0) + 1; } } } catch (e) { }
-        }
-      } else out.getTerrain = 'no getTerrain fn';
-      out.sample = { total: total, nonZero: nonZero, blockCnt: blockCnt, addonCnt: addonCnt, distinctTiles: Object.keys(hist).length };
-      out.catHist = catHist;
-      out.topTiles = Object.keys(hist).map(function (k) { return { tid: Number(k), n: hist[k], biome: biomeOf(Number(k)) || '', cat: cat(biomeOf(Number(k))) }; }).sort(function (a, b) { return b.n - a.n; }).slice(0, 24);
-      out.topAddons = Object.keys(addonHist).map(function (k) { return { addon: k, n: addonHist[k] }; }).sort(function (a, b) { return b.n - a.n; }).slice(0, 18);
-      if (assets) out.assets = { terrainTexture: assets.terrainTexture, addonTexture: assets.addonTexture, specTerrainTexture: assets.specTerrainTexture || null, terrainScale: assets.terrainScale, hasTileTextureMap: !!assets.tileTextureMap, tileMapSize: assets.tileMap && assets.tileMap.size, tt1Size: tt1 && tt1.size, tt2Size: tt2 && tt2.size, waterIds: assets.waterIds, hillCount: assets.hillIds && assets.hillIds.length };
-      else out.assets = 'NMapAssets[' + mapType + '] missing';
-    } catch (e) { out.error = String((e && (e.stack || e.message)) || e); }
-    console.log('%c[pocketcc] probeTerrainData', 'color:#4a9fff;font-weight:bold', out);
-    if (out.topTiles && out.topTiles.length) console.table(out.topTiles);
-    if (out.topAddons && out.topAddons.length) console.table(out.topAddons);
-    if (out.mapFile && out.mapFile.blocks) console.table(out.mapFile.blocks);
-    return out;
-  },
-  /**
-   * 【调试探针】遍历整个场景，抽出所有材质/Sprite 纹理（含 nativeUrl），并列出名字含 terrain 的节点及其组件类型。
-   *   目的：定位 newTerrainV2（mapType 202）地形网格用的纹理——若有一张覆盖全图的大地形纹理，直接按 nativeUrl 抓下来当底图。
-   *   控制台：pocketcc.gameApi.worldMap.probeNewTerrainAssets()（需先进入世界地图）
-   * @returns {object} { terrainNodes, textures:[{tag,w,h,url}], newTerrainV2, matKeys }
-   */
-  probeNewTerrainAssets() {
-    var out = { error: null, textures: [], terrainNodes: [], matKeys: null, newTerrainV2: null };
-    try {
-      var cc = window.cc;
-      if (!cc || !cc.director) { out.error = 'no cc/director'; return out; }
-      var scene = cc.director.getScene();
-      if (!scene) { out.error = 'no scene (不在世界地图?)'; return out; }
-      var seen = {};
-      var pushTex = function (tex, tag) {
-        try {
-          if (!tex || !tex.width) return;
-          var url = tex.nativeUrl || tex._nativeUrl || null;
-          var key = (url || '') + '@' + tex.width + 'x' + tex.height;
-          if (seen[key]) return; seen[key] = 1;
-          out.textures.push({ tag: tag, w: tex.width | 0, h: tex.height | 0, url: url });
-        } catch (e) { }
-      };
-      var grabMat = function (m, tag) {
-        if (!m) return;
-        if (!out.matKeys && m.getTexture) { try { out.matKeys = Object.keys(m).slice(0, 30); } catch (e) { } }
-        var names = ['mainTexture', 'texture', 'albedoMap', 'diffuseMap', 'baseMap'];
-        try { if (typeof m.getTexture === 'function') for (var i = 0; i < names.length; i++) { var t = m.getTexture(names[i]); if (t) pushTex(t, tag + ':' + names[i]); } } catch (e) { }
-        try { if (m.texture) pushTex(m.texture, tag + '.texture'); } catch (e) { }
-        try { if (m._texture) pushTex(m._texture, tag + '._texture'); } catch (e) { }
-        try { if (m.effect && m.effect.textures) { for (var k in m.effect.textures) pushTex(m.effect.textures[k], tag + '.eff.' + k); } } catch (e) { }
-      };
-      var walk = function (node, path) {
-        if (!node) return;
-        var nm = node.name || '?';
-        var p = path + '/' + nm;
-        try {
-          if (/terrain/i.test(nm) && out.terrainNodes.length < 30) {
-            var comps = node._components || [];
-            var cn = [];
-            for (var q = 0; q < comps.length && cn.length < 8; q++) { try { cn.push(comps[q] && (comps[q].__type__ || (comps[q].constructor && comps[q].constructor.name))); } catch (e) { } }
-            out.terrainNodes.push({ path: p, comps: cn.join(',') });
-          }
-          var cs = node._components;
-          if (cs) for (var ci = 0; ci < cs.length; ci++) {
-            var c = cs[ci]; if (!c) continue;
-            try { if (c.spriteFrame) { var t = c.spriteFrame.getTexture && c.spriteFrame.getTexture(); if (t) pushTex(t, p + '#sprite'); } } catch (e) { }
-            try { if (typeof c.getMaterial === 'function') { for (var mi = 0; mi < 4; mi++) { var mm = c.getMaterial(mi); if (mm) grabMat(mm, p + '#m' + mi); } } } catch (e) { }
-            try { if (c.materials) for (var qi = 0; qi < c.materials.length; qi++) grabMat(c.materials[qi], p + '#ms' + qi); } catch (e) { }
-            try { if (c.sharedMaterials) for (var ri = 0; ri < c.sharedMaterials.length; ri++) grabMat(c.sharedMaterials[ri], p + '#sms' + ri); } catch (e) { }
-            try { if (c._materials) for (var si = 0; si < c._materials.length; si++) grabMat(c._materials[si], p + '#_m' + si); } catch (e) { }
-          }
-        } catch (e) { }
-        var ch = node.children; if (ch) for (var j = 0; j < ch.length; j++) walk(ch[j], p);
-      };
-      walk(scene, '');
-      var mc = ns(game.get(SYM.modules.mapCommon));
-      var infos = mc && (mc.allMapInfos || (mc.NWorldMapCommon && mc.NWorldMapCommon.allMapInfos));
-      var info = infos && infos[this.mapType()];
-      if (info && info.newTerrainV2) { var nv = info.newTerrainV2; out.newTerrainV2 = { defaultPrefab: nv.defaultPrefab, hasSubMapPrefabs: !!nv.subMapPrefabs, hasSubMap: !!nv.subMap }; }
-      out.textures.sort(function (a, b) { return (b.w * b.h) - (a.w * a.h); });
-      out.textures = out.textures.slice(0, 50);
-    } catch (e) { out.error = String((e && (e.stack || e.message)) || e); }
-    console.log('%c[pocketcc] probeNewTerrainAssets', 'color:#4a9fff;font-weight:bold', out);
-    if (out.terrainNodes.length) console.table(out.terrainNodes);
-    if (out.textures.length) console.table(out.textures);
-    return out;
-  },
 };
 
 /**
  * 调试面（仅供控制台，不入业务路径）：与 core 工具同挂 window.pocketcc（见 content.entry.js），
- * 逆向时 `pocketcc.api.march.flags()` 看战场判定器是否解析成功、
- * `pocketcc.api.march.resolve(13)` 看基础 marchType 在当前战场漂成哪个值（无需等到活动图里复现）。
+ * 逆向时 `pocketcc.gameApi.march.flags()` 看战场判定器是否解析成功、
+ * `pocketcc.gameApi.march.resolve(13)` 看基础 marchType 在当前战场漂成哪个值（无需等到活动图里复现）。
  */
 export const debug = { SYM, probe, ns, game, l10n, nav, march, gameData, gameConf, bits, session, avatar, worldMap, battlePreset, scene, ui };

@@ -34,18 +34,20 @@ import { march } from '../../core/march.js';
  * spec: { key 场景标识, label 日志展示, cls 面板类（game.get(cls).default）,
  *         field onShow 后 tileInfo 落在组件上的字段名,
  *         marchTypes.attack 本服基础 NMarchType（发包前由 marchApi.resolve 做跨服漂移换算）,
- *         marchTypes.attackV2 可选：同面板二期实体（按 tileInfo.type 分流）的行军类型 }
+ *         marchTypes.attackV2 可选：同面板二期实体（按 tileInfo.type 分流）的行军类型（兜底值）,
+ *         marchMembers 可选：行军类型以游戏 MarchType 枚举成员名为权威源（marchApi.typeOf 运行时取名，
+ *           成员名收在 core/game-api.js SYM.marchEnum），marchTypes 数值仅作符号漂移兜底 }
  * NMarchType 见 extracted/Script/WorldMapCommon__WorldMapCommon.js 的 MarchType 枚举。
- * @type {Array<{key:string, label:string, cls:string, field:string, marchTypes:{attack:number, attackV2?:number}}>}
+ * @type {Array<{key:string, label:string, cls:string, field:string, marchTypes:{attack:number, attackV2?:number}, marchMembers?:{attack:string, attackV2?:string}}>}
  */
 const QUICK_ATTACK_TARGETS = [
     { key: 'city',     label: '城市',   cls: 'NWorldCityPopup',      field: 'tileInfo',  marchTypes: { attack: 13 } }, // ATTACK_PLAYER（跨服战场经 resolve 漂移到 150/170/110/181）
     { key: 'monster',  label: '野怪',   cls: 'NWorldMapEnemy',       field: 'tileInfo',  marchTypes: { attack: 5 } },  // ATTACK_MONSTER
     { key: 'nMonster', label: '新野怪', cls: 'NWorldMapNEnemy',      field: '_tileInfo', marchTypes: { attack: 5 } },  // ATTACK_MONSTER
     { key: 'mine',     label: '矿点',   cls: 'NWorldResourcePopup',  field: 'tileInfo',  marchTypes: { attack: 3 } },  // GATHER_RESOURCE 位
-    // 世界 BOSS：普通=ATTACK_WORLDBOSS(14)；BOSS_V2 实体=ATTACK_WORLD_BOSS_V2(298)，
+    // 世界 BOSS：普通=ATTACK_WORLDBOSS(14)；BOSS_V2 实体=ATTACK_WORLD_BOSS_V2(298)，行军类型走游戏枚举成员名，
     // 口径同游戏 WorldBossDetailPanel._onClickAttackBtn（tileInfo.type===WorldMapEntityType.BOSS_V2）。
-    { key: 'boss',     label: '世界BOSS', cls: 'WorldBossDetailPanel', field: 'tileInfo', marchTypes: { attack: 14, attackV2: 298 } },
+    { key: 'boss',     label: '世界BOSS', cls: 'WorldBossDetailPanel', field: 'tileInfo', marchTypes: { attack: 14, attackV2: 298 }, marchMembers: { attack: 'attackWorldBoss', attackV2: 'attackWorldBossV2' } },
 ];
 
 /**
@@ -66,7 +68,7 @@ const TRIPLE_INTERVAL_MS = 1000;
 function buildModuleCfg() {
     var targets = {};
     QUICK_ATTACK_TARGETS.forEach(function (spec) {
-        targets[spec.key] = { enabled: true, marchTypes: { attack: spec.marchTypes.attack } };
+        targets[spec.key] = { enabled: true, marchTypes: { attack: spec.marchTypes.attack, attackV2: spec.marchTypes.attackV2 } };
     });
     return { tripleIntervalMs: TRIPLE_INTERVAL_MS, targets: targets };
 }
@@ -360,8 +362,17 @@ async function attackFlow(spec, target, planList) {
  */
 function resolveMarchType(spec, target) {
     var t = (cfg.targets[spec.key] && cfg.targets[spec.key].marchTypes) || {};
-    var base = t.attack | 0;
-    if (t.attackV2 && marchApi.isBossV2(target.entityType)) base = t.attackV2 | 0;
+    var v2 = !!(t.attackV2 && marchApi.isBossV2(target.entityType));
+    var base;
+    if (spec.marchMembers && spec.marchMembers.attack) {
+        // 注册表声明了枚举成员名的场景（世界 BOSS 两型）：以游戏 MarchType 运行时值为权威源，marchTypes 数值仅漂移兜底
+        base = v2 && spec.marchMembers.attackV2
+            ? marchApi.typeOf(spec.marchMembers.attackV2, t.attackV2 | 0)
+            : marchApi.typeOf(spec.marchMembers.attack, t.attack | 0);
+    } else {
+        base = t.attack | 0;
+        if (v2) base = t.attackV2 | 0;
+    }
     var resolved = marchApi.resolve(base, MARCH_FALLBACK);
     if (resolved !== base) log.info('marchType 漂移. key=%s;base=%d->%d;flags=%s', spec.key, base, resolved, JSON.stringify(marchApi.flags()));
     return resolved;
@@ -392,7 +403,7 @@ function configure(partial) {
         QUICK_ATTACK_TARGETS.forEach(function (spec) {
             var t = targets[spec.key];
             if (!t) return;
-            var cur = cfg.targets[spec.key] || (cfg.targets[spec.key] = { enabled: true, marchTypes: { attack: spec.marchTypes.attack } });
+            var cur = cfg.targets[spec.key] || (cfg.targets[spec.key] = { enabled: true, marchTypes: { attack: spec.marchTypes.attack, attackV2: spec.marchTypes.attackV2 } });
             if (typeof t.enabled === 'boolean') cur.enabled = t.enabled;
             if (t.marchTypes && typeof t.marchTypes.attack === 'number' && t.marchTypes.attack > 0) {
                 cur.marchTypes.attack = t.marchTypes.attack;

@@ -8,18 +8,19 @@
  *   1) 推送 10912（PUSH_ONE_ACTIVITYEXTRA，载荷 {aid,extra}）：新矿脉诞生时服务器推它 → aid 反查是领域寻宝 → 触发扫描；
  *   2) run() 启动即主动扫描一次；
  *   3) 兜底定时（active/idle 两档：发现矿脉用 active 短间隔，连续 EMPTY_STREAK_IDLE 次空扫降到 idle 长间隔）：防止服务器漏推。
- *   触发一律汇入 triggerScan：扫描/消费在飞时只置 scanPending，不并发改 queue，本轮结束后再补扫一次（多条推送合并成一次）。
+ *   触发一律汇入 cycle.kick（core/cycle 调和循环）：一轮（生产+消费）在飞时只置 pending，本轮结束后补扫一次（多条推送合并成一次）。
  *   生产 doScan：找活动 → 名额够 → 拉 8623 → 过滤 gatherStatus===0 → 整批替换 queue → 交消费。
- *   消费 consume：consuming 闸门保证单循环，逐条 shift → digFlow 派 902 → 每条间 sleep(digInterval)；排空/名额满/退让后 afterConsume 重排。
+ *   消费 consume（并入 cycleRun 的一轮）：逐条 shift → digFlow 派 902 → 每条间 sleep(digInterval)；排空/名额满即结束本轮，由 cycle 按 nextScanInterval 重排。
  *
  * 生命周期由 reactor 托管：install/configure/run 三个钩子，scenes 门控限定 Home/NWorldMap。
- *   consume 有"名额满即停 + afterConsume 重排"的独有逻辑，不套 createDrain，原样保留在本文件。
+ *   consume 有"名额满即停"的独有逻辑，不套 createDrain，作为 cycleRun 一轮的后半段原样保留在本文件。
  *   兜底定时器是功能内部生产逻辑，pause 后 alive()=false 自然停摆，resume 时 run 复位状态并重新点火。
  */
 import { createLog } from '../../core/log.js';
 import { game } from '../../core/game.js';
 import { reactor } from '../../core/reactor.js';
 import { march } from '../../core/march.js';
+import { createCycle } from '../../core/cycle.js';
 
 /** @type {ReturnType<createLog>} 模块日志器（tag=DOMAIN-TREASURE-MINER） */
 const log = createLog('DOMAIN-TREASURE-MINER');
@@ -97,14 +98,10 @@ var ctxRef = null;
 
 /** @type {object[]} 本轮扫描过滤出的可派矿（gatherStatus===0），consume 逐条 shift */
 var queue = [];
-/** @type {boolean} 消费闸门：同时只有一个 consume 循环 */
-var consuming = false;
-/** @type {boolean} 生产闸门：同时只有一个 doScan 在飞（含 8623 await） */
-var scanning = false;
-/** @type {boolean} 扫描/消费在飞时来了新触发（推送/run），置位；本轮结束后补扫一次 */
-var scanPending = false;
-/** @type {number|null} 兜底定时器；pause 后到点空转不再自重排 */
-var scanTimer = null;
+/**
+ * 消费/生产在飞闸门与兜底定时器均收口到 core/cycle（见下方 cycle 实例）：
+ * consume 不再是独立循环入口（并入 cycleRun 的一轮），故 consuming 随之消失。
+ */
 /** @type {object|null} 当前轮活动信息，消费段每条派前现判名额（para6）用 */
 var scanActivity = null;
 /** @type {number} 连续空扫计数：发现矿脉/名额满即清零，达到 EMPTY_STREAK_IDLE 转 idle 间隔 */
@@ -149,41 +146,28 @@ function mineKey(x, y) {
 }
 
 /**
- * 兜底定时器武装器：自重排一次 triggerScan；pause 后 alive()=false，到点空转不再自重排
- * @param {number} delay 延迟(毫秒)
+ * 单轮调和主体（core/cycle 承载单飞闸门 + 触发合并 + 绝不停摆）：生产 doScan → 消费 consume → 返回下拍间隔。
+ * 决策仍归本 feat：在飞期间攒下触发（cycle.pending）优先立即补扫，否则按 emptyStreak 选 active/idle 两档。
+ * @returns {Promise<number>}
  */
-function scheduleScan(delay) {
-    if (!aliveFn()) return;
-    if (scanTimer) clearTimeout(scanTimer);
-    scanTimer = setTimeout(function () {
-        scanTimer = null;
-        if (aliveFn()) triggerScan();
-    }, Math.max(0, delay));
+async function cycleRun() {
+    await doScan();
+    if (!aliveFn()) return 0;   // pause 中途：consume 不再进入，cycle 在 alive 检查处自然停摆
+    await consume();
+    if (cycle.pending) return 0;
+    return nextScanInterval();
 }
 
-/**
- * 扫描触发汇入口：推送 / run / 兜底定时都走这里。
- * 扫描或消费在飞时不并发进入，只置 scanPending，由本轮 afterConsume 补扫（多条触发合并成一次）
- */
-function triggerScan() {
-    if (!aliveFn()) return;
-    if (scanning || consuming) {
-        scanPending = true;
-        return;
-    }
-    doScan().catch(function (err) {
-        log.warn('scan threw.', err);
-    });
-}
+/** @type {{kick: function(), pending: boolean}} 调和循环驱动器（fallback 取 active 档，防异常停摆） */
+const cycle = createCycle({ log: log, alive: aliveFn, run: cycleRun, fallback: cfg.activeScanInterval });
 
 /**
  * 生产端：找活动 → 名额够 → 拉 8623 → 过滤可派 → 整批替换 queue → 交消费。永不 reject。
  * @returns {Promise<void>}
  */
 async function doScan() {
-    scanning = true;
     try {
-        // 活动并未开启：清空队列，交 afterConsume 排兜底。算一次空扫（没矿可检测）
+        // 活动并未开启：清空队列，交下拍兜底。算一次空扫（没矿可检测）
         var activity = getDomainTreasureActivity();
         if (!activity) {
             log.debug('no activity found.');
@@ -220,47 +204,31 @@ async function doScan() {
         log.warn('scan error.', err);
         queue.length = 0;
         emptyStreak++;
-    } finally {
-        scanning = false;
     }
-
-    if (!aliveFn()) return;
-    // 即便队列空也进 consume：它空转一圈后由 afterConsume 统一重排，触发源单一
-    consume().catch(function (err) {
-        log.warn('consume loop threw.', err);
-    });
 }
 
 /**
- * 消费端：串行消费队列，consuming 闸门防重入；每条之间休眠 digInterval（队列空则不空等）。永不 reject。
+ * 消费端（作为 cycleRun 一轮的后半段）：串行消费队列，每条之间休眠 digInterval（队列空则不空等）。
  * @returns {Promise<void>}
  */
 async function consume() {
-    if (consuming) return;
-    consuming = true;
-    try {
-        while (queue.length && aliveFn()) {
-            // 名额满：停止本轮消费，等下一轮扫描重新判
-            if (!(await isDomainTreasureActivityMarchEnough(scanActivity))) {
-                log.debug('march slots full, drain stopped.');
-                queue.length = 0;
-                break;
-            }
-            var mine = queue.shift();
-            try {
-                await digFlow(mine);
-            } catch (err) {
-                log.warn('dig flow threw.', err);
-            }
-            if (queue.length && aliveFn()) {
-                await sleep(cfg.digInterval);
-            }
+    while (queue.length && aliveFn()) {
+        // 名额满：停止本轮消费，等下一轮扫描重新判
+        if (!(await isDomainTreasureActivityMarchEnough(scanActivity))) {
+            log.debug('march slots full, drain stopped.');
+            queue.length = 0;
+            break;
         }
-    } finally {
-        consuming = false;
+        var mine = queue.shift();
+        try {
+            await digFlow(mine);
+        } catch (err) {
+            log.warn('dig flow threw.', err);
+        }
+        if (queue.length && aliveFn()) {
+            await sleep(cfg.digInterval);
+        }
     }
-    if (!aliveFn()) return;
-    afterConsume();
 }
 
 /**
@@ -270,18 +238,6 @@ async function consume() {
  */
 function nextScanInterval() {
     return emptyStreak >= EMPTY_STREAK_IDLE ? cfg.idleScanInterval : cfg.activeScanInterval;
-}
-
-/**
- * 一轮消费收尾：在飞期间攒下的触发（scanPending）优先补扫，否则武装兜底定时
- */
-function afterConsume() {
-    if (scanPending) {
-        scanPending = false;
-        triggerScan();
-        return;
-    }
-    scheduleScan(nextScanInterval());
 }
 
 /**
@@ -298,7 +254,7 @@ function onActivityExtraPush(ev) {
     }
 
     log.info('new mine push received, trigger scan. aid=%d', aid);
-    triggerScan();
+    cycle.kick();
 }
 
 /**
@@ -341,7 +297,7 @@ async function digFlow(mine) {
     /*
      * 服务器主动返回：活动行军队列到达上限
      * 这种情况是因为主界面在主城区，导致地图数据中拿不到活动行军队列数量，让脚本进行了误判。
-     * 遇到这种情况，主动退让：清空队列，consume 循环随即结束 → afterConsume 重排。
+     * 遇到这种情况，主动退让：清空队列，consume 循环随即结束 → 本轮由 cycle 重排。
      */
     if (ret.code === 3 && ret.data === ERR_MARCH_QUEUE_FULL) {
         log.info('dig rejected, march queue full (server), retreat. x=%d;y=%d;code=%d;data=%s',
@@ -510,14 +466,11 @@ function install(ctx) {
 
 /**
  * 运行：复位调度状态，挂 10912 监听，主动扫一次（之后由推送 / 兜底定时驱动）。
- * reactor pause 置 alive=false 后定时器自然停摆；resume 重新复位点火（scheduleScan 先 clearTimeout 单定时器，不会重复）。
+ * reactor pause 置 alive=false 后定时器自然停摆；resume 重新复位点火（cycle.kick 内部先清旧定时器，不会重复）。
  * @param {object} ctx reactor 上下文
  */
 function run(ctx) {
     ctxRef = ctx;
-    consuming = false;
-    scanning = false;
-    scanPending = false;
     scanActivity = null;
     emptyStreak = 0;
     queue = [];
@@ -525,8 +478,8 @@ function run(ctx) {
     blacklist.clear();
     ctx.on.push(CMD_PUSH_ONE_ACTIVITY_EXTRA, onActivityExtraPush);
     log.info('started, listening push cmd=%d.', CMD_PUSH_ONE_ACTIVITY_EXTRA);
-    // 启动即主动查一次；本轮结束后 afterConsume 会武装兜底定时
-    triggerScan();
+    // 启动即主动查一次；本轮结束后 cycle 会武装兜底定时
+    cycle.kick();
 }
 
 /**
