@@ -1,0 +1,120 @@
+=== L8 req:send 911 MOVE_CITY_POSITION
+{"itemId":200003,"amount":0,"isPurchase":1,"x":417,"y":419,"vipShopBuy":1}
+
+=== L15 req:send 909 GET_PLAYER_POINT
+{"targetId":"14179309129759"}
+
+=== L20 resp 911 MOVE_CITY_POSITION
+{}
+
+=== L22 req:send 1083 GET_MIX_TERRITORY_INFO
+{"time":1791252736,"k":4336}
+
+=== L23 req:send 1001 GET_TERRITORY_INFO
+{"x":417,"y":419,"k":4336,"width":24,"height":42}
+
+=== L24 req:sendPB 6001 GET_BEHEMOTH_WORLD_INFO
+{"header":{},"getBehemothWorldInfo":{"pos":{"x":417,"y":419,"k":4336},"viewLevel":0,"rid":0}}
+
+=== L25 resp 909 GET_PLAYER_POINT
+{"like":191,"point":{"p":{"plateId":139,"fireTime":0,"moveCityEffectId":0,"playerInfo":"{\"nationalflag\":48,\"gender\":0,\"avatarurl\":null,\"nickname\":\"\",\"headimgurl\":\"https://thirdwx.qlogo.cn/mmopen/vi_32/Q0j4TwGTfTKmReghf9syFic40FWrJiciaCdtCIAibAzbtVcILt3NoheWUCibnzgy0bzvztPDzFbUaYZfJ1EDGXHwX3A/132\",\"cn\":1,\"usergender\":1,\"username\":\"书院🏝️晚风\"}","invadeState":0,"pid":14179309129759,"language":"zh_cn","cMid":4336,"cFreedomSiders":0,"enigmaCastleEffectId":0,"exploitLevel":1,"sml":100,"province":1,"haloSkinId":0,"uskskin":1772000,"power":48895287,"used_s_skin":0,"countryRank":0,"sBId":0,"sBNum":0,"level":100,"shieldTime":1791388393,"castleEffectId":49,"skinId":1949000,"skinskStateEt":1791373593,"stampSkill":{"count":10,"type":1},"w":4336,"armyPower":1.1597481172038797e+36,"sskin":0,"fireState":0,"aid":401083783,"a_tag":"CMSY"},"v":453,"x":417,"y":419,"k":4336,"id":214737,"pointType":1}}
+
+=== L26 resp 1083 GET_MIX_TERRITORY_INFO
+{"time":1791252736}
+
+=== L27 resp 1001 GET_TERRITORY_INFO
+{"viewLevel":0,"x":417,"width":60,"y":419,"serverId":4336,"infos":[{"owner":-1000,"a":1,"s":4336,"bw":2,"bh":2,"w":50,"x":408,"h":50,"y":476,"buildId":0,"time":0},{"owner":401081151,"a":1,"s":4336,"bw":2,"bh":2,"w":10,"x":396,"h":10,"y":426,"buildId":104,"time":1790863017656},{"owner":401081151,"a":1,"s":4336,"bw":2,"bh":2,"w":10,"x":420,"h":10,"y":426,"buildId":102,"time":1790862464572},{"owner":401081151,"a":1,"s":4336,"bw":2,"bh":2,"w":10,"x":396,"h":10,"y":402,"buildId":103,"time":1789949464075},{"owner":401081151,"a":1,"s":4336,"bw":2,"bh":2,"w":10,"x":420,"h":10,"y":402,"buildId":105,"time":1790948142692},{"owner":401081151,"a":1,"s":4336,"bw":2,"bh":2,"w":10,"x":408,"h":10,"y":414,"buildId":101,"time":1789948986084},{"owner":401081386,"a":1,"s":4336,"bw":2,"bh":2,"w":10,"x":445,"h":10,"y":453,"buildId":101,"time":1782746735382},{"owner":401081653,"a":1,"s":4336,"bw":2,"bh":2,"w":10,"x":438,"h":10,"y":446,"buildId":102,"time":1778037835035},{"owner":401081653,"a":1,"s":4336,"bw":2,"bh":2,"w":10,"x":448,"h":10,"y":436,"buildId":101,"time":1778037870345}],"height":60}
+
+=== L28 resp 6001 GET_BEHEMOTH_WORLD_INFO
+{"header":{"ts":1791374078,"s":0},"getBehemothWorldInfo":{"behemoths":[]}}
+
+=== L36 req:send 909 GET_PLAYER_POINT
+{"targetId":"14179309129759"}
+
+=== L38 req:send 1001 GET_TERRITORY_INFO
+{"x":408,"y":478,"k":4336,"width":24,"height":42}
+
+=== L39 req:sendPB 6001 GET_BEHEMOTH_WORLD_INFO
+{"header":{},"getBehemothWorldInfo":{"pos":{"x":408,"y":478,"k":4336},"viewLevel":0,"rid":0}}
+
+=== L40 resp 909 GET_PLAYER_POINT
+{"like":191,"point":{"p":{"plateId":139,"fireTime":0,"moveCityEffectId":0,"playerInfo":"{\"nationalflag\":48,\"gender\":0,\"avatarurl\":null,\"nickname\":\"\",\"headimgurl\":\"https://thirdwx.qlogo.cn/mmopen/vi_32/Q0j4TwGTfTKmReghf9syFic40FWrJiciaCdtCIAibAzbtVcILt3NoheWUCibnzgy0bzvztPDzFbUaYZfJ1EDGXHwX3A/132\",\"cn\":1,\"usergender\":1,\"username\":\"书院🏝️晚风\"}","invadeState":0,"pid":14179309129759,"language":"zh_cn","cMid":4336,"cFreedomSiders":0,"enigmaCastleEffectId":0,"exploitLevel":1,"sml":100,"province":1,"haloSkinId":0,"uskskin":1772000,"power":48895287,"used_s_skin":0,"countryRank":0,"sBId":0,"sBNum":0,"level":100,"shieldTime":1791388393,"castleEffectId":49,"skinId":1949000,"skinskStateEt":1791373593,"stampSkill":{"count":10,"type":1},"w":4336,"armyPower":1.1597481172038797e+36,"sskin":0,"fireState":0,"aid":401083783,"a_tag":"CMSY"},"v":453,"x":417,"y":419,"k":4336,"id":214737,"pointType":1}}
+
+=== L41 resp 1001 GET_TERRITORY_INFO
+{"viewLevel":0,"x":408,"width":60,"y":478,"serverId":4336,"infos":[{"owner":-1000,"a":1,"s":4336,"bw":2,"bh":2,"w":50,"x":408,"h":50,"y":476,"buildId":0,"time":0},{"owner":401081102,"a":1,"s":4336,"bw":2,"bh":2,"w":10,"x":384,"h":10,"y":512,"buildId":101,"time":1766870784264},{"owner":401081386,"a":1,"s":4336,"bw":2,"bh":2,"w":10,"x":445,"h":10,"y":453,"buildId":101,"time":1782746735382},{"owner":401081653,"a":1,"s":4336,"bw":2,"bh":2,"w":10,"x":438,"h":10,"y":446,"buildId":102,"time":1778037835035},{"owner":401081800,"a":1,"s":4336,"bw":2,"bh":2,"w":10,"x":438,"h":10,"y":506,"buildId":101,"time":1779015913394}],"height":60}
+
+=== L42 resp 6001 GET_BEHEMOTH_WORLD_INFO
+{"header":{"ts":1791374080,"s":0},"getBehemothWorldInfo":{"behemoths":[]}}
+
+=== L62 req:send 1083 GET_MIX_TERRITORY_INFO
+{"time":1791252736,"k":4336}
+
+=== L63 resp 1083 GET_MIX_TERRITORY_INFO
+{"time":1791252736}
+
+=== L66 req:send 1001 GET_TERRITORY_INFO
+{"x":338,"y":476,"k":4336,"width":18,"height":30}
+
+=== L67 req:sendPB 6001 GET_BEHEMOTH_WORLD_INFO
+{"header":{},"getBehemothWorldInfo":{"pos":{"x":338,"y":476,"k":4336},"viewLevel":0,"rid":0}}
+
+=== L68 resp 1001 GET_TERRITORY_INFO
+{"viewLevel":0,"x":338,"width":60,"y":476,"serverId":4336,"infos":[{"owner":-1000,"a":1,"s":4336,"bw":2,"bh":2,"w":50,"x":408,"h":50,"y":476,"buildId":0,"time":0},{"owner":401081267,"a":1,"s":4336,"bw":2,"bh":2,"w":10,"x":347,"h":10,"y":455,"buildId":101,"time":1786695781982},{"owner":401081326,"a":1,"s":4336,"bw":2,"bh":2,"w":10,"x":335,"h":10,"y":443,"buildId":101,"time":1784103192908},{"owner":401083783,"a":1,"s":4336,"bw":2,"bh":2,"w":12,"x":360,"h":12,"y":462,"buildId":102,"time":1786011296043},{"owner":401083783,"a":1,"s":4336,"bw":2,"bh":2,"w":12,"x":360,"h":12,"y":490,"buildId":103,"time":1786011396659},{"owner":401083783,"a":1,"s":4336,"bw":2,"bh":2,"w":12,"x":332,"h":12,"y":462,"buildId":105,"time":1786011705828},{"owner":401083783,"a":1,"s":4336,"bw":2,"bh":2,"w":12,"x":332,"h":12,"y":490,"buildId":104,"time":1786011480240},{"owner":401083783,"a":1,"s":4336,"bw":2,"bh":2,"w":12,"x":346,"h":12,"y":476,"buildId":101,"time":1786011416493}],"height":60}
+
+=== L69 resp 6001 GET_BEHEMOTH_WORLD_INFO
+{"header":{"ts":1791374086,"s":0},"getBehemothWorldInfo":{"behemoths":[]}}
+
+=== L74 req:send 909 GET_PLAYER_POINT
+{"targetId":"14179309129759"}
+
+=== L76 resp 909 GET_PLAYER_POINT
+{"like":191,"point":{"p":{"plateId":139,"fireTime":0,"moveCityEffectId":0,"playerInfo":"{\"nationalflag\":48,\"gender\":0,\"avatarurl\":null,\"nickname\":\"\",\"headimgurl\":\"https://thirdwx.qlogo.cn/mmopen/vi_32/Q0j4TwGTfTKmReghf9syFic40FWrJiciaCdtCIAibAzbtVcILt3NoheWUCibnzgy0bzvztPDzFbUaYZfJ1EDGXHwX3A/132\",\"cn\":1,\"usergender\":1,\"username\":\"书院🏝️晚风\"}","invadeState":0,"pid":14179309129759,"language":"zh_cn","cMid":4336,"cFreedomSiders":0,"enigmaCastleEffectId":0,"exploitLevel":1,"sml":100,"province":1,"haloSkinId":0,"uskskin":1772000,"power":48895287,"used_s_skin":0,"countryRank":0,"sBId":0,"sBNum":0,"level":100,"shieldTime":1791388393,"castleEffectId":49,"skinId":1949000,"skinskStateEt":1791373593,"stampSkill":{"count":10,"type":1},"w":4336,"armyPower":1.1597481172038797e+36,"sskin":0,"fireState":0,"aid":401083783,"a_tag":"CMSY"},"v":453,"x":417,"y":419,"k":4336,"id":214737,"pointType":1}}
+
+=== L81 req:send 1001 GET_TERRITORY_INFO
+{"x":338,"y":476,"k":4336,"width":18,"height":30}
+
+=== L82 req:sendPB 6001 GET_BEHEMOTH_WORLD_INFO
+{"header":{},"getBehemothWorldInfo":{"pos":{"x":338,"y":476,"k":4336},"viewLevel":0,"rid":0}}
+
+=== L83 resp 1001 GET_TERRITORY_INFO
+{"viewLevel":0,"x":338,"width":60,"y":476,"serverId":4336,"infos":[{"owner":-1000,"a":1,"s":4336,"bw":2,"bh":2,"w":50,"x":408,"h":50,"y":476,"buildId":0,"time":0},{"owner":401081267,"a":1,"s":4336,"bw":2,"bh":2,"w":10,"x":347,"h":10,"y":455,"buildId":101,"time":1786695781982},{"owner":401081326,"a":1,"s":4336,"bw":2,"bh":2,"w":10,"x":335,"h":10,"y":443,"buildId":101,"time":1784103192908},{"owner":401083783,"a":1,"s":4336,"bw":2,"bh":2,"w":12,"x":360,"h":12,"y":462,"buildId":102,"time":1786011296043},{"owner":401083783,"a":1,"s":4336,"bw":2,"bh":2,"w":12,"x":360,"h":12,"y":490,"buildId":103,"time":1786011396659},{"owner":401083783,"a":1,"s":4336,"bw":2,"bh":2,"w":12,"x":332,"h":12,"y":462,"buildId":105,"time":1786011705828},{"owner":401083783,"a":1,"s":4336,"bw":2,"bh":2,"w":12,"x":332,"h":12,"y":490,"buildId":104,"time":1786011480240},{"owner":401083783,"a":1,"s":4336,"bw":2,"bh":2,"w":12,"x":346,"h":12,"y":476,"buildId":101,"time":1786011416493}],"height":60}
+
+=== L84 resp 6001 GET_BEHEMOTH_WORLD_INFO
+{"header":{"ts":1791374087,"s":0},"getBehemothWorldInfo":{"behemoths":[]}}
+
+=== L88 req:send 909 GET_PLAYER_POINT
+{"targetId":"14179309129759"}
+
+=== L89 resp 909 GET_PLAYER_POINT
+{"like":191,"point":{"p":{"plateId":139,"fireTime":0,"moveCityEffectId":0,"playerInfo":"{\"nationalflag\":48,\"gender\":0,\"avatarurl\":null,\"nickname\":\"\",\"headimgurl\":\"https://thirdwx.qlogo.cn/mmopen/vi_32/Q0j4TwGTfTKmReghf9syFic40FWrJiciaCdtCIAibAzbtVcILt3NoheWUCibnzgy0bzvztPDzFbUaYZfJ1EDGXHwX3A/132\",\"cn\":1,\"usergender\":1,\"username\":\"书院🏝️晚风\"}","invadeState":0,"pid":14179309129759,"language":"zh_cn","cMid":4336,"cFreedomSiders":0,"enigmaCastleEffectId":0,"exploitLevel":1,"sml":100,"province":1,"haloSkinId":0,"uskskin":1772000,"power":48895287,"used_s_skin":0,"countryRank":0,"sBId":0,"sBNum":0,"level":100,"shieldTime":1791388393,"castleEffectId":49,"skinId":1949000,"skinskStateEt":1791373593,"stampSkill":{"count":10,"type":1},"w":4336,"armyPower":1.1597481172038797e+36,"sskin":0,"fireState":0,"aid":401083783,"a_tag":"CMSY"},"v":453,"x":417,"y":419,"k":4336,"id":214737,"pointType":1}}
+
+=== L91 req:send 911 MOVE_CITY_POSITION
+{"itemId":200003,"amount":0,"isPurchase":1,"x":338,"y":476,"vipShopBuy":1}
+
+=== L98 req:send 909 GET_PLAYER_POINT
+{"targetId":"14179309129759"}
+
+=== L103 resp 911 MOVE_CITY_POSITION
+{}
+
+=== L105 req:send 1083 GET_MIX_TERRITORY_INFO
+{"time":1791252736,"k":4336}
+
+=== L106 req:send 1001 GET_TERRITORY_INFO
+{"x":338,"y":476,"k":4336,"width":18,"height":30}
+
+=== L107 req:sendPB 6001 GET_BEHEMOTH_WORLD_INFO
+{"header":{},"getBehemothWorldInfo":{"pos":{"x":338,"y":476,"k":4336},"viewLevel":0,"rid":0}}
+
+=== L108 resp 909 GET_PLAYER_POINT
+{"like":191,"point":{"p":{"plateId":139,"fireTime":0,"moveCityEffectId":0,"playerInfo":"{\"nationalflag\":48,\"gender\":0,\"avatarurl\":null,\"nickname\":\"\",\"headimgurl\":\"https://thirdwx.qlogo.cn/mmopen/vi_32/Q0j4TwGTfTKmReghf9syFic40FWrJiciaCdtCIAibAzbtVcILt3NoheWUCibnzgy0bzvztPDzFbUaYZfJ1EDGXHwX3A/132\",\"cn\":1,\"usergender\":1,\"username\":\"书院🏝️晚风\"}","invadeState":0,"pid":14179309129759,"language":"zh_cn","cMid":4336,"cFreedomSiders":0,"enigmaCastleEffectId":0,"exploitLevel":1,"sml":100,"province":1,"haloSkinId":0,"uskskin":1772000,"power":48895287,"used_s_skin":0,"countryRank":0,"sBId":0,"sBNum":0,"level":100,"shieldTime":1791388393,"castleEffectId":49,"skinId":1949000,"skinskStateEt":1791373593,"stampSkill":{"count":10,"type":1},"w":4336,"armyPower":1.1597481172038797e+36,"sskin":0,"fireState":0,"aid":401083783,"a_tag":"CMSY"},"v":389,"x":338,"y":476,"k":4336,"id":243882,"pointType":1}}
+
+=== L109 resp 1083 GET_MIX_TERRITORY_INFO
+{"time":1791252736}
+
+=== L110 resp 1001 GET_TERRITORY_INFO
+{"viewLevel":0,"x":338,"width":60,"y":476,"serverId":4336,"infos":[{"owner":-1000,"a":1,"s":4336,"bw":2,"bh":2,"w":50,"x":408,"h":50,"y":476,"buildId":0,"time":0},{"owner":401081267,"a":1,"s":4336,"bw":2,"bh":2,"w":10,"x":347,"h":10,"y":455,"buildId":101,"time":1786695781982},{"owner":401081326,"a":1,"s":4336,"bw":2,"bh":2,"w":10,"x":335,"h":10,"y":443,"buildId":101,"time":1784103192908},{"owner":401083783,"a":1,"s":4336,"bw":2,"bh":2,"w":12,"x":360,"h":12,"y":462,"buildId":102,"time":1786011296043},{"owner":401083783,"a":1,"s":4336,"bw":2,"bh":2,"w":12,"x":360,"h":12,"y":490,"buildId":103,"time":1786011396659},{"owner":401083783,"a":1,"s":4336,"bw":2,"bh":2,"w":12,"x":332,"h":12,"y":462,"buildId":105,"time":1786011705828},{"owner":401083783,"a":1,"s":4336,"bw":2,"bh":2,"w":12,"x":332,"h":12,"y":490,"buildId":104,"time":1786011480240},{"owner":401083783,"a":1,"s":4336,"bw":2,"bh":2,"w":12,"x":346,"h":12,"y":476,"buildId":101,"time":1786011416493}],"height":60}
+
+=== L111 resp 6001 GET_BEHEMOTH_WORLD_INFO
+{"header":{"ts":1791374089,"s":0},"getBehemothWorldInfo":{"behemoths":[]}}
+

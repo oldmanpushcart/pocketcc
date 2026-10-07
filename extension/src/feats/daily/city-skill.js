@@ -262,8 +262,9 @@ async function tick() {
     if (wakes.length) {
         var minWake = Math.min.apply(null, wakes);
         var delay = minWake - now;
-        // 夹在 [MIN_WAKE_MS, idleInterval]：长冷却/长退避也至少每 idleInterval 复查一次（读请求，兜住时钟漂移/状态变化）
-        return Math.min(Math.max(delay, MIN_WAKE_MS), cfg.idleInterval);
+        // 夹在 [MIN_WAKE_MS, 24h]：1752 应答 endTime(CDTime) 为游戏显式冷却结束时刻，直接睡到该点（+CD_BUFFER_MS），
+        // 仅以 24h 硬顶兜住时钟漂移/异常超长值；退避重试点 notBeforeMs 本就远小于此顶，不受影响。
+        return Math.min(Math.max(delay, MIN_WAKE_MS), 24 * 3600 * 1000);
     }
     return cfg.idleInterval;
 }

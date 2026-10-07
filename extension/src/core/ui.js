@@ -103,6 +103,9 @@ const PANEL_CSS = `
     .pc-en,.pc-gen{width:16px;height:16px;cursor:pointer;flex:0 0 auto;}
     .pc-sec-body{padding:4px 12px 10px;}
     .pc-sec-body[hidden]{display:none;}
+    /* 组内子项声明了 showFields 时展开的详细字段：左缩进一级、与子项开关行视觉从属，去掉重复上边框 */
+    .pc-subfields{margin:0 0 6px 18px;padding:0 0 2px;border:0;}
+    .pc-subfields .pc-fsec{margin-top:2px;padding-top:2px;border-top:0;}
     /* 字段行 / 子项行 */
     .pc-row{display:flex;align-items:center;justify-content:space-between;gap:12px;margin:7px 0;}
     .pc-row > span{flex:1;min-width:0;}
@@ -226,6 +229,11 @@ const PANEL_CSS = `
     .pc-fsecchev{font-size:9px;opacity:.6;transition:transform .15s;}
     .pc-fsectoggle.open .pc-fsecchev{transform:rotate(90deg);}
     .pc-fsec-body{margin:0;}
+    /* 字段条件显隐（fd.showIf(cfg)）：行根打 data-dep 标记，由 refreshFieldVisibility 就地切 hidden、不重建 DOM。
+       双属性选择器特异度高于 .pc-row/.pc-mopts 等作者类规则，故 hidden 能真生效（同 .pc-sec-body[hidden] 的写法原因）；
+       分组小标题同理：其下字段全隐时一起收起，不留「光杆标题」 */
+    [data-dep][hidden]{display:none;}
+    .pc-fsec[data-sec][hidden]{display:none;}
     .pc-empty{opacity:.5;font-size:12px;padding:4px 0;}
     /* 快捷键一览卡（方案 C：分组 + 键帽精修）：不复用 .pc-row（其 >span{flex:1} 会抢宽导致换行/错位）。
        行内负外边距 + padding 让 hover 高亮能铺到卡片内边沿；键帽立体（渐变+底边阴影）、键名列右对齐贴齐功能名、场景做小胶囊 */
@@ -928,6 +936,7 @@ function setupUidField(wrap) {
 /**
  * descriptor fields -> 行 HTML（checkbox / text 只读惰性求值 / 数字输入 / 下拉 / 区间规则）。
  * fd.section 变化时插入分组小标题（如联盟集结按战锤/惧星/难民营分段），容器带 data-id=功能 id。
+ * fd.showIf(cfg) 为假时该行不占位（只在行根打 data-dep，真实显隐由 refreshFieldVisibility 切 hidden）。
  * @param {string} fid 功能 id
  * @param {object} f descriptor
  * @returns {string}
@@ -1008,7 +1017,7 @@ function buildFieldsHTML(fid, f) {
       return `<button class="pc-btn pc-fbtn" type="button" data-id="${fid}" data-bkey="${fd.key}">${fd.label}</button>`;
     }
     return `<label class="pc-row"><span>${fd.label}</span>` +
-      `<input type="number" data-id="${fid}" data-key="${fd.key}" min="${fd.min}" step="${fd.step}" value="${c[fd.key]}"></label>`;
+      `<input type="number" data-id="${fid}" data-key="${fd.key}" min="${fd.min}" step="${fd.step}" placeholder="${escAttr(fd.placeholder || '')}" value="${c[fd.key]}"></label>`;
   };
   let lastSection;
   let bodyOpen = false;   // 当前是否有一个可折叠子分组的 body 处于打开（待闭合）状态
@@ -1023,14 +1032,43 @@ function buildFieldsHTML(fid, f) {
         out.push(`<div class="pc-fsec-body"${collapsed ? ' hidden' : ''}>`);
         bodyOpen = true;
       } else {
-        out.push(`<div class="pc-fsec">${fd.section}</div>`);
+        out.push(`<div class="pc-fsec" data-sec="${escAttr(fd.section)}">${fd.section}</div>`);
       }
     }
     lastSection = fd.section || null;
-    out.push(fieldHTML(fd));
+    const html = fieldHTML(fd);
+    // 条件字段（fd.showIf(cfg)）：不改 fieldHTML 各分支，只在行根补一个 data-dep 标记（值=字段 key，
+    //   data-depfid=功能 id），显隐交 refreshFieldVisibility 就地切 hidden —— 不重建 DOM，已绑好的控件事件全部存活
+    out.push(fd.showIf ? html.replace(/<([a-zA-Z][\w-]*)/, `<$1 data-dep="${escAttr(fd.key)}" data-depfid="${fid}"`) : html);
   }
   if (bodyOpen) out.push('</div>');
   return out.join('');
+}
+
+/**
+ * 重算条件字段（fd.showIf）的显隐：只切 hidden 属性，不重建 DOM（结构不变 → 控件已绑的事件与草稿态全存活）。
+ * 一个分组下的字段全被隐藏时，其 .pc-fsec 小标题一起收起；可折叠子分组的字段包在 .pc-fsec-body 里，
+ * 不是标题的弟弟元素，故保守当「有内容」不收标题。
+ * showIf 抛错按**可见**处理：宁可多显一行，也静默不掉用户能改的字段。
+ * @param {Element} root 扫描范围（整个面板）
+ */
+function refreshFieldVisibility(root) {
+  root.querySelectorAll('[data-dep]').forEach((el) => {
+    const f = findFeature(el.dataset.depfid);
+    if (!f) return;
+    const fd = f.fields.find((x) => x.key === el.dataset.dep);
+    if (!fd || !fd.showIf) return;
+    let on = true;
+    try { on = !!fd.showIf(configs[f.id]); } catch (e) { on = true; }
+    if (el.hidden !== !on) el.hidden = !on;
+  });
+  root.querySelectorAll('.pc-fsec[data-sec]').forEach((head) => {
+    let visible = false;
+    for (let n = head.nextElementSibling; n && !n.classList.contains('pc-fsec'); n = n.nextElementSibling) {
+      if (!n.hasAttribute('data-dep') || !n.hidden) { visible = true; break; }   // 无条件字段或还有未隐的条件字段
+    }
+    head.hidden = !visible;
+  });
 }
 
 /**
@@ -1044,8 +1082,14 @@ function renderGroupCard(node) {
   const rows = (node.children || []).map((ch) => {
     const c = configs[ch.id] || { enabled: false };
     const f = findFeature(ch.id);
-    return `<label class="pc-row"><span>${ch.label || (f && f.label) || ch.id}</span>` +
+    const head = `<label class="pc-row"><span>${ch.label || (f && f.label) || ch.id}</span>` +
       `<input type="checkbox" class="pc-en" data-id="${ch.id}" ${c.enabled ? 'checked' : ''}></label>`;
+    // 组内子项一般只出 checkbox；若个别子项声明了 showFields，则紧随其开关行展开该功能的详细字段（通用备用能力），
+    //   number/checkbox 控件由 wirePanel 的全局面板委托统一接好（按 data-id 定位功能），无需在此单独绑定
+    if (ch.showFields && f && f.fields && f.fields.length) {
+      return head + `<div class="pc-subfields">${buildFieldsHTML(ch.id, f)}</div>`;
+    }
+    return head;
   }).join('');
   return `<div class="pc-sec" data-gid="${node.id}">` +
     cardHead(node.label, chk, true) +
@@ -1286,6 +1330,7 @@ export async function mountUI() {
   document.body.appendChild(host);
 
   wirePanel(panel);
+  refreshFieldVisibility(panel);   // 条件字段（fd.showIf）初始态：按当前配置把不该出现的行收起
 
   // 战斗模式复选框随模式广播同步（含下面的 F8 热键切换，避免图标翻了但面板未跟着变）
   bus.on('mode.change', () => { const cb = panel.querySelector('#pc-combat'); if (cb) cb.checked = isCombat(); });
@@ -1549,14 +1594,18 @@ function wirePanel(panel) {
     });
   });
 
-  // 下拉字段（如战争之源按形态选预设部队）：值取 option 的整数值，存档 + 运行中热更
+  // 下拉字段（如战争之源按形态选预设部队）：存档 + 运行中热更。
+  // 值按 descriptor 的 option **原类型**回写：字符串档（如卡车「时段模板」、目标模式 random/specify）过去被 parseInt
+  // 成 NaN → 静默回落 defaults，用户选完像没生效；没命中 option 才走旧的整数解析（保留非法值兜底）。
   panel.querySelectorAll('select.pc-fsel').forEach((sel) => {
     sel.addEventListener('change', () => {
       const f = findFeature(sel.dataset.id);
       if (!f) return;
       const fd = f.fields.find((x) => x.key === sel.dataset.key);
-      let v = parseInt(sel.value, 10);
-      if (isNaN(v)) v = f.defaults[fd.key];
+      const opts = (typeof fd.options === 'function' ? fd.options(configs[f.id]) : fd.options) || [];
+      const hit = opts.find((o) => String(o.value) === sel.value);
+      let v = hit ? hit.value : parseInt(sel.value, 10);
+      if (!hit && isNaN(v)) v = f.defaults[fd.key];
       sel.value = String(v);
       configs[f.id][fd.key] = v;
       saveFeature(f);
@@ -1871,4 +1920,9 @@ function wirePanel(panel) {
   combatCb.addEventListener('change', () => {
     setCombatMode(combatCb.checked);
   });
+
+  // 条件字段显隐（fd.showIf）：任何字段改动都可能翻动别的字段（如「目标模式」从随机切到指定要收起联盟/离线阈值）。
+  // 挂面板级 change 委托兜住全部控件类型：change 会冒泡，且各控件自己的监听在 target 阶段已跑完
+  // saveFeature/applyFeature，到这里 configs 必定是新值；只切 hidden 不重建，所以重复触发代价可忽。
+  panel.addEventListener('change', () => refreshFieldVisibility(panel));
 }

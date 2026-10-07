@@ -61,8 +61,8 @@ const CD_BUFFER_MS = 1000 * 5;
 /** @type {number} 排程唤醒的最小间隔（毫秒），防 0 延迟忙循环 */
 const MIN_WAKE_MS = 1000 * 1;
 
-/** @type {number} 距下次重置的排程上限：兜住 SystemZeroTime 语义漂移/时钟异常导致的超长休眠 */
-const MAX_RESET_WAKE_MS = 1000 * 60 * 60;
+/** @type {number} 距下次重置的排程硬顶：点赞无 CD、每日 10 次零点重置，重置点必 <24h，故直接睡到下次重置；此顶仅兜住 SystemZeroTime 语义漂移/时钟异常导致的异常超长休眠 */
+const MAX_RESET_WAKE_MS = 24 * 3600 * 1000;
 
 /** @type {number} 当日计数持久化到数据 blob 的逻辑键 */
 const DAILY_STATE_NAME = 'pocketcc.feat.playerLike.daily';
@@ -438,10 +438,10 @@ async function tick() {
         return cfg.retryInterval;
     }
 
-    // 当日额度已用尽（含玩家自己点掉的）：睡到下次重置
+    // 当日额度已用尽（含玩家自己点掉的）：无 CD、零点重置，直接睡到下次重置（醒后 rollDateIfNeeded 归零），不再每 10min 提前醒重复轮询
     if (daily.used >= LIKE_DAILY_MAX) {
         log.debug('daily like quota used (%d/%d), sleep to next reset.', daily.used, LIKE_DAILY_MAX);
-        return Math.min(msToNextReset(), cfg.idleInterval);
+        return msToNextReset();
     }
 
     // 退避闸门：上次失败后未到重试点，本轮不碰
@@ -465,7 +465,7 @@ async function tick() {
 
     switch (r) {
         case 'ok': return LIKE_GAP_MS;
-        case 'limit': return Math.min(msToNextReset(), cfg.idleInterval);
+        case 'limit': return msToNextReset();
         case 'inflight':
             // 同一次点赞的应答还在途（多半是游戏自己在发）：等满最小唤醒间隔再来看结果，不计失败退避
             return MIN_WAKE_MS;

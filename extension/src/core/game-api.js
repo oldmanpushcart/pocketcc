@@ -48,6 +48,11 @@ const SYM = {
     procedureManager: 'ProcedureManager', // 场景程序管理器（PROCE 单例）：Run(PROCE.Home/PROCE.NewWorld) 切场景，与主界面「世界/回城」按钮同源
     uiManager: 'UIManager',               // UI 管理器门面（default.Instance().OpenUI(UIDataInfo.xxx) 打开原生面板）
     uiDataInfo: 'UIDataInfo',             // 面板描述符注册表（UIDataInfo.<PanelName> → UIDataInfoClass 实例）
+    homeMapUtils: 'HomeMapUtils',         // 大本营地图工具（default.getMapPosByPosId：posId→主城小格坐标 {x,y}），空投落点换算用
+    homeMapCommon: 'HomeMapCommon',       // 大本营地图常量（WidthCount/HeightCount 主城网格尺寸），空投落点扫描边界用
+    buff: 'Buff',                         // 战争状态 Buff 门面：getStateDataById(stateId) 读狂热/护盾等状态EndTime（自动防御只读探测；符号缺失软失败）
+    commonTools: 'CommonTools',           // 通用工具（subpack2）：checkShieldEnable(false) 权威「能否开盾」闸（狂热/危险区/跨服一次覆盖，抑制 UI）
+    worldMapCtrl: 'WorldMapController',   // 世界地图主控（getInstance）：checkCanMove/checkIsPlainTile 迁城落点合法性只读判定
   },
   /** 新图单例属性链：module[cls][inst]，枚举对象 module[goType] */
   newMap: { cls: 'NWorldMapTodoController', inst: 'instance', goType: 'NWorldMapGoType' },
@@ -62,7 +67,7 @@ const SYM = {
     mineCave: 'mine_cave', mineCaveLevel: 'mine_cave_level', mineCaveInteraction: 'mine_cave_interaction',
   },
   /** UserData 子对象上的数据成员名（属性链符号，Alliance.<name>；WorldCoord 为 UserData 直属成员，myWorldPos 经 SYM 引用） */
-  dataProps: { allianceBoss: 'AllianceBossData', allianceScience: 'scienceData', worldCoord: 'WorldCoord' },
+  dataProps: { allianceBoss: 'AllianceBossData', allianceScience: 'scienceData', allianceBehemoth: 'allianceBehemothData', worldCoord: 'WorldCoord' },
   /** 行军/地块枚举成员名（只记名字，数值运行时向游戏枚举对象取） */
   marchEnum: {
     obj: 'MarchType',                                 // WorldMapCommon 导出：新旧图同一张 MarchType 表
@@ -400,6 +405,13 @@ export const gameData = {
   myPid() { try { return Number(userData() && userData().UID) || 0; } catch (e) { return 0; } },
   /** 本人联盟 aid（=UserData.Alliance.Aid，与地图 p.aid 同源）；未入盟/取不到返回 0 */
   myAid() { try { var a = userData() && userData().Alliance; return Number(a && a.Aid) || 0; } catch (e) { return 0; } },
+  /**
+   * 本人联盟 tag 串（=UserData.Alliance.Tag，AllianceData 构造 `this.Tag = e.basic.tag` 已核对）。
+   * 用于「只与同联盟成员比对」这类判据：联盟类下发（如 1585 的 ownerAllianceTag）只带 tag 不带 aid，
+   * 按 aid 比对需逐 uid 反查（回调式、代价高），故 tag 字符串比对是这类全量列表的唯一可行口径。
+   * @returns {string} 未入盟/取不到返回 ''（调用方据此判「无联盟」而非「匹配任意」）
+   */
+  myAllianceTag() { try { var a = userData() && userData().Alliance; return String((a && a.Tag) || ''); } catch (e) { return ''; } },
   /** 本人主城/账号等级（=UserData.Level，功能 open_level 门槛判据同源）；取不到返回 0 */
   level() { try { return Number(userData() && userData().Level) || 0; } catch (e) { return 0; } },
   /**
@@ -412,6 +424,156 @@ export const gameData = {
     return { x: c.x | 0, y: c.y | 0 };
   },
   /**
+   * 空投支援合法落点（只读、**场景无关**）：复刻游戏 HomeMap.findValidAirDropBoxArea 的落点判定，但不依赖 HomeMap 场景组件
+   *   （该组件离开 Home 即被 cpnDestroy 置 null）。原版三块数据的权威来源均可在任意场景只读获取：
+   *     · 地形/可投放合法性：HomeMapUtils.checkHomeBoxLegal（静态表 HomeMapTileBlockTypeTable，任何场景可调）；
+   *     · 建筑占用：DataCenter.UserData.Buildings（正是 HomeMap.InitBuildings 的数据源、服务器推送的常驻单例），
+   *       footprint 复用游戏自身的等距展开函数 HomeMapUtils.getMapPosList（与 checkHomeBoxLegal 内部同一生成器，零口径漂移）；
+   *     · 空投 footprint：BUILDING 表 buildingId 行的 width/height（缺省 3×3）。
+   *   原版把搜索种子锚在「当前视口中心」（必然已解锁疆域）再螺旋外扩；本实现把扫描锚定在主城网格中心、按距中心由近及远，
+   *   等价地优先落在玩家早期即解锁的核心地块，规避「静态表合法但疆域未解锁」的外围格被服务器拒。
+   *   占用采保守口径：把 UserData.Buildings 里每个建筑的 footprint 全计为占位（含游戏侧本不计占位的地面装饰/地板）——
+   *   保守只会少选几格、绝不会选到与真建筑重叠的非法格（服务器端也忽略地面装饰，避开地面格是其合法子集），故无需精确复刻 IsGround 判据。
+   * @param {number} buildingId 待投放建筑 id（空投建筑=9001001）
+   * @returns {{x:number, y:number, posId:number}|null} 合法空位锚点（主城小格坐标，即 4170 param 口径）；符号缺失/无空地/无建筑数据返回 null（→ 本轮不发）
+   */
+  homeAirDropSpot(buildingId) {
+    try {
+      var HU = ns(game.get(SYM.modules.homeMapUtils));
+      if (!HU || typeof HU.getMapPosList !== 'function' || typeof HU.checkHomeBoxLegal !== 'function'
+        || typeof HU.getMapPosByPosId !== 'function' || typeof HU.getPosIdByMapPos !== 'function') {
+        log.debug('homeAirDropSpot: HomeMapUtils 符号缺失（getMapPosList/checkHomeBoxLegal/…）→ 无法定位落点');
+        return null;
+      }
+      var GD = game.get(SYM.modules.gameDefine);
+      var BI_BUILD = GD && GD.BaseItemType && GD.BaseItemType.Building;   // 必为真值：传错 checkHomeBoxLegal 会跳过地形判定
+      if (BI_BUILD == null) {
+        log.debug('homeAirDropSpot: GameDefine.BaseItemType.Building 缺失 → 无法定位落点');
+        return null;
+      }
+      var air = l10n.tableRow('building', buildingId);
+      var airW = air && air.width > 0 ? air.width | 0 : 3;
+      var airH = air && air.height > 0 ? air.height | 0 : 3;
+      var HCM = ns(game.get(SYM.modules.homeMapCommon));
+      var WC = (HCM && HCM.WidthCount) || 84, HC = (HCM && HCM.HeightCount) || 104;
+      // 占用格集合：所有建筑 footprint（getMapPosList 与游戏内部同一等距生成器，口径一致）
+      var occ = Object.create(null);
+      var list = userData() && userData().Buildings;
+      if (Array.isArray(list)) {
+        for (var k = 0; k < list.length; k++) {
+          var b = list[k];
+          if (!b || b.Pos == null) continue;
+          var cfg = l10n.tableRow('building', b.BuildingId);
+          if (!cfg) continue;
+          var mp = HU.getMapPosByPosId(b.Pos);
+          if (!mp || mp.x == null || mp.y == null) continue;
+          var cells = HU.getMapPosList(mp.x, mp.y, cfg.width | 0 || 1, cfg.height | 0 || 1);
+          for (var j = 0; j < cells.length; j++) { if (cells[j] !== -1) occ[cells[j]] = 1; }
+        }
+      }
+      // 由主城网格中心向外（切比雪夫环）扫第一个「地形合法 + 空投 footprint 全空」的锚点；限环数待在核心已解锁区，宁可本轮不发也不赌外围
+      var cx = WC >> 1, cy = HC >> 1, R = Math.min(WC, HC) >> 1;
+      for (var r = 0; r <= R; r++) {
+        for (var dx = -r; dx <= r; dx++) {
+          for (var dy = -r; dy <= r; dy++) {
+            if (Math.max(Math.abs(dx), Math.abs(dy)) !== r) continue;   // 只走本环边框，避免重扫内圈
+            var x = cx + dx, y = cy + dy;
+            if (x < 0 || y < 0 || x >= WC || y >= HC) continue;
+            var pid = HU.getPosIdByMapPos(x, y);
+            if (occ[pid]) continue;                                     // 快速淘汰：锚点格已被占
+            if (!HU.checkHomeBoxLegal(x, y, airW, airH, BI_BUILD, buildingId, -1)) continue;  // 地形/可投放合法性
+            var ac = HU.getMapPosList(x, y, airW, airH), free = true;
+            for (var q = 0; q < ac.length; q++) { if (ac[q] === -1 || occ[ac[q]]) { free = false; break; } }
+            if (free) return { x: x, y: y, posId: pid };
+          }
+        }
+      }
+      log.debug('homeAirDropSpot: 核心区半径 %d 环内无合法空位（BUILDING 表 %s→ footprint=%dx%d, 网格=%dx%d, 占用格数=%d）',
+        R, air ? 'OK' : 'MISSING', airW, airH, WC, HC, Object.keys(occ).length);
+      return null;   // 核心区内无合法空位（空地不足）
+    } catch (e) { log.debug('homeAirDropSpot threw: %s —— 落点计算中途抛错被吞，本轮不发', e && (e.stack || e.message)); return null; }
+  },
+  /**
+   * 地面上现存的空投建筑实例 id 列表（只读遍历 UserData.Buildings，BuildingId==buildingId 者）。
+   * 用于开启 feat 前已落地、不会再重推 10101 的空投播种待收（随后由 4168 按实例 id 领取）。
+   * @param {number} buildingId 空投建筑 buildingId（9001001）
+   * @returns {string[]} 实例 id 字符串数组（4168 targetId 口径）；无数据/符号缺失返回 []
+   */
+  airDropInstances(buildingId) {
+    try {
+      var list = userData() && userData().Buildings;
+      var out = [];
+      if (!Array.isArray(list)) return out;
+      // 64 位实例 id 超过 JS 安全整数：优先取字符串/protobuf Long.toString()，否则由 {_low,_high}/{low,high} 用 BigInt 精确还原
+      var toIdStr = function (raw) {
+        if (raw == null) return '';
+        if (typeof raw === 'string') return /^\d+$/.test(raw) ? raw : '';
+        if (typeof raw === 'object') {
+          if (typeof raw.toString === 'function') {
+            var s = String(raw.toString());
+            if (/^\d+$/.test(s)) return s;
+          }
+          var lo = (raw._low != null ? raw._low : raw.low), hi = (raw._high != null ? raw._high : raw.high);
+          if (lo != null && hi != null && typeof BigInt !== 'undefined') {
+            lo = Number(lo); hi = Number(hi); if (lo < 0) lo += 4294967296;
+            return (BigInt(hi) * (BigInt(1) << BigInt(32)) + BigInt(lo)).toString();
+          }
+        }
+        if (typeof raw === 'number' && Number.isSafeInteger(raw) && raw > 0) return String(raw);
+        return '';
+      };
+      for (var i = 0; i < list.length; i++) {
+        var b = list[i];
+        if (!b || Number(b.BuildingId) !== buildingId) continue;
+        var id = toIdStr(b.Id != null ? b.Id : b.id);
+        if (id) out.push(id);
+      }
+      return out;
+    } catch (e) { log.debug('airDropInstances threw: %s', e && (e.message || e)); return []; }
+  },
+  /**
+   * 秘密武器 cd_skill 次数/冷却可用性（只读复刻 PlayerSkillController.getSkillUseEnableNum/getSkillCdTime 的 type==2 口径）。
+   * 数据来自 CD_SKILL_INFO(4169) 应答里 id 对应的那条技能状态（start/end 为 protobuf Long），账号从未用过则传 null。
+   * @param {number} skillId cd_skill 表 id（空投支援=2）
+   * @param {object|null} skill 该技能当前状态 {id,start,cnt,end}；无则 null
+   * @returns {{type:number, available:number, nextMs:number, max:number, cd:number, cnt:(number|null)}|null}
+   *   available=此刻可用次数（≥1 才能发 4170）；nextMs=下一枚次数恢复的**绝对毫秒时刻**（已满则 0）；配置缺失（符号漂移）返回 null。
+   */
+  cdSkillAvailability(skillId, skill) {
+    try {
+      var cfg = l10n.tableRow('cd_skill', skillId);
+      if (!cfg) return null;
+      var type = Number(cfg.type) | 0;
+      var cd = Number(cfg.cd) || 0;     // 每枚次数恢复间隔（分钟）
+      var max = Number(cfg.max) || 0;   // 次数上限
+      var serverSec = gameData.serverTime() | 0;
+      var msOf = function (v) {   // protobuf Long / {_low,_high} / number → 毫秒
+        if (!v) return 0;
+        if (typeof v === 'number') return v;
+        if (typeof v.toNumber === 'function') { try { return v.toNumber(); } catch (e) { return 0; } }
+        var lo = (v._low != null ? v._low : v.low), hi = (v._high != null ? v._high : v.high);
+        if (lo == null || hi == null) return 0;
+        lo = Number(lo); hi = Number(hi);
+        if (lo < 0) lo += 4294967296;
+        return hi * 4294967296 + lo;
+      };
+      if (type === 2) {   // 次数型（空投支援）：可用 = min(cnt + 自 start 起已恢复的整数枚, max)
+        if (!skill) return { type: type, available: max, nextMs: 0, max: max, cd: cd, cnt: null };   // 从未用过 = 满次数
+        var cnt = Number(skill.cnt) || 0;
+        var startSec = Math.floor(msOf(skill.start) / 1000);
+        var accr = cd > 0 ? Math.floor((serverSec - startSec) / (60 * cd)) : 0;
+        if (accr < 0) accr = 0;
+        var avail = Math.min(cnt + accr, max);
+        var nextMs = avail >= max ? 0 : (startSec + (accr + 1) * 60 * cd) * 1000;   // 下一枚恢复的绝对毫秒
+        return { type: type, available: avail, nextMs: nextMs, max: max, cd: cd, cnt: cnt };
+      }
+      // type1/type3：单次冷却型，end（绝对毫秒）过了即可用一次
+      if (!skill) return { type: type, available: 1, nextMs: 0, max: 1, cd: cd, cnt: null };
+      var endMs = msOf(skill.end);
+      return { type: type, available: Math.floor(endMs / 1000) < serverSec ? 1 : 0, nextMs: endMs, max: 1, cd: cd, cnt: null };
+    } catch (e) { return null; }
+  },
+  /**
    * 道具背包持有量（UserData.getItemAmount，只读）。机甲碎片 3200001 等都走这里。
    * @param {number} itemId 道具 id
    * @returns {number} 持有数量；数据源/方法不可用返回 0
@@ -420,6 +582,94 @@ export const gameData = {
     var u = userData();
     if (!u || typeof u.getItemAmount !== 'function') return 0;
     try { return Number(u.getItemAmount(+itemId)) || 0; } catch (e) { return 0; }
+  },
+  /**
+   * 战争状态 Buff 的结束时刻（只读，秒）：Buff.getStateDataById(stateId).EndTime 与服务器时间比较由调用方做。
+   * 自动防御用来判战争狂热（130048/130049/130132）与护盾是否在期（stateId 50001）。
+   * 符号缺失/无该状态一律回 0（调用方据此判「不在该状态」——放行后仍以服务器权威拒绝为最终裁决，见 feats/battle/auto-defense）。
+   * EndTime 单位实证不定时按数量级折算：>1e11 视为毫秒折回秒。
+   * @param {number} stateId Buff 状态 id
+   * @returns {number} 结束时刻（epoch 秒）；0=不在该状态或探测不可用
+   */
+  buffStateEndTime(stateId) {
+    var B = probe(SYM.modules.buff + '.getStateDataById', () => {
+      var m = ns(game.get(SYM.modules.buff));
+      return (m && typeof m.getStateDataById === 'function') ? m : null;
+    });
+    if (!B) return 0;
+    try {
+      var st = B.getStateDataById(+stateId);
+      if (!st) return 0;
+      var end = Number(st.EndTime != null ? st.EndTime : st.endTime) || 0;
+      if (end <= 0) return 0;
+      return end > 1e11 ? Math.floor(end / 1000) : end;
+    } catch (e) { return 0; }
+  },
+  /**
+   * 是否处于战争狂热（禁止开盾窗口）：复刻游戏 getWarFeverState，三个狂热阶段 stateId 任一命中即真。
+   * 探测不可用（Buff 符号漂移）时返回 false——放行开盾尝试，交由 910 status=3+war_fever_003 权威裁决。
+   * @returns {boolean}
+   */
+  warFever() {
+    var now = gameData.serverTime() | 0;
+    if (!now) return false;
+    var ids = [130048, 130049, 130132];
+    for (var i = 0; i < ids.length; i++) { if (gameData.buffStateEndTime(ids[i]) > now) return true; }
+    return false;
+  },
+  /**
+   * 本人护盾是否已生效（只读，stateId 50001 的结束时刻 > 服务器时间）。探测不可用返回 false（不阻断，交由 910 裁决）。
+   * @returns {boolean}
+   */
+  shieldActive() { return gameData.buffStateEndTime(50001) > (gameData.serverTime() | 0); },
+  /**
+   * 游戏权威「能否开盾」闸（只读、抑制 UI：checkShieldEnable(false)）——命中狂热/危险区/跨服限制时返回 false，一次覆盖三重判定。
+   * 符号缺失返回 null（调用方降级为「不预判、直接尝试、以 910 拒绝为准」）。
+   * @returns {boolean|null} true=可开 / false=不可开 / null=无从判定（符号缺失）
+   */
+  canShield() {
+    var C = probe(SYM.modules.commonTools + '.checkShieldEnable', () => {
+      var m = ns(game.get(SYM.modules.commonTools));
+      return (m && typeof m.checkShieldEnable === 'function') ? m : null;
+    });
+    if (!C) return null;
+    try { return !!C.checkShieldEnable(false); } catch (e) { return null; }
+  },
+  /**
+   * 指定世界坐标能否落城（只读，封装游戏 WorldMapController 迁城合法性判定）。
+   * 优先 checkCanMove，回退 checkIsPlainTile（外观占 4 格的 checkIsPlainTile4 由上层按需另判，此处按单格口径）。
+   * 符号缺失/未在世界图（控制器未就绪）返回 null（调用方降级为 901 空格判定，见 core/defense.findRelocatableSpot）。
+   * @param {number} x game x
+   * @param {number} y game y
+   * @returns {boolean|null} true=可落 / false=不可落 / null=无从判定
+   */
+  canMoveCity(x, y) {
+    var W = probe(SYM.modules.worldMapCtrl + '.checkCanMove', () => {
+      var m = game.get(SYM.modules.worldMapCtrl);
+      var C = m && (m.WorldMapController || (m.default && m.default.WorldMapController));
+      var inst = C && typeof C.getInstance === 'function' ? C.getInstance() : (C && C.instance);
+      return (inst && (typeof inst.checkCanMove === 'function' || typeof inst.checkIsPlainTile === 'function')) ? inst : null;
+    });
+    if (!W) return null;
+    try {
+      if (typeof W.checkCanMove === 'function') return !!W.checkCanMove(x | 0, y | 0);
+      if (typeof W.checkIsPlainTile === 'function') return !!W.checkIsPlainTile(x | 0, y | 0);
+    } catch (e) { return null; }
+    return null;
+  },
+  /**
+   * 每日补给（online reward）计时奖励态只读快照（UserData.timeReward，登录/630 全量下发 + 游戏 UI 领取回调回写）。
+   * 可领判据由调用方算：online_reward 表第 times+1 行的 time 与 (ServerTime - rewardTime) 比较；
+   * 查不到/字段非法返回 null（游戏侧 updateTimeReward 空数据时也会置 null，语义一致）。
+   * @returns {{times:number, rewardTime:number}|null}
+   */
+  timeReward() {
+    var t = userData() && userData().timeReward;
+    if (!t) return null;
+    var times = Number(t.times);
+    var rewardTime = Number(t.rewardTime);
+    if (!(times >= 0) || !(rewardTime > 0)) return null;
+    return { times: times, rewardTime: rewardTime };
   },
   /**
    * 联盟机甲本地态快照（Alliance.AllianceBossData 的 getter，游戏由 push 10435 / 1160 / 1161 应答刷新）。
@@ -565,6 +815,48 @@ export const gameData = {
         donateRecommended: recommended,
       };
     } catch (e) { return null; }
+  },
+  /**
+   * 联盟守卫（巨兽，AllianceBehemoth）本地态快照：只读守卫养成数据，产出可捐列表供 feat 逐条判定。
+   * 数据由游戏登录/联盟刷新链（UserData.getAllianceBehemothData → 7101）填充，本方法不发包、只读内存。
+   * open：功能开启闸（在盟 && FunctionOn(alliance_behemoth) && UserData.behemothIsOpen）；关则不披露 items。
+   * items：每项 {behemothId, level, exp, isUnlock, levelCap}，level/exp 取服务端回写的 serverData，
+   *   levelCap 取 behemoth_cultivate 表行（level>=levelCap 即满级不可捐）。是否真能捐由 feat
+   *   再叠加能量池 13 与升级消耗道具（behemoth_level[level].lvup_cost）判定，这里不做消耗校验。
+   * @returns {object|null} {open:boolean, items:[{behemothId,level,exp,isUnlock,levelCap}]}；UserData/Alliance 不可用返回 null
+   */
+  allianceBehemoth() {
+    var u = userData();
+    var a = u && u.Alliance;
+    if (!u || !a || typeof a.isInAlliance !== 'function') return null;
+    var inAlliance = false;
+    try { inAlliance = !!a.isInAlliance(); } catch (e) { inAlliance = false; }
+    if (!inAlliance || !gameData.functionOn('alliance_behemoth') || !u.behemothIsOpen) {
+      return { open: false, items: [] };
+    }
+    var src = probe('Alliance.allianceBehemothData', () => {
+      var d = a[SYM.dataProps.allianceBehemoth];
+      return (d && typeof d.getAllianceBehemothData === 'function') ? d : null;
+    });
+    if (!src) return { open: true, items: [] };
+    try {
+      var map = src.getAllianceBehemothData();   // Map<behemothId, AllianceBehemothItemData>
+      var items = [];
+      if (map && typeof map.forEach === 'function') {
+        map.forEach(function (it) {
+          var sd = it && it.serverData;
+          if (!sd) return;
+          items.push({
+            behemothId: Number(sd.behemothId) || 0,
+            level: Number(sd.level) || 0,
+            exp: Number(sd.exp) || 0,
+            isUnlock: !!sd.isUnlock,
+            levelCap: (it.cfg && Number(it.cfg.level_cap)) || 0,
+          });
+        });
+      }
+      return { open: true, items: items };
+    } catch (e) { return { open: true, items: [] }; }
   },
   /**
    * 功能开关位只读查询（UserData.FunctionOn(FunctionKey 字符串名)，枚举定义在 GameDefine）。

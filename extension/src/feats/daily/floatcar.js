@@ -40,6 +40,7 @@ import { reactor } from '../../core/reactor.js';
 import { l10n } from '../../core/game-api.js';
 import { payloadOf } from '../../core/net-payload.js';
 import { march } from '../../core/march.js';
+import { item } from '../../core/item.js';
 
 /** @type {ReturnType<createLog>} 模块日志器（tag=FLOAT_CAR） */
 const log = createLog('FLOAT_CAR');
@@ -188,6 +189,20 @@ var net;
 var dataCenter;
 /** @type {object|null} MarchTools.ACT_MARCHS 命名导出（活动行军归属判据）；缺失回退 GET_TYPE_FALLBACK */
 var actMarchs = null;
+
+/**
+ * 行军加速目标（秒）：面板可让用户指定「把拾取行军加速到剩余 ≤ 多少秒」。
+ * 0 = 不加速（缺省，行为与旧版一致）。由 reactor.configure 从面板配置注入。
+ * 语义见 maybeAccelerate：剩余 ≤ 该目标即不消耗道具；否则用能达标的最温和一支（先普通 25%、不够再高级 50%）。
+ * @type {number}
+ */
+var accelTargetSec = 0;
+
+/**
+ * 是否启用行军加速（面板勾选项 accelEnabled）。缺省 false=不启用；与 accelTargetSec>0 共同作为加速触发闸。
+ * @type {boolean}
+ */
+var accelEnabled = false;
 
 /** @type {object|null} reactor 注入的上下文；alive() 反映运行态，pause 后置否让堆事件与在飞流程自然收手 */
 var ctxRef = null;
@@ -520,10 +535,14 @@ async function nextReleaseAt(getType) {
     var now = Date.now();
     var min = Infinity;
     for (var i = 0; i < marches.length; i++) {
-        // 到家时刻优先读客户端派生字段（raw 命中即精确唤醒）；856/10019 快照条目常无此字段 → NaN>0 假 → 回退 slotFreePollMs 轮询唤醒
-        var raw = marches[i].raw || {};
-        var ra = +raw.returnArriveTime, ma = +raw.marchArrive;
-        var relSec = ra > 0 ? ra : (ma > 0 ? ma : nowSec + cfg.slotFreePollMs / 1000);
+        // 读归一化时刻（decode 已从 marchInfo.* 抹平）：到家时刻优先 returnArriveTime，出发段只有 marchArrive；
+        //   加速(920)后的 10019 边沿会把 marchArrive 更新为更早值（state 不变），快照读它即自然收紧腾位打点。
+        //   两者都缺（旧 mapData 摊平或增量推送未带时刻）才回退 slotFreePollMs 轮询唤醒。
+        var m = marches[i];
+        var ra = +m.returnArriveTime, ma = +m.marchArrive;
+        // 只采用「未来」时刻：已到点(过去值)但未并进 returnArriveTime 的行军，若直接用过去的 marchArrive
+        //   会把打点排到 now → 自续排成每 slotFreeMarginMs 的紧轮询（违背本模块替代每秒连查的目标）；故过去年视同无效，回退轮询。
+        var relSec = ra > nowSec ? ra : (ma > nowSec ? ma : nowSec + cfg.slotFreePollMs / 1000);
         if (relSec < min) min = relSec;
     }
     if (!isFinite(min)) return now;
@@ -986,6 +1005,16 @@ async function onPickup(item) {
             try { peek = String(typeof raw === 'string' ? raw : JSON.stringify(raw)).slice(0, 400); } catch (e) { }
             var shape = typeof raw === 'string' ? 'string' : (raw && typeof raw === 'object' ? Object.keys(raw).join('|') : typeof raw);
             log.warn('pickup resp shape unexpected. keys=%s;raw=%s', shape, peek);
+            return;
+        }
+        // 行军队列加速（勾选「启用行军加速」且配了目标剩余秒数才做）：对刚受理的拾取行军循环加速直到剩余 ≤ 目标（或道具耗尽/被拒），fire-and-forget
+        if (accelEnabled && accelTargetSec > 0) {
+            var arriveSec = +mi.marchArrive;
+            if (arriveSec > 0) {
+                maybeAccelerate(String(mi.marchId), arriveSec, item.getType).catch(function (err) {
+                    log.warn('speed up threw. marchId=%s', mi.marchId, err);
+                });
+            }
         }
         return;
     }
@@ -1166,6 +1195,96 @@ async function marchPickUp(item) {
     // 零部队三键（{marchType:getType,x,y}，无 armyList）走 core/march.pickUp；频控由本 feat 的 retryMs/drain 自持
     return march.pickUp({ marchType: item.getType, target: { x: item.x, y: item.y } });
 }
+
+/**
+ * 读某拾取行军当前到达时刻（服务器 epoch 秒）：走 march.list({cache:true}) 快照（920 加速后的新到达由常驻 10019 边沿并进快照）。
+ * 快照里已无该行军（到家/移除）回 0。
+ * @param {string} marchIdStr 拾取行军 id（string）
+ * @returns {Promise<number>} 到达 epoch 秒，或 0
+ */
+async function pickupArriveSec(marchIdStr) {
+    var ms = await march.list({ cache: true });
+    for (var i = 0; i < ms.length; i++) {
+        if (ms[i].id === marchIdStr) return ms[i].marchArrive > 0 ? +ms[i].marchArrive : 0;
+    }
+    return 0;
+}
+
+/**
+ * 920 受理后轮询重读该行军到达时刻，直到比 prevArrive 更早（服务器结算加速、经 10019 并进快照）；
+ * 每 ~0.6s 读一次快照，最多等 ~6s。行军消失回 0；窗口内无确认进展回 prevArrive（交调用方停止，防空耗道具）。
+ * @param {string} marchIdStr 拾取行军 id
+ * @param {number} prevArrive 加速前的到达时刻（epoch 秒）
+ * @returns {Promise<number>}
+ */
+async function waitArriveDrop(marchIdStr, prevArrive) {
+    var POLL_MS = 600, DEADLINE_MS = 6000;
+    var end = Date.now() + DEADLINE_MS;
+    while (Date.now() < end) {
+        await new Promise(function (r) { setTimeout(r, POLL_MS); });
+        if (!aliveFn()) return prevArrive;
+        var a = await pickupArriveSec(marchIdStr);
+        if (!(a > 0)) return a;               // 行军已从快照消失
+        if (a < prevArrive) return a;          // 加速已反映（到达更早）
+    }
+    return prevArrive;                         // 超时未确认
+}
+
+/**
+ * 对本 feat 刚派出的活动拾取行军**循环**使用加速道具，直到剩余行军时间 ≤ 面板目标秒数（省队列位/早拿箱），或道具耗尽/被拒/到达结算超时即停。
+ * 语义（真机报文 dashcam 20261005T204748 实证）：普通 520001 剩余时间缩短 25%（剩 75%）、高级 520002 缩短 50%（剩 50%）；削减对「当时剩余」逐次生效。
+ * 每拍选物：先核对背包持有量——普通一发即可达标(remain×0.75 ≤ 目标)就优先普通（削减更小、更省），否则用高级尽快逼近；
+ *   首选缺货回退另一支，两支皆缺则停止。发一支后等 10019 把新到达并进快照再据剩余判下一支，绝不盲连发。
+ * 收敛护栏：单次拾取最多连发 MAX_SHOTS 支；920 被拒 / 新到达未在窗口内确认提前 → 停（防无限烧道具）。
+ * 加速把到达显著提前，而已排的 slotFree 仍按旧到达醒（10019 同态不触发重锚）：结束时清标记重排一次，让腾位读到更早的到达。
+ * fire-and-forget：内部异常由调用侧 catch，绝不影响领取主流程。
+ * @param {string} marchIdStr 拾取行军 id（902 应答 marchInfo.marchId，string 防 Int64）
+ * @param {number} arriveSec 该行军当前段到达时刻（服务器 epoch 秒）
+ * @param {number} [getType] 该拾取行军类型（用于加速后重排 slotFree 腾位打点）
+ */
+async function maybeAccelerate(marchIdStr, arriveSec, getType) {
+    if (!accelEnabled) return;                              // 面板未勾选「启用行军加速」：不消耗任何道具
+    var target = accelTargetSec | 0;
+    if (target <= 0) return;
+    var normal = march.ITEM_SPEED_UP_NORMAL, advanced = march.ITEM_SPEED_UP_ADVANCED;
+    var arrive = arriveSec;
+    var applied = 0;
+    var MAX_SHOTS = 15;
+    for (var shot = 0; shot < MAX_SHOTS; shot++) {
+        if (!aliveFn()) break;
+        if (!(arrive > 0)) break;
+        var remain = arrive - serverTimeSec();
+        if (!(remain > target)) break;                       // 已达标 / 时刻无效（NaN/非正）：停
+        var prefer = (remain * 0.75 <= target) ? normal : advanced;   // 普通一发可达标就用普通（更省），否则高级逼近
+        var other = prefer === normal ? advanced : normal;
+        var itemId = item.amount(prefer) > 0 ? prefer : (item.amount(other) > 0 ? other : 0);
+        if (!itemId) { log.debug('no speed-up item left, stop accel. marchId=%s;remain=%ds;target=%ds', marchIdStr, Math.round(remain), target); break; }
+        var ret = await march.speedUp(marchIdStr, { itemId: itemId });
+        if (!ret || !ret.ok) { log.info('speed up rejected, stop. marchId=%s;itemId=%d;code=%d', marchIdStr, itemId, ret && ret.code); break; }
+        applied++;
+        log.info('speed up pickup march. marchId=%s;itemId=%d;remain=%ds;after~=%ds;target=%ds;shot=%d',
+            marchIdStr, itemId, Math.round(remain), Math.round(remain * (itemId === advanced ? 0.5 : 0.75)), target, applied);
+        var newArrive = await waitArriveDrop(marchIdStr, arrive);
+        if (!(newArrive > 0)) break;                          // 行军消失
+        if (newArrive >= arrive) break;                        // 未确认到新到达提前：停，防空耗
+        arrive = newArrive;
+    }
+    if (applied > 0 && getType != null) {
+        try { slotFreeScheduled.delete(getType); await scheduleSlotFree(getType); } catch (e) { /* 重排失败无害，靠 TTL 兑底 */ }
+    }
+}
+/**
+ * 注入面板配置：读行军加速开关与目标秒数（accelEnabled / accelTargetSec，0=不加速）。reactor.setConfig 每次推配置时调用。
+ * @param {object} partial {enabled, accelEnabled, accelTargetSec}
+ * @returns {object} 当前生效的加速开关与目标秒数（仅供日志/调试）
+ */
+function configure(partial) {
+    accelEnabled = !!(partial && partial.accelEnabled);
+    var v = partial && +partial.accelTargetSec;
+    accelTargetSec = (v > 0) ? (v | 0) : 0;
+    return { accelEnabled: accelEnabled, accelTargetSec: accelTargetSec };
+}
+
 /**
  * 安装：取网络底座 + 数据中心（ServerTime）（硬依赖，任一缺失即失败，reactor 不激活）；行军列表改走 core/march.list({cache:true}) 快照，不再依赖 NWorldMapData；
  * MarchTools 为软依赖，缺失只降级活动行军归属判据（回退 FLOATS getType 副本）+ warn，不阻断激活。
@@ -1233,9 +1352,25 @@ reactor.register({
     storageKey: 'pocketcc.feat.floatCar',
     scenes: ['Home', 'NWorldMap'],
     offInCombat: true,
-    defaults: { enabled: false },
-    fields: [],
-    toModuleCfg: function () { return {}; },
+    defaults: { enabled: false, accelEnabled: false, accelTargetSec: 0 },
+    fields: [
+        {
+            // 花车空投已抽为独立 feature 卡片：卡片主体默认收起（点标题行展开），故「行军加速」段不再自带折叠，避免双层折叠
+            key: 'accelEnabled', type: 'checkbox', label: '启用行军加速', section: '行军加速',
+        },
+        {
+            key: 'accelTargetSec', type: 'number', label: '加速至剩余(秒)', min: 0, step: 1, section: '行军加速',
+            // 行内轻提示：循环对拾取行军用加速道具直到剩余 ≤ N 秒（每支前先核背包、普通可达就优先普通）；0=不加速。
+            placeholder: '0=不加速；>0 循环加速至剩余≤此秒',
+        },
+    ],
+    toModuleCfg: function (c) {
+        return {
+            accelEnabled: !!(c && c.accelEnabled),
+            accelTargetSec: (c && +c.accelTargetSec) > 0 ? (+c.accelTargetSec | 0) : 0,
+        };
+    },
+    configure: configure,
     install: install,
     run: run,
 });

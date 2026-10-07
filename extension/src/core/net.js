@@ -834,7 +834,9 @@ import { bus } from './bus.js';
             const ok = net.sendPB(cmd, data, null, (ret) => {
                 try {
                     const s = ret.pbAck.header.s;
-                    const d = ret.pbAck.data;
+                    // V1 PB 的业务数据是 pbAck 下的命名子字段（如 allianceBehemothDonate/allianceBehemothList），
+                    // 不像 V2 那样有统一的 .data 包装；故整体返回 pbAck，调用方按 cmd 取自己的子字段。
+                    const d = ret.pbAck;
                     resolve(Ret.from(s, d));
                 } catch (e) {
                     reject(e);
@@ -853,9 +855,13 @@ import { bus } from './bus.js';
         return withTimeout(new Promise((resolve, reject) => {
             const ok = net.sendPBV2(cmd, data, null, (ret) => {
                 try {
-                    const s = ret.pbAckV2.header.s;
+                    const header = ret.pbAckV2.header || {};
+                    const s = header.s;
                     const d = ret.pbAckV2.data;
-                    resolve(Ret.from(s, d));
+                    const r = Ret.from(s, d);
+                    // 拒绝原因的多语言 key 落在 header.d（非 data），s≠0 时保留供上层判读（否则 rejectText 只看到空 data）
+                    if (s !== 0 && header.d != null) r.reason = header.d;
+                    resolve(r);
                 } catch (e) {
                     reject(e);
                 }
@@ -891,6 +897,8 @@ import { bus } from './bus.js';
         constructor(code, data) {
             this.code = code;
             this.data = data;
+            /** @type {string|null} PBV2 拒绝原因的多语言 key（落在 pbAckV2.header.d，与业务 data 不同位）；仅 s≠0 且带 key 时非空 */
+            this.reason = null;
         }
 
         /**

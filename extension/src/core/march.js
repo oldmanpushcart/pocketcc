@@ -78,6 +78,16 @@ function firstNum() {
     return 0;
 }
 
+/** 时刻专用取第一个可解析正数值（不做 |0 截断）：行军时刻为 epoch 秒（2038 前 <2^31 安全），
+ *  但若某来源以毫秒下发，firstNum 的 |0 会静默截成负数、令调用方 >0 判据全体失效，故不截断。 */
+function firstTime() {
+    for (var i = 0; i < arguments.length; i++) {
+        var v = Number(arguments[i]);
+        if (isFinite(v) && v > 0) return v;
+    }
+    return 0;
+}
+
 /** net 缺失时的降级 Ret（无 Ret 类可用） */
 function fallbackRet() { return { ok: false, code: NOT_SENT, data: null }; }
 /** 在途/异常哨兵 Ret */
@@ -100,10 +110,12 @@ function isOccupying(m) {
  *   - type：marchInfo.marchType → marchType；
  *   - id：marchInfo.marchId → marchId（一律 String()，>2^53 安全）；
  *   - target.x/y：摊平 target_tx/ty 优先 → 嵌套 marchInfo.target.tx/ty → entry.target.tx/ty（修历史「恒 undefined」坑）；
- *   - target.itemId：摊平 itemId 优先 → 嵌套 target.itemId → marchInfo.itemId。
+ *   - target.itemId：摊平 itemId 优先 → 嵌套 target.itemId → marchInfo.itemId；
+ *   - 时刻：marchStartTime/marchArrive/returnArriveTime（服务器 epoch 秒）嵌套 marchInfo.* 优先 → 摊平顶层，
+ *     供「剩余行军时间/加速后到达点/腾位打点」直接读，无需再各自摸 raw 的两条路径（856/10019 均嵌在 marchInfo 下）。
  * type 仅透传展示，march.js 不解读、不做漂移。永不抛异常，非法输入回 null。
  * @param {object} rawEntry 856 条目 / 10019 推送体 / mapData.marches 摊平条目
- * @returns {object|null} March = {id:str,type,state,stateName,isOccupying,target:{x,y,itemId},raw}
+ * @returns {object|null} March = {id:str,type,state,stateName,isOccupying,target:{x,y,itemId},marchStartTime,marchArrive,returnArriveTime,raw}
  */
 function decode(rawEntry) {
     if (!rawEntry || typeof rawEntry !== 'object') return null;
@@ -120,6 +132,12 @@ function decode(rawEntry) {
     var x = firstNum(rawEntry.target_tx, mt && mt.tx, et && et.tx, mi && mi.tx);
     var y = firstNum(rawEntry.target_ty, mt && mt.ty, et && et.ty, mi && mi.ty);
     var itemId = firstNum(rawEntry.itemId, mt && mt.itemId, et && et.itemId, mi && mi.itemId);
+    // 行军时刻（服务器 epoch 秒）：嵌套 marchInfo.* 优先，回落摊平顶层；缺省 0（不代表返程未发生，交由调用方 >0 判）。
+    //   加速(920)后到达点由 10019 边沿更新到 marchInfo.marchArrive（state 不变），归一化后快照读它即拿到加速后的新到达。
+    var timeSrc = mi || rawEntry;
+    var marchStartTime = firstTime(timeSrc.marchStartTime, rawEntry.marchStartTime);
+    var marchArrive = firstTime(timeSrc.marchArrive, rawEntry.marchArrive);
+    var returnArriveTime = firstTime(timeSrc.returnArriveTime, rawEntry.returnArriveTime);
     var m = {
         id: id,
         type: type,
@@ -127,6 +145,9 @@ function decode(rawEntry) {
         stateName: STATE_NAME[state] || '',
         isOccupying: state !== State.RETURNING && state !== State.ARRIVED_HOME,
         target: { x: x, y: y, itemId: itemId },
+        marchStartTime: marchStartTime,
+        marchArrive: marchArrive,
+        returnArriveTime: returnArriveTime,
         raw: rawEntry,
     };
     return m;
@@ -190,10 +211,11 @@ async function byId(id) {
     return null;
 }
 
-// ── 名额（同步读 UserData，服务端跨场景可靠） ─────────────────────────
+// ── 名额（同步读 UserData，服务端跨场景可靠）──────────────────────
 /**
- * 当前空闲行军名额 = myMarchNumMAX - myMarchNum。
- * @returns {number} 空闲槽数（数据源缺失回 0，调用方据此不拦）
+ * 当前空闲行军名额 = myMarchNumMAX - myMarchNum（读 UserData，跨场景可靠）。
+ * 跨 feat 名额协调不再走预约账本：发射井↔auto-farm 的争抢改由「发射井撤田腾位 + 抢回城空窗期快路径补驻」收敛。
+ * @returns {number} 空闲槽数（数据源缺失按 0 计）
  */
 function freeSlots() {
     var c = gameData.marchCount();
@@ -277,7 +299,12 @@ async function recall(marchId) {
 }
 
 /**
- * 加速一条在途行军（920）。实证报文：req {marchId:str, itemId:number} → resp {s:0,d:"{}"}（成功空载荷）。
+ * 加速一条在途行军（920）。实证报文（dashcam 20261005T204748）：req {marchId:str, itemId:number} → resp {s:0,d:"{}"}（成功空载荷）。
+ * 道具削减比（报文实测同一行军 68s→普通 −16s、−16s→高级 −24s，均对「当时剩余时间」生效）：
+ *   - 普通 520001：行军剩余时间缩短 25%（剩 75%）；
+ *   - 高级 520002：行军剩余时间缩短 50%（剩 50%）。
+ * 加速后的新到达通过一条 10019 边沿下发（state 不变、仍 MARCHING），marchInfo.marchArrive 即新到达点；
+ *   本模块快照经 _cacheApply 采用新值，故 list({cache:true}) 读到的是加速后的到达，同态不触发 onStateChange（非生命周期跃迁）。
  * 道具选择：缺省用普通加速（ITEM_SPEED_UP_NORMAL）；传 {advanced:true} 用高级；或直接 {itemId} 指定任意加速道具。
  * 永不 reject：net 缺/发送异常回 Ret(NOT_SENT)。
  * @param {string|number} marchId 行军 id
@@ -355,7 +382,9 @@ const SNAPSHOT_TTL_MS = 8000;
 
 /**
  * 将一条 10019 边沿同步进快照：到家(ARRIVED_HOME)删除；其余 upsert。
- * 防御：若推送只带状态增量（坐标缺省解为 0,0）而缓存已有更富条目，则保留旧坐标/type。
+ * 防御：若推送只带状态增量（坐标缺省解为 0,0 / 时刻缺省解为 0）而缓存已有更富条目，则保留旧坐标/type/时刻。
+ *   注意加速(920)后的 10019 带全新 marchArrive(>0)：新值 >0 时直接采用（覆盖为加速后的新到达），
+ *   只有新值解为 0（增量推送未带时刻）才回退保留旧值，绝不把加速后的更早到达又冲掉。
  * @param {object} m decode() 产出的 March
  */
 function _cacheApply(m) {
@@ -365,6 +394,9 @@ function _cacheApply(m) {
     if (prev) {
         if ((!m.target || (m.target.x === 0 && m.target.y === 0)) && prev.target) m.target = prev.target;
         if (!m.type && prev.type) m.type = prev.type;
+        if (!(m.marchArrive > 0) && prev.marchArrive > 0) m.marchArrive = prev.marchArrive;
+        if (!(m.marchStartTime > 0) && prev.marchStartTime > 0) m.marchStartTime = prev.marchStartTime;
+        if (!(m.returnArriveTime > 0) && prev.returnArriveTime > 0) m.returnArriveTime = prev.returnArriveTime;
     }
     _cache.set(m.id, m);
 }

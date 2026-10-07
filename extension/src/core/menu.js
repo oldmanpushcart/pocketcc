@@ -2,7 +2,7 @@
 // 与 registry 的分工：descriptor（reactor.list() + INTERNAL_FEATURES）仍是字段/存储/默认值的真相，
 // 本文件只决定层级归属、显示标签覆写与是否渲染详细字段。
 // 节点：
-//   kind:'category' 类别 = 面板左侧一个 TAB（日常设置/战斗设置/系统设置），本身不可开关；children=右栏卡片数组。
+//   kind:'category' 类别 = 面板左侧一个 TAB（日常设置/活动设置/战斗设置/系统设置），本身不可开关；children=右栏卡片数组。
 //   kind:'group'    组卡片：标题行带主闸门 checkbox，展开=子项 checkbox 列表（如日常任务）。
 //   kind:'feature'  功能卡片：标题行带启用 checkbox；showFields=true 时展开 descriptor 的详细字段。
 // 组开关语义（工程决策，勿改回门控方案）：组是 UI 层主闸门，不进 reactor 门控——
@@ -28,13 +28,14 @@
  */
 export const CATEGORIES = {
   daily: '日常设置',
+  activity: '活动设置',
   battle: '战斗设置',
   map: '地图设置',
   system: '系统设置',
 };
 
 /**
- * 面板菜单树根（三个类别节点）
+ * 面板菜单树根（五个类别节点）
  * @type {MenuNode[]}
  */
 export const MENU = [
@@ -43,18 +44,22 @@ export const MENU = [
       {
         id: 'dailyTasks', kind: 'group', label: '日常任务', defaultEnabled: true,
         storageKey: 'pocketcc.group.dailyTasks',
-        // 日常任务只出 checkbox，详细参数一律用默认值/存量值（feature 卡片无 showFields）
+        // 日常任务各子项一般只出 checkbox，详细参数用默认值/存量值；需要可调参数与独立开关的功能（如花车空投）抽为与本组平级的 feature 卡片
         children: [
-          { id: 'floatCar', kind: 'feature', label: '花车空投' },
           { id: 'titanBlessing', kind: 'feature', label: '泰坦祝福' },
           { id: 'allianceHelp', kind: 'feature', label: '联盟帮助' },
           { id: 'domainTreasure', kind: 'feature', label: '领域寻宝' },
-          { id: 'launchSilo', kind: 'feature', label: '占领发射井' },
           { id: 'seaTreasure', kind: 'feature', label: '海上夺宝' },
           { id: 'allianceGift', kind: 'feature', label: '联盟礼物' },
           { id: 'allianceScience', kind: 'feature', label: '联盟科技' },
+          { id: 'allianceBehemoth', kind: 'feature', label: '联盟守卫' },
+          { id: 'dailySupply', kind: 'feature', label: '每日补给' },
+          { id: 'armoryMaterial', kind: 'feature', label: '军火库生产材料' },
+          { id: 'secretWeaponDrop', kind: 'feature', label: '秘密武器空投' },
         ],
       },
+      // 花车空投：从日常任务组抽出，与本组平级的独立 feature 卡片（卡片主体默认收起，点标题行展开行军加速字段）
+      { id: 'floatCar', kind: 'feature', label: '花车空投', showFields: true },
       { id: 'allianceRally', kind: 'feature', label: '联盟集结', showFields: true },
       { id: 'sourceOfWar', kind: 'feature', label: '战争之源', showFields: true },
       { id: 'allianceBoss', kind: 'feature', label: '联盟机甲', showFields: true },
@@ -64,12 +69,20 @@ export const MENU = [
       { id: 'autoFarm', kind: 'feature', label: '自动下田', showFields: true },
       { id: 'relicReward', kind: 'feature', label: '遗迹奖励', showFields: true },
       { id: 'truckIntercept', kind: 'feature', label: '卡车争夺', showFields: true },
+      { id: 'beastBreed', kind: 'feature', label: '异能兽培育', showFields: true },
+    ],
+  },
+  {
+    id: 'activity', kind: 'category', label: CATEGORIES.activity, children: [
+      // 活动类功能：定时开窗的活动玩法挂这里（与日常任务的周期型玩法区分）
+      { id: 'launchSilo', kind: 'feature', label: '占领发射井', showFields: true },
     ],
   },
   {
     id: 'battle', kind: 'category', label: CATEGORIES.battle, children: [
       { id: 'quickAttack', kind: 'feature', label: '快捷战斗' },
       { id: 'imperialDecree', kind: 'feature', label: '奉旨出征', showFields: true },
+      { id: 'autoDefense', kind: 'feature', label: '自动防御', showFields: true },
     ],
   },
   {

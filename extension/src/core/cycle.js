@@ -18,8 +18,25 @@
  *   log:       logger（缺省 createLog('CYCLE')）
  * 返回：{ kick, pending } —— kick() 是外部触发汇入口（启动 / 回城唤醒 / 配置变更 / 兜底定时都调它），
  *   在飞时自动合并；pending 为只读属性，供 run() 判断「本轮在飞期间是否有新触发」。
+ *
+ * 可观测性：每轮真正排下次（delay>0）时，驱动器统一打印一行 `next check at [yyyy-MM-dd HH:mm:ss] (after N sec)`，
+ *   让「长静默期」自证仍在排程而非假死；调用方无需各自再打择时日志（delay<=0 立即补扫不打印）。
  */
 import { createLog } from './log.js';
+
+/** @type {number} 单拍排程硬顶（毫秒）：纯防御 setTimeout 溢出（>~24.8 天即 2^31ms 回绕）与异常超长值；正常 feat 已各自封顶，命中即等价 */
+var MAX_ARM_MS = 24 * 3600 * 1000;
+
+/**
+ * 把「距今 ms 毫秒」换成补零的本地墙上时刻展示串（yyyy-MM-dd HH:mm:ss）；仅用于日志，基准取墙上钟不受游戏服务器钟影响。
+ * @param {number} ms 距今毫秒数
+ * @returns {string}
+ */
+function fmtAt(ms) {
+    var d = new Date(Date.now() + ms);
+    function p(n) { return (n < 10 ? '0' : '') + n; }
+    return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate()) + ' ' + p(d.getHours()) + ':' + p(d.getMinutes()) + ':' + p(d.getSeconds());
+}
 
 /**
  * 创建一个调和循环驱动器。
@@ -72,6 +89,8 @@ export function createCycle(o) {
         if (!alive()) return;
         if (typeof delay !== 'number' || !isFinite(delay)) delay = fallback;
         if (delay <= 0) { exec(); return; }
+        if (delay > MAX_ARM_MS) delay = MAX_ARM_MS;
+        log.info('next check at [%s] (after %d sec).', fmtAt(delay), Math.round(delay / 1000));
         arm(delay);
     }
 

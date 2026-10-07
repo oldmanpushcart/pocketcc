@@ -108,6 +108,7 @@ function activate(entry) {
 
 /**
  * 暂停：置 running（在飞流程 await 回来判 alive 自然退出）+ 摘除所有触发器。保留队列/cfg，不卸载。
+ * 末尾调 per-feat 可选 pause 钩子：让 feat 释放不该跨暂停持有的共享资源（如行军名额预约）。
  * @param {Entry} entry 功能条目
  */
 function pause(entry) {

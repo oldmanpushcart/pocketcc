@@ -1,5 +1,5 @@
 // MAIN world 入口：按依赖顺序导入模块（IIFE 副作用执行），末尾拼接 curated 调试面。
-// feat 目录层级对齐面板菜单树（core/menu.js）：daily 日常设置（含联盟集结）/ battle 战斗设置 / map 地图设置 / chat 聊天窗口。
+// feat 目录层级对齐面板菜单树（core/menu.js）：daily 日常设置（含联盟集结）/ activity 活动设置 / battle 战斗设置 / map 地图设置 / chat 聊天窗口。
 // 导入顺序 = 旧 manifest content_scripts 顺序：net 先于 feat，feat 先于编排器 boot；
 // 新增 feat 除在这里加 import 外，还须挂进 core/menu.js 菜单树，否则不会出现在面板。
 import './core/net.js';
@@ -11,7 +11,7 @@ import './feats/daily/titan-blessing.js';
 import './feats/daily/alliance-help.js';
 import './feats/daily/domain-treasure.js';
 import './feats/daily/mine-cave/index.js';
-import './feats/daily/launch-silo.js';
+import './feats/activity/launch-silo.js';
 import './feats/daily/auto-farm.js';
 import './feats/daily/sea-treasure.js';
 import './feats/daily/alliance-gift.js';
@@ -19,12 +19,18 @@ import './feats/daily/alliance-rally.js';
 import './feats/daily/source-of-war/index.js';
 import './feats/daily/alliance-boss.js';
 import './feats/daily/alliance-science.js';
+import './feats/daily/alliance-behemoth.js';
+import './feats/daily/daily-supply.js';
 import './feats/daily/city-skill.js';
 import './feats/daily/player-like.js';
 import './feats/daily/relic-reward.js';
 import './feats/daily/truck-intercept.js';
+import './feats/daily/armory-material.js';
+import './feats/daily/beast-breed.js';
+import './feats/daily/secret-weapon-drop.js';
 import './feats/battle/quick-attack.js';
 import './feats/battle/imperial-decree.js';
+import './feats/battle/auto-defense.js';
 import './feats/chat/chat-window.js';
 import './feats/map/global-map.js';
 // 游戏内快捷键：core/hotkeys.js 集中注册表，非 feat——import 即 hotkeys.bind 自激活，
