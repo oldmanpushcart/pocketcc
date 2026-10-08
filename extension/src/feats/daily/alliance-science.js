@@ -507,6 +507,7 @@ reactor.register({
     id: 'allianceScience',
     label: '联盟科技',
     storageKey: 'pocketcc.feat.allianceScience',
+    symbols: ['dataCenter', 'worldSite', 'gameDefine', 'tableManager'],
     scenes: ['Home', 'NWorldMap'],
     offInCombat: true,
     defaults: { enabled: false },

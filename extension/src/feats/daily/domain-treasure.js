@@ -489,6 +489,7 @@ reactor.register({
     id: 'domainTreasure',
     label: '领域寻宝',
     storageKey: 'pocketcc.feat.domainTreasure',
+    symbols: ['activityController'],
     scenes: ['Home', 'NWorldMap'],
     offInCombat: true,
     // 面板仅出启用开关；三个扫描/挖矿间隔均为上方 cfg 的内置常量，不作为可持久化配置项。

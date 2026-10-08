@@ -391,6 +391,7 @@ reactor.register({
     id: 'allianceGift',
     label: '联盟礼物',
     storageKey: 'pocketcc.feat.allianceGift',
+    symbols: ['dataCenter'],
     // 面板仅出启用开关；普通/稀有领取开关与 busy/idle 间隔均为上方 cfg 的内置常量，不作为可持久化配置项。
     defaults: {
         enabled: false,

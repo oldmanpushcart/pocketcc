@@ -220,6 +220,7 @@ reactor.register({
     id: 'dailySupply',
     label: '每日补给',
     storageKey: 'pocketcc.feat.dailySupply',
+    symbols: ['dataCenter', 'tableManager'],
     scenes: ['Home', 'NWorldMap'],
     offInCombat: false,
     defaults: { enabled: false },

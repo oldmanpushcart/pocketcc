@@ -400,6 +400,7 @@ reactor.register({
     id: 'secretWeaponDrop',
     label: '秘密武器空投',
     storageKey: 'pocketcc.feat.secretWeaponDrop',
+    symbols: ['dataCenter', 'homeMapUtils', 'homeMapCommon', 'gameDefine', 'tableManager'],
     scenes: ['Home', 'NWorldMap'],
     offInCombat: false,
     defaults: { enabled: false },

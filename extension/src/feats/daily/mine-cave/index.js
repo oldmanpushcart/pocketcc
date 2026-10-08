@@ -99,6 +99,7 @@ reactor.register({
     id: 'mineCave',
     label: '次元矿洞',
     storageKey: 'pocketcc.feat.mineCave',
+    symbols: ['dataCenter', 'tableManager', 'tableUtils'],
     scenes: ['Home', 'NWorldMap'],
     offInCombat: true,
     defaults: { enabled: false, rules: [] },

@@ -470,6 +470,7 @@ reactor.register({
     id: 'quickAttack',
     label: '快捷攻击',
     storageKey: 'pocketcc.feat.quickAttack',
+    symbols: ['dataCenter', 'marchType', 'worldUtils', 'presetMarch', 'heroController', 'mechaController', 'formationAdv', 'marchStorage'],
     scenes: ['NWorldMap'],
     // 战斗设置类：不声明 offInCombat，战斗模式下依然生效（快捷战斗本就是战斗时的手动辅）
     defaults: { enabled: false },

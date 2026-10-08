@@ -733,6 +733,7 @@ reactor.register({
     id: 'allianceHelp',
     label: '联盟帮助',
     storageKey: 'pocketcc.feat.allianceHelp',
+    symbols: ['tableManager', 'dataCenter', 'tableUtils'],
     // 无 scenes、无 offInCombat：纯发包（不派行军、不抢队列），全场景 + 战斗态下都继续跑。
     // 面板仅出启用开关；busy/idle/consume 间隔与 items 候选均为上方 cfg 的内置常量，不作为可持久化配置项。
     defaults: { enabled: false },

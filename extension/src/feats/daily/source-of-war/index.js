@@ -131,6 +131,7 @@ reactor.register({
     id: 'sourceOfWar',
     label: '战争之源',
     storageKey: 'pocketcc.feat.sourceOfWar',
+    symbols: ['dataCenter', 'tableUtils', 'tableManager'],
     scenes: ['Home', 'NWorldMap'],
     defaults: {
         enabled: false,

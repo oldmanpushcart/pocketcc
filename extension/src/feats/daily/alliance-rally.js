@@ -463,6 +463,7 @@ reactor.register({
     id: 'allianceRally',
     label: '联盟集结',
     storageKey: 'pocketcc.feat.allianceRally',
+    symbols: ['dataCenter'],
     scenes: ['Home', 'NWorldMap'],
     offInCombat: true,
     defaults: {

@@ -7,22 +7,25 @@
  *       敌战力取不到按「无限高·最悲观」照常开盾；拒因 war_fever_003/kingdom_077 以 910 status=3 为最终裁决。
  *     · 策略 2 绕后攻击：迁城到敌主城 8 单位内最近合法可落点（911），迁城落地确认后以预设部队 902 打敌主城。
  *       不做行军加速——贴近即压缩行军；8 单位内无落点则放弃顺延。
- *     · 策略 3 迁城逃避：以我方主城为锚、背向敌取离敌更远的合法落点（911）迁走。
+ *     · 策略 3 迁城逃避：以我方主城为锚、背向敌取离敌更远的合法落点（911）迁走；迁成后镜头跟随到新落地点。
  *
- * 坐标/战力来源（报文实证）：敌主城坐标与战力/等级主用 909 GET_PLAYER_POINT {targetId:uid}（不依赖 10007 时序）。
+ * 坐标/战力来源（报文实证）：敌主城坐标与战力一次 630 PLAYER_INFO 按 uid 直查（应答顶层 x/y=主城、power/level），
+ *   与视口/场景无关——Home 城内也能查。（曾试过 10007 MARCH_INFO push：它是视口绑定推送，视野在 Home 时不下发；
+ *   又试过 909 GET_PLAYER_POINT：它是取点护盾信息、targetId 对应本地 UserData、返回的是自己，均非「按 uid 查陌生玩家」。）
+ *   我方坐标走本地 UserData.WorldCoord（gameData.myWorldPos）、战力走本地 UserData.Power（gameData.myPower）。
  *   去重/终止：同 marchId 去重；attackState=0 视为已结束不再触发；attackState=1 才触发。
  *
  * 决策日志（硬性要求）：每条策略评估后必落一行 `[autoDefense] marchId=… decision=… result=… reason=…`，
  *   result∈{hit|skip|fail|not-selected}；战力场景同时打印 me.power/enemy.power，未知显式记 power=unknown→assume-max。
  *   全部未命中 → 不向游戏侧告警（不聊天、不弹窗），只本地日志照记。
  *
- * 合规：只读游戏数据 + 发包（910/911/902/909），不调任何游戏 Update/Delete 改写本地数据。
+ * 合规：只读游戏数据 + 发包（910/911/902/630），不调任何游戏 Update/Delete 改写本地数据。
  *   场景 ['Home','NWorldMap']；不声明 offInCombat——战斗模式下照常防御（与快捷战斗/奉旨出征同侧）。
  *   高影响（自动耗盾/迁城卡、自动迁走主城）：面板默认关闭 + 逐条策略开关。
  */
 import { createLog } from '../../core/log.js';
 import { game } from '../../core/game.js';
-import { gameData, l10n, march as marchApi } from '../../core/game-api.js';
+import { gameData, l10n, march as marchApi, nav } from '../../core/game-api.js';
 import { reactor } from '../../core/reactor.js';
 import { Battle } from '../../core/battle.js';
 import { march } from '../../core/march.js';
@@ -34,8 +37,8 @@ const log = createLog('AUTO_DEFENSE');
 // ── 协议命令号（服务器契约常量，就近定义） ──────────────────────────────
 /** @type {number} ResponseId.PUSH_ATTACK_ARMIES：被攻击军队推送（来袭预警）；{uid,attackState(1来袭/0结束),level,arrivalTime,marchId} */
 const CMD_PUSH_ATTACK_ARMIES = 10167;
-/** @type {number} RequestId.GET_PLAYER_POINT：查玩家坐标点（护盾/战力/等级）；req {targetId} */
-const CMD_GET_PLAYER_POINT = 909;
+/** @type {number} RequestId.PLAYER_INFO：按 uid 查玩家基础信息；req {uid:String}，应答顶层含 x/y(主城坐标)/power/level/allianceName（真机实证，见 chat-window 630 口径），与视口/场景无关，Home 亦可查 */
+const CMD_PLAYER_INFO = 630;
 /** @type {number} RequestId.PEACE_SHIELD：开护盾（背包道具，isPurchase:0）；拒 status=3+war_fever_003/kingdom_077 */
 const CMD_PEACE_SHIELD = 910;
 /** @type {number} RequestId.MOVE_CITY_POSITION：迁城到指定坐标（背包迁城卡，isPurchase:0）；req {itemId,amount:1,isPurchase:0,x,y} */
@@ -145,61 +148,56 @@ function decision(marchId, name, result, reason, level) {
 }
 
 /**
- * 909 查玩家坐标点（敌我皆用）：解析 x/y/power/level，字段缺失记 null（永不抛）。
- * 应答形态以 point 为主体，战力/等级在 point.p 上（地图报告实证：901/909 城池 p.power/p.level 直读）。
- * @param {string|number} uid 目标玩家 uid/pid
+ * 630 PLAYER_INFO 按 uid 查玩家基础信息：解析主城坐标 x/y + 战力 + 等级（字段缺失记 null，永不抛）。
+ * 应答顶层即含 x/y/power/level/allianceName/serverId（真机实证，同 chat-window 630 飞图口径）；
+ * 与视口/场景无关，Home 城内也能查——绕后攻击据此取敌主城坐标，不依赖 10007 行军推送。
+ * @param {string|number} uid 目标玩家 uid（push.uid 是 JS number，须转字符串上线，防 Int64 反序列化拒绝）
  * @returns {Promise<{x:(number|null), y:(number|null), power:(number|null), level:number}|null>} 请求失败/无载荷返回 null
  */
-async function getPlayerPoint(uid) {
+async function getPlayerInfoByUid(uid) {
   if (uid == null || uid === '') return null;
   var ret;
-  try { ret = await net.send(CMD_GET_PLAYER_POINT, { targetId: uid }); }
-  catch (err) { log.warn('909 send error. uid=%s', uid, err); return null; }
-  if (!ret || !ret.ok) { log.info('909 not ok. uid=%s;code=%s', uid, ret && ret.code); return null; }
-  var data = safeParse(ret.data) || {};
-  var pt = (data.point && typeof data.point === 'object') ? data.point : data;
-  var p = (pt.p && typeof pt.p === 'object') ? pt.p : {};
-  var x = numOrNull(pt.x != null ? pt.x : data.x);
-  var y = numOrNull(pt.y != null ? pt.y : data.y);
-  var power = numOrNull(p.power != null ? p.power : pt.power);
-  var level = Number(p.level != null ? p.level : pt.level) || 0;
+  try { ret = await net.send(CMD_PLAYER_INFO, { uid: String(uid) }); }
+  catch (err) { log.warn('630 send error. uid=%s', uid, err); return null; }
+  if (!ret || !ret.ok) { log.info('630 not ok. uid=%s;code=%s', uid, ret && ret.code); return null; }
+  var d = safeParse(ret.data) || {};
+  var x = numOrNull(d.x), y = numOrNull(d.y);
+  var power = numOrNull(d.power);
+  var level = Number(d.level) || 0;
   if (x == null && y == null && power == null) return null;   // 啥都没解析出来 → 视为查无
   return { x: x, y: y, power: power, level: level };
 }
 
 /**
- * 单条 10167 算一份共享快照，三策略复用（避免逐策略重复探测/重复开销）。
- * @param {object} pushData 10167 载荷 {uid,level,...}
+ * 单条 10167 算一份共享快照，三策略复用。
+ * 敌主城坐标+战力：一次 630 PLAYER_INFO 按 uid 直查（应答顶层 x/y=主城、power/level），与视口/场景无关，Home 亦可。
+ * @param {object} pushData 10167 载荷 {uid,level,marchId,...}
  * @returns {Promise<object>} snapshot
  */
 async function buildSnapshot(pushData) {
   var uid = pushData.uid;
-  var enemy = await getPlayerPoint(uid);        // {x,y,power,level}|null
+  // 1) 我方坐标/战力本地读
+  var mePos = gameData.myWorldPos();
+  var me = { x: mePos ? mePos.x : null, y: mePos ? mePos.y : null, power: gameData.myPower() };
+  // 2) 敌主城坐标+战力：630 按 uid 直查（城点固定，行军不影响）
+  var info = await getPlayerInfoByUid(uid);
   if (!aliveFn()) return null;
-  var mePos = gameData.myWorldPos();            // {x,y}|null
-  var me = { x: mePos ? mePos.x : null, y: mePos ? mePos.y : null, power: null };
-  var myPid = gameData.myPid();
-  if (myPid) {
-    var mp = await getPlayerPoint(myPid);       // 自查 909 拿 me.power（+ 坐标兜底）
-    if (mp) {
-      me.power = mp.power;
-      if (me.x == null && mp.x != null) me.x = mp.x;
-      if (me.y == null && mp.y != null) me.y = mp.y;
-    }
-  }
-  // 在外部队数（迁城闸 ==0）：856 权威读，占用=非返程/非到家
+  var enemy = info
+    ? { x: info.x, y: info.y, power: info.power, level: info.level, src: '630' }
+    : { x: null, y: null, power: null, level: 0, src: 'none' };
+  // 3) 在外部队数
   var marchesOut = 0;
   var ms = await march.list();
   for (var i = 0; i < ms.length; i++) { if (march.isOccupying(ms[i])) marchesOut++; }
   return {
     marchId: pushData.marchId != null ? String(pushData.marchId) : '',
-    enemy: enemy || { x: null, y: null, power: null, level: 0 },
+    enemy: enemy,
     me: me,
     shieldItem: defense.pickShieldItem(),
     canMove: gameData.itemAmount(defense.ITEM_MOVE_CITY) > 0,
     shieldActive: gameData.shieldActive(),
     warFever: gameData.warFever(),
-    canShieldByGame: gameData.canShield(),   // true/false/null（null=符号缺失，不预判）
+    canShieldByGame: gameData.canShield(),
     marchesOut: marchesOut,
     freeSlots: march.freeSlots(),
   };
@@ -213,8 +211,13 @@ async function buildSnapshot(pushData) {
  */
 async function moveCity(x, y) {
   if (net.isSending(CMD_MOVE_CITY_POSITION)) return { ok: false, why: '911 在途' };
+  var hasItem = gameData.itemAmount(defense.ITEM_MOVE_CITY) > 0;
+  var body = hasItem
+    ? { itemId: defense.ITEM_MOVE_CITY, amount: 1, isPurchase: 0, x: x, y: y }
+    : { itemId: defense.ITEM_MOVE_CITY, amount: 0, isPurchase: 1, vipShopBuy: 1, x: x, y: y };
+  if (!hasItem) log.info('911 迁城卡不足，改用钻石迁城 isPurchase=1');
   var ret;
-  try { ret = await net.send(CMD_MOVE_CITY_POSITION, { itemId: defense.ITEM_MOVE_CITY, amount: 1, isPurchase: 0, x: x, y: y }); }
+  try { ret = await net.send(CMD_MOVE_CITY_POSITION, body); }
   catch (err) { log.warn('911 send error. x=%d;y=%d', x, y, err); return { ok: false, why: '迁城发包异常' }; }
   if (!ret) return { ok: false, why: '迁城无应答' };
   if (ret.ok) return { ok: true, why: '' };
@@ -294,14 +297,15 @@ async function strategyShield(snap) {
 async function strategyAttack(snap) {
   if (snap.marchesOut !== 0) return { result: 'skip', reason: '有 ' + snap.marchesOut + ' 支部队在外，需全部回城', stop: false };
   if (snap.freeSlots < 1) return { result: 'fail', reason: '无空闲行军队列', stop: false };
-  if (!snap.canMove) return { result: 'fail', reason: '背包无迁城卡', stop: false };
+  // canMove 不再作硬闸（钻石兜底），仅作日志参考
   var ex = snap.enemy.x, ey = snap.enemy.y;
   if (ex == null || ey == null) return { result: 'fail', reason: '敌主城坐标未知(909 未回坐标)', stop: false };
   var marchData = new Battle().plan().preset(cfg.preset).adjust().build();
   if (!marchData.armyListNew.length) return { result: 'fail', reason: '预设 #' + cfg.preset + ' 无兵可派', stop: false };
-  var spot = await defense.findRelocatableSpot({ x: ex, y: ey }, { mode: 'near', radius: defense.NEAR_RADIUS, ctx: { net: net, serverId: serverId() } });
-  if (!aliveFn()) return { result: 'fail', reason: '流程已暂停', stop: false };
-  if (!spot) return { result: 'fail', reason: '敌 ' + defense.NEAR_RADIUS + ' 单位内无可迁落脚', stop: false };
+  var spot = await defense.findRelocatableSpot({ x: ex, y: ey }, { mode: 'near', radius: defense.NEAR_RADIUS, exclude: { x: snap.me.x, y: snap.me.y }, ctx: { net: net, serverId: serverId() } });
+  if (!aliveFn()) return { result: 'fail', reason: '流程已暂停 enemy=(' + ex + ',' + ey + ')', stop: false };
+  if (!spot) return { result: 'fail', reason: '敌 ' + defense.NEAR_RADIUS + ' 单位内无可迁落脚 enemy=(' + ex + ',' + ey + ')', stop: false };
+  try { nav.flyTo({ x: spot.x, y: spot.y, z: serverId() || null, subMap: null, click: false }); } catch (e) { }
   var mv = await moveCity(spot.x, spot.y);
   if (!aliveFn()) return { result: 'fail', reason: '迁城后流程已暂停', stop: false };
   if (!mv.ok) return { result: 'fail', reason: '迁城到(' + spot.x + ',' + spot.y + ')' + mv.why, stop: false };
@@ -321,7 +325,6 @@ async function strategyAttack(snap) {
  */
 async function strategyRelocate(snap) {
   if (snap.marchesOut !== 0) return { result: 'skip', reason: '有 ' + snap.marchesOut + ' 支部队在外，需全部回城', stop: false };
-  if (!snap.canMove) return { result: 'fail', reason: '背包无迁城卡', stop: false };
   if (snap.me.x == null || snap.me.y == null) return { result: 'fail', reason: '我方主城坐标未知', stop: false };
   var ex = snap.enemy.x, ey = snap.enemy.y;
   var threat = (ex != null && ey != null) ? { x: ex, y: ey } : null;
@@ -330,7 +333,10 @@ async function strategyRelocate(snap) {
   if (!spot) return { result: 'fail', reason: '无背向敌的可迁落脚', stop: false };
   var mv = await moveCity(spot.x, spot.y);
   if (!aliveFn()) return { result: 'fail', reason: '迁城后流程已暂停', stop: false };
-  if (mv.ok) return { result: 'hit', reason: '迁城逃避至(' + spot.x + ',' + spot.y + ')', stop: true };
+  if (mv.ok) {
+    try { nav.flyTo({ x: spot.x, y: spot.y, z: serverId() || null, subMap: null, click: false }); } catch (e) { }   // 迁成后镜头跟随到新落地点
+    return { result: 'hit', reason: '迁城逃避至(' + spot.x + ',' + spot.y + ')', stop: true };
+  }
   return { result: 'fail', reason: '迁城' + mv.why, stop: false };
 }
 
@@ -366,6 +372,8 @@ async function runFlow(pushData) {
   try {
     var snap = await buildSnapshot(pushData);
     if (!snap || !aliveFn()) return;
+    log.info('snapshot ready. enemy=(%s,%s) src=%s power=%s; me=(%s,%s) power=%s',
+      snap.enemy.x, snap.enemy.y, snap.enemy.src, snap.enemy.power, snap.me.x, snap.me.y, snap.me.power);
     if (snap.shieldActive) { decision(snap.marchId, 'autoDefense', 'skip', '护盾已在生效，本轮无需防御'); return; }
     var order = normalizeOrder();
     var selected = new Set(Array.isArray(cfg.strategies) ? cfg.strategies : []);
@@ -472,6 +480,7 @@ reactor.register({
   id: 'autoDefense',
   label: '自动防御',
   storageKey: 'pocketcc.feat.autoDefense',
+  symbols: ['dataCenter', 'marchType', 'worldUtils', 'tableManager', 'localManager', 'presetMarch', 'heroController', 'mechaController', 'formationAdv', 'marchStorage', 'buff?', 'commonTools'],
   scenes: ['Home', 'NWorldMap'],
   defaults: {
     enabled: false,

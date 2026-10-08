@@ -2075,6 +2075,7 @@ reactor.register({
   id: 'chatWindow',
   label: '聊天窗口',
   storageKey: 'pocketcc.chatWindow.config',
+  symbols: ['dataCenter', 'tableManager', 'tableUtils', 'long64Bit', 'chatCommon?', 'navFly?'],
   defaults: {
     enabled: true,
     quickWorld: true, quickAlliance: true, quickPm: true, quickCross: true, quickGroup: false,

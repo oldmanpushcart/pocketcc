@@ -525,6 +525,7 @@ reactor.register({
     id: 'titanBlessing',
     label: '泰坦祝福',
     storageKey: 'pocketcc.feat.titanBlessing',
+    symbols: ['dataCenter'],
     scenes: ['Home', 'NWorldMap'],
     offInCombat: true,
     defaults: { enabled: false },

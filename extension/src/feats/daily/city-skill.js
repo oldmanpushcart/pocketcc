@@ -377,6 +377,7 @@ reactor.register({
     id: 'citySkill',
     label: '城市技能',
     storageKey: 'pocketcc.feat.citySkill',
+    symbols: ['dataCenter'],
     scenes: ['Home', 'NWorldMap'],
     offInCombat: true,
     defaults: {

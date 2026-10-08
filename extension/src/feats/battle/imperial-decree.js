@@ -452,6 +452,7 @@ reactor.register({
     id: 'imperialDecree',
     label: '奉旨出征',
     storageKey: 'pocketcc.feat.imperialDecree',
+    symbols: ['dataCenter', 'marchType', 'worldUtils', 'tableManager', 'localManager'],
     scenes: ['Home', 'NWorldMap'],
     defaults: {
         enabled: false,

@@ -304,6 +304,7 @@ reactor.register({
     id: 'allianceBehemoth',
     label: '联盟守卫',
     storageKey: 'pocketcc.feat.allianceBehemoth',
+    symbols: ['dataCenter', 'gameDefine', 'tableManager'],
     scenes: ['Home', 'NWorldMap'],
     offInCombat: false,
     defaults: { enabled: false },

@@ -994,6 +994,7 @@ reactor.register({
     id: 'autoFarm',
     label: '自动下田',
     storageKey: 'pocketcc.feat.autoFarm',
+    symbols: ['dataCenter', 'tableManager', 'localManager', 'tableName', 'presetMarch', 'heroController', 'mechaController', 'formationAdv', 'marchStorage'],
     scenes: ['Home', 'NWorldMap'],
     offInCombat: true,
     defaults: { enabled: false, rules: [] },

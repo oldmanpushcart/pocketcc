@@ -23,8 +23,8 @@
  *
  * 目标选择两种互斥模式（cfg.mode，面板靠 core/ui.js 的 fd.showIf 只展开当前模式那侧的参数）：
  *   - specify 指定玩家：只在 cfg.uids 名单内挑拜访目标，**同意申请也只认这份名单**（cfg.autoAgree='list'）——
- *             名单是用户显式意志，故不再套联盟/离线阈值（但仍守 WAIT、不在途、未拉黑）；
- *   - random 随机玩家：1585 全量里按「WAIT → 不在我已发出且等同意的集合 → 未当日拉黑 →（allyOnly）同联盟 tag
+ *             名单是用户显式意志，故不再套联盟/离线阈值（但仍守 WAIT、不在途）；
+ *   - random 随机玩家：1585 全量里按「WAIT → 不在我已发出且等同意的集合 →（allyOnly）同联盟 tag
  *             → 在线或离线时长达标」逐级过滤，**过滤后为空则逐级回退**（先放宽离线阈值、再放宽联盟闸门），
  *             仍空才本轮跳过申请并记 warn——窄口径导致整轮空转且无声是最难查的故障；同意口径走 off/ally/all 三档。
  *   两个模式的候选集都是**等概率随机取一个**（用户口径：随机一个匹配的玩家/宠物）。
@@ -40,8 +40,9 @@
  *
  * 合规红线：全程只读游戏数据（经 game-api ACL）+ 直发 15xx，不调用游戏的 Update 系列接口改写本地态、不 OpenUI。
  *   唯一的非 15xx 出站是 670 聊天分享（求加油，走 core/chat.js 底座，与聊天浮层同一发送链）。
- *   唯一本地写是 storage.data 的当日账本（拉黑集 + 在途首发时刻 + 上次分享时刻）。
- *   撞限额刷屏防护：被拒目标当日拉黑（同 mine-cave / relic-reward 既有规范），发包条间 sleep 限流。
+ *   唯一本地写是 storage.data 的当日账本（在途首发时刻 + 「次数耗尽」标记 + 上次分享时刻）。
+ *   刷屏防护：发包条间 sleep 限流 + 在途集合本轮不撞同一目标 + 「次数耗尽」当日不再申请；
+ *   不做按 uid 的当日拉黑（错 ID/瞬时拒不该把指定玩家整天封掉；下一拍重读 1585/1582 自愈）。
  *
  * Int64 陷阱：兽 id 在应答里是游戏 Int64 实例（{_low,_high}），读必须 .toString() 取十进制串，
  *   发必须经 bits.int64(strId) 装箱回 Int64——直传数字串会丢精度、直传 JS number 会被服务器拒。
@@ -93,7 +94,7 @@ const PUSH_BREEDING_CHANGE = 10132;
 /** @type {number} ResponseId.ENIGMA_BEAST_OTHER_BREEDING_CHANGE：别人家培育变更推送（仅作唤醒） */
 const PUSH_OTHER_BREEDING = 10133;
 
-/** @type {number} 非服务器返回的哨兵 code：闸门未放开 / 在途 / 发送异常，与真实 s 码区分，不当拒绝拉黑 */
+/** @type {number} 非服务器返回的哨兵 code：闸门未放开 / 在途 / 发送异常，与真实 s 码区分，不当拒绝处理 */
 const CODE_NOT_SENT = -1;
 
 /** BeastBreedType（游戏 EnigmaBeastController 枚举）：培育状态机三值 */
@@ -131,17 +132,13 @@ const CFG = {
 
 /** @type {string} 拒绝文案键：每日申请次数耗尽（命中即当日不再申请） */
 const REJECT_TIMES_EXHAUSTED = 'enigma_peiyu_times_8';
-/** @type {string} 硬关系拒绝文案键「对方不是您的好友或联盟成员」（非瞬时，即刻拉黑） */
-const REJECT_NOT_RELATION = 'enigma_beast239';
-/** @type {number} 同一目标连续被拒几次才当日拉黑（瞬时占位/时序竞争给几次自愈机会，避免误吃指定玩家一整天） */
-const APPLY_BAN_STREAK = 2;
 
 // ─────────────────────────── 择时常量 ───────────────────────────
 /** @type {number} 活跃档：有在途申请/有兽在培育时的复查间隔 */
 const ACTIVE_INTERVAL_MS = 5 * 60 * 1000;
 /** @type {number} 空闲档：全空闲/配额用尽/无候选时的兜底巡检间隔（也是 cycle 的 fallback） */
 const IDLE_INTERVAL_MS = 30 * 60 * 1000;
-/** @type {number} 310008 取不到时的在途名额兜底（服务器仍会硬拦，被拒即拉黑，超发是有界的） */
+/** @type {number} 310008 取不到时的在途名额兜底（服务器仍会硬拦，超发是有界的） */
 const DEFAULT_INFLIGHT_MAX = 3;
 /** @type {number} 在途申请超时撤单阈值（时）：内部兜底阀门，不进面板（用户无从判断该填几小时，6h 覆盖「对方当天上线一次就够」） */
 const APPLY_TTL_HOURS = 6;
@@ -185,8 +182,8 @@ var ctl = null;
 /** @type {object|null} 10132 缓存的 breedData：{info,breedingTodayCnt,breedingBuyMaxCnt,breedingTodayHelpCnt,helpBornRewardCnt} */
 var breedData = null;
 
-/** @type {{day:string, uids:string[], exhausted:string, shareAt:number}} 当日拉黑、「次数耗尽」标记与上次分享时刻 */
-var ledger = { day: '', uids: [], exhausted: '', shareAt: 0 };
+/** @type {{day:string, exhausted:string, shareAt:number}} 「次数耗尽」标记与上次分享时刻（不做按 uid 拉黑） */
+var ledger = { day: '', exhausted: '', shareAt: 0 };
 
 /** @type {boolean} 账本是否已成功读回（未读回前绝不写盘，避免拿内存初值覆掉盘上真值） */
 var ledgerLoaded = false;
@@ -194,8 +191,6 @@ var ledgerLoaded = false;
 var ledgerLoading = false;
 /** @type {Object<string,number>} uid → 该在途申请首次被见到的时刻（毫秒）；1583 的 apply 条目不带发起时间戳，只能本地记账 */
 var inflightSeen = {};
-/** @type {Object<string,number>} uid → 连续被服务器拒绝次数（成功即清零）；达 APPLY_BAN_STREAK 才当日拉黑 */
-var applyRejectStreak = {};
 
 /**
  * 功能是否仍在运行（在飞流程与限流 sleep 的存活判定）
@@ -325,17 +320,15 @@ function normUids(v) {
     return out;
 }
 
-// ─────────────────────────── 当日账本（拉黑 / 在途首发时刻） ───────────────────────────
+// ─────────────────────────── 当日账本（在途首发时刻 / 次数耗尽标记） ───────────────────────────
 /**
- * 跳日收敛：拉黑集与「次数耗尽」标记都只在当日有效；首发时刻不按日清（它随条目消失而删）。
+ * 跳日收敛：「次数耗尽」标记只在当日有效；首发时刻不按日清（它随条目消失而删）。
  */
 function rollDay() {
     var today = todayStr();
     if (ledger.day === today) return;
     ledger.day = today;
-    ledger.uids = [];
     ledger.exhausted = '';
-    applyRejectStreak = {};
 }
 
 /**
@@ -351,7 +344,6 @@ function loadLedger() {
         ledgerLoaded = true;   // 读回成功才允许写盘（缺这行会把 persistLedger 永久锁死，账本落不了盘）
         if (saved && typeof saved === 'object') {
             if (typeof saved.day === 'string') ledger.day = saved.day;
-            if (Array.isArray(saved.uids)) ledger.uids = saved.uids.map(String);
             if (typeof saved.exhausted === 'string') ledger.exhausted = saved.exhausted;
             if (saved.seen && typeof saved.seen === 'object') inflightSeen = Object.assign({}, saved.seen);
             // 上次分享时刻不按日清（它只是防刷屏的节流锚，跳日照常继续隔够久再发）
@@ -368,32 +360,13 @@ function loadLedger() {
 function persistLedger() {
     if (!ledgerLoaded) return;
     Promise.resolve(storage.data.set(LEDGER_NAME, {
-        day: ledger.day, uids: ledger.uids, exhausted: ledger.exhausted, seen: inflightSeen, shareAt: ledger.shareAt,
+        day: ledger.day, exhausted: ledger.exhausted, seen: inflightSeen, shareAt: ledger.shareAt,
     })).catch(function (err) { log.warn('persist ledger failed.', err); });
 }
 
-/**
- * 当日拉黑一个玩家（撞限额/被拒/超时撤单的目标，当日不再重复申请或同意）
- * @param {string} uid 玩家 uid 串
- */
-function banToday(uid) {
-    uid = String(uid || '');
-    if (!uid) return;
-    rollDay();
-    if (ledger.uids.indexOf(uid) === -1) {
-        ledger.uids.push(uid);
-        persistLedger();
-    }
-}
-
-/**
- * 该玩家是否已被当日拉黑
- * @param {string} uid 玩家 uid 串
- * @returns {boolean}
- */
-function isBanned(uid) {
-    return !!uid && ledger.uids.indexOf(String(uid)) !== -1;
-}
+// 旧版本曾在此定义 banToday / isBanned（按 uid 当日拉黑），已整体移除：
+// 任何瞬时/异常拒绝都不应把指定玩家整天封掉；下一拍重读 1585/1582 自然收敛。
+// storage.data 上历史遗留的 uids 字段被 loadLedger 忽略、不再落盘。
 
 // ─────────────────────────── 发包封装 ───────────────────────────
 /**
@@ -496,10 +469,9 @@ function filterVisit(visit, g, inflightUids, nowSec, myUid, myTag) {
         if (!uid || uid === myUid) continue;
         if ((v.breedingStatus | 0) !== BREED_WAIT) continue;           // ① 只挑空着的家
         if (inflightUids.has(uid)) continue;                            // ② 我已申请且等同意
-        if (isBanned(uid)) continue;                                    // ③ 当日拉黑
         if (g.mine && g.mine.length && g.mine.indexOf(uid) === -1) continue;
-        if (g.ally && (!myTag || String(v.ownerAllianceTag || '') !== myTag)) continue;  // ④ 同联盟
-        if (g.offlineSec !== Infinity) {                                // ⑤ 在线或近期离线
+        if (g.ally && (!myTag || String(v.ownerAllianceTag || '') !== myTag)) continue;  // ③ 同联盟
+        if (g.offlineSec !== Infinity) {                                // ④ 在线或近期离线
             var off = v.lastOfflineTime | 0;
             if (off !== 0 && nowSec - off > g.offlineSec) continue;
         }
@@ -632,7 +604,7 @@ async function ensureMain(beasts) {
  * 同意口径由 cfg.autoAgree 一档决定（与 cfg.mode 互斥关系对齐）：
  *   list（指定玩家模式）= 只处理名单内申请人的申请，不再套联盟/离线；名单是用户显式意志；
  *   ally / all（随机玩家模式）= 按联盟 tag 比对 / 不看关系。
- * 被拒（非哨兵）即当日拉黑该申请人并结束本段——既守「撞限额不刷屏」，也免反复撞同一堵墙。
+ * 被拒（非哨兵）本轮整段收手、下轮再试——不做按 uid 拉黑，同一申请人下一拍仍会重读 1582 再判。
  * @param {object[]} applyList 1582 的 apply
  * @param {boolean} mainSet 我家已有主宠
  * @returns {Promise<number>} 处理条数
@@ -646,7 +618,7 @@ async function agreeApplies(applyList, mainSet) {
         var a = applyList[i];
         if (!a || !aliveFn()) break;
         var uid = String(a.uid || '');
-        if (!uid || isBanned(uid)) continue;
+        if (!uid) continue;
         if (cfg.autoAgree === 'list') {
             if (cfg.uids.indexOf(uid) === -1) continue;
         } else if (cfg.autoAgree === 'ally' && (!myTag || String(a.allianceTag || '') !== myTag)) continue;
@@ -656,9 +628,8 @@ async function agreeApplies(applyList, mainSet) {
         done++;
         if (ret.code === 0) log.info('agreed a breeding apply. uid=%s;beast=%s', uid, idS);
         else if (ret.code !== CODE_NOT_SENT) {
-            log.info('agree rejected, ban applicant today. uid=%s;code=%d;data=%s', uid, ret.code, rejectText(ret));
-            banToday(uid);
-            break;   // 同一原因大概率会连着拒绝整批：本轮整段收手，下轮再试
+            log.info('agree rejected, stop this round. uid=%s;code=%d;data=%s', uid, ret.code, rejectText(ret));
+            break;   // 同一原因大概率会连着拒绝整批：本轮整段收手，下轮再试（不拉黑申请人）
         }
         await sleep(cfg.applyIntervalMs);
     }
@@ -773,8 +744,8 @@ function collectInflight(mainList) {
 
 /**
  * 超时撤单：1583 的 apply 条目不带发起时间戳，故按 inflightSeen[uid] 的首见时刻判 TTL；
- * 超期即发 1580 apply:false 撤单并当日拉黑该目标，腾出 310008 名额给随机池的其他候选。
- * 这是防止「指定了一个长期不在线的玩家导致名额被永久占住」的收敛阀。
+ * 超期即发 1580 apply:false 撤单，腾出 310008 名额给随机池的其他候选（不拉黑目标，下拍可再申请）。
+ * TTL 本身即是防刷屏的收敛阀：撤单前该 uid 在 inflightUids 里被挡住，撤单后要等 inflightSeen 被 clear 才会重发。
  * @param {Array<{uid:string,beastId:string}>} inflight 在途单
  * @param {number} nowMs 本地毫秒时刻
  * @returns {Promise<number>} 撤单数
@@ -796,7 +767,6 @@ async function cancelStaleApplies(inflight, nowMs) {
         if (ret.code === 0) {
             log.info('stale apply withdrawn. uid=%s;beast=%s;age=%dmin', it.uid, it.beastId, Math.round((nowMs - inflightSeen[it.uid]) / 60000));
             delete inflightSeen[it.uid];
-            banToday(it.uid);
             n++;
         } else if (ret.code !== CODE_NOT_SENT) {
             log.info('withdraw rejected. uid=%s;code=%d;data=%s', it.uid, ret.code, rejectText(ret));
@@ -864,7 +834,6 @@ async function applyNewBeasts(beasts, visit, inflight, nowSec, nowMs) {
             log.info('apply sent. uid=%s;beast=%s;cfgId=%d', target, pick.strId, pick.cfgId);
             inflightSeen[target] = nowMs;
             inflightUids.add(target);
-            delete applyRejectStreak[target];   // 成功即清连续被拒计数
             persistLedger();
             res.applied++;
             slots--;
@@ -877,21 +846,13 @@ async function applyNewBeasts(beasts, visit, inflight, nowSec, nowMs) {
                 log.info('daily apply exhausted today, only claim/help will run.');
                 break;
             }
-            inflightUids.add(target);   // 本轮不再撞同一目标
-            // 拒绝分类：硬关系拒绝（非好友/联盟）即刻拉黑；瞬时态（目标家刚被占/时序竞争）连续达阈值才拉黑，
-            // 避免你唯一指定的玩家因一次瞬时 s=3 被整天排除（下拍重读 1585，空出 WAIT 后会再来试）。
-            if (text.indexOf(REJECT_NOT_RELATION) >= 0) {
-                banToday(target);
-            } else if ((applyRejectStreak[target] = (applyRejectStreak[target] || 0) + 1) >= APPLY_BAN_STREAK) {
-                banToday(target);
-                log.info('target banned after %d consecutive rejects. uid=%s', applyRejectStreak[target], target);
-            }
+            inflightUids.add(target);   // 本轮不再撞同一目标（不做按 uid 拉黑，下拍重读 1585 再判）
         }
         await sleep(cfg.applyIntervalMs);
     }
-    // 指定模式下「名单里全忙/在途/已拉黑」是随名额释放自愈的「当前不可动作」→ debug（勿当 warn 刷屏）；
+    // 指定模式下「名单里全忙/在途」是随名额释放自愈的「当前不可动作」→ debug（勿当 warn 刷屏）；
     // 随机模式回退后仍空往往意味着过滤口径过严，保留 warn 供排查。
-    if (res.noTarget && cfg.mode === 'specify') log.debug('no visit candidate in specified list (all busy / banned / inflight).');
+    if (res.noTarget && cfg.mode === 'specify') log.debug('no visit candidate in specified list (all busy / inflight).');
     else if (res.noTarget) log.warn('no visit candidate even after fallbacks.');
     if (res.noBeast) log.warn('no free beast matches type/quality filter.');
     return res;
@@ -1133,6 +1094,7 @@ reactor.register({
     id: 'beastBreed',
     label: '异能兽培育',
     storageKey: 'pocketcc.feat.beastBreed',
+    symbols: ['dataCenter', 'tableManager', 'tableUtils', 'long64Bit', 'enigmaBeast?'],
     scenes: ['Home', 'NWorldMap'],
     offInCombat: true,
     defaults: {

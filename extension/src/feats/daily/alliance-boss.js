@@ -783,6 +783,7 @@ reactor.register({
     id: 'allianceBoss',
     label: '联盟机甲',
     storageKey: 'pocketcc.feat.allianceBoss',
+    symbols: ['dataCenter', 'tableManager', 'tableUtils'],
     scenes: ['Home', 'NWorldMap'],
     offInCombat: true,
     defaults: {

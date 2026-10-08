@@ -50,9 +50,12 @@ const SYM = {
     uiDataInfo: 'UIDataInfo',             // 面板描述符注册表（UIDataInfo.<PanelName> → UIDataInfoClass 实例）
     homeMapUtils: 'HomeMapUtils',         // 大本营地图工具（default.getMapPosByPosId：posId→主城小格坐标 {x,y}），空投落点换算用
     homeMapCommon: 'HomeMapCommon',       // 大本营地图常量（WidthCount/HeightCount 主城网格尺寸），空投落点扫描边界用
-    buff: 'Buff',                         // 战争状态 Buff 门面：getStateDataById(stateId) 读狂热/护盾等状态EndTime（自动防御只读探测；符号缺失软失败）
     commonTools: 'CommonTools',           // 通用工具（subpack2）：checkShieldEnable(false) 权威「能否开盾」闸（狂热/危险区/跨服一次覆盖，抑制 UI）
-    worldMapCtrl: 'WorldMapController',   // 世界地图主控（getInstance）：checkCanMove/checkIsPlainTile 迁城落点合法性只读判定
+    worldMapCtrl: 'WorldMapController',   // 旧图主控：静态 model.checkIsPlainTile(x,y,true) 为迁城落点合法性只读判定（cc 组件类无 getInstance，故取 .model）
+    nWorldMapUtils: 'NWorldMapUtils',     // 新图迁城工具（subpack2、模块级）：checkCanMove(x,y) 落点合法性权威判定（当前游戏默认走新图；符号缺失软失败）
+    nWorldMapTerritoryModel: 'NWorldMapTerritoryModel', // 新图联盟领地单例（subpack2）：AllianceTerritory 存视口内堡垒领地条目 {x,y,w,bw,owner,buildId}，供迁城落点推「禁迁实心区」（符号缺失软失败）
+    nWorldMapData: 'NWorldMapData',       // 新图世界数据单例（subpack2）：instance.placeFlags 为 cell 级占用 Map，settle 就绪门按邻域命中计数（符号缺失软失败）
+    gameTools: 'GameTools',               // 游戏工具：isKVK() 判 KVK 跨服战场图（=isC4||isC8||isC8S2），迁城落点「仅本服图拦别盟领地」分区闸门（符号缺失保守当本服）
   },
   /** 新图单例属性链：module[cls][inst]，枚举对象 module[goType] */
   newMap: { cls: 'NWorldMapTodoController', inst: 'instance', goType: 'NWorldMapGoType' },
@@ -66,8 +69,8 @@ const SYM = {
     // 次元矿洞三张表（TableName.mine_cave/_level/_interaction，报告 §6 实证；成员名与值同名小写）
     mineCave: 'mine_cave', mineCaveLevel: 'mine_cave_level', mineCaveInteraction: 'mine_cave_interaction',
   },
-  /** UserData 子对象上的数据成员名（属性链符号，Alliance.<name>；WorldCoord 为 UserData 直属成员，myWorldPos 经 SYM 引用） */
-  dataProps: { allianceBoss: 'AllianceBossData', allianceScience: 'scienceData', allianceBehemoth: 'allianceBehemothData', worldCoord: 'WorldCoord' },
+  /** UserData 子对象上的数据成员名（属性链符号，Alliance.<name>；WorldCoord 为 UserData 直属成员，myWorldPos 经 SYM 引用）；buffPool=UserData.Buff 为 BuffPool 实例（非可 require 模块），getStateDataById 读战争状态/护盾 EndTime */
+  dataProps: { allianceBoss: 'AllianceBossData', allianceScience: 'scienceData', allianceBehemoth: 'allianceBehemothData', worldCoord: 'WorldCoord', buffPool: 'Buff' },
   /** 行军/地块枚举成员名（只记名字，数值运行时向游戏枚举对象取） */
   marchEnum: {
     obj: 'MarchType',                                 // WorldMapCommon 导出：新旧图同一张 MarchType 表
@@ -112,6 +115,62 @@ function probe(key, resolve) {
     log.warn('probe "%s" failed —— 符号漂移（游戏更新）或功能/子包未加载，相关能力将降级', key);
   }
   return null;
+}
+
+// ─────────────────────── 能力校验表（feat 安装期依赖自检） ───────────────────────
+
+/**
+ * 能力键 → 只读校验器：feat 在 spec.symbols 里按语义名声明依赖的游戏 bundle 符号，
+ * reactor 在调用 spec.install 前逐一经本表校验；任一项解析不到即安装失败并记 warn。
+ * 符号名知识收在本文件（ACL），feat 只写语义名，不出现游戏模块名字符串。
+ * 约定：
+ *   - 校验只判「模块在场 + 声明的成员链可达」，不判方法签名（漂移细节仍由 probe 运行期告警）；
+ *   - 名字末尾带 '?' 的软能力（feat 已有降级路径）缺失只告警不阻断，由 reactor 侧解释；
+ *   - 惰性解析的实例 getter（instance）可能在安装期尚未建立，故此类能力只校验模块/类在场。
+ * @type {Object<string, function():boolean>}
+ */
+export const CAPS = {
+  dataCenter: () => { var m = game.get(SYM.modules.dataCenter); return !!(m && m.DATA); },
+  localManager: () => { var m = game.get(SYM.modules.localManager); return !!(m && m.LOCAL); },
+  tableManager: () => { var m = game.get(SYM.modules.tableManager); return !!(m && m.TABLE); },
+  tableName: () => { var m = game.get(SYM.modules.tableName); return !!(m && (m.TableName || (m.default && m.default.TableName))); },
+  tableUtils: () => { var m = game.get(SYM.modules.tableUtils); return !!(m && (typeof m.getDataConfigData === 'function' || (m.default && typeof m.default.getDataConfigData === 'function'))); },
+  gameDefine: () => { var m = game.get(SYM.modules.gameDefine); return !!(m && (m.FunctionKey || (m.default && m.default.FunctionKey))); },
+  long64Bit: () => { var m = game.get(SYM.modules.long64Bit); return !!(m && m.Int64); },
+  chatCommon: () => !!game.get(SYM.modules.chatCommon),
+  platformCore: () => !!game.get(SYM.modules.platformCore),
+  eventIds: () => { var m = game.get('EventId'); return !!(m && m.EventId); },
+  gameTools: () => { var m = game.get('GameTools'); return !!(m && (m.default || m)); },
+  activityController: () => { var m = game.get('ActivityController'); return !!(m && m.ActivityController && m.ActivityController.Instance); },
+  marchType: () => { var m = game.get(SYM.modules.mapOldCommon); return !!(m && m[SYM.marchEnum.obj]); },
+  worldUtils: () => { var W = ns(game.get(SYM.modules.worldUtils)); return !!(W && typeof W.dealMarchTypeWithSpecialMarch === 'function'); },
+  presetMarch: () => { var m = game.get('PresetMarchController'); return !!(m && m.default && m.default.instance); },
+  heroController: () => !!game.get('HeroController'),
+  mechaController: () => !!game.get('MechaController'),
+  formationAdv: () => !!game.get('FightFormationAdvController'),
+  marchStorage: () => { var m = game.get(SYM.modules.marchStorage); return !!(m && (m.MarchStorageController || (m.default && m.default.MarchStorageController))); },
+  buff: () => { var u = userData(); var B = u && u[SYM.dataProps.buffPool]; return !!(B && typeof B.getStateDataById === 'function'); },
+  commonTools: () => !!game.get(SYM.modules.commonTools),
+  homeMapUtils: () => !!game.get(SYM.modules.homeMapUtils),
+  homeMapCommon: () => !!game.get(SYM.modules.homeMapCommon),
+  worldSite: () => { var m = game.get(SYM.modules.worldSiteCtrl); return !!(m && (m.AllianceWorldSiteController || (m.default && m.default.AllianceWorldSiteController))); },
+  rewardCtrl: () => { var m = game.get(SYM.modules.rewardCtrl); return !!(m && (m.RewardController || (m.default && m.default.RewardController))); },
+  enigmaBeast: () => !!game.get('EnigmaBeastController'),
+  marchTools: () => !!game.get('MarchTools'),
+  terrainModel: () => !!game.get(SYM.modules.terrainModel),
+  navFly: () => !!mapTodo(),
+};
+
+/**
+ * 校验一个能力键在场（未知键返回 false —— 声明笔误在开发期 F5 即暴露）。
+ * @param {string} key 能力语义名（CAPS 键，可带 '?' 后缀表软依赖）
+ * @returns {boolean}
+ */
+export function checkCap(key) {
+  var k = String(key || '').replace(/\?$/, '');
+  var f = CAPS[k];
+  if (!f) { log.warn('checkCap: 未登记的能力键 "%s"', key); return false; }
+  try { return !!f(); } catch (e) { return false; }
 }
 
 /** LOCAL 翻译单例（LocalManager 导出 .LOCAL） */
@@ -403,6 +462,12 @@ export const gameData = {
   alliance() { return (userData() && userData().Alliance) || null; },
   /** 本人数字 pid（=UserData.UID，与世界地图 p.pid 同源，已用实录核对）；取不到返回 0 */
   myPid() { try { return Number(userData() && userData().UID) || 0; } catch (e) { return 0; } },
+  /**
+   * 本人基地战力（=UserData.Power，游戏顶栏同源；真机探针实证 Power 为明文整数 48906307，与地图 p.power 同量纲）。
+   * 取不到返回 null（而非 0）：自动防御开盾的战力闸门据 null 走「未知→最悲观」保守分支，不可把「取不到」误当「战力为 0 而判我更强」。
+   * @returns {number|null}
+   */
+  myPower() { try { var p = userData() && userData().Power; return (p != null && !isNaN(Number(p))) ? Number(p) : null; } catch (e) { return null; } },
   /** 本人联盟 aid（=UserData.Alliance.Aid，与地图 p.aid 同源）；未入盟/取不到返回 0 */
   myAid() { try { var a = userData() && userData().Alliance; return Number(a && a.Aid) || 0; } catch (e) { return 0; } },
   /**
@@ -592,9 +657,11 @@ export const gameData = {
    * @returns {number} 结束时刻（epoch 秒）；0=不在该状态或探测不可用
    */
   buffStateEndTime(stateId) {
-    var B = probe(SYM.modules.buff + '.getStateDataById', () => {
-      var m = ns(game.get(SYM.modules.buff));
-      return (m && typeof m.getStateDataById === 'function') ? m : null;
+    // Buff 门面是 UserData 上的 BuffPool 实例（userData().Buff），非可 require 的模块——直接 game.get('Buff') 会抛「Cannot find module」
+    var B = probe('UserData.Buff.getStateDataById', () => {
+      var u = userData();
+      var inst = u && u[SYM.dataProps.buffPool];
+      return (inst && typeof inst.getStateDataById === 'function') ? inst : null;
     });
     if (!B) return 0;
     try {
@@ -636,26 +703,141 @@ export const gameData = {
     try { return !!C.checkShieldEnable(false); } catch (e) { return null; }
   },
   /**
-   * 指定世界坐标能否落城（只读，封装游戏 WorldMapController 迁城合法性判定）。
-   * 优先 checkCanMove，回退 checkIsPlainTile（外观占 4 格的 checkIsPlainTile4 由上层按需另判，此处按单格口径）。
-   * 符号缺失/未在世界图（控制器未就绪）返回 null（调用方降级为 901 空格判定，见 core/defense.findRelocatableSpot）。
+   * 指定世界坐标能否落城（只读，一切以游戏自身迁城判定为准，不做插件侧启发式降级）。
+   * 新图优先：NWorldMapUtils.checkCanMove(x,y)（模块级函数，无需实例）；旧图回退：WorldMapController.model.checkIsPlainTile(x,y,true)（静态 model）。
+   * 二者皆不可得（模块未加载/未在世界图）返回 null（→ core/defense 判「无从判定」，交上层顺延，绝不猜测）。
    * @param {number} x game x
    * @param {number} y game y
    * @returns {boolean|null} true=可落 / false=不可落 / null=无从判定
    */
   canMoveCity(x, y) {
-    var W = probe(SYM.modules.worldMapCtrl + '.checkCanMove', () => {
-      var m = game.get(SYM.modules.worldMapCtrl);
-      var C = m && (m.WorldMapController || (m.default && m.default.WorldMapController));
-      var inst = C && typeof C.getInstance === 'function' ? C.getInstance() : (C && C.instance);
-      return (inst && (typeof inst.checkCanMove === 'function' || typeof inst.checkIsPlainTile === 'function')) ? inst : null;
+    var A = probe(SYM.modules.nWorldMapUtils + '.checkCanMove', () => {
+      try {
+        var m = game.get(SYM.modules.nWorldMapUtils);
+        var U = m && (m.NWorldMapUtils || m.default || m);
+        if (U && typeof U.checkCanMove === 'function') return { kind: 'utils', ref: U };
+      } catch (e) {}
+      try {
+        var c = game.get(SYM.modules.worldMapCtrl);
+        var C = c && (c.WorldMapController || (c.default && (c.default.WorldMapController || c.default)) || c);
+        var model = C && C.model;
+        if (model && typeof model.checkIsPlainTile === 'function') return { kind: 'ctrl', ref: model };
+      } catch (e) {}
+      return null;
     });
-    if (!W) return null;
+    if (!A) return null;
     try {
-      if (typeof W.checkCanMove === 'function') return !!W.checkCanMove(x | 0, y | 0);
-      if (typeof W.checkIsPlainTile === 'function') return !!W.checkIsPlainTile(x | 0, y | 0);
+      if (A.kind === 'utils') return !!A.ref.checkCanMove(x | 0, y | 0);
+      return !!A.ref.checkIsPlainTile(x | 0, y | 0, true);
     } catch (e) { return null; }
-    return null;
+  },
+  /**
+   * 城外观(skinId)占地边长（格数，只读、**场景无关**）：等价游戏 CommonTools.getCitySkinSize——直接查 SKIN 配置表 .large。
+   * 用现成的 l10n.tableRow('SKIN', id) 取行、读 .large，不再 probe NWorldMapUtils.getCitySkinSize（该类无此方法，宿主应为 CommonTools，且本质就是查表）。
+   * 用于把 901 单锚点还原成 footprint 格集合（4 格城 large=2）；不依赖已加载 entities，远程可用。
+   * @param {number|string} skinId 城外观 id（901 城点 p.skinId，或 UserData.UsingCastleFace）
+   * @returns {number|null} 边长格数（1=单格，2=2×2…）；表/行不可得或 skinId 空 → null
+   */
+  citySkinSize(skinId) {
+    if (skinId == null) return null;
+    var row = l10n.tableRow('SKIN', skinId);
+    if (!row) return null;
+    var s = Number(row.large != null ? row.large : row.Large) || 0;
+    return s >= 1 ? (s | 0) : 1;
+  },
+  /**
+   * 本人主城外观 skinId（UserData.UsingCastleFace）；迁城落点 footprint 边长 = citySkinSize(此值)。
+   * @returns {number|null} 取不到返回 null
+   */
+  usingCastleFace() {
+    var u = userData();
+    return (u && u.UsingCastleFace != null) ? u.UsingCastleFace : null;
+  },
+  /**
+   * 联盟堡垒领地（禁迁区）原始条目只读快照：NWorldMapTerritoryModel 单例的 AllianceTerritory（随视口加载、出视口被 purge，故易失）。
+   * 每条 {x,y,w,bw,owner,buildId} 为堡垒原点 + 旋转菱形宽高 + 归属联盟 aid；调用方据此推「实心禁迁区」（不依赖 AlliancePointPool 的奇偶采样，避免盲区漏判）。
+   * 模型不可得（子包未载/未进世界图）返回 null（→ 交上层判「无从判定」，绝不猜测）；在场但当前为空返回 []。
+   * @returns {Array<{x:number,y:number,w:number,bw:number,owner:number,buildId:number}>|null}
+   */
+  allianceTerritories() {
+    var inst = probe('NWorldMapTerritoryModel.inst', function () {
+      try {
+        var m = game.get(SYM.modules.nWorldMapTerritoryModel);
+        var C = m && (m.NWorldMapTerritoryModel || m.default || m);
+        return (C && (C.instance || C)) || null;
+      } catch (e) { return null; }
+    });
+    var AT = inst && inst.AllianceTerritory;
+    if (!AT) return null;
+    var out = [];
+    for (var k in AT) {
+      var it = AT[k];
+      if (it && it.x != null && it.y != null) out.push({ x: it.x | 0, y: it.y | 0, w: it.w | 0, bw: it.bw | 0, owner: it.owner | 0, buildId: it.buildId });
+    }
+    return out;
+  },
+  /** 本人子服号（UserData.subServerID）；取不到返回 0——getCellIndex/cell 空间换算用 */
+  subServerId() { try { return Number(userData().subServerID) || 0; } catch (e) { return 0; } },
+  /**
+   * 当前是否 KVK 跨服战场图（GameTools.isKVK = isC4||isC8||isC8S2）。用于迁城落点分区规则：
+   * false=本服普通图（须拦别盟领地），true=跨服战场图（别盟领地随便进）。
+   * 符号不可得保守返回 false（当本服处理，宁可多拦也不误迁被服务器拒）。
+   * @returns {boolean}
+   */
+  isKVK() {
+    var T = probe(SYM.modules.gameTools + '.isKVK', () => {
+      try { var m = game.get(SYM.modules.gameTools); return (m && (m.default || m.GameTools || m)) || null; } catch (e) { return null; }
+    });
+    try { return !!(T && typeof T.isKVK === 'function' && T.isKVK()); } catch (e) { return false; }
+  },
+  /**
+   * 本服是否处于「战区/跨服对战态」（UserData.ServerState === GameDefine.ServerState.Fight）。
+   * 迁城落点权威豁免源（实证 extracted WorldMapController.moveCity）：服务端「别盟堡垒领地禁迁」
+   * 仅在 `(!isKVK() || !八国色号) && ServerState != Fight && owner>0 && owner!=我的Aid` 时拒绝迁入——
+   * 即 ServerState==Fight（作战态）时整图放开别盟领地，与本服/KVK 图无关。符号不可得保守返回 false
+   * （维持禁落，宁可不迁也不误迁）。
+   * @returns {boolean} true=作战态（禁迁豁免）
+   */
+  serverStateIsFight() {
+    try {
+      var u = userData();
+      var GD = probe(SYM.modules.gameDefine + '.ServerState.Fight', () => ns(game.get(SYM.modules.gameDefine)));
+      var fight = GD && GD.ServerState && GD.ServerState.Fight;
+      if (u == null || fight == null) return false;
+      return u.ServerState === fight;
+    } catch (e) { return false; }
+  },
+  /**
+   * 世界格索引（NWorldMapUtils.getCellIndex(x,y,ServerId,subServerID)）：game 坐标 + 服号 + 子服 → 唯一 cell index，供 placeFlags 逐格读。符号不可得返回 null。
+   * @returns {number|string|null}
+   */
+  mapCellIndex(x, y) {
+    var U = probe(SYM.modules.nWorldMapUtils + '.getCellIndex', () => {
+      try { var m = game.get(SYM.modules.nWorldMapUtils); var u = m && (m.NWorldMapUtils || m.default || m); return (u && typeof u.getCellIndex === 'function') ? u : null; } catch (e) { return null; }
+    });
+    if (!U) return null;
+    var svr = 0, sub = 0;
+    try { var u = userData(); svr = u.ServerId | 0; sub = u.subServerID | 0; } catch (e) { }
+    try { return U.getCellIndex(x | 0, y | 0, svr, sub); } catch (e) { return null; }
+  },
+  /**
+   * settle 就绪信号：以 (x,y) 为中心 `(2r+1)²` 邻域内 placeFlags 命中格数。>0 表示该区域已随视口加载进 NWorldMapData（canMoveCity 据此可信）；
+   * =0 表示区域未加载（canMoveCity 会把一切当空地误放行）。placeFlags 符号不可得返回 null（与「加载后确为空」区分）。
+   * @param {number} x @param {number} y @param {number} r 邻域半宽（格）
+   * @returns {number|null}
+   */
+  mapLoadedNear(x, y, r) {
+    var W = probe(SYM.modules.nWorldMapData + '.inst', () => {
+      try { var m = game.get(SYM.modules.nWorldMapData); var C = m && (m.NWorldMapData || m.default || m); return (C && (C.instance || C)) || null; } catch (e) { return null; }
+    });
+    var pf = W && W.placeFlags;
+    if (!pf || typeof pf.has !== 'function') return null;
+    r = r | 0; var n = 0;
+    for (var dx = -r; dx <= r; dx++) for (var dy = -r; dy <= r; dy++) {
+      var idx = this.mapCellIndex((x | 0) + dx, (y | 0) + dy);
+      if (idx != null && pf.has(idx)) n++;
+    }
+    return n;
   },
   /**
    * 每日补给（online reward）计时奖励态只读快照（UserData.timeReward，登录/630 全量下发 + 游戏 UI 领取回调回写）。
@@ -1149,7 +1331,10 @@ export const bits = {
     v = String(v == null ? '0' : v);
     var L = probe(SYM.modules.long64Bit + '.Int64', () => { var m = game.get(SYM.modules.long64Bit); return (m && m.Int64) || null; });
     if (!L) return /^\d+$/.test(v) ? Number(v) || 0 : 0;
-    try { return /^\d+$/.test(v) ? L.Int64.fromString(v) : L.Int64.fromNumber(Number(v) || 0); } catch (e) { return 0; }
+    // probe 的 resolve 已返回 m.Int64（Int64 类本体 r），类上直接挂 fromString/fromNumber 静态方法；
+    // 曾经多写一层 L.Int64.fromString → TypeError → catch return 0，导致所有大 id（19 位兽 id）
+    // 装箱失败、服务器回 enigma_beast018「找不到对应异能兽信息，已失效」。
+    try { return /^\d+$/.test(v) ? L.fromString(v) : L.fromNumber(Number(v) || 0); } catch (e) { return 0; }
   },
 };
 
@@ -1319,6 +1504,28 @@ export const worldMap = {
     } catch (e) { }
     return this.serverId();
   },
+  /**
+   * 当前可活动地图的 game 坐标边界（迁城落点收口用）：绑游戏自身
+   * NWorldMapUtils.getMapGameSizeBySubMap(subServerID)——内建 subMap 分支，比硬编码
+   * 常量对活动图（KVK/天梯/CAB/无双/尺寸不同图）更准；返回 game 口径 {xMax,yMax}
+   * （width 已含 x 双倍，故 -1 得合法上界）。符号缺失/尺寸非法返回 null（调用方回退硬编码常量）。
+   * @returns {{xMax:number, yMax:number}|null}
+   */
+  gameBounds() {
+    var U = probe(SYM.modules.nWorldMapUtils + '.getMapGameSizeBySubMap', () => {
+      try {
+        var m = game.get(SYM.modules.nWorldMapUtils);
+        var u = m && (m.NWorldMapUtils || m.default || m);
+        return (u && typeof u.getMapGameSizeBySubMap === 'function') ? u : null;
+      } catch (e) { return null; }
+    });
+    if (!U) return null;
+    try {
+      var s = U.getMapGameSizeBySubMap(gameData.subServerId());
+      var w = s && (s.width != null ? s.width : s.x), h = s && (s.height != null ? s.height : s.y);
+      return (w > 0 && h > 0) ? { xMax: (w | 0) - 1, yMax: (h | 0) - 1 } : null;
+    } catch (e) { return null; }
+  },
 };
 
 /**
@@ -1326,4 +1533,4 @@ export const worldMap = {
  * 逆向时 `pocketcc.gameApi.march.flags()` 看战场判定器是否解析成功、
  * `pocketcc.gameApi.march.resolve(13)` 看基础 marchType 在当前战场漂成哪个值（无需等到活动图里复现）。
  */
-export const debug = { SYM, probe, ns, game, l10n, nav, march, gameData, gameConf, bits, session, avatar, worldMap, battlePreset, scene, ui };
+export const debug = { SYM, CAPS, checkCap, probe, ns, game, l10n, nav, march, gameData, gameConf, bits, session, avatar, worldMap, battlePreset, scene, ui };

@@ -486,6 +486,7 @@ reactor.register({
     id: 'armoryMaterial',
     label: '军火库生产材料',
     storageKey: 'pocketcc.feat.armoryMaterial',
+    symbols: ['tableManager', 'tableName', 'dataCenter', 'gameTools'],
     scenes: ['Home', 'NWorldMap'],
     offInCombat: true,
     defaults: { enabled: false },

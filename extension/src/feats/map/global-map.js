@@ -470,6 +470,7 @@ reactor.register({
   id: 'globalMap',
   label: '全局地图',
   storageKey: 'pocketcc.globalMap.config',
+  symbols: ['dataCenter', 'terrainModel?', 'eventIds?'],
   defaults: {
     enabled: DEFAULTS.enabled,
     dwellMs: DEFAULTS.dwellMs,

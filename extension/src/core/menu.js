@@ -56,6 +56,7 @@ export const MENU = [
           { id: 'dailySupply', kind: 'feature', label: '每日补给' },
           { id: 'armoryMaterial', kind: 'feature', label: '军火库生产材料' },
           { id: 'secretWeaponDrop', kind: 'feature', label: '秘密武器空投' },
+          { id: 'mechaTreasure', kind: 'feature', label: '重装母舰' },
         ],
       },
       // 花车空投：从日常任务组抽出，与本组平级的独立 feature 卡片（卡片主体默认收起，点标题行展开行军加速字段）

@@ -1350,6 +1350,7 @@ reactor.register({
     id: 'floatCar',
     label: '花车空投',
     storageKey: 'pocketcc.feat.floatCar',
+    symbols: ['dataCenter', 'marchTools?'],
     scenes: ['Home', 'NWorldMap'],
     offInCombat: true,
     defaults: { enabled: false, accelEnabled: false, accelTargetSec: 0 },

@@ -753,6 +753,7 @@ reactor.register({
     id: 'launchSilo',
     label: '占领发射井',
     storageKey: 'pocketcc.feat.launchSilo',
+    symbols: ['dataCenter', 'tableManager', 'tableName', 'tableUtils'],
     scenes: ['Home', 'NWorldMap'],
     offInCombat: true,
     defaults: { enabled: false, recallFarm: true },

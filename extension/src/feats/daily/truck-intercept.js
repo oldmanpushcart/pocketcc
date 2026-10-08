@@ -26,8 +26,9 @@
  *
  * 被拒当日拉黑（blockedToday，落 storage.data，跨日清空）+ 6474/6476 节流：对齐「自动化撞限额刷屏」既有教训。
  *
- * 只打能赢（threatOn，默认开）：每轮刷列表先用未过滤 raw 预设编成走 999 GET_SINGLE_QUEUE_BATTLEPOWER 算一次我方出征战力
- *   （battlePowerVal）+ heroList 多数投票定我方军种；列表侧按 grade（escort_truck.grade，面板「拦截品级」勾选）+ 战力粗筛
+ * 只打能赢（threatOn，默认开）：每轮刷列表先用未过滤 raw 预设编成算我方出征战力（999 GET_SINGLE_QUEUE_BATTLEPOWER 的
+ *   battlePowerVal）+ heroList 多数投票定我方军种；战力不每轮重查——队列战力变化极少，缓存 POWER_CACHE_EVERY 次卡车列表
+ *   刷新才主动更新一次（换预设/面板「刷新我方战力」按钮/冷启动强制重查）；列表侧按 grade（escort_truck.grade，面板「拦截品级」勾选）+ 战力粗筛
  *   （敌 > 我×1.5 直接淘汰，省 927）预筛；对存活候选用 scoutReportId 走 927 拉战报，取 defender.players[0].heroList 的 hero
  *   army_type（101陆/201海/301空，仅 hero 表有此字段，army 表无）多数投票定对方军种；再按克制（陆克空/空克海/海克陆）与
  *   战力比（我克敌≤1.5 / 同军种≤1.2 / 我被克≤0.8）assess：打得起才入队，打不过进本轮 skipRound（内存态、重随机即清，与
@@ -61,6 +62,8 @@ const CMD_REFRESH = 6486;
 const CMD_REFRESH_PUSH = 21551;
 /** @type {number} GET_SINGLE_QUEUE_BATTLEPOWER：查询一支编队的实际战力（旧 send 链路，ret.data 字符串需 parse） */
 const CMD_POWER = 999;
+/** @type {number} 我方战力缓存档：刷这么多次卡车列表才重查一次 999（队列战力变化极少，省重复往返） */
+const POWER_CACHE_EVERY = 10;
 /** @type {number} MAIL_GETREPORT：按 reportId 拉战报（旧 send 链路，reportStr 解析后含 battle.defender） */
 const CMD_REPORT = 927;
 
@@ -193,6 +196,10 @@ var skipRound = new Set();
 var my = { power: 0, branch: 0, raw: null, ready: false, tried: false };
 /** 上次 configure 生效的攻击预设号（面板换预设时据此唤醒一次探测，供展示） */
 var prevPreset = -1;
+/** 战力缓存：上次 999 探到的 battlePowerVal（0=未探到/已失效，下一轮仍会重试） */
+var powerCache = 0;
+/** 距上次 999 真实查询已刷新的卡车列表次数，达 POWER_CACHE_EVERY 归零并重查 */
+var powerAge = 0;
 
 /**
  * 每日配额权威态（由 6486 / 21551 push / 6476 应答共同维护）：
@@ -318,6 +325,7 @@ function configure(partial) {
     }
     rankMap = new Map();
     for (var i = 0; i < order.length; i++) rankMap.set(order[i], i);
+    if (presetIdx !== prevPreset) { powerCache = 0; powerAge = 0; }   // 换攻击预设：缓存战力属于旧编成，作废下轮重查
     if (threatOn && (presetIdx !== prevPreset || !my.ready)) cycle.kick();   // 换攻击预设/尚未探到：唤醒一轮刷新展示快照（配额耗尽也能探）
     prevPreset = presetIdx;
     bus.emit('ui.refresh');   // 阈值/开关变更后即时重算面板“可打上限”展示
@@ -584,17 +592,28 @@ async function enemyBranch(scoutId) {
 
 /**
  * 每轮刷列表前算一次我方出征侧：raw 满编编成→ 999 战力（battlePowerVal）+ heroList 多数投票定我方军种。
+ * 战力走缓存（powerCache）：powerAge 达 POWER_CACHE_EVERY 或 force 才真实发 999，编成/军种仍每轮本地重算。
  * 失败（无兵/无应答）时 ready=false，上层退回不做战力/克制过滤的降级模式。落 my，永不 reject。
+ * @param {boolean} [force] true=无视缓存强制重查 999（面板按钮/换预设后的首次探测）
  * @returns {Promise<void>}
  */
-async function probeSelf() {
-    my.ready = false; my.power = 0; my.branch = 0; my.raw = null; my.tried = false;
+async function probeSelf(force) {
+    my.ready = false; my.branch = 0; my.raw = null; my.tried = false;
     var raw = new Battle().plan().preset(presetIdx).build();
-    if (!raw || !raw.armyListNew.length) { my.tried = true; log.debug('preset %d raw empty, threat probe skipped.', presetIdx); bus.emit('ui.refresh'); return; }
+    if (!raw || !raw.armyListNew.length) { my.power = 0; my.tried = true; log.debug('preset %d raw empty, threat probe skipped.', presetIdx); bus.emit('ui.refresh'); return; }
     my.raw = raw;
     my.branch = majorityBranch(raw.heroList);
-    var r = await sendLegacy(CMD_POWER, { armyListNew: raw.armyListNew, heroList: raw.heroList, formation: 0, formationV2: raw.formationV2 | 0 });
-    if (r && r.ok && r.data && typeof r.data === 'object') my.power = Number(r.data.battlePowerVal) || 0;
+    if (force || powerCache <= 0 || powerAge >= POWER_CACHE_EVERY) {
+        var atPreset = presetIdx;   // 在飞期间面板换预设则丢弃本次应答，避免旧编成的战力回写缓存
+        powerAge = 0;
+        var r = await sendLegacy(CMD_POWER, { armyListNew: raw.armyListNew, heroList: raw.heroList, formation: 0, formationV2: raw.formationV2 | 0 });
+        var pow = (r && r.ok && r.data && typeof r.data === 'object') ? (Number(r.data.battlePowerVal) || 0) : 0;
+        if (presetIdx === atPreset) {
+            powerCache = pow;
+            if (powerCache > 0) log.debug('999 power refreshed: %d (cache every %d lists).', powerCache, POWER_CACHE_EVERY);
+        }
+    }
+    my.power = powerCache;
     my.ready = my.power > 0;
     my.tried = true;
     if (!my.ready) log.debug('999 power unavailable, degrade: skip power/counter filter.');
@@ -610,7 +629,7 @@ async function probeSelf() {
 function probeForPanel(cfg) {
     presetIdx = Math.max(1, Number(cfg && cfg.preset) || presetIdx);
     if (!ensureNet()) { my.tried = true; bus.emit('ui.refresh'); return Promise.resolve(); }
-    return probeSelf();
+    return probeSelf(true);   // 面板按钮是显式动作：无视缓存强制重查
 }
 
 /**
@@ -755,7 +774,7 @@ async function doScan() {
             var ret = await send(cmd, { funcType: FUNC_TYPE, localServerDisable: 1 });
             lastReloadAt = Date.now();
             if (!aliveFn()) return;
-            if (ret.code !== CODE_NOT_SENT) { stats.refreshUsed++; saveStats(); bus.emit('ui.refresh'); }   // 真实列表往返（含空/拒）计一次刷新预算
+            if (ret.code !== CODE_NOT_SENT) { stats.refreshUsed++; powerAge++; saveStats(); bus.emit('ui.refresh'); }   // 真实列表往返（含空/拒）计一次刷新预算，同时推战力缓存年龄
             if (!ret.ok || !ret.data || !Array.isArray(ret.data.lootTruckViewList)) {
                 log.debug('loot list empty/rejected. cmd=%d;code=%d', cmd, ret.code);
                 queue.length = 0;
@@ -1014,12 +1033,12 @@ function install(ctx) {
 }
 
 /**
- * 运行：复位列表开态与重随机时间戳 → 挂 21551 push 订阅 → 读回当日拉黑 → 点火即刷一轮 → 后续由 cycle 根据 planNextRefresh 择下拍。
+ * 运行：复位列表开态、重随机时间戳与战力缓存 → 挂 21551 push 订阅 → 读回当日拉黑 → 点火即刷一轮 → 后续由 cycle 根据 planNextRefresh 择下拍。
  * @param {object} ctx
  */
 function run(ctx) {
     ctxRef = ctx;
-    listOpened = false; lastReloadAt = 0;
+    listOpened = false; lastReloadAt = 0; powerCache = 0; powerAge = 0;   // 冷启动作废战力缓存，首轮必真实探一次
     ctx.on.push(CMD_REFRESH_PUSH, onRefreshPush);   // 订阅须挂 run：pause 会统一摘 triggers，install 只跑一次不重挂
     log.info('started.');
     Promise.all([loadBlocked(), loadStats()]).then(function () { if (aliveFn()) cycle.kick(); });
@@ -1036,6 +1055,7 @@ reactor.register({
     id: 'truckIntercept',
     label: '卡车争夺',
     storageKey: 'pocketcc.feat.truckIntercept',
+    symbols: ['dataCenter', 'tableManager'],
     scenes: ['Home', 'NWorldMap'],
     offInCombat: true,
     defaults: { enabled: false, order: TRUCK_ITEM_POOL.slice(), off: [], preset: 1, grades: ALL_GRADES.slice(), threat: true, ratioCounter: RATIO_DEFAULT.counter, ratioSame: RATIO_DEFAULT.same, ratioCountered: RATIO_DEFAULT.countered, refreshCap: REFRESH.capDefault, refreshPreset: REFRESH.presetDefault },

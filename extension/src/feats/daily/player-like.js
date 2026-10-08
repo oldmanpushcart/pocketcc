@@ -543,6 +543,7 @@ reactor.register({
     id: 'playerLike',
     label: '玩家点赞',
     storageKey: 'pocketcc.feat.playerLike',
+    symbols: ['dataCenter'],
     scenes: ['Home', 'NWorldMap'],
     offInCombat: true,
     defaults: {

@@ -266,9 +266,11 @@ async function attack(opt) {
  * 两种真机 body 由 ext 切换（保持与各 feat 录制报文逐键一致，勿合并）：
  *   - 不传 ext → 三键 `{marchType,x,y}`（海上夺宝 178 / 花车 getType 真机口径）；
  *   - 传 ext（含空对象 {}）→ 九键 `{marchType,x,y,armyList:[],armyListNew:[],heroList:[],trapList:[],ext}`（领域寻宝挖矿 180 / 泰坦祝福）。
+ * bodyExtra：三键分支的「活动专属顶层标记键」透传（重装母舰 189 实证多带 `isAirCraftCarrier:true`）；不传时逐键与旧行为一致，
+ *   九键分支不受影响（floatcar / sea-treasure / domain-treasure / titan-blessing 四个消费者零改动）。
  * 不内置 isSending(902)：零部队拾取的频控/限流门留各 feat（drain 单飞 / retryMs / march_time_control 各异）。
  * 永不 reject：net 缺/发送异常回 Ret(NOT_SENT)。
- * @param {{marchType:number, target:{x:number,y:number}, ext?:object}} opt 行军参数（target 兼容 pointX/pointY）
+ * @param {{marchType:number, target:{x:number,y:number}, ext?:object, bodyExtra?:object}} opt 行军参数（target 兼容 pointX/pointY）
  * @returns {Promise<object>} net.Ret
  */
 async function pickUp(opt) {
@@ -279,9 +281,13 @@ async function pickUp(opt) {
     var y = t.y != null ? t.y : t.pointY;
     var n = net();
     if (!n) return fallbackRet();
-    var body = opt.ext
-        ? { marchType: marchType, x: x, y: y, armyList: [], armyListNew: [], heroList: [], trapList: [], ext: opt.ext }
-        : { marchType: marchType, x: x, y: y };
+    var body;
+    if (opt.ext) {
+        body = { marchType: marchType, x: x, y: y, armyList: [], armyListNew: [], heroList: [], trapList: [], ext: opt.ext };
+    } else {
+        body = { marchType: marchType, x: x, y: y };
+        if (opt.bodyExtra && typeof opt.bodyExtra === 'object') Object.assign(body, opt.bodyExtra);
+    }
     try { return await n.send(CMD_MARCH_WORLD_POINT, body); }
     catch (err) { log.warn('902 pickUp error. marchType=%d;x=%s;y=%s', marchType, x, y, err); return notSentRet(); }
 }

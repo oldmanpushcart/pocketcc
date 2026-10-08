@@ -5,6 +5,7 @@
 import { createLog } from './log.js';
 import { bus } from './bus.js';
 import { game } from './game.js';
+import { checkCap } from './game-api.js';
 
 /** @type {ReturnType<createLog>} 模块日志器（tag=REACTOR） */
 const log = createLog('REACTOR');
@@ -92,6 +93,26 @@ function makeCtx(entry) {
 }
 
 /**
+ * 安装前依赖自检：逐项校验 spec.symbols 声明的游戏符号（能力语义名，解析表见 core/game-api.js CAPS）。
+ * 硬依赖缺失 → 返回缺失清单，调用方判安装失败；名字末尾带 '?' 的软依赖（feat 自带降级路径）
+ * 缺失只记一行 debug，不阻断。
+ * @param {object} spec 功能说明书
+ * @returns {string[]} 缺失的硬依赖名（含未登记的能力键）
+ */
+function missingSymbols(spec) {
+    var syms = spec.symbols;
+    if (!Array.isArray(syms) || !syms.length) return [];
+    var missing = [];
+    for (var i = 0; i < syms.length; i++) {
+        var name = String(syms[i] || '');
+        if (!name || checkCap(name)) continue;
+        if (/\?$/.test(name)) log.debug('soft symbol %s unavailable (degraded): %s', name, spec.id);
+        else missing.push(name);
+    }
+    return missing;
+}
+
+/**
  * 激活：置 running，再交给 spec.run 挂触发器。幂等。
  * @param {Entry} entry 功能条目
  */
@@ -145,7 +166,9 @@ bus.on('mode.change', recomputeAll);
  * spec 是一个功能的全部声明：运行时（install/configure/run/scenes）+ 面板 descriptor
  * （label/storageKey/defaults/fields/toModuleCfg）。面板与存储据此渲染、持久化、推配置，
  * 故 label/storageKey/defaults 为必填——缺则拒绝注册（fail fast，开发期 F5 即见 warn）。
- * @param {object} spec { id, label, storageKey, defaults, fields?, toModuleCfg?, scenes?, install?(ctx), configure?(cfg), run?(ctx) }
+ * symbols：本功能依赖的游戏 bundle 符号（能力语义名，解析表见 core/game-api.js CAPS；'?' 后缀=软依赖），
+ * setConfig 首次 install 前由框架统一校验，缺则不跑 install 直接记安装失败。
+ * @param {object} spec { id, label, storageKey, defaults, fields?, toModuleCfg?, scenes?, symbols?, install?(ctx), configure?(cfg), run?(ctx) }
  */
 function register(spec) {
     if (!spec || typeof spec.id !== 'string') {
@@ -184,13 +207,19 @@ function setConfig(id, cfg) {
     entry.enabled = !!(cfg && cfg.enabled);
     entry.cfg = cfg || {};
     if (entry.enabled && !entry.installed) {
-        try {
-            entry.installed = entry.spec.install ? entry.spec.install(entry.ctx) !== false : true;
-        } catch (err) {
+        var miss = missingSymbols(entry.spec);
+        if (miss.length) {
             entry.installed = false;
-            log.warn('install threw: %s', id, err);
+            log.warn('install failed: %s —— 依赖的游戏符号无效 missing=%s', id, miss.join(';'));
+        } else {
+            try {
+                entry.installed = entry.spec.install ? entry.spec.install(entry.ctx) !== false : true;
+            } catch (err) {
+                entry.installed = false;
+                log.warn('install threw: %s', id, err);
+            }
+            if (!entry.installed) log.info('install failed: %s', id);
         }
-        if (!entry.installed) log.info('install failed: %s', id);
     }
     if (entry.installed && entry.spec.configure) {
         try { entry.spec.configure(entry.cfg); } catch (err) { log.warn('configure threw: %s', id, err); }

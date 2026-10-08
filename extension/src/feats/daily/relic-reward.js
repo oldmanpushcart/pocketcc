@@ -406,6 +406,7 @@ reactor.register({
     id: 'relicReward',
     label: '遗迹奖励',
     storageKey: 'pocketcc.feat.relicReward',
+    symbols: ['dataCenter', 'worldSite', 'rewardCtrl', 'tableManager'],
     scenes: ['Home', 'NWorldMap'],
     defaults: { enabled: false, order: L2_ITEM_POOL.slice() },
     fields: [

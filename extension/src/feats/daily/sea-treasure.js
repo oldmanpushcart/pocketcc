@@ -412,6 +412,7 @@ reactor.register({
     id: 'seaTreasure',
     label: '海上夺宝',
     storageKey: 'pocketcc.feat.seaTreasure',
+    symbols: ['activityController'],
     scenes: ['Home', 'NWorldMap'],
     offInCombat: true,
     // 面板仅出启用开关；三个扫描/攻打间隔均为 cfg 内置常量，不作为可持久化配置项。
