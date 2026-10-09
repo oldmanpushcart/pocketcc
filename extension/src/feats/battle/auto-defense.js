@@ -194,7 +194,6 @@ async function buildSnapshot(pushData) {
     enemy: enemy,
     me: me,
     shieldItem: defense.pickShieldItem(),
-    canMove: gameData.itemAmount(defense.ITEM_MOVE_CITY) > 0,
     shieldActive: gameData.shieldActive(),
     warFever: gameData.warFever(),
     canShieldByGame: gameData.canShield(),
@@ -297,9 +296,8 @@ async function strategyShield(snap) {
 async function strategyAttack(snap) {
   if (snap.marchesOut !== 0) return { result: 'skip', reason: '有 ' + snap.marchesOut + ' 支部队在外，需全部回城', stop: false };
   if (snap.freeSlots < 1) return { result: 'fail', reason: '无空闲行军队列', stop: false };
-  // canMove 不再作硬闸（钻石兜底），仅作日志参考
   var ex = snap.enemy.x, ey = snap.enemy.y;
-  if (ex == null || ey == null) return { result: 'fail', reason: '敌主城坐标未知(909 未回坐标)', stop: false };
+  if (ex == null || ey == null) return { result: 'fail', reason: '敌主城坐标未知(630 未回坐标)', stop: false };
   var marchData = new Battle().plan().preset(cfg.preset).adjust().build();
   if (!marchData.armyListNew.length) return { result: 'fail', reason: '预设 #' + cfg.preset + ' 无兵可派', stop: false };
   var spot = await defense.findRelocatableSpot({ x: ex, y: ey }, { mode: 'near', radius: defense.NEAR_RADIUS, exclude: { x: snap.me.x, y: snap.me.y }, ctx: { net: net, serverId: serverId() } });
