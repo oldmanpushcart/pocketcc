@@ -13,7 +13,14 @@
 import { createLog } from '../../core/log.js';
 import { nav } from '../../core/game-api.js';
 import { cellToGame } from './coord.js';
-import { SERVER, SCAN_GRID, classifyPoint, playerPass, GRID_STYLE, CELL_ASPECT } from './map-meta.js';
+import {
+  SERVER,
+  SCAN_GRID,
+  classifyPoint,
+  playerPass,
+  GRID_STYLE,
+  CELL_ASPECT,
+} from './map-meta.js';
 
 /** @type {ReturnType<createLog>} 模块日志器（tag=MAPRENDER） */
 const log = createLog('MAPRENDER');
@@ -107,14 +114,17 @@ export class MapView {
     /** @type {{x:number,y:number,moved:boolean}|null} 拖拽态 */
     this._drag = null;
     /** @type {number} CSS 像素宽/高 */
-    this._w = 0; this._h = 0;
+    this._w = 0;
+    this._h = 0;
     /** @type {number} 设备像素比（resize 时记录，实体屏幕缓存用） */
     this._dpr = 1;
     /** @type {string} 上次实体缓存对应的视图签名（缩放/平移/尺寸），变化即重建 */
     this._viewSig = '';
     this._bind();
     /** 调试句柄：控制台可经 canvas.__pcmap 拿到实时 MapView（与 window.pocketcc 调试面同风格） */
-    try { canvas.__pcmap = this; } catch (e) { }
+    try {
+      canvas.__pcmap = this;
+    } catch (e) {}
   }
 
   // ── 视图变换（world=cell 单位 ↔ screen=CSS 像素） ──
@@ -152,11 +162,17 @@ export class MapView {
 
   /** 平移夹持：zoom=1 锁死居中（始终全网格）；放大后允许平移但不使网格完全离视 */
   _clampPan() {
-    if (this.zoom <= MIN_ZOOM) { this.panX = 0; this.panY = 0; return; }
+    if (this.zoom <= MIN_ZOOM) {
+      this.panX = 0;
+      this.panY = 0;
+      return;
+    }
     const s = this._scale();
     const sp = this._gridSpan();
-    const halfW = (this.cols * s * CELL_ASPECT) / 2, halfH = ((sp.bot - sp.top) * s) / 2;
-    const limX = Math.max(0, halfW - this._w / 2), limY = Math.max(0, halfH - this._h / 2);
+    const halfW = (this.cols * s * CELL_ASPECT) / 2,
+      halfH = ((sp.bot - sp.top) * s) / 2;
+    const limX = Math.max(0, halfW - this._w / 2),
+      limY = Math.max(0, halfH - this._h / 2);
     this.panX = Math.max(-limX, Math.min(limX, this.panX));
     this.panY = Math.max(-limY, Math.min(limY, this.panY));
   }
@@ -171,7 +187,8 @@ export class MapView {
   resize(cssW, cssH) {
     const dpr = Math.min(2, window.devicePixelRatio || 1);
     this._dpr = dpr;
-    this._w = cssW; this._h = cssH;
+    this._w = cssW;
+    this._h = cssH;
     this.canvas.width = Math.round(cssW * dpr);
     this.canvas.height = Math.round(cssH * dpr);
     this.canvas.style.width = cssW + 'px';
@@ -181,16 +198,29 @@ export class MapView {
   }
 
   /** 设地形底图（null=降级纯色）；标脏重绘 */
-  setTerrain(cv) { this.terrainCanvas = cv || null; this.invalidate(); }
+  setTerrain(cv) {
+    this.terrainCanvas = cv || null;
+    this.invalidate();
+  }
 
   /** 设筛选：enabledSubs=允许的细分类 key 集合（null=不限制已分类点）；showOther=是否显示未归类类型（灰色兜底） */
-  setFilter(enabledSubs, showOther) { this.enabledSubs = enabledSubs || null; this.showOther = !!showOther; this._entityDirty = true; this.invalidate(); }
+  setFilter(enabledSubs, showOther) {
+    this.enabledSubs = enabledSubs || null;
+    this.showOther = !!showOther;
+    this._entityDirty = true;
+    this.invalidate();
+  }
 
   /** 设细分类归属判定基准（selfAid/selfServer 变化时重传，影响本区联盟/敌对/跨区归类） */
   setClassifyCtx(ctx) {
     if (!ctx) return;
-    this._ctx = { selfPid: ctx.selfPid || 0, selfAid: ctx.selfAid || 0, selfServer: ctx.selfServer || 0 };
-    this._entityDirty = true; this.invalidate();
+    this._ctx = {
+      selfPid: ctx.selfPid || 0,
+      selfAid: ctx.selfAid || 0,
+      selfServer: ctx.selfServer || 0,
+    };
+    this._entityDirty = true;
+    this.invalidate();
   }
 
   /**
@@ -198,18 +228,23 @@ export class MapView {
    * @param {?number} vk 视角所在区服号
    */
   setActiveVk(vk) {
-    const n = (vk == null || !isFinite(vk)) ? null : (Number(vk) | 0);
+    const n = vk == null || !isFinite(vk) ? null : Number(vk) | 0;
     const next = n && n > 0 ? n : null;
     if (next === this.activeVk) return;
     this.activeVk = next;
-    this._entityDirty = true; this.invalidate();
+    this._entityDirty = true;
+    this.invalidate();
   }
 
   /** 设归属筛选：mode=all/self/ally/enemy/none；self={pid,aid} 本人身份（身份变化时重传） */
   setOwner(mode, self) {
     this.ownerMode = mode || 'all';
-    if (self) { this.selfPid = self.pid || 0; this.selfAid = self.aid || 0; }
-    this._entityDirty = true; this.invalidate();
+    if (self) {
+      this.selfPid = self.pid || 0;
+      this.selfAid = self.aid || 0;
+    }
+    this._entityDirty = true;
+    this.invalidate();
   }
 
   /**
@@ -219,11 +254,12 @@ export class MapView {
    * @param {?number} ms
    */
   setShieldFilter(mode, ms) {
-    const m = (mode === 'has' || mode === 'none') ? mode : 'off';
-    const n = (ms == null || !isFinite(ms) || ms < 0) ? null : Number(ms);
+    const m = mode === 'has' || mode === 'none' ? mode : 'off';
+    const n = ms == null || !isFinite(ms) || ms < 0 ? null : Number(ms);
     this.shieldMode = m;
     this.shieldMs = m === 'has' ? n : null;
-    this._entityDirty = true; this.invalidate();
+    this._entityDirty = true;
+    this.invalidate();
   }
 
   /**
@@ -232,13 +268,17 @@ export class MapView {
    * @param {?number} min 等级下限（含）；null/非法=不限
    */
   setLevelFilter(min) {
-    const n = (min == null || !isFinite(min) || min < 0) ? null : Math.floor(Number(min));
+    const n = min == null || !isFinite(min) || min < 0 ? null : Math.floor(Number(min));
     this.levelMin = n;
-    this._entityDirty = true; this.invalidate();
+    this._entityDirty = true;
+    this.invalidate();
   }
 
   /** 标实体层脏（scanner 每块入库后调用） */
-  markEntitiesDirty() { this._entityDirty = true; this.invalidate(); }
+  markEntitiesDirty() {
+    this._entityDirty = true;
+    this.invalidate();
+  }
 
   /**
    * 设当前扫描块（cell 矩形 + 块网格下标 i/j）：扫描中同时测块间隔 EMA、推进扫波目标、推入余晖。
@@ -250,11 +290,17 @@ export class MapView {
     if (this.scanning && Number.isFinite(i) && Number.isFinite(j)) {
       // 实测块间隔（网络 RTT + dwell 全含）EMA → 扫波速度自适应真实节奏，块边不再驻停等待
       const dur = now - this._lastBlockAt;
-      if (this._lastBlockAt && dur > 100 && dur < 10000) this._blockEma = this._blockEma ? this._blockEma * 0.75 + dur * 0.25 : dur;
+      if (this._lastBlockAt && dur > 100 && dur < 10000)
+        this._blockEma = this._blockEma ? this._blockEma * 0.75 + dur * 0.25 : dur;
       this._lastBlockAt = now;
       const nx = Math.max(1, this.gridNx | 0);
-      if (j !== this._waveRow) { this._waveRow = j; this._waveFrac = 0; this._waveShown = 0; this._entityDirty = true; } // 换行：冲刷上行未释放数据；蛇形行尾与下行起点同侧，x 几乎不动
-      this._targetFrac = (j & 1) ? nx - i : i + 1; // 目标=行内已完成块数（向西行自右端起计）
+      if (j !== this._waveRow) {
+        this._waveRow = j;
+        this._waveFrac = 0;
+        this._waveShown = 0;
+        this._entityDirty = true;
+      } // 换行：冲刷上行未释放数据；蛇形行尾与下行起点同侧，x 几乎不动
+      this._targetFrac = j & 1 ? nx - i : i + 1; // 目标=行内已完成块数（向西行自右端起计）
       this._trail.push({ i, j, t: now });
       if (this._trail.length > 5) this._trail.shift();
     }
@@ -262,11 +308,17 @@ export class MapView {
   }
 
   /** 设块停留时长（扫波速度初始基准；global-map 用 dwellMs+jitter/2 注入，运行中由实测 EMA 接管） */
-  setDwell(ms) { if (ms > 0) { this._dwellMs = ms; if (!this._blockEma) this._blockEma = ms; } }
+  setDwell(ms) {
+    if (ms > 0) {
+      this._dwellMs = ms;
+      if (!this._blockEma) this._blockEma = ms;
+    }
+  }
 
   /** 设起扫块标记（{i,j} 块网格下标；null=清） */
   setStartBlock(b) {
-    this.startBlock = (b && Number.isFinite(b.i) && Number.isFinite(b.j)) ? { i: b.i | 0, j: b.j | 0 } : null;
+    this.startBlock =
+      b && Number.isFinite(b.i) && Number.isFinite(b.j) ? { i: b.i | 0, j: b.j | 0 } : null;
     this.invalidate();
   }
 
@@ -292,9 +344,15 @@ export class MapView {
   /** 扫描态（true 时逐帧脉动动画） */
   setScanning(on) {
     this.scanning = !!on;
-    if (!this.scanning) { // 停扫：扫波/测速复位，实体层冲刷一次（末块数据不压箱），其余晖自然播完
-      this._waveRow = -1; this._waveFrac = 0; this._targetFrac = 0;
-      this._lastBlockAt = 0; this._blockEma = 0; this._waveLastT = 0; this._waveShown = 0;
+    if (!this.scanning) {
+      // 停扫：扫波/测速复位，实体层冲刷一次（末块数据不压箱），其余晖自然播完
+      this._waveRow = -1;
+      this._waveFrac = 0;
+      this._targetFrac = 0;
+      this._lastBlockAt = 0;
+      this._blockEma = 0;
+      this._waveLastT = 0;
+      this._waveShown = 0;
       this._entityDirty = true;
     }
     this.invalidate();
@@ -303,7 +361,10 @@ export class MapView {
   /** 请求一帧渲染（合并多次调用） */
   invalidate() {
     if (this._raf != null) return;
-    this._raf = requestAnimationFrame(() => { this._raf = null; this._draw(); });
+    this._raf = requestAnimationFrame(() => {
+      this._raf = null;
+      this._draw();
+    });
   }
 
   /**
@@ -318,16 +379,25 @@ export class MapView {
 
   /** 复位到「刚好完整展示全图」（zoom=1、平移清零） */
   fit() {
-    this.zoom = 1; this.panX = 0; this.panY = 0;
+    this.zoom = 1;
+    this.panX = 0;
+    this.panY = 0;
     this.invalidate();
   }
 
   /** 切换坐标网格显隐（工具栏「网格」按钮用） @returns {boolean} 切换后状态 */
-  toggleGrid() { this.showGrid = !this.showGrid; this.invalidate(); return this.showGrid; }
+  toggleGrid() {
+    this.showGrid = !this.showGrid;
+    this.invalidate();
+    return this.showGrid;
+  }
 
   /** 停止渲染循环 */
   destroy() {
-    if (this._raf != null) { cancelAnimationFrame(this._raf); this._raf = null; }
+    if (this._raf != null) {
+      cancelAnimationFrame(this._raf);
+      this._raf = null;
+    }
     this._unbind();
   }
 
@@ -343,7 +413,8 @@ export class MapView {
 
     const tl = this._w2s(0, 0);
     const s = this._scale();
-    const wpx = this.cols * s * CELL_ASPECT, hpx = this.rows * s;
+    const wpx = this.cols * s * CELL_ASPECT,
+      hpx = this.rows * s;
 
     // 1) 草地底图层
     if (this.terrainCanvas) {
@@ -375,7 +446,17 @@ export class MapView {
 
   /** 当前视图签名（缩放/平移/尺寸）——变化即需重建实体屏幕缓存 */
   _viewSigNow() {
-    return this.zoom.toFixed(4) + '|' + this.panX.toFixed(1) + '|' + this.panY.toFixed(1) + '|' + this._w + 'x' + this._h;
+    return (
+      this.zoom.toFixed(4) +
+      '|' +
+      this.panX.toFixed(1) +
+      '|' +
+      this.panY.toFixed(1) +
+      '|' +
+      this._w +
+      'x' +
+      this._h
+    );
   }
 
   /** 重建实体点：屏幕空间正圆点（固定像素半径，随视图缩放/平移重排，视口外剔除） */
@@ -386,7 +467,8 @@ export class MapView {
     let cv = this.entityCanvas;
     if (!cv || cv.width !== W || cv.height !== H) {
       cv = document.createElement('canvas');
-      cv.width = W; cv.height = H;
+      cv.width = W;
+      cv.height = H;
       this.entityCanvas = cv;
     }
     const c = cv.getContext('2d');
@@ -394,24 +476,34 @@ export class MapView {
     c.clearRect(0, 0, this._w, this._h);
     const R = ENTITY_DOT_R;
     const TAU = Math.PI * 2;
-    const now = Date.now();                    // 护盾跨档判据的基准时刻（本轮重建共用，避免逐点取时）
+    const now = Date.now(); // 护盾跨档判据的基准时刻（本轮重建共用，避免逐点取时）
     for (const e of this.store.entities.values()) {
-      if (this.activeVk != null) {           // 视角桶：旧档无 vk 时退按点自身服号，都无则 0
-        const vk = e.vk != null ? e.vk : (e.k != null ? e.k : 0);
+      if (this.activeVk != null) {
+        // 视角桶：旧档无 vk 时退按点自身服号，都无则 0
+        const vk = e.vk != null ? e.vk : e.k != null ? e.k : 0;
         if (vk !== this.activeVk) continue;
       }
-      if (!playerPass(e, { shieldMode: this.shieldMode, shieldMs: this.shieldMs, levelMin: this.levelMin }, now)) continue; // 玩家筛选：护盾有/无+剩余上限 & 等级≥（未开启时全放）
+      if (
+        !playerPass(
+          e,
+          { shieldMode: this.shieldMode, shieldMs: this.shieldMs, levelMin: this.levelMin },
+          now,
+        )
+      )
+        continue; // 玩家筛选：护盾有/无+剩余上限 & 等级≥（未开启时全放）
       const sub = classifyPoint(e, this._ctx);
       let color;
       if (sub) {
         if (this.enabledSubs && !this.enabledSubs.has(sub.key)) continue;
         color = sub.color;
       } else {
-        if (!this.showOther) continue;   // 未归类类型：仅在开启「其他」时显示（灰色），否则隐形
+        if (!this.showOther) continue; // 未归类类型：仅在开启「其他」时显示（灰色），否则隐形
         color = '#8a93a6';
       }
-      if (this.ownerMode !== 'all') {       // 归属分类：self/ally/enemy/none
-        const oid = e.oid, aid = e.aid;
+      if (this.ownerMode !== 'all') {
+        // 归属分类：self/ally/enemy/none
+        const oid = e.oid,
+          aid = e.aid;
         const owned = oid != null && oid !== 0;
         let cls;
         if (owned && oid === this.selfPid) cls = 'self';
@@ -440,34 +532,70 @@ export class MapView {
    */
   _drawGrid(ctx, s, tl) {
     if (!this.showGrid) return;
-    const cols = this.cols, rows = this.rows;
-    const sx = s * CELL_ASPECT, sy = s;
-    const wpx = cols * sx, hpx = rows * sy;
-    const g = this._gg, nx = g.nx, ny = g.ny;
-    const bwpx = (g.gw / 2) * sx, bhpx = g.gh * sy; // 定标块像素（列宽 game/2 cell）
-    const topY = tl.y + g.offY * sy;                // 行 0 顶边（offY<0：在地图上方，属图外 padding，照常绘制）
+    const cols = this.cols,
+      rows = this.rows;
+    const sx = s * CELL_ASPECT,
+      sy = s;
+    const wpx = cols * sx,
+      hpx = rows * sy;
+    const g = this._gg,
+      nx = g.nx,
+      ny = g.ny;
+    const bwpx = (g.gw / 2) * sx,
+      bhpx = g.gh * sy; // 定标块像素（列宽 game/2 cell）
+    const topY = tl.y + g.offY * sy; // 行 0 顶边（offY<0：在地图上方，属图外 padding，照常绘制）
     const sp = this._gridSpan();
-    const gy0 = tl.y + sp.top * sy, ghPx = (sp.bot - sp.top) * sy; // 网格矩形（含向外 padding）
+    const gy0 = tl.y + sp.top * sy,
+      ghPx = (sp.bot - sp.top) * sy; // 网格矩形（含向外 padding）
     ctx.save();
-    ctx.beginPath(); ctx.rect(tl.x, gy0, wpx, ghPx); ctx.clip(); // 裁剪到网格范围：格线完整，不再被图边切短
+    ctx.beginPath();
+    ctx.rect(tl.x, gy0, wpx, ghPx);
+    ctx.clip(); // 裁剪到网格范围：格线完整，不再被图边切短
     // 次网格：块内逐轴等分（份数使间距≥minPx），固定格距 → 全图均匀
     const subW = Math.max(1, Math.floor(bwpx / GRID_STYLE.minPx));
     const subH = Math.max(1, Math.floor(bhpx / GRID_STYLE.minPx));
     if (subW > 1 || subH > 1) {
-      ctx.strokeStyle = GRID_STYLE.minor; ctx.lineWidth = 1; ctx.beginPath();
-      if (subW > 1) for (let i = 0; i < nx; i++) { for (let k = 1; k < subW; k++) { const x = Math.round(tl.x + (i + k / subW) * bwpx) + 0.5; ctx.moveTo(x, gy0); ctx.lineTo(x, gy0 + ghPx); } }
-      if (subH > 1) for (let j = 0; j < ny; j++) { for (let k = 1; k < subH; k++) { const y = Math.round(topY + (j + k / subH) * bhpx) + 0.5; ctx.moveTo(tl.x, y); ctx.lineTo(tl.x + wpx, y); } }
+      ctx.strokeStyle = GRID_STYLE.minor;
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      if (subW > 1)
+        for (let i = 0; i < nx; i++) {
+          for (let k = 1; k < subW; k++) {
+            const x = Math.round(tl.x + (i + k / subW) * bwpx) + 0.5;
+            ctx.moveTo(x, gy0);
+            ctx.lineTo(x, gy0 + ghPx);
+          }
+        }
+      if (subH > 1)
+        for (let j = 0; j < ny; j++) {
+          for (let k = 1; k < subH; k++) {
+            const y = Math.round(topY + (j + k / subH) * bhpx) + 0.5;
+            ctx.moveTo(tl.x, y);
+            ctx.lineTo(tl.x + wpx, y);
+          }
+        }
       ctx.stroke();
     }
     // 主网格=扫描块网格（nx×ny 定标固定格，x 向 7 列恰好铺满，y 向首末行完整画到图外 padding 区）
-    ctx.strokeStyle = GRID_STYLE.major; ctx.lineWidth = 1; ctx.beginPath();
-    for (let i = 1; i < nx; i++) { const x = Math.round(tl.x + i * bwpx) + 0.5; ctx.moveTo(x, gy0); ctx.lineTo(x, gy0 + ghPx); }
-    for (let j = 1; j < ny; j++) { const y = Math.round(topY + j * bhpx) + 0.5; ctx.moveTo(tl.x, y); ctx.lineTo(tl.x + wpx, y); }
+    ctx.strokeStyle = GRID_STYLE.major;
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    for (let i = 1; i < nx; i++) {
+      const x = Math.round(tl.x + i * bwpx) + 0.5;
+      ctx.moveTo(x, gy0);
+      ctx.lineTo(x, gy0 + ghPx);
+    }
+    for (let j = 1; j < ny; j++) {
+      const y = Math.round(topY + j * bhpx) + 0.5;
+      ctx.moveTo(tl.x, y);
+      ctx.lineTo(tl.x + wpx, y);
+    }
     ctx.stroke();
     ctx.restore();
     // 全图边框
     ctx.save();
-    ctx.strokeStyle = GRID_STYLE.border; ctx.lineWidth = 1.5;
+    ctx.strokeStyle = GRID_STYLE.border;
+    ctx.lineWidth = 1.5;
     ctx.strokeRect(tl.x, tl.y, wpx, hpx);
     ctx.restore();
   }
@@ -475,35 +603,48 @@ export class MapView {
   /** 块网格下标 i/j → 屏幕矩形（与 _drawGrid 同一套定标固定格几何；首末行可探出地图，由调用方裁剪） */
   _blockRectPx(i, j, s, tl) {
     const g = this._gg;
-    const bwpx = (g.gw / 2) * s * CELL_ASPECT, bhpx = g.gh * s;
+    const bwpx = (g.gw / 2) * s * CELL_ASPECT,
+      bhpx = g.gh * s;
     return {
       x: tl.x + Math.max(0, Math.min(g.nx - 1, i)) * bwpx,
       y: tl.y + g.offY * s + Math.max(0, Math.min(g.ny - 1, j)) * bhpx,
-      w: bwpx, h: bhpx,
+      w: bwpx,
+      h: bhpx,
     };
   }
 
   /** 雷达动效层：发光覆盖框 + 余晖拖尾 + 整行滑过的雷达扫波 + 起扫块十字标记 */
   _drawRadar(ctx, s, tl) {
     const AS = CELL_ASPECT;
-    const cols = this.cols, rows = this.rows;
+    const cols = this.cols,
+      rows = this.rows;
     const now = Date.now();
     // 全层裁到网格矩形（含向外 padding）：定标格首末行完整可见，块高亮/拖尾/扫波与格线同一裁剪界
     const sp = this._gridSpan();
     ctx.save();
-    ctx.beginPath(); ctx.rect(tl.x, tl.y + sp.top * s, cols * s * AS, (sp.bot - sp.top) * s); ctx.clip();
+    ctx.beginPath();
+    ctx.rect(tl.x, tl.y + sp.top * s, cols * s * AS, (sp.bot - sp.top) * s);
+    ctx.clip();
     // 1) 覆盖范围（当前桶 bound）发光描边；尚无数据时默认按全图范围出边框（边框常驻可见）
     const b = this.store.bucketMeta(this.activeVk != null ? this.activeVk : 0).bound;
     const hasBound = isFinite(b.minX) && isFinite(b.maxX) && b.maxX > b.minX && b.maxY > b.minY;
     {
-      const minX = hasBound ? Math.max(0, b.minX) : 0, minY = hasBound ? Math.max(0, b.minY) : 0;
-      const maxX = hasBound ? Math.min(cols, b.maxX) : cols, maxY = hasBound ? Math.min(rows, b.maxY) : rows;
+      const minX = hasBound ? Math.max(0, b.minX) : 0,
+        minY = hasBound ? Math.max(0, b.minY) : 0;
+      const maxX = hasBound ? Math.min(cols, b.maxX) : cols,
+        maxY = hasBound ? Math.min(rows, b.maxY) : rows;
       if (maxX > minX && maxY > minY) {
         ctx.save();
-        ctx.shadowColor = 'rgba(120,180,255,.7)'; ctx.shadowBlur = 4;
+        ctx.shadowColor = 'rgba(120,180,255,.7)';
+        ctx.shadowBlur = 4;
         ctx.strokeStyle = hasBound ? 'rgba(120,180,255,.4)' : 'rgba(120,180,255,.28)';
         ctx.lineWidth = 1;
-        ctx.strokeRect(tl.x + minX * s * AS, tl.y + minY * s, (maxX - minX) * s * AS, (maxY - minY) * s);
+        ctx.strokeRect(
+          tl.x + minX * s * AS,
+          tl.y + minY * s,
+          (maxX - minX) * s * AS,
+          (maxY - minY) * s,
+        );
         ctx.restore();
       }
     }
@@ -520,8 +661,9 @@ export class MapView {
     //    单块网络慢时波只是减速接近块边而非驻停卡死；网络快时持续前行不跳位，视觉全程丝滑。
     if (this.scanning && this._waveRow >= 0) {
       const g = this._gg;
-      const nx = g.nx, ny = g.ny;
-      const wpx = cols * s * AS, hpx = rows * s;
+      const nx = g.nx,
+        ny = g.ny;
+      const wpx = cols * s * AS;
       const bhpx = g.gh * s;
       const j = Math.max(0, Math.min(ny - 1, this._waveRow));
       const ry = Math.max(tl.y + sp.top * s, tl.y + g.offY * s + j * bhpx); // 裁剪界=网格顶（含 padding）
@@ -531,10 +673,17 @@ export class MapView {
         this._waveLastT = now;
         const period = Math.max(300, this._blockEma || this._dwellMs); // 波速 = 1 块 / 实测间隔
         const lag = this._targetFrac - this._waveFrac;
-        if (lag > 0) this._waveFrac = Math.min(this._targetFrac, this._waveFrac + (dt / period) * (1 + Math.max(0, lag - 1) * 1.5));
+        if (lag > 0)
+          this._waveFrac = Math.min(
+            this._targetFrac,
+            this._waveFrac + (dt / period) * (1 + Math.max(0, lag - 1) * 1.5),
+          );
         // 波前跨块边线才释放显示：已入库但未被波扫过的块暂藏在实体缓存外（不提前穿帮）
         const shown = Math.floor(this._waveFrac);
-        if (shown > this._waveShown) { this._waveShown = shown; this._entityDirty = true; }
+        if (shown > this._waveShown) {
+          this._waveShown = shown;
+          this._entityDirty = true;
+        }
         const east = !(j & 1); // 蛇形推进方向：偶数行→（自左而右），奇数行←
         const p = Math.max(0, Math.min(nx, east ? this._waveFrac : nx - this._waveFrac)); // 推进量折为自西向东坐标
         const wx = tl.x + (p / nx) * wpx;
@@ -552,9 +701,14 @@ export class MapView {
         ctx.fillRect(Math.min(wx, wx - dir * GW), ry, GW, rh);
         // 波前亮线（发光）
         ctx.save();
-        ctx.shadowColor = 'rgba(140,235,255,.9)'; ctx.shadowBlur = 8;
-        ctx.strokeStyle = 'rgba(190,250,255,.95)'; ctx.lineWidth = 2;
-        ctx.beginPath(); ctx.moveTo(wx, ry); ctx.lineTo(wx, ry + rh); ctx.stroke();
+        ctx.shadowColor = 'rgba(140,235,255,.9)';
+        ctx.shadowBlur = 8;
+        ctx.strokeStyle = 'rgba(190,250,255,.95)';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.moveTo(wx, ry);
+        ctx.lineTo(wx, ry + rh);
+        ctx.stroke();
         ctx.restore();
       }
     } else if (this.curBlock) {
@@ -563,11 +717,19 @@ export class MapView {
       let x, y, w, h;
       if (Number.isFinite(cb.i) && Number.isFinite(cb.j)) {
         const r = this._blockRectPx(cb.i, cb.j, s, tl);
-        x = r.x; y = r.y; w = r.w; h = r.h;
+        x = r.x;
+        y = r.y;
+        w = r.w;
+        h = r.h;
       } else {
-        const x0 = Math.max(0, Math.min(cols, cb.cx)), y0 = Math.max(0, Math.min(rows, cb.cy));
-        const w0 = Math.min(cb.cw, cols - x0), h0 = Math.min(cb.ch, rows - y0);
-        x = tl.x + x0 * s * AS; y = tl.y + y0 * s; w = w0 * s * AS; h = h0 * s;
+        const x0 = Math.max(0, Math.min(cols, cb.cx)),
+          y0 = Math.max(0, Math.min(rows, cb.cy));
+        const w0 = Math.min(cb.cw, cols - x0),
+          h0 = Math.min(cb.ch, rows - y0);
+        x = tl.x + x0 * s * AS;
+        y = tl.y + y0 * s;
+        w = w0 * s * AS;
+        h = h0 * s;
       }
       if (w > 0 && h > 0) {
         ctx.fillStyle = 'rgba(90,180,255,.10)';
@@ -583,14 +745,20 @@ export class MapView {
       const col = 'rgba(255,122,217,.85)';
       ctx.save();
       ctx.setLineDash([5, 4]);
-      ctx.strokeStyle = col; ctx.lineWidth = 1.2;
+      ctx.strokeStyle = col;
+      ctx.lineWidth = 1.2;
       ctx.strokeRect(r.x + 1, r.y + 1, r.w - 2, r.h - 2);
       ctx.restore();
-      const cx0 = r.x + r.w / 2, cy0 = r.y + r.h / 2, CR = Math.min(14, Math.max(7, Math.min(r.w, r.h) * 0.18));
-      ctx.strokeStyle = col; ctx.lineWidth = 1.5;
+      const cx0 = r.x + r.w / 2,
+        cy0 = r.y + r.h / 2,
+        CR = Math.min(14, Math.max(7, Math.min(r.w, r.h) * 0.18));
+      ctx.strokeStyle = col;
+      ctx.lineWidth = 1.5;
       ctx.beginPath();
-      ctx.moveTo(cx0 - CR * 1.7, cy0); ctx.lineTo(cx0 + CR * 1.7, cy0);
-      ctx.moveTo(cx0, cy0 - CR * 1.7); ctx.lineTo(cx0, cy0 + CR * 1.7);
+      ctx.moveTo(cx0 - CR * 1.7, cy0);
+      ctx.lineTo(cx0 + CR * 1.7, cy0);
+      ctx.moveTo(cx0, cy0 - CR * 1.7);
+      ctx.lineTo(cx0, cy0 + CR * 1.7);
       ctx.stroke();
     }
     ctx.restore(); // 配对方法开头的地图矩形 clip
@@ -602,7 +770,8 @@ export class MapView {
     this._onWheel = (e) => {
       e.preventDefault();
       const rect = this.canvas.getBoundingClientRect();
-      const sx = e.clientX - rect.left, sy = e.clientY - rect.top;
+      const sx = e.clientX - rect.left,
+        sy = e.clientY - rect.top;
       const before = this._s2w(sx, sy);
       const factor = e.deltaY < 0 ? 1.15 : 1 / 1.15;
       this.zoom = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, this.zoom * factor));
@@ -615,11 +784,14 @@ export class MapView {
     };
     this._onDown = (e) => {
       this._drag = { x: e.clientX, y: e.clientY, moved: false, ox: this.panX, oy: this.panY };
-      try { this.canvas.setPointerCapture(e.pointerId); } catch (err) { }
+      try {
+        this.canvas.setPointerCapture(e.pointerId);
+      } catch (err) {}
     };
     this._onMove = (e) => {
       if (!this._drag) return;
-      const dx = e.clientX - this._drag.x, dy = e.clientY - this._drag.y;
+      const dx = e.clientX - this._drag.x,
+        dy = e.clientY - this._drag.y;
       if (Math.abs(dx) + Math.abs(dy) > 4) this._drag.moved = true;
       this.panX = this._drag.ox + dx;
       this.panY = this._drag.oy + dy;
@@ -627,13 +799,17 @@ export class MapView {
       this.invalidate();
     };
     this._onUp = (e) => {
-      const d = this._drag; this._drag = null;
-      try { this.canvas.releasePointerCapture(e.pointerId); } catch (err) { }
+      const d = this._drag;
+      this._drag = null;
+      try {
+        this.canvas.releasePointerCapture(e.pointerId);
+      } catch (err) {}
       if (!d || d.moved) return; // 拖拽不算点击
       if (!this.onPick) return;
       const rect = this.canvas.getBoundingClientRect();
       const w = this._s2w(e.clientX - rect.left, e.clientY - rect.top);
-      const cellX = Math.floor(w.x), cellY = Math.floor(w.y);
+      const cellX = Math.floor(w.x),
+        cellY = Math.floor(w.y);
       if (cellX < 0 || cellY < 0 || cellX >= this.cols || cellY >= this.rows) return;
       this.onPick(cellX, cellY);
     };
@@ -648,7 +824,8 @@ export class MapView {
       if (!this.onCtxPick) return;
       const rect = this.canvas.getBoundingClientRect();
       const w = this._s2w(e.clientX - rect.left, e.clientY - rect.top);
-      const cellX = Math.floor(w.x), cellY = Math.floor(w.y);
+      const cellX = Math.floor(w.x),
+        cellY = Math.floor(w.y);
       if (cellX < 0 || cellY < 0 || cellX >= this.cols || cellY >= this.rows) return;
       const g2 = this._gg;
       const i = Math.max(0, Math.min(g2.nx - 1, Math.floor(cellX / (g2.gw / 2))));
@@ -678,7 +855,8 @@ export class MapView {
   jumpToCell(cellX, cellY, k, subMap) {
     const g = cellToGame(cellX, cellY);
     const r = nav.flyTo({ x: g.x, y: g.y, z: k != null ? k : null, subMap, click: false });
-    if (!r.ok) log.warn('flyTo failed. cell=(%d,%d) game=(%d,%d) err=%s', cellX, cellY, g.x, g.y, r.err);
+    if (!r.ok)
+      log.warn('flyTo failed. cell=(%d,%d) game=(%d,%d) err=%s', cellX, cellY, g.x, g.y, r.err);
     return r;
   }
 }

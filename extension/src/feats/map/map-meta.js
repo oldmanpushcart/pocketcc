@@ -53,14 +53,19 @@ export const SERVER = { cols: 408, rows: 952, gameXMax: 408 * 2, gameYMax: 952 }
  * @type {Object<string,{name:string, rows:number, cols:number, subMap?:Array<{id:number, rect:[number,number,number,number]}>}>}
  */
 export const MAP_INFOS = {
-  '1': { name: 'world', rows: 952, cols: 408 },
-  '201': { name: 'world_NTerrain', rows: 952, cols: 408 },
-  '6': {
-    name: 'world_withBorder', rows: 952, cols: 568,
+  1: { name: 'world', rows: 952, cols: 408 },
+  201: { name: 'world_NTerrain', rows: 952, cols: 408 },
+  6: {
+    name: 'world_withBorder',
+    rows: 952,
+    cols: 568,
     // 边境图横向更宽：subMap 0=本服主体 [0,0,408,952]，1=右侧边境带 [408,0,160,952]
-    subMap: [{ id: 0, rect: [0, 0, 408, 952] }, { id: 1, rect: [408, 0, 160, 952] }],
+    subMap: [
+      { id: 0, rect: [0, 0, 408, 952] },
+      { id: 1, rect: [408, 0, 160, 952] },
+    ],
   },
-  '202': { name: 'world_NTerrain_border', rows: 952, cols: 568 },
+  202: { name: 'world_NTerrain_border', rows: 952, cols: 568 },
 };
 
 /**
@@ -91,33 +96,138 @@ export const POINT_TYPES = [
   { type: 1, label: '玩家城池', en: 'City', color: '#ff5b5b', group: 'city', field: 'p' },
   // 资源类
   { type: 4, label: '资源田', en: 'Resource', color: '#4ad07a', group: 'resource', field: 'r' },
-  { type: 24, label: '资源塔', en: 'ResourceTower', color: '#35c07a', group: 'resource', field: 'b' },
-  { type: 38, label: '要塞资源', en: 'FORTRESS_RESOURCE', color: '#5b8bff', group: 'alliance', field: 'r' },
-  { type: 40, label: '联盟矿', en: 'Alliance_Mine', color: '#6ac25b', group: 'alliance', field: 'b' },
-  { type: 82, label: '帝国仓库', en: 'WorldEmpireStorehouse', color: '#4ac0ff', group: 'alliance', field: 't' },
+  {
+    type: 24,
+    label: '资源塔',
+    en: 'ResourceTower',
+    color: '#35c07a',
+    group: 'resource',
+    field: 'b',
+  },
+  {
+    type: 38,
+    label: '要塞资源',
+    en: 'FORTRESS_RESOURCE',
+    color: '#5b8bff',
+    group: 'alliance',
+    field: 'r',
+  },
+  {
+    type: 40,
+    label: '联盟矿',
+    en: 'Alliance_Mine',
+    color: '#6ac25b',
+    group: 'alliance',
+    field: 'b',
+  },
+  {
+    type: 82,
+    label: '帝国仓库',
+    en: 'WorldEmpireStorehouse',
+    color: '#4ac0ff',
+    group: 'alliance',
+    field: 't',
+  },
   // 野怪 / BOSS（含雷达怪）
   { type: 2, label: '野怪', en: 'Monster', color: '#8a93a6', group: 'monster', field: 'm' },
   { type: 12, label: '集结BOSS', en: 'RALLY_BOSS', color: '#b06cff', group: 'monster', field: 'm' },
-  { type: 73, label: '雷达怪', en: 'RADAR_MONSTER', color: '#c07bd0', group: 'monster', field: 'm' },
-  { type: 74, label: '雷达集结怪', en: 'RADAR_RALLY_MONSTER', color: '#d08be0', group: 'monster', field: 'm' },
-  { type: 77, label: '雷达增援', en: 'RADAR_ASSITANCE', color: '#a06bb0', group: 'monster', field: 'm' },
-  { type: 86, label: '雷神混合BOSS', en: 'THOR_BUFF_RALLY_MIX_BOSS', color: '#ff7bd0', group: 'monster', field: 'b' },
+  {
+    type: 73,
+    label: '雷达怪',
+    en: 'RADAR_MONSTER',
+    color: '#c07bd0',
+    group: 'monster',
+    field: 'm',
+  },
+  {
+    type: 74,
+    label: '雷达集结怪',
+    en: 'RADAR_RALLY_MONSTER',
+    color: '#d08be0',
+    group: 'monster',
+    field: 'm',
+  },
+  {
+    type: 77,
+    label: '雷达增援',
+    en: 'RADAR_ASSITANCE',
+    color: '#a06bb0',
+    group: 'monster',
+    field: 'm',
+  },
+  {
+    type: 86,
+    label: '雷神混合BOSS',
+    en: 'THOR_BUFF_RALLY_MIX_BOSS',
+    color: '#ff7bd0',
+    group: 'monster',
+    field: 'b',
+  },
   // 联盟建筑 / BOSS
   { type: 13, label: '联盟领地', en: 'Territory', color: '#5b9bff', group: 'alliance', field: 'b' },
-  { type: 17, label: '联盟BOSS', en: 'ALLIANCE_BOSS', color: '#ff4a4a', group: 'alliance', field: 'm' },
-  { type: 116, label: '巨兽展台', en: 'ALLIANCE_BEHEMOTH_SHOW_STAND', color: '#d0a06a', group: 'alliance', field: 'm' },
+  {
+    type: 17,
+    label: '联盟BOSS',
+    en: 'ALLIANCE_BOSS',
+    color: '#ff4a4a',
+    group: 'alliance',
+    field: 'm',
+  },
+  {
+    type: 116,
+    label: '巨兽展台',
+    en: 'ALLIANCE_BEHEMOTH_SHOW_STAND',
+    color: '#d0a06a',
+    group: 'alliance',
+    field: 'm',
+  },
   // 活动 / 特殊
   { type: 0, label: '空白', en: 'Blank', color: '#6a6a6a', group: 'activity', field: '' },
   { type: 10, label: '王座', en: 'Throne', color: '#ffd24a', group: 'activity', field: 't' },
   { type: 15, label: '世界遗迹', en: 'WorldSite', color: '#d0d06a', group: 'activity', field: 't' },
-  { type: 53, label: '次元遗迹', en: 'NWORLD_RAISE_RELIC', color: '#7ad0c0', group: 'activity', field: 'm' },
+  {
+    type: 53,
+    label: '次元遗迹',
+    en: 'NWORLD_RAISE_RELIC',
+    color: '#7ad0c0',
+    group: 'activity',
+    field: 'm',
+  },
   { type: 18, label: '难民营', en: 'RefugeeCamp', color: '#c0a0ff', group: 'activity', field: 'm' },
-  { type: 104, label: '机甲小游戏', en: 'MECHA_MINIGAME', color: '#7ac0d0', group: 'activity', field: 'm' },
+  {
+    type: 104,
+    label: '机甲小游戏',
+    en: 'MECHA_MINIGAME',
+    color: '#7ac0d0',
+    group: 'activity',
+    field: 'm',
+  },
   { type: 132, label: '荣誉殿', en: 'HONOR_HALL', color: '#e0c060', group: 'activity', field: 'm' },
-  { type: 259, label: '芯片祝福空投', en: 'CHIP_BLESSING_ITEMDROP_BUILD', color: '#ff9a6a', group: 'activity', field: 'm' },
+  {
+    type: 259,
+    label: '芯片祝福空投',
+    en: 'CHIP_BLESSING_ITEMDROP_BUILD',
+    color: '#ff9a6a',
+    group: 'activity',
+    field: 'm',
+  },
   // 跨服夺宝（夺宝奇兵）——归活动类
-  { type: 133, label: '夺宝奇兵', en: 'CROSS_TREASURE', color: '#ff5bd0', group: 'activity', field: '' },
-  { type: 157, label: '夺宝飞船', en: 'CROSS_TREASURE_SHIP', color: '#ff2fb0', group: 'activity', field: 'm' },
+  {
+    type: 133,
+    label: '夺宝奇兵',
+    en: 'CROSS_TREASURE',
+    color: '#ff5bd0',
+    group: 'activity',
+    field: '',
+  },
+  {
+    type: 157,
+    label: '夺宝飞船',
+    en: 'CROSS_TREASURE_SHIP',
+    color: '#ff2fb0',
+    group: 'activity',
+    field: 'm',
+  },
 ];
 
 /**
@@ -152,52 +262,72 @@ export const POINT_TYPE_MAP = (() => {
  */
 export const FILTER_TREE = [
   {
-    key: 'city', label: '城池', subs: [
-      { key: 'p_ally_local',  label: '本区联盟', color: '#4a9fff', match: { types: [1], rule: 'local_ally' } },
-      { key: 'p_enemy_local', label: '本区敌对', color: '#ff5b5b', match: { types: [1], rule: 'local_enemy' } },
-      { key: 'p_cross',       label: '跨区玩家', color: '#ffb04a', match: { types: [1], rule: 'cross' } },
+    key: 'city',
+    label: '城池',
+    subs: [
+      {
+        key: 'p_ally_local',
+        label: '本区联盟',
+        color: '#4a9fff',
+        match: { types: [1], rule: 'local_ally' },
+      },
+      {
+        key: 'p_enemy_local',
+        label: '本区敌对',
+        color: '#ff5b5b',
+        match: { types: [1], rule: 'local_enemy' },
+      },
+      { key: 'p_cross', label: '跨区玩家', color: '#ffb04a', match: { types: [1], rule: 'cross' } },
     ],
   },
   {
-    key: 'resource', label: '资源', subs: [
-      { key: 'r_oil',  label: '石油',   color: '#d9a441', match: { types: [4], itemIdPrefix: [1] } },
-      { key: 'r_food', label: '粮食',   color: '#7bc043', match: { types: [4], itemIdPrefix: [5] } },
-      { key: 'r_gold', label: '金矿',   color: '#f2d74e', match: { types: [4], itemIdPrefix: [7] } },
-      { key: 'r_thor', label: '雷神',   color: '#8a7bff', match: { types: [4], itemIdPrefix: [16] } },
-      { key: 't_oil',  label: '石油塔', color: '#b8860b', match: { types: [24], bidPrefix: [52] } },
+    key: 'resource',
+    label: '资源',
+    subs: [
+      { key: 'r_oil', label: '石油', color: '#d9a441', match: { types: [4], itemIdPrefix: [1] } },
+      { key: 'r_food', label: '粮食', color: '#7bc043', match: { types: [4], itemIdPrefix: [5] } },
+      { key: 'r_gold', label: '金矿', color: '#f2d74e', match: { types: [4], itemIdPrefix: [7] } },
+      { key: 'r_thor', label: '雷神', color: '#8a7bff', match: { types: [4], itemIdPrefix: [16] } },
+      { key: 't_oil', label: '石油塔', color: '#b8860b', match: { types: [24], bidPrefix: [52] } },
       { key: 't_food', label: '粮食塔', color: '#5a9e36', match: { types: [24], bidPrefix: [53] } },
       { key: 't_thor', label: '雷神塔', color: '#6a5acd', match: { types: [24], bidPrefix: [71] } },
       { key: 't_gold', label: '金矿塔', color: '#c9a227', match: { types: [24], bidPrefix: [51] } },
     ],
   },
   {
-    key: 'monster', label: '野怪BOSS', subs: [
-      { key: 'm_wild',   label: '野怪',         color: '#8a93a6', match: { types: [2] } },
-      { key: 'm_rally',  label: '集结BOSS',     color: '#b06cff', match: { types: [12] } },
-      { key: 'm_radar',  label: '雷达怪',       color: '#c07bd0', match: { types: [73, 74, 77] } },
-      { key: 'm_thor',   label: '雷神混合BOSS', color: '#ff7bd0', match: { types: [86] } },
+    key: 'monster',
+    label: '野怪BOSS',
+    subs: [
+      { key: 'm_wild', label: '野怪', color: '#8a93a6', match: { types: [2] } },
+      { key: 'm_rally', label: '集结BOSS', color: '#b06cff', match: { types: [12] } },
+      { key: 'm_radar', label: '雷达怪', color: '#c07bd0', match: { types: [73, 74, 77] } },
+      { key: 'm_thor', label: '雷神混合BOSS', color: '#ff7bd0', match: { types: [86] } },
     ],
   },
   {
-    key: 'alliance', label: '联盟', subs: [
-      { key: 'b_territory',  label: '联盟领地', color: '#5b9bff', match: { types: [13] } },
-      { key: 'b_boss',       label: '联盟BOSS', color: '#ff4a4a', match: { types: [17] } },
-      { key: 'b_behemoth',   label: '巨兽展台', color: '#d0a06a', match: { types: [116] } },
-      { key: 'b_fortress',   label: '要塞资源', color: '#5b8bff', match: { types: [38] } },
-      { key: 'b_alli_mine',  label: '联盟矿',   color: '#6ac25b', match: { types: [40] } },
+    key: 'alliance',
+    label: '联盟',
+    subs: [
+      { key: 'b_territory', label: '联盟领地', color: '#5b9bff', match: { types: [13] } },
+      { key: 'b_boss', label: '联盟BOSS', color: '#ff4a4a', match: { types: [17] } },
+      { key: 'b_behemoth', label: '巨兽展台', color: '#d0a06a', match: { types: [116] } },
+      { key: 'b_fortress', label: '要塞资源', color: '#5b8bff', match: { types: [38] } },
+      { key: 'b_alli_mine', label: '联盟矿', color: '#6ac25b', match: { types: [40] } },
       { key: 'b_storehouse', label: '帝国仓库', color: '#4ac0ff', match: { types: [82] } },
     ],
   },
   {
-    key: 'activity', label: '活动', subs: [
-      { key: 'b_throne',   label: '王座',       color: '#ffd24a', match: { types: [10] } },
-      { key: 'b_site',     label: '世界遗迹',   color: '#d0d06a', match: { types: [15] } },
-      { key: 'b_relic',    label: '次元遗迹',   color: '#7ad0c0', match: { types: [53] } },
-      { key: 'b_refugee',  label: '难民营',     color: '#c0a0ff', match: { types: [18] } },
-      { key: 'b_mecha',    label: '机甲小游戏', color: '#7ac0d0', match: { types: [104] } },
-      { key: 'b_honor',    label: '荣誉殿',     color: '#e0c060', match: { types: [132] } },
-      { key: 'b_chip',     label: '芯片空投',   color: '#ff9a6a', match: { types: [259] } },
-      { key: 'p_treasure', label: '夺宝飞船',   color: '#ff2fb0', match: { types: [133, 157] } },
+    key: 'activity',
+    label: '活动',
+    subs: [
+      { key: 'b_throne', label: '王座', color: '#ffd24a', match: { types: [10] } },
+      { key: 'b_site', label: '世界遗迹', color: '#d0d06a', match: { types: [15] } },
+      { key: 'b_relic', label: '次元遗迹', color: '#7ad0c0', match: { types: [53] } },
+      { key: 'b_refugee', label: '难民营', color: '#c0a0ff', match: { types: [18] } },
+      { key: 'b_mecha', label: '机甲小游戏', color: '#7ac0d0', match: { types: [104] } },
+      { key: 'b_honor', label: '荣誉殿', color: '#e0c060', match: { types: [132] } },
+      { key: 'b_chip', label: '芯片空投', color: '#ff9a6a', match: { types: [259] } },
+      { key: 'p_treasure', label: '夺宝飞船', color: '#ff2fb0', match: { types: [133, 157] } },
     ],
   },
 ];
@@ -208,15 +338,24 @@ export const FILTER_TREE = [
  */
 export const SUB_MAP = (() => {
   const m = {};
-  for (const cat of FILTER_TREE) for (const sub of cat.subs) m[sub.key] = Object.assign({}, sub, { catKey: cat.key, catLabel: cat.label });
+  for (const cat of FILTER_TREE)
+    for (const sub of cat.subs)
+      m[sub.key] = Object.assign({}, sub, { catKey: cat.key, catLabel: cat.label });
   return m;
 })();
 
 /** @type {string[]} 全部细分类 key（声明序） */
-export const ALL_SUB_KEYS = FILTER_TREE.reduce((a, c) => { for (const s of c.subs) a.push(s.key); return a; }, []);
+export const ALL_SUB_KEYS = FILTER_TREE.reduce((a, c) => {
+  for (const s of c.subs) a.push(s.key);
+  return a;
+}, []);
 
 /** @type {Object<string,{key:string,label:string,subs:Array}>} 大类 key → 大类项 */
-export const CAT_MAP = (() => { const m = {}; for (const c of FILTER_TREE) m[c.key] = c; return m; })();
+export const CAT_MAP = (() => {
+  const m = {};
+  for (const c of FILTER_TREE) m[c.key] = c;
+  return m;
+})();
 
 /**
  * 筛选分组（由 FILTER_TREE 派生·单一真相）：cat.key → { label, types }（组内各细分类 match.types 并集）；
@@ -227,7 +366,7 @@ export const POINT_GROUPS = (() => {
   const g = {};
   for (const cat of FILTER_TREE) {
     const set = new Set();
-    for (const s of cat.subs) for (const t of (s.match.types || [])) set.add(t);
+    for (const s of cat.subs) for (const t of s.match.types || []) set.add(t);
     g[cat.key] = { label: cat.label, types: Array.from(set) };
   }
   g.other = { label: '其他', types: [] };
@@ -240,9 +379,10 @@ export const POINT_GROUPS = (() => {
  */
 const SUBS_BY_TYPE = (() => {
   const m = {};
-  for (const cat of FILTER_TREE) for (const sub of cat.subs) {
-    for (const t of (sub.match.types || [])) (m[t] = m[t] || []).push(sub);
-  }
+  for (const cat of FILTER_TREE)
+    for (const sub of cat.subs) {
+      for (const t of sub.match.types || []) (m[t] = m[t] || []).push(sub);
+    }
   return m;
 })();
 
@@ -256,7 +396,7 @@ const SUBS_BY_TYPE = (() => {
 function matchRule(rule, e, ctx) {
   const selfAid = (ctx && ctx.selfAid) || 0;
   const selfServer = (ctx && ctx.selfServer) || 0;
-  const sameServer = selfServer ? (e.k === selfServer) : true;
+  const sameServer = selfServer ? e.k === selfServer : true;
   const isAlly = !!(e.aid && selfAid && e.aid === selfAid);
   if (rule === 'local_ally') return sameServer && isAlly;
   if (rule === 'local_enemy') return sameServer && !isAlly;
@@ -294,7 +434,9 @@ function matchSub(sub, e, ctx) {
 export function classifyPoint(e, ctx) {
   const list = SUBS_BY_TYPE[e.pointType];
   if (!list) return null;
-  for (let i = 0; i < list.length; i++) { if (matchSub(list[i], e, ctx)) return list[i]; }
+  for (let i = 0; i < list.length; i++) {
+    if (matchSub(list[i], e, ctx)) return list[i];
+  }
   return null;
 }
 
@@ -316,12 +458,16 @@ export const CITY_POINT_TYPE = 1;
 export function playerPass(e, pf, now) {
   const mode = (pf && pf.shieldMode) || 'off';
   const levelMin = pf && pf.levelMin != null ? pf.levelMin : null;
-  if (mode === 'off' && levelMin == null) return true;   // 未开启：放行一切
-  if (e.pointType !== CITY_POINT_TYPE) return false;      // 开启后只在城池内取（非城池隐藏）
+  if (mode === 'off' && levelMin == null) return true; // 未开启：放行一切
+  if (e.pointType !== CITY_POINT_TYPE) return false; // 开启后只在城池内取（非城池隐藏）
   if (mode !== 'off') {
     const rem = e.shield ? e.shield * 1000 - (now || Date.now()) : -1; // 无盾/过期 → 剩余 ≤0
-    if (mode === 'none') { if (rem > 0) return false; }
-    else if (mode === 'has') { if (rem <= 0) return false; if (pf.shieldMs != null && rem > pf.shieldMs) return false; }
+    if (mode === 'none') {
+      if (rem > 0) return false;
+    } else if (mode === 'has') {
+      if (rem <= 0) return false;
+      if (pf.shieldMs != null && rem > pf.shieldMs) return false;
+    }
   }
   if (levelMin != null && !(e.level >= levelMin)) return false;
   return true;
@@ -337,7 +483,8 @@ export function shieldText(shieldSec, now) {
   const rem = shieldSec ? shieldSec * 1000 - (now || Date.now()) : -1;
   if (rem <= 0) return '无';
   const totalMin = Math.floor(rem / 60000);
-  const h = Math.floor(totalMin / 60), m = totalMin % 60;
+  const h = Math.floor(totalMin / 60),
+    m = totalMin % 60;
   return (h > 0 ? '剩余' + h + '小时' : '') + (m > 0 || h === 0 ? m + '分钟' : '');
 }
 
@@ -364,9 +511,9 @@ export function fmtLargeNum(v, round, plain) {
   const len = LARGE_UNITS.length;
   for (let n = 0; n < len; n++) {
     let r = 1e3;
-    for (let s = n + 1; s < len; s++) r *= 1e3;   // r = 1000^(len-n)，从大阈值往下扫，首个 v>=r 即当档
+    for (let s = n + 1; s < len; s++) r *= 1e3; // r = 1000^(len-n)，从大阈值往下扫，首个 v>=r 即当档
     if (v >= r) {
-      const l = v > 100 * r ? 0 : (v > 10 * r ? 1 : 2);
+      const l = v > 100 * r ? 0 : v > 10 * r ? 1 : 2;
       const unit = LARGE_UNITS[len - n - 1];
       if (round) return (v / r).toFixed(l) + unit;
       const c = Math.pow(10, l);
@@ -385,9 +532,9 @@ export function fmtLargeNum(v, round, plain) {
  * @type {{landA:string, landB:string, water:string}}
  */
 export const TERRAIN_COLORS = {
-  landA: '#4a6a3d',   // 草地低频噪声暗端
-  landB: '#6e8b56',   // 草地低频噪声亮端
-  water: '#3f6f96',   // 预留：水系（newTerrainV2 无水系数据，暂不触发）
+  landA: '#4a6a3d', // 草地低频噪声暗端
+  landB: '#6e8b56', // 草地低频噪声亮端
+  water: '#3f6f96', // 预留：水系（newTerrainV2 无水系数据，暂不触发）
 };
 
 /**
@@ -397,10 +544,10 @@ export const TERRAIN_COLORS = {
  * @type {{minor:string,major:string,border:string,minPx:number}}
  */
 export const GRID_STYLE = {
-  minPx: 34,                              // 次网格目标最小像素间距（逐轴算细分份数用）
-  minor: 'rgba(18,28,12,0.22)',              // 次网格线
-  major: 'rgba(232,240,214,0.30)',           // 主网格线（=扫描块网格）
-  border: 'rgba(245,205,120,0.6)',            // 全图边框
+  minPx: 34, // 次网格目标最小像素间距（逐轴算细分份数用）
+  minor: 'rgba(18,28,12,0.22)', // 次网格线
+  major: 'rgba(232,240,214,0.30)', // 主网格线（=扫描块网格）
+  border: 'rgba(245,205,120,0.6)', // 全图边框
 };
 
 /**
@@ -409,16 +556,42 @@ export const GRID_STYLE = {
  */
 export const DEFAULTS = {
   enabled: false,
-  dwellMs: 2200,       // 每块停留毫秒（≥ 单块 RT，压总 QPS）
-  jitterMs: 500,       // 停留附加随机抖动上限（错峰，去机械规律）
-  viewLevel: 1,        // 901 视口层级（高度）：网格按 level 1 回点窗定标，固定不可切，见 SCAN_GRID
-  ttlHours: 24,        // 持久数据有效期（小时），超期提示重扫
-  showMarch: false,    // 是否绘制行军（v1 默认关，仅存关键项）
+  dwellMs: 2200, // 每块停留毫秒（≥ 单块 RT，压总 QPS）
+  jitterMs: 500, // 停留附加随机抖动上限（错峰，去机械规律）
+  viewLevel: 1, // 901 视口层级（高度）：网格按 level 1 回点窗定标，固定不可切，见 SCAN_GRID
+  ttlHours: 24, // 持久数据有效期（小时），超期提示重扫
+  showMarch: false, // 是否绘制行军（v1 默认关，仅存关键项）
   // 默认展示的细分类（默认全开，保证扫到的数据默认可见不隐形；玩法五大类主干见 FILTER_TREE）
-  subs: ['p_ally_local', 'p_enemy_local', 'p_cross', 'p_treasure',
-    'r_oil', 'r_food', 'r_gold', 'r_thor', 't_oil', 't_food', 't_thor', 't_gold',
-    'm_wild', 'm_rally', 'm_radar', 'm_thor',
-    'b_territory', 'b_boss', 'b_behemoth', 'b_fortress', 'b_alli_mine', 'b_storehouse',
-    'b_throne', 'b_site', 'b_relic', 'b_refugee', 'b_mecha', 'b_honor', 'b_chip'],
-  showOther: true,     // 未收录进 FILTER_TREE 的 pointType（如 type0 空白）是否以灰色兜底展示
+  subs: [
+    'p_ally_local',
+    'p_enemy_local',
+    'p_cross',
+    'p_treasure',
+    'r_oil',
+    'r_food',
+    'r_gold',
+    'r_thor',
+    't_oil',
+    't_food',
+    't_thor',
+    't_gold',
+    'm_wild',
+    'm_rally',
+    'm_radar',
+    'm_thor',
+    'b_territory',
+    'b_boss',
+    'b_behemoth',
+    'b_fortress',
+    'b_alli_mine',
+    'b_storehouse',
+    'b_throne',
+    'b_site',
+    'b_relic',
+    'b_refugee',
+    'b_mecha',
+    'b_honor',
+    'b_chip',
+  ],
+  showOther: true, // 未收录进 FILTER_TREE 的 pointType（如 type0 空白）是否以灰色兜底展示
 };

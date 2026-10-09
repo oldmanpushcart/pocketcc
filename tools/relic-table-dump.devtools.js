@@ -20,10 +20,19 @@
 
   const PC = window.pocketcc;
   if (!PC || !PC.game || typeof PC.game.get !== 'function') {
-    console.error('[relic-dump] window.pocketcc.game.get 不可用：确认已加载扩展并登录进游戏（主世界上下文）。');
+    console.error(
+      '[relic-dump] window.pocketcc.game.get 不可用：确认已加载扩展并登录进游戏（主世界上下文）。',
+    );
     return;
   }
-  const G = (n) => { try { return PC.game.get(n); } catch (e) { console.warn('[relic-dump] game.get(%s) 失败', n, e); return null; } };
+  const G = (n) => {
+    try {
+      return PC.game.get(n);
+    } catch (e) {
+      console.warn('[relic-dump] game.get(%s) 失败', n, e);
+      return null;
+    }
+  };
 
   const TM = G('TableManager');
   const TABLE = TM && (TM.TABLE || (TM.default && TM.default.TABLE));
@@ -39,20 +48,44 @@
   const RC = G('RewardController');
   const K = RC && (RC.RewardController || (RC.default && RC.default.RewardController));
   const rewardItems = (id) => {
-    try { const a = K && K.Instance && K.Instance.getRewardsArrById(Number(id)); return Array.isArray(a) ? a : []; }
-    catch (e) { return []; }
+    try {
+      const a = K && K.Instance && K.Instance.getRewardsArrById(Number(id));
+      return Array.isArray(a) ? a : [];
+    } catch (e) {
+      return [];
+    }
   };
 
   const H = (m) => console.log('%c\n===== ' + m + ' =====', 'color:#4a90d9;font-weight:bold');
-  H('表名解析'); console.log({ itemTable, rewardTable, REWARD_member: TN.REWARD, sp_fortress_item_member: TN.sp_fortress_item });
+  H('表名解析');
+  console.log({
+    itemTable,
+    rewardTable,
+    REWARD_member: TN.REWARD,
+    sp_fortress_item_member: TN.sp_fortress_item,
+  });
 
   // ── 1) sp_fortress_item 整表原样 dump ──
   H('1) sp_fortress_item 整表（遗迹奖励配置）');
   let itemRows = [];
-  try { itemRows = TABLE.getTableGroupArray(itemTable) || []; } catch (e) { console.error('[relic-dump] 读 sp_fortress_item 失败', e); }
+  try {
+    itemRows = TABLE.getTableGroupArray(itemTable) || [];
+  } catch (e) {
+    console.error('[relic-dump] 读 sp_fortress_item 失败', e);
+  }
   console.log('行数:', itemRows.length);
   if (itemRows.length) {
-    console.table(itemRows.map((r) => ({ id: r.id, choose_num: r.choose_num, join_time: r.join_time, item: r.item, reward: r.reward, prize: r.prize, pool: r.pool })));
+    console.table(
+      itemRows.map((r) => ({
+        id: r.id,
+        choose_num: r.choose_num,
+        join_time: r.join_time,
+        item: r.item,
+        reward: r.reward,
+        prize: r.prize,
+        pool: r.pool,
+      })),
+    );
     console.log('%c原始 JSON（整表，可复制贴回）：', 'color:#888');
     console.log(JSON.stringify(itemRows));
   }
@@ -66,15 +99,22 @@
     const walk = (obj, path) => {
       if (!obj || typeof obj !== 'object') return;
       for (const k in obj) {
-        const v = obj[k]; const p = path ? path + '.' + k : k;
-        if (typeof v === 'string' && listRe.test(v)) found.push({ field: p, ids: v.split(/[,;|]/).map((x) => Number(x.trim())) });
-        else if (Array.isArray(v) && v.length && v.every((x) => typeof x === 'number')) found.push({ field: p, ids: v.slice() });
+        const v = obj[k];
+        const p = path ? path + '.' + k : k;
+        if (typeof v === 'string' && listRe.test(v))
+          found.push({ field: p, ids: v.split(/[,;|]/).map((x) => Number(x.trim())) });
+        else if (Array.isArray(v) && v.length && v.every((x) => typeof x === 'number'))
+          found.push({ field: p, ids: v.slice() });
       }
     };
     walk(r, '');
-    if (found.length) { poolByCfg[r.id] = found; console.log('cfgId=' + r.id + ' →', JSON.stringify(found)); }
+    if (found.length) {
+      poolByCfg[r.id] = found;
+      console.log('cfgId=' + r.id + ' →', JSON.stringify(found));
+    }
   }
-  if (!Object.keys(poolByCfg).length) console.log('（没发现数字列表字段——奖励池可能在独立表或由服务器下发，看第 3 段暴力扫描）');
+  if (!Object.keys(poolByCfg).length)
+    console.log('（没发现数字列表字段——奖励池可能在独立表或由服务器下发，看第 3 段暴力扫描）');
 
   // ── 3) 暴力扫描 reward id 区间，逐个解析 ──
   H('3) 暴力扫描 reward 表 id 区间 [' + BRUTE_LO + ',' + BRUTE_HI + ']');
@@ -82,19 +122,39 @@
   for (let id = BRUTE_LO; id <= BRUTE_HI; id++) {
     const items = rewardItems(id);
     if (items && items.length) {
-      resolved.push({ rewardId: id, itemId: items[0].id, 道具名: items[0].name, 数量: items[0].count, 条目数: items.length, 全部: items.map((it) => it.id + ':' + it.name + '×' + it.count).join(' | ') });
+      resolved.push({
+        rewardId: id,
+        itemId: items[0].id,
+        道具名: items[0].name,
+        数量: items[0].count,
+        条目数: items.length,
+        全部: items.map((it) => it.id + ':' + it.name + '×' + it.count).join(' | '),
+      });
     }
   }
   console.log('可解析的 reward 行数:', resolved.length);
-  if (resolved.length) { console.table(resolved); console.log('%c原始 JSON（可复制贴回）：', 'color:#888'); console.log(JSON.stringify(resolved)); }
+  if (resolved.length) {
+    console.table(resolved);
+    console.log('%c原始 JSON（可复制贴回）：', 'color:#888');
+    console.log(JSON.stringify(resolved));
+  }
 
   // ── 4) 若第 2 段拿到 cfg 的池 id，按 cfg 归类解析成名字 ──
   H('4) 按 cfgId 归类的奖励池（若第 2 段有数字列表）');
   for (const cfg in poolByCfg) {
-    const ids = new Set(); poolByCfg[cfg].forEach((f) => f.ids.forEach((x) => ids.add(x)));
-    const named = [...ids].sort((a, b) => a - b).map((rid) => { const it = rewardItems(rid)[0]; return rid + ' → ' + (it ? (it.id + ' / ' + it.name + '×' + it.count) : '（未解析）'); });
+    const ids = new Set();
+    poolByCfg[cfg].forEach((f) => f.ids.forEach((x) => ids.add(x)));
+    const named = [...ids]
+      .sort((a, b) => a - b)
+      .map((rid) => {
+        const it = rewardItems(rid)[0];
+        return rid + ' → ' + (it ? it.id + ' / ' + it.name + '×' + it.count : '（未解析）');
+      });
     console.log('cfgId=' + cfg + ' 池（' + ids.size + ' 项）:\n  ' + named.join('\n  '));
   }
 
-  console.log('%c[relic-dump] 完成：把上面各段 JSON 贴回来即可据此定稿 L2_ITEM_POOL。', 'color:#2aa198;font-weight:bold');
+  console.log(
+    '%c[relic-dump] 完成：把上面各段 JSON 贴回来即可据此定稿 L2_ITEM_POOL。',
+    'color:#2aa198;font-weight:bold',
+  );
 })();

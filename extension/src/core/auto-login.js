@@ -46,12 +46,16 @@ export function installAutoLogin() {
   const origSetLoginParam = platformCore.setLoginParam;
   platformCore.setLoginParam = function (param) {
     origSetLoginParam.call(this, param);
-    const platform = CryptoJS.enc.Utf8.stringify(CryptoJS.enc.Base64.parse(param.serverInfoToken)).split(',')[1];
+    const platform = CryptoJS.enc.Utf8.stringify(
+      CryptoJS.enc.Base64.parse(param.serverInfoToken),
+    ).split(',')[1];
     param.platform = platform;
   };
 
   // 自动复用 token 后，游戏默认无法主动换号，这里补登出能力。
-  platformCore.canUserLogout = function () { return true; };
+  platformCore.canUserLogout = function () {
+    return true;
+  };
   /** 清掉自动登录凭证并回到干净 URL（面板「登出 / 换号」调） */
   platformCore.userLogout = function () {
     if (!window.confirm('确定登出并清除自动登录凭证？')) return;
@@ -60,7 +64,8 @@ export function installAutoLogin() {
   };
 
   // 启动即重放：旧登录参数路径的 token 作兜底，取到就存；之后清掉会干扰选服的历史键。
-  const cachedToken = localStore.get('app_serverToken') ?? localStore.get('app_loginFlowArgs')?.serverInfoToken;
+  const cachedToken =
+    localStore.get('app_serverToken') ?? localStore.get('app_loginFlowArgs')?.serverInfoToken;
   platformCore.saveServerToken(cachedToken);
   localStore.del('app_gameServer');
   localStore.del('app_loginFlowArgs');

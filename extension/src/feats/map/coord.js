@@ -16,7 +16,7 @@ import { TILE, SERVER } from './map-meta.js';
  * @returns {{cellX:number, cellY:number}}
  */
 export function gameToCell(x, y) {
-  return { cellX: ((x & 1) ? x - 1 : x) / 2, cellY: y };
+  return { cellX: (x & 1 ? x - 1 : x) / 2, cellY: y };
 }
 
 /**
@@ -26,7 +26,7 @@ export function gameToCell(x, y) {
  * @returns {{x:number, y:number}}
  */
 export function cellToGame(cellX, cellY) {
-  return { x: 2 * cellX + ((cellY & 1) ? 1 : 0), y: cellY };
+  return { x: 2 * cellX + (cellY & 1 ? 1 : 0), y: cellY };
 }
 
 /**
@@ -37,7 +37,7 @@ export function cellToGame(cellX, cellY) {
  * @returns {{dx:number, dy:number}}
  */
 export function cellToDisplay(cellX, cellY) {
-  const dx = cellX * TILE.W + TILE.HALF_W + ((cellY & 1) ? TILE.HALF_W : 0);
+  const dx = cellX * TILE.W + TILE.HALF_W + (cellY & 1 ? TILE.HALF_W : 0);
   const dy = -(cellY * (TILE.H / 2) + TILE.HALF_H);
   return { dx, dy };
 }
@@ -51,7 +51,7 @@ export function cellToDisplay(cellX, cellY) {
  */
 export function displayToCell(dx, dy) {
   const cellY = Math.round((-dy - TILE.HALF_H) / (TILE.H / 2));
-  const base = dx - TILE.HALF_W - ((cellY & 1) ? TILE.HALF_W : 0);
+  const base = dx - TILE.HALF_W - (cellY & 1 ? TILE.HALF_W : 0);
   const cellX = Math.round(base / TILE.W);
   return { cellX, cellY };
 }

@@ -93,7 +93,12 @@ import { installModeGate } from './core/mode.js';
       .then(() => loadAllConfigs())
       .then(() => installReconnectHooks());
     watchLoginSuccess();
-    watchHomeMapReady(() => { configsReady.then(() => { startFeatures(); mountUI(); }); });
+    watchHomeMapReady(() => {
+      configsReady.then(() => {
+        startFeatures();
+        mountUI();
+      });
+    });
     logCore.info('initialized');
   }
 

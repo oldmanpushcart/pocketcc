@@ -15,16 +15,16 @@ import { ui } from '../../core/game-api.js';
 const log = createLog('OPEN_BAG');
 
 bind({
-    id: 'openBag',
-    keys: ['KeyB'],
-    display: 'B',
-    label: '打开背包',
-    where: '基地/大世界',
-    scenes: ['Home', 'NWorldMap'],
-    handler: function () {
-        var r = ui.openBag();
-        if (r.ok) log.info('bag opened.');
-        else log.warn('open bag failed. err=%s', r.err);
-        return true;
-    },
+  id: 'openBag',
+  keys: ['KeyB'],
+  display: 'B',
+  label: '打开背包',
+  where: '基地/大世界',
+  scenes: ['Home', 'NWorldMap'],
+  handler: function () {
+    var r = ui.openBag();
+    if (r.ok) log.info('bag opened.');
+    else log.warn('open bag failed. err=%s', r.err);
+    return true;
+  },
 });

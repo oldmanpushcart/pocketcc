@@ -71,24 +71,31 @@ function pickShieldItem() {
 }
 
 /** 欧氏距离平方（比较远近无需开方，避开 Math.sqrt 噪声且保序） */
-function dist2(ax, ay, bx, by) { var dx = ax - bx, dy = ay - by; return dx * dx + dy * dy; }
+function dist2(ax, ay, bx, by) {
+  var dx = ax - bx,
+    dy = ay - by;
+  return dx * dx + dy * dy;
+}
 
 /** 迁城落点 footprint：等价游戏 checkIsPlainTileBySize 的 L×L 菱形展开（L=城外观边长），返回占地格集合 */
 function footprintCells(x, y, L) {
   var out = [];
-  for (var s = 0; s < L; s++) for (var k = 0; k < L; k++) out.push({ x: (x | 0) + s - k, y: (y | 0) - s - k });
+  for (var s = 0; s < L; s++)
+    for (var k = 0; k < L; k++) out.push({ x: (x | 0) + s - k, y: (y | 0) - s - k });
   return out;
 }
 
 /** 堡垒禁迁区「实心菱形区间」（旋转系、奇偶无关）：由 {x,y,w,bw} 推 S=x+y 与 D=x-y 的闭合区间（避开 AlliancePointPool 只采样单奇偶的盲区） */
 function terrBounds(x, y, w, bw) {
-  var Slo = x + y - w + bw, Dlo = x - y - w - bw + 2;
+  var Slo = x + y - w + bw,
+    Dlo = x - y - w - bw + 2;
   return { Slo: Slo, Shi: Slo + 2 * (w - 1), Dlo: Dlo, Dhi: Dlo + 2 * (w - 1) };
 }
 
 /** 格 (gx,gy) 到实心区间的越界格数（0=落在区间内） */
 function terrViol(b, gx, gy) {
-  var S = gx + gy, D = gx - gy;
+  var S = gx + gy,
+    D = gx - gy;
   return Math.max(b.Slo - S, S - b.Shi, b.Dlo - D, D - b.Dhi, 0);
 }
 
@@ -96,9 +103,15 @@ function terrViol(b, gx, gy) {
 function pickSub(p, subs, keys) {
   for (var i = 0; i < subs.length; i++) {
     var s = p[subs[i]];
-    if (s && typeof s === 'object') { for (var j = 0; j < keys.length; j++) { if (s[keys[j]] != null) return s[keys[j]]; } }
+    if (s && typeof s === 'object') {
+      for (var j = 0; j < keys.length; j++) {
+        if (s[keys[j]] != null) return s[keys[j]];
+      }
+    }
   }
-  for (var k = 0; k < keys.length; k++) { if (p[keys[k]] != null) return p[keys[k]]; }
+  for (var k = 0; k < keys.length; k++) {
+    if (p[keys[k]] != null) return p[keys[k]];
+  }
   return null;
 }
 
@@ -116,54 +129,114 @@ function pickSub(p, subs, keys) {
  */
 async function makeJudge(anchor, opts) {
   opts = opts || {};
-  var ax = anchor.x | 0, ay = anchor.y | 0;
-  var maxWait = opts.maxWait || 6000, step = 120;
+  var ax = anchor.x | 0,
+    ay = anchor.y | 0;
+  var maxWait = opts.maxWait || 6000,
+    step = 120;
   var net = opts.net;
-  var sleep = function (ms) { return new Promise(function (r) { setTimeout(r, ms); }); };
-  var fly = function () { try { nav.flyTo({ x: ax, y: ay, z: (opts.serverId | 0) || null, subMap: null, click: false }); } catch (e) { } };
+  var sleep = function (ms) {
+    return new Promise(function (r) {
+      setTimeout(r, ms);
+    });
+  };
+  var fly = function () {
+    try {
+      nav.flyTo({ x: ax, y: ay, z: opts.serverId | 0 || null, subMap: null, click: false });
+    } catch (e) {}
+  };
   // 1) 订阅 net.901 回包作 settle 信号（主动发送 + 视口原生 push 均计）；bus 不可用 → 降级为纯 canMoveCity/mapLoadedNear 就绪
-  var pushSeen = 0, lastPush = 0;
-  var off901 = (bus && typeof bus.on === 'function') ? bus.on('net.901', function () { pushSeen++; lastPush = Date.now(); }) : null;
+  var lastPush = 0;
+  var off901 =
+    bus && typeof bus.on === 'function'
+      ? bus.on('net.901', function () {
+          lastPush = Date.now();
+        })
+      : null;
   try {
-    var startSeen = pushSeen;
     fly();
     // 2) 主动一发 901 取权威占用（单窗口 x±58/y±39 罩住搜索带）；同时数 pointType=13 领土点作就绪交叉校验
-    var occ = {}, terr901 = 0, myAid = gameData.myAid(), myPid = gameData.myPid();
+    var occ = {},
+      terr901 = 0,
+      myAid = gameData.myAid(),
+      myPid = gameData.myPid();
     if (net && typeof net.send === 'function') {
-      var body = { x: ax, y: ay, k: (opts.serverId | 0) || 0, rid: 0, width: RELOC_VIEW.width, height: RELOC_VIEW.height, marchInfo: true, viewLevel: RELOC_VIEW.viewLevel };
+      var body = {
+        x: ax,
+        y: ay,
+        k: opts.serverId | 0 || 0,
+        rid: 0,
+        width: RELOC_VIEW.width,
+        height: RELOC_VIEW.height,
+        marchInfo: true,
+        viewLevel: RELOC_VIEW.viewLevel,
+      };
       var ret = null;
-      try { ret = await net.send(901, body); } catch (e) { log.debug('makeJudge 901 send error: %s', e && e.message); }
+      try {
+        ret = await net.send(901, body);
+      } catch (e) {
+        log.debug('makeJudge 901 send error: %s', e && e.message);
+      }
       var d = ret && ret.ok ? ret.data : null;
-      if (typeof d === 'string') { try { d = JSON.parse(d); } catch (e2) { d = null; } }
+      if (typeof d === 'string') {
+        try {
+          d = JSON.parse(d);
+        } catch (e2) {
+          d = null;
+        }
+      }
       var list = d && Array.isArray(d.pointList) ? d.pointList : null;
       if (list) {
         for (var i = 0; i < list.length; i++) {
-          var p = list[i], pt = p.pointType | 0;
-          if (pt === 13) { terr901++; continue; }                       // 领土交④闸判，不属占地
-          if (!RELOC_OCC_BLOCK.has(pt)) continue;                       // 可覆盖类不阻塞
+          var p = list[i],
+            pt = p.pointType | 0;
+          if (pt === 13) {
+            terr901++;
+            continue;
+          } // 领土交④闸判，不属占地
+          if (!RELOC_OCC_BLOCK.has(pt)) continue; // 可覆盖类不阻塞
           var aid = Number(pickSub(p, ['p', 'r', 'm', 't', 'b'], ['aid', 'allianceId'])) || 0;
           var pid = Number(pickSub(p, ['p', 'b', 'r', 't', 'm'], ['pid', 'ownerId'])) || 0;
-          if ((aid && aid === myAid) || (pid && pid === myPid)) continue;  // 己方占地不算阻塞
+          if ((aid && aid === myAid) || (pid && pid === myPid)) continue; // 己方占地不算阻塞
           var L = 1;
-          if (pt === 1) { var sk = pickSub(p, ['p', 'b', 'r', 't', 'm'], ['skinId']); L = (sk != null ? (gameData.citySkinSize(sk) || 2) : 2); }
+          if (pt === 1) {
+            var sk = pickSub(p, ['p', 'b', 'r', 't', 'm'], ['skinId']);
+            L = sk != null ? gameData.citySkinSize(sk) || 2 : 2;
+          }
           var fc = footprintCells(p.x | 0, p.y | 0, L);
-          for (var j = 0; j < fc.length; j++) { var key = fc[j].x + ',' + fc[j].y; if (!occ[key]) occ[key] = 1; }
+          for (var j = 0; j < fc.length; j++) {
+            var key = fc[j].x + ',' + fc[j].y;
+            if (!occ[key]) occ[key] = 1;
+          }
         }
       }
     }
     // 3) settle 就绪门：轮询至「canMoveCity 为 boolean 且 邻域 placeFlags 有命中」（区域真正加载）；
     //    注：bus.on('net.901') 只收服务端主动推送（多数图不推 901），不卡此信号作硬闸；若确有推送则加静默期等待刷完。
-    var t0 = Date.now(), ready = false;
+    var t0 = Date.now(),
+      ready = false;
     while (Date.now() - t0 < maxWait) {
       fly();
       if (typeof gameData.canMoveCity(ax, ay) === 'boolean') {
         var near = gameData.mapLoadedNear(ax, ay, 7);
-        if (near == null || near > 0) { ready = true; break; }   // placeFlags 符号不可得→不阻断；可得且有命中→就绪
+        if (near == null || near > 0) {
+          ready = true;
+          break;
+        } // placeFlags 符号不可得→不阻断；可得且有命中→就绪
       }
       await sleep(step);
     }
-    if (ready && lastPush && (Date.now() - lastPush) < 3000) { var tq = Date.now(); while (Date.now() - tq < maxWait && (Date.now() - lastPush) < 800) await sleep(100); }   // 可选：若有近期推送则等静默
-    if (!ready) { log.debug('makeJudge: 锚点 settle 未就绪(canMoveCity=%s, near=%s) → 无从判定落点', typeof gameData.canMoveCity(ax, ay), gameData.mapLoadedNear(ax, ay, 7)); return null; }
+    if (ready && lastPush && Date.now() - lastPush < 3000) {
+      var tq = Date.now();
+      while (Date.now() - tq < maxWait && Date.now() - lastPush < 800) await sleep(100);
+    } // 可选：若有近期推送则等静默
+    if (!ready) {
+      log.debug(
+        'makeJudge: 锚点 settle 未就绪(canMoveCity=%s, near=%s) → 无从判定落点',
+        typeof gameData.canMoveCity(ax, ay),
+        gameData.mapLoadedNear(ax, ay, 7),
+      );
+      return null;
+    }
     // 4) 敌盟禁迁区主动自取 1001（GET_TERRITORY_INFO 应答 infos 即锚点视口领地，服务端扩窗 60×60）。
     //    不读游戏模型：远程切视口时模型仍是旧视口数据——实证 20261008T232006 新视口 1001 回包比 911 晚 2ms 落地，
     //    陈旧领地放行 (412,415)（实入敌盟 buildId=101 区间）被服务器拒 csb_tips_005。net 不可用才退回读模型（同视口场景可信）。
@@ -174,41 +247,69 @@ async function makeJudge(anchor, opts) {
     var terrInfos = [];
     if (terrApplies) {
       if (net && typeof net.send === 'function') {
-        var tret = null, t1 = Date.now();
+        var tret = null,
+          t1 = Date.now();
         while (Date.now() - t1 < maxWait) {
           if (!net.isSending || !net.isSending(1001)) {
-            try { tret = await net.send(1001, { x: ax, y: ay, k: (opts.serverId | 0) || 0, rid: 0, width: 18, height: 30 }); }
-            catch (e) { log.debug('makeJudge 1001 send error: %s', e && e.message); }
+            try {
+              tret = await net.send(1001, {
+                x: ax,
+                y: ay,
+                k: opts.serverId | 0 || 0,
+                rid: 0,
+                width: 18,
+                height: 30,
+              });
+            } catch (e) {
+              log.debug('makeJudge 1001 send error: %s', e && e.message);
+            }
             break;
           }
           await sleep(step);
         }
-        if (!tret || !tret.ok) { log.debug('makeJudge: 1001 领地应答未就绪 → 无从判定禁迁区'); return null; }
+        if (!tret || !tret.ok) {
+          log.debug('makeJudge: 1001 领地应答未就绪 → 无从判定禁迁区');
+          return null;
+        }
         var td = tret.data;
-        if (typeof td === 'string') { try { td = JSON.parse(td); } catch (e3) { td = null; } }
-        terrInfos = (td && Array.isArray(td.infos)) ? td.infos : [];
+        if (typeof td === 'string') {
+          try {
+            td = JSON.parse(td);
+          } catch (e3) {
+            td = null;
+          }
+        }
+        terrInfos = td && Array.isArray(td.infos) ? td.infos : [];
       } else {
-        var terrs = null, t2 = Date.now();
+        var terrs = null,
+          t2 = Date.now();
         while (Date.now() - t2 < maxWait) {
           terrs = gameData.allianceTerritories();
           if (terrs && (terrs.length > 0 || terr901 === 0)) break;
           await sleep(step);
         }
-        if (terrs == null || (terrs.length === 0 && terr901 > 0)) { log.debug('makeJudge: 堡垒领地模型未就绪(901领土点=%d) → 无从判定禁迁区', terr901); return null; }
+        if (terrs == null || (terrs.length === 0 && terr901 > 0)) {
+          log.debug('makeJudge: 堡垒领地模型未就绪(901领土点=%d) → 无从判定禁迁区', terr901);
+          return null;
+        }
         terrInfos = terrs;
       }
     }
-    if (gameData.canMoveCity(ax, ay) === null) return null;            // 地形/游戏可落判据符号不可得 → 无从判定
+    if (gameData.canMoveCity(ax, ay) === null) return null; // 地形/游戏可落判据符号不可得 → 无从判定
     // 5) 敌堡垒实心禁迁区区间（排除己方 aid；owner=-1000 中立占位自动被 owner>0 过滤）
     var enemyBounds = [];
     for (var ti = 0; ti < terrInfos.length; ti++) {
       var t = terrInfos[ti];
       if (t && t.owner > 0 && t.owner !== myAid) enemyBounds.push(terrBounds(t.x, t.y, t.w, t.bw));
     }
-    var a = gameData.citySkinSize(gameData.usingCastleFace()) || 2;    // 我方迁城 footprint 边长
+    var a = gameData.citySkinSize(gameData.usingCastleFace()) || 2; // 我方迁城 footprint 边长
     // 6) self-overlap 格集（我方现主城 footprint 扩 a×a），补 canMoveCity ignoreSelf 漏
-    var selfSet = {}, mp = gameData.myWorldPos();
-    if (mp) { var sc = footprintCells(mp.x, mp.y, a); for (var q = 0; q < sc.length; q++) selfSet[sc[q].x + ',' + sc[q].y] = 1; }
+    var selfSet = {},
+      mp = gameData.myWorldPos();
+    if (mp) {
+      var sc = footprintCells(mp.x, mp.y, a);
+      for (var q = 0; q < sc.length; q++) selfSet[sc[q].x + ',' + sc[q].y] = 1;
+    }
     // 7) 四闸判定器：canMoveCity===true && footprint 无 901 占用 && footprint 无 self-overlap && (KVK/作战态 || footprint 不入敌禁迁区)
     return function (x, y) {
       if (gameData.canMoveCity(x | 0, y | 0) !== true) return false;
@@ -217,25 +318,31 @@ async function makeJudge(anchor, opts) {
         var k = fp[m].x + ',' + fp[m].y;
         if (occ[k]) return false;
         if (selfSet[k]) return false;
-        for (var b = 0; b < enemyBounds.length; b++) { if (terrViol(enemyBounds[b], fp[m].x, fp[m].y) <= RELOC_TERR_MARGIN) return false; }
+        for (var b = 0; b < enemyBounds.length; b++) {
+          if (terrViol(enemyBounds[b], fp[m].x, fp[m].y) <= RELOC_TERR_MARGIN) return false;
+        }
       }
       return true;
     };
-  } finally { if (off901) off901(); }
+  } finally {
+    if (off901) off901();
+  }
 }
 
 /** 由锚点向外按切比雪夫环逐格搜「距锚点最近的可落点」；exclude 非空则跳过该格（落点不得等于现有位置，命中即顺延取次近），radius 内全无 → null（不退让取更远点） */
 function searchNear(anchor, judge, inBounds, radius, exclude) {
-  var ax = anchor.x | 0, ay = anchor.y | 0;
-  var ex = (exclude && exclude.x != null) ? (exclude.x | 0) : null;
-  var ey = (exclude && exclude.y != null) ? (exclude.y | 0) : null;
+  var ax = anchor.x | 0,
+    ay = anchor.y | 0;
+  var ex = exclude && exclude.x != null ? exclude.x | 0 : null;
+  var ey = exclude && exclude.y != null ? exclude.y | 0 : null;
   for (var r = 0; r <= radius; r++) {
     for (var dx = -r; dx <= r; dx++) {
       for (var dy = -r; dy <= r; dy++) {
-        if (Math.max(Math.abs(dx), Math.abs(dy)) !== r) continue;   // 只走本环边框
-        var x = ax + dx, y = ay + dy;
+        if (Math.max(Math.abs(dx), Math.abs(dy)) !== r) continue; // 只走本环边框
+        var x = ax + dx,
+          y = ay + dy;
         if (!inBounds(x, y)) continue;
-        if (ex != null && ey != null && x === ex && y === ey) continue;   // 落点不得等于现有位置：命中则跳过，取同环下一格/次环最近格
+        if (ex != null && ey != null && x === ex && y === ey) continue; // 落点不得等于现有位置：命中则跳过，取同环下一格/次环最近格
         if (judge(x, y)) return { x: x, y: y };
       }
     }
@@ -245,19 +352,26 @@ function searchNear(anchor, judge, inBounds, radius, exclude) {
 
 /** 在我方主城周围取「背向威胁、离威胁更远」的可落点：带内所有可落点里选距威胁最远者；无更远点 → null */
 function searchAway(home, threat, judge, inBounds, radius) {
-  var hx = home.x | 0, hy = home.y | 0;
-  var thx = threat ? threat.x | 0 : hx, thy = threat ? threat.y | 0 : hy;
+  var hx = home.x | 0,
+    hy = home.y | 0;
+  var thx = threat ? threat.x | 0 : hx,
+    thy = threat ? threat.y | 0 : hy;
   var base = dist2(thx, thy, hx, hy);
-  var best = null, bestD = base;
+  var best = null,
+    bestD = base;
   for (var r = 1; r <= radius; r++) {
     for (var dx = -r; dx <= r; dx++) {
       for (var dy = -r; dy <= r; dy++) {
         if (Math.max(Math.abs(dx), Math.abs(dy)) !== r) continue;
-        var x = hx + dx, y = hy + dy;
+        var x = hx + dx,
+          y = hy + dy;
         if (!inBounds(x, y)) continue;
         if (!judge(x, y)) continue;
         var d = dist2(thx, thy, x, y);
-        if (d > bestD) { bestD = d; best = { x: x, y: y }; }   // 严格比当前基线/已选更远
+        if (d > bestD) {
+          bestD = d;
+          best = { x: x, y: y };
+        } // 严格比当前基线/已选更远
       }
     }
   }
@@ -276,10 +390,18 @@ async function findRelocatableSpot(anchor, opts) {
   if (!anchor || anchor.x == null || anchor.y == null) return null;
   opts = opts || {};
   var bounds = opts.bounds || worldMap.gameBounds() || WORLD_BOUNDS;
-  var inBounds = function (x, y) { return x >= 0 && y >= 0 && x <= bounds.xMax && y <= bounds.yMax; };
+  var inBounds = function (x, y) {
+    return x >= 0 && y >= 0 && x <= bounds.xMax && y <= bounds.yMax;
+  };
   var radius = opts.radius || (opts.mode === 'away' ? AWAY_RADIUS : NEAR_RADIUS);
-  var judge = await makeJudge(anchor, { serverId: (opts.ctx && opts.ctx.serverId), net: (opts.ctx && opts.ctx.net) });
-  if (!judge) { log.debug('findRelocatableSpot: 世界图未就绪 / canMoveCity 不可得，无从判定落点合法性'); return null; }
+  var judge = await makeJudge(anchor, {
+    serverId: opts.ctx && opts.ctx.serverId,
+    net: opts.ctx && opts.ctx.net,
+  });
+  if (!judge) {
+    log.debug('findRelocatableSpot: 世界图未就绪 / canMoveCity 不可得，无从判定落点合法性');
+    return null;
+  }
   if (opts.mode === 'away') {
     return searchAway(anchor, opts.threat, judge, inBounds, radius);
   }

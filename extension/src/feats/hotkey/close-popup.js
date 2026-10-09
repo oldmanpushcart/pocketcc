@@ -16,17 +16,17 @@ import { ui } from '../../core/game-api.js';
 const log = createLog('CLOSE_POPUP');
 
 bind({
-    id: 'closePopup',
-    keys: ['KeyQ'],
-    display: 'Q',
-    label: '关闭当前弹窗',
-    where: '基地/大世界',
-    scenes: ['Home', 'NWorldMap'],
-    handler: function () {
-        var r = ui.closeTop();
-        if (r.ok) log.info('popup closed. name=%s', r.name);
-        else if (r.err === 'nothing') log.debug('no popup to close.');
-        else log.warn('close popup failed. err=%s', r.err);
-        return true;
-    },
+  id: 'closePopup',
+  keys: ['KeyQ'],
+  display: 'Q',
+  label: '关闭当前弹窗',
+  where: '基地/大世界',
+  scenes: ['Home', 'NWorldMap'],
+  handler: function () {
+    var r = ui.closeTop();
+    if (r.ok) log.info('popup closed. name=%s', r.name);
+    else if (r.err === 'nothing') log.debug('no popup to close.');
+    else log.warn('close popup failed. err=%s', r.err);
+    return true;
+  },
 });

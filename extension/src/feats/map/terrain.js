@@ -43,8 +43,11 @@ const PAL = {
  * @returns {number} 0..1 插值因子
  */
 function mottle(x, y) {
-  const v = Math.sin(x * 0.018) * 0.5 + Math.sin(y * 0.015) * 0.5
-    + Math.sin((x * 0.6 + y) * 0.021) * 0.35 + Math.sin((x - y * 0.8) * 0.013) * 0.35;
+  const v =
+    Math.sin(x * 0.018) * 0.5 +
+    Math.sin(y * 0.015) * 0.5 +
+    Math.sin((x * 0.6 + y) * 0.021) * 0.35 +
+    Math.sin((x - y * 0.8) * 0.013) * 0.35;
   const t = (v + 1.7) / 3.4;
   return t < 0 ? 0 : t > 1 ? 1 : t;
 }
@@ -79,7 +82,9 @@ export class TerrainBase {
   }
 
   /** @returns {boolean} 草地底图恒可生成（纯程序化噪声，不依赖地形符号） */
-  supported() { return true; }
+  supported() {
+    return true;
+  }
 
   /**
    * 启动生成（异步，跨帧铺完）。已就绪则同步回调；不支持则回调 null。
@@ -88,10 +93,14 @@ export class TerrainBase {
    */
   build(onDone) {
     this._done = onDone || null;
-    if (this.ready) { if (onDone) onDone(this.canvas); return; }
+    if (this.ready) {
+      if (onDone) onDone(this.canvas);
+      return;
+    }
     if (this.generating) return;
     const cv = document.createElement('canvas');
-    cv.width = this.cols; cv.height = this.rows;
+    cv.width = this.cols;
+    cv.height = this.rows;
     this._cv = cv;
     this._ctx = cv.getContext('2d');
     this._img = this._ctx.createImageData(this.cols, this.rows);
@@ -106,9 +115,12 @@ export class TerrainBase {
   /** 逐帧铺若干行：每格用低频噪声在两档草绿间插值上色；铺完落 canvas 并回调 */
   _tick() {
     if (!this.generating) return;
-    const cols = this.cols, rows = this.rows, data = this._img.data;
+    const cols = this.cols,
+      rows = this.rows,
+      data = this._img.data;
     const end = Math.min(rows, this._row + ROWS_PER_FRAME);
-    const a = PAL.a, b = PAL.b;
+    const a = PAL.a,
+      b = PAL.b;
     for (let y = this._row; y < end; y++) {
       for (let x = 0; x < cols; x++) {
         const t = mottle(x, y);
@@ -135,7 +147,10 @@ export class TerrainBase {
   /** 取消进行中的生成（清 rAF） */
   cancel() {
     this.generating = false;
-    if (this._raf != null) { cancelAnimationFrame(this._raf); this._raf = null; }
+    if (this._raf != null) {
+      cancelAnimationFrame(this._raf);
+      this._raf = null;
+    }
   }
 }
 

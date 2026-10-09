@@ -337,9 +337,11 @@ function rescuePos(pos) {
  * @returns {string}
  */
 function cardHead(label, chkHTML, expandable) {
-  return `<div class="pc-sec-head">` +
+  return (
+    `<div class="pc-sec-head">` +
     `<span class="pc-chev${expandable ? '' : ' invisible'}">▶</span>` +
-    `<span class="pc-sec-title">${label}</span>${chkHTML}</div>`;
+    `<span class="pc-sec-title">${label}</span>${chkHTML}</div>`
+  );
 }
 
 /**
@@ -354,17 +356,21 @@ function cardHead(label, chkHTML, expandable) {
 function multiOptsInnerHTML(selected, fd, cfg) {
   const opts = (typeof fd.options === 'function' ? fd.options(cfg) : fd.options) || [];
   const sel = Array.isArray(selected) ? selected : [];
-  const cells = opts.map((o) => {
-    const checked = sel.indexOf(o.value) >= 0 ? ' checked' : '';
-    return `<label class="pc-mopt"><input type="checkbox" class="pc-moptchk" value="${o.value}"${checked}>${escAttr(String(o.label))}</label>`;
-  }).join('');
-  return `<div class="pc-mopstop">` +
-      `<span class="pc-mopttitle">${escAttr(fd.label || '多选')}</span>` +
-      `<span class="pc-moptacts"><button class="pc-moptall" type="button">全选</button>` +
-      `<button class="pc-moptnone" type="button">清空</button></span>` +
+  const cells = opts
+    .map((o) => {
+      const checked = sel.indexOf(o.value) >= 0 ? ' checked' : '';
+      return `<label class="pc-mopt"><input type="checkbox" class="pc-moptchk" value="${o.value}"${checked}>${escAttr(String(o.label))}</label>`;
+    })
+    .join('');
+  return (
+    `<div class="pc-mopstop">` +
+    `<span class="pc-mopttitle">${escAttr(fd.label || '多选')}</span>` +
+    `<span class="pc-moptacts"><button class="pc-moptall" type="button">全选</button>` +
+    `<button class="pc-moptnone" type="button">清空</button></span>` +
     `</div>` +
-    `<div class="pc-moptgrid"${fd.gridMin ? ` style="grid-template-columns:repeat(auto-fill,minmax(${(+fd.gridMin || 72)}px,1fr))"` : ''}>${cells || '<div class="pc-rnghint">暂无可选项</div>'}</div>` +
-    (fd.hint ? `<div class="pc-rnghint">${escAttr(fd.hint)}</div>` : '');
+    `<div class="pc-moptgrid"${fd.gridMin ? ` style="grid-template-columns:repeat(auto-fill,minmax(${+fd.gridMin || 72}px,1fr))"` : ''}>${cells || '<div class="pc-rnghint">暂无可选项</div>'}</div>` +
+    (fd.hint ? `<div class="pc-rnghint">${escAttr(fd.hint)}</div>` : '')
+  );
 }
 
 /**
@@ -378,32 +384,48 @@ function multiOptsInnerHTML(selected, fd, cfg) {
  */
 function mineRulesInnerHTML(list, fd, cfg) {
   const typeOpts = (typeof fd.options === 'function' ? fd.options(cfg) : fd.options) || [];
-  const lvOpts = (typeof fd.levelOptions === 'function' ? fd.levelOptions(cfg) : fd.levelOptions) || [];
+  const lvOpts =
+    (typeof fd.levelOptions === 'function' ? fd.levelOptions(cfg) : fd.levelOptions) || [];
   const maxStar = (typeof fd.maxStar === 'function' ? fd.maxStar(cfg) : fd.maxStar) || 5;
-  const optsHTML = (opts, sel) => opts.map((o) => `<option value="${o.value}"${Number(o.value) === sel ? ' selected' : ''}>${escAttr(String(o.label))}</option>`).join('');
-  const rows = (Array.isArray(list) ? list : []).map((r, i) => {
-    const type = Number(r.type) || 0, lv = Number(r.level) || 0, star = Number(r.star) || 0;
-    let stars = '';
-    for (let s = 1; s <= maxStar; s++) {
-      const on = s <= star;
-      stars += `<span class="pc-mrstar${on ? ' on' : ''}" data-part="star" data-star="${s}" title="${s} 星；再点当前星=不限">${on ? '★' : '☆'}</span>`;
-    }
-    return `<div class="pc-mrrow" data-midx="${i}">` +
-      `<div class="pc-mrbox">` +
+  const optsHTML = (opts, sel) =>
+    opts
+      .map(
+        (o) =>
+          `<option value="${o.value}"${Number(o.value) === sel ? ' selected' : ''}>${escAttr(String(o.label))}</option>`,
+      )
+      .join('');
+  const rows = (Array.isArray(list) ? list : [])
+    .map((r, i) => {
+      const type = Number(r.type) || 0,
+        lv = Number(r.level) || 0,
+        star = Number(r.star) || 0;
+      let stars = '';
+      for (let s = 1; s <= maxStar; s++) {
+        const on = s <= star;
+        stars += `<span class="pc-mrstar${on ? ' on' : ''}" data-part="star" data-star="${s}" title="${s} 星；再点当前星=不限">${on ? '★' : '☆'}</span>`;
+      }
+      return (
+        `<div class="pc-mrrow" data-midx="${i}">` +
+        `<div class="pc-mrbox">` +
         `<select class="pc-mrsel pc-mrtype" data-part="type" title="矿种">${optsHTML(typeOpts, type)}</select>` +
         `<select class="pc-mrsel pc-mrlv" data-part="level" title="等级">${optsHTML(lvOpts, lv)}</select>` +
         `<span class="">星级</span>` +
         `<span class="pc-mrstars" title="星级；再点当前星=不限">${stars}</span>` +
-      `</div>` +
-      `<button class="pc-mrdel" type="button" title="删除此规则">×</button>` +
-      `</div>`;
-  }).join('');
-  return `<div class="pc-mruletop">` +
-      `<span class="pc-rngtitle">${escAttr(fd.label || '采集规则')}</span>` +
-      `<button class="pc-mradd" type="button" title="添加一条规则">＋</button>` +
+        `</div>` +
+        `<button class="pc-mrdel" type="button" title="删除此规则">×</button>` +
+        `</div>`
+      );
+    })
+    .join('');
+  return (
+    `<div class="pc-mruletop">` +
+    `<span class="pc-rngtitle">${escAttr(fd.label || '采集规则')}</span>` +
+    `<button class="pc-mradd" type="button" title="添加一条规则">＋</button>` +
     `</div>` +
-    (rows || '<div class="pc-rnghint">未添加规则 = 不采集；点＋添加的行即生效，同时会暂停总开关，配好后手动重新打开</div>') +
-    (fd.hint ? `<div class="pc-rnghint">${escAttr(fd.hint)}</div>` : '');
+    (rows ||
+      '<div class="pc-rnghint">未添加规则 = 不采集；点＋添加的行即生效，同时会暂停总开关，配好后手动重新打开</div>') +
+    (fd.hint ? `<div class="pc-rnghint">${escAttr(fd.hint)}</div>` : '')
+  );
 }
 
 /**
@@ -416,33 +438,45 @@ function mineRulesInnerHTML(list, fd, cfg) {
  * @returns {string}
  */
 function farmRulesInnerHTML(list, fd) {
-  const optsHTML = (opts, sel) => (opts || []).map((o) =>
-    `<option value="${o.value}"${Number(o.value) === sel ? ' selected' : ''}>${escAttr(String(o.label))}</option>`).join('');
-  const rows = (Array.isArray(list) ? list : []).map((r, i) => {
-    const fam = Number(r.family) || 7;
-    const maxLv = fam === 16 ? 3 : 6;                    // 雷神矿田等级上限 3 级
-    const lv = Math.min(maxLv, Math.max(1, Number(r.level) || 5));
-    const levelOpts = (fd.levelOptions || []).filter((o) => Number(o.value) <= maxLv);
-    const mechApplicable = lv < 6;                        // 6 级田没有机械田
-    const mech = !!r.mechOnly && mechApplicable;
-    return `<div class="pc-frrow" data-fidx="${i}">` +
-      `<div class="pc-frmain">` +
+  const optsHTML = (opts, sel) =>
+    (opts || [])
+      .map(
+        (o) =>
+          `<option value="${o.value}"${Number(o.value) === sel ? ' selected' : ''}>${escAttr(String(o.label))}</option>`,
+      )
+      .join('');
+  const rows = (Array.isArray(list) ? list : [])
+    .map((r, i) => {
+      const fam = Number(r.family) || 7;
+      const maxLv = fam === 16 ? 3 : 6; // 雷神矿田等级上限 3 级
+      const lv = Math.min(maxLv, Math.max(1, Number(r.level) || 5));
+      const levelOpts = (fd.levelOptions || []).filter((o) => Number(o.value) <= maxLv);
+      const mechApplicable = lv < 6; // 6 级田没有机械田
+      const mech = !!r.mechOnly && mechApplicable;
+      return (
+        `<div class="pc-frrow" data-fidx="${i}">` +
+        `<div class="pc-frmain">` +
         `<div class="pc-frbox">` +
-          `<select class="pc-frsel" data-part="family" title="田类型">${optsHTML(fd.familyOptions, fam)}</select>` +
-          `<select class="pc-frsel" data-part="level" title="田等级（雷神上限 3 级；6 级田无机械田）">${optsHTML(levelOpts, lv)}</select>` +
-          `<label class="pc-frmech${mechApplicable ? '' : ' pc-frmechdis'}" title="只下机械：勾选=只看机械田（没有则本行不下、不回退普通田）；不勾选=优先机械田、机械田没有才下普通田。6 级田没有机械田"><input type="checkbox" class="pc-frmechin" data-part="mechOnly"${mech ? ' checked' : ''}${mechApplicable ? '' : ' disabled'}><span>只下机械</span></label>` +
-          `<span class="pc-frdiv" aria-hidden="true"></span>` +
-          `<select class="pc-frsel" data-part="preset" title="预设部队（1~8 战斗 / 9~16 采集）">${optsHTML(fd.presetOptions, Number(r.preset) || 1)}</select>` +
+        `<select class="pc-frsel" data-part="family" title="田类型">${optsHTML(fd.familyOptions, fam)}</select>` +
+        `<select class="pc-frsel" data-part="level" title="田等级（雷神上限 3 级；6 级田无机械田）">${optsHTML(levelOpts, lv)}</select>` +
+        `<label class="pc-frmech${mechApplicable ? '' : ' pc-frmechdis'}" title="只下机械：勾选=只看机械田（没有则本行不下、不回退普通田）；不勾选=优先机械田、机械田没有才下普通田。6 级田没有机械田"><input type="checkbox" class="pc-frmechin" data-part="mechOnly"${mech ? ' checked' : ''}${mechApplicable ? '' : ' disabled'}><span>只下机械</span></label>` +
+        `<span class="pc-frdiv" aria-hidden="true"></span>` +
+        `<select class="pc-frsel" data-part="preset" title="预设部队（1~8 战斗 / 9~16 采集）">${optsHTML(fd.presetOptions, Number(r.preset) || 1)}</select>` +
         `</div>` +
         `<button class="pc-frdel" type="button" title="删除此田位">×</button>` +
-      `</div></div>`;
-  }).join('');
-  return `<div class="pc-fruletop">` +
-      `<span class="pc-rngtitle">${escAttr(fd.label || '下田规则')}</span>` +
-      `<button class="pc-fradd" type="button" title="添加一个田位">＋</button>` +
+        `</div></div>`
+      );
+    })
+    .join('');
+  return (
+    `<div class="pc-fruletop">` +
+    `<span class="pc-rngtitle">${escAttr(fd.label || '下田规则')}</span>` +
+    `<button class="pc-fradd" type="button" title="添加一个田位">＋</button>` +
     `</div>` +
-    (rows || '<div class="pc-rnghint">未添加行 = 不下田；点＋添加的行即生效，同时会暂停总开关，配好后手动重新打开</div>') +
-    (fd.hint ? `<div class="pc-rnghint">${escAttr(fd.hint)}</div>` : '');
+    (rows ||
+      '<div class="pc-rnghint">未添加行 = 不下田；点＋添加的行即生效，同时会暂停总开关，配好后手动重新打开</div>') +
+    (fd.hint ? `<div class="pc-rnghint">${escAttr(fd.hint)}</div>` : '')
+  );
 }
 
 /**
@@ -455,26 +489,41 @@ function farmRulesInnerHTML(list, fd) {
  */
 function rangesInnerHTML(list, fd) {
   const cols = fd.cols || ['大于等于', '小于', '数值'];
-  const rngRow = (cells, ridx) => `<div class="pc-rngrow${ridx === undefined ? ' pc-rnghead' : ''}"` +
-    (ridx === undefined ? '' : ` data-ridx="${ridx}"`) + `>` +
+  const rngRow = (cells, ridx) =>
+    `<div class="pc-rngrow${ridx === undefined ? ' pc-rnghead' : ''}"` +
+    (ridx === undefined ? '' : ` data-ridx="${ridx}"`) +
+    `>` +
     `<span class="pc-rngop">[</span>${cells[0]}` +
     `<span class="pc-rngop">~</span>${cells[1]}` +
     `<span class="pc-rngop">)</span><span class="pc-rngop">→</span>${cells[2]}` +
     `${cells[3]}</div>`;
-  const rows = (Array.isArray(list) ? list : []).map((r, i) => rngRow([
-    `<input type="number" class="pc-rngn" data-part="from" min="0" step="1" value="${r.from | 0}" title="区间下界（含）">`,
-    `<input type="number" class="pc-rngn" data-part="to" min="0" step="1" value="${r.to | 0}" title="区间上界（不含）；填 0 = 不封顶">`,
-    `<input type="number" class="pc-rngn" data-part="count" min="0" step="1" value="${r.count | 0}" title="命中该区间的数值；填 0 = 该段不生效">`,
-    `<button class="pc-rngdel" type="button" title="删除此档">×</button>`,
-  ], i)).join('');
-  return `<div class="pc-rngtop">` +
-      `<span class="pc-rngtitle">${fd.label || '区间规则'}</span>` +
-      `<button class="pc-rngadd" type="button" title="增加一档">＋</button>` +
+  const rows = (Array.isArray(list) ? list : [])
+    .map((r, i) =>
+      rngRow(
+        [
+          `<input type="number" class="pc-rngn" data-part="from" min="0" step="1" value="${r.from | 0}" title="区间下界（含）">`,
+          `<input type="number" class="pc-rngn" data-part="to" min="0" step="1" value="${r.to | 0}" title="区间上界（不含）；填 0 = 不封顶">`,
+          `<input type="number" class="pc-rngn" data-part="count" min="0" step="1" value="${r.count | 0}" title="命中该区间的数值；填 0 = 该段不生效">`,
+          `<button class="pc-rngdel" type="button" title="删除此档">×</button>`,
+        ],
+        i,
+      ),
+    )
+    .join('');
+  return (
+    `<div class="pc-rngtop">` +
+    `<span class="pc-rngtitle">${fd.label || '区间规则'}</span>` +
+    `<button class="pc-rngadd" type="button" title="增加一档">＋</button>` +
     `</div>` +
-    rngRow([`<span class="pc-rnglbl">${cols[0]}</span>`, `<span class="pc-rnglbl">${cols[1]}</span>`,
-      `<span class="pc-rnglbl">${cols[2]}</span>`, `<span class="pc-rngdelcol"></span>`]) +
+    rngRow([
+      `<span class="pc-rnglbl">${cols[0]}</span>`,
+      `<span class="pc-rnglbl">${cols[1]}</span>`,
+      `<span class="pc-rnglbl">${cols[2]}</span>`,
+      `<span class="pc-rngdelcol"></span>`,
+    ]) +
     (rows || '<div class="pc-rnghint">无档位，点右上＋添加</div>') +
-    `<div class="pc-rnghint">${fd.hint || '先命中先生效；0 = 不封顶 / 不生效'}</div>`;
+    `<div class="pc-rnghint">${fd.hint || '先命中先生效；0 = 不封顶 / 不生效'}</div>`
+  );
 }
 
 /**
@@ -491,22 +540,28 @@ function uidListInnerHTML(list, fd) {
   const max = fd.max || 10;
   const ph = escAttr(fd.placeholder || '');
   const item = escAttr(fd.itemLabel || '好友');
-  const rows = arr.map((it, i) => {
-    const uidV = String((it && it.uid) || '');
-    const nmV = String((it && it.name) || '');
-    return `<div class="pc-uidwrap pc-uli" data-uidx="${i}">` +
-      `<div class="pc-row"><span>${item} ${i + 1}</span>` +
-      `<span class="pc-udisp" title="点击编辑 UID"><span class="pc-uedit">✎</span><span class="pc-uname">${escAttr(nmV || uidV)}</span></span>` +
-      `<input type="text" class="pc-uinput" inputmode="numeric" hidden placeholder="${ph}">` +
-      `<button class="pc-udel" type="button" title="删除此${item}">×</button>` +
-      `</div><div class="pc-uhint" hidden></div></div>`;
-  }).join('');
-  return `<div class="pc-ulisttop">` +
-      `<span class="pc-rngtitle">${fd.label || (item + '清单')}</span>` +
-      `<button class="pc-ulistadd" type="button" title="添加${item}"${arr.length >= max ? ' disabled' : ''}>＋</button>` +
+  const rows = arr
+    .map((it, i) => {
+      const uidV = String((it && it.uid) || '');
+      const nmV = String((it && it.name) || '');
+      return (
+        `<div class="pc-uidwrap pc-uli" data-uidx="${i}">` +
+        `<div class="pc-row"><span>${item} ${i + 1}</span>` +
+        `<span class="pc-udisp" title="点击编辑 UID"><span class="pc-uedit">✎</span><span class="pc-uname">${escAttr(nmV || uidV)}</span></span>` +
+        `<input type="text" class="pc-uinput" inputmode="numeric" hidden placeholder="${ph}">` +
+        `<button class="pc-udel" type="button" title="删除此${item}">×</button>` +
+        `</div><div class="pc-uhint" hidden></div></div>`
+      );
+    })
+    .join('');
+  return (
+    `<div class="pc-ulisttop">` +
+    `<span class="pc-rngtitle">${fd.label || item + '清单'}</span>` +
+    `<button class="pc-ulistadd" type="button" title="添加${item}"${arr.length >= max ? ' disabled' : ''}>＋</button>` +
     `</div>` +
     (rows || `<div class="pc-rnghint">无${item}，点右上＋添加</div>`) +
-    `<div class="pc-rnghint">${fd.hint || ('最多 ' + max + ' 个；点＋添加，×删除')}</div>`;
+    `<div class="pc-rnghint">${fd.hint || '最多 ' + max + ' 个；点＋添加，×删除'}</div>`
+  );
 }
 
 /**
@@ -527,27 +582,33 @@ function mountUidList(box) {
   const arr = c[fd.key];
   const max = fd.max || 10;
 
-  const rerender = () => { box.innerHTML = uidListInnerHTML(arr, fd); mountUidList(box); };
+  const rerender = () => {
+    box.innerHTML = uidListInnerHTML(arr, fd);
+    mountUidList(box);
+  };
 
   // ＋ / ×：结构性改动后整块重刷（索引会变，故重绑而非逐控件）
   const add = box.querySelector('.pc-ulistadd');
-  if (add) add.addEventListener('click', (e) => {
-    e.stopPropagation();
-    if (arr.length >= max) return;
-    arr.push({ uid: '', name: '' });
-    rerender();
-    const rows = box.querySelectorAll('.pc-uli');
-    const last = rows[rows.length - 1];
-    if (last && last.__pcEnterEdit) last.__pcEnterEdit();
-    saveFeature(f); applyFeature(f);
-  });
+  if (add)
+    add.addEventListener('click', (e) => {
+      e.stopPropagation();
+      if (arr.length >= max) return;
+      arr.push({ uid: '', name: '' });
+      rerender();
+      const rows = box.querySelectorAll('.pc-uli');
+      const last = rows[rows.length - 1];
+      if (last && last.__pcEnterEdit) last.__pcEnterEdit();
+      saveFeature(f);
+      applyFeature(f);
+    });
   box.querySelectorAll('.pc-udel').forEach((btn) => {
     btn.addEventListener('click', (e) => {
       e.stopPropagation();
       const i = +btn.closest('.pc-uli').dataset.uidx;
       if (i >= 0 && i < arr.length) arr.splice(i, 1);
       rerender();
-      saveFeature(f); applyFeature(f);
+      saveFeature(f);
+      applyFeature(f);
     });
   });
 
@@ -567,10 +628,16 @@ function sortListLabel(fd, id) {
     if (fd && typeof fd.resolve === 'function') {
       const items = fd.resolve(id);
       if (Array.isArray(items) && items.length) {
-        return items.map((it) => (it && (it.name || ('#' + it.id))) + (it && it.count > 1 ? ' ×' + it.count : '')).join('、');
+        return items
+          .map(
+            (it) => (it && (it.name || '#' + it.id)) + (it && it.count > 1 ? ' ×' + it.count : ''),
+          )
+          .join('、');
       }
     }
-  } catch (e) { /* 符号缺失/解析异常 → 回退原值 */ }
+  } catch (e) {
+    /* 符号缺失/解析异常 → 回退原值 */
+  }
   return String(id);
 }
 
@@ -585,25 +652,33 @@ function sortListInnerHTML(list, fd, offArr) {
   const arr = Array.isArray(list) ? list : [];
   const checkable = !!(fd && fd.checkable);
   const offSet = new Set(checkable && Array.isArray(offArr) ? offArr.map(String) : []);
-  const rows = arr.map((id, i) => {
-    const label = sortListLabel(fd, id);
-    const isOff = checkable && offSet.has(String(id));
-    const chk = checkable
-      ? `<input type="checkbox" class="pc-scheck" data-sc="${escAttr(String(id))}"${isOff ? '' : ' checked'}>`
-      : '';
-    return `<div class="pc-srow${isOff ? ' pc-srowoff' : ''}" data-sidx="${i}" data-skey="${escAttr(String(id))}">` +
-      `<span class="pc-shandle" title="按住拖拽调整顺序">⣿</span>` +
-      chk +
-      `<span class="pc-srank">${i + 1}</span>` +
-      `<span class="pc-sname" title="${escAttr(label)}">${escAttr(label)}</span>` +
-      `</div>`;
-  }).join('');
-  return `<div class="pc-slisttop">` +
-      `<span class="pc-rngtitle">${escAttr(fd.label || '领取优先级')}</span>` +
-      `<span class="pc-rnghint">拖动调整顺序</span>` +
+  const rows = arr
+    .map((id, i) => {
+      const label = sortListLabel(fd, id);
+      const isOff = checkable && offSet.has(String(id));
+      const chk = checkable
+        ? `<input type="checkbox" class="pc-scheck" data-sc="${escAttr(String(id))}"${isOff ? '' : ' checked'}>`
+        : '';
+      return (
+        `<div class="pc-srow${isOff ? ' pc-srowoff' : ''}" data-sidx="${i}" data-skey="${escAttr(String(id))}">` +
+        `<span class="pc-shandle" title="按住拖拽调整顺序">⣿</span>` +
+        chk +
+        `<span class="pc-srank">${i + 1}</span>` +
+        `<span class="pc-sname" title="${escAttr(label)}">${escAttr(label)}</span>` +
+        `</div>`
+      );
+    })
+    .join('');
+  return (
+    `<div class="pc-slisttop">` +
+    `<span class="pc-rngtitle">${escAttr(fd.label || '领取优先级')}</span>` +
+    `<span class="pc-rnghint">拖动调整顺序</span>` +
     `</div>` +
-    `<div class="pc-srows">` + (rows || '<div class="pc-rnghint">礼品池为空</div>') + `</div>` +
-    `<div class="pc-rnghint">${escAttr(fd.hint || '拖动调整顺序，顺序靠前优先领取')}</div>`;
+    `<div class="pc-srows">` +
+    (rows || '<div class="pc-rnghint">礼品池为空</div>') +
+    `</div>` +
+    `<div class="pc-rnghint">${escAttr(fd.hint || '拖动调整顺序，顺序靠前优先领取')}</div>`
+  );
 }
 
 /**
@@ -619,17 +694,22 @@ function mountSortList(box) {
   if (!f) return;
   const fd = f.fields.find((x) => x.key === box.dataset.skey);
   if (!fd) return;
-  if (box.__pcSDragging) return;   // 拖拽进行中：跳过重刷，避免 ui.refresh 摧毁被拖行
+  if (box.__pcSDragging) return; // 拖拽进行中：跳过重刷，避免 ui.refresh 摧毁被拖行
   const c = configs[fid];
-  if (!Array.isArray(c[fd.key])) c[fd.key] = Array.isArray(f.defaults[fd.key]) ? f.defaults[fd.key].slice() : [];
+  if (!Array.isArray(c[fd.key]))
+    c[fd.key] = Array.isArray(f.defaults[fd.key]) ? f.defaults[fd.key].slice() : [];
   else if (c[fd.key] === f.defaults[fd.key]) c[fd.key] = c[fd.key].slice();
   const arr = c[fd.key];
   // 可选全量源 fd.all（数组或 fn(cfg)）：把全量里当前 order 数组缺失的项追加到末尾——
   //   解决「功能新增了可排序项、但老用户存档的 order 不含它 → 面板这一行不显示」。
   //   未声明 fd.all 的 sortlist（遗迹奖励/卡车）保持原样，向后兼容。
   if (fd.all != null) {
-    const full = (typeof fd.all === 'function') ? fd.all(c) : fd.all;
-    if (Array.isArray(full)) { for (let ai = 0; ai < full.length; ai++) { if (arr.indexOf(full[ai]) < 0) arr.push(full[ai]); } }
+    const full = typeof fd.all === 'function' ? fd.all(c) : fd.all;
+    if (Array.isArray(full)) {
+      for (let ai = 0; ai < full.length; ai++) {
+        if (arr.indexOf(full[ai]) < 0) arr.push(full[ai]);
+      }
+    }
   }
   if (fd.checkable && (!Array.isArray(c[fd.offKey]) || c[fd.offKey] === f.defaults[fd.offKey])) {
     c[fd.offKey] = Array.isArray(f.defaults[fd.offKey]) ? f.defaults[fd.offKey].slice() : [];
@@ -644,50 +724,73 @@ function mountSortList(box) {
   // 拖拽中就地更新序号（不整块重刷，保住被拖的行节点）
   const refreshRanks = () => {
     rowEls().forEach((r, i) => {
-      const rk = r.querySelector('.pc-srank'); if (rk) rk.textContent = i + 1;
+      const rk = r.querySelector('.pc-srank');
+      if (rk) rk.textContent = i + 1;
     });
   };
   // 松手收尾：按当前 DOM 顺序回写 arr → 清拖拽标志 → 重刷 + 重绑 → 持久化热更（configure 即重建优先级 Map，下一轮生效）
   const commitFromDom = () => {
-    const order = rowEls().map((r) => { const k = r.dataset.skey; return valByStr.has(k) ? valByStr.get(k) : (isFinite(+k) ? +k : k); });
-    arr.length = 0; order.forEach((v) => arr.push(v));
+    const order = rowEls().map((r) => {
+      const k = r.dataset.skey;
+      return valByStr.has(k) ? valByStr.get(k) : isFinite(+k) ? +k : k;
+    });
+    arr.length = 0;
+    order.forEach((v) => arr.push(v));
     box.__pcSDragging = false;
     box.innerHTML = sortListInnerHTML(arr, fd, offArr());
     bind();
-    saveFeature(f); applyFeature(f);
+    saveFeature(f);
+    applyFeature(f);
   };
 
   const onRowDown = (e) => {
-    if (e.target && e.target.classList && e.target.classList.contains('pc-scheck')) return;   // 勾选框点击不触发起拖拽
+    if (e.target && e.target.classList && e.target.classList.contains('pc-scheck')) return; // 勾选框点击不触发起拖拽
     if (e.pointerType === 'mouse' && e.button !== 0) return;
     const row = e.currentTarget;
-    const wrap = rowsWrap(); if (!wrap) return;
+    const wrap = rowsWrap();
+    if (!wrap) return;
     e.preventDefault();
     box.__pcSDragging = true;
-    const pid = e.pointerId, startY = e.clientY;
+    const pid = e.pointerId,
+      startY = e.clientY;
     let moved = false;
-    try { row.setPointerCapture(pid); } catch (err) { /* 不支持则靠 window 冒泡兑底 */ }
+    try {
+      row.setPointerCapture(pid);
+    } catch (err) {
+      /* 不支持则靠 window 冒泡兑底 */
+    }
     const onMove = (ev) => {
       if (!moved) {
         if (Math.abs(ev.clientY - startY) < 4) return;
-        moved = true; row.classList.add('pc-sdragging'); wrap.classList.add('pc-sgrabbing');
+        moved = true;
+        row.classList.add('pc-sdragging');
+        wrap.classList.add('pc-sgrabbing');
       }
       ev.preventDefault();
       const others = rowEls().filter((r) => r !== row);
       let placed = false;
       for (const r of others) {
         const rect = r.getBoundingClientRect();
-        if (ev.clientY < rect.top + rect.height / 2) { wrap.insertBefore(row, r); placed = true; break; }
+        if (ev.clientY < rect.top + rect.height / 2) {
+          wrap.insertBefore(row, r);
+          placed = true;
+          break;
+        }
       }
       if (!placed) wrap.appendChild(row);
       refreshRanks();
     };
     const onUp = () => {
-      try { row.releasePointerCapture(pid); } catch (err) { /* ignore */ }
+      try {
+        row.releasePointerCapture(pid);
+      } catch (err) {
+        /* ignore */
+      }
       window.removeEventListener('pointermove', onMove);
       window.removeEventListener('pointerup', onUp);
       window.removeEventListener('pointercancel', onUp);
-      row.classList.remove('pc-sdragging'); wrap.classList.remove('pc-sgrabbing');
+      row.classList.remove('pc-sdragging');
+      wrap.classList.remove('pc-sgrabbing');
       if (moved) commitFromDom();
       else box.__pcSDragging = false;
     };
@@ -698,7 +801,9 @@ function mountSortList(box) {
   };
 
   const bind = () => {
-    box.querySelectorAll('.pc-srows .pc-srow').forEach((row) => row.addEventListener('pointerdown', onRowDown));
+    box
+      .querySelectorAll('.pc-srows .pc-srow')
+      .forEach((row) => row.addEventListener('pointerdown', onRowDown));
     // checkable 行首勾选框：切换该物品是否参与匹配（off 集按 itemId 存，与拖拽 order 解耦），改动即重刷 + 存档 + 热更
     if (fd.checkable) {
       box.querySelectorAll('.pc-srows .pc-scheck').forEach((chk) => {
@@ -707,11 +812,15 @@ function mountSortList(box) {
           const idStr = chk.dataset.sc;
           const off = c[fd.offKey];
           const at = off.map(String).indexOf(idStr);
-          if (chk.checked) { if (at !== -1) off.splice(at, 1); }
-          else if (at === -1) { off.push(isFinite(+idStr) ? +idStr : idStr); }
+          if (chk.checked) {
+            if (at !== -1) off.splice(at, 1);
+          } else if (at === -1) {
+            off.push(isFinite(+idStr) ? +idStr : idStr);
+          }
           box.innerHTML = sortListInnerHTML(arr, fd, off);
           bind();
-          saveFeature(f); applyFeature(f);
+          saveFeature(f);
+          applyFeature(f);
         });
       });
     }
@@ -765,33 +874,57 @@ function setupUidListRow(wrap, f, arr) {
     input.focus();
   }
 
-  disp.addEventListener('click', (e) => { e.stopPropagation(); enterEdit(); });
+  disp.addEventListener('click', (e) => {
+    e.stopPropagation();
+    enterEdit();
+  });
   input.addEventListener('click', (e) => e.stopPropagation());
   input.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') { e.preventDefault(); input.blur(); }
-    else if (e.key === 'Escape') { e.preventDefault(); lastBad = null; renderDisplay(); }
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      input.blur();
+    } else if (e.key === 'Escape') {
+      e.preventDefault();
+      lastBad = null;
+      renderDisplay();
+    }
   });
   input.addEventListener('blur', async () => {
-    if (!wrap.isConnected) return;         // 容器已重刷，丢弃
+    if (!wrap.isConnected) return; // 容器已重刷，丢弃
     const it = item();
     const oldUid = String(it.uid || '');
     const val = input.value.trim();
-    if (val === '') {                       // 清空：提交空 UID/名字，不查
+    if (val === '') {
+      // 清空：提交空 UID/名字，不查
       lastBad = null;
-      if (oldUid || it.name) { it.uid = ''; it.name = ''; saveFeature(f); applyFeature(f); }
+      if (oldUid || it.name) {
+        it.uid = '';
+        it.name = '';
+        saveFeature(f);
+        applyFeature(f);
+      }
       renderDisplay();
       return;
     }
-    if (val === oldUid) { lastBad = null; renderDisplay(); return; }   // 未变，不查
-    if (val === lastBad) { failEdit(hint.textContent || '玩家不存在，请检查 UID'); return; }
+    if (val === oldUid) {
+      lastBad = null;
+      renderDisplay();
+      return;
+    } // 未变，不查
+    if (val === lastBad) {
+      failEdit(hint.textContent || '玩家不存在，请检查 UID');
+      return;
+    }
     input.disabled = true;
     nameEl.textContent = '查询中…';
     const res = await lookupPlayerName(val);
-    if (!wrap.isConnected) return;          // 面板已重刷，丢弃回写
+    if (!wrap.isConnected) return; // 面板已重刷，丢弃回写
     if (res.ok) {
       lastBad = null;
-      it.uid = val; it.name = res.name || '';
-      saveFeature(f); applyFeature(f);
+      it.uid = val;
+      it.name = res.name || '';
+      saveFeature(f);
+      applyFeature(f);
       renderDisplay();
     } else {
       lastBad = val;
@@ -810,7 +943,11 @@ function setupUidListRow(wrap, f, arr) {
  * @returns {string}
  */
 function escAttr(s) {
-  return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  return String(s == null ? '' : s)
+    .replace(/&/g, '&amp;')
+    .replace(/"/g, '&quot;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
 }
 
 /** @type {number} RequestId.PLAYER_INFO（同 chat-window 口径），按 uid 查玩家基础信息，应答 d.playerInfo 为内层 JSON 串 */
@@ -823,7 +960,11 @@ const CMD_PLAYER_INFO = 630;
  */
 function parseMaybe(s) {
   if (typeof s !== 'string' || !s) return s;
-  try { return JSON.parse(s); } catch (e) { return s; }
+  try {
+    return JSON.parse(s);
+  } catch (e) {
+    return s;
+  }
 }
 
 /**
@@ -872,13 +1013,13 @@ function setupUidField(wrap) {
   const input = wrap.querySelector('.pc-uinput');
   const hint = wrap.querySelector('.pc-uhint');
   const cur = () => configs[fid] || {};
-  let lastBad = null;   // 同一无效值不重复查
+  let lastBad = null; // 同一无效值不重复查
 
   function renderDisplay() {
     const c = cur();
     const v = String(c[nkey] || c[ukey] || '');
     nameEl.textContent = v || input.placeholder || '未设置';
-    nameEl.classList.toggle('pc-uempty', !v);   // 空值显占位提示（弱化），非空显玩家名/UID
+    nameEl.classList.toggle('pc-uempty', !v); // 空值显占位提示（弱化），非空显玩家名/UID
     disp.hidden = false;
     input.hidden = true;
     input.disabled = false;
@@ -902,33 +1043,61 @@ function setupUidField(wrap) {
     input.focus();
   }
 
-  disp.addEventListener('click', (e) => { e.stopPropagation(); enterEdit(); });
+  disp.addEventListener('click', (e) => {
+    e.stopPropagation();
+    enterEdit();
+  });
   input.addEventListener('click', (e) => e.stopPropagation());
   input.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') { e.preventDefault(); input.blur(); }
-    else if (e.key === 'Escape') { e.preventDefault(); lastBad = null; renderDisplay(); }
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      input.blur();
+    } else if (e.key === 'Escape') {
+      e.preventDefault();
+      lastBad = null;
+      renderDisplay();
+    }
   });
   input.addEventListener('blur', async () => {
     const c = cur();
     const f = findFeature(fid);
     const oldUid = String(c[ukey] || '');
     const val = input.value.trim();
-    if (val === '') {                       // 清空：提交空 UID/名字，不查
+    if (val === '') {
+      // 清空：提交空 UID/名字，不查
       lastBad = null;
-      if (oldUid || c[nkey]) { c[ukey] = ''; c[nkey] = ''; if (f) { saveFeature(f); applyFeature(f); } }
+      if (oldUid || c[nkey]) {
+        c[ukey] = '';
+        c[nkey] = '';
+        if (f) {
+          saveFeature(f);
+          applyFeature(f);
+        }
+      }
       renderDisplay();
       return;
     }
-    if (val === oldUid) { lastBad = null; renderDisplay(); return; }   // 未变，不查
-    if (val === lastBad) { failEdit(hint.textContent || '玩家不存在，请检查 UID'); return; }   // 同一无效值不重查
+    if (val === oldUid) {
+      lastBad = null;
+      renderDisplay();
+      return;
+    } // 未变，不查
+    if (val === lastBad) {
+      failEdit(hint.textContent || '玩家不存在，请检查 UID');
+      return;
+    } // 同一无效值不重查
     input.disabled = true;
     nameEl.textContent = '查询中…';
     const res = await lookupPlayerName(val);
-    if (!wrap.isConnected) return;          // 面板已重建，丢弃回写
+    if (!wrap.isConnected) return; // 面板已重建，丢弃回写
     if (res.ok) {
       lastBad = null;
-      c[ukey] = val; c[nkey] = res.name || '';
-      if (f) { saveFeature(f); applyFeature(f); }
+      c[ukey] = val;
+      c[nkey] = res.name || '';
+      if (f) {
+        saveFeature(f);
+        applyFeature(f);
+      }
       renderDisplay();
     } else {
       lastBad = val;
@@ -953,89 +1122,138 @@ function buildFieldsHTML(fid, f) {
   // 单字段 → HTML（不含分组标题）；分组标题与可折叠包裹由下方循环统一处理
   const fieldHTML = (fd) => {
     if (fd.type === 'checkbox') {
-      return `<label class="pc-row"><span>${fd.label}</span>` +
-        `<input type="checkbox" class="pc-fchk" data-id="${fid}" data-key="${fd.key}" ${c[fd.key] ? 'checked' : ''}></label>`;
+      return (
+        `<label class="pc-row"><span>${fd.label}</span>` +
+        `<input type="checkbox" class="pc-fchk" data-id="${fid}" data-key="${fd.key}" ${c[fd.key] ? 'checked' : ''}></label>`
+      );
     }
     if (fd.type === 'text') {
       const v = fd.get ? String(fd.get(c)) : '';
       if (fd.multiline && fd.inline) {
         // 同行多行变体（如卡车「今日刷新 / 今日攻击」）：标签与值同一行、值靠右 pre-line 换行，顶对齐使首行与标签齐平
-        return `<div class="pc-row pc-rowtop"><span>${fd.label}</span>` +
-          `<span class="pc-fval pc-fvalhl" data-fid="${fid}" data-fkey="${fd.key}">${v}</span></div>`;
+        return (
+          `<div class="pc-row pc-rowtop"><span>${fd.label}</span>` +
+          `<span class="pc-fval pc-fvalhl" data-fid="${fid}" data-fkey="${fd.key}">${v}</span></div>`
+        );
       }
       if (fd.multiline) {
         // 多行只读值（如「今日进度」一长串统计）：标签在上、值整行，pre-line 保留 \n 换行不截断
-        return `<div class="pc-row pc-rowcol"><span>${fd.label}</span>` +
-          `<span class="pc-fval pc-fvalml" data-fid="${fid}" data-fkey="${fd.key}">${v}</span></div>`;
+        return (
+          `<div class="pc-row pc-rowcol"><span>${fd.label}</span>` +
+          `<span class="pc-fval pc-fvalml" data-fid="${fid}" data-fkey="${fd.key}">${v}</span></div>`
+        );
       }
-      return `<label class="pc-row"><span>${fd.label}</span>` +
-        `<span class="pc-fval" data-fid="${fid}" data-fkey="${fd.key}">${v}</span></label>`;
+      return (
+        `<label class="pc-row"><span>${fd.label}</span>` +
+        `<span class="pc-fval" data-fid="${fid}" data-fkey="${fd.key}">${v}</span></label>`
+      );
     }
     if (fd.type === 'select') {
       const cur = String(c[fd.key]);
-      const opts = (fd.options || []).map((o) =>
-        `<option value="${o.value}"${String(o.value) === cur ? ' selected' : ''}>${o.label}</option>`).join('');
-      return `<label class="pc-row"><span>${fd.label}</span>` +
-        `<select class="pc-fsel" data-id="${fid}" data-key="${fd.key}">${opts}</select></label>`;
+      const opts = (fd.options || [])
+        .map(
+          (o) =>
+            `<option value="${o.value}"${String(o.value) === cur ? ' selected' : ''}>${o.label}</option>`,
+        )
+        .join('');
+      return (
+        `<label class="pc-row"><span>${fd.label}</span>` +
+        `<select class="pc-fsel" data-id="${fid}" data-key="${fd.key}">${opts}</select></label>`
+      );
     }
     if (fd.type === 'string') {
       // 可编辑文本字段（如城市技能目标 UID）：按字符串存档，change 时 trim 落盘 + 热更
-      return `<label class="pc-row"><span>${fd.label}</span>` +
-        `<input type="text" class="pc-fstr" data-id="${fid}" data-key="${fd.key}" placeholder="${escAttr(fd.placeholder)}" value="${escAttr(c[fd.key])}"></label>`;
+      return (
+        `<label class="pc-row"><span>${fd.label}</span>` +
+        `<input type="text" class="pc-fstr" data-id="${fid}" data-key="${fd.key}" placeholder="${escAttr(fd.placeholder)}" value="${escAttr(c[fd.key])}"></label>`
+      );
     }
     if (fd.type === 'uid') {
       // UID 复合行（城市技能）：显示态「✎ 玩家名」点击转输入态，失焦用 PLAYER_INFO(630) 反查名字。
       // 名字随 UID 一起持久化(fd.nameKey)，开面板直接显缓存名、零查询；仅 UID 变了才查。失败留框+红字不提交。
       const uidV = String(c[fd.key] || '');
       const nmV = String(c[fd.nameKey] || '');
-      return `<div class="pc-uidwrap" data-id="${fid}" data-ukey="${fd.key}" data-nkey="${fd.nameKey}" data-ekey="${fd.enableKey}">` +
+      return (
+        `<div class="pc-uidwrap" data-id="${fid}" data-ukey="${fd.key}" data-nkey="${fd.nameKey}" data-ekey="${fd.enableKey}">` +
         `<div class="pc-row"><span>${fd.label}</span>` +
         `<span class="pc-udisp" title="点击编辑 UID"><span class="pc-uedit">✎</span><span class="pc-uname">${escAttr(nmV || uidV)}</span></span>` +
         `<input type="text" class="pc-uinput" inputmode="numeric" hidden placeholder="${escAttr(fd.placeholder)}">` +
         `<input type="checkbox" class="pc-fchk" data-id="${fid}" data-key="${fd.enableKey}" ${c[fd.enableKey] ? 'checked' : ''}>` +
-        `</div><div class="pc-uhint" hidden></div></div>`;
+        `</div><div class="pc-uhint" hidden></div></div>`
+      );
     }
     if (fd.type === 'ranges') {
       // 区间规则占整行（不套 pc-row）：容器带 fid/key，行内控件靠 closest('.pc-rng') 回属
-      return `<div class="pc-rng" data-id="${fid}" data-rkey="${fd.key}">` + rangesInnerHTML(c[fd.key], fd) + `</div>`;
+      return (
+        `<div class="pc-rng" data-id="${fid}" data-rkey="${fd.key}">` +
+        rangesInnerHTML(c[fd.key], fd) +
+        `</div>`
+      );
     }
     if (fd.type === 'uidlist') {
       // 好友清单（玩家点赞）：动态增删的 UID 行，整行返回（不套 pc-row），容器带 fid/key 供 mountUidList 重绑
-      return `<div class="pc-ulist" data-id="${fid}" data-akey="${fd.key}">` + uidListInnerHTML(c[fd.key], fd) + `</div>`;
+      return (
+        `<div class="pc-ulist" data-id="${fid}" data-akey="${fd.key}">` +
+        uidListInnerHTML(c[fd.key], fd) +
+        `</div>`
+      );
     }
     if (fd.type === 'sortlist') {
       // 领取优先级清单（遗迹奖励/卡车目标物品）：整池奖励行不可增删只能拖拽调序，容器带 fid/key 供 mountSortList 重刷+重绑
-      return `<div class="pc-slist" data-id="${fid}" data-skey="${fd.key}">` + sortListInnerHTML(c[fd.key], fd, fd.checkable ? c[fd.offKey] : undefined) + `</div>`;
+      return (
+        `<div class="pc-slist" data-id="${fid}" data-skey="${fd.key}">` +
+        sortListInnerHTML(c[fd.key], fd, fd.checkable ? c[fd.offKey] : undefined) +
+        `</div>`
+      );
     }
     if (fd.type === 'multiopts') {
       // 多选开关组（次元矿洞矿种/卡车品级）：整行返回，选项由 fd.options(cfg) 动态求值
-      return `<div class="pc-mopts" data-id="${fid}" data-mkey="${fd.key}">` + multiOptsInnerHTML(c[fd.key], fd, c) + `</div>`;
+      return (
+        `<div class="pc-mopts" data-id="${fid}" data-mkey="${fd.key}">` +
+        multiOptsInnerHTML(c[fd.key], fd, c) +
+        `</div>`
+      );
     }
     if (fd.type === 'minerules') {
       // 采集规则（次元矿洞）：整行返回（不套 pc-row），行可增删，容器带 fid/key 供委托与重刷
-      return `<div class="pc-mrule" data-id="${fid}" data-mrkey="${fd.key}">` + mineRulesInnerHTML(c[fd.key], fd, c) + `</div>`;
+      return (
+        `<div class="pc-mrule" data-id="${fid}" data-mrkey="${fd.key}">` +
+        mineRulesInnerHTML(c[fd.key], fd, c) +
+        `</div>`
+      );
     }
     if (fd.type === 'farmrules') {
       // 下田规则（自动下田）：整行返回，田位行可增删，容器带 fid/key 供委托与重刷（同 minerules）
-      return `<div class="pc-frule" data-id="${fid}" data-frkey="${fd.key}">` + farmRulesInnerHTML(c[fd.key], fd) + `</div>`;
+      return (
+        `<div class="pc-frule" data-id="${fid}" data-frkey="${fd.key}">` +
+        farmRulesInnerHTML(c[fd.key], fd) +
+        `</div>`
+      );
     }
     if (fd.type === 'button') {
       // 动作按钮（如卡车拦截「刷新我方战力」）：整行一个 .pc-btn，点击回调 fd.onClick(cfg)，不写配置不触发折叠
       return `<button class="pc-btn pc-fbtn" type="button" data-id="${fid}" data-bkey="${fd.key}">${fd.label}</button>`;
     }
-    return `<label class="pc-row"><span>${fd.label}</span>` +
-      `<input type="number" data-id="${fid}" data-key="${fd.key}" min="${fd.min}" step="${fd.step}" placeholder="${escAttr(fd.placeholder || '')}" value="${c[fd.key]}"></label>`;
+    return (
+      `<label class="pc-row"><span>${fd.label}</span>` +
+      `<input type="number" data-id="${fid}" data-key="${fd.key}" min="${fd.min}" step="${fd.step}" placeholder="${escAttr(fd.placeholder || '')}" value="${c[fd.key]}"></label>`
+    );
   };
   let lastSection;
-  let bodyOpen = false;   // 当前是否有一个可折叠子分组的 body 处于打开（待闭合）状态
+  let bodyOpen = false; // 当前是否有一个可折叠子分组的 body 处于打开（待闭合）状态
   const out = [];
   for (const fd of f.fields) {
     if (fd.section && fd.section !== lastSection) {
-      if (bodyOpen) { out.push('</div>'); bodyOpen = false; }   // 闭合上一个折叠体
+      if (bodyOpen) {
+        out.push('</div>');
+        bodyOpen = false;
+      } // 闭合上一个折叠体
       if (fd.secCollapsible) {
         // 可折叠子分组（如卡车拦截「拦截判定」）：标题行带箭头可点，其后字段包进 .pc-fsec-body（secCollapsed 默认收起）
         const collapsed = !!fd.secCollapsed;
-        out.push(`<div class="pc-fsec pc-fsectoggle${collapsed ? '' : ' open'}"><span class="pc-fsecchev">▶</span><span>${fd.section}</span></div>`);
+        out.push(
+          `<div class="pc-fsec pc-fsectoggle${collapsed ? '' : ' open'}"><span class="pc-fsecchev">▶</span><span>${fd.section}</span></div>`,
+        );
         out.push(`<div class="pc-fsec-body"${collapsed ? ' hidden' : ''}>`);
         bodyOpen = true;
       } else {
@@ -1046,7 +1264,14 @@ function buildFieldsHTML(fid, f) {
     const html = fieldHTML(fd);
     // 条件字段（fd.showIf(cfg)）：不改 fieldHTML 各分支，只在行根补一个 data-dep 标记（值=字段 key，
     //   data-depfid=功能 id），显隐交 refreshFieldVisibility 就地切 hidden —— 不重建 DOM，已绑好的控件事件全部存活
-    out.push(fd.showIf ? html.replace(/<([a-zA-Z][\w-]*)/, `<$1 data-dep="${escAttr(fd.key)}" data-depfid="${fid}"`) : html);
+    out.push(
+      fd.showIf
+        ? html.replace(
+            /<([a-zA-Z][\w-]*)/,
+            `<$1 data-dep="${escAttr(fd.key)}" data-depfid="${fid}"`,
+          )
+        : html,
+    );
   }
   if (bodyOpen) out.push('</div>');
   return out.join('');
@@ -1065,14 +1290,25 @@ function refreshFieldVisibility(root) {
     if (!f) return;
     const fd = f.fields.find((x) => x.key === el.dataset.dep);
     if (!fd || !fd.showIf) return;
-    let on = true;
-    try { on = !!fd.showIf(configs[f.id]); } catch (e) { on = true; }
+    let on;
+    try {
+      on = !!fd.showIf(configs[f.id]);
+    } catch (e) {
+      on = true;
+    }
     if (el.hidden !== !on) el.hidden = !on;
   });
   root.querySelectorAll('.pc-fsec[data-sec]').forEach((head) => {
     let visible = false;
-    for (let n = head.nextElementSibling; n && !n.classList.contains('pc-fsec'); n = n.nextElementSibling) {
-      if (!n.hasAttribute('data-dep') || !n.hidden) { visible = true; break; }   // 无条件字段或还有未隐的条件字段
+    for (
+      let n = head.nextElementSibling;
+      n && !n.classList.contains('pc-fsec');
+      n = n.nextElementSibling
+    ) {
+      if (!n.hasAttribute('data-dep') || !n.hidden) {
+        visible = true;
+        break;
+      } // 无条件字段或还有未隐的条件字段
     }
     head.hidden = !visible;
   });
@@ -1086,21 +1322,26 @@ function refreshFieldVisibility(root) {
 function renderGroupCard(node) {
   const gc = configs[node.id] || { enabled: false };
   const chk = `<input type="checkbox" class="pc-gen" data-gid="${node.id}" ${gc.enabled ? 'checked' : ''}>`;
-  const rows = (node.children || []).map((ch) => {
-    const c = configs[ch.id] || { enabled: false };
-    const f = findFeature(ch.id);
-    const head = `<label class="pc-row"><span>${ch.label || (f && f.label) || ch.id}</span>` +
-      `<input type="checkbox" class="pc-en" data-id="${ch.id}" ${c.enabled ? 'checked' : ''}></label>`;
-    // 组内子项一般只出 checkbox；若个别子项声明了 showFields，则紧随其开关行展开该功能的详细字段（通用备用能力），
-    //   number/checkbox 控件由 wirePanel 的全局面板委托统一接好（按 data-id 定位功能），无需在此单独绑定
-    if (ch.showFields && f && f.fields && f.fields.length) {
-      return head + `<div class="pc-subfields">${buildFieldsHTML(ch.id, f)}</div>`;
-    }
-    return head;
-  }).join('');
-  return `<div class="pc-sec" data-gid="${node.id}">` +
+  const rows = (node.children || [])
+    .map((ch) => {
+      const c = configs[ch.id] || { enabled: false };
+      const f = findFeature(ch.id);
+      const head =
+        `<label class="pc-row"><span>${ch.label || (f && f.label) || ch.id}</span>` +
+        `<input type="checkbox" class="pc-en" data-id="${ch.id}" ${c.enabled ? 'checked' : ''}></label>`;
+      // 组内子项一般只出 checkbox；若个别子项声明了 showFields，则紧随其开关行展开该功能的详细字段（通用备用能力），
+      //   number/checkbox 控件由 wirePanel 的全局面板委托统一接好（按 data-id 定位功能），无需在此单独绑定
+      if (ch.showFields && f && f.fields && f.fields.length) {
+        return head + `<div class="pc-subfields">${buildFieldsHTML(ch.id, f)}</div>`;
+      }
+      return head;
+    })
+    .join('');
+  return (
+    `<div class="pc-sec" data-gid="${node.id}">` +
     cardHead(node.label, chk, true) +
-    `<div class="pc-sec-body" hidden>${rows || '<div class="pc-empty">无子项</div>'}</div></div>`;
+    `<div class="pc-sec-body" hidden>${rows || '<div class="pc-empty">无子项</div>'}</div></div>`
+  );
 }
 
 /**
@@ -1117,8 +1358,10 @@ function renderFeatureCard(node) {
   const head = cardHead(node.label || (f && f.label) || fid, chk, expandable);
   if (!expandable) return `<div class="pc-sec" data-fid="${fid}">${head}</div>`;
   const fields = buildFieldsHTML(fid, f);
-  return `<div class="pc-sec" data-fid="${fid}">${head}` +
-    `<div class="pc-sec-body" hidden>${fields || '<div class="pc-empty">无可调参数</div>'}</div></div>`;
+  return (
+    `<div class="pc-sec" data-fid="${fid}">${head}` +
+    `<div class="pc-sec-body" hidden>${fields || '<div class="pc-empty">无可调参数</div>'}</div></div>`
+  );
 }
 
 /**
@@ -1131,21 +1374,31 @@ function renderFeatureCard(node) {
 function renderHotkeysCard(node) {
   const items = hotkeyList();
   const row = function (h) {
-    return `<div class="pc-hkrow"><span class="pc-hkk"><kbd>${escAttr(h.display)}</kbd></span>` +
+    return (
+      `<div class="pc-hkrow"><span class="pc-hkk"><kbd>${escAttr(h.display)}</kbd></span>` +
       `<span class="pc-hkl">${escAttr(h.label)}</span>` +
-      (h.where ? `<span class="pc-hkw">${escAttr(h.where)}</span>` : '') + `</div>`;
+      (h.where ? `<span class="pc-hkw">${escAttr(h.where)}</span>` : '') +
+      `</div>`
+    );
   };
   // 分组顺序固定：全局/浮层开关在前，游戏内操作在后；group 缺省归 game
-  const groups = [['global', '全局 · 浮层开关'], ['game', '游戏内操作']];
+  const groups = [
+    ['global', '全局 · 浮层开关'],
+    ['game', '游戏内操作'],
+  ];
   let body = '';
   groups.forEach(function (g) {
-    const rows = items.filter(function (h) { return (h.group || 'game') === g[0]; });
+    const rows = items.filter(function (h) {
+      return (h.group || 'game') === g[0];
+    });
     if (!rows.length) return;
     body += `<div class="pc-hkgrp">${escAttr(g[1])}</div>` + rows.map(row).join('');
   });
-  return `<div class="pc-sec open" data-hk="1">` +
+  return (
+    `<div class="pc-sec open" data-hk="1">` +
     cardHead(node.label || '快捷键一览', '', true) +
-    `<div class="pc-sec-body">${body || '<div class="pc-empty">暂无快捷键</div>'}</div></div>`;
+    `<div class="pc-sec-body">${body || '<div class="pc-empty">暂无快捷键</div>'}</div></div>`
+  );
 }
 
 /** @type {string} 挂「登出 / 换号」按钮的类别 id（账号级操作，归入系统设置） */
@@ -1157,9 +1410,17 @@ const LOGOUT_PANE_ID = 'system';
  * @returns {string}
  */
 function renderCategoryPane(cat, active) {
-  const cards = (cat.children || []).map((n) => (n.kind === 'group' ? renderGroupCard(n) : n.kind === 'hotkeys' ? renderHotkeysCard(n) : renderFeatureCard(n))).join('');
-  const extra = cat.id === LOGOUT_PANE_ID
-    ? `<button class="pc-btn" id="pc-logout">登出 / 换号</button>` : '';
+  const cards = (cat.children || [])
+    .map((n) =>
+      n.kind === 'group'
+        ? renderGroupCard(n)
+        : n.kind === 'hotkeys'
+          ? renderHotkeysCard(n)
+          : renderFeatureCard(n),
+    )
+    .join('');
+  const extra =
+    cat.id === LOGOUT_PANE_ID ? `<button class="pc-btn" id="pc-logout">登出 / 换号</button>` : '';
   return `<div class="pc-pane" data-pane="${cat.id}"${active ? '' : ' hidden'}>${cards || '<div class="pc-empty">无内容</div>'}${extra}</div>`;
 }
 
@@ -1168,8 +1429,10 @@ function renderCategoryPane(cat, active) {
  * @returns {string}
  */
 function buildPanelHTML() {
-  const tabs = MENU.map((c, i) =>
-    `<button class="pc-tab${i === 0 ? ' active' : ''}" data-tab="${c.id}">${c.label}</button>`).join('');
+  const tabs = MENU.map(
+    (c, i) =>
+      `<button class="pc-tab${i === 0 ? ' active' : ''}" data-tab="${c.id}">${c.label}</button>`,
+  ).join('');
   const panes = MENU.map((c, i) => renderCategoryPane(c, i === 0)).join('');
   return `
       <h3>口袋控制中心<span class="pc-sub">POCKETCC</span></h3>
@@ -1209,9 +1472,11 @@ function syncControls(panel) {
     const c = configs[cb.dataset.id];
     if (c) cb.checked = !!c.enabled;
   });
-  panel.querySelectorAll('input.pc-fchk').forEach((cb) => { cb.checked = !!configs[cb.dataset.id][cb.dataset.key]; });
+  panel.querySelectorAll('input.pc-fchk').forEach((cb) => {
+    cb.checked = !!configs[cb.dataset.id][cb.dataset.key];
+  });
   panel.querySelectorAll('input[type=number]').forEach((input) => {
-    if (!input.dataset.id) return;   // 区间规则行内的数字格靠 data-part 定位，不占 data-id/data-key
+    if (!input.dataset.id) return; // 区间规则行内的数字格靠 data-part 定位，不占 data-id/data-key
     const v = configs[input.dataset.id][input.dataset.key];
     if (v !== undefined) input.value = v;
   });
@@ -1225,7 +1490,9 @@ function syncControls(panel) {
   });
   // UID 复合行：若当前处于显示态，按最新 configs 回写名字/UID（输入态下不打断用户编辑）
   // 好友清单的行（.pc-uli）不在此列：它们随下方 .pc-ulist 整块重刷，避免重复回写
-  panel.querySelectorAll('.pc-uidwrap').forEach((w) => { if (!w.classList.contains('pc-uli') && w.__pcUidRefresh) w.__pcUidRefresh(); });
+  panel.querySelectorAll('.pc-uidwrap').forEach((w) => {
+    if (!w.classList.contains('pc-uli') && w.__pcUidRefresh) w.__pcUidRefresh();
+  });
   // 区间规则：整块重刷内层（行数可增可减，不能只回写值）
   panel.querySelectorAll('.pc-rng').forEach((box) => {
     const f = findFeature(box.dataset.id);
@@ -1337,19 +1604,31 @@ export async function mountUI() {
   document.body.appendChild(host);
 
   wirePanel(panel);
-  refreshFieldVisibility(panel);   // 条件字段（fd.showIf）初始态：按当前配置把不该出现的行收起
+  refreshFieldVisibility(panel); // 条件字段（fd.showIf）初始态：按当前配置把不该出现的行收起
 
   // 战斗模式复选框随模式广播同步（含下面的 F8 热键切换，避免图标翻了但面板未跟着变）
-  bus.on('mode.change', () => { const cb = panel.querySelector('#pc-combat'); if (cb) cb.checked = isCombat(); });
+  bus.on('mode.change', () => {
+    const cb = panel.querySelector('#pc-combat');
+    if (cb) cb.checked = isCombat();
+  });
   // F8 热键：战斗 / 日常 切换（setCombatMode 广播 mode.change → 图标/复选框/reactor 门控重算自动跟进）。
   // 必须用 window 捕获阶段（capture:true）：游戏自己也会处理 keydown 并在冒泡阶段 stopPropagation，
   // 导致面板收起（焦点在画布）时挂 document 冒泡监听收不到；捕获阶段先于游戏处理且不受焦点/stopPropagation 影响。
-  window.addEventListener('keydown', (e) => {
-    if (e.key === 'F8') { e.preventDefault(); setCombatMode(!isCombat()); }
-  }, true);
+  window.addEventListener(
+    'keydown',
+    (e) => {
+      if (e.key === 'F8') {
+        e.preventDefault();
+        setCombatMode(!isCombat());
+      }
+    },
+    true,
+  );
 
   // 功能侧主动推面板刷新（如联盟集结今日计数 +1）；emit 同步，open 时才扫 DOM
-  bus.on('ui.refresh', function () { if (!panel.hidden) refreshTexts(panel); });
+  bus.on('ui.refresh', function () {
+    if (!panel.hidden) refreshTexts(panel);
+  });
 
   let pos = await readIconPos();
   applyPos(pos);
@@ -1409,9 +1688,15 @@ export async function mountUI() {
   }
 
   /** 展开面板并刷一次只读字段 */
-  function openPanel() { placePanel(); panel.hidden = false; refreshTexts(panel); }
+  function openPanel() {
+    placePanel();
+    panel.hidden = false;
+    refreshTexts(panel);
+  }
   /** 收起面板 */
-  function closePanel() { panel.hidden = true; }
+  function closePanel() {
+    panel.hidden = true;
+  }
 
   let dragging = false;
   let moved = false;
@@ -1453,11 +1738,15 @@ export async function mountUI() {
   });
 
   // 点击外部收起：shadow DOM 内事件在 document 上 target 被重定向为 host
-  document.addEventListener('click', (e) => {
-    if (panel.hidden) return;
-    if (e.target === host || host.contains(e.target)) return;
-    closePanel();
-  }, true);
+  document.addEventListener(
+    'click',
+    (e) => {
+      if (panel.hidden) return;
+      if (e.target === host || host.contains(e.target)) return;
+      closePanel();
+    },
+    true,
+  );
 }
 
 // ─────────────────────── 面板交互 ───────────────────────
@@ -1469,10 +1758,14 @@ export async function mountUI() {
  */
 function findMenuNode(id) {
   let hit = null;
-  const walk = (nodes) => nodes.some((n) => {
-    if (n.id === id) { hit = n; return true; }
-    return !!(n.children && walk(n.children));
-  });
+  const walk = (nodes) =>
+    nodes.some((n) => {
+      if (n.id === id) {
+        hit = n;
+        return true;
+      }
+      return !!(n.children && walk(n.children));
+    });
   walk(MENU);
   return hit;
 }
@@ -1499,7 +1792,9 @@ function wirePanel(panel) {
     tab.addEventListener('click', () => {
       const id = tab.dataset.tab;
       panel.querySelectorAll('.pc-tab').forEach((t) => t.classList.toggle('active', t === tab));
-      panel.querySelectorAll('.pc-pane').forEach((p) => { p.hidden = p.dataset.pane !== id; });
+      panel.querySelectorAll('.pc-pane').forEach((p) => {
+        p.hidden = p.dataset.pane !== id;
+      });
       const pane = panel.querySelector(`.pc-pane[data-pane="${id}"]`);
       if (pane) refreshTexts(pane);
     });
@@ -1539,7 +1834,10 @@ function wirePanel(panel) {
     cb.addEventListener('change', () => {
       const gid = cb.dataset.gid;
       const gc = configs[gid];
-      if (!gc) { logCore.warn('group config missing: %s', gid); return; }
+      if (!gc) {
+        logCore.warn('group config missing: %s', gid);
+        return;
+      }
       gc.enabled = cb.checked;
       saveGroup(gid);
       const node = findMenuNode(gid);
@@ -1554,7 +1852,9 @@ function wirePanel(panel) {
       }
       const sec = cb.closest('.pc-sec');
       if (sec) syncFeatureChecks(sec);
-      logCore.info(`group ${gid} ${cb.checked ? 'enabled' : 'disabled'} (cascade ${ids.length} features)`);
+      logCore.info(
+        `group ${gid} ${cb.checked ? 'enabled' : 'disabled'} (cascade ${ids.length} features)`,
+      );
     });
   });
 
@@ -1563,7 +1863,10 @@ function wirePanel(panel) {
     cb.addEventListener('click', (e) => e.stopPropagation());
     cb.addEventListener('change', () => {
       const f = findFeature(cb.dataset.id);
-      if (!f || !configs[f.id]) { logCore.warn('feature not registered: %s', cb.dataset.id); return; }
+      if (!f || !configs[f.id]) {
+        logCore.warn('feature not registered: %s', cb.dataset.id);
+        return;
+      }
       configs[f.id].enabled = cb.checked;
       configs[f.id].intentEnabled = cb.checked;
       saveFeature(f);
@@ -1609,7 +1912,8 @@ function wirePanel(panel) {
       const f = findFeature(sel.dataset.id);
       if (!f) return;
       const fd = f.fields.find((x) => x.key === sel.dataset.key);
-      const opts = (typeof fd.options === 'function' ? fd.options(configs[f.id]) : fd.options) || [];
+      const opts =
+        (typeof fd.options === 'function' ? fd.options(configs[f.id]) : fd.options) || [];
       const hit = opts.find((o) => String(o.value) === sel.value);
       let v = hit ? hit.value : parseInt(sel.value, 10);
       if (!hit && isNaN(v)) v = f.defaults[fd.key];
@@ -1628,9 +1932,19 @@ function wirePanel(panel) {
       if (!f) return;
       const fd = f.fields.find((x) => x.key === btn.dataset.bkey);
       if (!fd || typeof fd.onClick !== 'function') return;
-      const restore = () => { if (btn.isConnected) { btn.disabled = false; btn.textContent = fd.label; } };
-      btn.disabled = true; btn.textContent = fd.busyText || '处理中…';
-      try { Promise.resolve(fd.onClick(configs[f.id])).then(restore, restore); } catch (err) { restore(); }
+      const restore = () => {
+        if (btn.isConnected) {
+          btn.disabled = false;
+          btn.textContent = fd.label;
+        }
+      };
+      btn.disabled = true;
+      btn.textContent = fd.busyText || '处理中…';
+      try {
+        Promise.resolve(fd.onClick(configs[f.id])).then(restore, restore);
+      } catch (err) {
+        restore();
+      }
     });
   });
 
@@ -1652,7 +1966,9 @@ function wirePanel(panel) {
   // UID 复合行（type:'uid'，城市技能）：装配显示态↔输入态切换 + 失焦反查名字（见 setupUidField）。
   // 行内勾选框是 .pc-fchk，已由上面的通用处理器接好；这里只管输入控件的状态机。
   // 好友清单的行（.pc-uli）走下方 mountUidList 单独装配，此处排除。
-  panel.querySelectorAll('.pc-uidwrap').forEach((w) => { if (!w.classList.contains('pc-uli')) setupUidField(w); });
+  panel.querySelectorAll('.pc-uidwrap').forEach((w) => {
+    if (!w.classList.contains('pc-uli')) setupUidField(w);
+  });
 
   // 好友清单字段（type:'uidlist'，玩家点赞）：逐容器装配（行状态机 + ＋/× 增删，见 mountUidList）。
   panel.querySelectorAll('.pc-ulist').forEach(mountUidList);
@@ -1723,7 +2039,7 @@ function wirePanel(panel) {
     } else {
       const last = t.list[t.list.length - 1];
       // 新档默认接在上一档上界（首档从 0 起），不封顶且枚数 0 = 先占位不捐，避免误发
-      t.list.push({ from: last ? (last.to | 0) : 0, to: 0, count: 0 });
+      t.list.push({ from: last ? last.to | 0 : 0, to: 0, count: 0 });
     }
     t.box.innerHTML = rangesInnerHTML(t.list, t.fd);
     saveFeature(t.f);
@@ -1803,7 +2119,8 @@ function wirePanel(panel) {
     if (idx < 0 || idx >= t.list.length) return;
     const part = el.dataset.part === 'level' ? 'level' : 'type';
     t.list[idx][part] = parseInt(el.value, 10) || 0;
-    saveFeature(t.f); applyFeature(t.f);
+    saveFeature(t.f);
+    applyFeature(t.f);
   });
   // 星级★点选（再点当前星=不限）/ 增删行：结构性或视觉变化后整块重刷
   panel.addEventListener('click', (e) => {
@@ -1817,7 +2134,7 @@ function wirePanel(panel) {
       const idx = mrIdx(star);
       if (idx < 0 || idx >= t.list.length) return;
       const s = +star.dataset.star || 0;
-      t.list[idx].star = (t.list[idx].star === s) ? 0 : s;
+      t.list[idx].star = t.list[idx].star === s ? 0 : s;
     } else if (del) {
       const idx = mrIdx(del);
       if (idx >= 0 && idx < t.list.length) t.list.splice(idx, 1);
@@ -1826,9 +2143,16 @@ function wirePanel(panel) {
       // 添加行会把本功能总开关关闭（新行未配好即生效会误采），配好后由用户手动重新打开。
       const topts = (typeof t.fd.options === 'function' ? t.fd.options(t.cfg) : t.fd.options) || [];
       const first = topts.find((o) => Number(o.value) > 0);
-      const lopts = (typeof t.fd.levelOptions === 'function' ? t.fd.levelOptions(t.cfg) : t.fd.levelOptions) || [];
-      let maxLv = 0; for (const o of lopts) { const v = Number(o.value) || 0; if (v > maxLv) maxLv = v; }
-      const maxStar = (typeof t.fd.maxStar === 'function' ? t.fd.maxStar(t.cfg) : t.fd.maxStar) || 5;
+      const lopts =
+        (typeof t.fd.levelOptions === 'function' ? t.fd.levelOptions(t.cfg) : t.fd.levelOptions) ||
+        [];
+      let maxLv = 0;
+      for (const o of lopts) {
+        const v = Number(o.value) || 0;
+        if (v > maxLv) maxLv = v;
+      }
+      const maxStar =
+        (typeof t.fd.maxStar === 'function' ? t.fd.maxStar(t.cfg) : t.fd.maxStar) || 5;
       t.list.push({ type: first ? Number(first.value) : 0, level: maxLv, star: maxStar });
       // 加行即暂停总开关：清 enabled/intentEnabled，回写卡片勾选与组级联（新行未配好即生效会误采）
       const c = configs[t.f.id];
@@ -1842,7 +2166,8 @@ function wirePanel(panel) {
       }
     }
     t.box.innerHTML = mineRulesInnerHTML(t.list, t.fd, t.cfg);
-    saveFeature(t.f); applyFeature(t.f);
+    saveFeature(t.f);
+    applyFeature(t.f);
   });
 
   // 下田规则字段（type:'farmrules'，自动下田）：田类型/田等级/预设部队下拉 + ☑只下机械田开关，行可增删，
@@ -1874,7 +2199,8 @@ function wirePanel(panel) {
       const idx = frIdx(el);
       if (idx < 0 || idx >= t.list.length) return;
       t.list[idx].mechOnly = !!el.checked;
-      saveFeature(t.f); applyFeature(t.f);
+      saveFeature(t.f);
+      applyFeature(t.f);
       return;
     }
     if (!el.classList.contains('pc-frsel')) return;
@@ -1891,7 +2217,8 @@ function wirePanel(panel) {
       if ((Number(row.level) || 0) >= 6) row.mechOnly = false;
       t.box.innerHTML = farmRulesInnerHTML(t.list, t.fd);
     }
-    saveFeature(t.f); applyFeature(t.f);
+    saveFeature(t.f);
+    applyFeature(t.f);
   });
   // 增删行：行存在即生效（已无行级开关）。新行默认金矿 5 级、不勾「只下机械」、预设 1（战斗预设）。
   // 添加行会把「自动下田」总开关关闭（新行未配好即生效会派错兵），配好后由用户手动重新打开。
@@ -1918,7 +2245,8 @@ function wirePanel(panel) {
       }
     }
     t.box.innerHTML = farmRulesInnerHTML(t.list, t.fd);
-    saveFeature(t.f); applyFeature(t.f);
+    saveFeature(t.f);
+    applyFeature(t.f);
   });
 
   // 战斗模式总开关：翻态即广播 mode.change（reactor 重算门控、图标换态）。不持久化，默认日常。

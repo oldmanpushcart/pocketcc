@@ -16,17 +16,18 @@ import { scene } from '../../core/game-api.js';
 const log = createLog('SCENE_TOGGLE');
 
 bind({
-    id: 'sceneToggle',
-    keys: ['KeyH'],
-    display: 'H',
-    label: '基地 ↔ 大世界',
-    where: '基地/大世界',
-    scenes: ['Home', 'NWorldMap'],
-    handler: function () {
-        var r = scene.toggleHomeWorld();
-        if (r.ok) log.info('toggled. now scene=%s', scene.name());
-        else if (r.err === 'wrongscene') log.debug('not in home/world scene, ignore. scene=%s', r.scene);
-        else log.warn('toggle home/world failed. err=%s', r.err);
-        return true;
-    },
+  id: 'sceneToggle',
+  keys: ['KeyH'],
+  display: 'H',
+  label: '基地 ↔ 大世界',
+  where: '基地/大世界',
+  scenes: ['Home', 'NWorldMap'],
+  handler: function () {
+    var r = scene.toggleHomeWorld();
+    if (r.ok) log.info('toggled. now scene=%s', scene.name());
+    else if (r.err === 'wrongscene')
+      log.debug('not in home/world scene, ignore. scene=%s', r.scene);
+    else log.warn('toggle home/world failed. err=%s', r.err);
+    return true;
+  },
 });

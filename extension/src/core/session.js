@@ -52,8 +52,12 @@ const RELOAD_MAX = 3;
  */
 function readReloadLog() {
   const now = Date.now();
-  let records = [];
-  try { records = JSON.parse(sessionStorage.getItem(RELOAD_LOG_KEY) || '[]'); } catch (e) { records = []; }
+  let records;
+  try {
+    records = JSON.parse(sessionStorage.getItem(RELOAD_LOG_KEY) || '[]');
+  } catch (e) {
+    records = [];
+  }
   return records.filter((t) => now - t < RELOAD_WINDOW_MS);
 }
 
@@ -86,7 +90,10 @@ let connectingSince = 0;
 
 /** 取消已排队的延迟刷新 */
 function cancelReload() {
-  if (reloadTimer) { clearTimeout(reloadTimer); reloadTimer = null; }
+  if (reloadTimer) {
+    clearTimeout(reloadTimer);
+    reloadTimer = null;
+  }
 }
 
 /**
@@ -101,7 +108,9 @@ function scheduleReload(reason, immediate) {
   if (!rc.enabled) return;
   if (reloadTimer) return;
   if (!allowReload()) {
-    logNet.info('reload limit reached within window, auto-reconnect halted, manual action required');
+    logNet.info(
+      'reload limit reached within window, auto-reconnect halted, manual action required',
+    );
     return;
   }
   const delay = immediate ? 0 : rc.intervalSec * 1000;
@@ -115,7 +124,10 @@ function scheduleReload(reason, immediate) {
 
 /** 解除连接超时定时器 */
 function disarmConnectTimeout() {
-  if (connectTimer) { clearTimeout(connectTimer); connectTimer = null; }
+  if (connectTimer) {
+    clearTimeout(connectTimer);
+    connectTimer = null;
+  }
 }
 
 /** 挂连接超时定时器：到点仍在连接中即判卡死 */
@@ -188,11 +200,14 @@ function startLivenessWatch() {
     const rc = configs.reconnect;
     if (!rc.enabled) return;
     const disconnected = net.states !== CONNECTED;
-    const trafficStale = (Date.now() - net.lastReceiveTime) > rc.connectTimeoutSec * 1000;
+    const trafficStale = Date.now() - net.lastReceiveTime > rc.connectTimeoutSec * 1000;
     if (disconnected || trafficStale) {
       if (!stuckSince) stuckSince = Date.now();
       else if (Date.now() - stuckSince > rc.connectTimeoutSec * 1000) {
-        scheduleReload(disconnected ? `socket-not-connected(states=${net.states})` : 'no-server-traffic', true);
+        scheduleReload(
+          disconnected ? `socket-not-connected(states=${net.states})` : 'no-server-traffic',
+          true,
+        );
       }
     } else {
       stuckSince = 0;
@@ -217,7 +232,10 @@ export function watchLoginSuccess() {
     logNet.info('LOGIN_SUCCESS captured');
     resetReloadLog(); // 会话恢复健康，清零重连计数
     setHealthy('login-success');
-    if (!livenessStarted) { livenessStarted = true; startLivenessWatch(); }
+    if (!livenessStarted) {
+      livenessStarted = true;
+      startLivenessWatch();
+    }
   };
   conn.connect();
 }

@@ -78,7 +78,7 @@ var mirror = null;
  * @returns {boolean}
  */
 function aliveFn() {
-    return ctxRef ? ctxRef.alive() : false;
+  return ctxRef ? ctxRef.alive() : false;
 }
 
 // ── 状态判定 ──────────────────────────────────────────────────────────
@@ -87,11 +87,11 @@ function aliveFn() {
  * @returns {{times:number, rewardTime:number}|null} 两边都拿不到返回 null
  */
 function effectiveState() {
-    var u = gameData.timeReward();
-    if (!u) return mirror;
-    if (mirror && mirror.rewardTime > u.rewardTime) return mirror;
-    mirror = null;
-    return u;
+  var u = gameData.timeReward();
+  if (!u) return mirror;
+  if (mirror && mirror.rewardTime > u.rewardTime) return mirror;
+  mirror = null;
+  return u;
 }
 
 /**
@@ -99,14 +99,14 @@ function effectiveState() {
  * @returns {{state:string, waitMs?:number, times?:number}}
  */
 function readyInfo() {
-    var t = effectiveState();
-    if (!t) return { state: 'idle' };
-    var row = l10n.tableRow(TABLE_ONLINE_REWARD, t.times + 1);
-    var intervalSec = row ? Number(row.time) || 0 : 0;
-    if (!(intervalSec > 0)) return { state: 'capped', times: t.times };
-    var leftSec = intervalSec - (gameData.serverTime() - t.rewardTime);
-    if (leftSec <= 0) return { state: 'ready', times: t.times };
-    return { state: 'wait', waitMs: leftSec * 1000, times: t.times };
+  var t = effectiveState();
+  if (!t) return { state: 'idle' };
+  var row = l10n.tableRow(TABLE_ONLINE_REWARD, t.times + 1);
+  var intervalSec = row ? Number(row.time) || 0 : 0;
+  if (!(intervalSec > 0)) return { state: 'capped', times: t.times };
+  var leftSec = intervalSec - (gameData.serverTime() - t.rewardTime);
+  if (leftSec <= 0) return { state: 'ready', times: t.times };
+  return { state: 'wait', waitMs: leftSec * 1000, times: t.times };
 }
 
 /**
@@ -114,10 +114,10 @@ function readyInfo() {
  * @returns {number} 毫秒
  */
 function dayRollDelay() {
-    var now = new Date();
-    var next = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1, 0, 0, 0, 0);
-    var ms = next.getTime() - now.getTime() + DAY_ROLL_BUFFER_MS;
-    return Math.min(Math.max(ms, IDLE_TICK_MS), 1000 * 60 * 60 * 26);
+  var now = new Date();
+  var next = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1, 0, 0, 0, 0);
+  var ms = next.getTime() - now.getTime() + DAY_ROLL_BUFFER_MS;
+  return Math.min(Math.max(ms, IDLE_TICK_MS), 1000 * 60 * 60 * 26);
 }
 
 /**
@@ -126,9 +126,9 @@ function dayRollDelay() {
  * @returns {number} 毫秒
  */
 function delayFor(info) {
-    if (info.state === 'wait') return Math.min(info.waitMs + READY_BUFFER_MS, WAIT_CAP_MS);
-    if (info.state === 'capped') return dayRollDelay();
-    return rejectStreak >= 3 ? IDLE_TICK_MS * 2 : IDLE_TICK_MS;
+  if (info.state === 'wait') return Math.min(info.waitMs + READY_BUFFER_MS, WAIT_CAP_MS);
+  if (info.state === 'capped') return dayRollDelay();
+  return rejectStreak >= 3 ? IDLE_TICK_MS * 2 : IDLE_TICK_MS;
 }
 
 // ── 发包 ──────────────────────────────────────────────────────────────
@@ -138,47 +138,52 @@ function delayFor(info) {
  * @returns {Promise<{claimed:boolean, code:number}>}
  */
 async function claimOnce(times) {
-    if (net.isSending(CMD_GET_TIME_REWARD)) return { claimed: false, code: CODE_NOT_SENT };
-    var ret;
-    try {
-        ret = await net.send(CMD_GET_TIME_REWARD, {});
-    } catch (err) {
-        log.debug('cmd 825 send failed: %s', err && err.message);
-        return { claimed: false, code: CODE_NOT_SENT };
-    }
-    var code = ret ? ret.code : CODE_NOT_SENT;
-    if (!ret || !ret.ok) return { claimed: false, code: code };
-    var d = null;
-    try { d = typeof ret.data === 'string' ? JSON.parse(ret.data) : ret.data; } catch (e) { d = null; }
-    // 镜像优先取应答回写的 timeReward；缺则按「now + times+1」兜底，保证下一拍不误判仍可领
-    var tr = d && d.timeReward;
-    if (tr && Number(tr.rewardTime) > 0) {
-        mirror = { times: Number(tr.times) || times + 1, rewardTime: Number(tr.rewardTime) };
-    } else {
-        mirror = { times: times + 1, rewardTime: gameData.serverTime() };
-    }
-    rejectStreak = 0;
-    var gold = d && d.reward && d.reward.resource ? Number(d.reward.resource.gold) || 0 : 0;
-    log.info('daily supply claimed (#%d), gold=%s.', mirror.times, gold);
-    return { claimed: true, code: code };
+  if (net.isSending(CMD_GET_TIME_REWARD)) return { claimed: false, code: CODE_NOT_SENT };
+  var ret;
+  try {
+    ret = await net.send(CMD_GET_TIME_REWARD, {});
+  } catch (err) {
+    log.debug('cmd 825 send failed: %s', err && err.message);
+    return { claimed: false, code: CODE_NOT_SENT };
+  }
+  var code = ret ? ret.code : CODE_NOT_SENT;
+  if (!ret || !ret.ok) return { claimed: false, code: code };
+  var d;
+  try {
+    d = typeof ret.data === 'string' ? JSON.parse(ret.data) : ret.data;
+  } catch (e) {
+    d = null;
+  }
+  // 镜像优先取应答回写的 timeReward；缺则按「now + times+1」兜底，保证下一拍不误判仍可领
+  var tr = d && d.timeReward;
+  if (tr && Number(tr.rewardTime) > 0) {
+    mirror = { times: Number(tr.times) || times + 1, rewardTime: Number(tr.rewardTime) };
+  } else {
+    mirror = { times: times + 1, rewardTime: gameData.serverTime() };
+  }
+  rejectStreak = 0;
+  var gold = d && d.reward && d.reward.resource ? Number(d.reward.resource.gold) || 0 : 0;
+  log.info('daily supply claimed (#%d), gold=%s.', mirror.times, gold);
+  return { claimed: true, code: code };
 }
 
 // ── 主流程 ────────────────────────────────────────────────────────────
 /** cycle 单轮：判态 → 非 ready 纯本地择时（零发包）→ ready 领一拍 → 按新态排下拍。next-check 日志由 cycle 驱动器统一输出。 */
 async function cycleRun() {
-    var info = readyInfo();
-    if (info.state !== 'ready') {
-        if (info.state === 'capped') log.info('daily supply capped at #%d; sleep to day roll.', info.times);
-        return delayFor(info);
-    }
-    var res = await claimOnce(info.times);
-    if (!aliveFn()) return 0;
-    if (!res.claimed) {
-        rejectStreak++;
-        log.warn('claim rejected (streak #%d). code=%s', rejectStreak, res.code);
-    }
-    // 领成功后按新态排下拍（间隔由表驱动逐档变长）；next-check 时刻交由驱动器统一打印
-    return delayFor(readyInfo());
+  var info = readyInfo();
+  if (info.state !== 'ready') {
+    if (info.state === 'capped')
+      log.info('daily supply capped at #%d; sleep to day roll.', info.times);
+    return delayFor(info);
+  }
+  var res = await claimOnce(info.times);
+  if (!aliveFn()) return 0;
+  if (!res.claimed) {
+    rejectStreak++;
+    log.warn('claim rejected (streak #%d). code=%s', rejectStreak, res.code);
+  }
+  // 领成功后按新态排下拍（间隔由表驱动逐档变长）；next-check 时刻交由驱动器统一打印
+  return delayFor(readyInfo());
 }
 
 const cycle = createCycle({ log: log, alive: aliveFn, run: cycleRun, fallback: IDLE_TICK_MS });
@@ -189,15 +194,15 @@ const cycle = createCycle({ log: log, alive: aliveFn, run: cycleRun, fallback: I
  * @returns {boolean}
  */
 function install(ctx) {
-    ctxRef = ctx;
-    net = ctx.net;
-    if (!net || !net.install()) {
-        log.warn('install failed: pocketcc.net unavailable');
-        net = null;
-        return false;
-    }
-    log.info('installed.');
-    return true;
+  ctxRef = ctx;
+  net = ctx.net;
+  if (!net || !net.install()) {
+    log.warn('install failed: pocketcc.net unavailable');
+    net = null;
+    return false;
+  }
+  log.info('installed.');
+  return true;
 }
 
 /**
@@ -205,11 +210,11 @@ function install(ctx) {
  * @param {object} ctx reactor 上下文
  */
 function run(ctx) {
-    ctxRef = ctx;
-    rejectStreak = 0;
-    mirror = null;
-    log.info('started.');
-    cycle.kick();
+  ctxRef = ctx;
+  rejectStreak = 0;
+  mirror = null;
+  log.info('started.');
+  cycle.kick();
 }
 
 /**
@@ -217,15 +222,17 @@ function run(ctx) {
  * 日常任务形态——面板只出启用开关，无字段无配置（封顶/未到点均为内置钟算口径）。
  */
 reactor.register({
-    id: 'dailySupply',
-    label: '每日补给',
-    storageKey: 'pocketcc.feat.dailySupply',
-    symbols: ['dataCenter', 'tableManager'],
-    scenes: ['Home', 'NWorldMap'],
-    offInCombat: false,
-    defaults: { enabled: false },
-    fields: [],
-    toModuleCfg: function () { return {}; },
-    install: install,
-    run: run,
+  id: 'dailySupply',
+  label: '每日补给',
+  storageKey: 'pocketcc.feat.dailySupply',
+  symbols: ['dataCenter', 'tableManager'],
+  scenes: ['Home', 'NWorldMap'],
+  offInCombat: false,
+  defaults: { enabled: false },
+  fields: [],
+  toModuleCfg: function () {
+    return {};
+  },
+  install: install,
+  run: run,
 });

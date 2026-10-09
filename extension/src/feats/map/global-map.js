@@ -79,9 +79,17 @@ function refreshBucket(vk) {
   const running = scanner.isRunning();
   const bm = mapStore.bucketMeta(vk || 0);
   const n = mapStore.size(vk || 0);
-  overlay.setProgress({ done: bm.done ? (total || 0) : 0, total: total || 0, running }, `已存 ${n} 点`);
+  overlay.setProgress(
+    { done: bm.done ? total || 0 : 0, total: total || 0, running },
+    `已存 ${n} 点`,
+  );
   if (running) overlay.setStatus(`扫描中 · 已存 ${n} 点`);
-  else if (bm.ts) overlay.setStatus(`区 ${vk || '?'} 数据时间 ` + new Date(bm.ts).toLocaleString() + (mapStore.isFresh(vk || 0, cfg.ttlHours) ? '' : ' · 建议重扫'));
+  else if (bm.ts)
+    overlay.setStatus(
+      `区 ${vk || '?'} 数据时间 ` +
+        new Date(bm.ts).toLocaleString() +
+        (mapStore.isFresh(vk || 0, cfg.ttlHours) ? '' : ' · 建议重扫'),
+    );
   else overlay.setStatus(vk ? '本区尚无数据，点「开始扫描」' : '尚无数据，点「开始扫描」');
 }
 
@@ -113,7 +121,10 @@ function onViewChange(k) {
   if (nk === lastVk) return;
   if (scanner.isRunning()) {
     scanner.stop();
-    if (overlay) { overlay.setProgress(scanner.progress(), `已存 ${mapStore.size(nk)} 点`); overlay.toast('已切区，扫描停止'); }
+    if (overlay) {
+      overlay.setProgress(scanner.progress(), `已存 ${mapStore.size(nk)} 点`);
+      overlay.toast('已切区，扫描停止');
+    }
   }
   applyView(nk);
   if (overlay) overlay.toast(nk ? '视角切到 区 ' + nk : '视角服号未知，维持当前已载入区的数据');
@@ -125,11 +136,19 @@ function onViewChange(k) {
 function startVkPoll() {
   if (pollTimer) return;
   pollTimer = setInterval(() => {
-    try { const vk = activeVk(); if (vk && vk !== lastVk) onViewChange(vk); } catch (e) { }
+    try {
+      const vk = activeVk();
+      if (vk && vk !== lastVk) onViewChange(vk);
+    } catch (e) {}
   }, 2000);
 }
 /** 停轮询 */
-function stopVkPoll() { if (pollTimer) { clearInterval(pollTimer); pollTimer = null; } }
+function stopVkPoll() {
+  if (pollTimer) {
+    clearInterval(pollTimer);
+    pollTimer = null;
+  }
+}
 
 /** 护盾过滤激活期：每分钟重建实体缓存（护盾随时间流逝跨档，否则筛出的「剩余 ≤ 阈值」会僵住不更新）。 */
 function startShieldTimer() {
@@ -141,7 +160,12 @@ function startShieldTimer() {
   }, 60000);
 }
 /** 停护盾重建定时器 */
-function stopShieldTimer() { if (shieldTimer) { clearInterval(shieldTimer); shieldTimer = null; } }
+function stopShieldTimer() {
+  if (shieldTimer) {
+    clearInterval(shieldTimer);
+    shieldTimer = null;
+  }
+}
 
 /**
  * 刷新右侧坐标列表（仅列表展开时工作）：当前桶实体套用与渲染层同一套图例/归属过滤，
@@ -161,19 +185,22 @@ function refreshList() {
   const out = [];
   let total = 0;
   for (const e of mapStore.entities.values()) {
-    const evk = e.vk != null ? e.vk : (e.k != null ? e.k : 0);
+    const evk = e.vk != null ? e.vk : e.k != null ? e.k : 0;
     if (vk && evk !== vk) continue;
     if (!playerPass(e, { shieldMode, shieldMs, levelMin }, now)) continue; // 玩家筛选：护盾有/无+剩余上限 & 等级≥（未开启全放）
     const sub = classifyPoint(e, cx1);
     let color, label;
     if (sub) {
       if (subs && !subs.has(sub.key)) continue;
-      color = sub.color; label = sub.label;
+      color = sub.color;
+      label = sub.label;
     } else {
       if (!view.showOther) continue;
-      color = '#8a93a6'; label = '类型 ' + e.pointType;
+      color = '#8a93a6';
+      label = '类型 ' + e.pointType;
     }
-    if (ownerMode !== 'all') { // 与 render._rebuildEntities 同一套归属判定
+    if (ownerMode !== 'all') {
+      // 与 render._rebuildEntities 同一套归属判定
       const owned = e.oid != null && e.oid !== 0;
       let cls;
       if (owned && e.oid === view.selfPid) cls = 'self';
@@ -183,7 +210,21 @@ function refreshList() {
       if (cls !== ownerMode) continue;
     }
     total++;
-    out.push({ cx: e.cellX, cy: e.cellY, k: e.k != null ? e.k : vk, color, name: e.oname || label, sub: label, cross: !!(vk && e.k != null && e.k !== vk), ts: e.ts || 0, pt: e.pointType, shield: e.shield || 0, lv: e.level == null ? null : e.level, power: e.power == null ? null : e.power, army: e.army == null ? null : e.army });
+    out.push({
+      cx: e.cellX,
+      cy: e.cellY,
+      k: e.k != null ? e.k : vk,
+      color,
+      name: e.oname || label,
+      sub: label,
+      cross: !!(vk && e.k != null && e.k !== vk),
+      ts: e.ts || 0,
+      pt: e.pointType,
+      shield: e.shield || 0,
+      lv: e.level == null ? null : e.level,
+      power: e.power == null ? null : e.power,
+      army: e.army == null ? null : e.army,
+    });
   }
   out.sort((a, b) => b.ts - a.ts || a.cx - b.cx || a.cy - b.cy);
   overlay.renderList(out.slice(0, 500), total);
@@ -203,14 +244,20 @@ function refreshListThrottled() {
  * @returns {{selfPid:number, selfAid:number, selfServer:number}}
  */
 function classifyCtx() {
-  return { selfPid: gameData.myPid(), selfAid: gameData.myAid(), selfServer: (worldMap.serverId && worldMap.serverId()) || scanner.currentK() || 0 };
+  return {
+    selfPid: gameData.myPid(),
+    selfAid: gameData.myAid(),
+    selfServer: (worldMap.serverId && worldMap.serverId()) || scanner.currentK() || 0,
+  };
 }
 
 /** 铺色块底图（地形符号就绪后调用；缺失降级纯色，仍显实体） */
 function buildTerrainBase() {
   if (!overlay) return;
   const tb = getTerrainBase();
-  tb.build((cv) => { if (overlay) overlay.setTerrain(cv); });
+  tb.build((cv) => {
+    if (overlay) overlay.setTerrain(cv);
+  });
 }
 
 /**
@@ -223,19 +270,22 @@ function ensureBucket(vk) {
   const bvk = vk | 0;
   const seq = ++loadSeq;
   if (overlay) overlay.setStatus(`正在载入 ${bvk ? '区 ' + bvk : '本区'} 数据…`);
-  return mapStore.useBucket(bvk).then(() => {
-    if (seq !== loadSeq || !overlay) return;                 // 期间又切区，本次作废（最后一次会自己收尾）
-    const view = overlay.view;
-    if (view) {
-      view.cols = mapStore.meta.cols || view.cols;           // 尺寸以索引记录为准（与扫描/网格同源）
-      view.rows = mapStore.meta.rows || view.rows;
-    }
-    if (mapStore.indexLoaded) dataBooted = true;             // 索引就绪才算booted成功；否则下次开浮层再试
-    applyView(bvk);
-  }).catch((err) => {
-    log.warn('bucket load failed: %s', err && err.message);
-    if (seq === loadSeq && overlay) overlay.setStatus('数据载入失败（重开浮层可重试）');
-  });
+  return mapStore
+    .useBucket(bvk)
+    .then(() => {
+      if (seq !== loadSeq || !overlay) return; // 期间又切区，本次作废（最后一次会自己收尾）
+      const view = overlay.view;
+      if (view) {
+        view.cols = mapStore.meta.cols || view.cols; // 尺寸以索引记录为准（与扫描/网格同源）
+        view.rows = mapStore.meta.rows || view.rows;
+      }
+      if (mapStore.indexLoaded) dataBooted = true; // 索引就绪才算booted成功；否则下次开浮层再试
+      applyView(bvk);
+    })
+    .catch((err) => {
+      log.warn('bucket load failed: %s', err && err.message);
+      if (seq === loadSeq && overlay) overlay.setStatus('数据载入失败（重开浮层可重试）');
+    });
 }
 
 /**
@@ -249,10 +299,10 @@ async function clearAllBuckets() {
   const bk = mapStore.meta.buckets;
   const zones = Object.keys(bk).length;
   const total = Object.keys(bk).reduce((a, k) => a + (bk[k].count | 0), 0);
-  await mapStore.persist();                       // 排到链尾：等 stop 那笔落盘真正写完
+  await mapStore.persist(); // 排到链尾：等 stop 那笔落盘真正写完
   await mapStore.clearPersisted();
   log.info('cleared all. zones=%d points=%d', zones, total);
-  if (!overlay) return;                           // 浮层未建（功能未启用）：盘已清，无需重铺视图
+  if (!overlay) return; // 浮层未建（功能未启用）：盘已清，无需重铺视图
   if (overlay.view) overlay.view.markEntitiesDirty();
   overlay.toast(`已清空全部区数据（${zones} 区 · ${total} 点）`);
   ensureBucket(targetVk());
@@ -260,7 +310,10 @@ async function clearAllBuckets() {
 
 /** 开始/重扫一轮（仅世界地图态放行） */
 function startScan() {
-  if (!ctxRef || !ctxRef.alive()) { overlay && overlay.toast('需在世界地图场景扫描'); return; }
+  if (!ctxRef || !ctxRef.alive()) {
+    overlay && overlay.toast('需在世界地图场景扫描');
+    return;
+  }
   if (scanner.isRunning()) return;
   // 定标网格绑定 viewLevel=1（回点窗按该档实测标定）：开扫前强制锁回，防旧配置残留其他档位
   cfg.viewLevel = 1;
@@ -268,33 +321,43 @@ function startScan() {
   // 未驻留（懒加载未完或期间切了区）则先补加载，本次不发起——否则写会因串桶守卫被丢弃。
   const vk = targetVk();
   if (!mapStore.isResident(vk)) {
-    if (overlay) { overlay.toast('本区数据载入中，请稍候再试'); }
+    if (overlay) {
+      overlay.toast('本区数据载入中，请稍候再试');
+    }
     ensureBucket(vk);
     return;
   }
-  const started = scanner.start(ctxRef, Object.assign({}, cfg, { k: vk, startBlock: startBlock || undefined }), {
-    onBlock: (b, added) => {
-      if (!overlay) return;
-      const view = overlay.view;
-      const n = mapStore.size(scanner.currentK());
-      // 注意：不在此处 markEntitiesDirty——数据已入库但由扫波前跨块边线时才释放显示（render 内部驱动），避免波还没扫到数据就现身
-      if (view) view.setCurrentBlock(b.cx0, b.cy0, b.cw, b.ch, b.i, b.j);
-      overlay.setProgress(scanner.progress(), `已存 ${n} 点`);
-      overlay.setStatus(`扫描中 · 已存 ${n} 点`);
-      refreshListThrottled();
+  const started = scanner.start(
+    ctxRef,
+    Object.assign({}, cfg, { k: vk, startBlock: startBlock || undefined }),
+    {
+      onBlock: (b, _added) => {
+        if (!overlay) return;
+        const view = overlay.view;
+        const n = mapStore.size(scanner.currentK());
+        // 注意：不在此处 markEntitiesDirty——数据已入库但由扫波前跨块边线时才释放显示（render 内部驱动），避免波还没扫到数据就现身
+        if (view) view.setCurrentBlock(b.cx0, b.cy0, b.cw, b.ch, b.i, b.j);
+        overlay.setProgress(scanner.progress(), `已存 ${n} 点`);
+        overlay.setStatus(`扫描中 · 已存 ${n} 点`);
+        refreshListThrottled();
+      },
+      onProgress: () => {
+        if (overlay)
+          overlay.setProgress(scanner.progress(), `已存 ${mapStore.size(scanner.currentK())} 点`);
+      },
+      onDone: () => {
+        if (!overlay) return;
+        refreshBucket(scanner.currentK() || lastVk);
+        overlay.toast('全图扫描完成');
+        if (overlay) overlay.setStatus('扫描完成 ' + new Date().toLocaleString());
+        refreshList();
+      },
     },
-    onProgress: () => { if (overlay) overlay.setProgress(scanner.progress(), `已存 ${mapStore.size(scanner.currentK())} 点`); },
-    onDone: () => {
-      if (!overlay) return;
-      refreshBucket(scanner.currentK() || lastVk);
-      overlay.toast('全图扫描完成');
-      if (overlay) overlay.setStatus('扫描完成 ' + new Date().toLocaleString());
-      refreshList();
-    },
-  });
+  );
   if (started) {
     // 激光扫掠周期与块停留同源（dwell + 半个抖动），使动效节奏贴合实际推进
-    if (overlay && overlay.view) overlay.view.setDwell(cfg.dwellMs + Math.floor((cfg.jitterMs | 0) / 2));
+    if (overlay && overlay.view)
+      overlay.view.setDwell(cfg.dwellMs + Math.floor((cfg.jitterMs | 0) / 2));
     // 主网格同步为定标固定格（与队列同一几何源 SCAN_GRID）
     if (overlay && overlay.view) overlay.view.setGrid(SCAN_GRID);
     overlay && overlay.setProgress(scanner.progress(), '扫描中…');
@@ -305,7 +368,14 @@ function startScan() {
 function makeHandlers() {
   return {
     onStartScan: startScan,
-    onStopScan: () => { scanner.stop(); if (overlay) { const n = mapStore.size(scanner.currentK() || lastVk); overlay.setProgress(scanner.progress(), `已存 ${n} 点`); overlay.setStatus(`已停 · 已存 ${n} 点`); } },
+    onStopScan: () => {
+      scanner.stop();
+      if (overlay) {
+        const n = mapStore.size(scanner.currentK() || lastVk);
+        overlay.setProgress(scanner.progress(), `已存 ${n} 点`);
+        overlay.setStatus(`已停 · 已存 ${n} 点`);
+      }
+    },
     onFilterChange: (f) => {
       if (!overlay || !overlay.view || !f) return;
       // 图例筛选：细分类集合 + showOther 兜底 + 归属（注入本人身份/本服号）
@@ -320,7 +390,8 @@ function makeHandlers() {
       if (!overlay || !overlay.view) return;
       // 护盾过滤（仅玩家城池）：mode='has'有盾/'none'无盾/'off'不限；ms=剩余上限（仅 has 生效）
       overlay.view.setShieldFilter(mode, ms);
-      if (mode && mode !== 'off') startShieldTimer(); else stopShieldTimer();
+      if (mode && mode !== 'off') startShieldTimer();
+      else stopShieldTimer();
       refreshList();
     },
     onLevelFilter: (min) => {
@@ -329,16 +400,19 @@ function makeHandlers() {
       overlay.view.setLevelFilter(min);
       refreshList();
     },
-    onViewLevelChange: (lv) => {
+    onViewLevelChange: (_lv) => {
       // 网格按 level 1 回点窗定标（SCAN_GRID），切档会破坏对齐：锁定不再生效
       if (overlay) overlay.toast('高度已固定为 1（网格按该档定标），切档已禁用');
     },
     onClearPoints: () => {
       const vk = lastVk || 0;
       const n = mapStore.clearBucket(vk);
-      Promise.resolve(mapStore.persist(true)).catch(() => { });
+      Promise.resolve(mapStore.persist(true)).catch(() => {});
       if (overlay && overlay.view) overlay.view.markEntitiesDirty();
-      if (overlay) { overlay.toast('已清空本区点位（' + n + '）'); applyView(vk); }
+      if (overlay) {
+        overlay.toast('已清空本区点位（' + n + '）');
+        applyView(vk);
+      }
     },
     onPick: (cx, cy) => {
       if (!overlay || !overlay.view) return;
@@ -347,7 +421,8 @@ function makeHandlers() {
       const e = vk ? mapStore.pointAt(vk, cx, cy) : null;
       const k = (e && e.k) || vk || 0;
       const r = overlay.view.jumpToCell(cx, cy, k || null, null);
-      if (!r.ok) overlay.toast(r.err === 'unavailable' ? '导航不可用（请先进入世界地图）' : '跳转失败');
+      if (!r.ok)
+        overlay.toast(r.err === 'unavailable' ? '导航不可用（请先进入世界地图）' : '跳转失败');
     },
     onCellContext: (i, j) => {
       // 再右键同一块 = 取消选择；选中只影响下一次 startScan（在飞队列不变）
@@ -359,30 +434,47 @@ function makeHandlers() {
       }
       startBlock = { i, j };
       if (overlay && overlay.view) overlay.view.setStartBlock(startBlock);
-      if (overlay) overlay.toast(scanner.isRunning() ? `起扫块 (${i},${j}) · 下次扫描生效` : `起扫块 (${i},${j}) · 将从此块向外环扩扫描`);
+      if (overlay)
+        overlay.toast(
+          scanner.isRunning()
+            ? `起扫块 (${i},${j}) · 下次扫描生效`
+            : `起扫块 (${i},${j}) · 将从此块向外环扩扫描`,
+        );
     },
     onListPick: (cx, cy, k) => {
       if (!overlay || !overlay.view) return;
       const r = overlay.view.jumpToCell(cx, cy, k || null, null);
       overlay.view.recenter(cx, cy);
-      overlay.toast(r.ok ? `已跳转 (${cx},${cy})` : (r.err === 'unavailable' ? '导航不可用（请先进入世界地图）' : '跳转失败'));
+      overlay.toast(
+        r.ok
+          ? `已跳转 (${cx},${cy})`
+          : r.err === 'unavailable'
+            ? '导航不可用（请先进入世界地图）'
+            : '跳转失败',
+      );
     },
     onVisibleChange: (visible) => {
       if (visible) {
         startVkPoll();
-        if (overlay && overlay.view && overlay.view.shieldMode && overlay.view.shieldMode !== 'off') startShieldTimer();
+        if (overlay && overlay.view && overlay.view.shieldMode && overlay.view.shieldMode !== 'off')
+          startShieldTimer();
         const vk = targetVk();
         // 首次可见才读盘（懒加载）；之后按区差异跟随，未变则只刷进度/新鲜度文案
         if (!dataBooted) ensureBucket(vk);
         else if (vk !== lastVk) onViewChange(vk);
         else refreshBucket(vk);
       } else {
-        stopVkPoll(); stopShieldTimer();
+        stopVkPoll();
+        stopShieldTimer();
         // 收起时补一笔落盘：现在只序列化当前驻留桶，是百 KB 级而不是全图，代价可忽略
-        Promise.resolve(mapStore.persist()).catch(() => { });
+        Promise.resolve(mapStore.persist()).catch(() => {});
       }
     },
-    onGeomChange: (geom) => { try { Promise.resolve(storage.set(GEOM_KEY, geom)).catch(() => { }); } catch (e) { } },
+    onGeomChange: (geom) => {
+      try {
+        Promise.resolve(storage.set(GEOM_KEY, geom)).catch(() => {});
+      } catch (e) {}
+    },
   };
 }
 
@@ -422,13 +514,20 @@ function install(ctx) {
     const evName = E && E.EventId && E.EventId.SERVER_VIEW_CHANGE;
     if (evName) ctx.on.event(evName, (k) => onViewChange(k));
     else log.warn('EventId.SERVER_VIEW_CHANGE missing, rely on visible-time poll.');
-  } catch (e) { log.warn('subscribe SERVER_VIEW_CHANGE failed: %s', e && e.message); }
+  } catch (e) {
+    log.warn('subscribe SERVER_VIEW_CHANGE failed: %s', e && e.message);
+  }
   // 实体数据不在此读盘（懒加载：浮层首次可见才走 ensureBucket）；底图是纯程序化噪声，无数据也能铺
   buildTerrainBase();
   // 先把徽标/尺寸/过滤就位（内存空，渲染自然为空；读盘完成后 ensureBucket 会再应用一次）
   applyView(targetVk());
   // 几何存档：读盘失败（命名空间未设等）静默用默认
-  storage.get(GEOM_KEY).then((g) => { if (g && overlay) overlay.setGeom(g); }).catch(() => { });
+  storage
+    .get(GEOM_KEY)
+    .then((g) => {
+      if (g && overlay) overlay.setGeom(g);
+    })
+    .catch(() => {});
   installed = true;
   log.info('global map installed (Ctrl+M).');
   return true;
@@ -452,7 +551,10 @@ function configure(partial) {
   if (Array.isArray(partial.subs)) cfg.subs = partial.subs.slice();
   if (Array.isArray(partial.subs) || typeof partial.showOther === 'boolean') {
     if (overlay) overlay.setSubs(cfg.subs);
-    if (overlay && overlay.view) { overlay.view.setClassifyCtx(classifyCtx()); overlay.view.setFilter(new Set(cfg.subs), !!cfg.showOther); }
+    if (overlay && overlay.view) {
+      overlay.view.setClassifyCtx(classifyCtx());
+      overlay.view.setFilter(new Set(cfg.subs), !!cfg.showOther);
+    }
   }
   return cfg;
 }
@@ -487,18 +589,33 @@ reactor.register({
     { key: 'ttlHours', label: '数据有效期(小时)', min: 1, step: 1, section: '持久化' },
     { key: 'showMarch', label: '记录行军', type: 'checkbox', section: '持久化' },
     {
-      key: 'clearAllBtn', type: 'button', section: '持久化', label: '清空全部区数据（内存 + 磁盘）',
-      busyText: '清理中…', onClick: clearAllBuckets,
+      key: 'clearAllBtn',
+      type: 'button',
+      section: '持久化',
+      label: '清空全部区数据（内存 + 磁盘）',
+      busyText: '清理中…',
+      onClick: clearAllBuckets,
     },
     {
-      key: 'subs', type: 'multiopts', label: '显示单位类型', section: '类型筛选',
-      options: FILTER_TREE.reduce((a, c) => { for (const s of c.subs) a.push({ value: s.key, label: c.label + '·' + s.label }); return a; }, []),
+      key: 'subs',
+      type: 'multiopts',
+      label: '显示单位类型',
+      section: '类型筛选',
+      options: FILTER_TREE.reduce((a, c) => {
+        for (const s of c.subs) a.push({ value: s.key, label: c.label + '·' + s.label });
+        return a;
+      }, []),
     },
   ],
   toModuleCfg: function (c) {
     return {
-      dwellMs: c.dwellMs, jitterMs: c.jitterMs,
-      viewLevel: c.viewLevel, ttlHours: c.ttlHours, showMarch: c.showMarch, subs: c.subs, showOther: c.showOther,
+      dwellMs: c.dwellMs,
+      jitterMs: c.jitterMs,
+      viewLevel: c.viewLevel,
+      ttlHours: c.ttlHours,
+      showMarch: c.showMarch,
+      subs: c.subs,
+      showOther: c.showOther,
     };
   },
   scenes: ['NWorldMap'],

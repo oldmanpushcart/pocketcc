@@ -78,34 +78,33 @@ const CODE_NOT_SENT = -1;
  * @type {object}
  */
 const cfg = {
+  /**
+   * 忙碌生产间隔：当天荣誉分或申请次数还没满时用，默认10秒
+   */
+  busyInterval: 1000 * 10,
 
-    /**
-     * 忙碌生产间隔：当天荣誉分或申请次数还没满时用，默认10秒
-     */
-    busyInterval: 1000 * 10,
+  /**
+   * 空转生产间隔：荣誉分与申请次数都到当日上限后用，默认10分钟（等次日重置）
+   */
+  idleInterval: 1000 * 60 * 10,
 
-    /**
-     * 空转生产间隔：荣誉分与申请次数都到当日上限后用，默认10分钟（等次日重置）
-     */
-    idleInterval: 1000 * 60 * 10,
+  /**
+   * 队列逐条消费之间的休眠毫秒。1139/1141/1195 暂无限流实锤，2秒起步
+   * （真机所见：code=3 为业务拒绝而非限流——首发未带任何前序请求也回此码）
+   */
+  consumeInterval: 1000 * 2,
 
-    /**
-     * 队列逐条消费之间的休眠毫秒。1139/1141/1195 暂无限流实锤，2秒起步
-     * （真机所见：code=3 为业务拒绝而非限流——首发未带任何前序请求也回此码）
-     */
-    consumeInterval: 1000 * 2,
-
-    /**
-     * 申请帮助候选物品：只在这4个石头里选持有数量最少的。
-     * id=alliance_help 表行 id；reward=行内 reward_param，用于 getItemAmount 读持有量
-     * （对应关系见《联盟帮助资料整理.md》，已对过游戏面板取值路径 AllianceHelpSelectPanel_New.js:70,177）
-     */
-    items: [
-        { id: 10005, reward: 3500005, name: '玛瑙石' },
-        { id: 10006, reward: 3500006, name: '黑曜石' },
-        { id: 10003, reward: 3500007, name: '月亮石' },
-        { id: 10004, reward: 3500008, name: '翡翠石' }
-    ]
+  /**
+   * 申请帮助候选物品：只在这4个石头里选持有数量最少的。
+   * id=alliance_help 表行 id；reward=行内 reward_param，用于 getItemAmount 读持有量
+   * （对应关系见《联盟帮助资料整理.md》，已对过游戏面板取值路径 AllianceHelpSelectPanel_New.js:70,177）
+   */
+  items: [
+    { id: 10005, reward: 3500005, name: '玛瑙石' },
+    { id: 10006, reward: 3500006, name: '黑曜石' },
+    { id: 10003, reward: 3500007, name: '月亮石' },
+    { id: 10004, reward: 3500008, name: '翡翠石' },
+  ],
 };
 
 /**
@@ -147,16 +146,22 @@ var installed = false;
  * @returns {boolean}
  */
 function aliveFn() {
-    return ctxRef ? ctxRef.alive() : false;
+  return ctxRef ? ctxRef.alive() : false;
 }
 
 /** @type {object} 串行消费器（逐条执行任务 + 间隔休眠） */
 var drain = createDrain({
-    log: log,
-    queue: { get: function () { return queue; } },
-    alive: aliveFn,
-    process: execTask,
-    interval: function () { return cfg.consumeInterval; },
+  log: log,
+  queue: {
+    get: function () {
+      return queue;
+    },
+  },
+  alive: aliveFn,
+  process: execTask,
+  interval: function () {
+    return cfg.consumeInterval;
+  },
 });
 
 /**
@@ -166,19 +171,22 @@ var drain = createDrain({
  * @param {function} fn 到点执行的下一步
  */
 function scheduling(delay, fn) {
-    if (!aliveFn()) return false;
-    if (timer) clearTimeout(timer);
-    timer = setTimeout(function () {
-        timer = null;
-        if (!aliveFn()) return;
-        Promise.resolve()
-            .then(fn)
-            .catch(function (err) {
-                log.warn('scheduled step threw, reschedule.', err);
-                scheduling(nextInterval(), runTick);
-            });
-    }, Math.max(0, delay));
-    return true;
+  if (!aliveFn()) return false;
+  if (timer) clearTimeout(timer);
+  timer = setTimeout(
+    function () {
+      timer = null;
+      if (!aliveFn()) return;
+      Promise.resolve()
+        .then(fn)
+        .catch(function (err) {
+          log.warn('scheduled step threw, reschedule.', err);
+          scheduling(nextInterval(), runTick);
+        });
+    },
+    Math.max(0, delay),
+  );
+  return true;
 }
 
 // ─────────────────────────── 生产者 ───────────────────────────
@@ -187,12 +195,12 @@ function scheduling(delay, fn) {
  * 生产轮询：无状态条件扫描 → 按 kind 去重入队 → 触发消费 → 重排下一轮
  */
 function runTick() {
-    produce();
-    if (!aliveFn()) return;
-    drain.consume().catch(function (err) {
-        log.warn('consume loop threw!', err);
-    });
-    scheduling(nextInterval(), runTick);
+  produce();
+  if (!aliveFn()) return;
+  drain.consume().catch(function (err) {
+    log.warn('consume loop threw!', err);
+  });
+  scheduling(nextInterval(), runTick);
 }
 
 /**
@@ -201,80 +209,84 @@ function runTick() {
  * 任务按 kind 去重：队列里或在消费中的同类任务已存在就不重复入队
  */
 function produce() {
+  var alliance = data.UserData.Alliance;
 
-    var alliance = data.UserData.Alliance;
+  // 不在联盟：什么都不入队
+  if (!alliance.isInAlliance()) {
+    log.debug('not in alliance, wait next tick.');
+    return;
+  }
 
-    // 不在联盟：什么都不入队
-    if (!alliance.isInAlliance()) {
-        log.debug('not in alliance, wait next tick.');
-        return;
+  // 流程1：有盟员请求帮助，且荣誉分没满 → 帮助全员
+  if (needHelpAll()) {
+    enqueue({ kind: TASK_HELP_ALL });
+  }
+
+  // 计数未落地前绝不发申请：盲发会因占位 0 被判“未满”而撞墙（真机：启动即申请 code=3、data=alliance_120503）。
+  // 口径同游戏 canAskHelp（AllianceController.js:133-138）的 !!UpdatedSelfHelp 且 AllianceHelpMax 已填。
+  if (!alliance.UpdatedSelfHelp) {
+    log.debug('help data not synced by game yet (UpdatedSelfHelp=false), wait next tick.');
+    return;
+  }
+
+  // 流程2：自己的申请（在途领取 / 无在途申请 / 次数用完空转）
+  // “申请次数已同步”与“自助帮助列表已同步”是两条不同通道：UpdatedSelfHelp 仅由 UpdateSelfHelpList 置真，
+  // push 10446（只带 selfHelps、不带计数）就能触发它；而 AllianceHelpCount 只有 UpdateAllianceHelpCountAndHonor
+  // 收到含 alhtdcnt 的下发（10453 整表重取 / 1138 拉取 / 任一申请应答）才填。同一函数会把
+  // AllianceHelpMax 从占位 0 惰性填成真实上限，故 AllianceHelpMax>0 等价于“计数通道同步过”（见 isHelpCountSynced）。
+
+  // 不直接用 getSelfHelpData()（恒取 _selfHelpList[0]）：表按 Type upsert 去重，不同 Type 可并存，
+  // 我们申请满进度的那条（物品类 Type4）若不在 [0]，盲取 [0] 会漏判、永不入队 RECEIVE。
+  // 故全表扫描定位满进度条目；“表非空”仍作为“是否发起新申请”的闸门（口径同面板 btnAskHelp 要求 getSelfHelpData()==null）。
+  var selfHelpList = alliance.SelfHelpList;
+
+  if (selfHelpList.length > 0) {
+    var full = findFullSelfHelp(selfHelpList);
+    if (full) {
+      // 集齐判据同游戏排序器（AllianceHelpPanel_New2.js:127）：HelpCount >= MaxCount。
+      // 用 >= 不用 ===：盟友可超量帮（样本见 count:16/max:10），HelpCount 会越过 MaxCount，
+      // 严格相等会漏判满进度、永不领取（真机：第10次求助集齐后不领）。
+      // 入队只存 Type 与签名、不存对象引用——push 10453 会整体重建 _selfHelpList，旧引用执行前必失效（真机：满进度迟迟不领）
+      pruneDoneReceived();
+      var sig = selfHelpSig(full);
+      if (doneReceived.has(sig)) {
+        // 该条已在服务端领过（脚本裸发不触发游戏 UI 回调里的 DeleteSelfHelpList，本地残留满进度），不再重复领
+        log.debug('self help already received (server gone), skip. type=%s;sig=%s', full.Type, sig);
+      } else {
+        enqueue({ kind: TASK_RECEIVE, type: full.Type, sig: sig });
+      }
+    } else {
+      var inflight = selfHelpList[0];
+      log.debug(
+        'self help in progress, wait next tick. progress=%s/%s',
+        inflight.HelpCount,
+        inflight.MaxCount,
+      );
     }
+    return;
+  }
 
-    // 流程1：有盟员请求帮助，且荣誉分没满 → 帮助全员
-    if (needHelpAll()) {
-        enqueue({ kind: TASK_HELP_ALL });
-    }
+  // 自帮助列表已同步（UpdatedSelfHelp）不等于申请次数已同步：未过这道闸门时不入 APPLY 任务
+  // （与 execTask 重判一致，避免入队后又被当陈旧丢弃的无谓 churn）。
+  if (!isHelpCountSynced(alliance)) {
+    log.debug(
+      'help count not synced yet (AllianceHelpMax=0), skip applying, wait for authoritative count.',
+    );
+    return;
+  }
 
-    // 计数未落地前绝不发申请：盲发会因占位 0 被判“未满”而撞墙（真机：启动即申请 code=3、data=alliance_120503）。
-    // 口径同游戏 canAskHelp（AllianceController.js:133-138）的 !!UpdatedSelfHelp 且 AllianceHelpMax 已填。
-    if (!alliance.UpdatedSelfHelp) {
-        log.debug('help data not synced by game yet (UpdatedSelfHelp=false), wait next tick.');
-        return;
-    }
+  if (isQuotaReached(alliance)) {
+    // 自用/日额已满（本地计数或服务器显式饱和）：预期空闲态，静默返回即可，无需刷日志
+    return;
+  }
 
-    // 流程2：自己的申请（在途领取 / 无在途申请 / 次数用完空转）
-    // “申请次数已同步”与“自助帮助列表已同步”是两条不同通道：UpdatedSelfHelp 仅由 UpdateSelfHelpList 置真，
-    // push 10446（只带 selfHelps、不带计数）就能触发它；而 AllianceHelpCount 只有 UpdateAllianceHelpCountAndHonor
-    // 收到含 alhtdcnt 的下发（10453 整表重取 / 1138 拉取 / 任一申请应答）才填。同一函数会把
-    // AllianceHelpMax 从占位 0 惰性填成真实上限，故 AllianceHelpMax>0 等价于“计数通道同步过”（见 isHelpCountSynced）。
+  var picked = pickLeastItem();
+  if (!picked) {
+    log.warn('no selectable item (table row missing?), wait next tick.');
+    return;
+  }
 
-    // 不直接用 getSelfHelpData()（恒取 _selfHelpList[0]）：表按 Type upsert 去重，不同 Type 可并存，
-    // 我们申请满进度的那条（物品类 Type4）若不在 [0]，盲取 [0] 会漏判、永不入队 RECEIVE。
-    // 故全表扫描定位满进度条目；“表非空”仍作为“是否发起新申请”的闸门（口径同面板 btnAskHelp 要求 getSelfHelpData()==null）。
-    var selfHelpList = alliance.SelfHelpList;
-
-    if (selfHelpList.length > 0) {
-        var full = findFullSelfHelp(selfHelpList);
-        if (full) {
-            // 集齐判据同游戏排序器（AllianceHelpPanel_New2.js:127）：HelpCount >= MaxCount。
-            // 用 >= 不用 ===：盟友可超量帮（样本见 count:16/max:10），HelpCount 会越过 MaxCount，
-            // 严格相等会漏判满进度、永不领取（真机：第10次求助集齐后不领）。
-            // 入队只存 Type 与签名、不存对象引用——push 10453 会整体重建 _selfHelpList，旧引用执行前必失效（真机：满进度迟迟不领）
-            pruneDoneReceived();
-            var sig = selfHelpSig(full);
-            if (doneReceived.has(sig)) {
-                // 该条已在服务端领过（脚本裸发不触发游戏 UI 回调里的 DeleteSelfHelpList，本地残留满进度），不再重复领
-                log.debug('self help already received (server gone), skip. type=%s;sig=%s', full.Type, sig);
-            } else {
-                enqueue({ kind: TASK_RECEIVE, type: full.Type, sig: sig });
-            }
-        } else {
-            var inflight = selfHelpList[0];
-            log.debug('self help in progress, wait next tick. progress=%s/%s',
-                inflight.HelpCount, inflight.MaxCount);
-        }
-        return;
-    }
-
-    // 自帮助列表已同步（UpdatedSelfHelp）不等于申请次数已同步：未过这道闸门时不入 APPLY 任务
-    // （与 execTask 重判一致，避免入队后又被当陈旧丢弃的无谓 churn）。
-    if (!isHelpCountSynced(alliance)) {
-        log.debug('help count not synced yet (AllianceHelpMax=0), skip applying, wait for authoritative count.');
-        return;
-    }
-
-    if (isQuotaReached(alliance)) {
-        // 自用/日额已满（本地计数或服务器显式饱和）：预期空闲态，静默返回即可，无需刷日志
-        return;
-    }
-
-    var picked = pickLeastItem();
-    if (!picked) {
-        log.warn('no selectable item (table row missing?), wait next tick.');
-        return;
-    }
-
-    enqueue({ kind: TASK_APPLY, item: picked.item, helpNum: picked.helpNum });
+  enqueue({ kind: TASK_APPLY, item: picked.item, helpNum: picked.helpNum });
 }
 
 /**
@@ -282,15 +294,20 @@ function produce() {
  * @param {object} task 任务对象 {kind, ...载荷}
  */
 function enqueue(task) {
-    if (hasQueued(task.kind)) {
-        log.debug('task already queued, skip. kind=%s', task.kind);
-        return;
-    }
-    queue.push(task);
-    // item id 放末位：%d 对 undefined 输出 NaN；type 无值时传 '-' 直出，不走 typeToName（其入参是类型码）
-    log.info('task enqueued. kind=%s;type=%s;helpNum=%d;pending=%d;item=%d',
-        task.kind, task.type == null ? '-' : typeToName(task.type), task.helpNum || 0, queue.length,
-        task.item ? task.item.id : 0);
+  if (hasQueued(task.kind)) {
+    log.debug('task already queued, skip. kind=%s', task.kind);
+    return;
+  }
+  queue.push(task);
+  // item id 放末位：%d 对 undefined 输出 NaN；type 无值时传 '-' 直出，不走 typeToName（其入参是类型码）
+  log.info(
+    'task enqueued. kind=%s;type=%s;helpNum=%d;pending=%d;item=%d',
+    task.kind,
+    task.type == null ? '-' : typeToName(task.type),
+    task.helpNum || 0,
+    queue.length,
+    task.item ? task.item.id : 0,
+  );
 }
 
 /**
@@ -300,13 +317,18 @@ function enqueue(task) {
  * @returns {string}
  */
 function typeToName(type) {
-    switch (type) {
-        case 1: return '科技';
-        case 2: return '建筑';
-        case 3: return '医院';
-        case 4: return '石头';
-        default: return '-';
-    }
+  switch (type) {
+    case 1:
+      return '科技';
+    case 2:
+      return '建筑';
+    case 3:
+      return '医院';
+    case 4:
+      return '石头';
+    default:
+      return '-';
+  }
 }
 
 /**
@@ -316,7 +338,9 @@ function typeToName(type) {
  * @returns {boolean}
  */
 function hasQueued(kind) {
-    return queue.some(function (task) { return task.kind === kind; });
+  return queue.some(function (task) {
+    return task.kind === kind;
+  });
 }
 
 /**
@@ -330,12 +354,13 @@ function hasQueued(kind) {
  * @returns {number} 毫秒
  */
 function nextInterval() {
-    var alliance = data.UserData.Alliance;
-    var pendingSelfHelp = alliance.SelfHelpList.length > 0;
-    var busy = pendingSelfHelp
-        || alliance.AllianceHelpHonorCount < getHonorMax(alliance)
-        || !isQuotaReached(alliance);
-    return busy ? cfg.busyInterval : cfg.idleInterval;
+  var alliance = data.UserData.Alliance;
+  var pendingSelfHelp = alliance.SelfHelpList.length > 0;
+  var busy =
+    pendingSelfHelp ||
+    alliance.AllianceHelpHonorCount < getHonorMax(alliance) ||
+    !isQuotaReached(alliance);
+  return busy ? cfg.busyInterval : cfg.idleInterval;
 }
 
 /**
@@ -344,13 +369,12 @@ function nextInterval() {
  * @returns {boolean}
  */
 function needHelpAll() {
-    var alliance = data.UserData.Alliance;
-    if (alliance.AllianceHelpHonorCount >= getHonorMax(alliance)) return false;
-    // 可帮判据直接复用游戏口径：AllianceHelpList（自己/他人的物品类求助）非空，
-    // 或 getOtherCanHelpAssistList()（他人的援助请求，已排除我自己、以及我已帮过的）非空。
-    // 与游戏 helpAllClick 的判空逻辑一一对应（AllianceHelpPanel_New2.js:369-371）
-    return alliance.AllianceHelpList.length > 0
-        || alliance.getOtherCanHelpAssistList().length > 0;
+  var alliance = data.UserData.Alliance;
+  if (alliance.AllianceHelpHonorCount >= getHonorMax(alliance)) return false;
+  // 可帮判据直接复用游戏口径：AllianceHelpList（自己/他人的物品类求助）非空，
+  // 或 getOtherCanHelpAssistList()（他人的援助请求，已排除我自己、以及我已帮过的）非空。
+  // 与游戏 helpAllClick 的判空逻辑一一对应（AllianceHelpPanel_New2.js:369-371）
+  return alliance.AllianceHelpList.length > 0 || alliance.getOtherCanHelpAssistList().length > 0;
 }
 
 /**
@@ -361,8 +385,8 @@ function needHelpAll() {
  * @returns {boolean}
  */
 function isQuotaReached(alliance) {
-    if (quotaSaturatedToday === todayStr()) return true;
-    return alliance.AllianceHelpCount >= getHelpMax(alliance);
+  if (quotaSaturatedToday === todayStr()) return true;
+  return alliance.AllianceHelpCount >= getHelpMax(alliance);
 }
 
 /**
@@ -374,7 +398,7 @@ function isQuotaReached(alliance) {
  * @returns {boolean}
  */
 function isHelpCountSynced(alliance) {
-    return alliance.AllianceHelpMax > 0;
+  return alliance.AllianceHelpMax > 0;
 }
 
 /**
@@ -382,10 +406,10 @@ function isHelpCountSynced(alliance) {
  * @returns {string} YYYY-MM-DD
  */
 function todayStr() {
-    var d = new Date();
-    var m = d.getMonth() + 1;
-    var day = d.getDate();
-    return d.getFullYear() + '-' + (m < 10 ? '0' + m : m) + '-' + (day < 10 ? '0' + day : day);
+  var d = new Date();
+  var m = d.getMonth() + 1;
+  var day = d.getDate();
+  return d.getFullYear() + '-' + (m < 10 ? '0' + m : m) + '-' + (day < 10 ? '0' + day : day);
 }
 
 /**
@@ -395,10 +419,10 @@ function todayStr() {
  * @returns {string|null}
  */
 function rejectErrKey(data) {
-    if (typeof data !== 'string' || !data) return null;
-    var comma = data.indexOf(',');
-    var key = comma >= 0 ? data.slice(0, comma) : data;
-    return /^[a-z][a-z0-9_]*$/i.test(key) ? key : null;
+  if (typeof data !== 'string' || !data) return null;
+  var comma = data.indexOf(',');
+  var key = comma >= 0 ? data.slice(0, comma) : data;
+  return /^[a-z][a-z0-9_]*$/i.test(key) ? key : null;
 }
 
 /**
@@ -408,9 +432,9 @@ function rejectErrKey(data) {
  * @returns {number}
  */
 function getHonorMax(alliance) {
-    if (alliance.AllianceHelpHonorMax) return alliance.AllianceHelpHonorMax;
-    var v = parseInt(tableUtils.getDataConfigData(9910), 10);
-    return isNaN(v) ? Infinity : v;
+  if (alliance.AllianceHelpHonorMax) return alliance.AllianceHelpHonorMax;
+  var v = parseInt(tableUtils.getDataConfigData(9910), 10);
+  return isNaN(v) ? Infinity : v;
 }
 
 /**
@@ -420,9 +444,9 @@ function getHonorMax(alliance) {
  * @returns {number}
  */
 function getHelpMax(alliance) {
-    if (alliance.AllianceHelpMax) return alliance.AllianceHelpMax;
-    var v = parseInt(tableUtils.getDataConfigData(130062), 10);
-    return isNaN(v) ? 0 : v;
+  if (alliance.AllianceHelpMax) return alliance.AllianceHelpMax;
+  var v = parseInt(tableUtils.getDataConfigData(130062), 10);
+  return isNaN(v) ? 0 : v;
 }
 
 /**
@@ -432,24 +456,24 @@ function getHelpMax(alliance) {
  * @returns {object|null} {item, amount, helpNum}；没有可选行时返回 null
  */
 function pickLeastItem() {
-    var picked = null;
-    for (var i = 0; i < cfg.items.length; i++) {
-        var item = cfg.items[i];
-        var row = table.getTableDataById(TABLE_NAME_ALLIANCE_HELP, String(item.id));
-        if (!row) {
-            log.warn('alliance_help table row missing, skip. itemId=%d', item.id);
-            continue;
-        }
-        if (!rowSelectable(row)) {
-            log.debug('item locked by unlock condition, skip. itemId=%d', item.id);
-            continue;
-        }
-        var amount = getItemAmount(item);
-        if (!picked || amount < picked.amount) {
-            picked = { item: item, amount: amount, helpNum: row.rewards_num };
-        }
+  var picked = null;
+  for (var i = 0; i < cfg.items.length; i++) {
+    var item = cfg.items[i];
+    var row = table.getTableDataById(TABLE_NAME_ALLIANCE_HELP, String(item.id));
+    if (!row) {
+      log.warn('alliance_help table row missing, skip. itemId=%d', item.id);
+      continue;
     }
-    return picked;
+    if (!rowSelectable(row)) {
+      log.debug('item locked by unlock condition, skip. itemId=%d', item.id);
+      continue;
+    }
+    var amount = getItemAmount(item);
+    if (!picked || amount < picked.amount) {
+      picked = { item: item, amount: amount, helpNum: row.rewards_num };
+    }
+  }
+  return picked;
 }
 
 /**
@@ -460,10 +484,10 @@ function pickLeastItem() {
  * @returns {boolean}
  */
 function rowSelectable(row) {
-    var level = data.UserData.Level;
-    if (row.unlock_type === 1) return level >= row.unlock_level;
-    if (row.unlock_type === 2) return level === row.unlock_level;
-    return false;
+  var level = data.UserData.Level;
+  if (row.unlock_type === 1) return level >= row.unlock_level;
+  if (row.unlock_type === 2) return level === row.unlock_level;
+  return false;
 }
 
 /**
@@ -473,10 +497,10 @@ function rowSelectable(row) {
  * @returns {object|null} 命中的条目（可读 Type/HelpCount/MaxCount），无则 null
  */
 function findFullSelfHelp(selfHelpList) {
-    for (var i = 0; i < selfHelpList.length; i++) {
-        if (selfHelpList[i].HelpCount >= selfHelpList[i].MaxCount) return selfHelpList[i];
-    }
-    return null;
+  for (var i = 0; i < selfHelpList.length; i++) {
+    if (selfHelpList[i].HelpCount >= selfHelpList[i].MaxCount) return selfHelpList[i];
+  }
+  return null;
 }
 
 /**
@@ -486,10 +510,10 @@ function findFullSelfHelp(selfHelpList) {
  * @returns {object|null} 命中的条目，无则 null
  */
 function findSelfHelpByType(selfHelpList, type) {
-    for (var i = 0; i < selfHelpList.length; i++) {
-        if (selfHelpList[i].Type === type) return selfHelpList[i];
-    }
-    return null;
+  for (var i = 0; i < selfHelpList.length; i++) {
+    if (selfHelpList[i].Type === type) return selfHelpList[i];
+  }
+  return null;
 }
 
 /**
@@ -500,15 +524,26 @@ function findSelfHelpByType(selfHelpList, type) {
  * @returns {string}
  */
 function selfHelpSig(item) {
-    return (item.Type || 0) + '|' + (item.Qid || 0) + '|' + (item.RequestTime || 0) + '|' + (item.ItemId || 0);
+  return (
+    (item.Type || 0) +
+    '|' +
+    (item.Qid || 0) +
+    '|' +
+    (item.RequestTime || 0) +
+    '|' +
+    (item.ItemId || 0)
+  );
 }
 
 /**
  * 跨日清空「已领条目签名」集合（新的一天条目重来）；同日累积的签名集合很小，无需额外淘汰
  */
 function pruneDoneReceived() {
-    var today = todayStr();
-    if (doneReceivedDay !== today) { doneReceived.clear(); doneReceivedDay = today; }
+  var today = todayStr();
+  if (doneReceivedDay !== today) {
+    doneReceived.clear();
+    doneReceivedDay = today;
+  }
 }
 
 /**
@@ -517,7 +552,7 @@ function pruneDoneReceived() {
  * @returns {number}
  */
 function getItemAmount(it) {
-    return item.amount(it.reward);
+  return item.amount(it.reward);
 }
 
 // ─────────────────────────── 消费者 ───────────────────────────
@@ -529,50 +564,73 @@ function getItemAmount(it) {
  * @returns {Promise<void>}
  */
 async function execTask(task) {
+  var alliance = data.UserData.Alliance;
+  var ret;
 
-    var alliance = data.UserData.Alliance;
-    var ret;
-
-    if (task.kind === TASK_HELP_ALL) {
-        if (!needHelpAll()) return dropStale(task);
-        ret = await helpAll();
-        if (!aliveFn()) return;
-        log.info('helpAll done. code=%d;honor=%s/%s',
-            ret.code, alliance.AllianceHelpHonorCount, getHonorMax(alliance));
-    } else if (task.kind === TASK_RECEIVE) {
-        // 重判：仍按 Type 在全表里定位当初那条（getSelfHelpData 恒取 [0]，多条在途时可能不是它），且该条仍在、仍集齐（HelpCount >= MaxCount，口径同 produce）。
-        // 不能用对象引用比较：push 会重建 _selfHelpList，引用必然失效导致任务被当陈旧丢弃、反复入队却永不领取
-        var selfHelp = findSelfHelpByType(alliance.SelfHelpList, task.type);
-        if (!selfHelp || selfHelp.HelpCount < selfHelp.MaxCount) return dropStale(task);
-        pruneDoneReceived();
-        var sig = task.sig || selfHelpSig(selfHelp);
-        if (doneReceived.has(sig)) return dropStale(task);   // 入队到执行之间已被领取/判定不存在
-        ret = await receiveSelfHelp(selfHelp);
-        if (!aliveFn()) return;
-        // 领取成功：服务端条目已删（但本地残留，脚本不能调 DeleteSelfHelpList）；或回 120518「不存在」：本地是残留满进度条目。
-        // 两者都按签名记录，后续轮不再对同一条重复领取——这是消除「联盟帮助不存在」刷屏的关键
-        if (ret.ok || (!ret.ok && rejectErrKey(ret.data) === ERR_ALLIANCE_HELP_NOT_EXIST)) {
-            doneReceived.add(sig);
-        }
-        log.info('receive done. code=%d;sig=%s;receivedKeys=%d;progress=%s/%s',
-            ret.code, sig, doneReceived.size, selfHelp.HelpCount, selfHelp.MaxCount);
-    } else if (task.kind === TASK_APPLY) {
-        // 重判：计数通道已同步（防在入队到执行之间才首次同步好）、仍无在途、次数仍未用完（口径同 produce）
-        if (!alliance.UpdatedSelfHelp || !isHelpCountSynced(alliance) || alliance.getSelfHelpData() || isQuotaReached(alliance)) return dropStale(task);
-        ret = await requestSelfHelp(task.item, task.helpNum);
-        if (!aliveFn()) return;
-        // 拒绝时解析载荷里的显式文案键：命中 alliance_120503（超过每日上限）才记当日饱和、停止申请；
-        // 其他拒绝（如 120501 不属该盟、120504 类型不存在）不记不满、下轮按最新同步状态重判。
-        // 拒绝应答不更新本地计数，此标记是防反复撞墙的唯一依据（真机：启动即申请被拒后循环重试）
-        if (!ret.ok && rejectErrKey(ret.data) === ERR_ALLIANCE_DAILY_HELP_LIMIT) {
-            quotaSaturatedToday = todayStr();
-            log.info('server marked daily help limit reached (data=%s), stop applying today.', String(ret.data));
-        }
-        log.info('apply done. code=%d;item=%s(%d);helpNum=%d',
-            ret.code, task.item.name, task.item.id, task.helpNum);
-    } else {
-        log.warn('unknown task kind, dropped. kind=%s', task.kind);
+  if (task.kind === TASK_HELP_ALL) {
+    if (!needHelpAll()) return dropStale(task);
+    ret = await helpAll();
+    if (!aliveFn()) return;
+    log.info(
+      'helpAll done. code=%d;honor=%s/%s',
+      ret.code,
+      alliance.AllianceHelpHonorCount,
+      getHonorMax(alliance),
+    );
+  } else if (task.kind === TASK_RECEIVE) {
+    // 重判：仍按 Type 在全表里定位当初那条（getSelfHelpData 恒取 [0]，多条在途时可能不是它），且该条仍在、仍集齐（HelpCount >= MaxCount，口径同 produce）。
+    // 不能用对象引用比较：push 会重建 _selfHelpList，引用必然失效导致任务被当陈旧丢弃、反复入队却永不领取
+    var selfHelp = findSelfHelpByType(alliance.SelfHelpList, task.type);
+    if (!selfHelp || selfHelp.HelpCount < selfHelp.MaxCount) return dropStale(task);
+    pruneDoneReceived();
+    var sig = task.sig || selfHelpSig(selfHelp);
+    if (doneReceived.has(sig)) return dropStale(task); // 入队到执行之间已被领取/判定不存在
+    ret = await receiveSelfHelp(selfHelp);
+    if (!aliveFn()) return;
+    // 领取成功：服务端条目已删（但本地残留，脚本不能调 DeleteSelfHelpList）；或回 120518「不存在」：本地是残留满进度条目。
+    // 两者都按签名记录，后续轮不再对同一条重复领取——这是消除「联盟帮助不存在」刷屏的关键
+    if (ret.ok || (!ret.ok && rejectErrKey(ret.data) === ERR_ALLIANCE_HELP_NOT_EXIST)) {
+      doneReceived.add(sig);
     }
+    log.info(
+      'receive done. code=%d;sig=%s;receivedKeys=%d;progress=%s/%s',
+      ret.code,
+      sig,
+      doneReceived.size,
+      selfHelp.HelpCount,
+      selfHelp.MaxCount,
+    );
+  } else if (task.kind === TASK_APPLY) {
+    // 重判：计数通道已同步（防在入队到执行之间才首次同步好）、仍无在途、次数仍未用完（口径同 produce）
+    if (
+      !alliance.UpdatedSelfHelp ||
+      !isHelpCountSynced(alliance) ||
+      alliance.getSelfHelpData() ||
+      isQuotaReached(alliance)
+    )
+      return dropStale(task);
+    ret = await requestSelfHelp(task.item, task.helpNum);
+    if (!aliveFn()) return;
+    // 拒绝时解析载荷里的显式文案键：命中 alliance_120503（超过每日上限）才记当日饱和、停止申请；
+    // 其他拒绝（如 120501 不属该盟、120504 类型不存在）不记不满、下轮按最新同步状态重判。
+    // 拒绝应答不更新本地计数，此标记是防反复撞墙的唯一依据（真机：启动即申请被拒后循环重试）
+    if (!ret.ok && rejectErrKey(ret.data) === ERR_ALLIANCE_DAILY_HELP_LIMIT) {
+      quotaSaturatedToday = todayStr();
+      log.info(
+        'server marked daily help limit reached (data=%s), stop applying today.',
+        String(ret.data),
+      );
+    }
+    log.info(
+      'apply done. code=%d;item=%s(%d);helpNum=%d',
+      ret.code,
+      task.item.name,
+      task.item.id,
+      task.helpNum,
+    );
+  } else {
+    log.warn('unknown task kind, dropped. kind=%s', task.kind);
+  }
 }
 
 /**
@@ -580,7 +638,7 @@ async function execTask(task) {
  * @param {object} task 被丢弃的任务
  */
 function dropStale(task) {
-    log.info('task stale, dropped. kind=%s', task.kind);
+  log.info('task stale, dropped. kind=%s', task.kind);
 }
 
 // ─────────────────────────── 发包（只读+发，不改本地数据） ───────────────────────────
@@ -595,19 +653,19 @@ function dropStale(task) {
  * @returns {Promise<Ret>}
  */
 async function guardedSend(cmd, payload, label) {
-    if (net.isSending(cmd)) {
-        return net.Ret.from(CODE_NOT_SENT, null);
+  if (net.isSending(cmd)) {
+    return net.Ret.from(CODE_NOT_SENT, null);
+  }
+  try {
+    var ret = await net.send(cmd, payload);
+    if (!ret.ok) {
+      log.info('%s rejected. code=%d', label, ret.code);
     }
-    try {
-        var ret = await net.send(cmd, payload);
-        if (!ret.ok) {
-            log.info('%s rejected. code=%d', label, ret.code);
-        }
-        return ret;
-    } catch (err) {
-        log.warn('%s error!', label, err);
-        return net.Ret.from(CODE_NOT_SENT, null);
-    }
+    return ret;
+  } catch (err) {
+    log.warn('%s error!', label, err);
+    return net.Ret.from(CODE_NOT_SENT, null);
+  }
 }
 
 /**
@@ -615,7 +673,7 @@ async function guardedSend(cmd, payload, label) {
  * @returns {Promise<Ret>} code=1195 状态码
  */
 function helpAll() {
-    return guardedSend(CMD_HELP_ALL_ALLIANCE_MEMBERS, { type: HELP_TYPE_ITEM }, 'helpAll');
+  return guardedSend(CMD_HELP_ALL_ALLIANCE_MEMBERS, { type: HELP_TYPE_ITEM }, 'helpAll');
 }
 
 /**
@@ -624,15 +682,15 @@ function helpAll() {
  * @returns {Promise<Ret>} code=1141 状态码
  */
 function receiveSelfHelp(selfHelp) {
-    if (!selfHelp) {
-        return Promise.resolve(net.Ret.from(CODE_NOT_SENT, null));
-    }
-    // 游戏把领取成功后的 DeleteSelfHelpList 绑在 UI 那次 NET.send 的回调里（AllianceHelpPanel_New2/SelectPanel_New），脚本裸发不触发它，本地条目会残留满进度；调用方 execTask 用 doneReceived 签名去重，避免重复领撞 120518。合规上脚本不调游戏 Delete/Update 改本地数据
-    return guardedSend(
-        CMD_ALLIANCE_HELP_RECEIVE,
-        { type: selfHelp.Type, qid: '0' },
-        'receive(type=' + selfHelp.Type + ')'
-    );
+  if (!selfHelp) {
+    return Promise.resolve(net.Ret.from(CODE_NOT_SENT, null));
+  }
+  // 游戏把领取成功后的 DeleteSelfHelpList 绑在 UI 那次 NET.send 的回调里（AllianceHelpPanel_New2/SelectPanel_New），脚本裸发不触发它，本地条目会残留满进度；调用方 execTask 用 doneReceived 签名去重，避免重复领撞 120518。合规上脚本不调游戏 Delete/Update 改本地数据
+  return guardedSend(
+    CMD_ALLIANCE_HELP_RECEIVE,
+    { type: selfHelp.Type, qid: '0' },
+    'receive(type=' + selfHelp.Type + ')',
+  );
 }
 
 /**
@@ -642,16 +700,16 @@ function receiveSelfHelp(selfHelp) {
  * @returns {Promise<Ret>} code=1139 状态码
  */
 function requestSelfHelp(item, helpNum) {
-    if (!item) {
-        log.warn('requestSelfHelp aborted: item is required.');
-        return Promise.resolve(net.Ret.from(CODE_NOT_SENT, null));
-    }
-    // 申请成功后的计数/在途条目由游戏 push 维护；脚本不手动 Update
-    return guardedSend(
-        CMD_ALLIANCE_HELP_APPLY,
-        { type: HELP_TYPE_ITEM, itemId: item.id, helpNum: helpNum },
-        'apply(itemId=' + item.id + ')'
-    );
+  if (!item) {
+    log.warn('requestSelfHelp aborted: item is required.');
+    return Promise.resolve(net.Ret.from(CODE_NOT_SENT, null));
+  }
+  // 申请成功后的计数/在途条目由游戏 push 维护；脚本不手动 Update
+  return guardedSend(
+    CMD_ALLIANCE_HELP_APPLY,
+    { type: HELP_TYPE_ITEM, itemId: item.id, helpNum: helpNum },
+    'apply(itemId=' + item.id + ')',
+  );
 }
 
 // ─────────────────────────── 生命周期 ───────────────────────────
@@ -662,43 +720,40 @@ function requestSelfHelp(item, helpNum) {
  * @returns {boolean}
  */
 function install(ctx) {
-    ctxRef = ctx;
-    if (installed) {
-        return true;
-    }
-
-    var missing = [];
-
-    net = ctx.net;
-    if (!net.install()) {
-        missing.push('pocketcc.net');
-        net = null;
-    }
-
-    var mods = game.requireAll(['TableManager', 'DataCenter', 'TableUtils']);
-
-    table = mods.TableManager
-        && mods.TableManager.TABLE
-        || missing.push('TableManager');
-
-    data = mods.DataCenter
-        && mods.DataCenter.DATA
-        || missing.push('DataCenter');
-
-    tableUtils = mods.TableUtils
-        && mods.TableUtils.default
-        || missing.push('TableUtils');
-
-    if (missing.length) {
-        net = null; table = null; data = null; tableUtils = null;
-        log.warn('install failed. missing=%s', missing.join(';'));
-        return false;
-    }
-
-    installed = true;
-    log.info('installed.');
-
+  ctxRef = ctx;
+  if (installed) {
     return true;
+  }
+
+  var missing = [];
+
+  net = ctx.net;
+  if (!net.install()) {
+    missing.push('pocketcc.net');
+    net = null;
+  }
+
+  var mods = game.requireAll(['TableManager', 'DataCenter', 'TableUtils']);
+
+  table = (mods.TableManager && mods.TableManager.TABLE) || missing.push('TableManager');
+
+  data = (mods.DataCenter && mods.DataCenter.DATA) || missing.push('DataCenter');
+
+  tableUtils = (mods.TableUtils && mods.TableUtils.default) || missing.push('TableUtils');
+
+  if (missing.length) {
+    net = null;
+    table = null;
+    data = null;
+    tableUtils = null;
+    log.warn('install failed. missing=%s', missing.join(';'));
+    return false;
+  }
+
+  installed = true;
+  log.info('installed.');
+
+  return true;
 }
 
 /**
@@ -709,8 +764,8 @@ function install(ctx) {
  * 又靠单定时器语义自然合并频繁 push（多条连到也只抢跑一次）。轮询仍是兜底。
  */
 function onHelpUpdate() {
-    if (!aliveFn()) return;
-    scheduling(0, runTick);
+  if (!aliveFn()) return;
+  scheduling(0, runTick);
 }
 
 /**
@@ -719,26 +774,28 @@ function onHelpUpdate() {
  * @param {object} ctx reactor 上下文
  */
 function run(ctx) {
-    ctxRef = ctx;
-    ctx.on.push(PUSH_ALLIANCE_SELF_HELP, onHelpUpdate);
-    ctx.on.push(PUSH_ALLIANCE_HELP_REGET, onHelpUpdate);
-    scheduling(0, runTick);
-    log.info('started.');
+  ctxRef = ctx;
+  ctx.on.push(PUSH_ALLIANCE_SELF_HELP, onHelpUpdate);
+  ctx.on.push(PUSH_ALLIANCE_HELP_REGET, onHelpUpdate);
+  scheduling(0, runTick);
+  log.info('started.');
 }
 
 /**
  * 向 reactor 注册本功能说明书：纯发包（不派行军、不抢队列），不声明 scenes / offInCombat。
  */
 reactor.register({
-    id: 'allianceHelp',
-    label: '联盟帮助',
-    storageKey: 'pocketcc.feat.allianceHelp',
-    symbols: ['tableManager', 'dataCenter', 'tableUtils'],
-    // 无 scenes、无 offInCombat：纯发包（不派行军、不抢队列），全场景 + 战斗态下都继续跑。
-    // 面板仅出启用开关；busy/idle/consume 间隔与 items 候选均为上方 cfg 的内置常量，不作为可持久化配置项。
-    defaults: { enabled: false },
-    fields: [],
-    toModuleCfg: function () { return {}; },
-    install: install,
-    run: run,
+  id: 'allianceHelp',
+  label: '联盟帮助',
+  storageKey: 'pocketcc.feat.allianceHelp',
+  symbols: ['tableManager', 'dataCenter', 'tableUtils'],
+  // 无 scenes、无 offInCombat：纯发包（不派行军、不抢队列），全场景 + 战斗态下都继续跑。
+  // 面板仅出启用开关；busy/idle/consume 间隔与 items 候选均为上方 cfg 的内置常量，不作为可持久化配置项。
+  defaults: { enabled: false },
+  fields: [],
+  toModuleCfg: function () {
+    return {};
+  },
+  install: install,
+  run: run,
 });

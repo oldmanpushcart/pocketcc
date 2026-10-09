@@ -39,9 +39,9 @@ const MARCH_TYPE_JOIN = 9;
  * @type {Object<string,{key:string, label:string}>}
  */
 const RALLY_TARGETS = {
-    44: { key: 'warHammer', label: '战锤' },       // 战锤4000，pointType=12
-    9100: { key: 'fearStar', label: '惧星' },      // 惧星，pointType=86
-    12: { key: 'refugeeCamp', label: '难民营' },   // 难民营，pointType=18
+  44: { key: 'warHammer', label: '战锤' }, // 战锤4000，pointType=12
+  9100: { key: 'fearStar', label: '惧星' }, // 惧星，pointType=86
+  12: { key: 'refugeeCamp', label: '难民营' }, // 难民营，pointType=18
 };
 
 /** @type {number} 非服务器返回的哨兵 code：发送异常时用，与真实 s 码区分开 */
@@ -70,11 +70,11 @@ var ctxRef = null;
  * @type {object}
  */
 var cfg = {
-    targets: {
-        warHammer: { enabled: true, joinDelayMs: 0, dailyLimit: 0 },
-        fearStar: { enabled: true, joinDelayMs: 0, dailyLimit: 0 },
-        refugeeCamp: { enabled: true, joinDelayMs: 0, dailyLimit: 0 },
-    },
+  targets: {
+    warHammer: { enabled: true, joinDelayMs: 0, dailyLimit: 0 },
+    fearStar: { enabled: true, joinDelayMs: 0, dailyLimit: 0 },
+    refugeeCamp: { enabled: true, joinDelayMs: 0, dailyLimit: 0 },
+  },
 };
 
 /**
@@ -108,7 +108,7 @@ var installed = false;
  * @returns {boolean}
  */
 function aliveFn() {
-    return ctxRef ? ctxRef.alive() : false;
+  return ctxRef ? ctxRef.alive() : false;
 }
 
 /**
@@ -117,17 +117,19 @@ function aliveFn() {
  * @returns {object} 当前 cfg
  */
 function configure(partial) {
-    if (!partial) return cfg;
-    var targets = partial.targets;
-    if (!targets) return cfg;
-    Object.keys(cfg.targets).forEach(function (key) {
-        var t = targets[key];
-        if (!t) return;
-        if (typeof t.enabled === 'boolean') cfg.targets[key].enabled = t.enabled;
-        if (typeof t.joinDelayMs === 'number' && t.joinDelayMs >= 0) cfg.targets[key].joinDelayMs = t.joinDelayMs;
-        if (typeof t.dailyLimit === 'number' && t.dailyLimit >= 0) cfg.targets[key].dailyLimit = t.dailyLimit;
-    });
-    return cfg;
+  if (!partial) return cfg;
+  var targets = partial.targets;
+  if (!targets) return cfg;
+  Object.keys(cfg.targets).forEach(function (key) {
+    var t = targets[key];
+    if (!t) return;
+    if (typeof t.enabled === 'boolean') cfg.targets[key].enabled = t.enabled;
+    if (typeof t.joinDelayMs === 'number' && t.joinDelayMs >= 0)
+      cfg.targets[key].joinDelayMs = t.joinDelayMs;
+    if (typeof t.dailyLimit === 'number' && t.dailyLimit >= 0)
+      cfg.targets[key].dailyLimit = t.dailyLimit;
+  });
+  return cfg;
 }
 
 /**
@@ -135,53 +137,63 @@ function configure(partial) {
  * @param {object} ev net.on 事件 {cmd, status, data, ord, ts, raw}
  */
 function onAssemblyCreated(ev) {
-    if (!aliveFn()) return;
+  if (!aliveFn()) return;
 
-    var d = ev && ev.data;
-    if (!d || !d.teamId || d.marchType !== MARCH_TYPE_RALLY) return;
+  var d = ev && ev.data;
+  if (!d || !d.teamId || d.marchType !== MARCH_TYPE_RALLY) return;
 
-    var target = RALLY_TARGETS[d.itemId];
-    if (!target) return;
+  var target = RALLY_TARGETS[d.itemId];
+  if (!target) return;
 
-    var tcfg = cfg.targets[target.key];
-    if (!tcfg || !tcfg.enabled) return;
+  var tcfg = cfg.targets[target.key];
+  if (!tcfg || !tcfg.enabled) return;
 
-    // 首读失败过（如 UID 前缀未设的登录窗口期）就借这次推送再试一次，否则本次会话只能永远跑内存值
-    if (!dailyStateLoaded) ensureDailyLoaded();
+  // 首读失败过（如 UID 前缀未设的登录窗口期）就借这次推送再试一次，否则本次会话只能永远跑内存值
+  if (!dailyStateLoaded) ensureDailyLoaded();
 
-    var teamId = String(d.teamId);
+  var teamId = String(d.teamId);
 
-    if (isOwnRally(d)) return;
+  if (isOwnRally(d)) return;
 
-    // 余位检查
-    if ((d.rallyCapacity | 0) - (d.rallySize | 0) < 1) {
-        log.info('rally full, skip. target=%s;teamId=%s', target.label, teamId);
-        return;
+  // 余位检查
+  if ((d.rallyCapacity | 0) - (d.rallySize | 0) < 1) {
+    log.info('rally full, skip. target=%s;teamId=%s', target.label, teamId);
+    return;
+  }
+
+  // 全局行军闸门（core/march.canMarch）
+  if (!march.canMarch()) {
+    log.info('no free march slot, skip. target=%s;teamId=%s', target.label, teamId);
+    return;
+  }
+
+  // 每日参与上限闸门（dailyLimit=0 意味无限）
+  if (isDailyLimitReached(target.key)) {
+    // 已达上限是预期的空闲态：每目标每天只在首次命中时播报一行（生命周期），之后 push 静默返回，不刷日志
+    var announceKey = dailyState.date + '|' + target.key;
+    if (!limitAnnounced.has(announceKey)) {
+      limitAnnounced.add(announceKey);
+      log.info(
+        'daily limit reached, going idle today. target=%s;count=%d/%d (further skips muted)',
+        target.label,
+        dailyState.counts[target.key] | 0,
+        tcfg.dailyLimit,
+      );
     }
+    return;
+  }
 
-    // 全局行军闸门（core/march.canMarch）
-    if (!march.canMarch()) {
-        log.info('no free march slot, skip. target=%s;teamId=%s', target.label, teamId);
-        return;
-    }
+  if (pendingTeamIds.has(teamId)) return;
+  pendingTeamIds.add(teamId);
 
-    // 每日参与上限闸门（dailyLimit=0 意味无限）
-    if (isDailyLimitReached(target.key)) {
-        // 已达上限是预期的空闲态：每目标每天只在首次命中时播报一行（生命周期），之后 push 静默返回，不刷日志
-        var announceKey = dailyState.date + '|' + target.key;
-        if (!limitAnnounced.has(announceKey)) {
-            limitAnnounced.add(announceKey);
-            log.info('daily limit reached, going idle today. target=%s;count=%d/%d (further skips muted)',
-                target.label, dailyState.counts[target.key] | 0, tcfg.dailyLimit);
-        }
-        return;
-    }
-
-    if (pendingTeamIds.has(teamId)) return;
-    pendingTeamIds.add(teamId);
-
-    log.info('rally push. target=%s;teamId=%s;leader=%s;delay=%dms', target.label, teamId, d.leaderName, tcfg.joinDelayMs);
-    scheduleJoin(target.key, teamId, tcfg.joinDelayMs, d.expireTime);
+  log.info(
+    'rally push. target=%s;teamId=%s;leader=%s;delay=%dms',
+    target.label,
+    teamId,
+    d.leaderName,
+    tcfg.joinDelayMs,
+  );
+  scheduleJoin(target.key, teamId, tcfg.joinDelayMs, d.expireTime);
 }
 
 /**
@@ -190,8 +202,8 @@ function onAssemblyCreated(ev) {
  * @returns {boolean}
  */
 function isOwnRally(d) {
-    var uid = dataCenter.UserData && dataCenter.UserData.UID;
-    return uid != null && String(d.leaderUid) === String(uid);
+  var uid = dataCenter.UserData && dataCenter.UserData.UID;
+  return uid != null && String(d.leaderUid) === String(uid);
 }
 
 /**
@@ -199,10 +211,10 @@ function isOwnRally(d) {
  * @returns {string}
  */
 function todayStr() {
-    var d = new Date();
-    var m = d.getMonth() + 1;
-    var day = d.getDate();
-    return d.getFullYear() + '-' + (m < 10 ? '0' + m : m) + '-' + (day < 10 ? '0' + day : day);
+  var d = new Date();
+  var m = d.getMonth() + 1;
+  var day = d.getDate();
+  return d.getFullYear() + '-' + (m < 10 ? '0' + m : m) + '-' + (day < 10 ? '0' + day : day);
 }
 
 /**
@@ -212,13 +224,13 @@ function todayStr() {
  * 读回回调里日期会整体覆盖并重试跳日，这里直接跳过即可。
  */
 function rollDateIfNeeded() {
-    if (!dailyStateLoaded) return;
-    var today = todayStr();
-    if (dailyState.date !== today) {
-        dailyState.date = today;
-        dailyState.counts = {};
-        persistDaily();
-    }
+  if (!dailyStateLoaded) return;
+  var today = todayStr();
+  if (dailyState.date !== today) {
+    dailyState.date = today;
+    dailyState.counts = {};
+    persistDaily();
+  }
 }
 
 /**
@@ -228,19 +240,24 @@ function rollDateIfNeeded() {
  * 保留下次 run()/推送重试的机会；未 loaded 期间 persistDaily 会挡住写盘，不会拿内存全 0 覆掉盘上真值。
  */
 function ensureDailyLoaded() {
-    if (dailyStateLoaded) { rollDateIfNeeded(); return; }
-    Promise.resolve(storage.data.get(DAILY_STATE_NAME)).then(function (saved) {
-        dailyStateLoaded = true;
-        if (saved && typeof saved === 'object' && typeof saved.date === 'string') {
-            dailyState.date = saved.date;
-            dailyState.counts = saved.counts && typeof saved.counts === 'object' ? saved.counts : {};
-        }
-        rollDateIfNeeded();
-        // 读回完成把面板上的 '-' 占位刷成真实计数（ui.refresh 仅在面板打开时扫 DOM，开销可忽略）
-        bus.emit('ui.refresh');
-    }).catch(function (err) {
-        log.warn('daily state load failed, will retry on next run/push. %s', err && err.message);
-        rollDateIfNeeded();
+  if (dailyStateLoaded) {
+    rollDateIfNeeded();
+    return;
+  }
+  Promise.resolve(storage.data.get(DAILY_STATE_NAME))
+    .then(function (saved) {
+      dailyStateLoaded = true;
+      if (saved && typeof saved === 'object' && typeof saved.date === 'string') {
+        dailyState.date = saved.date;
+        dailyState.counts = saved.counts && typeof saved.counts === 'object' ? saved.counts : {};
+      }
+      rollDateIfNeeded();
+      // 读回完成把面板上的 '-' 占位刷成真实计数（ui.refresh 仅在面板打开时扫 DOM，开销可忽略）
+      bus.emit('ui.refresh');
+    })
+    .catch(function (err) {
+      log.warn('daily state load failed, will retry on next run/push. %s', err && err.message);
+      rollDateIfNeeded();
     });
 }
 
@@ -250,10 +267,10 @@ function ensureDailyLoaded() {
  * @returns {boolean}
  */
 function isDailyLimitReached(key) {
-    var limit = cfg.targets[key] && cfg.targets[key].dailyLimit;
-    if (!limit || limit <= 0) return false;
-    rollDateIfNeeded();
-    return (dailyState.counts[key] | 0) >= limit;
+  var limit = cfg.targets[key] && cfg.targets[key].dailyLimit;
+  if (!limit || limit <= 0) return false;
+  rollDateIfNeeded();
+  return (dailyState.counts[key] | 0) >= limit;
 }
 
 /**
@@ -266,13 +283,13 @@ function isDailyLimitReached(key) {
  * @returns {string}
  */
 function formatToday(key, limit) {
-    if (!dailyStateLoaded) {
-        ensureDailyLoaded();
-        return '-';
-    }
-    var n = dailyState.counts[key] | 0;
-    limit = limit | 0;
-    return limit > 0 ? (n + ' / ' + limit) : (n + ' / ∞');
+  if (!dailyStateLoaded) {
+    ensureDailyLoaded();
+    return '-';
+  }
+  var n = dailyState.counts[key] | 0;
+  limit = limit | 0;
+  return limit > 0 ? n + ' / ' + limit : n + ' / ∞';
 }
 
 /**
@@ -280,10 +297,10 @@ function formatToday(key, limit) {
  * @param {string} key 目标 key
  */
 function bumpDailyCount(key) {
-    rollDateIfNeeded();
-    dailyState.counts[key] = (dailyState.counts[key] | 0) + 1;
-    persistDaily();
-    bus.emit('ui.refresh');
+  rollDateIfNeeded();
+  dailyState.counts[key] = (dailyState.counts[key] | 0) + 1;
+  persistDaily();
+  bus.emit('ui.refresh');
 }
 
 /**
@@ -293,23 +310,27 @@ function bumpDailyCount(key) {
  *      超时强制复位，后续修改照常重试。
  */
 function persistDaily() {
-    if (dailyStateSaving) return;
-    if (!dailyStateLoaded) {
-        log.warn('skip daily state save: disk state not loaded yet (in-memory counts are not authoritative).');
-        return;
-    }
-    dailyStateSaving = true;
-    var seq = ++saveSeq;
-    var snapshot = { date: dailyState.date, counts: Object.assign({}, dailyState.counts) };
-    var watchdog = setTimeout(function () {
-        log.warn('daily state save pending over %dms, reset latch.', SAVE_STUCK_MS);
-        releaseSaveLatch(seq);
-    }, SAVE_STUCK_MS);
-    Promise.resolve(storage.data.set(DAILY_STATE_NAME, snapshot)).catch(function (err) {
-        log.warn('daily state save failed.', err);
-    }).then(function () {
-        clearTimeout(watchdog);
-        releaseSaveLatch(seq);
+  if (dailyStateSaving) return;
+  if (!dailyStateLoaded) {
+    log.warn(
+      'skip daily state save: disk state not loaded yet (in-memory counts are not authoritative).',
+    );
+    return;
+  }
+  dailyStateSaving = true;
+  var seq = ++saveSeq;
+  var snapshot = { date: dailyState.date, counts: Object.assign({}, dailyState.counts) };
+  var watchdog = setTimeout(function () {
+    log.warn('daily state save pending over %dms, reset latch.', SAVE_STUCK_MS);
+    releaseSaveLatch(seq);
+  }, SAVE_STUCK_MS);
+  Promise.resolve(storage.data.set(DAILY_STATE_NAME, snapshot))
+    .catch(function (err) {
+      log.warn('daily state save failed.', err);
+    })
+    .then(function () {
+      clearTimeout(watchdog);
+      releaseSaveLatch(seq);
     });
 }
 
@@ -318,8 +339,8 @@ function persistDaily() {
  * @param {number} seq 本次写入的世代号
  */
 function releaseSaveLatch(seq) {
-    if (seq !== saveSeq) return;
-    dailyStateSaving = false;
+  if (seq !== saveSeq) return;
+  dailyStateSaving = false;
 }
 
 /**
@@ -330,11 +351,14 @@ function releaseSaveLatch(seq) {
  * @param {number} expireTime 集结过期时间戳（秒）
  */
 function scheduleJoin(key, teamId, delayMs, expireTime) {
-    setTimeout(function () {
-        joinFlow(key, teamId, expireTime).catch(function (err) {
-            log.warn('join flow threw!', err);
-        });
-    }, Math.max(0, delayMs | 0));
+  setTimeout(
+    function () {
+      joinFlow(key, teamId, expireTime).catch(function (err) {
+        log.warn('join flow threw!', err);
+      });
+    },
+    Math.max(0, delayMs | 0),
+  );
 }
 
 /**
@@ -345,45 +369,50 @@ function scheduleJoin(key, teamId, delayMs, expireTime) {
  * @returns {Promise<void>}
  */
 async function joinFlow(key, teamId, expireTime) {
-    try {
-        if (!aliveFn()) return;
+  try {
+    if (!aliveFn()) return;
 
-        // 过期检查：集结已开始（expireTime 已过）则放弃
-        if (expireTime && Date.now() / 1000 > expireTime) {
-            log.info('rally expired, abandon. target=%s;teamId=%s', key, teamId);
-            return;
-        }
-
-        // 行军闸门复查
-        if (!march.canMarch()) {
-            log.info('no march slot (recheck), abandon. target=%s;teamId=%s', key, teamId);
-            return;
-        }
-
-        var marchData = new Battle().plan().minimal().build();
-        if (!marchData.armyListNew.length) {
-            log.info('no army available, abandon. target=%s;teamId=%s', key, teamId);
-            return;
-        }
-
-        // 发送前复查每日上限（延迟期间可能上一刚刚发成一条，同目标计数会变）
-        if (isDailyLimitReached(key)) {
-            log.info('daily limit reached (recheck), abandon. target=%s;teamId=%s', key, teamId);
-            return;
-        }
-
-        var ret = await sendJoin(teamId, marchData);
-        if (ret.ok) {
-            bumpDailyCount(key);
-            log.info('join ok. target=%s;teamId=%s;armyId=%d;today=%d',
-                key, teamId, marchData.armyListNew[0].armyId, dailyState.counts[key] | 0);
-        } else {
-            // 加入被拒（目标已满/已过期/不可加入等 code=3）属预期业务态，非错误：降为 info（真实网络失败另由 sendJoin 的 join send error warn 兜底）
-            log.info('join rejected. target=%s;teamId=%s;code=%d', key, teamId, ret.code);
-        }
-    } finally {
-        pendingTeamIds.delete(teamId);
+    // 过期检查：集结已开始（expireTime 已过）则放弃
+    if (expireTime && Date.now() / 1000 > expireTime) {
+      log.info('rally expired, abandon. target=%s;teamId=%s', key, teamId);
+      return;
     }
+
+    // 行军闸门复查
+    if (!march.canMarch()) {
+      log.info('no march slot (recheck), abandon. target=%s;teamId=%s', key, teamId);
+      return;
+    }
+
+    var marchData = new Battle().plan().minimal().build();
+    if (!marchData.armyListNew.length) {
+      log.info('no army available, abandon. target=%s;teamId=%s', key, teamId);
+      return;
+    }
+
+    // 发送前复查每日上限（延迟期间可能上一刚刚发成一条，同目标计数会变）
+    if (isDailyLimitReached(key)) {
+      log.info('daily limit reached (recheck), abandon. target=%s;teamId=%s', key, teamId);
+      return;
+    }
+
+    var ret = await sendJoin(teamId, marchData);
+    if (ret.ok) {
+      bumpDailyCount(key);
+      log.info(
+        'join ok. target=%s;teamId=%s;armyId=%d;today=%d',
+        key,
+        teamId,
+        marchData.armyListNew[0].armyId,
+        dailyState.counts[key] | 0,
+      );
+    } else {
+      // 加入被拒（目标已满/已过期/不可加入等 code=3）属预期业务态，非错误：降为 info（真实网络失败另由 sendJoin 的 join send error warn 兜底）
+      log.info('join rejected. target=%s;teamId=%s;code=%d', key, teamId, ret.code);
+    }
+  } finally {
+    pendingTeamIds.delete(teamId);
+  }
 }
 
 /**
@@ -393,21 +422,21 @@ async function joinFlow(key, teamId, expireTime) {
  * @returns {Promise<Ret>} code=1204 状态码
  */
 async function sendJoin(teamId, marchData) {
-    try {
-        return await net.send(CMD_ASSEMBLY_JOIN, {
-            marchType: MARCH_TYPE_JOIN,
-            teamId: teamId,
-            armyList: marchData.armyListNew,
-            armyListNew: marchData.armyListNew,
-            heroList: marchData.heroList,
-            trapList: marchData.trapList,
-            formation: 0,
-            formationV2: marchData.formationV2,
-        });
-    } catch (err) {
-        log.warn('join send error. teamId=%s', teamId, err);
-        return net.Ret.from(CODE_NOT_SENT, null);
-    }
+  try {
+    return await net.send(CMD_ASSEMBLY_JOIN, {
+      marchType: MARCH_TYPE_JOIN,
+      teamId: teamId,
+      armyList: marchData.armyListNew,
+      armyListNew: marchData.armyListNew,
+      heroList: marchData.heroList,
+      trapList: marchData.trapList,
+      formation: 0,
+      formationV2: marchData.formationV2,
+    });
+  } catch (err) {
+    log.warn('join send error. teamId=%s', teamId, err);
+    return net.Ret.from(CODE_NOT_SENT, null);
+  }
 }
 
 /**
@@ -416,32 +445,31 @@ async function sendJoin(teamId, marchData) {
  * @returns {boolean}
  */
 function install(ctx) {
-    ctxRef = ctx;
-    if (installed) return true;
+  ctxRef = ctx;
+  if (installed) return true;
 
-    var missing = [];
+  var missing = [];
 
-    net = ctx.net;
-    if (!net.install()) {
-        missing.push('pocketcc.net');
-        net = null;
-    }
+  net = ctx.net;
+  if (!net.install()) {
+    missing.push('pocketcc.net');
+    net = null;
+  }
 
-    var mods = game.requireAll(['DataCenter']);
+  var mods = game.requireAll(['DataCenter']);
 
-    dataCenter = mods.DataCenter
-        && mods.DataCenter.DATA
-        || missing.push('DataCenter');
+  dataCenter = (mods.DataCenter && mods.DataCenter.DATA) || missing.push('DataCenter');
 
-    if (missing.length) {
-        net = null; dataCenter = null;
-        log.warn('install failed. missing=%s', missing.join(';'));
-        return false;
-    }
+  if (missing.length) {
+    net = null;
+    dataCenter = null;
+    log.warn('install failed. missing=%s', missing.join(';'));
+    return false;
+  }
 
-    installed = true;
-    log.info('installed.');
-    return true;
+  installed = true;
+  log.info('installed.');
+  return true;
 }
 
 /**
@@ -449,56 +477,95 @@ function install(ctx) {
  * @param {object} ctx reactor 上下文
  */
 function run(ctx) {
-    ctxRef = ctx;
-    pendingTeamIds.clear();
-    ensureDailyLoaded();
-    ctx.on.push(CMD_PUSH_ASSEMBLY_CREATED, onAssemblyCreated);
-    log.info('started, listening push=%d.', CMD_PUSH_ASSEMBLY_CREATED);
+  ctxRef = ctx;
+  pendingTeamIds.clear();
+  ensureDailyLoaded();
+  ctx.on.push(CMD_PUSH_ASSEMBLY_CREATED, onAssemblyCreated);
+  log.info('started, listening push=%d.', CMD_PUSH_ASSEMBLY_CREATED);
 }
 
 /**
  * 向 reactor 注册本功能说明书：scenes 限定 Home/NWorldMap，战斗模式暂停；面板按目标分段带今日计数。
  */
 reactor.register({
-    id: 'allianceRally',
-    label: '联盟集结',
-    storageKey: 'pocketcc.feat.allianceRally',
-    symbols: ['dataCenter'],
-    scenes: ['Home', 'NWorldMap'],
-    offInCombat: true,
-    defaults: {
-        enabled: false,
-        warHammerEnabled: true, warHammerDelaySec: 0, warHammerDailyLimit: 0,
-        fearStarEnabled: true, fearStarDelaySec: 0, fearStarDailyLimit: 0,
-        refugeeCampEnabled: true, refugeeCampDelaySec: 0, refugeeCampDailyLimit: 0,
+  id: 'allianceRally',
+  label: '联盟集结',
+  storageKey: 'pocketcc.feat.allianceRally',
+  symbols: ['dataCenter'],
+  scenes: ['Home', 'NWorldMap'],
+  offInCombat: true,
+  defaults: {
+    enabled: false,
+    warHammerEnabled: true,
+    warHammerDelaySec: 0,
+    warHammerDailyLimit: 0,
+    fearStarEnabled: true,
+    fearStarDelaySec: 0,
+    fearStarDailyLimit: 0,
+    refugeeCampEnabled: true,
+    refugeeCampDelaySec: 0,
+    refugeeCampDailyLimit: 0,
+  },
+  fields: [
+    { key: 'warHammerEnabled', label: '自动加入', type: 'checkbox', section: '战锤' },
+    { key: 'warHammerDelaySec', label: '延迟入队(秒)', min: 0, step: 1, section: '战锤' },
+    { key: 'warHammerDailyLimit', label: '每日上限(0=无限)', min: 0, step: 1, section: '战锤' },
+    {
+      key: 'warHammerTodayCount',
+      label: '今日已参与',
+      type: 'text',
+      section: '战锤',
+      get: function (c) {
+        return formatToday('warHammer', c && c.warHammerDailyLimit);
+      },
     },
-    fields: [
-        { key: 'warHammerEnabled', label: '自动加入', type: 'checkbox', section: '战锤' },
-        { key: 'warHammerDelaySec', label: '延迟入队(秒)', min: 0, step: 1, section: '战锤' },
-        { key: 'warHammerDailyLimit', label: '每日上限(0=无限)', min: 0, step: 1, section: '战锤' },
-        { key: 'warHammerTodayCount', label: '今日已参与', type: 'text', section: '战锤',
-          get: function (c) { return formatToday('warHammer', c && c.warHammerDailyLimit); } },
-        { key: 'fearStarEnabled', label: '自动加入', type: 'checkbox', section: '惧星' },
-        { key: 'fearStarDelaySec', label: '延迟入队(秒)', min: 0, step: 1, section: '惧星' },
-        { key: 'fearStarDailyLimit', label: '每日上限(0=无限)', min: 0, step: 1, section: '惧星' },
-        { key: 'fearStarTodayCount', label: '今日已参与', type: 'text', section: '惧星',
-          get: function (c) { return formatToday('fearStar', c && c.fearStarDailyLimit); } },
-        { key: 'refugeeCampEnabled', label: '自动加入', type: 'checkbox', section: '难民营' },
-        { key: 'refugeeCampDelaySec', label: '延迟入队(秒)', min: 0, step: 1, section: '难民营' },
-        { key: 'refugeeCampDailyLimit', label: '每日上限(0=无限)', min: 0, step: 1, section: '难民营' },
-        { key: 'refugeeCampTodayCount', label: '今日已参与', type: 'text', section: '难民营',
-          get: function (c) { return formatToday('refugeeCamp', c && c.refugeeCampDailyLimit); } },
-    ],
-    toModuleCfg: function (c) {
-        return {
-            targets: {
-                warHammer: { enabled: !!c.warHammerEnabled, joinDelayMs: c.warHammerDelaySec * 1000, dailyLimit: c.warHammerDailyLimit | 0 },
-                fearStar: { enabled: !!c.fearStarEnabled, joinDelayMs: c.fearStarDelaySec * 1000, dailyLimit: c.fearStarDailyLimit | 0 },
-                refugeeCamp: { enabled: !!c.refugeeCampEnabled, joinDelayMs: c.refugeeCampDelaySec * 1000, dailyLimit: c.refugeeCampDailyLimit | 0 },
-            },
-        };
+    { key: 'fearStarEnabled', label: '自动加入', type: 'checkbox', section: '惧星' },
+    { key: 'fearStarDelaySec', label: '延迟入队(秒)', min: 0, step: 1, section: '惧星' },
+    { key: 'fearStarDailyLimit', label: '每日上限(0=无限)', min: 0, step: 1, section: '惧星' },
+    {
+      key: 'fearStarTodayCount',
+      label: '今日已参与',
+      type: 'text',
+      section: '惧星',
+      get: function (c) {
+        return formatToday('fearStar', c && c.fearStarDailyLimit);
+      },
     },
-    install: install,
-    configure: configure,
-    run: run,
+    { key: 'refugeeCampEnabled', label: '自动加入', type: 'checkbox', section: '难民营' },
+    { key: 'refugeeCampDelaySec', label: '延迟入队(秒)', min: 0, step: 1, section: '难民营' },
+    { key: 'refugeeCampDailyLimit', label: '每日上限(0=无限)', min: 0, step: 1, section: '难民营' },
+    {
+      key: 'refugeeCampTodayCount',
+      label: '今日已参与',
+      type: 'text',
+      section: '难民营',
+      get: function (c) {
+        return formatToday('refugeeCamp', c && c.refugeeCampDailyLimit);
+      },
+    },
+  ],
+  toModuleCfg: function (c) {
+    return {
+      targets: {
+        warHammer: {
+          enabled: !!c.warHammerEnabled,
+          joinDelayMs: c.warHammerDelaySec * 1000,
+          dailyLimit: c.warHammerDailyLimit | 0,
+        },
+        fearStar: {
+          enabled: !!c.fearStarEnabled,
+          joinDelayMs: c.fearStarDelaySec * 1000,
+          dailyLimit: c.fearStarDailyLimit | 0,
+        },
+        refugeeCamp: {
+          enabled: !!c.refugeeCampEnabled,
+          joinDelayMs: c.refugeeCampDelaySec * 1000,
+          dailyLimit: c.refugeeCampDailyLimit | 0,
+        },
+      },
+    };
+  },
+  install: install,
+  configure: configure,
+  run: run,
 });

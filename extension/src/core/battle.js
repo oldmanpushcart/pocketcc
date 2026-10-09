@@ -21,8 +21,8 @@ const log = createLog('BATTLE');
  * @type {{BATTLE:number, GATHER:number}}
  */
 const PRESET_TYPE = {
-    BATTLE: 0,
-    GATHER: 1,
+  BATTLE: 0,
+  GATHER: 1,
 };
 
 /** @type {number} 最简行军放兵的战斗位（grid 索引发 0，投影时 toBattlePos(0)=1） */
@@ -43,11 +43,11 @@ const MECHA_CAN_FIGHT = 3;
  * @returns {number} 战斗位 pos
  */
 function toBattlePos(index) {
-    if (index < 3) return index + 1;
-    var col = (index + 1) % 3 || 3;
-    if (index < 6) return 10 + col;
-    if (index < 9) return 20 + col;
-    return index + 1; // 越界兜底：极少见，保持不丢兵
+  if (index < 3) return index + 1;
+  var col = (index + 1) % 3 || 3;
+  if (index < 6) return 10 + col;
+  if (index < 9) return 20 + col;
+  return index + 1; // 越界兜底：极少见，保持不丢兵
 }
 
 /**
@@ -57,14 +57,14 @@ function toBattlePos(index) {
  * @returns {object}
  */
 function toArmyEntry(item) {
-    var entry = {
-        pos: toBattlePos(item.Pos | 0),
-        armyId: item.ArmyId,
-        armyNum: item.Num | 0,
-    };
-    if (item.heroCap) entry.heroCap = item.heroCap;
-    if (item.skinId) entry.skinId = item.skinId;
-    return entry;
+  var entry = {
+    pos: toBattlePos(item.Pos | 0),
+    armyId: item.ArmyId,
+    armyNum: item.Num | 0,
+  };
+  if (item.heroCap) entry.heroCap = item.heroCap;
+  if (item.skinId) entry.skinId = item.skinId;
+  return entry;
 }
 
 /**
@@ -75,7 +75,7 @@ function toArmyEntry(item) {
  * @returns {number[]}
  */
 function toHeroList(ids) {
-    return (ids || []).slice();
+  return (ids || []).slice();
 }
 
 /**
@@ -85,15 +85,15 @@ function toHeroList(ids) {
  * @returns {object}
  */
 function toExtraArmy(extra) {
-    var list = extra;
-    if (!list) return {};
-    if (!Array.isArray(list)) list = [list];
-    if (!list.length) return {};
-    var armyNum = 0;
-    for (var i = 0; i < list.length; i++) {
-        armyNum += list[i].Num | 0;
-    }
-    return { armyId: list[0].ArmyId, armyNum: armyNum };
+  var list = extra;
+  if (!list) return {};
+  if (!Array.isArray(list)) list = [list];
+  if (!list.length) return {};
+  var armyNum = 0;
+  for (var i = 0; i < list.length; i++) {
+    armyNum += list[i].Num | 0;
+  }
+  return { armyId: list[0].ArmyId, armyNum: armyNum };
 }
 
 // ── 预设部队读取 ────────────────────────────────────────────────────────
@@ -102,27 +102,27 @@ function toExtraArmy(extra) {
  * @returns {object|null}
  */
 function presetMarchCtl() {
-    var m = game.get('PresetMarchController');
-    var inst = m && m.default && m.default.instance;
-    if (!inst) log.warn('PresetMarchController.instance unavailable.');
-    return inst || null;
+  var m = game.get('PresetMarchController');
+  var inst = m && m.default && m.default.instance;
+  if (!inst) log.warn('PresetMarchController.instance unavailable.');
+  return inst || null;
 }
 
 // ── 运行时依赖 ──────────────────────────────────────────────────────
 /** @returns {object|null} UserData 数据面（DataCenter.DATA.UserData） */
 function userData() {
-    var dc = game.get('DataCenter');
-    return (dc && dc.DATA && dc.DATA.UserData) || null;
+  var dc = game.get('DataCenter');
+  return (dc && dc.DATA && dc.DATA.UserData) || null;
 }
 /** @returns {object|null} HeroController 单例 */
 function heroCtl() {
-    var m = game.get('HeroController');
-    return (m && m.HeroController && m.HeroController.getInstance()) || null;
+  var m = game.get('HeroController');
+  return (m && m.HeroController && m.HeroController.getInstance()) || null;
 }
 /** @returns {object|null} MechaController 单例 */
 function mechaCtl() {
-    var m = game.get('MechaController');
-    return (m && m.MechaController && m.MechaController.getInstance()) || null;
+  var m = game.get('MechaController');
+  return (m && m.MechaController && m.MechaController.getInstance()) || null;
 }
 
 /**
@@ -131,8 +131,8 @@ function mechaCtl() {
  * @returns {number}
  */
 function getAvailableArmyNum(armyId) {
-    var u = userData();
-    return (u && u.getCanUseArmyLenByArmyId(armyId)) || 0;
+  var u = userData();
+  return (u && u.getCanUseArmyLenByArmyId(armyId)) || 0;
 }
 /**
  * 从"当前可派遣部队"里挑等级最低的一支（供最简行军按 1 数量派遣）。
@@ -140,21 +140,21 @@ function getAvailableArmyNum(armyId) {
  * @returns {{armyId:number, level:number}|null} 无可用部队时返回 null
  */
 function findLowestLevelAvailableArmy() {
-    var u = userData();
-    if (!u || typeof u.userArmyForEach !== 'function') return null;
-    var best = null;
-    u.userArmyForEach(function (army) {
-        if (!army || !army.ArmyId) return;
-        if (!army.Normal || !army.CanBattle) return;    // 与 getCanUseArmyLenByArmyId 同判据
-        var level = (army.Data && army.Data.level) | 0;
-        if (!best || level < best.level) best = { armyId: army.ArmyId, level: level };
-    });
-    return best;
+  var u = userData();
+  if (!u || typeof u.userArmyForEach !== 'function') return null;
+  var best = null;
+  u.userArmyForEach(function (army) {
+    if (!army || !army.ArmyId) return;
+    if (!army.Normal || !army.CanBattle) return; // 与 getCanUseArmyLenByArmyId 同判据
+    var level = (army.Data && army.Data.level) | 0;
+    if (!best || level < best.level) best = { armyId: army.ArmyId, level: level };
+  });
+  return best;
 }
 /** 可派遣英雄列表（原始对象数组，元素含 _id） */
 function getMarchableHeroes() {
-    var inst = heroCtl();
-    return (inst && inst.getHaveHeroCanMarchList()) || [];
+  var inst = heroCtl();
+  return (inst && inst.getHaveHeroCanMarchList()) || [];
 }
 /**
  * 我方机甲列表
@@ -162,8 +162,8 @@ function getMarchableHeroes() {
  * @returns {object[]} 机甲数组，实际只用 [0]
  */
 function getMyMechaList(mechaId) {
-    var inst = mechaCtl();
-    return (inst && inst.getMyMechaList(mechaId)) || [];
+  var inst = mechaCtl();
+  return (inst && inst.getMyMechaList(mechaId)) || [];
 }
 /**
  * 机甲战斗状态：0 未开放 / 2 不能战斗 / 3 可战斗 / 4 已出征(行军中) / 5 损坏
@@ -171,14 +171,14 @@ function getMyMechaList(mechaId) {
  * @returns {number}
  */
 function getMechaState(mecha) {
-    var inst = mechaCtl();
-    return (inst && mecha && inst.getMechaStateByMecha(mecha)) || 0;
+  var inst = mechaCtl();
+  return (inst && mecha && inst.getMechaStateByMecha(mecha)) || 0;
 }
 /** 军阵是否已在出征 */
 function isFormationMarching(formationCode) {
-    var m = game.get('FightFormationAdvController');
-    var inst = m && m.default && m.default.Instance;
-    return !!(inst && inst.getAdvFormationMarching(formationCode));
+  var m = game.get('FightFormationAdvController');
+  var inst = m && m.default && m.default.Instance;
+  return !!(inst && inst.getAdvFormationMarching(formationCode));
 }
 
 /**
@@ -189,12 +189,12 @@ function isFormationMarching(formationCode) {
  * @returns {boolean}
  */
 function isMechaCanFight(mechaId) {
-    if (!mechaId) return false;
-    var mecha = getMyMechaList(mechaId)[0];
-    if (!mecha) return false;
-    var sd = mecha.mechaServerData;
-    if (sd && sd.marching) return false;                 // 已出征（行军中）
-    return getMechaState(mecha) === MECHA_CAN_FIGHT;
+  if (!mechaId) return false;
+  var mecha = getMyMechaList(mechaId)[0];
+  if (!mecha) return false;
+  var sd = mecha.mechaServerData;
+  if (sd && sd.marching) return false; // 已出征（行军中）
+  return getMechaState(mecha) === MECHA_CAN_FIGHT;
 }
 
 /**
@@ -203,9 +203,13 @@ function isMechaCanFight(mechaId) {
  * @returns {number[]} 可出征的英雄 id
  */
 function filterHeroIds(heroIds) {
-    var set = new Set();
-    getMarchableHeroes().forEach(function (h) { if (h) set.add(h._id); });
-    return (heroIds || []).filter(function (id) { return set.has(id); });
+  var set = new Set();
+  getMarchableHeroes().forEach(function (h) {
+    if (h) set.add(h._id);
+  });
+  return (heroIds || []).filter(function (id) {
+    return set.has(id);
+  });
 }
 
 /**
@@ -217,56 +221,60 @@ function filterHeroIds(heroIds) {
  * @returns {object|null} MarchData；重算能力不可用返回 null（调用方降级）
  */
 function recalcData(d, excludeMarched) {
-    if (!battlePreset.ok()) return null;
-    var srcByPos = {};
-    var armyInfo = [];
-    d.armyInfo.forEach(function (it) {
-        srcByPos[it.pos] = it;   // 重算后按 pos 找回原条目，带回 skinId/heroCap 等游戏不认的字段
-        armyInfo.push({ armyId: it.armyId, num: it.num | 0, pos: it.pos, heroCap: it.heroCap || 0 });
-    });
-    if (!armyInfo.length) return null;
-    armyInfo.sort(function (a, b) { return a.pos - b.pos; });
-    var extra = toExtraArmy(d.extraRaw);
-    var entry = {
-        index: 0,
-        formation: 0,
-        formationV2: d.formationV2 | 0,
-        heroIds: d.heroIds.slice(),
-        armyInfo: armyInfo,
-        extraArmy: extra.armyId ? extra : null,
-    };
-    // excludeMarched=true → checkMarch=true（排除在途）；false → checkMarch=false（全部持有池，容量校准恒做）
-    if (battlePreset.recalc(entry, excludeMarched !== false) === null) return null;
+  if (!battlePreset.ok()) return null;
+  var srcByPos = {};
+  var armyInfo = [];
+  d.armyInfo.forEach(function (it) {
+    srcByPos[it.pos] = it; // 重算后按 pos 找回原条目，带回 skinId/heroCap 等游戏不认的字段
+    armyInfo.push({ armyId: it.armyId, num: it.num | 0, pos: it.pos, heroCap: it.heroCap || 0 });
+  });
+  if (!armyInfo.length) return null;
+  armyInfo.sort(function (a, b) {
+    return a.pos - b.pos;
+  });
+  var extra = toExtraArmy(d.extraRaw);
+  var entry = {
+    index: 0,
+    formation: 0,
+    formationV2: d.formationV2 | 0,
+    heroIds: d.heroIds.slice(),
+    armyInfo: armyInfo,
+    extraArmy: extra.armyId ? extra : null,
+  };
+  // excludeMarched=true → checkMarch=true（排除在途）；false → checkMarch=false（全部持有池，容量校准恒做）
+  if (battlePreset.recalc(entry, excludeMarched !== false) === null) return null;
 
-    var armys = [];
-    (entry.armyInfo || []).forEach(function (a) {
-        var src = srcByPos[a.pos];
-        var live = a.num | 0;
-        // 发满语义 → 与预设取小；src 缺失（理论上不会）时直接采纳实时值
-        if (src && src.num != null) live = Math.min(live, src.num | 0);
-        if (live <= 0) return;
-        armys.push(toArmyEntry({
-            ArmyId: a.armyId,       // 机甲条目的 armyId 会被游戏按当前 armyType 换算，取返回值
-            Pos: a.pos,
-            Num: live,
-            heroCap: src && src.heroCap,
-            skinId: src && src.skinId,
-        }));
-    });
-    var extraArmy = {};
-    if (entry.extraArmy && entry.extraArmy.armyId) {
-        var liveExtra = entry.extraArmy.armyNum | 0;            // 无补位容量时游戏已把 extraArmy 置 null
-        if ((extra.armyNum | 0) > 0) liveExtra = Math.min(liveExtra, extra.armyNum | 0);
-        if (liveExtra > 0) extraArmy = { armyId: entry.extraArmy.armyId, armyNum: liveExtra };
-    }
-    return {
-        armyListNew: armys,
-        heroList: toHeroList(entry.heroIds),                     // 游戏已按"可派遣 + 数量上限"截断
-        trapList: [],
-        formationV2: entry.formationV2 | 0,
-        extraArmy: extraArmy,
-        presetHasHeroes: d.heroIds.length > 0,
-    };
+  var armys = [];
+  (entry.armyInfo || []).forEach(function (a) {
+    var src = srcByPos[a.pos];
+    var live = a.num | 0;
+    // 发满语义 → 与预设取小；src 缺失（理论上不会）时直接采纳实时值
+    if (src && src.num != null) live = Math.min(live, src.num | 0);
+    if (live <= 0) return;
+    armys.push(
+      toArmyEntry({
+        ArmyId: a.armyId, // 机甲条目的 armyId 会被游戏按当前 armyType 换算，取返回值
+        Pos: a.pos,
+        Num: live,
+        heroCap: src && src.heroCap,
+        skinId: src && src.skinId,
+      }),
+    );
+  });
+  var extraArmy = {};
+  if (entry.extraArmy && entry.extraArmy.armyId) {
+    var liveExtra = entry.extraArmy.armyNum | 0; // 无补位容量时游戏已把 extraArmy 置 null
+    if ((extra.armyNum | 0) > 0) liveExtra = Math.min(liveExtra, extra.armyNum | 0);
+    if (liveExtra > 0) extraArmy = { armyId: entry.extraArmy.armyId, armyNum: liveExtra };
+  }
+  return {
+    armyListNew: armys,
+    heroList: toHeroList(entry.heroIds), // 游戏已按"可派遣 + 数量上限"截断
+    trapList: [],
+    formationV2: entry.formationV2 | 0,
+    extraArmy: extraArmy,
+    presetHasHeroes: d.heroIds.length > 0,
+  };
 }
 
 /**
@@ -277,16 +285,16 @@ function recalcData(d, excludeMarched) {
  * @returns {{rawArmys:object[], rawHeroIds:number[], rawExtra:object[]|object, formationV2:number}|null}
  */
 function readPreset(index, type) {
-    var ctl = presetMarchCtl();
-    if (!ctl) return null;
-    var preset = ctl.getPreMarchByIndex(index, type);
-    if (!preset) return null;
-    return {
-        rawArmys: preset.Armys || preset._Armys,
-        rawHeroIds: preset.HeroIds || preset._HeroIds,
-        rawExtra: preset.extraArmy || preset._extraArmy,
-        formationV2: (ctl.getFormationV2ByIndex && ctl.getFormationV2ByIndex(index, type)) || 0,
-    };
+  var ctl = presetMarchCtl();
+  if (!ctl) return null;
+  var preset = ctl.getPreMarchByIndex(index, type);
+  if (!preset) return null;
+  return {
+    rawArmys: preset.Armys || preset._Armys,
+    rawHeroIds: preset.HeroIds || preset._HeroIds,
+    rawExtra: preset.extraArmy || preset._extraArmy,
+    formationV2: (ctl.getFormationV2ByIndex && ctl.getFormationV2ByIndex(index, type)) || 0,
+  };
 }
 
 // ── 装载：来源 → raw 完备集（存 grid pos，不编码、不重算、不过滤）───────
@@ -297,21 +305,28 @@ function readPreset(index, type) {
  * @returns {object|null} {source,armyInfo,heroIds,formationV2,extraRaw}；读取失败返回 null
  */
 function loadPreset(index, type) {
-    var rp = readPreset(index, type);
-    if (!rp) return null;
-    var armyInfo = [];
-    (rp.rawArmys || []).forEach(function (item) {
-        if (!item || !item.ArmyId) return;
-        armyInfo.push({
-            armyId: item.ArmyId, num: item.Num | 0, pos: item.Pos | 0,
-            heroCap: item.heroCap || 0, skinId: item.skinId,
-            mechaId: item.mechaId || 0, isMecha: !!(item.isMecha || item.mechaId),
-        });
+  var rp = readPreset(index, type);
+  if (!rp) return null;
+  var armyInfo = [];
+  (rp.rawArmys || []).forEach(function (item) {
+    if (!item || !item.ArmyId) return;
+    armyInfo.push({
+      armyId: item.ArmyId,
+      num: item.Num | 0,
+      pos: item.Pos | 0,
+      heroCap: item.heroCap || 0,
+      skinId: item.skinId,
+      mechaId: item.mechaId || 0,
+      isMecha: !!(item.isMecha || item.mechaId),
     });
-    return {
-        source: 'preset', armyInfo: armyInfo,
-        heroIds: (rp.rawHeroIds || []).slice(), formationV2: rp.formationV2 | 0, extraRaw: rp.rawExtra,
-    };
+  });
+  return {
+    source: 'preset',
+    armyInfo: armyInfo,
+    heroIds: (rp.rawHeroIds || []).slice(),
+    formationV2: rp.formationV2 | 0,
+    extraRaw: rp.rawExtra,
+  };
 }
 
 /**
@@ -320,12 +335,14 @@ function loadPreset(index, type) {
  * @returns {object} 完备集
  */
 function loadMinimal() {
-    var found = findLowestLevelAvailableArmy();
-    return {
-        source: 'minimal',
-        armyInfo: found ? [{ armyId: found.armyId, num: 1, pos: MINIMAL_GRID_POS }] : [],
-        heroIds: [], formationV2: 0, extraRaw: null,
-    };
+  var found = findLowestLevelAvailableArmy();
+  return {
+    source: 'minimal',
+    armyInfo: found ? [{ armyId: found.armyId, num: 1, pos: MINIMAL_GRID_POS }] : [],
+    heroIds: [],
+    formationV2: 0,
+    extraRaw: null,
+  };
 }
 
 // ── 投影：raw 完备集 → 请求 MarchData ─────────────────────────────────
@@ -335,14 +352,22 @@ function loadMinimal() {
  * @returns {object} MarchData
  */
 function projectRaw(d) {
-    return {
-        armyListNew: d.armyInfo.map(function (it) { return toArmyEntry({ ArmyId: it.armyId, Pos: it.pos, Num: it.num, heroCap: it.heroCap, skinId: it.skinId }); }),
-        heroList: toHeroList(d.heroIds),
-        trapList: [],
-        formationV2: d.formationV2 | 0,
-        extraArmy: toExtraArmy(d.extraRaw),
-        presetHasHeroes: d.heroIds.length > 0,
-    };
+  return {
+    armyListNew: d.armyInfo.map(function (it) {
+      return toArmyEntry({
+        ArmyId: it.armyId,
+        Pos: it.pos,
+        Num: it.num,
+        heroCap: it.heroCap,
+        skinId: it.skinId,
+      });
+    }),
+    heroList: toHeroList(d.heroIds),
+    trapList: [],
+    formationV2: d.formationV2 | 0,
+    extraArmy: toExtraArmy(d.extraRaw),
+    presetHasHeroes: d.heroIds.length > 0,
+  };
 }
 
 /**
@@ -351,29 +376,47 @@ function projectRaw(d) {
  * @returns {object} MarchData
  */
 function filterFallback(d) {
-    var remaining = {};   // armyId -> 该兵种剩余可派额度（懒查一次）
-    var armys = [];
-    d.armyInfo.forEach(function (it) {
-        if (it.isMecha) {                                   // 机甲走战斗状态判定
-            if (isMechaCanFight(it.mechaId)) armys.push(toArmyEntry({ ArmyId: it.armyId, Pos: it.pos, Num: it.num, heroCap: it.heroCap, skinId: it.skinId }));
-            return;
-        }
-        if (remaining[it.armyId] === undefined) remaining[it.armyId] = getAvailableArmyNum(it.armyId);
-        var take = Math.min(it.num | 0, remaining[it.armyId]);
-        if (take <= 0) return;                              // 该兵种已全部派出
-        remaining[it.armyId] -= take;
-        armys.push(toArmyEntry({ ArmyId: it.armyId, Pos: it.pos, Num: take, heroCap: it.heroCap, skinId: it.skinId }));
-    });
-    var formationV2 = d.formationV2;
-    if (formationV2 && isFormationMarching(formationV2)) formationV2 = 0;
-    return {
-        armyListNew: armys,
-        heroList: toHeroList(filterHeroIds(d.heroIds)),
-        trapList: [],
-        formationV2: formationV2,
-        extraArmy: toExtraArmy(d.extraRaw),
-        presetHasHeroes: d.heroIds.length > 0,
-    };
+  var remaining = {}; // armyId -> 该兵种剩余可派额度（懒查一次）
+  var armys = [];
+  d.armyInfo.forEach(function (it) {
+    if (it.isMecha) {
+      // 机甲走战斗状态判定
+      if (isMechaCanFight(it.mechaId))
+        armys.push(
+          toArmyEntry({
+            ArmyId: it.armyId,
+            Pos: it.pos,
+            Num: it.num,
+            heroCap: it.heroCap,
+            skinId: it.skinId,
+          }),
+        );
+      return;
+    }
+    if (remaining[it.armyId] === undefined) remaining[it.armyId] = getAvailableArmyNum(it.armyId);
+    var take = Math.min(it.num | 0, remaining[it.armyId]);
+    if (take <= 0) return; // 该兵种已全部派出
+    remaining[it.armyId] -= take;
+    armys.push(
+      toArmyEntry({
+        ArmyId: it.armyId,
+        Pos: it.pos,
+        Num: take,
+        heroCap: it.heroCap,
+        skinId: it.skinId,
+      }),
+    );
+  });
+  var formationV2 = d.formationV2;
+  if (formationV2 && isFormationMarching(formationV2)) formationV2 = 0;
+  return {
+    armyListNew: armys,
+    heroList: toHeroList(filterHeroIds(d.heroIds)),
+    trapList: [],
+    formationV2: formationV2,
+    extraArmy: toExtraArmy(d.extraRaw),
+    presetHasHeroes: d.heroIds.length > 0,
+  };
 }
 
 /**
@@ -382,14 +425,14 @@ function filterFallback(d) {
  * @returns {object} MarchData
  */
 function emptyMarchData() {
-    return {
-        armyListNew: [],
-        heroList: [],
-        trapList: [],
-        formationV2: 0,
-        extraArmy: {},
-        presetHasHeroes: false,
-    };
+  return {
+    armyListNew: [],
+    heroList: [],
+    trapList: [],
+    formationV2: 0,
+    extraArmy: {},
+    presetHasHeroes: false,
+  };
 }
 
 /**
@@ -398,72 +441,72 @@ function emptyMarchData() {
  * 三场景与组合矩阵详见 docs/core/battle.md §3.3。
  */
 class MarchPlan {
-    /** @type {object|null} raw 数据完备集；null=尚未选源或读取失败 */
-    #data = null;
-    /** @type {{excludeMarched:boolean}|null} 校准意图（adjust 设置、build 执行）；null=不校准 */
-    #recalc = null;
+  /** @type {object|null} raw 数据完备集；null=尚未选源或读取失败 */
+  #data = null;
+  /** @type {{excludeMarched:boolean}|null} 校准意图（adjust 设置、build 执行）；null=不校准 */
+  #recalc = null;
 
-    /**
-     * 覆盖式装载预设队伍为完备集（来源选择，与 minimal 互斥）。
-     * @param {number} [index=1] 预设队伍号（1 起，内部减 1）
-     * @param {number|boolean} [type] 预设类型：0 战斗（默认）/ 1 采集；传 true 等价采集
-     * @returns {MarchPlan} this
-     */
-    preset(index, type) {
-        var idx = (index == null ? 1 : index | 0) - 1;
-        var t = type == null ? PRESET_TYPE.BATTLE : (type === true ? PRESET_TYPE.GATHER : type | 0);
-        this.#data = loadPreset(idx, t);
-        return this;
-    }
+  /**
+   * 覆盖式装载预设队伍为完备集（来源选择，与 minimal 互斥）。
+   * @param {number} [index=1] 预设队伍号（1 起，内部减 1）
+   * @param {number|boolean} [type] 预设类型：0 战斗（默认）/ 1 采集；传 true 等价采集
+   * @returns {MarchPlan} this
+   */
+  preset(index, type) {
+    var idx = (index == null ? 1 : index | 0) - 1;
+    var t = type == null ? PRESET_TYPE.BATTLE : type === true ? PRESET_TYPE.GATHER : type | 0;
+    this.#data = loadPreset(idx, t);
+    return this;
+  }
 
-    /**
-     * 覆盖式装载最简出征为完备集（0 英雄/0 军阵/0 陷阱，最低级可派遣部队 1 个；无可用则派空）
-     * @returns {MarchPlan} this
-     */
-    minimal() {
-        this.#data = loadMinimal();
-        return this;
-    }
+  /**
+   * 覆盖式装载最简出征为完备集（0 英雄/0 军阵/0 陷阱，最低级可派遣部队 1 个；无可用则派空）
+   * @returns {MarchPlan} this
+   */
+  minimal() {
+    this.#data = loadMinimal();
+    return this;
+  }
 
-    /**
-     * 记「按可派口径校准」意图：build() 时对完备集整份重算（容量校准恒做，与是否排除在途无关）。
-     * 默认排除已外派的部队/英雄/军阵名额（普通派兵）；传 { ignoreMarched: true } 则不排除在途
-     * （活动/快照派兵，如卡车掠夺），对应游戏 checkPreMarchExtraList 的 checkMarch=false。
-     * 仅对 preset 源有意义（minimal 只发 1 支最低级兵、本就是快速派兵，不查额度也不重算）。
-     * @param {object} [opts] { ignoreMarched?:boolean } true=不排除在途（活动派兵）
-     * @returns {MarchPlan} this
-     */
-    adjust(opts) {
-        this.#recalc = { excludeMarched: !(opts && opts.ignoreMarched) };
-        return this;
-    }
+  /**
+   * 记「按可派口径校准」意图：build() 时对完备集整份重算（容量校准恒做，与是否排除在途无关）。
+   * 默认排除已外派的部队/英雄/军阵名额（普通派兵）；传 { ignoreMarched: true } 则不排除在途
+   * （活动/快照派兵，如卡车掠夺），对应游戏 checkPreMarchExtraList 的 checkMarch=false。
+   * 仅对 preset 源有意义（minimal 只发 1 支最低级兵、本就是快速派兵，不查额度也不重算）。
+   * @param {object} [opts] { ignoreMarched?:boolean } true=不排除在途（活动派兵）
+   * @returns {MarchPlan} this
+   */
+  adjust(opts) {
+    this.#recalc = { excludeMarched: !(opts && opts.ignoreMarched) };
+    return this;
+  }
 
-    /**
-     * 单点投影：把完备集转成请求 MarchData（5 字段）。未选源/读取失败 → 派空。
-     * minimal 与不校准走满编原样；preset+校准走重算，符号不可用时按口径降级（普通=手写过滤，活动=满编）。
-     * @returns {object} MarchData
-     */
-    build() {
-        var d = this.#data;
-        if (!d) return emptyMarchData();
-        if (d.source === 'minimal' || !this.#recalc) return projectRaw(d);
-        var excl = this.#recalc.excludeMarched;
-        var out = recalcData(d, excl);
-        if (out) {
-            // 重算器不校验非法/在途军阵，排除口径下本地兜一层；活动口径不兜（名额由池来源决定）
-            if (excl && out.formationV2 && isFormationMarching(out.formationV2)) out.formationV2 = 0;
-            return out;
-        }
-        return excl ? filterFallback(d) : projectRaw(d);          // 符号不可用降级：普通→手写过滤，活动→满编
+  /**
+   * 单点投影：把完备集转成请求 MarchData（5 字段）。未选源/读取失败 → 派空。
+   * minimal 与不校准走满编原样；preset+校准走重算，符号不可用时按口径降级（普通=手写过滤，活动=满编）。
+   * @returns {object} MarchData
+   */
+  build() {
+    var d = this.#data;
+    if (!d) return emptyMarchData();
+    if (d.source === 'minimal' || !this.#recalc) return projectRaw(d);
+    var excl = this.#recalc.excludeMarched;
+    var out = recalcData(d, excl);
+    if (out) {
+      // 重算器不校验非法/在途军阵，排除口径下本地兜一层；活动口径不兜（名额由池来源决定）
+      if (excl && out.formationV2 && isFormationMarching(out.formationV2)) out.formationV2 = 0;
+      return out;
     }
+    return excl ? filterFallback(d) : projectRaw(d); // 符号不可用降级：普通→手写过滤，活动→满编
+  }
 }
 
 /**
  * 战斗工具入口：new Battle().plan() 开始一份行军计划（用法见 MarchPlan / docs/core/battle.md §4）。
  */
 export class Battle {
-    /** 开始一份行军计划 @returns {MarchPlan} */
-    plan() {
-        return new MarchPlan();
-    }
+  /** 开始一份行军计划 @returns {MarchPlan} */
+  plan() {
+    return new MarchPlan();
+  }
 }

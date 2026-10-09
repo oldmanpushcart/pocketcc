@@ -25,7 +25,7 @@ const SYM = {
   modules: {
     localManager: 'LocalManager',
     tableManager: 'TableManager',
-    tableName: 'TableName',        // 配置表名枚举（成员名→游戏表名字符串，如 BOSS="boss"）
+    tableName: 'TableName', // 配置表名枚举（成员名→游戏表名字符串，如 BOSS="boss"）
     dataCenter: 'DataCenter',
     tableUtils: 'TableUtils',
     long64Bit: 'Long64Bit',
@@ -35,52 +35,68 @@ const SYM = {
     mapNewCtrl: 'NWorldMapTodoController',
     mapOldCommon: 'WorldMapCommon',
     mapOldCtrl: 'WorldMapTodoController',
-    worldUtils: 'WorldUtils',      // 行军类型换算（世界地图业务工具，静态类）
-    crossUtils: 'CrossUtils',      // 跨服战场类型判定（tmServerType 驱动）
+    worldUtils: 'WorldUtils', // 行军类型换算（世界地图业务工具，静态类）
+    crossUtils: 'CrossUtils', // 跨服战场类型判定（tmServerType 驱动）
     newCabCtrl: 'NewCABController', // 新跨服战场（AVA）控制器
-    pathUtils: 'PathUtils',        // 资源路径换算（游戏自带头像图集名 → headpic CDN URL）
-    gameDefine: 'GameDefine',      // 全局枚举汇出（FunctionKey/EnergyType 等，CommonJS 直挂 exports）
+    pathUtils: 'PathUtils', // 资源路径换算（游戏自带头像图集名 → headpic CDN URL）
+    gameDefine: 'GameDefine', // 全局枚举汇出（FunctionKey/EnergyType 等，CommonJS 直挂 exports）
     worldSiteCtrl: 'AllianceWorldSiteController', // 联盟遗迹（要塞）控制器门面，具名导出，实例在 _instance/instance
-    rewardCtrl: 'RewardController',      // 奖励配置解析器，ES 命名空间具名导出（无 .default），静态 Instance.getRewardsArrById 把奖励配置 id 解成道具清单
+    rewardCtrl: 'RewardController', // 奖励配置解析器，ES 命名空间具名导出（无 .default），静态 Instance.getRewardsArrById 把奖励配置 id 解成道具清单
     terrainModel: 'NWorldMapTerrainModel', // 离线地形查询单例：getTerrain/getAreaByWorldMap/isBlock/cols/rows
-    mapCommon: 'NWorldMapCommon',           // 常量枚举：allMapInfos（按 mapType 的 rows/cols/subMap）、NWorldMapSettings
+    mapCommon: 'NWorldMapCommon', // 常量枚举：allMapInfos（按 mapType 的 rows/cols/subMap）、NWorldMapSettings
     marchStorage: 'MarchStorageController', // 出征档案门面：getInstance() 由 subpack2 启动接管（Subpack2Main.main → initMarchStorageController）注入 Real 实现
     procedureManager: 'ProcedureManager', // 场景程序管理器（PROCE 单例）：Run(PROCE.Home/PROCE.NewWorld) 切场景，与主界面「世界/回城」按钮同源
-    uiManager: 'UIManager',               // UI 管理器门面（default.Instance().OpenUI(UIDataInfo.xxx) 打开原生面板）
-    uiDataInfo: 'UIDataInfo',             // 面板描述符注册表（UIDataInfo.<PanelName> → UIDataInfoClass 实例）
-    homeMapUtils: 'HomeMapUtils',         // 大本营地图工具（default.getMapPosByPosId：posId→主城小格坐标 {x,y}），空投落点换算用
-    homeMapCommon: 'HomeMapCommon',       // 大本营地图常量（WidthCount/HeightCount 主城网格尺寸），空投落点扫描边界用
-    commonTools: 'CommonTools',           // 通用工具（subpack2）：checkShieldEnable(false) 权威「能否开盾」闸（狂热/危险区/跨服一次覆盖，抑制 UI）
-    worldMapCtrl: 'WorldMapController',   // 旧图主控：静态 model.checkIsPlainTile(x,y,true) 为迁城落点合法性只读判定（cc 组件类无 getInstance，故取 .model）
-    nWorldMapUtils: 'NWorldMapUtils',     // 新图迁城工具（subpack2、模块级）：checkCanMove(x,y) 落点合法性权威判定（当前游戏默认走新图；符号缺失软失败）
+    uiManager: 'UIManager', // UI 管理器门面（default.Instance().OpenUI(UIDataInfo.xxx) 打开原生面板）
+    uiDataInfo: 'UIDataInfo', // 面板描述符注册表（UIDataInfo.<PanelName> → UIDataInfoClass 实例）
+    homeMapUtils: 'HomeMapUtils', // 大本营地图工具（default.getMapPosByPosId：posId→主城小格坐标 {x,y}），空投落点换算用
+    homeMapCommon: 'HomeMapCommon', // 大本营地图常量（WidthCount/HeightCount 主城网格尺寸），空投落点扫描边界用
+    commonTools: 'CommonTools', // 通用工具（subpack2）：checkShieldEnable(false) 权威「能否开盾」闸（狂热/危险区/跨服一次覆盖，抑制 UI）
+    worldMapCtrl: 'WorldMapController', // 旧图主控：静态 model.checkIsPlainTile(x,y,true) 为迁城落点合法性只读判定（cc 组件类无 getInstance，故取 .model）
+    nWorldMapUtils: 'NWorldMapUtils', // 新图迁城工具（subpack2、模块级）：checkCanMove(x,y) 落点合法性权威判定（当前游戏默认走新图；符号缺失软失败）
     nWorldMapTerritoryModel: 'NWorldMapTerritoryModel', // 新图联盟领地单例（subpack2）：AllianceTerritory 存视口内堡垒领地条目 {x,y,w,bw,owner,buildId}，供迁城落点推「禁迁实心区」（符号缺失软失败）
-    nWorldMapData: 'NWorldMapData',       // 新图世界数据单例（subpack2）：instance.placeFlags 为 cell 级占用 Map，settle 就绪门按邻域命中计数（符号缺失软失败）
-    gameTools: 'GameTools',               // 游戏工具：isKVK() 判 KVK 跨服战场图（=isC4||isC8||isC8S2），迁城落点「仅本服图拦别盟领地」分区闸门（符号缺失保守当本服）
+    nWorldMapData: 'NWorldMapData', // 新图世界数据单例（subpack2）：instance.placeFlags 为 cell 级占用 Map，settle 就绪门按邻域命中计数（符号缺失软失败）
+    gameTools: 'GameTools', // 游戏工具：isKVK() 判 KVK 跨服战场图（=isC4||isC8||isC8S2），迁城落点「仅本服图拦别盟领地」分区闸门（符号缺失保守当本服）
   },
   /** 新图单例属性链：module[cls][inst]，枚举对象 module[goType] */
   newMap: { cls: 'NWorldMapTodoController', inst: 'instance', goType: 'NWorldMapGoType' },
   /** 旧图枚举对象属性名 */
   oldMap: { todoType: 'WorldMapToDoType' },
   /** 导航动作枚举名（按名字取值，不依赖静态数值——NWorldMapGoType 数值未落盘） */
-  mapActions: { moveTo: 'MOVE_TO', tileClick: 'JUMP_TO_TILE_CLICK', marchClick: 'JUMP_TO_MARCH_CLICK' },
+  mapActions: {
+    moveTo: 'MOVE_TO',
+    tileClick: 'JUMP_TO_TILE_CLICK',
+    marchClick: 'JUMP_TO_MARCH_CLICK',
+  },
   /** 语义表名 → 游戏 TableName 字符串值（TableName.js 实证） */
   tables: {
-    emotion: 'emotion', emotionNew: 'emotion_new', emojiGif: 'emoji_gif', item: 'item', building: 'building',
+    emotion: 'emotion',
+    emotionNew: 'emotion_new',
+    emojiGif: 'emoji_gif',
+    item: 'item',
+    building: 'building',
     // 次元矿洞三张表（TableName.mine_cave/_level/_interaction，报告 §6 实证；成员名与值同名小写）
-    mineCave: 'mine_cave', mineCaveLevel: 'mine_cave_level', mineCaveInteraction: 'mine_cave_interaction',
+    mineCave: 'mine_cave',
+    mineCaveLevel: 'mine_cave_level',
+    mineCaveInteraction: 'mine_cave_interaction',
   },
   /** UserData 子对象上的数据成员名（属性链符号，Alliance.<name>；WorldCoord 为 UserData 直属成员，myWorldPos 经 SYM 引用）；buffPool=UserData.Buff 为 BuffPool 实例（非可 require 模块），getStateDataById 读战争状态/护盾 EndTime */
-  dataProps: { allianceBoss: 'AllianceBossData', allianceScience: 'scienceData', allianceBehemoth: 'allianceBehemothData', worldCoord: 'WorldCoord', buffPool: 'Buff' },
+  dataProps: {
+    allianceBoss: 'AllianceBossData',
+    allianceScience: 'scienceData',
+    allianceBehemoth: 'allianceBehemothData',
+    worldCoord: 'WorldCoord',
+    buffPool: 'Buff',
+  },
   /** 行军/地块枚举成员名（只记名字，数值运行时向游戏枚举对象取） */
   marchEnum: {
-    obj: 'MarchType',                                 // WorldMapCommon 导出：新旧图同一张 MarchType 表
-    attackPlayer: 'ATTACK_PLAYER',                    // 13 本服攻玩家城
-    tmAttackPlayer: 'TM_ATTACK_PLAYER',               // 150 双子星（无双）战场
-    masterAttackPlayer: 'MASTER_ATTACK_PLAYER',       // 170 王者对战
-    avaAttackPlayer: 'AVA_ATTACK_PLAYER',             // 110 新跨服战场
+    obj: 'MarchType', // WorldMapCommon 导出：新旧图同一张 MarchType 表
+    attackPlayer: 'ATTACK_PLAYER', // 13 本服攻玩家城
+    tmAttackPlayer: 'TM_ATTACK_PLAYER', // 150 双子星（无双）战场
+    masterAttackPlayer: 'MASTER_ATTACK_PLAYER', // 170 王者对战
+    avaAttackPlayer: 'AVA_ATTACK_PLAYER', // 110 新跨服战场
     teamLegendAttackPlayer: 'TEAM_LEGEND_ATTACK_PLAYER', // 181 军团传奇
-    attackWorldBoss: 'ATTACK_WORLDBOSS',              // 14 普通世界 boss（quick-attack/imperial-decree 经 typeOf 取名值）
-    attackWorldBossV2: 'ATTACK_WORLD_BOSS_V2'         // 298 bossV2 世界 boss（同上；source-of-war 本地写死 298 未走此）
+    attackWorldBoss: 'ATTACK_WORLDBOSS', // 14 普通世界 boss（quick-attack/imperial-decree 经 typeOf 取名值）
+    attackWorldBossV2: 'ATTACK_WORLD_BOSS_V2', // 298 bossV2 世界 boss（同上；source-of-war 本地写死 298 未走此）
   },
   entityEnum: { obj: 'WorldMapEntityType', boss: 'BOSS', bossV2: 'BOSS_V2' },
   /** ProcedureManager.PROCE 单例上的场景程序成员名（各 Procedure 自带 sceneName，Run 时按 sceneName 判断是否切换） */
@@ -108,8 +124,13 @@ const probeWarned = new Set();
 function probe(key, resolve) {
   if (probes.has(key)) return probes.get(key);
   var v = null;
-  try { v = resolve() || null; } catch (e) { }
-  if (v) { probes.set(key, v); return v; }
+  try {
+    v = resolve() || null;
+  } catch (e) {}
+  if (v) {
+    probes.set(key, v);
+    return v;
+  }
   if (!probeWarned.has(key)) {
     probeWarned.add(key);
     log.warn('probe "%s" failed —— 符号漂移（游戏更新）或功能/子包未加载，相关能力将降级', key);
@@ -130,31 +151,90 @@ function probe(key, resolve) {
  * @type {Object<string, function():boolean>}
  */
 export const CAPS = {
-  dataCenter: () => { var m = game.get(SYM.modules.dataCenter); return !!(m && m.DATA); },
-  localManager: () => { var m = game.get(SYM.modules.localManager); return !!(m && m.LOCAL); },
-  tableManager: () => { var m = game.get(SYM.modules.tableManager); return !!(m && m.TABLE); },
-  tableName: () => { var m = game.get(SYM.modules.tableName); return !!(m && (m.TableName || (m.default && m.default.TableName))); },
-  tableUtils: () => { var m = game.get(SYM.modules.tableUtils); return !!(m && (typeof m.getDataConfigData === 'function' || (m.default && typeof m.default.getDataConfigData === 'function'))); },
-  gameDefine: () => { var m = game.get(SYM.modules.gameDefine); return !!(m && (m.FunctionKey || (m.default && m.default.FunctionKey))); },
-  long64Bit: () => { var m = game.get(SYM.modules.long64Bit); return !!(m && m.Int64); },
+  dataCenter: () => {
+    var m = game.get(SYM.modules.dataCenter);
+    return !!(m && m.DATA);
+  },
+  localManager: () => {
+    var m = game.get(SYM.modules.localManager);
+    return !!(m && m.LOCAL);
+  },
+  tableManager: () => {
+    var m = game.get(SYM.modules.tableManager);
+    return !!(m && m.TABLE);
+  },
+  tableName: () => {
+    var m = game.get(SYM.modules.tableName);
+    return !!(m && (m.TableName || (m.default && m.default.TableName)));
+  },
+  tableUtils: () => {
+    var m = game.get(SYM.modules.tableUtils);
+    return !!(
+      m &&
+      (typeof m.getDataConfigData === 'function' ||
+        (m.default && typeof m.default.getDataConfigData === 'function'))
+    );
+  },
+  gameDefine: () => {
+    var m = game.get(SYM.modules.gameDefine);
+    return !!(m && (m.FunctionKey || (m.default && m.default.FunctionKey)));
+  },
+  long64Bit: () => {
+    var m = game.get(SYM.modules.long64Bit);
+    return !!(m && m.Int64);
+  },
   chatCommon: () => !!game.get(SYM.modules.chatCommon),
   platformCore: () => !!game.get(SYM.modules.platformCore),
-  eventIds: () => { var m = game.get('EventId'); return !!(m && m.EventId); },
-  gameTools: () => { var m = game.get('GameTools'); return !!(m && (m.default || m)); },
-  activityController: () => { var m = game.get('ActivityController'); return !!(m && m.ActivityController && m.ActivityController.Instance); },
-  marchType: () => { var m = game.get(SYM.modules.mapOldCommon); return !!(m && m[SYM.marchEnum.obj]); },
-  worldUtils: () => { var W = ns(game.get(SYM.modules.worldUtils)); return !!(W && typeof W.dealMarchTypeWithSpecialMarch === 'function'); },
-  presetMarch: () => { var m = game.get('PresetMarchController'); return !!(m && m.default && m.default.instance); },
+  eventIds: () => {
+    var m = game.get('EventId');
+    return !!(m && m.EventId);
+  },
+  gameTools: () => {
+    var m = game.get('GameTools');
+    return !!(m && (m.default || m));
+  },
+  activityController: () => {
+    var m = game.get('ActivityController');
+    return !!(m && m.ActivityController && m.ActivityController.Instance);
+  },
+  marchType: () => {
+    var m = game.get(SYM.modules.mapOldCommon);
+    return !!(m && m[SYM.marchEnum.obj]);
+  },
+  worldUtils: () => {
+    var W = ns(game.get(SYM.modules.worldUtils));
+    return !!(W && typeof W.dealMarchTypeWithSpecialMarch === 'function');
+  },
+  presetMarch: () => {
+    var m = game.get('PresetMarchController');
+    return !!(m && m.default && m.default.instance);
+  },
   heroController: () => !!game.get('HeroController'),
   mechaController: () => !!game.get('MechaController'),
   formationAdv: () => !!game.get('FightFormationAdvController'),
-  marchStorage: () => { var m = game.get(SYM.modules.marchStorage); return !!(m && (m.MarchStorageController || (m.default && m.default.MarchStorageController))); },
-  buff: () => { var u = userData(); var B = u && u[SYM.dataProps.buffPool]; return !!(B && typeof B.getStateDataById === 'function'); },
+  marchStorage: () => {
+    var m = game.get(SYM.modules.marchStorage);
+    return !!(m && (m.MarchStorageController || (m.default && m.default.MarchStorageController)));
+  },
+  buff: () => {
+    var u = userData();
+    var B = u && u[SYM.dataProps.buffPool];
+    return !!(B && typeof B.getStateDataById === 'function');
+  },
   commonTools: () => !!game.get(SYM.modules.commonTools),
   homeMapUtils: () => !!game.get(SYM.modules.homeMapUtils),
   homeMapCommon: () => !!game.get(SYM.modules.homeMapCommon),
-  worldSite: () => { var m = game.get(SYM.modules.worldSiteCtrl); return !!(m && (m.AllianceWorldSiteController || (m.default && m.default.AllianceWorldSiteController))); },
-  rewardCtrl: () => { var m = game.get(SYM.modules.rewardCtrl); return !!(m && (m.RewardController || (m.default && m.default.RewardController))); },
+  worldSite: () => {
+    var m = game.get(SYM.modules.worldSiteCtrl);
+    return !!(
+      m &&
+      (m.AllianceWorldSiteController || (m.default && m.default.AllianceWorldSiteController))
+    );
+  },
+  rewardCtrl: () => {
+    var m = game.get(SYM.modules.rewardCtrl);
+    return !!(m && (m.RewardController || (m.default && m.default.RewardController)));
+  },
   enigmaBeast: () => !!game.get('EnigmaBeastController'),
   marchTools: () => !!game.get('MarchTools'),
   terrainModel: () => !!game.get(SYM.modules.terrainModel),
@@ -169,12 +249,24 @@ export const CAPS = {
 export function checkCap(key) {
   var k = String(key || '').replace(/\?$/, '');
   var f = CAPS[k];
-  if (!f) { log.warn('checkCap: 未登记的能力键 "%s"', key); return false; }
-  try { return !!f(); } catch (e) { return false; }
+  if (!f) {
+    log.warn('checkCap: 未登记的能力键 "%s"', key);
+    return false;
+  }
+  try {
+    return !!f();
+  } catch (e) {
+    return false;
+  }
 }
 
 /** LOCAL 翻译单例（LocalManager 导出 .LOCAL） */
-function LOCAL() { return probe('LocalManager.LOCAL', () => { var m = game.get(SYM.modules.localManager); return (m && m.LOCAL) || null; }); }
+function LOCAL() {
+  return probe('LocalManager.LOCAL', () => {
+    var m = game.get(SYM.modules.localManager);
+    return (m && m.LOCAL) || null;
+  });
+}
 
 /**
  * ES 模块包装解包：本 bundle 混用两种导出风格——裸 CommonJS（如 WorldMapCommon，`t.exports=a`，
@@ -186,25 +278,57 @@ function LOCAL() { return probe('LocalManager.LOCAL', () => { var m = game.get(S
  * @param {object|null} m 模块导出
  * @returns {object|null} ES 命名空间则取其 .default，否则原样
  */
-function ns(m) { return (m && m.__esModule && m.default != null) ? m.default : m; }
+function ns(m) {
+  return m && m.__esModule && m.default != null ? m.default : m;
+}
 
 /** TABLE 配置表单例（TableManager 导出 .TABLE） */
-function TABLE() { return probe('TableManager.TABLE', () => { var m = game.get(SYM.modules.tableManager); return (m && m.TABLE) || null; }); }
+function TABLE() {
+  return probe('TableManager.TABLE', () => {
+    var m = game.get(SYM.modules.tableManager);
+    return (m && m.TABLE) || null;
+  });
+}
 
 /** 配置表名枚举对象（TableName 模块导出 .TableName，成员名 → 游戏表名字符串；符号缺失返回 null） */
-function tableNameEnum() { return probe(SYM.modules.tableName + '.TableName', () => { var m = game.get(SYM.modules.tableName); return (m && (m.TableName || (m.default && m.default.TableName))) || null; }); }
+function tableNameEnum() {
+  return probe(SYM.modules.tableName + '.TableName', () => {
+    var m = game.get(SYM.modules.tableName);
+    return (m && (m.TableName || (m.default && m.default.TableName))) || null;
+  });
+}
 
 /** UserData 对象引用缓存（Friends/Alliance/StrUid 为其上属性，读值仍实时） */
-function userData() { return probe('DataCenter.UserData', () => { var m = game.get(SYM.modules.dataCenter); return (m && m.DATA && m.DATA.UserData) || null; }); }
+function userData() {
+  return probe('DataCenter.UserData', () => {
+    var m = game.get(SYM.modules.dataCenter);
+    return (m && m.DATA && m.DATA.UserData) || null;
+  });
+}
 
 /** 场景程序管理器单例（ProcedureManager.PROCE）；PROCE.Home/NewWorld 由 ProcedureManagerInit 惰性挂上，成员每次实时读 */
-function proce() { return probe('ProcedureManager.PROCE', () => { var m = game.get(SYM.modules.procedureManager); return (m && m.PROCE) || null; }); }
+function proce() {
+  return probe('ProcedureManager.PROCE', () => {
+    var m = game.get(SYM.modules.procedureManager);
+    return (m && m.PROCE) || null;
+  });
+}
 
 /** UI 管理器门面类（UIManager.default，其静态 Instance() 返回真实接管单例或未接管兜底桩；此处只缓存类、实例每次实时取，避免缓存到兜底桩） */
-function uiMgrClass() { return probe(SYM.modules.uiManager + '.default', () => { var m = game.get(SYM.modules.uiManager); return (m && m.default) || null; }); }
+function uiMgrClass() {
+  return probe(SYM.modules.uiManager + '.default', () => {
+    var m = game.get(SYM.modules.uiManager);
+    return (m && m.default) || null;
+  });
+}
 
 /** UIDataInfo 面板描述符注册表对象（成员名→UIDataInfoClass 实例；对象引用稳定，面板由各模块惰性追加，读成员实时） */
-function uiRegistry() { return probe(SYM.modules.uiDataInfo + '.UIDataInfo', () => { var m = game.get(SYM.modules.uiDataInfo); return (m && m.UIDataInfo) || null; }); }
+function uiRegistry() {
+  return probe(SYM.modules.uiDataInfo + '.UIDataInfo', () => {
+    var m = game.get(SYM.modules.uiDataInfo);
+    return (m && m.UIDataInfo) || null;
+  });
+}
 
 // ─────────────────────── 本地化 / 配置表 ───────────────────────
 
@@ -219,7 +343,11 @@ export const l10n = {
     var args = Array.prototype.slice.call(arguments, 1);
     var L = LOCAL();
     if (!L || typeof L.getText !== 'function') return String(key);
-    try { return String(L.getText.apply(L, [String(key)].concat(args)) || '') || String(key); } catch (e) { return String(key); }
+    try {
+      return String(L.getText.apply(L, [String(key)].concat(args)) || '') || String(key);
+    } catch (e) {
+      return String(key);
+    }
   },
   /**
    * 服务器应答 '<键,参数1|参数2>' 裸串 → 译文（getNetMsgText 同源；查不到回原文）。
@@ -231,7 +359,11 @@ export const l10n = {
     if (!s) return s;
     var L = LOCAL();
     if (!L || typeof L.getNetMsgText !== 'function') return s;
-    try { return String(L.getNetMsgText(s) || '') || s; } catch (e) { return s; }
+    try {
+      return String(L.getNetMsgText(s) || '') || s;
+    } catch (e) {
+      return s;
+    }
   },
   /**
    * 配置表行查询（只读）。
@@ -244,8 +376,15 @@ export const l10n = {
     if (!T) return null;
     // 名字解析优先级：语义别名表 → 游戏 TableName 枚举成员（BOSS→"boss"，随游戏版本自维护）→ 原样作游戏表名
     var tn = SYM.tables[semantic];
-    if (!tn) { var E = tableNameEnum(); tn = (E && E[semantic]) || semantic; }
-    try { return T.getTableDataById(tn, String(id)) || null; } catch (e) { return null; }
+    if (!tn) {
+      var E = tableNameEnum();
+      tn = (E && E[semantic]) || semantic;
+    }
+    try {
+      return T.getTableDataById(tn, String(id)) || null;
+    } catch (e) {
+      return null;
+    }
   },
   /**
    * 配置表整表行数组（只读，getTableGroupArray）。表未就绪/符号缺失返回 []。
@@ -256,8 +395,15 @@ export const l10n = {
     var T = TABLE();
     if (!T || typeof T.getTableGroupArray !== 'function') return [];
     var tn = SYM.tables[semantic];
-    if (!tn) { var E = tableNameEnum(); tn = (E && E[semantic]) || semantic; }
-    try { return T.getTableGroupArray(tn) || []; } catch (e) { return []; }
+    if (!tn) {
+      var E = tableNameEnum();
+      tn = (E && E[semantic]) || semantic;
+    }
+    try {
+      return T.getTableGroupArray(tn) || [];
+    } catch (e) {
+      return [];
+    }
   },
   /**
    * 频道号 → 游戏频道显示名（chatCommon.getChatToggleConfig 文案键 + 翻译，与游戏侧栏同源）。
@@ -267,10 +413,14 @@ export const l10n = {
   channelName(c) {
     var cm = probe(SYM.modules.chatCommon + '.getChatToggleConfig', () => {
       var m = game.get(SYM.modules.chatCommon);
-      return (m && typeof m.getChatToggleConfig === 'function') ? m : null;
+      return m && typeof m.getChatToggleConfig === 'function' ? m : null;
     });
     if (!cm) return null;
-    try { return l10n.net(cm.getChatToggleConfig(+c)) || null; } catch (e) { return null; }
+    try {
+      return l10n.net(cm.getChatToggleConfig(+c)) || null;
+    } catch (e) {
+      return null;
+    }
   },
 };
 
@@ -279,22 +429,29 @@ export const l10n = {
 /** 跳转协调器（新旧地图双通道，首次探测后缓存句柄） */
 function mapTodo() {
   return probe('mapTodo', () => {
-    try { // 新图：NWorldMapCoreBiz.NWorldMapGoType + NWorldMapTodoController.instance
+    try {
+      // 新图：NWorldMapCoreBiz.NWorldMapGoType + NWorldMapTodoController.instance
       var biz = game.get(SYM.modules.mapNewBiz);
       var G = biz && biz[SYM.newMap.goType];
       var cls = game.get(SYM.modules.mapNewCtrl);
       var C = cls && cls[SYM.newMap.cls];
       var inst = C && C[SYM.newMap.inst];
       if (G && inst && typeof inst.gotoWorldAndDo === 'function') return { inst: inst, G: G };
-    } catch (e) { }
-    try { // 旧图：WorldMapCommon.WorldMapToDoType + WorldMapTodoController.getInstance()
+    } catch (e) {}
+    try {
+      // 旧图：WorldMapCommon.WorldMapToDoType + WorldMapTodoController.getInstance()
       var common = game.get(SYM.modules.mapOldCommon);
       var G2 = common && common[SYM.oldMap.todoType];
       var m2 = game.get(SYM.modules.mapOldCtrl);
-      var i2 = m2 && (typeof m2.getInstance === 'function' ? m2.getInstance()
-        : (m2.default && typeof m2.default.getInstance === 'function' ? m2.default.getInstance() : null));
+      var i2 =
+        m2 &&
+        (typeof m2.getInstance === 'function'
+          ? m2.getInstance()
+          : m2.default && typeof m2.default.getInstance === 'function'
+            ? m2.default.getInstance()
+            : null);
       if (G2 && i2 && typeof i2.gotoWorldAndDo === 'function') return { inst: i2, G: G2 };
-    } catch (e) { }
+    } catch (e) {}
     return null;
   });
 }
@@ -317,10 +474,19 @@ export const nav = {
     var type = action.click && t.G[A.tileClick] != null ? t.G[A.tileClick] : t.G[A.moveTo];
     if (type == null) return { ok: false, err: 'unavailable' };
     var opts = { x: action.x | 0, y: action.y | 0, mark: true };
-    if (action.z != null) { opts.s = action.z; opts.k = action.z; opts.z = action.z; }
+    if (action.z != null) {
+      opts.s = action.z;
+      opts.k = action.z;
+      opts.z = action.z;
+    }
     if (action.subMap != null && action.subMap > 0) opts.subMap = action.subMap;
-    try { t.inst.gotoWorldAndDo(type, opts); return { ok: true }; }
-    catch (e) { log.warn('flyTo(%s,%s) failed: %s', action.x, action.y, e && e.message); return { ok: false, err: 'failed' }; }
+    try {
+      t.inst.gotoWorldAndDo(type, opts);
+      return { ok: true };
+    } catch (e) {
+      log.warn('flyTo(%s,%s) failed: %s', action.x, action.y, e && e.message);
+      return { ok: false, err: 'failed' };
+    }
   },
   /**
    * 行军/集结飞行：JUMP_TO_MARCH_CLICK {marchId,marchType}（游戏默认分支走通用协议 GET_MARCH_INFO_FOR_JUMP）。
@@ -330,22 +496,46 @@ export const nav = {
   flyMarch(action) {
     var t = mapTodo();
     if (!t) return { ok: false, err: 'unavailable' };
-    if (!t.G[SYM.mapActions.marchClick] || action.marchId == null) return { ok: false, err: 'nomarch' };
-    try { t.inst.gotoWorldAndDo(t.G[SYM.mapActions.marchClick], { marchId: action.marchId, marchType: action.marchType }); return { ok: true }; }
-    catch (e) { log.warn('flyMarch(%s) failed: %s', action.marchId, e && e.message); return { ok: false, err: 'failed' }; }
+    if (!t.G[SYM.mapActions.marchClick] || action.marchId == null)
+      return { ok: false, err: 'nomarch' };
+    try {
+      t.inst.gotoWorldAndDo(t.G[SYM.mapActions.marchClick], {
+        marchId: action.marchId,
+        marchType: action.marchType,
+      });
+      return { ok: true };
+    } catch (e) {
+      log.warn('flyMarch(%s) failed: %s', action.marchId, e && e.message);
+      return { ok: false, err: 'failed' };
+    }
   },
 };
 
 // ─────────────────────── 行军类型（跨服漂移） ───────────────────────
 
 /** 游戏 MarchType 枚举对象（WorldMapCommon 为裸 CommonJS 导出，枚举在顶层，无 .default） */
-function marchEnum() { return probe(SYM.modules.mapOldCommon + '.' + SYM.marchEnum.obj, () => { var m = game.get(SYM.modules.mapOldCommon); return (m && m[SYM.marchEnum.obj]) || null; }); }
+function marchEnum() {
+  return probe(SYM.modules.mapOldCommon + '.' + SYM.marchEnum.obj, () => {
+    var m = game.get(SYM.modules.mapOldCommon);
+    return (m && m[SYM.marchEnum.obj]) || null;
+  });
+}
 
 /** 游戏 WorldMapEntityType 枚举对象（地块实体类型，同上在裸导出顶层） */
-function entityEnum() { return probe(SYM.modules.mapOldCommon + '.' + SYM.entityEnum.obj, () => { var m = game.get(SYM.modules.mapOldCommon); return (m && m[SYM.entityEnum.obj]) || null; }); }
+function entityEnum() {
+  return probe(SYM.modules.mapOldCommon + '.' + SYM.entityEnum.obj, () => {
+    var m = game.get(SYM.modules.mapOldCommon);
+    return (m && m[SYM.entityEnum.obj]) || null;
+  });
+}
 
 /** 跨服判定器（CrossUtils 静态方法，ES 包装下取 .default；随 tmServerType 变化，每次实时调用，不缓存结果） */
-function crossUtils() { return probe(SYM.modules.crossUtils, () => { var C = ns(game.get(SYM.modules.crossUtils)); return (C && typeof C.isTMServer === 'function') ? C : null; }); }
+function crossUtils() {
+  return probe(SYM.modules.crossUtils, () => {
+    var C = ns(game.get(SYM.modules.crossUtils));
+    return C && typeof C.isTMServer === 'function' ? C : null;
+  });
+}
 
 /** 新跨服战场（AVA）判定：NewCABController.default.Instance.isNewCABServer() */
 function isNewCabServer() {
@@ -353,14 +543,16 @@ function isNewCabServer() {
     var K = ns(game.get(SYM.modules.newCabCtrl));
     var I = K && (K.Instance || K.instance);
     return !!(I && typeof I.isNewCABServer === 'function' && I.isNewCABServer());
-  } catch (e) { return false; }
+  } catch (e) {
+    return false;
+  }
 }
 
 /** 游戏原生换算器 WorldUtils.dealMarchTypeWithSpecialMarch（漂移表唯一真相源，在则优先用；ES 包装下取 .default） */
 function worldMarchUtils() {
   return probe(SYM.modules.worldUtils + '.dealMarchTypeWithSpecialMarch', () => {
     var W = ns(game.get(SYM.modules.worldUtils));
-    return (W && typeof W.dealMarchTypeWithSpecialMarch === 'function') ? W : null;
+    return W && typeof W.dealMarchTypeWithSpecialMarch === 'function' ? W : null;
   });
 }
 
@@ -381,7 +573,7 @@ export const march = {
   typeOf(member, fallback) {
     var E = marchEnum();
     var v = E && E[SYM.marchEnum[member]];
-    return (typeof v === 'number' && v > 0) ? v : (fallback | 0);
+    return typeof v === 'number' && v > 0 ? v : fallback | 0;
   },
   /**
    * 地块实体类型是否 bossV2（世界 boss 二期，行军类型与普怪不同）。
@@ -416,10 +608,11 @@ export const march = {
     if (base !== this.typeOf('attackPlayer', fb.attackPlayer)) return base; // 仅攻玩家城参与漂移换算
     var W = worldMarchUtils();
     if (W) {
-      try { // 游戏原生优先：服务器契约由游戏自己维护，改版自动跟随
+      try {
+        // 游戏原生优先：服务器契约由游戏自己维护，改版自动跟随
         var v = W.dealMarchTypeWithSpecialMarch(base, {});
         if (v) return v | 0;
-      } catch (e) { }
+      } catch (e) {}
     }
     var C = crossUtils();
     if (isNewCabServer()) return this.typeOf('avaAttackPlayer', fb.ava);
@@ -439,7 +632,11 @@ export const march = {
     var C = crossUtils();
     var o = { resolver: !!worldMarchUtils(), tm: null, master: null, teamLegend: null, ava: null };
     if (C) {
-      try { o.tm = !!C.isTMServer(); o.master = !!C.isMasterMatch(); o.teamLegend = !!C.isTeamLegendServer(); } catch (e) { }
+      try {
+        o.tm = !!C.isTMServer();
+        o.master = !!C.isMasterMatch();
+        o.teamLegend = !!C.isTeamLegendServer();
+      } catch (e) {}
     }
     o.ava = isNewCabServer();
     return o;
@@ -450,35 +647,79 @@ export const march = {
 
 export const gameData = {
   /** 当前服务器时间（秒），实时取值不缓存；取不到返回 0 */
-  serverTime() { try { return +game.get(SYM.modules.dataCenter).DATA.ServerTime || 0; } catch (e) { return 0; } },
+  serverTime() {
+    try {
+      return +game.get(SYM.modules.dataCenter).DATA.ServerTime || 0;
+    } catch (e) {
+      return 0;
+    }
+  },
   /** 本人 StrUid（快速登录模式下与数字 UID 不同）；取不到返回 '' */
-  strUid() { var s = userData() && userData().StrUid; return (s != null && s !== '') ? String(s) : ''; },
+  strUid() {
+    var s = userData() && userData().StrUid;
+    return s != null && s !== '' ? String(s) : '';
+  },
   /** 好友 Map（登录下发 + push 维护，CheckIsMyFriend 同源）；无数据源返回 null */
   friends() {
     var fr = userData() && userData().Friends;
-    return (fr && typeof fr.has === 'function' && typeof fr.keys === 'function') ? fr : null;
+    return fr && typeof fr.has === 'function' && typeof fr.keys === 'function' ? fr : null;
   },
   /** 联盟对象（Aid/MemberCount…）；不在盟/无数据源返回 null */
-  alliance() { return (userData() && userData().Alliance) || null; },
+  alliance() {
+    return (userData() && userData().Alliance) || null;
+  },
   /** 本人数字 pid（=UserData.UID，与世界地图 p.pid 同源，已用实录核对）；取不到返回 0 */
-  myPid() { try { return Number(userData() && userData().UID) || 0; } catch (e) { return 0; } },
+  myPid() {
+    try {
+      return Number(userData() && userData().UID) || 0;
+    } catch (e) {
+      return 0;
+    }
+  },
   /**
    * 本人基地战力（=UserData.Power，游戏顶栏同源；真机探针实证 Power 为明文整数 48906307，与地图 p.power 同量纲）。
    * 取不到返回 null（而非 0）：自动防御开盾的战力闸门据 null 走「未知→最悲观」保守分支，不可把「取不到」误当「战力为 0 而判我更强」。
    * @returns {number|null}
    */
-  myPower() { try { var p = userData() && userData().Power; return (p != null && !isNaN(Number(p))) ? Number(p) : null; } catch (e) { return null; } },
+  myPower() {
+    try {
+      var p = userData() && userData().Power;
+      return p != null && !isNaN(Number(p)) ? Number(p) : null;
+    } catch (e) {
+      return null;
+    }
+  },
   /** 本人联盟 aid（=UserData.Alliance.Aid，与地图 p.aid 同源）；未入盟/取不到返回 0 */
-  myAid() { try { var a = userData() && userData().Alliance; return Number(a && a.Aid) || 0; } catch (e) { return 0; } },
+  myAid() {
+    try {
+      var a = userData() && userData().Alliance;
+      return Number(a && a.Aid) || 0;
+    } catch (e) {
+      return 0;
+    }
+  },
   /**
    * 本人联盟 tag 串（=UserData.Alliance.Tag，AllianceData 构造 `this.Tag = e.basic.tag` 已核对）。
    * 用于「只与同联盟成员比对」这类判据：联盟类下发（如 1585 的 ownerAllianceTag）只带 tag 不带 aid，
    * 按 aid 比对需逐 uid 反查（回调式、代价高），故 tag 字符串比对是这类全量列表的唯一可行口径。
    * @returns {string} 未入盟/取不到返回 ''（调用方据此判「无联盟」而非「匹配任意」）
    */
-  myAllianceTag() { try { var a = userData() && userData().Alliance; return String((a && a.Tag) || ''); } catch (e) { return ''; } },
+  myAllianceTag() {
+    try {
+      var a = userData() && userData().Alliance;
+      return String((a && a.Tag) || '');
+    } catch (e) {
+      return '';
+    }
+  },
   /** 本人主城/账号等级（=UserData.Level，功能 open_level 门槛判据同源）；取不到返回 0 */
-  level() { try { return Number(userData() && userData().Level) || 0; } catch (e) { return 0; } },
+  level() {
+    try {
+      return Number(userData() && userData().Level) || 0;
+    } catch (e) {
+      return 0;
+    }
+  },
   /**
    * 本人基地世界坐标（UserData.WorldCoord，口径同 NWorldMapUIComponent 的小地图定位）。
    * @returns {{x:number, y:number}|null} 取不到/字段不全返回 null
@@ -505,13 +746,20 @@ export const gameData = {
   homeAirDropSpot(buildingId) {
     try {
       var HU = ns(game.get(SYM.modules.homeMapUtils));
-      if (!HU || typeof HU.getMapPosList !== 'function' || typeof HU.checkHomeBoxLegal !== 'function'
-        || typeof HU.getMapPosByPosId !== 'function' || typeof HU.getPosIdByMapPos !== 'function') {
-        log.debug('homeAirDropSpot: HomeMapUtils 符号缺失（getMapPosList/checkHomeBoxLegal/…）→ 无法定位落点');
+      if (
+        !HU ||
+        typeof HU.getMapPosList !== 'function' ||
+        typeof HU.checkHomeBoxLegal !== 'function' ||
+        typeof HU.getMapPosByPosId !== 'function' ||
+        typeof HU.getPosIdByMapPos !== 'function'
+      ) {
+        log.debug(
+          'homeAirDropSpot: HomeMapUtils 符号缺失（getMapPosList/checkHomeBoxLegal/…）→ 无法定位落点',
+        );
         return null;
       }
       var GD = game.get(SYM.modules.gameDefine);
-      var BI_BUILD = GD && GD.BaseItemType && GD.BaseItemType.Building;   // 必为真值：传错 checkHomeBoxLegal 会跳过地形判定
+      var BI_BUILD = GD && GD.BaseItemType && GD.BaseItemType.Building; // 必为真值：传错 checkHomeBoxLegal 会跳过地形判定
       if (BI_BUILD == null) {
         log.debug('homeAirDropSpot: GameDefine.BaseItemType.Building 缺失 → 无法定位落点');
         return null;
@@ -520,7 +768,8 @@ export const gameData = {
       var airW = air && air.width > 0 ? air.width | 0 : 3;
       var airH = air && air.height > 0 ? air.height | 0 : 3;
       var HCM = ns(game.get(SYM.modules.homeMapCommon));
-      var WC = (HCM && HCM.WidthCount) || 84, HC = (HCM && HCM.HeightCount) || 104;
+      var WC = (HCM && HCM.WidthCount) || 84,
+        HC = (HCM && HCM.HeightCount) || 104;
       // 占用格集合：所有建筑 footprint（getMapPosList 与游戏内部同一等距生成器，口径一致）
       var occ = Object.create(null);
       var list = userData() && userData().Buildings;
@@ -533,30 +782,55 @@ export const gameData = {
           var mp = HU.getMapPosByPosId(b.Pos);
           if (!mp || mp.x == null || mp.y == null) continue;
           var cells = HU.getMapPosList(mp.x, mp.y, cfg.width | 0 || 1, cfg.height | 0 || 1);
-          for (var j = 0; j < cells.length; j++) { if (cells[j] !== -1) occ[cells[j]] = 1; }
+          for (var j = 0; j < cells.length; j++) {
+            if (cells[j] !== -1) occ[cells[j]] = 1;
+          }
         }
       }
       // 由主城网格中心向外（切比雪夫环）扫第一个「地形合法 + 空投 footprint 全空」的锚点；限环数待在核心已解锁区，宁可本轮不发也不赌外围
-      var cx = WC >> 1, cy = HC >> 1, R = Math.min(WC, HC) >> 1;
+      var cx = WC >> 1,
+        cy = HC >> 1,
+        R = Math.min(WC, HC) >> 1;
       for (var r = 0; r <= R; r++) {
         for (var dx = -r; dx <= r; dx++) {
           for (var dy = -r; dy <= r; dy++) {
-            if (Math.max(Math.abs(dx), Math.abs(dy)) !== r) continue;   // 只走本环边框，避免重扫内圈
-            var x = cx + dx, y = cy + dy;
+            if (Math.max(Math.abs(dx), Math.abs(dy)) !== r) continue; // 只走本环边框，避免重扫内圈
+            var x = cx + dx,
+              y = cy + dy;
             if (x < 0 || y < 0 || x >= WC || y >= HC) continue;
             var pid = HU.getPosIdByMapPos(x, y);
-            if (occ[pid]) continue;                                     // 快速淘汰：锚点格已被占
-            if (!HU.checkHomeBoxLegal(x, y, airW, airH, BI_BUILD, buildingId, -1)) continue;  // 地形/可投放合法性
-            var ac = HU.getMapPosList(x, y, airW, airH), free = true;
-            for (var q = 0; q < ac.length; q++) { if (ac[q] === -1 || occ[ac[q]]) { free = false; break; } }
+            if (occ[pid]) continue; // 快速淘汰：锚点格已被占
+            if (!HU.checkHomeBoxLegal(x, y, airW, airH, BI_BUILD, buildingId, -1)) continue; // 地形/可投放合法性
+            var ac = HU.getMapPosList(x, y, airW, airH),
+              free = true;
+            for (var q = 0; q < ac.length; q++) {
+              if (ac[q] === -1 || occ[ac[q]]) {
+                free = false;
+                break;
+              }
+            }
             if (free) return { x: x, y: y, posId: pid };
           }
         }
       }
-      log.debug('homeAirDropSpot: 核心区半径 %d 环内无合法空位（BUILDING 表 %s→ footprint=%dx%d, 网格=%dx%d, 占用格数=%d）',
-        R, air ? 'OK' : 'MISSING', airW, airH, WC, HC, Object.keys(occ).length);
-      return null;   // 核心区内无合法空位（空地不足）
-    } catch (e) { log.debug('homeAirDropSpot threw: %s —— 落点计算中途抛错被吞，本轮不发', e && (e.stack || e.message)); return null; }
+      log.debug(
+        'homeAirDropSpot: 核心区半径 %d 环内无合法空位（BUILDING 表 %s→ footprint=%dx%d, 网格=%dx%d, 占用格数=%d）',
+        R,
+        air ? 'OK' : 'MISSING',
+        airW,
+        airH,
+        WC,
+        HC,
+        Object.keys(occ).length,
+      );
+      return null; // 核心区内无合法空位（空地不足）
+    } catch (e) {
+      log.debug(
+        'homeAirDropSpot threw: %s —— 落点计算中途抛错被吞，本轮不发',
+        e && (e.stack || e.message),
+      );
+      return null;
+    }
   },
   /**
    * 地面上现存的空投建筑实例 id 列表（只读遍历 UserData.Buildings，BuildingId==buildingId 者）。
@@ -578,9 +852,12 @@ export const gameData = {
             var s = String(raw.toString());
             if (/^\d+$/.test(s)) return s;
           }
-          var lo = (raw._low != null ? raw._low : raw.low), hi = (raw._high != null ? raw._high : raw.high);
+          var lo = raw._low != null ? raw._low : raw.low,
+            hi = raw._high != null ? raw._high : raw.high;
           if (lo != null && hi != null && typeof BigInt !== 'undefined') {
-            lo = Number(lo); hi = Number(hi); if (lo < 0) lo += 4294967296;
+            lo = Number(lo);
+            hi = Number(hi);
+            if (lo < 0) lo += 4294967296;
             return (BigInt(hi) * (BigInt(1) << BigInt(32)) + BigInt(lo)).toString();
           }
         }
@@ -594,7 +871,10 @@ export const gameData = {
         if (id) out.push(id);
       }
       return out;
-    } catch (e) { log.debug('airDropInstances threw: %s', e && (e.message || e)); return []; }
+    } catch (e) {
+      log.debug('airDropInstances threw: %s', e && (e.message || e));
+      return [];
+    }
   },
   /**
    * 秘密武器 cd_skill 次数/冷却可用性（只读复刻 PlayerSkillController.getSkillUseEnableNum/getSkillCdTime 的 type==2 口径）。
@@ -609,34 +889,53 @@ export const gameData = {
       var cfg = l10n.tableRow('cd_skill', skillId);
       if (!cfg) return null;
       var type = Number(cfg.type) | 0;
-      var cd = Number(cfg.cd) || 0;     // 每枚次数恢复间隔（分钟）
-      var max = Number(cfg.max) || 0;   // 次数上限
+      var cd = Number(cfg.cd) || 0; // 每枚次数恢复间隔（分钟）
+      var max = Number(cfg.max) || 0; // 次数上限
       var serverSec = gameData.serverTime() | 0;
-      var msOf = function (v) {   // protobuf Long / {_low,_high} / number → 毫秒
+      var msOf = function (v) {
+        // protobuf Long / {_low,_high} / number → 毫秒
         if (!v) return 0;
         if (typeof v === 'number') return v;
-        if (typeof v.toNumber === 'function') { try { return v.toNumber(); } catch (e) { return 0; } }
-        var lo = (v._low != null ? v._low : v.low), hi = (v._high != null ? v._high : v.high);
+        if (typeof v.toNumber === 'function') {
+          try {
+            return v.toNumber();
+          } catch (e) {
+            return 0;
+          }
+        }
+        var lo = v._low != null ? v._low : v.low,
+          hi = v._high != null ? v._high : v.high;
         if (lo == null || hi == null) return 0;
-        lo = Number(lo); hi = Number(hi);
+        lo = Number(lo);
+        hi = Number(hi);
         if (lo < 0) lo += 4294967296;
         return hi * 4294967296 + lo;
       };
-      if (type === 2) {   // 次数型（空投支援）：可用 = min(cnt + 自 start 起已恢复的整数枚, max)
-        if (!skill) return { type: type, available: max, nextMs: 0, max: max, cd: cd, cnt: null };   // 从未用过 = 满次数
+      if (type === 2) {
+        // 次数型（空投支援）：可用 = min(cnt + 自 start 起已恢复的整数枚, max)
+        if (!skill) return { type: type, available: max, nextMs: 0, max: max, cd: cd, cnt: null }; // 从未用过 = 满次数
         var cnt = Number(skill.cnt) || 0;
         var startSec = Math.floor(msOf(skill.start) / 1000);
         var accr = cd > 0 ? Math.floor((serverSec - startSec) / (60 * cd)) : 0;
         if (accr < 0) accr = 0;
         var avail = Math.min(cnt + accr, max);
-        var nextMs = avail >= max ? 0 : (startSec + (accr + 1) * 60 * cd) * 1000;   // 下一枚恢复的绝对毫秒
+        var nextMs = avail >= max ? 0 : (startSec + (accr + 1) * 60 * cd) * 1000; // 下一枚恢复的绝对毫秒
         return { type: type, available: avail, nextMs: nextMs, max: max, cd: cd, cnt: cnt };
       }
       // type1/type3：单次冷却型，end（绝对毫秒）过了即可用一次
       if (!skill) return { type: type, available: 1, nextMs: 0, max: 1, cd: cd, cnt: null };
       var endMs = msOf(skill.end);
-      return { type: type, available: Math.floor(endMs / 1000) < serverSec ? 1 : 0, nextMs: endMs, max: 1, cd: cd, cnt: null };
-    } catch (e) { return null; }
+      return {
+        type: type,
+        available: Math.floor(endMs / 1000) < serverSec ? 1 : 0,
+        nextMs: endMs,
+        max: 1,
+        cd: cd,
+        cnt: null,
+      };
+    } catch (e) {
+      return null;
+    }
   },
   /**
    * 道具背包持有量（UserData.getItemAmount，只读）。机甲碎片 3200001 等都走这里。
@@ -646,7 +945,11 @@ export const gameData = {
   itemAmount(itemId) {
     var u = userData();
     if (!u || typeof u.getItemAmount !== 'function') return 0;
-    try { return Number(u.getItemAmount(+itemId)) || 0; } catch (e) { return 0; }
+    try {
+      return Number(u.getItemAmount(+itemId)) || 0;
+    } catch (e) {
+      return 0;
+    }
   },
   /**
    * 战争状态 Buff 的结束时刻（只读，秒）：Buff.getStateDataById(stateId).EndTime 与服务器时间比较由调用方做。
@@ -661,7 +964,7 @@ export const gameData = {
     var B = probe('UserData.Buff.getStateDataById', () => {
       var u = userData();
       var inst = u && u[SYM.dataProps.buffPool];
-      return (inst && typeof inst.getStateDataById === 'function') ? inst : null;
+      return inst && typeof inst.getStateDataById === 'function' ? inst : null;
     });
     if (!B) return 0;
     try {
@@ -670,7 +973,9 @@ export const gameData = {
       var end = Number(st.EndTime != null ? st.EndTime : st.endTime) || 0;
       if (end <= 0) return 0;
       return end > 1e11 ? Math.floor(end / 1000) : end;
-    } catch (e) { return 0; }
+    } catch (e) {
+      return 0;
+    }
   },
   /**
    * 是否处于战争狂热（禁止开盾窗口）：复刻游戏 getWarFeverState，三个狂热阶段 stateId 任一命中即真。
@@ -681,14 +986,18 @@ export const gameData = {
     var now = gameData.serverTime() | 0;
     if (!now) return false;
     var ids = [130048, 130049, 130132];
-    for (var i = 0; i < ids.length; i++) { if (gameData.buffStateEndTime(ids[i]) > now) return true; }
+    for (var i = 0; i < ids.length; i++) {
+      if (gameData.buffStateEndTime(ids[i]) > now) return true;
+    }
     return false;
   },
   /**
    * 本人护盾是否已生效（只读，stateId 50001 的结束时刻 > 服务器时间）。探测不可用返回 false（不阻断，交由 910 裁决）。
    * @returns {boolean}
    */
-  shieldActive() { return gameData.buffStateEndTime(50001) > (gameData.serverTime() | 0); },
+  shieldActive() {
+    return gameData.buffStateEndTime(50001) > (gameData.serverTime() | 0);
+  },
   /**
    * 游戏权威「能否开盾」闸（只读、抑制 UI：checkShieldEnable(false)）——命中狂热/危险区/跨服限制时返回 false，一次覆盖三重判定。
    * 符号缺失返回 null（调用方降级为「不预判、直接尝试、以 910 拒绝为准」）。
@@ -697,10 +1006,14 @@ export const gameData = {
   canShield() {
     var C = probe(SYM.modules.commonTools + '.checkShieldEnable', () => {
       var m = ns(game.get(SYM.modules.commonTools));
-      return (m && typeof m.checkShieldEnable === 'function') ? m : null;
+      return m && typeof m.checkShieldEnable === 'function' ? m : null;
     });
     if (!C) return null;
-    try { return !!C.checkShieldEnable(false); } catch (e) { return null; }
+    try {
+      return !!C.checkShieldEnable(false);
+    } catch (e) {
+      return null;
+    }
   },
   /**
    * 指定世界坐标能否落城（只读，一切以游戏自身迁城判定为准，不做插件侧启发式降级）。
@@ -719,9 +1032,12 @@ export const gameData = {
       } catch (e) {}
       try {
         var c = game.get(SYM.modules.worldMapCtrl);
-        var C = c && (c.WorldMapController || (c.default && (c.default.WorldMapController || c.default)) || c);
+        var C =
+          c &&
+          (c.WorldMapController || (c.default && (c.default.WorldMapController || c.default)) || c);
         var model = C && C.model;
-        if (model && typeof model.checkIsPlainTile === 'function') return { kind: 'ctrl', ref: model };
+        if (model && typeof model.checkIsPlainTile === 'function')
+          return { kind: 'ctrl', ref: model };
       } catch (e) {}
       return null;
     });
@@ -729,7 +1045,9 @@ export const gameData = {
     try {
       if (A.kind === 'utils') return !!A.ref.checkCanMove(x | 0, y | 0);
       return !!A.ref.checkIsPlainTile(x | 0, y | 0, true);
-    } catch (e) { return null; }
+    } catch (e) {
+      return null;
+    }
   },
   /**
    * 城外观(skinId)占地边长（格数，只读、**场景无关**）：等价游戏 CommonTools.getCitySkinSize——直接查 SKIN 配置表 .large。
@@ -743,7 +1061,7 @@ export const gameData = {
     var row = l10n.tableRow('SKIN', skinId);
     if (!row) return null;
     var s = Number(row.large != null ? row.large : row.Large) || 0;
-    return s >= 1 ? (s | 0) : 1;
+    return s >= 1 ? s | 0 : 1;
   },
   /**
    * 本人主城外观 skinId（UserData.UsingCastleFace）；迁城落点 footprint 边长 = citySkinSize(此值)。
@@ -751,7 +1069,7 @@ export const gameData = {
    */
   usingCastleFace() {
     var u = userData();
-    return (u && u.UsingCastleFace != null) ? u.UsingCastleFace : null;
+    return u && u.UsingCastleFace != null ? u.UsingCastleFace : null;
   },
   /**
    * 联盟堡垒领地（禁迁区）原始条目只读快照：NWorldMapTerritoryModel 单例的 AllianceTerritory（随视口加载、出视口被 purge，故易失）。
@@ -765,19 +1083,35 @@ export const gameData = {
         var m = game.get(SYM.modules.nWorldMapTerritoryModel);
         var C = m && (m.NWorldMapTerritoryModel || m.default || m);
         return (C && (C.instance || C)) || null;
-      } catch (e) { return null; }
+      } catch (e) {
+        return null;
+      }
     });
     var AT = inst && inst.AllianceTerritory;
     if (!AT) return null;
     var out = [];
     for (var k in AT) {
       var it = AT[k];
-      if (it && it.x != null && it.y != null) out.push({ x: it.x | 0, y: it.y | 0, w: it.w | 0, bw: it.bw | 0, owner: it.owner | 0, buildId: it.buildId });
+      if (it && it.x != null && it.y != null)
+        out.push({
+          x: it.x | 0,
+          y: it.y | 0,
+          w: it.w | 0,
+          bw: it.bw | 0,
+          owner: it.owner | 0,
+          buildId: it.buildId,
+        });
     }
     return out;
   },
   /** 本人子服号（UserData.subServerID）；取不到返回 0——getCellIndex/cell 空间换算用 */
-  subServerId() { try { return Number(userData().subServerID) || 0; } catch (e) { return 0; } },
+  subServerId() {
+    try {
+      return Number(userData().subServerID) || 0;
+    } catch (e) {
+      return 0;
+    }
+  },
   /**
    * 当前是否 KVK 跨服战场图（GameTools.isKVK = isC4||isC8||isC8S2）。用于迁城落点分区规则：
    * false=本服普通图（须拦别盟领地），true=跨服战场图（别盟领地随便进）。
@@ -786,9 +1120,18 @@ export const gameData = {
    */
   isKVK() {
     var T = probe(SYM.modules.gameTools + '.isKVK', () => {
-      try { var m = game.get(SYM.modules.gameTools); return (m && (m.default || m.GameTools || m)) || null; } catch (e) { return null; }
+      try {
+        var m = game.get(SYM.modules.gameTools);
+        return (m && (m.default || m.GameTools || m)) || null;
+      } catch (e) {
+        return null;
+      }
     });
-    try { return !!(T && typeof T.isKVK === 'function' && T.isKVK()); } catch (e) { return false; }
+    try {
+      return !!(T && typeof T.isKVK === 'function' && T.isKVK());
+    } catch (e) {
+      return false;
+    }
   },
   /**
    * 本服是否处于「战区/跨服对战态」（UserData.ServerState === GameDefine.ServerState.Fight）。
@@ -801,11 +1144,15 @@ export const gameData = {
   serverStateIsFight() {
     try {
       var u = userData();
-      var GD = probe(SYM.modules.gameDefine + '.ServerState.Fight', () => ns(game.get(SYM.modules.gameDefine)));
+      var GD = probe(SYM.modules.gameDefine + '.ServerState.Fight', () =>
+        ns(game.get(SYM.modules.gameDefine)),
+      );
       var fight = GD && GD.ServerState && GD.ServerState.Fight;
       if (u == null || fight == null) return false;
       return u.ServerState === fight;
-    } catch (e) { return false; }
+    } catch (e) {
+      return false;
+    }
   },
   /**
    * 世界格索引（NWorldMapUtils.getCellIndex(x,y,ServerId,subServerID)）：game 坐标 + 服号 + 子服 → 唯一 cell index，供 placeFlags 逐格读。符号不可得返回 null。
@@ -813,12 +1160,27 @@ export const gameData = {
    */
   mapCellIndex(x, y) {
     var U = probe(SYM.modules.nWorldMapUtils + '.getCellIndex', () => {
-      try { var m = game.get(SYM.modules.nWorldMapUtils); var u = m && (m.NWorldMapUtils || m.default || m); return (u && typeof u.getCellIndex === 'function') ? u : null; } catch (e) { return null; }
+      try {
+        var m = game.get(SYM.modules.nWorldMapUtils);
+        var u = m && (m.NWorldMapUtils || m.default || m);
+        return u && typeof u.getCellIndex === 'function' ? u : null;
+      } catch (e) {
+        return null;
+      }
     });
     if (!U) return null;
-    var svr = 0, sub = 0;
-    try { var u = userData(); svr = u.ServerId | 0; sub = u.subServerID | 0; } catch (e) { }
-    try { return U.getCellIndex(x | 0, y | 0, svr, sub); } catch (e) { return null; }
+    var svr = 0,
+      sub = 0;
+    try {
+      var u = userData();
+      svr = u.ServerId | 0;
+      sub = u.subServerID | 0;
+    } catch (e) {}
+    try {
+      return U.getCellIndex(x | 0, y | 0, svr, sub);
+    } catch (e) {
+      return null;
+    }
   },
   /**
    * settle 就绪信号：以 (x,y) 为中心 `(2r+1)²` 邻域内 placeFlags 命中格数。>0 表示该区域已随视口加载进 NWorldMapData（canMoveCity 据此可信）；
@@ -828,15 +1190,23 @@ export const gameData = {
    */
   mapLoadedNear(x, y, r) {
     var W = probe(SYM.modules.nWorldMapData + '.inst', () => {
-      try { var m = game.get(SYM.modules.nWorldMapData); var C = m && (m.NWorldMapData || m.default || m); return (C && (C.instance || C)) || null; } catch (e) { return null; }
+      try {
+        var m = game.get(SYM.modules.nWorldMapData);
+        var C = m && (m.NWorldMapData || m.default || m);
+        return (C && (C.instance || C)) || null;
+      } catch (e) {
+        return null;
+      }
     });
     var pf = W && W.placeFlags;
     if (!pf || typeof pf.has !== 'function') return null;
-    r = r | 0; var n = 0;
-    for (var dx = -r; dx <= r; dx++) for (var dy = -r; dy <= r; dy++) {
-      var idx = this.mapCellIndex((x | 0) + dx, (y | 0) + dy);
-      if (idx != null && pf.has(idx)) n++;
-    }
+    r = r | 0;
+    var n = 0;
+    for (var dx = -r; dx <= r; dx++)
+      for (var dy = -r; dy <= r; dy++) {
+        var idx = this.mapCellIndex((x | 0) + dx, (y | 0) + dy);
+        if (idx != null && pf.has(idx)) n++;
+      }
     return n;
   },
   /**
@@ -864,7 +1234,7 @@ export const gameData = {
     var src = probe('Alliance.AllianceBossData', () => {
       var a = userData() && userData().Alliance;
       var d = a && a[SYM.dataProps.allianceBoss];
-      return (d && typeof d.State === 'number') ? d : null;
+      return d && typeof d.State === 'number' ? d : null;
     });
     if (!src) return null;
     try {
@@ -880,7 +1250,9 @@ export const gameData = {
         pointSid: src.PointSid | 0,
         help: src.Help | 0,
       };
-    } catch (e) { return null; }
+    } catch (e) {
+      return null;
+    }
   },
   /**
    * 联盟科技本地态快照（Alliance.scienceData 的只读 getter/方法，游戏由 1143 应答 / push 10430/10432 刷新）。
@@ -901,16 +1273,24 @@ export const gameData = {
     var src = probe('Alliance.scienceData', () => {
       var a = userData() && userData().Alliance;
       var d = a && a[SYM.dataProps.allianceScience];
-      return (d && Array.isArray(d.scienceDevDataList) && typeof d.getCostCoin === 'function') ? d : null;
+      return d && Array.isArray(d.scienceDevDataList) && typeof d.getCostCoin === 'function'
+        ? d
+        : null;
     });
     if (!src) return null;
     try {
       // 可捐口径（弹窗 showBtn 的捐赠按钮分支）：已解锁且未满级且非研究中
       var canDon = function (it) {
-        return !!(it && typeof it.isLock === 'function' && it.isLock() && !it.isMaxLevel() && it.isStatus());
+        return !!(
+          it &&
+          typeof it.isLock === 'function' &&
+          it.isLock() &&
+          !it.isMaxLevel() &&
+          it.isStatus()
+        );
       };
       var nameOf = function (it) {
-        return (it && typeof it.getName === 'function') ? String(it.getName() || '') : '';
+        return it && typeof it.getName === 'function' ? String(it.getName() || '') : '';
       };
       var recId = Number(src.RecommendId) || 0;
       var first = null;
@@ -919,18 +1299,32 @@ export const gameData = {
         var arr = lists[li] || [];
         for (var i = 0; i < arr.length; i++) {
           var it = arr[i];
-          if (canDon(it)) { first = { scienceId: Number(it.sid) || 0, name: nameOf(it) }; break; }
+          if (canDon(it)) {
+            first = { scienceId: Number(it.sid) || 0, name: nameOf(it) };
+            break;
+          }
         }
       }
       // 两级目标：推荐项须自身可捐才采纳，否则回退首项
-      var target = null, recommended = false, recName = '';
+      var target = null,
+        recommended = false,
+        recName = '';
       if (recId > 0) {
         var rec = src.getScienceItemDataByGroupId(recId);
-        if (canDon(rec)) { target = { id: recId, name: nameOf(rec) }; recommended = true; recName = target.name; }
+        if (canDon(rec)) {
+          target = { id: recId, name: nameOf(rec) };
+          recommended = true;
+          recName = target.name;
+        }
       }
-      if (!target && first) { target = { id: first.scienceId, name: first.name }; }
+      if (!target && first) {
+        target = { id: first.scienceId, name: first.name };
+      }
       var a2 = userData().Alliance;
-      var cap = (a2 && typeof a2.getAllianceScienceScore === 'function') ? (Number(a2.getAllianceScienceScore()) || 0) : 0;
+      var cap =
+        a2 && typeof a2.getAllianceScienceScore === 'function'
+          ? Number(a2.getAllianceScienceScore()) || 0
+          : 0;
       return {
         recommendId: recId,
         recommendName: recName,
@@ -941,7 +1335,9 @@ export const gameData = {
         donateTarget: target,
         donateRecommended: recommended,
       };
-    } catch (e) { return null; }
+    } catch (e) {
+      return null;
+    }
   },
   /**
    * 联盟遗迹（要塞，WorldSite）本地态快照：本盟名下要塞（getWorldSiteArrayBy 只筛 Owner.Aid==盟 id）。
@@ -959,10 +1355,12 @@ export const gameData = {
       // 该模块是 ES 命名空间具名导出（exports.AllianceWorldSiteController，无 .default），
       // 不能用 ns() 解包（会把壳的 .default 为 undefined 当成解包结果）
       var m = game.get(SYM.modules.worldSiteCtrl);
-      var C = m && (m.AllianceWorldSiteController || (m.default && m.default.AllianceWorldSiteController));
+      var C =
+        m &&
+        (m.AllianceWorldSiteController || (m.default && m.default.AllianceWorldSiteController));
       // 先读私有 _instance（零副作用）；尚未建立时才走 instance getter 懒建（与游戏自身同一路径）
       var inst = (C && C._instance) || (C && C.instance);
-      return (inst && typeof inst.recommendSite === 'number') ? inst : null;
+      return inst && typeof inst.recommendSite === 'number' ? inst : null;
     });
     var u = userData();
     if (!src || !u || !u.Alliance || typeof u.getWorldSiteArrayBy !== 'function') return null;
@@ -971,7 +1369,8 @@ export const gameData = {
       if (aid <= 0) return null;
       var sites = u.getWorldSiteArrayBy(aid) || [];
       var recSite = Number(src.recommendSite) || 0;
-      var first = null, recDonateable = false;
+      var first = null,
+        recDonateable = false;
       for (var i = 0; i < sites.length; i++) {
         var s = sites[i];
         var dd = s && s.DistrictData;
@@ -984,11 +1383,17 @@ export const gameData = {
         }
       }
       // 两级目标：推荐位须自身可捐才采纳，否则回退首项
-      var target = null, recommended = false;
-      if (recSite > 0 && recDonateable) { target = { id: recSite, name: '' }; recommended = true; }
-      else if (first) { target = { id: first.siteId, name: first.name }; }
+      var target = null,
+        recommended = false;
+      if (recSite > 0 && recDonateable) {
+        target = { id: recSite, name: '' };
+        recommended = true;
+      } else if (first) {
+        target = { id: first.siteId, name: first.name };
+      }
       var sd = u.Alliance[SYM.dataProps.allianceScience];
-      var relicCost = (sd && typeof sd.getCostCoin === 'function') ? (Number(sd.getCostCoin(true)) || 0) : 0;
+      var relicCost =
+        sd && typeof sd.getCostCoin === 'function' ? Number(sd.getCostCoin(true)) || 0 : 0;
       return {
         recommendSite: recSite,
         firstDonateable: first,
@@ -996,7 +1401,9 @@ export const gameData = {
         donateTarget: target,
         donateRecommended: recommended,
       };
-    } catch (e) { return null; }
+    } catch (e) {
+      return null;
+    }
   },
   /**
    * 联盟守卫（巨兽，AllianceBehemoth）本地态快照：只读守卫养成数据，产出可捐列表供 feat 逐条判定。
@@ -1011,18 +1418,22 @@ export const gameData = {
     var u = userData();
     var a = u && u.Alliance;
     if (!u || !a || typeof a.isInAlliance !== 'function') return null;
-    var inAlliance = false;
-    try { inAlliance = !!a.isInAlliance(); } catch (e) { inAlliance = false; }
+    var inAlliance;
+    try {
+      inAlliance = !!a.isInAlliance();
+    } catch (e) {
+      inAlliance = false;
+    }
     if (!inAlliance || !gameData.functionOn('alliance_behemoth') || !u.behemothIsOpen) {
       return { open: false, items: [] };
     }
     var src = probe('Alliance.allianceBehemothData', () => {
       var d = a[SYM.dataProps.allianceBehemoth];
-      return (d && typeof d.getAllianceBehemothData === 'function') ? d : null;
+      return d && typeof d.getAllianceBehemothData === 'function' ? d : null;
     });
     if (!src) return { open: true, items: [] };
     try {
-      var map = src.getAllianceBehemothData();   // Map<behemothId, AllianceBehemothItemData>
+      var map = src.getAllianceBehemothData(); // Map<behemothId, AllianceBehemothItemData>
       var items = [];
       if (map && typeof map.forEach === 'function') {
         map.forEach(function (it) {
@@ -1038,7 +1449,9 @@ export const gameData = {
         });
       }
       return { open: true, items: items };
-    } catch (e) { return { open: true, items: [] }; }
+    } catch (e) {
+      return { open: true, items: [] };
+    }
   },
   /**
    * 功能开关位只读查询（UserData.FunctionOn(FunctionKey 字符串名)，枚举定义在 GameDefine）。
@@ -1051,7 +1464,11 @@ export const gameData = {
     var gd = probe(SYM.modules.gameDefine, () => ns(game.get(SYM.modules.gameDefine)));
     var k = gd && gd.FunctionKey && gd.FunctionKey[key];
     if (!u || typeof u.FunctionOn !== 'function' || typeof k !== 'string' || !k) return false;
-    try { return !!u.FunctionOn(k); } catch (e) { return false; }
+    try {
+      return !!u.FunctionOn(k);
+    } catch (e) {
+      return false;
+    }
   },
   /**
    * 能量池快照（UserData.getEnergy(EnergyType数值)，EnergyData 的 Point getter 实时折算自然恢复）。
@@ -1062,10 +1479,18 @@ export const gameData = {
   energy(type) {
     var u = userData();
     if (!u || typeof u.getEnergy !== 'function') return null;
-    var e = null;
-    try { e = u.getEnergy(+type); } catch (err) { return null; }
+    var e;
+    try {
+      e = u.getEnergy(+type);
+    } catch (err) {
+      return null;
+    }
     if (!e) return null;
-    return { point: Number(e.Point) || 0, pointMax: Number(e.PointMax) || 0, nextRecoverSec: Number(e.NextPointRecoverTime) || 0 };
+    return {
+      point: Number(e.Point) || 0,
+      pointMax: Number(e.PointMax) || 0,
+      nextRecoverSec: Number(e.NextPointRecoverTime) || 0,
+    };
   },
   /** 金币余额（UserData.Resource.Coin）；数据源缺失返回 0 */
   coins() {
@@ -1080,10 +1505,11 @@ export const gameData = {
    *   hero_color:string,hero_star:string,hero_level:string}>} 表未就绪返回 []
    */
   mineSpecs() {
-    var cached = probe('mine_cave.specs', () => {
-      var rows = l10n.tableRows('mineCave');
-      return rows && rows.length ? rows : null;
-    }) || [];
+    var cached =
+      probe('mine_cave.specs', () => {
+        var rows = l10n.tableRows('mineCave');
+        return rows && rows.length ? rows : null;
+      }) || [];
     return cached;
   },
   /**
@@ -1123,7 +1549,9 @@ export const gameData = {
     var heros = u && u.Heros;
     if (!heros) return [];
     var now = 0;
-    try { now = +game.get(SYM.modules.dataCenter).DATA.ServerTime || 0; } catch (e) { }
+    try {
+      now = +game.get(SYM.modules.dataCenter).DATA.ServerTime || 0;
+    } catch (e) {}
     var out = [];
     for (var k in heros) {
       var h = heros[k];
@@ -1151,13 +1579,15 @@ export const gameData = {
     var C = probe(SYM.modules.rewardCtrl, function () {
       var m = game.get(SYM.modules.rewardCtrl);
       var K = m && (m.RewardController || (m.default && m.default.RewardController));
-      return (K && K.Instance && typeof K.Instance.getRewardsArrById === 'function') ? K : null;
+      return K && K.Instance && typeof K.Instance.getRewardsArrById === 'function' ? K : null;
     });
     if (!C || !C.Instance) return [];
     try {
       var arr = C.Instance.getRewardsArrById(Number(rewardId));
       return Array.isArray(arr) ? arr : [];
-    } catch (e) { return []; }
+    } catch (e) {
+      return [];
+    }
   },
   /**
    * 本盟指定等级/功能的道具遗迹候选快照（全程零发包，只读合成）。
@@ -1179,15 +1609,21 @@ export const gameData = {
     if (aid <= 0) return [];
     var inst = probe('AllianceWorldSiteController.itemInst', function () {
       var m = game.get(SYM.modules.worldSiteCtrl);
-      var C = m && (m.AllianceWorldSiteController || (m.default && m.default.AllianceWorldSiteController));
+      var C =
+        m &&
+        (m.AllianceWorldSiteController || (m.default && m.default.AllianceWorldSiteController));
       var it = (C && C._instance) || (C && C.instance);
-      return (it && it.myItemSiteData) ? it : null;
+      return it && it.myItemSiteData ? it : null;
     });
     var mine = (inst && inst.myItemSiteData) || {};
     var now = gameData.serverTime();
     var out = [];
     var sites;
-    try { sites = u.getWorldSiteArrayBy(aid) || []; } catch (e) { return []; }
+    try {
+      sites = u.getWorldSiteArrayBy(aid) || [];
+    } catch (e) {
+      return [];
+    }
     for (var i = 0; i < sites.length; i++) {
       var s = sites[i];
       var dd = s && s.DistrictData;
@@ -1200,8 +1636,12 @@ export const gameData = {
       var chooseNum = row ? Number(row.choose_num) || 0 : 0;
       var joinSec = row ? Number(row.join_time) || 0 : 0;
       var have = d && Array.isArray(d.have) ? d.have : undefined;
-      var left = (row && have) ? (chooseNum - have.length) : 0;
-      var ready = !!(row && have && d) && Number(d.otherToday) !== 1 && left > 0 && (now - Number(d.joinTime || 0)) > joinSec;
+      var left = row && have ? chooseNum - have.length : 0;
+      var ready =
+        !!(row && have && d) &&
+        Number(d.otherToday) !== 1 &&
+        left > 0 &&
+        now - Number(d.joinTime || 0) > joinSec;
       out.push({
         wonderId: wonderId,
         cfgId: cfgId,
@@ -1234,7 +1674,7 @@ export const gameData = {
 function pathUtils() {
   return probe(SYM.modules.pathUtils, () => {
     var P = ns(game.get(SYM.modules.pathUtils));
-    return (P && typeof P.GetIconURL === 'function') ? P : null;
+    return P && typeof P.GetIconURL === 'function' ? P : null;
   });
 }
 
@@ -1244,7 +1684,7 @@ function marchStorage() {
     var m = game.get(SYM.modules.marchStorage);
     var C = m && (m.MarchStorageController || (m.default && m.default.MarchStorageController));
     var inst = C && C.getInstance && C.getInstance();
-    return (inst && typeof inst.checkPreMarchExtraList === 'function') ? inst : null;
+    return inst && typeof inst.checkPreMarchExtraList === 'function' ? inst : null;
   });
 }
 
@@ -1261,7 +1701,9 @@ function marchStorage() {
  */
 export const battlePreset = {
   /** 重算能力是否可用（subpack2 已接管且方法在场） */
-  ok() { return !!marchStorage(); },
+  ok() {
+    return !!marchStorage();
+  },
   /**
    * 让游戏重算一份出征档案的每格上阵数。**只改写传入的 entry（必须是自建副本）**，不触碰游戏数据。
    * entry 会被就地改写：armyInfo[].num 重写为实时值（num<=0 的条目被剔除）、heroIds 截断为可派遣名单、
@@ -1277,7 +1719,10 @@ export const battlePreset = {
       inst.checkPreMarchExtraList([entry], { checkMarch: checkMarch !== false });
       return entry;
     } catch (e) {
-      log.warn('battlePreset.recalc threw —— 出征档案重算器不可用（符号漂移？），调用方将走降级口径', e);
+      log.warn(
+        'battlePreset.recalc threw —— 出征档案重算器不可用（符号漂移？），调用方将走降级口径',
+        e,
+      );
       return null;
     }
   },
@@ -1298,7 +1743,12 @@ export const avatar = {
     if (!v) return '';
     if (/^(https?:)?\/\//i.test(v) || /^data:/i.test(v)) return v; // 平台/用户上传的真实 URL 直接用
     var P = pathUtils();
-    if (P) { try { var u = P.GetIconURL(v); return (typeof u === 'string' && u) ? u : ''; } catch (e) { } }
+    if (P) {
+      try {
+        var u = P.GetIconURL(v);
+        return typeof u === 'string' && u ? u : '';
+      } catch (e) {}
+    }
     return ''; // 游戏符号缺失且非 URL：不猜路径，交占位
   },
 };
@@ -1314,10 +1764,14 @@ export const gameConf = {
       // TableUtils 为 TS 转译的 ES 命名空间（getDataConfigData 挂在 .default 下），用 ns 解包，
       // 否则取到的是命名空间壳、方法恒 undefined → 探测失败、DataConfig 读取降级（实测踩过）。
       var m = ns(game.get(SYM.modules.tableUtils));
-      return (m && typeof m.getDataConfigData === 'function') ? m : null;
+      return m && typeof m.getDataConfigData === 'function' ? m : null;
     });
     if (!tu) return '';
-    try { return tu.getDataConfigData(+id) || ''; } catch (e) { return ''; }
+    try {
+      return tu.getDataConfigData(+id) || '';
+    } catch (e) {
+      return '';
+    }
   },
 };
 
@@ -1329,19 +1783,29 @@ export const bits = {
    */
   int64(v) {
     v = String(v == null ? '0' : v);
-    var L = probe(SYM.modules.long64Bit + '.Int64', () => { var m = game.get(SYM.modules.long64Bit); return (m && m.Int64) || null; });
+    var L = probe(SYM.modules.long64Bit + '.Int64', () => {
+      var m = game.get(SYM.modules.long64Bit);
+      return (m && m.Int64) || null;
+    });
     if (!L) return /^\d+$/.test(v) ? Number(v) || 0 : 0;
     // probe 的 resolve 已返回 m.Int64（Int64 类本体 r），类上直接挂 fromString/fromNumber 静态方法；
     // 曾经多写一层 L.Int64.fromString → TypeError → catch return 0，导致所有大 id（19 位兽 id）
     // 装箱失败、服务器回 enigma_beast018「找不到对应异能兽信息，已失效」。
-    try { return /^\d+$/.test(v) ? L.fromString(v) : L.fromNumber(Number(v) || 0); } catch (e) { return 0; }
+    try {
+      return /^\d+$/.test(v) ? L.fromString(v) : L.fromNumber(Number(v) || 0);
+    } catch (e) {
+      return 0;
+    }
   },
 };
 
 export const session = {
   /** 触发游戏登出（PlatformCore.instance.userLogout）；符号缺失记 warn 静默 */
   logout() {
-    var p = probe('PlatformCore.instance', () => { var m = game.get(SYM.modules.platformCore); return (m && m.instance) || null; });
+    var p = probe('PlatformCore.instance', () => {
+      var m = game.get(SYM.modules.platformCore);
+      return (m && m.instance) || null;
+    });
     if (!p || typeof p.userLogout !== 'function') return;
     p.userLogout();
   },
@@ -1359,21 +1823,38 @@ export const session = {
 function goHomeScene() {
   var p = proce();
   if (!p || !p[SYM.procedures.home]) return { ok: false, err: 'unavailable' };
-  try { p.Run(p[SYM.procedures.home]); return { ok: true }; }
-  catch (e) { log.warn('goHome failed: %s', e && e.message); return { ok: false, err: 'failed' }; }
+  try {
+    p.Run(p[SYM.procedures.home]);
+    return { ok: true };
+  } catch (e) {
+    log.warn('goHome failed: %s', e && e.message);
+    return { ok: false, err: 'failed' };
+  }
 }
 
 /** 切到 NWorldMap 场景（内部） */
 function goWorldScene() {
   var p = proce();
   if (!p || !p[SYM.procedures.newWorld]) return { ok: false, err: 'unavailable' };
-  try { p.Run(p[SYM.procedures.newWorld]); return { ok: true }; }
-  catch (e) { log.warn('goWorld failed: %s', e && e.message); return { ok: false, err: 'failed' }; }
+  try {
+    p.Run(p[SYM.procedures.newWorld]);
+    return { ok: true };
+  } catch (e) {
+    log.warn('goWorld failed: %s', e && e.message);
+    return { ok: false, err: 'failed' };
+  }
 }
 
 export const scene = {
   /** 当前场景节点名（cc.director.getScene().name）；引擎未就绪返回 '' */
-  name() { try { var s = cc.director.getScene(); return (s && s.name) || ''; } catch (e) { return ''; } },
+  name() {
+    try {
+      var s = cc.director.getScene();
+      return (s && s.name) || '';
+    } catch (e) {
+      return '';
+    }
+  },
   /** 基地↔大世界互切：按当前场景决定去向（走内部 goHomeScene/goWorldScene）；两者之外的场景不处理（返回 wrongscene） */
   toggleHomeWorld() {
     var cur = this.name();
@@ -1403,11 +1884,18 @@ export const ui = {
     var mgr = C && typeof C.Instance === 'function' ? C.Instance() : null;
     if (!mgr || typeof mgr.OpenUI !== 'function') return { ok: false, err: 'unavailable' };
     var args = Array.prototype.slice.call(arguments, 1);
-    try { mgr.OpenUI.apply(mgr, [info].concat(args)); return { ok: true }; }
-    catch (e) { log.warn('ui.open(%s) failed: %s', semantic, e && e.message); return { ok: false, err: 'failed' }; }
+    try {
+      mgr.OpenUI.apply(mgr, [info].concat(args));
+      return { ok: true };
+    } catch (e) {
+      log.warn('ui.open(%s) failed: %s', semantic, e && e.message);
+      return { ok: false, err: 'failed' };
+    }
   },
   /** 打开道具背包（B 键用） */
-  openBag() { return this.open('bag'); },
+  openBag() {
+    return this.open('bag');
+  },
   /**
    * 关闭当前顶层弹窗（Q 键用）：读游戏原生 UIManager.Instance().CurrentUIDataInfo（最近打开、即栈顶的面板描述符），
    * 非空则调 CloseUI(描述符)（走面板自身关闭链路，等价 back 键/点遮罩）；回退 Close(name)。
@@ -1421,9 +1909,16 @@ export const ui = {
     var cur = mgr.CurrentUIDataInfo;
     if (!cur || !cur.name) return { ok: false, err: 'nothing' };
     var nm = cur.name;
-    try { mgr.CloseUI(cur); return { ok: true, name: nm }; }
-    catch (e) {
-      try { if (typeof mgr.Close === 'function') { mgr.Close(nm); return { ok: true, name: nm }; } } catch (e2) { }
+    try {
+      mgr.CloseUI(cur);
+      return { ok: true, name: nm };
+    } catch (e) {
+      try {
+        if (typeof mgr.Close === 'function') {
+          mgr.Close(nm);
+          return { ok: true, name: nm };
+        }
+      } catch (e2) {}
       log.warn('ui.closeTop(%s) failed: %s', nm, e && e.message);
       return { ok: false, err: 'failed' };
     }
@@ -1445,7 +1940,7 @@ export const worldMap = {
       var m = ns(game.get(SYM.modules.terrainModel));
       var C = m && (m.NWorldMapTerrainModel || m.default || m);
       var inst = C && C.instance;
-      return (inst && typeof inst.getTerrain === 'function') ? inst : (inst || null);
+      return inst && typeof inst.getTerrain === 'function' ? inst : inst || null;
     });
   },
   /**
@@ -1474,7 +1969,9 @@ export const worldMap = {
       var m = ns(game.get(SYM.modules.mapCommon));
       var infos = m && (m.allMapInfos || (m.NWorldMapCommon && m.NWorldMapCommon.allMapInfos));
       var info = infos && infos[mt];
-      return (info && info.cols > 0 && info.rows > 0) ? { cols: info.cols | 0, rows: info.rows | 0 } : null;
+      return info && info.cols > 0 && info.rows > 0
+        ? { cols: info.cols | 0, rows: info.rows | 0 }
+        : null;
     });
   },
   /**
@@ -1484,7 +1981,14 @@ export const worldMap = {
   serverId() {
     var u = userData();
     if (!u) return 0;
-    var v = u.ServerId != null ? u.ServerId : (u.serverId != null ? u.serverId : (u.Sid != null ? u.Sid : u.s));
+    var v =
+      u.ServerId != null
+        ? u.ServerId
+        : u.serverId != null
+          ? u.serverId
+          : u.Sid != null
+            ? u.Sid
+            : u.s;
     return Number(v) || 0;
   },
   /**
@@ -1501,7 +2005,7 @@ export const worldMap = {
         var v = Number(c.getCurServerId()) || 0;
         if (v) return v;
       }
-    } catch (e) { }
+    } catch (e) {}
     return this.serverId();
   },
   /**
@@ -1516,15 +2020,20 @@ export const worldMap = {
       try {
         var m = game.get(SYM.modules.nWorldMapUtils);
         var u = m && (m.NWorldMapUtils || m.default || m);
-        return (u && typeof u.getMapGameSizeBySubMap === 'function') ? u : null;
-      } catch (e) { return null; }
+        return u && typeof u.getMapGameSizeBySubMap === 'function' ? u : null;
+      } catch (e) {
+        return null;
+      }
     });
     if (!U) return null;
     try {
       var s = U.getMapGameSizeBySubMap(gameData.subServerId());
-      var w = s && (s.width != null ? s.width : s.x), h = s && (s.height != null ? s.height : s.y);
-      return (w > 0 && h > 0) ? { xMax: (w | 0) - 1, yMax: (h | 0) - 1 } : null;
-    } catch (e) { return null; }
+      var w = s && (s.width != null ? s.width : s.x),
+        h = s && (s.height != null ? s.height : s.y);
+      return w > 0 && h > 0 ? { xMax: (w | 0) - 1, yMax: (h | 0) - 1 } : null;
+    } catch (e) {
+      return null;
+    }
   },
 };
 
@@ -1533,4 +2042,23 @@ export const worldMap = {
  * 逆向时 `pocketcc.gameApi.march.flags()` 看战场判定器是否解析成功、
  * `pocketcc.gameApi.march.resolve(13)` 看基础 marchType 在当前战场漂成哪个值（无需等到活动图里复现）。
  */
-export const debug = { SYM, CAPS, checkCap, probe, ns, game, l10n, nav, march, gameData, gameConf, bits, session, avatar, worldMap, battlePreset, scene, ui };
+export const debug = {
+  SYM,
+  CAPS,
+  checkCap,
+  probe,
+  ns,
+  game,
+  l10n,
+  nav,
+  march,
+  gameData,
+  gameConf,
+  bits,
+  session,
+  avatar,
+  worldMap,
+  battlePreset,
+  scene,
+  ui,
+};

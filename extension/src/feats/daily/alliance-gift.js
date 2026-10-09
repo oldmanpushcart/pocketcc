@@ -70,26 +70,24 @@ const PUSH_DEBOUNCE_MS = 1000 * 2;
  * @type {object}
  */
 const cfg = {
+  /** 普通礼物自动领取开关 */
+  normal: { enabled: true },
 
-    /** 普通礼物自动领取开关 */
-    normal: { enabled: true },
+  /** 稀有礼物自动领取开关 */
+  rare: { enabled: true },
 
-    /** 稀有礼物自动领取开关 */
-    rare: { enabled: true },
+  /** 珍藏礼物自动领取开关（判据 AllianceGiftData.AlGiftList.length>0；1178 一次一箱，跨 tick busy 逐箱清完） */
+  big: { enabled: true },
 
-    /** 珍藏礼物自动领取开关（判据 AllianceGiftData.AlGiftList.length>0；1178 一次一箱，跨 tick busy 逐箱清完） */
-    big: { enabled: true },
+  /**
+   * 有礼物时间隔：本轮真领到了东西时用（默认15秒），勤扫趁 RedPointObj 刷新后继续领剩下的
+   */
+  busyInterval: 1000 * 15,
 
-    /**
-     * 有礼物时间隔：本轮真领到了东西时用（默认15秒），勤扫趁 RedPointObj 刷新后继续领剩下的
-     */
-    busyInterval: 1000 * 15,
-
-    /**
-     * 无礼物时间隔：没东西可领时降到这档（默认5分钟），少刷 1177；推送 10442 仍是主触发源，礼物一到即被唤醒
-     */
-    idleInterval: 1000 * 60 * 5,
-
+  /**
+   * 无礼物时间隔：没东西可领时降到这档（默认5分钟），少刷 1177；推送 10442 仍是主触发源，礼物一到即被唤醒
+   */
+  idleInterval: 1000 * 60 * 5,
 };
 
 /**
@@ -126,7 +124,7 @@ var installed = false;
  * @returns {boolean}
  */
 function aliveFn() {
-    return ctxRef ? ctxRef.alive() : false;
+  return ctxRef ? ctxRef.alive() : false;
 }
 
 /**
@@ -135,7 +133,9 @@ function aliveFn() {
  * @returns {Promise<void>}
  */
 function sleep(ms) {
-    return new Promise(function (resolve) { setTimeout(resolve, ms); });
+  return new Promise(function (resolve) {
+    setTimeout(resolve, ms);
+  });
 }
 
 // ─────────────────────────── 数据读取 ───────────────────────────
@@ -146,8 +146,8 @@ function sleep(ms) {
  * @returns {object|null}
  */
 function getGiftData() {
-    var alliance = data && data.UserData && data.UserData.Alliance;
-    return (alliance && alliance.AllianceGiftData) || null;
+  var alliance = data && data.UserData && data.UserData.Alliance;
+  return (alliance && alliance.AllianceGiftData) || null;
 }
 
 /**
@@ -155,8 +155,8 @@ function getGiftData() {
  * @returns {object|null}
  */
 function getRedPointObj() {
-    var giftData = getGiftData();
-    return (giftData && giftData.RedPointObj) || null;
+  var giftData = getGiftData();
+  return (giftData && giftData.RedPointObj) || null;
 }
 
 /**
@@ -165,8 +165,8 @@ function getRedPointObj() {
  * @returns {Array|null}
  */
 function getAlGiftList() {
-    var giftData = getGiftData();
-    return (giftData && giftData.AlGiftList) || null;
+  var giftData = getGiftData();
+  return (giftData && giftData.AlGiftList) || null;
 }
 
 /**
@@ -176,8 +176,8 @@ function getAlGiftList() {
  * @returns {number}
  */
 function countOf(red, type) {
-    if (!red) return 0;
-    return Number(red[type]) || 0;
+  if (!red) return 0;
+  return Number(red[type]) || 0;
 }
 
 // ─────────────────────────── 调度 ───────────────────────────
@@ -188,18 +188,21 @@ function countOf(red, type) {
  * @param {'busy'|'idle'|'wake'} mode 档位；wake 只能从 busy/idle 进入，防 push 风暴反复重置把检查无限后移
  */
 function schedule(delay, mode) {
-    if (!aliveFn()) return;
-    if (timer) clearTimeout(timer);
-    timerMode = mode;
-    timer = setTimeout(function () {
-        timer = null;
-        timerMode = null;
-        if (!aliveFn()) return;
-        tick().catch(function (err) {
-            log.warn('tick threw, reschedule.', err);
-            schedule(cfg.idleInterval, 'idle');
-        });
-    }, Math.max(0, delay));
+  if (!aliveFn()) return;
+  if (timer) clearTimeout(timer);
+  timerMode = mode;
+  timer = setTimeout(
+    function () {
+      timer = null;
+      timerMode = null;
+      if (!aliveFn()) return;
+      tick().catch(function (err) {
+        log.warn('tick threw, reschedule.', err);
+        schedule(cfg.idleInterval, 'idle');
+      });
+    },
+    Math.max(0, delay),
+  );
 }
 
 /**
@@ -208,11 +211,14 @@ function schedule(delay, mode) {
  * 风暴期实际检查节奏由 tick 自己的 busy/idle 排程决定，与 push 频率解耦
  */
 function onGiftInfoPush() {
-    if (!aliveFn() || claiming) return;
-    if (timerMode === 'wake') return;
-    if (timerMode === 'busy' && Date.now() - lastCheckAt < cfg.busyInterval) return;
-    // idle 长眠中或从未检查过：提前到 debounce 点；busy 档超期兜底：回到常规 busy 节奏
-    schedule(timerMode === 'idle' ? PUSH_DEBOUNCE_MS : cfg.busyInterval, timerMode === 'busy' ? 'busy' : 'wake');
+  if (!aliveFn() || claiming) return;
+  if (timerMode === 'wake') return;
+  if (timerMode === 'busy' && Date.now() - lastCheckAt < cfg.busyInterval) return;
+  // idle 长眠中或从未检查过：提前到 debounce 点；busy 档超期兜底：回到常规 busy 节奏
+  schedule(
+    timerMode === 'idle' ? PUSH_DEBOUNCE_MS : cfg.busyInterval,
+    timerMode === 'busy' ? 'busy' : 'wake',
+  );
 }
 
 // ─────────────────────────── 生产 + 领取 ───────────────────────────
@@ -222,46 +228,46 @@ function onGiftInfoPush() {
  * @returns {Promise<void>}
  */
 async function tick() {
-    if (claiming) return;
-    claiming = true;
-    lastCheckAt = Date.now();
-    var didClaim = false;
-    try {
-        var red = getRedPointObj();
+  if (claiming) return;
+  claiming = true;
+  lastCheckAt = Date.now();
+  var didClaim = false;
+  try {
+    var red = getRedPointObj();
 
-        // 普通礼物
-        if (cfg.normal.enabled && countOf(red, GIFT_TYPE_NORMAL) > 0) {
-            if (await claimType(GIFT_TYPE_NORMAL, 'normal')) {
-                didClaim = true;
-                await sleep(CLAIM_GAP_MS);
-                if (!aliveFn()) return;
-            }
-        }
-
-        // 稀有礼物（重新读红点，普通领取后可能已被服务器回执刷新）
-        red = getRedPointObj();
-        if (cfg.rare.enabled && countOf(red, GIFT_TYPE_RARE) > 0) {
-            if (await claimType(GIFT_TYPE_RARE, 'rare')) {
-                didClaim = true;
-                await sleep(CLAIM_GAP_MS);
-                if (!aliveFn()) return;
-            }
-        }
-
-        // 珍藏礼物：判据 AlGiftList.length>0；1178 一次一箱，剩余靠下轮 busy 续领（同 tick 不连发，规避限流）
-        if (cfg.big.enabled) {
-            var list = getAlGiftList();
-            if (list && list.length > 0) {
-                if (await claimBig()) didClaim = true;
-            }
-        }
-    } finally {
-        claiming = false;
+    // 普通礼物
+    if (cfg.normal.enabled && countOf(red, GIFT_TYPE_NORMAL) > 0) {
+      if (await claimType(GIFT_TYPE_NORMAL, 'normal')) {
+        didClaim = true;
+        await sleep(CLAIM_GAP_MS);
+        if (!aliveFn()) return;
+      }
     }
 
-    if (!aliveFn()) return;
-    // 领到了 → busy 勤扫接着清剩下的；没领 → idle 降频（push 唤醒会打破 idle 长眠）
-    schedule(didClaim ? cfg.busyInterval : cfg.idleInterval, didClaim ? 'busy' : 'idle');
+    // 稀有礼物（重新读红点，普通领取后可能已被服务器回执刷新）
+    red = getRedPointObj();
+    if (cfg.rare.enabled && countOf(red, GIFT_TYPE_RARE) > 0) {
+      if (await claimType(GIFT_TYPE_RARE, 'rare')) {
+        didClaim = true;
+        await sleep(CLAIM_GAP_MS);
+        if (!aliveFn()) return;
+      }
+    }
+
+    // 珍藏礼物：判据 AlGiftList.length>0；1178 一次一箱，剩余靠下轮 busy 续领（同 tick 不连发，规避限流）
+    if (cfg.big.enabled) {
+      var list = getAlGiftList();
+      if (list && list.length > 0) {
+        if (await claimBig()) didClaim = true;
+      }
+    }
+  } finally {
+    claiming = false;
+  }
+
+  if (!aliveFn()) return;
+  // 领到了 → busy 勤扫接着清剩下的；没领 → idle 降频（push 唤醒会打破 idle 长眠）
+  schedule(didClaim ? cfg.busyInterval : cfg.idleInterval, didClaim ? 'busy' : 'idle');
 }
 
 /**
@@ -274,27 +280,27 @@ async function tick() {
  * @returns {Promise<boolean>} 是否领取成功
  */
 async function claimType(type, label) {
-    if (net.isSending(CMD_RECEIVE_GIFT_ALL)) {
-        return false;
+  if (net.isSending(CMD_RECEIVE_GIFT_ALL)) {
+    return false;
+  }
+  if (Date.now() - (lastClaimAt[type] || 0) < cfg.busyInterval) {
+    log.debug('skip %s claim: min-interval gate. type=%d', label, type);
+    return false;
+  }
+  var pending = countOf(getRedPointObj(), type);
+  try {
+    var ret = await net.send(CMD_RECEIVE_GIFT_ALL, { type: type });
+    if (ret.ok) {
+      lastClaimAt[type] = Date.now();
+      log.info('receive %s gift ok. wasPending=%d', label, pending);
+      return true;
     }
-    if (Date.now() - (lastClaimAt[type] || 0) < cfg.busyInterval) {
-        log.debug('skip %s claim: min-interval gate. type=%d', label, type);
-        return false;
-    }
-    var pending = countOf(getRedPointObj(), type);
-    try {
-        var ret = await net.send(CMD_RECEIVE_GIFT_ALL, { type: type });
-        if (ret.ok) {
-            lastClaimAt[type] = Date.now();
-            log.info('receive %s gift ok. wasPending=%d', label, pending);
-            return true;
-        }
-        log.info('receive %s gift rejected. code=%d', label, ret.code);
-        return false;
-    } catch (err) {
-        log.warn('receive %s gift error.', label, err);
-        return false;
-    }
+    log.info('receive %s gift rejected. code=%d', label, ret.code);
+    return false;
+  } catch (err) {
+    log.warn('receive %s gift error.', label, err);
+    return false;
+  }
 }
 
 /**
@@ -305,27 +311,27 @@ async function claimType(type, label) {
  * @returns {Promise<boolean>} 是否领取成功
  */
 async function claimBig() {
-    if (net.isSending(CMD_RECEIVE_GIFT_BIG)) {
-        return false;
+  if (net.isSending(CMD_RECEIVE_GIFT_BIG)) {
+    return false;
+  }
+  if (Date.now() - (lastClaimAt[GIFT_KEY_BIG] || 0) < cfg.busyInterval) {
+    log.debug('skip big claim: min-interval gate.');
+    return false;
+  }
+  var pending = (getAlGiftList() || []).length;
+  try {
+    var ret = await net.send(CMD_RECEIVE_GIFT_BIG, {});
+    if (ret.ok) {
+      lastClaimAt[GIFT_KEY_BIG] = Date.now();
+      log.info('receive big gift ok. wasPending=%d', pending);
+      return true;
     }
-    if (Date.now() - (lastClaimAt[GIFT_KEY_BIG] || 0) < cfg.busyInterval) {
-        log.debug('skip big claim: min-interval gate.');
-        return false;
-    }
-    var pending = (getAlGiftList() || []).length;
-    try {
-        var ret = await net.send(CMD_RECEIVE_GIFT_BIG, {});
-        if (ret.ok) {
-            lastClaimAt[GIFT_KEY_BIG] = Date.now();
-            log.info('receive big gift ok. wasPending=%d', pending);
-            return true;
-        }
-        log.info('receive big gift rejected. code=%d', ret.code);
-        return false;
-    } catch (err) {
-        log.warn('receive big gift error.', err);
-        return false;
-    }
+    log.info('receive big gift rejected. code=%d', ret.code);
+    return false;
+  } catch (err) {
+    log.warn('receive big gift error.', err);
+    return false;
+  }
 }
 
 // ─────────────────────────── 生命周期 ───────────────────────────
@@ -336,35 +342,34 @@ async function claimBig() {
  * @returns {boolean}
  */
 function install(ctx) {
-    ctxRef = ctx;
-    if (installed) {
-        return true;
-    }
-
-    var missing = [];
-
-    net = ctx.net;
-    if (!net.install()) {
-        missing.push('pocketcc.net');
-        net = null;
-    }
-
-    var mods = game.requireAll(['DataCenter']);
-
-    data = mods.DataCenter
-        && mods.DataCenter.DATA
-        || missing.push('DataCenter');
-
-    if (missing.length) {
-        net = null; data = null;
-        log.warn('install failed. missing=%s', missing.join(';'));
-        return false;
-    }
-
-    installed = true;
-    log.info('installed.');
-
+  ctxRef = ctx;
+  if (installed) {
     return true;
+  }
+
+  var missing = [];
+
+  net = ctx.net;
+  if (!net.install()) {
+    missing.push('pocketcc.net');
+    net = null;
+  }
+
+  var mods = game.requireAll(['DataCenter']);
+
+  data = (mods.DataCenter && mods.DataCenter.DATA) || missing.push('DataCenter');
+
+  if (missing.length) {
+    net = null;
+    data = null;
+    log.warn('install failed. missing=%s', missing.join(';'));
+    return false;
+  }
+
+  installed = true;
+  log.info('installed.');
+
+  return true;
 }
 
 /**
@@ -373,31 +378,33 @@ function install(ctx) {
  * @param {object} ctx reactor 上下文
  */
 function run(ctx) {
-    ctxRef = ctx;
-    claiming = false;
-    lastCheckAt = 0;
-    timerMode = null;
-    lastClaimAt = Object.create(null);
-    ctx.on.push(CMD_PUSH_ALLIANCE_GIFT_INFO, onGiftInfoPush);
-    log.info('started, listening push=%d.', CMD_PUSH_ALLIANCE_GIFT_INFO);
-    // 启动即查一次；本轮结束后 tick 末尾按 busy/idle 武装下一轮
-    schedule(0, 'busy');
+  ctxRef = ctx;
+  claiming = false;
+  lastCheckAt = 0;
+  timerMode = null;
+  lastClaimAt = Object.create(null);
+  ctx.on.push(CMD_PUSH_ALLIANCE_GIFT_INFO, onGiftInfoPush);
+  log.info('started, listening push=%d.', CMD_PUSH_ALLIANCE_GIFT_INFO);
+  // 启动即查一次；本轮结束后 tick 末尾按 busy/idle 武装下一轮
+  schedule(0, 'busy');
 }
 
 /**
  * 向 reactor 注册本功能说明书：纯协议领取，不声明 scenes / offInCombat（全场景 + 战斗态都继续跑）。
  */
 reactor.register({
-    id: 'allianceGift',
-    label: '联盟礼物',
-    storageKey: 'pocketcc.feat.allianceGift',
-    symbols: ['dataCenter'],
-    // 面板仅出启用开关；普通/稀有领取开关与 busy/idle 间隔均为上方 cfg 的内置常量，不作为可持久化配置项。
-    defaults: {
-        enabled: false,
-    },
-    fields: [],
-    toModuleCfg: function () { return {}; },
-    install: install,
-    run: run,
+  id: 'allianceGift',
+  label: '联盟礼物',
+  storageKey: 'pocketcc.feat.allianceGift',
+  symbols: ['dataCenter'],
+  // 面板仅出启用开关；普通/稀有领取开关与 busy/idle 间隔均为上方 cfg 的内置常量，不作为可持久化配置项。
+  defaults: {
+    enabled: false,
+  },
+  fields: [],
+  toModuleCfg: function () {
+    return {};
+  },
+  install: install,
+  run: run,
 });

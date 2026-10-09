@@ -85,13 +85,11 @@ const BACKOFF_MS = [1000 * 30, 1000 * 60, 1000 * 180, 1000 * 60 * 10];
  * @type {object}
  */
 const cfg = {
+  /** 无可点（清单空/全是空 UID/等待额度重置）时的兜底复查间隔 */
+  idleInterval: 1000 * 60 * 10,
 
-    /** 无可点（清单空/全是空 UID/等待额度重置）时的兜底复查间隔 */
-    idleInterval: 1000 * 60 * 10,
-
-    /** 当日计数还没读回盘上数据时的重试间隔：宁可晚几秒开点，也不拿内存初值 0 当账去超点 */
-    retryInterval: 1000 * 3,
-
+  /** 当日计数还没读回盘上数据时的重试间隔：宁可晚几秒开点，也不拿内存初值 0 当账去超点 */
+  retryInterval: 1000 * 3,
 };
 
 /**
@@ -143,7 +141,7 @@ var saveSeq = 0;
  * @returns {boolean}
  */
 function aliveFn() {
-    return ctxRef ? ctxRef.alive() : false;
+  return ctxRef ? ctxRef.alive() : false;
 }
 
 /**
@@ -155,15 +153,18 @@ function aliveFn() {
  * @returns {object} 当前 {friends}
  */
 function configure(partial) {
-    if (partial && Array.isArray(partial.friends)) {
-        friends = partial.friends.slice(0, LIKE_DAILY_MAX).map(function (f) {
-            return { uid: f && f.uid != null ? String(f.uid).trim() : '', name: f && f.name ? String(f.name) : '' };
-        });
-    }
-    failState = null;
-    cursor = 0;
-    if (aliveFn()) cycle.kick();
-    return { friends: friends };
+  if (partial && Array.isArray(partial.friends)) {
+    friends = partial.friends.slice(0, LIKE_DAILY_MAX).map(function (f) {
+      return {
+        uid: f && f.uid != null ? String(f.uid).trim() : '',
+        name: f && f.name ? String(f.name) : '',
+      };
+    });
+  }
+  failState = null;
+  cursor = 0;
+  if (aliveFn()) cycle.kick();
+  return { friends: friends };
 }
 
 // ─────────────────────────── 当日计数（按日归零 + 持久化） ───────────────────────────
@@ -173,10 +174,10 @@ function configure(partial) {
  * @returns {string}
  */
 function todayStr() {
-    var d = new Date(((data && data.ServerTime) || 0) * 1000);
-    var m = d.getMonth() + 1;
-    var day = d.getDate();
-    return d.getFullYear() + '-' + (m < 10 ? '0' + m : m) + '-' + (day < 10 ? '0' + day : day);
+  var d = new Date(((data && data.ServerTime) || 0) * 1000);
+  var m = d.getMonth() + 1;
+  var day = d.getDate();
+  return d.getFullYear() + '-' + (m < 10 ? '0' + m : m) + '-' + (day < 10 ? '0' + day : day);
 }
 
 /**
@@ -185,13 +186,13 @@ function todayStr() {
  * 却不落盘（persistDaily 有 loaded 闸门），留下 date/used 不一致的半截状态。
  */
 function rollDateIfNeeded() {
-    if (!dailyLoaded) return;
-    var today = todayStr();
-    if (daily.date !== today) {
-        daily.date = today;
-        daily.used = 0;
-        persistDaily();
-    }
+  if (!dailyLoaded) return;
+  var today = todayStr();
+  if (daily.date !== today) {
+    daily.date = today;
+    daily.used = 0;
+    persistDaily();
+  }
 }
 
 /**
@@ -201,7 +202,7 @@ function rollDateIfNeeded() {
  * @returns {boolean}
  */
 function dailyReady() {
-    return dailyLoaded;
+  return dailyLoaded;
 }
 
 /**
@@ -213,29 +214,34 @@ function dailyReady() {
  * @returns {void}
  */
 function ensureDailyLoaded() {
-    if (dailyLoaded) { rollDateIfNeeded(); return; }
-    if (dailyLoading) {
-        if (Date.now() - loadStartedAt < LOAD_STUCK_MS) return;
-        log.warn('daily state load pending over %dms, reset latch.', LOAD_STUCK_MS);
-    }
-    var seq = ++loadSeq;
-    dailyLoading = true;
-    loadStartedAt = Date.now();
-    Promise.resolve(storage.data.get(DAILY_STATE_NAME)).then(function (saved) {
-        if (seq !== loadSeq) return;          // 迟到的旧回执（看门狗已开新一轮），丢弃
-        dailyLoading = false;
-        dailyLoaded = true;
-        if (saved && typeof saved === 'object' && typeof saved.date === 'string') {
-            daily.date = saved.date;
-            daily.used = Number(saved.used) || 0;
-        }
-        rollDateIfNeeded();
-        // 读回完成把面板上的 '-' 占位刷成真实计数（ui.refresh 仅在面板打开时扫 DOM，开销可忽略）
-        bus.emit('ui.refresh');
-    }).catch(function (err) {
-        if (seq !== loadSeq) return;
-        dailyLoading = false;
-        log.warn('daily state load failed, will retry on next tick. %s', err && err.message);
+  if (dailyLoaded) {
+    rollDateIfNeeded();
+    return;
+  }
+  if (dailyLoading) {
+    if (Date.now() - loadStartedAt < LOAD_STUCK_MS) return;
+    log.warn('daily state load pending over %dms, reset latch.', LOAD_STUCK_MS);
+  }
+  var seq = ++loadSeq;
+  dailyLoading = true;
+  loadStartedAt = Date.now();
+  Promise.resolve(storage.data.get(DAILY_STATE_NAME))
+    .then(function (saved) {
+      if (seq !== loadSeq) return; // 迟到的旧回执（看门狗已开新一轮），丢弃
+      dailyLoading = false;
+      dailyLoaded = true;
+      if (saved && typeof saved === 'object' && typeof saved.date === 'string') {
+        daily.date = saved.date;
+        daily.used = Number(saved.used) || 0;
+      }
+      rollDateIfNeeded();
+      // 读回完成把面板上的 '-' 占位刷成真实计数（ui.refresh 仅在面板打开时扫 DOM，开销可忽略）
+      bus.emit('ui.refresh');
+    })
+    .catch(function (err) {
+      if (seq !== loadSeq) return;
+      dailyLoading = false;
+      log.warn('daily state load failed, will retry on next tick. %s', err && err.message);
     });
 }
 
@@ -246,23 +252,27 @@ function ensureDailyLoaded() {
  *      超时强制复位，后续修改照常重试。
  */
 function persistDaily() {
-    if (dailySaving) return;
-    if (!dailyLoaded) {
-        log.warn('skip daily state save: disk state not loaded yet (in-memory used is not authoritative).');
-        return;
-    }
-    dailySaving = true;
-    var seq = ++saveSeq;
-    var snapshot = { date: daily.date, used: daily.used | 0 };
-    var watchdog = setTimeout(function () {
-        log.warn('daily state save pending over %dms, reset latch.', SAVE_STUCK_MS);
-        releaseSaveLatch(seq);
-    }, SAVE_STUCK_MS);
-    Promise.resolve(storage.data.set(DAILY_STATE_NAME, snapshot)).catch(function (err) {
-        log.warn('daily state save failed.', err);
-    }).then(function () {
-        clearTimeout(watchdog);
-        releaseSaveLatch(seq);
+  if (dailySaving) return;
+  if (!dailyLoaded) {
+    log.warn(
+      'skip daily state save: disk state not loaded yet (in-memory used is not authoritative).',
+    );
+    return;
+  }
+  dailySaving = true;
+  var seq = ++saveSeq;
+  var snapshot = { date: daily.date, used: daily.used | 0 };
+  var watchdog = setTimeout(function () {
+    log.warn('daily state save pending over %dms, reset latch.', SAVE_STUCK_MS);
+    releaseSaveLatch(seq);
+  }, SAVE_STUCK_MS);
+  Promise.resolve(storage.data.set(DAILY_STATE_NAME, snapshot))
+    .catch(function (err) {
+      log.warn('daily state save failed.', err);
+    })
+    .then(function () {
+      clearTimeout(watchdog);
+      releaseSaveLatch(seq);
     });
 }
 
@@ -271,8 +281,8 @@ function persistDaily() {
  * @param {number} seq 本次写入的世代号
  */
 function releaseSaveLatch(seq) {
-    if (seq !== saveSeq) return;
-    dailySaving = false;
+  if (seq !== saveSeq) return;
+  dailySaving = false;
 }
 
 /**
@@ -282,12 +292,12 @@ function releaseSaveLatch(seq) {
  * @returns {void}
  */
 function syncUsedFromServer(remaining) {
-    rollDateIfNeeded();
-    var used = Math.min(Math.max(LIKE_DAILY_MAX - remaining, 0), LIKE_DAILY_MAX);
-    if (used <= daily.used) return;
-    daily.used = used;
-    persistDaily();
-    bus.emit('ui.refresh');
+  rollDateIfNeeded();
+  var used = Math.min(Math.max(LIKE_DAILY_MAX - remaining, 0), LIKE_DAILY_MAX);
+  if (used <= daily.used) return;
+  daily.used = used;
+  persistDaily();
+  bus.emit('ui.refresh');
 }
 
 /**
@@ -296,11 +306,11 @@ function syncUsedFromServer(remaining) {
  * @returns {void}
  */
 function bumpLocalUsed() {
-    rollDateIfNeeded();
-    if (daily.used >= LIKE_DAILY_MAX) return;
-    daily.used = (daily.used | 0) + 1;
-    persistDaily();
-    bus.emit('ui.refresh');
+  rollDateIfNeeded();
+  if (daily.used >= LIKE_DAILY_MAX) return;
+  daily.used = (daily.used | 0) + 1;
+  persistDaily();
+  bus.emit('ui.refresh');
 }
 
 /**
@@ -309,11 +319,11 @@ function bumpLocalUsed() {
  * @returns {void}
  */
 function markUsedUp() {
-    rollDateIfNeeded();
-    if (daily.used >= LIKE_DAILY_MAX) return;
-    daily.used = LIKE_DAILY_MAX;
-    persistDaily();
-    bus.emit('ui.refresh');
+  rollDateIfNeeded();
+  if (daily.used >= LIKE_DAILY_MAX) return;
+  daily.used = LIKE_DAILY_MAX;
+  persistDaily();
+  bus.emit('ui.refresh');
 }
 
 /**
@@ -322,11 +332,11 @@ function markUsedUp() {
  * @returns {string}
  */
 function formatToday() {
-    if (!dailyLoaded) {
-        ensureDailyLoaded();
-        return '-';
-    }
-    return (daily.used | 0) + ' / ' + LIKE_DAILY_MAX;
+  if (!dailyLoaded) {
+    ensureDailyLoaded();
+    return '-';
+  }
+  return (daily.used | 0) + ' / ' + LIKE_DAILY_MAX;
 }
 
 // ─────────────────────────── 调度 ───────────────────────────
@@ -337,12 +347,12 @@ function formatToday() {
  * @returns {number}
  */
 function msToNextReset() {
-    var serverSec = (data && data.ServerTime) || 0;
-    var zero = data && data.UserData && data.UserData.SystemZeroTime;
-    if (!serverSec || !zero) return cfg.idleInterval;
-    var ms = (zero + 86400 - serverSec) * 1000 + CD_BUFFER_MS;
-    if (!(ms > 0)) return cfg.idleInterval;
-    return Math.min(ms, MAX_RESET_WAKE_MS);
+  var serverSec = (data && data.ServerTime) || 0;
+  var zero = data && data.UserData && data.UserData.SystemZeroTime;
+  if (!serverSec || !zero) return cfg.idleInterval;
+  var ms = (zero + 86400 - serverSec) * 1000 + CD_BUFFER_MS;
+  if (!(ms > 0)) return cfg.idleInterval;
+  return Math.min(ms, MAX_RESET_WAKE_MS);
 }
 
 // (cycle 直接接 tick()) —— 旧 单定时器武装器 schedule(delay) 已删
@@ -355,8 +365,12 @@ function msToNextReset() {
  * @returns {*} 解析结果
  */
 function parseMaybe(s) {
-    if (typeof s !== 'string' || !s) return s;
-    try { return JSON.parse(s); } catch (err) { return s; }
+  if (typeof s !== 'string' || !s) return s;
+  try {
+    return JSON.parse(s);
+  } catch (err) {
+    return s;
+  }
 }
 
 /**
@@ -367,37 +381,46 @@ function parseMaybe(s) {
  * @returns {Promise<'ok'|'limit'|'rejected'|'error'|'inflight'>} 点赞结果状态
  */
 async function sendLike(uid) {
-    if (net.isSending(CMD_LIKE_OTHER)) {
-        log.debug('skip like: 3821 in flight. uid=%s', uid);
-        return 'inflight';
+  if (net.isSending(CMD_LIKE_OTHER)) {
+    log.debug('skip like: 3821 in flight. uid=%s', uid);
+    return 'inflight';
+  }
+  try {
+    var ret = await net.sendPBV2(CMD_LIKE_OTHER, {
+      uid: String(uid),
+      type: LIKE_TYPE,
+      instanceIdStr: '',
+    });
+    var d = parseMaybe(ret.data) || {};
+    var remain = Number(d.selfTodayCanLikeNum);
+    if (ret.ok && !isFinite(remain))
+      bumpLocalUsed(); // 成功但服务器没回报剩余：本地 +1 兜住进度
+    else if (isFinite(remain)) syncUsedFromServer(remain);
+    if (ret.ok) {
+      if (isFinite(remain) && remain <= 0) {
+        markUsedUp();
+        log.info('like accepted but no times left today, stop till reset. uid=%s', uid);
+        return 'limit';
+      }
+      failState = null;
+      log.info('like ok. uid=%s%s', uid, isFinite(remain) ? ';selfTodayCanLikeNum=' + remain : '');
+      return 'ok';
     }
-    try {
-        var ret = await net.sendPBV2(CMD_LIKE_OTHER, { uid: String(uid), type: LIKE_TYPE, instanceIdStr: '' });
-        var d = parseMaybe(ret.data) || {};
-        var remain = Number(d.selfTodayCanLikeNum);
-        if (ret.ok && !isFinite(remain)) bumpLocalUsed();   // 成功但服务器没回报剩余：本地 +1 兜住进度
-        else if (isFinite(remain)) syncUsedFromServer(remain);
-        if (ret.ok) {
-            if (isFinite(remain) && remain <= 0) {
-                markUsedUp();
-                log.info('like accepted but no times left today, stop till reset. uid=%s', uid);
-                return 'limit';
-            }
-            failState = null;
-            log.info('like ok. uid=%s%s', uid, isFinite(remain) ? ';selfTodayCanLikeNum=' + remain : '');
-            return 'ok';
-        }
-        if (ret.code === LIKE_CODE_LIMIT) {
-            markUsedUp();
-            log.info('like daily limit reached, stop till reset. uid=%s;selfTodayCanLikeNum=%s', uid, d.selfTodayCanLikeNum);
-            return 'limit';
-        }
-        log.info('like rejected. uid=%s;code=%d', uid, ret.code);
-        return 'rejected';
-    } catch (err) {
-        log.warn('like error.', err);
-        return 'error';
+    if (ret.code === LIKE_CODE_LIMIT) {
+      markUsedUp();
+      log.info(
+        'like daily limit reached, stop till reset. uid=%s;selfTodayCanLikeNum=%s',
+        uid,
+        d.selfTodayCanLikeNum,
+      );
+      return 'limit';
     }
+    log.info('like rejected. uid=%s;code=%d', uid, ret.code);
+    return 'rejected';
+  } catch (err) {
+    log.warn('like error.', err);
+    return 'error';
+  }
 }
 
 /**
@@ -405,11 +428,11 @@ async function sendLike(uid) {
  * @returns {number} 下次可重试的墙上时刻(毫秒)
  */
 function bumpFail() {
-    var fs = failState || (failState = { count: 0, notBeforeMs: 0 });
-    fs.count++;
-    var idx = Math.min(fs.count - 1, BACKOFF_MS.length - 1);
-    fs.notBeforeMs = Date.now() + BACKOFF_MS[idx];
-    return fs.notBeforeMs;
+  var fs = failState || (failState = { count: 0, notBeforeMs: 0 });
+  fs.count++;
+  var idx = Math.min(fs.count - 1, BACKOFF_MS.length - 1);
+  fs.notBeforeMs = Date.now() + BACKOFF_MS[idx];
+  return fs.notBeforeMs;
 }
 
 // ─────────────────────────── 检查 + 点赞 ───────────────────────────
@@ -420,63 +443,73 @@ function bumpFail() {
  * @returns {Promise<number>} 下拍 delay（毫秒）；0 = 立即再跑（alive=false 或 pending 补扫）。
  */
 async function tick() {
-    ensureDailyLoaded();
-    rollDateIfNeeded();
-    if (!aliveFn()) return 0;
+  ensureDailyLoaded();
+  rollDateIfNeeded();
+  if (!aliveFn()) return 0;
 
-    // 清单为空（或全是空 UID）：本轮不点，降 idle 兜底复查（清单随时会加上）
-    var hasUid = false;
-    for (var i = 0; i < friends.length; i++) {
-        if (friends[i] && friends[i].uid) { hasUid = true; break; }
+  // 清单为空（或全是空 UID）：本轮不点，降 idle 兜底复查（清单随时会加上）
+  var hasUid = false;
+  for (var i = 0; i < friends.length; i++) {
+    if (friends[i] && friends[i].uid) {
+      hasUid = true;
+      break;
     }
-    if (!hasUid) return cfg.idleInterval;
+  }
+  if (!hasUid) return cfg.idleInterval;
 
-    // 当日计数读盘闸门：未读回前 daily.used 还是内存初值，拿去判额度形同虚设
-    //（刷新后盘上已点到 7、内存 0 → 每次刷新都会多冲一次赞），暂缓发包并短间隔重试
-    if (!dailyReady()) {
-        log.debug('hold like: daily state not loaded from disk yet (memory used is not authoritative).');
-        return cfg.retryInterval;
+  // 当日计数读盘闸门：未读回前 daily.used 还是内存初值，拿去判额度形同虚设
+  //（刷新后盘上已点到 7、内存 0 → 每次刷新都会多冲一次赞），暂缓发包并短间隔重试
+  if (!dailyReady()) {
+    log.debug(
+      'hold like: daily state not loaded from disk yet (memory used is not authoritative).',
+    );
+    return cfg.retryInterval;
+  }
+
+  // 当日额度已用尽（含玩家自己点掉的）：无 CD、零点重置，直接睡到下次重置（醒后 rollDateIfNeeded 归零），不再每 10min 提前醒重复轮询
+  if (daily.used >= LIKE_DAILY_MAX) {
+    log.debug('daily like quota used (%d/%d), sleep to next reset.', daily.used, LIKE_DAILY_MAX);
+    return msToNextReset();
+  }
+
+  // 退避闸门：上次失败后未到重试点，本轮不碰
+  var now = Date.now();
+  if (failState && now < failState.notBeforeMs) {
+    return Math.min(failState.notBeforeMs - now, cfg.idleInterval);
+  }
+
+  // 轮转取下一个有 UID 的好友（清单一律以面板配置为准，cursor 只决定起点）
+  var idx = -1;
+  for (var j = 0; j < friends.length; j++) {
+    var k = (cursor + j) % friends.length;
+    if (friends[k] && friends[k].uid) {
+      idx = k;
+      break;
     }
+  }
+  if (idx < 0) return cfg.idleInterval;
+  cursor = (idx + 1) % friends.length;
 
-    // 当日额度已用尽（含玩家自己点掉的）：无 CD、零点重置，直接睡到下次重置（醒后 rollDateIfNeeded 归零），不再每 10min 提前醒重复轮询
-    if (daily.used >= LIKE_DAILY_MAX) {
-        log.debug('daily like quota used (%d/%d), sleep to next reset.', daily.used, LIKE_DAILY_MAX);
-        return msToNextReset();
+  var r = await sendLike(friends[idx].uid);
+  if (!aliveFn()) return 0;
+  if (cycle.pending) return 0; // 本轮在飞时又触发了 configure→立即补扫
+
+  switch (r) {
+    case 'ok':
+      return LIKE_GAP_MS;
+    case 'limit':
+      return msToNextReset();
+    case 'inflight':
+      // 同一次点赞的应答还在途（多半是游戏自己在发）：等满最小唤醒间隔再来看结果，不计失败退避
+      return MIN_WAKE_MS;
+    default: {
+      // rejected / error：按阶梯退避（UID 填错等永久性失败不再无限狂发）
+      var retryAt = bumpFail();
+      var wait = Math.max(0, retryAt - Date.now());
+      log.warn('like failed, backoff %dms.', wait);
+      return Math.min(wait, cfg.idleInterval);
     }
-
-    // 退避闸门：上次失败后未到重试点，本轮不碰
-    var now = Date.now();
-    if (failState && now < failState.notBeforeMs) {
-        return Math.min(failState.notBeforeMs - now, cfg.idleInterval);
-    }
-
-    // 轮转取下一个有 UID 的好友（清单一律以面板配置为准，cursor 只决定起点）
-    var idx = -1;
-    for (var j = 0; j < friends.length; j++) {
-        var k = (cursor + j) % friends.length;
-        if (friends[k] && friends[k].uid) { idx = k; break; }
-    }
-    if (idx < 0) return cfg.idleInterval;
-    cursor = (idx + 1) % friends.length;
-
-    var r = await sendLike(friends[idx].uid);
-    if (!aliveFn()) return 0;
-    if (cycle.pending) return 0;   // 本轮在飞时又触发了 configure→立即补扫
-
-    switch (r) {
-        case 'ok': return LIKE_GAP_MS;
-        case 'limit': return msToNextReset();
-        case 'inflight':
-            // 同一次点赞的应答还在途（多半是游戏自己在发）：等满最小唤醒间隔再来看结果，不计失败退避
-            return MIN_WAKE_MS;
-        default: {
-            // rejected / error：按阶梯退避（UID 填错等永久性失败不再无限狂发）
-            var retryAt = bumpFail();
-            var wait = Math.max(0, retryAt - Date.now());
-            log.warn('like failed, backoff %dms.', wait);
-            return Math.min(wait, cfg.idleInterval);
-        }
-    }
+  }
 }
 
 const cycle = createCycle({ log: log, alive: aliveFn, run: tick, fallback: cfg.idleInterval });
@@ -489,35 +522,34 @@ const cycle = createCycle({ log: log, alive: aliveFn, run: tick, fallback: cfg.i
  * @returns {boolean}
  */
 function install(ctx) {
-    ctxRef = ctx;
-    if (installed) {
-        return true;
-    }
-
-    var missing = [];
-
-    net = ctx.net;
-    if (!net.install()) {
-        missing.push('pocketcc.net');
-        net = null;
-    }
-
-    var mods = game.requireAll(['DataCenter']);
-
-    data = mods.DataCenter
-        && mods.DataCenter.DATA
-        || missing.push('DataCenter');
-
-    if (missing.length) {
-        net = null; data = null;
-        log.warn('install failed. missing=%s', missing.join(';'));
-        return false;
-    }
-
-    installed = true;
-    log.info('installed.');
-
+  ctxRef = ctx;
+  if (installed) {
     return true;
+  }
+
+  var missing = [];
+
+  net = ctx.net;
+  if (!net.install()) {
+    missing.push('pocketcc.net');
+    net = null;
+  }
+
+  var mods = game.requireAll(['DataCenter']);
+
+  data = (mods.DataCenter && mods.DataCenter.DATA) || missing.push('DataCenter');
+
+  if (missing.length) {
+    net = null;
+    data = null;
+    log.warn('install failed. missing=%s', missing.join(';'));
+    return false;
+  }
+
+  installed = true;
+  log.info('installed.');
+
+  return true;
 }
 
 /**
@@ -526,38 +558,52 @@ function install(ctx) {
  * @param {object} ctx reactor 上下文
  */
 function run(ctx) {
-    ctxRef = ctx;
-    cursor = 0;
-    failState = null;
-    ensureDailyLoaded();
-    // 计数不在这里打：读盘异步、此刻 daily.used 仍是初值，报了会误导；真实额度首 tick 闸门自会核
-    log.info('started, %d friend(s).', friends.length);
-    // 启动即查一次；本轮结束后 tick 末尾按节奏 / 重置点 / idle 返给 cycle arm
-    cycle.kick();
+  ctxRef = ctx;
+  cursor = 0;
+  failState = null;
+  ensureDailyLoaded();
+  // 计数不在这里打：读盘异步、此刻 daily.used 仍是初值，报了会误导；真实额度首 tick 闸门自会核
+  log.info('started, %d friend(s).', friends.length);
+  // 启动即查一次；本轮结束后 tick 末尾按节奏 / 重置点 / idle 返给 cycle arm
+  cycle.kick();
 }
 
 /**
  * 向 reactor 注册本功能说明书：scenes 限定 Home/NWorldMap，战斗态暂停（offInCombat）。
  */
 reactor.register({
-    id: 'playerLike',
-    label: '玩家点赞',
-    storageKey: 'pocketcc.feat.playerLike',
-    symbols: ['dataCenter'],
-    scenes: ['Home', 'NWorldMap'],
-    offInCombat: true,
-    defaults: {
-        enabled: false,
-        friends: [],
+  id: 'playerLike',
+  label: '玩家点赞',
+  storageKey: 'pocketcc.feat.playerLike',
+  symbols: ['dataCenter'],
+  scenes: ['Home', 'NWorldMap'],
+  offInCombat: true,
+  defaults: {
+    enabled: false,
+    friends: [],
+  },
+  fields: [
+    {
+      key: 'friends',
+      label: '好友清单',
+      type: 'uidlist',
+      max: LIKE_DAILY_MAX,
+      placeholder: '请输入玩家UID',
+      hint: '每天 0 点重置后按清单逐个点赞，每日共 ' + LIKE_DAILY_MAX + ' 次、间隔 5 秒',
     },
-    fields: [
-        { key: 'friends', label: '好友清单', type: 'uidlist', max: LIKE_DAILY_MAX, placeholder: '请输入玩家UID', hint: '每天 0 点重置后按清单逐个点赞，每日共 ' + LIKE_DAILY_MAX + ' 次、间隔 5 秒' },
-        { key: 'todayLike', label: '今日已赞', type: 'text', get: function () { return formatToday(); } },
-    ],
-    toModuleCfg: function (c) {
-        return { friends: c.friends };
+    {
+      key: 'todayLike',
+      label: '今日已赞',
+      type: 'text',
+      get: function () {
+        return formatToday();
+      },
     },
-    install: install,
-    configure: configure,
-    run: run,
+  ],
+  toModuleCfg: function (c) {
+    return { friends: c.friends };
+  },
+  install: install,
+  configure: configure,
+  run: run,
 });

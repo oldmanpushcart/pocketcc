@@ -68,23 +68,21 @@ const CODE_NOT_SENT = -1;
  * @type {object}
  */
 const cfg = {
+  /**
+   * 活跃扫描间隔：默认1分钟。本轮扫描发现可攻打 boss 时用这档，勤扫趁名额还空多打
+   */
+  activeScanInterval: 1000 * 60,
 
-    /**
-     * 活跃扫描间隔：默认1分钟。本轮扫描发现可攻打 boss 时用这档，勤扫趁名额还空多打
-     */
-    activeScanInterval: 1000 * 60,
+  /**
+   * 空转扫描间隔：默认10分钟。连续 EMPTY_STREAK_IDLE 次扫描都没 boss 后降到这档，少刷 3756。
+   * 推送 10912 仍是主触发源，新 boss 一刷出即被推醒，不必等这档定时
+   */
+  idleScanInterval: 1000 * 60 * 10,
 
-    /**
-     * 空转扫描间隔：默认10分钟。连续 EMPTY_STREAK_IDLE 次扫描都没 boss 后降到这档，少刷 3756。
-     * 推送 10912 仍是主触发源，新 boss 一刷出即被推醒，不必等这档定时
-     */
-    idleScanInterval: 1000 * 60 * 10,
-
-    /**
-     * 攻打间隔：默认5秒（消费逐条之间的休眠）。902 过快会被服务器限流，逐条之间休眠规避
-     */
-    marchInterval: 1000 * 5,
-
+  /**
+   * 攻打间隔：默认5秒（消费逐条之间的休眠）。902 过快会被服务器限流，逐条之间休眠规避
+   */
+  marchInterval: 1000 * 5,
 };
 
 /** @type {number} 连续这么多次扫描都没 boss，才把扫描间隔从 active 降到 idle（去抖：单次漏扫不立即降频） */
@@ -115,7 +113,7 @@ var installed = false;
  * @returns {boolean}
  */
 function aliveFn() {
-    return ctxRef ? ctxRef.alive() : false;
+  return ctxRef ? ctxRef.alive() : false;
 }
 
 /**
@@ -124,7 +122,9 @@ function aliveFn() {
  * @returns {Promise<void>}
  */
 function sleep(ms) {
-    return new Promise(function (resolve) { setTimeout(resolve, ms); });
+  return new Promise(function (resolve) {
+    setTimeout(resolve, ms);
+  });
 }
 
 /**
@@ -133,51 +133,56 @@ function sleep(ms) {
  * @returns {Promise<number>}
  */
 async function cycleRun() {
-    await doScan();
-    if (!aliveFn()) return 0;   // pause 中途：consume 不再进入，cycle 在 alive 检查处自然停摆
-    await consume();
-    if (cycle.pending) return 0;
-    return nextScanInterval();
+  await doScan();
+  if (!aliveFn()) return 0; // pause 中途：consume 不再进入，cycle 在 alive 检查处自然停摆
+  await consume();
+  if (cycle.pending) return 0;
+  return nextScanInterval();
 }
 
 /** @type {{kick: function(), pending: boolean}} 调和循环驱动器（fallback 取 active 档，防异常停摆） */
-const cycle = createCycle({ log: log, alive: aliveFn, run: cycleRun, fallback: cfg.activeScanInterval });
+const cycle = createCycle({
+  log: log,
+  alive: aliveFn,
+  run: cycleRun,
+  fallback: cfg.activeScanInterval,
+});
 
 /**
  * 生产端：找活动 → 拉 3756 → 过滤可攻打 boss → 整批替换 queue → 交消费。永不 reject。
  * @returns {Promise<void>}
  */
 async function doScan() {
-    try {
-        // 活动并未开启：清空队列，交下拍兜底。算一次空扫（没 boss 可检测）
-        var activity = getSeaTreasureActivity();
-        if (!activity) {
-            log.debug('no activity found.');
-            queue.length = 0;
-            emptyStreak++;
-            return;
-        }
-
-        // loading 返回 Ret：code=3756 状态码，data=过滤后的可攻打 boss（失败/闸门时为 null）
-        var ret = await loadingBosses(activity);
-        if (!aliveFn()) return;
-
-        if (!ret.ok || !ret.data || !ret.data.length) {
-            log.debug('no boss found. code=%d', ret.code);
-            queue.length = 0;
-            emptyStreak++;
-            return;
-        }
-
-        // 每轮 3756 是全量快照，整批替换队列（追加会累积重复 boss）
-        queue = ret.data;
-        emptyStreak = 0;
-        log.debug('bosses loaded. count=%d', queue.length);
-    } catch (err) {
-        log.warn('scan error.', err);
-        queue.length = 0;
-        emptyStreak++;
+  try {
+    // 活动并未开启：清空队列，交下拍兜底。算一次空扫（没 boss 可检测）
+    var activity = getSeaTreasureActivity();
+    if (!activity) {
+      log.debug('no activity found.');
+      queue.length = 0;
+      emptyStreak++;
+      return;
     }
+
+    // loading 返回 Ret：code=3756 状态码，data=过滤后的可攻打 boss（失败/闸门时为 null）
+    var ret = await loadingBosses(activity);
+    if (!aliveFn()) return;
+
+    if (!ret.ok || !ret.data || !ret.data.length) {
+      log.debug('no boss found. code=%d', ret.code);
+      queue.length = 0;
+      emptyStreak++;
+      return;
+    }
+
+    // 每轮 3756 是全量快照，整批替换队列（追加会累积重复 boss）
+    queue = ret.data;
+    emptyStreak = 0;
+    log.debug('bosses loaded. count=%d', queue.length);
+  } catch (err) {
+    log.warn('scan error.', err);
+    queue.length = 0;
+    emptyStreak++;
+  }
 }
 
 /**
@@ -185,17 +190,17 @@ async function doScan() {
  * @returns {Promise<void>}
  */
 async function consume() {
-    while (queue.length && aliveFn()) {
-        var boss = queue.shift();
-        try {
-            await attackFlow(boss);
-        } catch (err) {
-            log.warn('attack flow threw.', err);
-        }
-        if (queue.length && aliveFn()) {
-            await sleep(cfg.marchInterval);
-        }
+  while (queue.length && aliveFn()) {
+    var boss = queue.shift();
+    try {
+      await attackFlow(boss);
+    } catch (err) {
+      log.warn('attack flow threw.', err);
     }
+    if (queue.length && aliveFn()) {
+      await sleep(cfg.marchInterval);
+    }
+  }
 }
 
 /**
@@ -204,7 +209,7 @@ async function consume() {
  * @returns {number} 毫秒
  */
 function nextScanInterval() {
-    return emptyStreak >= EMPTY_STREAK_IDLE ? cfg.idleScanInterval : cfg.activeScanInterval;
+  return emptyStreak >= EMPTY_STREAK_IDLE ? cfg.idleScanInterval : cfg.activeScanInterval;
 }
 
 /**
@@ -213,22 +218,22 @@ function nextScanInterval() {
  * @param {object} ev net.on 事件 {cmd, status, data, ord, ts, raw}
  */
 function onActivityExtraPush(ev) {
-    if (!aliveFn()) return;
+  if (!aliveFn()) return;
 
-    var aid = ev && ev.data && ev.data.aid;
-    if (!isSeaTreasureAid(aid)) {
-        return;
-    }
+  var aid = ev && ev.data && ev.data.aid;
+  if (!isSeaTreasureAid(aid)) {
+    return;
+  }
 
-    // 如果有BOSS，extra.worldUIRed 大于等于1，这样判断能过滤掉一些脏数据（推送载荷里 extra 挂在 ev.data.extra 下）
-    var extra = ev.data && ev.data.extra;
-    var hasBoss = extra && extra.worldUIRed && extra.worldUIRed >= 1;
-    if(!hasBoss) {
-        return;
-    }
+  // 如果有BOSS，extra.worldUIRed 大于等于1，这样判断能过滤掉一些脏数据（推送载荷里 extra 挂在 ev.data.extra 下）
+  var extra = ev.data && ev.data.extra;
+  var hasBoss = extra && extra.worldUIRed && extra.worldUIRed >= 1;
+  if (!hasBoss) {
+    return;
+  }
 
-    log.info('activity extra push received, trigger scan. aid=%d', aid);
-    cycle.kick();
+  log.info('activity extra push received, trigger scan. aid=%d', aid);
+  cycle.kick();
 }
 
 /**
@@ -237,9 +242,9 @@ function onActivityExtraPush(ev) {
  * @returns {boolean}
  */
 function isSeaTreasureAid(aid) {
-    if (!aid) return false;
-    var activity = activityCtl.getActivityByActivityId(aid);
-    return !!activity && activity.showUiType === SHOW_UI_TYPE_SEA_TREASURE;
+  if (!aid) return false;
+  var activity = activityCtl.getActivityByActivityId(aid);
+  return !!activity && activity.showUiType === SHOW_UI_TYPE_SEA_TREASURE;
 }
 
 /**
@@ -250,22 +255,33 @@ function isSeaTreasureAid(aid) {
  * @returns {Promise<void>}
  */
 async function attackFlow(boss) {
-    // 同一目标同一时间只能有一个行军，已在途中则跳过（在途核对走 core/march.list，856 本人全量、视口无关）
-    if (await hasMarchAtTarget(boss.x, boss.y)) {
-        log.debug('target already has march in flight, skip. bossId=%d;x=%d;y=%d', boss.bossId, boss.x, boss.y);
-        return;
-    }
+  // 同一目标同一时间只能有一个行军，已在途中则跳过（在途核对走 core/march.list，856 本人全量、视口无关）
+  if (await hasMarchAtTarget(boss.x, boss.y)) {
+    log.debug(
+      'target already has march in flight, skip. bossId=%d;x=%d;y=%d',
+      boss.bossId,
+      boss.x,
+      boss.y,
+    );
+    return;
+  }
 
-    var ret = await marchAttack(boss);
-    if (!aliveFn()) return;
+  var ret = await marchAttack(boss);
+  if (!aliveFn()) return;
 
-    if (ret.ok) {
-        log.info('attack march started. bossId=%d;x=%d;y=%d', boss.bossId, boss.x, boss.y);
-        return;
-    }
+  if (ret.ok) {
+    log.info('attack march started. bossId=%d;x=%d;y=%d', boss.bossId, boss.x, boss.y);
+    return;
+  }
 
-    log.info('attack march rejected. bossId=%d;x=%d;y=%d;code=%d;data=%s',
-        boss.bossId, boss.x, boss.y, ret.code, ret.data);
+  log.info(
+    'attack march rejected. bossId=%d;x=%d;y=%d;code=%d;data=%s',
+    boss.bossId,
+    boss.x,
+    boss.y,
+    ret.code,
+    ret.data,
+  );
 }
 
 /**
@@ -276,10 +292,10 @@ async function attackFlow(boss) {
  * @returns {Promise<boolean>}
  */
 async function hasMarchAtTarget(x, y) {
-    var marches = await march.list();
-    return marches.some(function (m) {
-        return m.type === MARCH_TYPE && m.target.x === x && m.target.y === y;
-    });
+  var marches = await march.list();
+  return marches.some(function (m) {
+    return m.type === MARCH_TYPE && m.target.x === x && m.target.y === y;
+  });
 }
 
 /**
@@ -287,11 +303,12 @@ async function hasMarchAtTarget(x, y) {
  * @returns {object|undefined}
  */
 function getSeaTreasureActivity() {
-    return activityCtl.getActivityList()
-        .find(function (activity) {
-            return activity.showUiType === SHOW_UI_TYPE_SEA_TREASURE
-                && activityCtl.checkActivityIsOpen(activity.id) === true;
-        });
+  return activityCtl.getActivityList().find(function (activity) {
+    return (
+      activity.showUiType === SHOW_UI_TYPE_SEA_TREASURE &&
+      activityCtl.checkActivityIsOpen(activity.id) === true
+    );
+  });
 }
 
 /**
@@ -301,39 +318,43 @@ function getSeaTreasureActivity() {
  * @returns {Promise<Ret>} code=3756 状态码，data=过滤后的可攻打 boss 数组（[{x,y,bossId,left}]）或 null
  */
 async function loadingBosses(activity) {
-    // 闸门未放开（游戏面板也在拉）：不静默断链，回哨兵 Ret
-    if (!activity || net.isSending(CMD_QUERY_WORLD_BOSS)) {
-        return net.Ret.from(CODE_NOT_SENT, null);
+  // 闸门未放开（游戏面板也在拉）：不静默断链，回哨兵 Ret
+  if (!activity || net.isSending(CMD_QUERY_WORLD_BOSS)) {
+    return net.Ret.from(CODE_NOT_SENT, null);
+  }
+
+  try {
+    var ret = await net.sendPBV2(CMD_QUERY_WORLD_BOSS, { activityId: activity.id });
+
+    // 请求失败：原样带上 3756 的 code 回传，data=null，供调用方进一步判断
+    if (!ret.ok || !ret.data) {
+      log.info(
+        'loading bosses rejected (activity closed?). activityId=%d;code=%d',
+        activity.id,
+        ret.code,
+      );
+      return net.Ret.from(ret.code, null);
     }
 
-    try {
-        var ret = await net.sendPBV2(CMD_QUERY_WORLD_BOSS, { activityId: activity.id });
+    /*
+     * bossInfos 每条：{bossId, pointX, pointY, endTime, myLeftAttackTimes, attackNum, ownerUidStr, serverId, uuidStr, ...}
+     * 只取我还能打、且尚未到期的 boss：myLeftAttackTimes>0 且 endTime（秒）> 当前服务器/本地时间
+     */
+    var nowSec = Date.now() / 1000;
+    var list = ret.data.bossInfos || [];
+    var bosses = list
+      .filter(function (b) {
+        return b && (b.myLeftAttackTimes | 0) > 0 && (!b.endTime || b.endTime > nowSec);
+      })
+      .map(function (b) {
+        return { x: b.pointX, y: b.pointY, bossId: b.bossId, left: b.myLeftAttackTimes | 0 };
+      });
 
-        // 请求失败：原样带上 3756 的 code 回传，data=null，供调用方进一步判断
-        if (!ret.ok || !ret.data) {
-            log.info('loading bosses rejected (activity closed?). activityId=%d;code=%d', activity.id, ret.code);
-            return net.Ret.from(ret.code, null);
-        }
-
-        /*
-         * bossInfos 每条：{bossId, pointX, pointY, endTime, myLeftAttackTimes, attackNum, ownerUidStr, serverId, uuidStr, ...}
-         * 只取我还能打、且尚未到期的 boss：myLeftAttackTimes>0 且 endTime（秒）> 当前服务器/本地时间
-         */
-        var nowSec = Date.now() / 1000;
-        var list = ret.data.bossInfos || [];
-        var bosses = list
-            .filter(function (b) {
-                return b && (b.myLeftAttackTimes | 0) > 0 && (!b.endTime || b.endTime > nowSec);
-            })
-            .map(function (b) {
-                return { x: b.pointX, y: b.pointY, bossId: b.bossId, left: b.myLeftAttackTimes | 0 };
-            });
-
-        return net.Ret.from(ret.code, bosses);
-    } catch (err) {
-        log.warn('loading bosses error. activityId=%d', activity && activity.id, err);
-        return net.Ret.from(CODE_NOT_SENT, null);
-    }
+    return net.Ret.from(ret.code, bosses);
+  } catch (err) {
+    log.warn('loading bosses error. activityId=%d', activity && activity.id, err);
+    return net.Ret.from(CODE_NOT_SENT, null);
+  }
 }
 
 /**
@@ -343,12 +364,12 @@ async function loadingBosses(activity) {
  * @returns {Promise<Ret>} 整个 902 的 Ret，code=902 状态码，data=成功载荷或 null
  */
 async function marchAttack(boss) {
-    if (!boss || net.isSending(CMD_MARCH_WORLD_POINT)) {
-        return net.Ret.from(CODE_NOT_SENT, null);
-    }
+  if (!boss || net.isSending(CMD_MARCH_WORLD_POINT)) {
+    return net.Ret.from(CODE_NOT_SENT, null);
+  }
 
-    // 零部队三键（{marchType,x,y}）走 core/march.pickUp；被拒日志仍由 attackFlow 单出口
-    return march.pickUp({ marchType: MARCH_TYPE, target: { x: boss.x, y: boss.y } });
+  // 零部队三键（{marchType,x,y}）走 core/march.pickUp；被拒日志仍由 attackFlow 单出口
+  return march.pickUp({ marchType: MARCH_TYPE, target: { x: boss.x, y: boss.y } });
 }
 
 /**
@@ -357,36 +378,38 @@ async function marchAttack(boss) {
  * @returns {boolean}
  */
 function install(ctx) {
-    ctxRef = ctx;
-    if (installed) {
-        return true;
-    }
-
-    var missing = [];
-
-    net = ctx.net;
-    if (!net.install()) {
-        missing.push('pocketcc.net');
-        net = null;
-    }
-
-    var mods = game.requireAll(['ActivityController']);
-
-    activityCtl = mods.ActivityController
-        && mods.ActivityController.ActivityController
-        && mods.ActivityController.ActivityController.Instance
-        || missing.push('ActivityController');
-
-    if (missing.length) {
-        net = null; activityCtl = null;
-        log.warn('install failed. missing=%d;deps=%s', missing.length, missing.join(';'));
-        return false;
-    }
-
-    installed = true;
-    log.info('installed.');
-
+  ctxRef = ctx;
+  if (installed) {
     return true;
+  }
+
+  var missing = [];
+
+  net = ctx.net;
+  if (!net.install()) {
+    missing.push('pocketcc.net');
+    net = null;
+  }
+
+  var mods = game.requireAll(['ActivityController']);
+
+  activityCtl =
+    (mods.ActivityController &&
+      mods.ActivityController.ActivityController &&
+      mods.ActivityController.ActivityController.Instance) ||
+    missing.push('ActivityController');
+
+  if (missing.length) {
+    net = null;
+    activityCtl = null;
+    log.warn('install failed. missing=%d;deps=%s', missing.length, missing.join(';'));
+    return false;
+  }
+
+  installed = true;
+  log.info('installed.');
+
+  return true;
 }
 
 /**
@@ -395,13 +418,13 @@ function install(ctx) {
  * @param {object} ctx reactor 上下文
  */
 function run(ctx) {
-    ctxRef = ctx;
-    emptyStreak = 0;
-    queue = [];
-    ctx.on.push(CMD_PUSH_ONE_ACTIVITY_EXTRA, onActivityExtraPush);
-    log.info('started, listening push cmd=%d.', CMD_PUSH_ONE_ACTIVITY_EXTRA);
-    // 启动即主动查一次；本轮结束后 cycle 会武装兜底定时
-    cycle.kick();
+  ctxRef = ctx;
+  emptyStreak = 0;
+  queue = [];
+  ctx.on.push(CMD_PUSH_ONE_ACTIVITY_EXTRA, onActivityExtraPush);
+  log.info('started, listening push cmd=%d.', CMD_PUSH_ONE_ACTIVITY_EXTRA);
+  // 启动即主动查一次；本轮结束后 cycle 会武装兜底定时
+  cycle.kick();
 }
 
 /**
@@ -409,16 +432,18 @@ function run(ctx) {
  * 面板仅出启用开关，三个间隔均为 cfg 内置常量
  */
 reactor.register({
-    id: 'seaTreasure',
-    label: '海上夺宝',
-    storageKey: 'pocketcc.feat.seaTreasure',
-    symbols: ['activityController'],
-    scenes: ['Home', 'NWorldMap'],
-    offInCombat: true,
-    // 面板仅出启用开关；三个扫描/攻打间隔均为 cfg 内置常量，不作为可持久化配置项。
-    defaults: { enabled: false },
-    fields: [],
-    toModuleCfg: function () { return {}; },
-    install: install,
-    run: run,
+  id: 'seaTreasure',
+  label: '海上夺宝',
+  storageKey: 'pocketcc.feat.seaTreasure',
+  symbols: ['activityController'],
+  scenes: ['Home', 'NWorldMap'],
+  offInCombat: true,
+  // 面板仅出启用开关；三个扫描/攻打间隔均为 cfg 内置常量，不作为可持久化配置项。
+  defaults: { enabled: false },
+  fields: [],
+  toModuleCfg: function () {
+    return {};
+  },
+  install: install,
+  run: run,
 });

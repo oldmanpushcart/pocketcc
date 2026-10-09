@@ -31,7 +31,9 @@ async function ingest(msg) {
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   if (msg && msg.type === 'dashcam-flush') {
     // 异步回执：return true 保持端口；失败/无接收器回 err 仅供诊断，bridge 侧已忽略、不阻断录制。
-    ingest(msg).then((status) => sendResponse({ ok: status })).catch((e) => sendResponse({ err: String(e) }));
+    ingest(msg)
+      .then((status) => sendResponse({ ok: status }))
+      .catch((e) => sendResponse({ err: String(e) }));
     return true;
   }
   // 其余消息非本 worker 职责，不响应。

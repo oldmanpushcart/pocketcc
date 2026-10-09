@@ -70,7 +70,8 @@ const MARCH_TYPE_DOMAIN_TREASURE = 180;
 /** @type {number} DataConfig：个人积分档位表（"num,rewardId|num,rewardId|..."，num=积分门槛） */
 const CFG_TIERS_KEY = 130118;
 /** @type {string} 档位兜底串：DATACONFIG 取不到时用面板内联值（实证门槛集） */
-const TIERS_FALLBACK = '10,9018101|50,9018102|100,9018103|200,9018104|400,9018105|700,9018106|1200,9018107';
+const TIERS_FALLBACK =
+  '10,9018101|50,9018102|100,9018103|200,9018104|400,9018105|700,9018106|1200,9018107';
 
 /** @type {number} 非服务器返回的哨兵 code：发送异常时用，与真实 s 码区分开 */
 const CODE_NOT_SENT = -1;
@@ -80,35 +81,35 @@ const CODE_NOT_SENT = -1;
  * @type {object}
  */
 const cfg = {
-    /** 活动窗口内兜底扫描间隔（毫秒）：驻军主要靠 11017 归属/回城 push 即时唤醒，本值仅作断推兜底（旧 60s→20s） */
-    activeScanInterval: 1000 * 20,
-    /**
-     * 非活动期的「周期复查上限」（毫秒）：离开启还远时按此周期低频探活（兼捕获排期变化）；
-     * 进入末段则由 cycleRun 改为按 (start−cur) 精确睡到开启点。10 分钟。
-     */
-    idleScanInterval: 1000 * 60 * 10,
-    /** 睡到开启点时提前量（毫秒）：在 start 前这么久醒，避免踩点读到的 cur 仍略早于 start */
-    openWakeLeadMs: 3000,
-    /** 睡到开启点的最小睡眠（毫秒）：临近开启时的下限，防 (start−now) 很小导致紧密空转 */
-    openWakeMinMs: 1000 * 10,
-    /** 逐条驻军 902 之间的休眠（毫秒）：规避 902 限流（同 titan-blessing） */
-    marchInterval: 1000 * 5,
-    /** 逐条撤田 904 之间的休眠（毫秒） */
-    recallInterval: 1000 * 400,
-    /** 逐条领 1058 之间的休眠（毫秒）：纯为不打爆 1058 频控（旧值 10min 系手滑，会把驻军串在后面拖慢） */
-    claimInterval: 1000 * 3,
-    /**
-     * 1057 积分查询的兜底最小间隔（毫秒）：领奖与驻军解耦——1057 只在收到 10029 积分刷新 push（即时）
-     *   或距上次查询超此兜底间隔时发起，不再搭驻军唤醒（11017 归属变化 / 撤田到家 10019）的顺风车。
-     */
-    rewardScanMinGap: 1000 * 60,
-    /** 回城/归属推送补扫的最小间隔（毫秒）：合并突发推送，免 1055 风暴 */
-    pushScanMinGap: 1000 * 4,
-    /**
-     * 关闭期「睡向下次开启」的单拍上限（毫秒）：已证实 1055 在关闭期即返回下期 start（固定周二 21:00 周活、不漂移），
-     * 故无需按 idle 每 10min 探活——直接成段睡向 start，仅以此上限兜住「服务器时钟漂移 / 单定时器过大」，醒一次即重读 cur 再校准。24 小时。
-     */
-    startSleepMaxMs: 1000 * 60 * 60 * 24,
+  /** 活动窗口内兜底扫描间隔（毫秒）：驻军主要靠 11017 归属/回城 push 即时唤醒，本值仅作断推兜底（旧 60s→20s） */
+  activeScanInterval: 1000 * 20,
+  /**
+   * 非活动期的「周期复查上限」（毫秒）：离开启还远时按此周期低频探活（兼捕获排期变化）；
+   * 进入末段则由 cycleRun 改为按 (start−cur) 精确睡到开启点。10 分钟。
+   */
+  idleScanInterval: 1000 * 60 * 10,
+  /** 睡到开启点时提前量（毫秒）：在 start 前这么久醒，避免踩点读到的 cur 仍略早于 start */
+  openWakeLeadMs: 3000,
+  /** 睡到开启点的最小睡眠（毫秒）：临近开启时的下限，防 (start−now) 很小导致紧密空转 */
+  openWakeMinMs: 1000 * 10,
+  /** 逐条驻军 902 之间的休眠（毫秒）：规避 902 限流（同 titan-blessing） */
+  marchInterval: 1000 * 5,
+  /** 逐条撤田 904 之间的休眠（毫秒） */
+  recallInterval: 1000 * 400,
+  /** 逐条领 1058 之间的休眠（毫秒）：纯为不打爆 1058 频控（旧值 10min 系手滑，会把驻军串在后面拖慢） */
+  claimInterval: 1000 * 3,
+  /**
+   * 1057 积分查询的兜底最小间隔（毫秒）：领奖与驻军解耦——1057 只在收到 10029 积分刷新 push（即时）
+   *   或距上次查询超此兜底间隔时发起，不再搭驻军唤醒（11017 归属变化 / 撤田到家 10019）的顺风车。
+   */
+  rewardScanMinGap: 1000 * 60,
+  /** 回城/归属推送补扫的最小间隔（毫秒）：合并突发推送，免 1055 风暴 */
+  pushScanMinGap: 1000 * 4,
+  /**
+   * 关闭期「睡向下次开启」的单拍上限（毫秒）：已证实 1055 在关闭期即返回下期 start（固定周二 21:00 周活、不漂移），
+   * 故无需按 idle 每 10min 探活——直接成段睡向 start，仅以此上限兜住「服务器时钟漂移 / 单定时器过大」，醒一次即重读 cur 再校准。24 小时。
+   */
+  startSleepMaxMs: 1000 * 60 * 60 * 24,
 };
 
 /** @type {object|null} 网络底座（promise 封装 pocketcc.net） */
@@ -174,7 +175,7 @@ var installed = false;
  * @returns {boolean}
  */
 function aliveFn() {
-    return ctxRef ? ctxRef.alive() : false;
+  return ctxRef ? ctxRef.alive() : false;
 }
 
 /**
@@ -183,7 +184,9 @@ function aliveFn() {
  * @returns {Promise<void>}
  */
 function sleep(ms) {
-    return new Promise(function (resolve) { setTimeout(resolve, Math.max(0, ms | 0)); });
+  return new Promise(function (resolve) {
+    setTimeout(resolve, Math.max(0, ms | 0));
+  });
 }
 
 /**
@@ -192,22 +195,21 @@ function sleep(ms) {
  * @returns {object|null} 解析后的对象；空/解析失败返回 null
  */
 function parseData(d) {
-    if (d == null) return null;
-    if (typeof d === 'object') return d;
-    if (typeof d === 'string') {
-        try { return JSON.parse(d); } catch (err) { return null; }
+  if (d == null) return null;
+  if (typeof d === 'object') return d;
+  if (typeof d === 'string') {
+    try {
+      return JSON.parse(d);
+    } catch (err) {
+      return null;
     }
-    return null;
-}
-
-/** @returns {object} DataCenter.DATA.UserData（读不到回空对象） */
-function userData() {
-    return (dataCenter && dataCenter.UserData) || {};
+  }
+  return null;
 }
 
 /** @returns {number} 服务器当前时间（秒） */
 function serverNow() {
-    return +(dataCenter && dataCenter.ServerTime) || 0;
+  return +(dataCenter && dataCenter.ServerTime) || 0;
 }
 
 // ── 行军表读取（本人 marches）────────────────────────────────────────
@@ -221,13 +223,13 @@ function serverNow() {
  * @returns {boolean}
  */
 function hasGarrisonMarchFor(siloId, coord, myMarches) {
-    for (var i = 0; i < myMarches.length; i++) {
-        var m = myMarches[i];
-        if ((m.type | 0) !== MARCH_TYPE_GUN_FIGHT) continue;
-        if (m.target.itemId && m.target.itemId === siloId) return true;
-        if (coord && m.target.x === coord.x && m.target.y === coord.y) return true;
-    }
-    return false;
+  for (var i = 0; i < myMarches.length; i++) {
+    var m = myMarches[i];
+    if ((m.type | 0) !== MARCH_TYPE_GUN_FIGHT) continue;
+    if (m.target.itemId && m.target.itemId === siloId) return true;
+    if (coord && m.target.x === coord.x && m.target.y === coord.y) return true;
+  }
+  return false;
 }
 
 /**
@@ -237,10 +239,10 @@ function hasGarrisonMarchFor(siloId, coord, myMarches) {
  * @returns {boolean}
  */
 function isRecallableFarmMarch(m) {
-    var mt = m.type | 0;
-    if (mt === MARCH_TYPE_GUN_FIGHT || mt === MARCH_TYPE_DOMAIN_TREASURE) return false;
-    if (pendingRecall.has(m.id)) return false;
-    return mt === 3 || mt === 26;
+  var mt = m.type | 0;
+  if (mt === MARCH_TYPE_GUN_FIGHT || mt === MARCH_TYPE_DOMAIN_TREASURE) return false;
+  if (pendingRecall.has(m.id)) return false;
+  return mt === 3 || mt === 26;
 }
 
 /**
@@ -251,13 +253,14 @@ function isRecallableFarmMarch(m) {
  * @returns {Array<{marchId:string}>}
  */
 function pickRecallableFarmMarches(limit, myMarches) {
-    var transit = [], harvesting = [];
-    for (var i = 0; i < myMarches.length; i++) {
-        var m = myMarches[i];
-        if (!isRecallableFarmMarch(m)) continue;
-        (m.state === march.State.MARCHING ? transit : harvesting).push({ marchId: m.id });
-    }
-    return transit.concat(harvesting).slice(0, limit);
+  var transit = [],
+    harvesting = [];
+  for (var i = 0; i < myMarches.length; i++) {
+    var m = myMarches[i];
+    if (!isRecallableFarmMarch(m)) continue;
+    (m.state === march.State.MARCHING ? transit : harvesting).push({ marchId: m.id });
+  }
+  return transit.concat(harvesting).slice(0, limit);
 }
 
 // ── 井坐标（tableThrone）─────────────────────────────────────────────
@@ -270,13 +273,13 @@ var coordCache = {};
  * @returns {{x:number,y:number}|null}
  */
 function getSiloCoord(siloId) {
-    var key = String(siloId);
-    if (coordCache[key]) return coordCache[key];
-    var row = l10n.tableRow('THRONE_v2', siloId) || l10n.tableRow('THRONE', siloId);
-    if (!row || row.pos_x == null || row.pos_y == null) return null;
-    var coord = { x: Number(row.pos_x) | 0, y: Number(row.pos_y) | 0 };
-    coordCache[key] = coord;
-    return coord;
+  var key = String(siloId);
+  if (coordCache[key]) return coordCache[key];
+  var row = l10n.tableRow('THRONE_v2', siloId) || l10n.tableRow('THRONE', siloId);
+  if (!row || row.pos_x == null || row.pos_y == null) return null;
+  var coord = { x: Number(row.pos_x) | 0, y: Number(row.pos_y) | 0 };
+  coordCache[key] = coord;
+  return coord;
 }
 
 // ── 档位表（DATACONFIG 130118）───────────────────────────────────────
@@ -285,21 +288,27 @@ function getSiloCoord(siloId) {
  * @returns {number[]} 各档位积分门槛
  */
 function tierThresholds() {
-    var raw;
-    try { raw = gameConf.dataConfig(CFG_TIERS_KEY); } catch (err) { raw = ''; }
-    var src = (raw && String(raw)) || TIERS_FALLBACK;
-    var nums = [];
-    src.split('|').forEach(function (seg) {
-        var num = parseInt(String(seg).split(',')[0], 10);
-        if (isFinite(num) && num > 0) nums.push(num);
+  var raw;
+  try {
+    raw = gameConf.dataConfig(CFG_TIERS_KEY);
+  } catch (err) {
+    raw = '';
+  }
+  var src = (raw && String(raw)) || TIERS_FALLBACK;
+  var nums = [];
+  src.split('|').forEach(function (seg) {
+    var num = parseInt(String(seg).split(',')[0], 10);
+    if (isFinite(num) && num > 0) nums.push(num);
+  });
+  if (!nums.length) {
+    TIERS_FALLBACK.split('|').forEach(function (seg) {
+      var num = parseInt(String(seg).split(',')[0], 10);
+      if (isFinite(num) && num > 0) nums.push(num);
     });
-    if (!nums.length) {
-        TIERS_FALLBACK.split('|').forEach(function (seg) {
-            var num = parseInt(String(seg).split(',')[0], 10);
-            if (isFinite(num) && num > 0) nums.push(num);
-        });
-    }
-    return nums.sort(function (a, b) { return a - b; });
+  }
+  return nums.sort(function (a, b) {
+    return a - b;
+  });
 }
 
 // ── 发包 ─────────────────────────────────────────────────────────────
@@ -308,17 +317,17 @@ function tierThresholds() {
  * @returns {Promise<object|null>} {start,end,cur,list} 或 null
  */
 async function requestInfo() {
-    try {
-        var ret = await net.send(CMD_GET_GUN_FIGHT_INFO, {});
-        if (!ret.ok) {
-            log.debug('1055 not ok. code=%d', ret.code);
-            return null;
-        }
-        return parseData(ret.data);
-    } catch (err) {
-        log.warn('request info error.', err);
-        return null;
+  try {
+    var ret = await net.send(CMD_GET_GUN_FIGHT_INFO, {});
+    if (!ret.ok) {
+      log.debug('1055 not ok. code=%d', ret.code);
+      return null;
     }
+    return parseData(ret.data);
+  } catch (err) {
+    log.warn('request info error.', err);
+    return null;
+  }
 }
 
 /**
@@ -326,14 +335,14 @@ async function requestInfo() {
  * @returns {Promise<object|null>} {total,reward:[]} 或 null
  */
 async function requestUserInfo() {
-    try {
-        var ret = await net.send(CMD_GET_GUN_FIGHT_USER_INFO, {});
-        if (!ret.ok) return null;
-        return parseData(ret.data);
-    } catch (err) {
-        log.warn('request user info error.', err);
-        return null;
-    }
+  try {
+    var ret = await net.send(CMD_GET_GUN_FIGHT_USER_INFO, {});
+    if (!ret.ok) return null;
+    return parseData(ret.data);
+  } catch (err) {
+    log.warn('request user info error.', err);
+    return null;
+  }
 }
 
 /**
@@ -342,12 +351,12 @@ async function requestUserInfo() {
  * @returns {Promise<object>} net.Ret
  */
 async function sendClaim(num) {
-    try {
-        return await net.send(CMD_GET_GUN_FIGHT_USER_REWARD, { score: Number(num) });
-    } catch (err) {
-        log.warn('claim send error. num=%d', num, err);
-        return net.Ret.from(CODE_NOT_SENT, null);
-    }
+  try {
+    return await net.send(CMD_GET_GUN_FIGHT_USER_REWARD, { score: Number(num) });
+  } catch (err) {
+    log.warn('claim send error. num=%d', num, err);
+    return net.Ret.from(CODE_NOT_SENT, null);
+  }
 }
 
 /**
@@ -357,7 +366,11 @@ async function sendClaim(num) {
  * @returns {Promise<object>} net.Ret
  */
 async function sendGarrison(coord, plan) {
-    return await march.attack({ marchType: MARCH_TYPE_GUN_FIGHT, target: { x: coord.x, y: coord.y }, data: plan });
+  return await march.attack({
+    marchType: MARCH_TYPE_GUN_FIGHT,
+    target: { x: coord.x, y: coord.y },
+    data: plan,
+  });
 }
 
 /**
@@ -366,14 +379,14 @@ async function sendGarrison(coord, plan) {
  * @returns {Promise<boolean>} 是否成功发出并被接受
  */
 async function sendRecall(marchId) {
-    var ret = await march.recall(marchId);
-    if (ret.ok) {
-        pendingRecall.add(String(marchId));
-        log.info('recall march ok. marchId=%s', marchId);
-        return true;
-    }
-    log.info('recall march rejected. marchId=%s;code=%d;data=%s', marchId, ret.code, ret.data);
-    return false;
+  var ret = await march.recall(marchId);
+  if (ret.ok) {
+    pendingRecall.add(String(marchId));
+    log.info('recall march ok. marchId=%s', marchId);
+    return true;
+  }
+  log.info('recall march rejected. marchId=%s;code=%d;data=%s', marchId, ret.code, ret.data);
+  return false;
 }
 
 /**
@@ -382,21 +395,22 @@ async function sendRecall(marchId) {
  * @returns {Promise<number>}
  */
 async function recallGarrisonMarches() {
-    var my = await march.list();
-    if (!aliveFn()) return -1;
-    var ids = [];
-    for (var i = 0; i < my.length; i++) {
-        var m = my[i];
-        if ((m.type | 0) === MARCH_TYPE_GUN_FIGHT && m.isOccupying && !pendingRecall.has(m.id)) ids.push(m.id);
-    }
-    if (!ids.length) return 0;   // 已无占位驻井（全在返程/已到家）
-    log.info('score maxed, recalling %d garrison march(es).', ids.length);
-    for (var j = 0; j < ids.length; j++) {
-        if (!aliveFn()) return -1;   // pause 中途：未撤完不谎报成功，下轮重读接着撤
-        await sendRecall(ids[j]);
-        if (j < ids.length - 1) await sleep(cfg.recallInterval);
-    }
-    return ids.length;
+  var my = await march.list();
+  if (!aliveFn()) return -1;
+  var ids = [];
+  for (var i = 0; i < my.length; i++) {
+    var m = my[i];
+    if ((m.type | 0) === MARCH_TYPE_GUN_FIGHT && m.isOccupying && !pendingRecall.has(m.id))
+      ids.push(m.id);
+  }
+  if (!ids.length) return 0; // 已无占位驻井（全在返程/已到家）
+  log.info('score maxed, recalling %d garrison march(es).', ids.length);
+  for (var j = 0; j < ids.length; j++) {
+    if (!aliveFn()) return -1; // pause 中途：未撤完不谎报成功，下轮重读接着撤
+    await sendRecall(ids[j]);
+    if (j < ids.length - 1) await sleep(cfg.recallInterval);
+  }
+  return ids.length;
 }
 
 // ── 领积分 ───────────────────────────────────────────────────────────
@@ -405,36 +419,46 @@ async function recallGarrisonMarches() {
  * @returns {Promise<void>}
  */
 async function claimRewards() {
-    if (net.isSending(CMD_GET_GUN_FIGHT_USER_INFO)) return;
-    var ui = await requestUserInfo();
-    if (!aliveFn() || !ui) return;
-    var total = Number(ui.total) || 0;
-    var got = Array.isArray(ui.reward) ? ui.reward.map(Number) : [];
-    var thresholds = tierThresholds();
-    for (var i = 0; i < thresholds.length; i++) {
-        var num = thresholds[i];
-        if (!aliveFn()) return;
-        if (total < num) continue;                 // 积分不足：游戏侧本地拦截不发 1058，这里同口径跳过
-        if (got.indexOf(num) >= 0) continue;       // 已领（reward[] 幂等真相）
-        if (net.isSending(CMD_GET_GUN_FIGHT_USER_REWARD)) break;
-        var ret = await sendClaim(num);
-        if (!aliveFn()) return;
-        if (ret.ok) {
-            got.push(num);                          // 本地补记，防本轮重复发同一档
-            log.info('claim ok. score=%d;total=%d', num, total);
-        } else {
-            log.info('claim rejected. score=%d;code=%d;data=%s', num, ret.code, ret.data);
-        }
-        if (i < thresholds.length - 1) await sleep(cfg.claimInterval);
+  if (net.isSending(CMD_GET_GUN_FIGHT_USER_INFO)) return;
+  var ui = await requestUserInfo();
+  if (!aliveFn() || !ui) return;
+  var total = Number(ui.total) || 0;
+  var got = Array.isArray(ui.reward) ? ui.reward.map(Number) : [];
+  var thresholds = tierThresholds();
+  for (var i = 0; i < thresholds.length; i++) {
+    var num = thresholds[i];
+    if (!aliveFn()) return;
+    if (total < num) continue; // 积分不足：游戏侧本地拦截不发 1058，这里同口径跳过
+    if (got.indexOf(num) >= 0) continue; // 已领（reward[] 幂等真相）
+    if (net.isSending(CMD_GET_GUN_FIGHT_USER_REWARD)) break;
+    var ret = await sendClaim(num);
+    if (!aliveFn()) return;
+    if (ret.ok) {
+      got.push(num); // 本地补记，防本轮重复发同一档
+      log.info('claim ok. score=%d;total=%d', num, total);
+    } else {
+      log.info('claim rejected. score=%d;code=%d;data=%s', num, ret.code, ret.data);
     }
-    // 判定积分刷满：total≥最高档 且 所有档位均已领 → 本期个人刷分结束（下轮 cycleRun 撤军收尾）
-    var maxT = thresholds.length ? thresholds[thresholds.length - 1] : 0;
-    if (maxT && total >= maxT && thresholds.every(function (t) { return got.indexOf(t) >= 0; })) {
-        if (!scoreMaxed) {
-            scoreMaxed = true;
-            log.info('score maxed. total=%d;max=%d — 本期发射井结束，下轮撤回驻军并放行 auto-farm.', total, maxT);
-        }
+    if (i < thresholds.length - 1) await sleep(cfg.claimInterval);
+  }
+  // 判定积分刷满：total≥最高档 且 所有档位均已领 → 本期个人刷分结束（下轮 cycleRun 撤军收尾）
+  var maxT = thresholds.length ? thresholds[thresholds.length - 1] : 0;
+  if (
+    maxT &&
+    total >= maxT &&
+    thresholds.every(function (t) {
+      return got.indexOf(t) >= 0;
+    })
+  ) {
+    if (!scoreMaxed) {
+      scoreMaxed = true;
+      log.info(
+        'score maxed. total=%d;max=%d — 本期发射井结束，下轮撤回驻军并放行 auto-farm.',
+        total,
+        maxT,
+      );
     }
+  }
 }
 
 // ── 驻军（含撤田腾队列）─────────────────────────────────────────────
@@ -447,68 +471,86 @@ async function claimRewards() {
  * @returns {Promise<void>}
  */
 async function garrisonPass(list) {
-    var alliance = gameData.alliance();
-    var myAid = alliance && Number(alliance.Aid);
-    if (!myAid) {
-        log.debug('no alliance, skip garrison.');
-        return;
+  var alliance = gameData.alliance();
+  var myAid = alliance && Number(alliance.Aid);
+  if (!myAid) {
+    log.debug('no alliance, skip garrison.');
+    return;
+  }
+  // 本人行军权威源（core/march.list 封装 856）：视口无关、Home 亦有全量，取代旧 mapData.marches（Home 读空会误判「没驻」而重复增援）
+  var myMarches = await march.list();
+  if (!aliveFn()) return;
+
+  // 需要驻的井：归属本联盟 && 我尚无驻军行军 && 坐标可读 → 全量重建待驻队列（权威，供本轮派发 + 撤田到家快路径取用）
+  garrisonQueue = [];
+  for (var i = 0; i < list.length; i++) {
+    var silo = list[i];
+    if (Number(silo.owner) !== myAid) continue; // 非我盟的井：只等待，不打
+    var coord = getSiloCoord(Number(silo.id));
+    if (!coord) {
+      log.debug('silo coord unavailable, skip. id=%s', silo.id);
+      continue;
     }
-    // 本人行军权威源（core/march.list 封装 856）：视口无关、Home 亦有全量，取代旧 mapData.marches（Home 读空会误判「没驻」而重复增援）
-    var myMarches = await march.list();
+    if (hasGarrisonMarchFor(Number(silo.id), coord, myMarches)) continue; // 已在驻：跳过
+    garrisonQueue.push({ id: Number(silo.id), x: coord.x, y: coord.y });
+  }
+  if (!garrisonQueue.length) return;
+
+  // 1) 先把当前空闲名额就地占满（逐条、发前现判，避免入表延迟导致超发；成功/被拒都移出队列，被拒者由下轮 1055 权威重建再定）
+  while (garrisonQueue.length && march.freeSlots() > 0) {
     if (!aliveFn()) return;
+    if (net.isSending(CMD_MARCH_WORLD_POINT)) return;
+    var tgt = garrisonQueue[0];
+    var plan = new Battle().plan().minimal().build();
+    if (!plan.armyListNew.length) {
+      log.debug('no dispatchable army, stop garrison pass. silo=%d', tgt.id);
+      return;
+    }
+    var ret = await sendGarrison(tgt, plan);
+    if (!aliveFn()) return;
+    garrisonQueue.shift();
+    if (ret.ok) {
+      log.info(
+        'garrison ok. silo=%d;x=%d;y=%d;remaining=%d',
+        tgt.id,
+        tgt.x,
+        tgt.y,
+        garrisonQueue.length,
+      );
+    } else {
+      log.info(
+        'garrison rejected. silo=%d;x=%d;y=%d;code=%d;data=%s',
+        tgt.id,
+        tgt.x,
+        tgt.y,
+        ret.code,
+        ret.data,
+      );
+    }
+    if (garrisonQueue.length && march.freeSlots() > 0) await sleep(cfg.marchInterval);
+  }
 
-    // 需要驻的井：归属本联盟 && 我尚无驻军行军 && 坐标可读 → 全量重建待驻队列（权威，供本轮派发 + 撤田到家快路径取用）
-    garrisonQueue = [];
-    for (var i = 0; i < list.length; i++) {
-        var silo = list[i];
-        if (Number(silo.owner) !== myAid) continue;          // 非我盟的井：只等待，不打
-        var coord = getSiloCoord(Number(silo.id));
-        if (!coord) {
-            log.debug('silo coord unavailable, skip. id=%s', silo.id);
-            continue;
-        }
-        if (hasGarrisonMarchFor(Number(silo.id), coord, myMarches)) continue;   // 已在驻：跳过
-        garrisonQueue.push({ id: Number(silo.id), x: coord.x, y: coord.y });
+  // 2) 仍有待驻但无空闲名额：撤 1 条田腾位（优先去程在途），其到家时由快路径抢空窗补驻。
+  //    在途撤军尚未到家时不重复多撤：以「已撤待归的腾位田数」<「剩余待驻数」为闸，防过度撤田。
+  //    撤田为面板可选项（recallFarm）：关闭则不主动撤田，待驻井只在自然空出名额时（cycle 唤醒）入驻。
+  if (!modCfg.recallFarm) {
+    if (garrisonQueue.length)
+      log.debug('recall disabled by option, wait for free slot. pending=%d', garrisonQueue.length);
+    return;
+  }
+  if (garrisonQueue.length && recalledForGarrison.size < garrisonQueue.length) {
+    var pick = pickRecallableFarmMarches(1, myMarches);
+    if (pick.length) {
+      log.info(
+        'slots short, recalling 1 farm march to free a slot for garrison. marchId=%s;remaining=%d',
+        pick[0].marchId,
+        garrisonQueue.length,
+      );
+      if (await sendRecall(pick[0].marchId)) recalledForGarrison.add(pick[0].marchId);
+    } else {
+      log.debug('no recallable farm march, wait for free slot.');
     }
-    if (!garrisonQueue.length) return;
-
-    // 1) 先把当前空闲名额就地占满（逐条、发前现判，避免入表延迟导致超发；成功/被拒都移出队列，被拒者由下轮 1055 权威重建再定）
-    while (garrisonQueue.length && march.freeSlots() > 0) {
-        if (!aliveFn()) return;
-        if (net.isSending(CMD_MARCH_WORLD_POINT)) return;
-        var tgt = garrisonQueue[0];
-        var plan = new Battle().plan().minimal().build();
-        if (!plan.armyListNew.length) {
-            log.debug('no dispatchable army, stop garrison pass. silo=%d', tgt.id);
-            return;
-        }
-        var ret = await sendGarrison(tgt, plan);
-        if (!aliveFn()) return;
-        garrisonQueue.shift();
-        if (ret.ok) {
-            log.info('garrison ok. silo=%d;x=%d;y=%d;remaining=%d', tgt.id, tgt.x, tgt.y, garrisonQueue.length);
-        } else {
-            log.info('garrison rejected. silo=%d;x=%d;y=%d;code=%d;data=%s', tgt.id, tgt.x, tgt.y, ret.code, ret.data);
-        }
-        if (garrisonQueue.length && march.freeSlots() > 0) await sleep(cfg.marchInterval);
-    }
-
-    // 2) 仍有待驻但无空闲名额：撤 1 条田腾位（优先去程在途），其到家时由快路径抢空窗补驻。
-    //    在途撤军尚未到家时不重复多撤：以「已撤待归的腾位田数」<「剩余待驻数」为闸，防过度撤田。
-    //    撤田为面板可选项（recallFarm）：关闭则不主动撤田，待驻井只在自然空出名额时（cycle 唤醒）入驻。
-    if (!modCfg.recallFarm) {
-        if (garrisonQueue.length) log.debug('recall disabled by option, wait for free slot. pending=%d', garrisonQueue.length);
-        return;
-    }
-    if (garrisonQueue.length && recalledForGarrison.size < garrisonQueue.length) {
-        var pick = pickRecallableFarmMarches(1, myMarches);
-        if (pick.length) {
-            log.info('slots short, recalling 1 farm march to free a slot for garrison. marchId=%s;remaining=%d', pick[0].marchId, garrisonQueue.length);
-            if (await sendRecall(pick[0].marchId)) recalledForGarrison.add(pick[0].marchId);
-        } else {
-            log.debug('no recallable farm march, wait for free slot.');
-        }
-    }
+  }
 }
 
 /**
@@ -518,23 +560,41 @@ async function garrisonPass(list) {
  * @returns {Promise<void>}
  */
 async function fillOneSiloFast() {
-    if (!aliveFn() || !garrisonQueue.length) return;
-    if (march.freeSlots() <= 0) { garrisonDirty = true; pushWake(); return; }   // 没抢到/仍满 → 交常规轮重判（可能再撤一田）
-    if (net.isSending(CMD_MARCH_WORLD_POINT)) { pushWake(); return; }
-    var tgt = garrisonQueue[0];
-    var plan = new Battle().plan().minimal().build();
-    if (!plan.armyListNew.length) return;
-    var ret = await sendGarrison(tgt, plan);
-    if (!aliveFn()) return;
-    garrisonQueue.shift();
-    if (ret.ok) {
-        log.info('garrison ok (fast). silo=%d;x=%d;y=%d;remaining=%d', tgt.id, tgt.x, tgt.y, garrisonQueue.length);
-        if (garrisonQueue.length && march.freeSlots() > 0) pushWake();
-    } else {
-        log.info('garrison rejected (fast), re-eval next cycle. silo=%d;code=%d;data=%s', tgt.id, ret.code, ret.data);
-        garrisonDirty = true;
-        pushWake();
-    }
+  if (!aliveFn() || !garrisonQueue.length) return;
+  if (march.freeSlots() <= 0) {
+    garrisonDirty = true;
+    pushWake();
+    return;
+  } // 没抢到/仍满 → 交常规轮重判（可能再撤一田）
+  if (net.isSending(CMD_MARCH_WORLD_POINT)) {
+    pushWake();
+    return;
+  }
+  var tgt = garrisonQueue[0];
+  var plan = new Battle().plan().minimal().build();
+  if (!plan.armyListNew.length) return;
+  var ret = await sendGarrison(tgt, plan);
+  if (!aliveFn()) return;
+  garrisonQueue.shift();
+  if (ret.ok) {
+    log.info(
+      'garrison ok (fast). silo=%d;x=%d;y=%d;remaining=%d',
+      tgt.id,
+      tgt.x,
+      tgt.y,
+      garrisonQueue.length,
+    );
+    if (garrisonQueue.length && march.freeSlots() > 0) pushWake();
+  } else {
+    log.info(
+      'garrison rejected (fast), re-eval next cycle. silo=%d;code=%d;data=%s',
+      tgt.id,
+      ret.code,
+      ret.data,
+    );
+    garrisonDirty = true;
+    pushWake();
+  }
 }
 
 // ── 扫描调度 ─────────────────────────────────────────────────────────
@@ -547,107 +607,119 @@ async function fillOneSiloFast() {
  * @returns {Promise<number>}
  */
 async function cycleRun() {
-    var info = await requestInfo();
-    if (!aliveFn()) return 0;   // pause 中途：cycle 会在 alive 检查处自然停摆
-    var now = (info && Number(info.cur)) || serverNow();
-    var start = info ? (Number(info.start) || 0) : 0;
-    var end = info ? (Number(info.end) || 0) : 0;
-    inWindow = !!(info && start && end && start <= now && now < end);
+  var info = await requestInfo();
+  if (!aliveFn()) return 0; // pause 中途：cycle 会在 alive 检查处自然停摆
+  var now = (info && Number(info.cur)) || serverNow();
+  var start = info ? Number(info.start) || 0 : 0;
+  var end = info ? Number(info.end) || 0 : 0;
+  inWindow = !!(info && start && end && start <= now && now < end);
 
-    if (!inWindow) {
-        // 窗口关闭/未开：本期结束，复位刷满收尾标记，下期重新计
-        scoreMaxed = false;
-        windDownDone = false;
-        scoreProbed = false;   // 下期重新探一次积分（冷启动防往返只在窗口首个周期生效）
-        garrisonQueue = [];
-        recalledForGarrison.clear();   // 出窗口清待驻/腾位残留，下期从 1055 权威重建
-        // 已证实 1055 关闭期即返回下期 start（固定周活、不漂移）→ 成段睡向 start（开前 openWakeLeadMs 醒），
-        //   单拍上限 startSleepMaxMs 仅兜「服务器时钟漂移 / 单定时器过大」，醒一次即重读 cur 再校准；临近开启 waitMs<上限自然收敛为精确睡到点。
-        if (start > now) {
-            var waitMs = (start - now) * 1000 - cfg.openWakeLeadMs;
-            var hop = Math.max(cfg.openWakeMinMs, Math.min(waitMs, cfg.startSleepMaxMs));
-            log.debug('activity not open, next start in ~%ds, sleep %dms.', Math.max(0, Math.round(waitMs / 1000)), hop);
-            return hop;
-        }
-        log.debug('activity not open, idle.');
-        return cfg.idleScanInterval;
+  if (!inWindow) {
+    // 窗口关闭/未开：本期结束，复位刷满收尾标记，下期重新计
+    scoreMaxed = false;
+    windDownDone = false;
+    scoreProbed = false; // 下期重新探一次积分（冷启动防往返只在窗口首个周期生效）
+    garrisonQueue = [];
+    recalledForGarrison.clear(); // 出窗口清待驻/腾位残留，下期从 1055 权威重建
+    // 已证实 1055 关闭期即返回下期 start（固定周活、不漂移）→ 成段睡向 start（开前 openWakeLeadMs 醒），
+    //   单拍上限 startSleepMaxMs 仅兜「服务器时钟漂移 / 单定时器过大」，醒一次即重读 cur 再校准；临近开启 waitMs<上限自然收敛为精确睡到点。
+    if (start > now) {
+      var waitMs = (start - now) * 1000 - cfg.openWakeLeadMs;
+      var hop = Math.max(cfg.openWakeMinMs, Math.min(waitMs, cfg.startSleepMaxMs));
+      log.debug(
+        'activity not open, next start in ~%ds, sleep %dms.',
+        Math.max(0, Math.round(waitMs / 1000)),
+        hop,
+      );
+      return hop;
     }
+    log.debug('activity not open, idle.');
+    return cfg.idleScanInterval;
+  }
 
-    var list = (info && info.list) || [];
-    // 积分刷满=本期结束：停驻军、把占用中的驻井部队持续撤回直到撤净（放行 auto-farm 正常回填），之后只保持窗口探测
-    if (scoreMaxed) {
-        garrisonQueue = [];
-        recalledForGarrison.clear();   // 刷满收尾：不再补驻，清待驻/腾位残留
-        if (!windDownDone) {
-            var left = await recallGarrisonMarches();
-            if (left === 0) {
-                windDownDone = true;   // 重读确认已无占位驻井 → 才认定收尾完成
-                log.info('score maxed wind-down settled: all garrison marches recalled.');
-            } else {
-                // left>0 本轮撤了待下轮确认返程，或 left<0 被 pause 打断：都短周期再来，不谎报 done
-                return cfg.activeScanInterval;
-            }
-        }
-        // 只剩等窗口关闭复位：睡到 end（末段外按 idle 上限复查），省得窗口内 20s 空转 1055
-        var toEnd = (end - now) * 1000 - cfg.openWakeLeadMs;
-        return Math.max(cfg.openWakeMinMs, Math.min(toEnd > 0 ? toEnd : cfg.activeScanInterval, cfg.idleScanInterval));
+  var list = (info && info.list) || [];
+  // 积分刷满=本期结束：停驻军、把占用中的驻井部队持续撤回直到撤净（放行 auto-farm 正常回填），之后只保持窗口探测
+  if (scoreMaxed) {
+    garrisonQueue = [];
+    recalledForGarrison.clear(); // 刷满收尾：不再补驻，清待驻/腾位残留
+    if (!windDownDone) {
+      var left = await recallGarrisonMarches();
+      if (left === 0) {
+        windDownDone = true; // 重读确认已无占位驻井 → 才认定收尾完成
+        log.info('score maxed wind-down settled: all garrison marches recalled.');
+      } else {
+        // left>0 本轮撤了待下轮确认返程，或 left<0 被 pause 打断：都短周期再来，不谎报 done
+        return cfg.activeScanInterval;
+      }
     }
-    // 冷启动/重启防往返傻动：刷新后 scoreMaxed 是初值 false，若直接驻军、同轮稍后才发现分已满→下轮又撤回，白跑一来回。
-    //   故未探过积分的首轮先查一次 1057（claimRewards 内含刷满判定）：若已满则本轮不驻军，直接交下轮顶部 scoreMaxed 分支收尾（只撤刷新前遗留的驻井兵）。
-    if (!scoreProbed) {
-        scoreProbed = true;
-        lastRewardScanAt = Date.now();
-        rewardDirty = false;
-        await claimRewards();
-        if (!aliveFn()) return 0;
-        if (scoreMaxed) return cfg.activeScanInterval;   // 已满：本轮不驻军
-    }
-    // 驻军与领奖各自按「唤醒意图 + 兜底间隔」门控，互不搭顺风车：
-    //   10029 积分 push 只置 rewardDirty→只跑领奖，不触发驻军的 856；11017/撤田到家只置 garrisonDirty→只跑驻军。
-    //   两者各有兜底间隔（active/rewardScanMinGap），保证任一路径漏 push 也能周期复查。
-    var wallG = Date.now();
-    if (garrisonDirty || wallG - lastGarrisonAt >= cfg.activeScanInterval) {
-        lastGarrisonAt = wallG;
-        garrisonDirty = false;
-        await garrisonPass(list);
-        if (!aliveFn()) return 0;
-    }
-    var wallC = Date.now();
-    if (rewardDirty || wallC - lastRewardScanAt >= cfg.rewardScanMinGap) {
-        lastRewardScanAt = wallC;
-        rewardDirty = false;
-        await claimRewards();
-        if (!aliveFn()) return 0;
-    }
-    if (cycle.pending) return 0;
-    return cfg.activeScanInterval;
+    // 只剩等窗口关闭复位：睡到 end（末段外按 idle 上限复查），省得窗口内 20s 空转 1055
+    var toEnd = (end - now) * 1000 - cfg.openWakeLeadMs;
+    return Math.max(
+      cfg.openWakeMinMs,
+      Math.min(toEnd > 0 ? toEnd : cfg.activeScanInterval, cfg.idleScanInterval),
+    );
+  }
+  // 冷启动/重启防往返傻动：刷新后 scoreMaxed 是初值 false，若直接驻军、同轮稍后才发现分已满→下轮又撤回，白跑一来回。
+  //   故未探过积分的首轮先查一次 1057（claimRewards 内含刷满判定）：若已满则本轮不驻军，直接交下轮顶部 scoreMaxed 分支收尾（只撤刷新前遗留的驻井兵）。
+  if (!scoreProbed) {
+    scoreProbed = true;
+    lastRewardScanAt = Date.now();
+    rewardDirty = false;
+    await claimRewards();
+    if (!aliveFn()) return 0;
+    if (scoreMaxed) return cfg.activeScanInterval; // 已满：本轮不驻军
+  }
+  // 驻军与领奖各自按「唤醒意图 + 兜底间隔」门控，互不搭顺风车：
+  //   10029 积分 push 只置 rewardDirty→只跑领奖，不触发驻军的 856；11017/撤田到家只置 garrisonDirty→只跑驻军。
+  //   两者各有兜底间隔（active/rewardScanMinGap），保证任一路径漏 push 也能周期复查。
+  var wallG = Date.now();
+  if (garrisonDirty || wallG - lastGarrisonAt >= cfg.activeScanInterval) {
+    lastGarrisonAt = wallG;
+    garrisonDirty = false;
+    await garrisonPass(list);
+    if (!aliveFn()) return 0;
+  }
+  var wallC = Date.now();
+  if (rewardDirty || wallC - lastRewardScanAt >= cfg.rewardScanMinGap) {
+    lastRewardScanAt = wallC;
+    rewardDirty = false;
+    await claimRewards();
+    if (!aliveFn()) return 0;
+  }
+  if (cycle.pending) return 0;
+  return cfg.activeScanInterval;
 }
 
 /** @type {{kick: function(), pending: boolean}} 调和循环驱动器（fallback 取 active 档，防异常停摆） */
-const cycle = createCycle({ log: log, alive: aliveFn, run: cycleRun, fallback: cfg.activeScanInterval });
+const cycle = createCycle({
+  log: log,
+  alive: aliveFn,
+  run: cycleRun,
+  fallback: cfg.activeScanInterval,
+});
 
 // ── 推送入口 ─────────────────────────────────────────────────────────
 /**
  * 由推送触发的补扫（去抖）：距上次补扫 < pushScanMinGap 则忽略（仅靠兜底定时收尾）。
  */
 function pushWake() {
-    if (!aliveFn()) return;
-    var wall = Date.now();
-    if (wall - lastPushScanAt < cfg.pushScanMinGap) return;
-    lastPushScanAt = wall;
-    cycle.kick();
+  if (!aliveFn()) return;
+  var wall = Date.now();
+  if (wall - lastPushScanAt < cfg.pushScanMinGap) return;
+  lastPushScanAt = wall;
+  cycle.kick();
 }
 
 /** 11017 单井归属/占领变化：可能刚变成我盟所有 → 置驻军脏标记，唤醒补扫驻军。 */
 function onGunFightInfoPush() {
-    garrisonDirty = true;
-    pushWake();
+  garrisonDirty = true;
+  pushWake();
 }
 
 /** 10029 个人积分/已领刷新：积分可能跨过新档位 → 置脏标记，下轮 cycleRun 无视兜底间隔立即领奖一次。 */
 function onRewardPush() {
-    rewardDirty = true;
-    pushWake();
+  rewardDirty = true;
+  pushWake();
 }
 
 /**
@@ -658,19 +730,22 @@ function onRewardPush() {
  * @param {object} m 归一化 March
  */
 function onMarchArrivedHome(m) {
-    if (!aliveFn()) return;
-    var mid = m && m.id;
-    if (!mid || !pendingRecall.has(mid)) return;   // 不是我们撤的（驻军/其它行军回城），不唤醒
-    pendingRecall.delete(mid);
-    if (recalledForGarrison.has(mid)) {
-        recalledForGarrison.delete(mid);
-        log.debug('recalled farm march arrived home (marchId=%s), slot freed → fast garrison fill.', mid);
-        fillOneSiloFast();
-        return;
-    }
-    log.debug('recalled march arrived home (marchId=%s).', mid);
-    garrisonDirty = true;
-    pushWake();
+  if (!aliveFn()) return;
+  var mid = m && m.id;
+  if (!mid || !pendingRecall.has(mid)) return; // 不是我们撤的（驻军/其它行军回城），不唤醒
+  pendingRecall.delete(mid);
+  if (recalledForGarrison.has(mid)) {
+    recalledForGarrison.delete(mid);
+    log.debug(
+      'recalled farm march arrived home (marchId=%s), slot freed → fast garrison fill.',
+      mid,
+    );
+    fillOneSiloFast();
+    return;
+  }
+  log.debug('recalled march arrived home (marchId=%s).', mid);
+  garrisonDirty = true;
+  pushWake();
 }
 
 /** @type {Function|null} march.onHomeReturn 退订句柄（防 resume 重激活重复注册） */
@@ -684,29 +759,30 @@ var offHomeReturn = null;
  * @returns {boolean}
  */
 function install(ctx) {
-    ctxRef = ctx;
-    if (installed) return true;
+  ctxRef = ctx;
+  if (installed) return true;
 
-    var missing = [];
+  var missing = [];
 
-    net = ctx.net;
-    if (!net.install()) {
-        missing.push('pocketcc.net');
-        net = null;
-    }
+  net = ctx.net;
+  if (!net.install()) {
+    missing.push('pocketcc.net');
+    net = null;
+  }
 
-    var dc = game.get('DataCenter');
-    dataCenter = (dc && dc.DATA) || (missing.push('DataCenter'), null);
+  var dc = game.get('DataCenter');
+  dataCenter = (dc && dc.DATA) || (missing.push('DataCenter'), null);
 
-    if (missing.length) {
-        net = null; dataCenter = null;
-        log.warn('install failed. missing=%s', missing.join(';'));
-        return false;
-    }
+  if (missing.length) {
+    net = null;
+    dataCenter = null;
+    log.warn('install failed. missing=%s', missing.join(';'));
+    return false;
+  }
 
-    installed = true;
-    log.info('installed.');
-    return true;
+  installed = true;
+  log.info('installed.');
+  return true;
 }
 
 /**
@@ -715,26 +791,26 @@ function install(ctx) {
  * @param {object} ctx reactor 上下文
  */
 function run(ctx) {
-    ctxRef = ctx;
-    inWindow = false;
-    lastPushScanAt = 0;
-    lastRewardScanAt = 0;
-    rewardDirty = true;   // 点火首轮强制查一次 1057（进场时可能有已达标未领的档位），之后靠 10029/兜底驱动
-    lastGarrisonAt = 0;
-    garrisonDirty = true;  // 点火首轮强制驻军一轮，之后靠 11017/撤田到家/兜底驱动
-    scoreProbed = false;   // 冷启动/resume 首轮先探一次积分再决定驻军（防“先驻→发现满→又撤”往返）
-    // 注：scoreMaxed/windDownDone 不在此复位——resume 会重跑 run，复位会丢弃刷满收尾状态导致重驻又重撤；
-    //         只在窗口关闭(!inWindow) 时复位，同一活动窗口内跨 pause/resume 保留。
-    pendingRecall.clear();
-    coordCache = {};
-    garrisonQueue = [];
-    recalledForGarrison.clear();   // 清上一轮残留的待驻/腾位标记（resume 后由 garrisonPass 从 1055 权威重建）
-    ctx.on.push(PUSH_GUN_FIGHT_INFO, onGunFightInfoPush);
-    ctx.on.push(PUSH_GUN_FIGHT_REWARD_INFO, onRewardPush);
-    if (offHomeReturn) offHomeReturn();   // 先退再挂，防 resume 重激活重复注册
-    offHomeReturn = march.onHomeReturn(onMarchArrivedHome);
-    log.info('started (驻军+领积分 内置默认;撤田腾队列=%s).', modCfg.recallFarm ? '开' : '关');
-    cycle.kick();
+  ctxRef = ctx;
+  inWindow = false;
+  lastPushScanAt = 0;
+  lastRewardScanAt = 0;
+  rewardDirty = true; // 点火首轮强制查一次 1057（进场时可能有已达标未领的档位），之后靠 10029/兜底驱动
+  lastGarrisonAt = 0;
+  garrisonDirty = true; // 点火首轮强制驻军一轮，之后靠 11017/撤田到家/兜底驱动
+  scoreProbed = false; // 冷启动/resume 首轮先探一次积分再决定驻军（防“先驻→发现满→又撤”往返）
+  // 注：scoreMaxed/windDownDone 不在此复位——resume 会重跑 run，复位会丢弃刷满收尾状态导致重驻又重撤；
+  //         只在窗口关闭(!inWindow) 时复位，同一活动窗口内跨 pause/resume 保留。
+  pendingRecall.clear();
+  coordCache = {};
+  garrisonQueue = [];
+  recalledForGarrison.clear(); // 清上一轮残留的待驻/腾位标记（resume 后由 garrisonPass 从 1055 权威重建）
+  ctx.on.push(PUSH_GUN_FIGHT_INFO, onGunFightInfoPush);
+  ctx.on.push(PUSH_GUN_FIGHT_REWARD_INFO, onRewardPush);
+  if (offHomeReturn) offHomeReturn(); // 先退再挂，防 resume 重激活重复注册
+  offHomeReturn = march.onHomeReturn(onMarchArrivedHome);
+  log.info('started (驻军+领积分 内置默认;撤田腾队列=%s).', modCfg.recallFarm ? '开' : '关');
+  cycle.kick();
 }
 
 /**
@@ -742,7 +818,7 @@ function run(ctx) {
  * @param {object} c 模块配置 { recallFarm:boolean }
  */
 function configure(c) {
-    modCfg = { recallFarm: !!(c && c.recallFarm) };
+  modCfg = { recallFarm: !!(c && c.recallFarm) };
 }
 
 /**
@@ -750,18 +826,25 @@ function configure(c) {
  * 驻军 / 领积分为内置默认行为；「队列不足撤田腾位」为面板可选项（默认勾选）。
  */
 reactor.register({
-    id: 'launchSilo',
-    label: '占领发射井',
-    storageKey: 'pocketcc.feat.launchSilo',
-    symbols: ['dataCenter', 'tableManager', 'tableName', 'tableUtils'],
-    scenes: ['Home', 'NWorldMap'],
-    offInCombat: true,
-    defaults: { enabled: false, recallFarm: true },
-    fields: [
-        { key: 'recallFarm', type: 'checkbox', label: '撤田腾队列', hint: '行军队列不足时，撤回一条下田采集行军腾出名额驻井；关闭则只在有空闲队列时驻军，不主动撤田' },
-    ],
-    toModuleCfg: function (c) { return { recallFarm: !!(c && c.recallFarm) }; },
-    configure: configure,
-    install: install,
-    run: run,
+  id: 'launchSilo',
+  label: '占领发射井',
+  storageKey: 'pocketcc.feat.launchSilo',
+  symbols: ['dataCenter', 'tableManager', 'tableName', 'tableUtils'],
+  scenes: ['Home', 'NWorldMap'],
+  offInCombat: true,
+  defaults: { enabled: false, recallFarm: true },
+  fields: [
+    {
+      key: 'recallFarm',
+      type: 'checkbox',
+      label: '撤田腾队列',
+      hint: '行军队列不足时，撤回一条下田采集行军腾出名额驻井；关闭则只在有空闲队列时驻军，不主动撤田',
+    },
+  ],
+  toModuleCfg: function (c) {
+    return { recallFarm: !!(c && c.recallFarm) };
+  },
+  configure: configure,
+  install: install,
+  run: run,
 });

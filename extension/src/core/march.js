@@ -49,13 +49,22 @@ const ITEM_SPEED_UP_ADVANCED = 520002;
  */
 const State = { INIT: 0, MARCHING: 1, ARRIVED: 2, RETURNING: 3, ARRIVED_HOME: 4, GATHERING: 5 };
 /** @type {Object<number,string>} 数值 → 成员名（展示/dump 用） */
-const STATE_NAME = { 0: 'INIT', 1: 'MARCHING', 2: 'ARRIVED', 3: 'RETURNING', 4: 'ARRIVED_HOME', 5: 'GATHERING' };
+const STATE_NAME = {
+  0: 'INIT',
+  1: 'MARCHING',
+  2: 'ARRIVED',
+  3: 'RETURNING',
+  4: 'ARRIVED_HOME',
+  5: 'GATHERING',
+};
 
 /** @type {number} 非服务器返回的哨兵 code：发送异常/在途闸门未放开时用（收编各 feat 行军处 CODE_NOT_SENT） */
 const NOT_SENT = -1;
 
 /** @returns {object|undefined} pocketcc.net 底座（懒取，install 时机可能早于底座安装） */
-function net() { return window.pocketcc && window.pocketcc.net; }
+function net() {
+  return window.pocketcc && window.pocketcc.net;
+}
 
 /**
  * 应答 data 归一化：旧 JSON 链路 data 常为字符串（game 侧 JSON_PARSE(t.d)），兜底已解析对象。
@@ -63,35 +72,46 @@ function net() { return window.pocketcc && window.pocketcc.net; }
  * @returns {object|null} 解析后的对象；空/解析失败返回 null
  */
 function parseData(d) {
-    if (d == null) return null;
-    if (typeof d === 'object') return d;
-    if (typeof d === 'string') { try { return JSON.parse(d); } catch (err) { return null; } }
-    return null;
+  if (d == null) return null;
+  if (typeof d === 'object') return d;
+  if (typeof d === 'string') {
+    try {
+      return JSON.parse(d);
+    } catch (err) {
+      return null;
+    }
+  }
+  return null;
 }
 
 /** 取第一个「非 null/undefined」数值（|0），全空回 def */
 function firstNum() {
-    for (var i = 0; i < arguments.length; i++) {
-        var v = arguments[i];
-        if (v != null && v !== '') return v | 0;
-    }
-    return 0;
+  for (var i = 0; i < arguments.length; i++) {
+    var v = arguments[i];
+    if (v != null && v !== '') return v | 0;
+  }
+  return 0;
 }
 
 /** 时刻专用取第一个可解析正数值（不做 |0 截断）：行军时刻为 epoch 秒（2038 前 <2^31 安全），
  *  但若某来源以毫秒下发，firstNum 的 |0 会静默截成负数、令调用方 >0 判据全体失效，故不截断。 */
 function firstTime() {
-    for (var i = 0; i < arguments.length; i++) {
-        var v = Number(arguments[i]);
-        if (isFinite(v) && v > 0) return v;
-    }
-    return 0;
+  for (var i = 0; i < arguments.length; i++) {
+    var v = Number(arguments[i]);
+    if (isFinite(v) && v > 0) return v;
+  }
+  return 0;
 }
 
 /** net 缺失时的降级 Ret（无 Ret 类可用） */
-function fallbackRet() { return { ok: false, code: NOT_SENT, data: null }; }
+function fallbackRet() {
+  return { ok: false, code: NOT_SENT, data: null };
+}
 /** 在途/异常哨兵 Ret */
-function notSentRet() { var n = net(); return (n && n.Ret) ? n.Ret.from(NOT_SENT, null) : fallbackRet(); }
+function notSentRet() {
+  var n = net();
+  return n && n.Ret ? n.Ret.from(NOT_SENT, null) : fallbackRet();
+}
 
 /**
  * 是否占用矿位/名额：非返程(RETURNING)、非到家(ARRIVED_HOME)。
@@ -100,7 +120,7 @@ function notSentRet() { var n = net(); return (n && n.Ret) ? n.Ret.from(NOT_SENT
  * @returns {boolean}
  */
 function isOccupying(m) {
-    return !!(m && m.state !== State.RETURNING && m.state !== State.ARRIVED_HOME);
+  return !!(m && m.state !== State.RETURNING && m.state !== State.ARRIVED_HOME);
 }
 
 /**
@@ -118,39 +138,52 @@ function isOccupying(m) {
  * @returns {object|null} March = {id:str,type,state,stateName,isOccupying,target:{x,y,itemId},marchStartTime,marchArrive,returnArriveTime,raw}
  */
 function decode(rawEntry) {
-    if (!rawEntry || typeof rawEntry !== 'object') return null;
-    var mi = rawEntry.marchInfo || null;
-    var stateSrc = mi || rawEntry;
-    var state = mi ? (mi.state != null ? mi.state | 0 : (rawEntry.marchState != null ? rawEntry.marchState | 0 : stateSrc.state | 0))
-        : (rawEntry.marchState != null ? rawEntry.marchState | 0 : rawEntry.state | 0);
-    var type = firstNum(mi && mi.marchType, rawEntry.marchType);
-    var idRaw = (mi && mi.marchId != null) ? mi.marchId
-        : (rawEntry.marchId != null ? rawEntry.marchId : (rawEntry.id != null ? rawEntry.id : null));
-    var id = idRaw != null ? String(idRaw) : '';
-    var mt = mi && mi.target;
-    var et = rawEntry.target;
-    var x = firstNum(rawEntry.target_tx, mt && mt.tx, et && et.tx, mi && mi.tx);
-    var y = firstNum(rawEntry.target_ty, mt && mt.ty, et && et.ty, mi && mi.ty);
-    var itemId = firstNum(rawEntry.itemId, mt && mt.itemId, et && et.itemId, mi && mi.itemId);
-    // 行军时刻（服务器 epoch 秒）：嵌套 marchInfo.* 优先，回落摊平顶层；缺省 0（不代表返程未发生，交由调用方 >0 判）。
-    //   加速(920)后到达点由 10019 边沿更新到 marchInfo.marchArrive（state 不变），归一化后快照读它即拿到加速后的新到达。
-    var timeSrc = mi || rawEntry;
-    var marchStartTime = firstTime(timeSrc.marchStartTime, rawEntry.marchStartTime);
-    var marchArrive = firstTime(timeSrc.marchArrive, rawEntry.marchArrive);
-    var returnArriveTime = firstTime(timeSrc.returnArriveTime, rawEntry.returnArriveTime);
-    var m = {
-        id: id,
-        type: type,
-        state: state,
-        stateName: STATE_NAME[state] || '',
-        isOccupying: state !== State.RETURNING && state !== State.ARRIVED_HOME,
-        target: { x: x, y: y, itemId: itemId },
-        marchStartTime: marchStartTime,
-        marchArrive: marchArrive,
-        returnArriveTime: returnArriveTime,
-        raw: rawEntry,
-    };
-    return m;
+  if (!rawEntry || typeof rawEntry !== 'object') return null;
+  var mi = rawEntry.marchInfo || null;
+  var stateSrc = mi || rawEntry;
+  var state = mi
+    ? mi.state != null
+      ? mi.state | 0
+      : rawEntry.marchState != null
+        ? rawEntry.marchState | 0
+        : stateSrc.state | 0
+    : rawEntry.marchState != null
+      ? rawEntry.marchState | 0
+      : rawEntry.state | 0;
+  var type = firstNum(mi && mi.marchType, rawEntry.marchType);
+  var idRaw =
+    mi && mi.marchId != null
+      ? mi.marchId
+      : rawEntry.marchId != null
+        ? rawEntry.marchId
+        : rawEntry.id != null
+          ? rawEntry.id
+          : null;
+  var id = idRaw != null ? String(idRaw) : '';
+  var mt = mi && mi.target;
+  var et = rawEntry.target;
+  var x = firstNum(rawEntry.target_tx, mt && mt.tx, et && et.tx, mi && mi.tx);
+  var y = firstNum(rawEntry.target_ty, mt && mt.ty, et && et.ty, mi && mi.ty);
+  var itemId = firstNum(rawEntry.itemId, mt && mt.itemId, et && et.itemId, mi && mi.itemId);
+  // 行军时刻（服务器 epoch 秒）：嵌套 marchInfo.* 优先，回落摊平顶层；缺省 0（不代表返程未发生，交由调用方 >0 判）。
+  //   加速(920)后到达点由 10019 边沿更新到 marchInfo.marchArrive（state 不变），归一化后快照读它即拿到加速后的新到达。
+  var timeSrc = mi || rawEntry;
+  var marchStartTime = firstTime(timeSrc.marchStartTime, rawEntry.marchStartTime);
+  var marchArrive = firstTime(timeSrc.marchArrive, rawEntry.marchArrive);
+  var returnArriveTime = firstTime(timeSrc.returnArriveTime, rawEntry.returnArriveTime);
+  var m = {
+    id: id,
+    type: type,
+    state: state,
+    stateName: STATE_NAME[state] || '',
+    isOccupying: state !== State.RETURNING && state !== State.ARRIVED_HOME,
+    target: { x: x, y: y, itemId: itemId },
+    marchStartTime: marchStartTime,
+    marchArrive: marchArrive,
+    returnArriveTime: returnArriveTime,
+    raw: rawEntry,
+  };
+  return m;
 }
 
 // ── 列表（856 权威读，区分「读不到」与「确实 0 条」） ────────────────────
@@ -164,24 +197,38 @@ var _listInflight = null;
  * @returns {Promise<object[]|null>}
  */
 function _fetch() {
-    if (_listInflight) return _listInflight;
-    _listInflight = (async function () {
-        var n = net();
-        if (!n) return null;
-        var ret;
-        try { ret = await n.send(CMD_GET_ALL_MY_MARCH_INFO, {}); }
-        catch (err) { log.debug('856 send failed. %s', err && err.message); return null; }
-        if (!ret || !ret.ok) return null;
-        var d = parseData(ret.data) || {};
-        var arr = Array.isArray(d.marches) ? d.marches : (Array.isArray(d.ret) ? d.ret : null);
-        if (!Array.isArray(arr)) return null;
-        var out = [];
-        for (var i = 0; i < arr.length; i++) { var m = decode(arr[i]); if (m && m.id) out.push(m); }
-        return out;
-    })();
-    // Promise 落定即释放，下 tick 重新打 856
-    _listInflight.then(function () { _listInflight = null; }, function () { _listInflight = null; });
-    return _listInflight;
+  if (_listInflight) return _listInflight;
+  _listInflight = (async function () {
+    var n = net();
+    if (!n) return null;
+    var ret;
+    try {
+      ret = await n.send(CMD_GET_ALL_MY_MARCH_INFO, {});
+    } catch (err) {
+      log.debug('856 send failed. %s', err && err.message);
+      return null;
+    }
+    if (!ret || !ret.ok) return null;
+    var d = parseData(ret.data) || {};
+    var arr = Array.isArray(d.marches) ? d.marches : Array.isArray(d.ret) ? d.ret : null;
+    if (!Array.isArray(arr)) return null;
+    var out = [];
+    for (var i = 0; i < arr.length; i++) {
+      var m = decode(arr[i]);
+      if (m && m.id) out.push(m);
+    }
+    return out;
+  })();
+  // Promise 落定即释放，下 tick 重新打 856
+  _listInflight.then(
+    function () {
+      _listInflight = null;
+    },
+    function () {
+      _listInflight = null;
+    },
+  );
+  return _listInflight;
 }
 
 /**
@@ -192,10 +239,10 @@ function _fetch() {
  * @returns {Promise<object[]>} March[]
  */
 async function list(opt) {
-    if (opt && opt.cache === true) return _cached();
-    var fresh = await _fetch();
-    _seed(fresh);                 // write-through：仅成功（fresh!==null）时替换快照，失败保留旧快照
-    return fresh || [];
+  if (opt && opt.cache === true) return _cached();
+  var fresh = await _fetch();
+  _seed(fresh); // write-through：仅成功（fresh!==null）时替换快照，失败保留旧快照
+  return fresh || [];
 }
 
 /**
@@ -204,11 +251,11 @@ async function list(opt) {
  * @returns {Promise<object|null>} March 或 null
  */
 async function byId(id) {
-    if (id == null || id === '') return null;
-    var key = String(id);
-    var ms = await list();
-    for (var i = 0; i < ms.length; i++) if (ms[i].id === key) return ms[i];
-    return null;
+  if (id == null || id === '') return null;
+  var key = String(id);
+  var ms = await list();
+  for (var i = 0; i < ms.length; i++) if (ms[i].id === key) return ms[i];
+  return null;
 }
 
 // ── 名额（同步读 UserData，服务端跨场景可靠）──────────────────────
@@ -218,8 +265,8 @@ async function byId(id) {
  * @returns {number} 空闲槽数（数据源缺失按 0 计）
  */
 function freeSlots() {
-    var c = gameData.marchCount();
-    return (c.max | 0) - (c.used | 0);
+  var c = gameData.marchCount();
+  return (c.max | 0) - (c.used | 0);
 }
 
 /**
@@ -227,7 +274,9 @@ function freeSlots() {
  * @param {number} [n=1] 需要的名额
  * @returns {boolean}
  */
-function canMarch(n) { return freeSlots() >= (n == null ? 1 : n | 0); }
+function canMarch(n) {
+  return freeSlots() >= (n == null ? 1 : n | 0);
+}
 
 // ── 发 / 撤 / 加速（marchType 外部传入，返回 net.Ret，永不 reject） ─────
 /**
@@ -237,27 +286,31 @@ function canMarch(n) { return freeSlots() >= (n == null ? 1 : n | 0); }
  * @returns {Promise<object>} net.Ret（异常/在途回落 code=NOT_SENT）
  */
 async function attack(opt) {
-    opt = opt || {};
-    var d = opt.data || {};
-    var target = opt.target || {};
-    var body = {
-        marchType: opt.marchType,
-        x: target.x,
-        y: target.y,
-        armyList: d.armyListNew,
-        armyListNew: d.armyListNew,
-        heroList: d.heroList,
-        trapList: d.trapList,
-        break: 0,
-        formation: 0,
-        formationV2: d.formationV2,
-        extraArmy: d.extraArmy,
-    };
-    var n = net();
-    if (!n) return fallbackRet();
-    if (n.isSending(CMD_MARCH_WORLD_POINT)) return notSentRet();
-    try { return await n.send(CMD_MARCH_WORLD_POINT, body); }
-    catch (err) { log.warn('902 send error. x=%s;y=%s', target.x, target.y, err); return notSentRet(); }
+  opt = opt || {};
+  var d = opt.data || {};
+  var target = opt.target || {};
+  var body = {
+    marchType: opt.marchType,
+    x: target.x,
+    y: target.y,
+    armyList: d.armyListNew,
+    armyListNew: d.armyListNew,
+    heroList: d.heroList,
+    trapList: d.trapList,
+    break: 0,
+    formation: 0,
+    formationV2: d.formationV2,
+    extraArmy: d.extraArmy,
+  };
+  var n = net();
+  if (!n) return fallbackRet();
+  if (n.isSending(CMD_MARCH_WORLD_POINT)) return notSentRet();
+  try {
+    return await n.send(CMD_MARCH_WORLD_POINT, body);
+  } catch (err) {
+    log.warn('902 send error. x=%s;y=%s', target.x, target.y, err);
+    return notSentRet();
+  }
 }
 
 /**
@@ -274,22 +327,35 @@ async function attack(opt) {
  * @returns {Promise<object>} net.Ret
  */
 async function pickUp(opt) {
-    opt = opt || {};
-    var t = opt.target || {};
-    var marchType = opt.marchType | 0;
-    var x = t.x != null ? t.x : t.pointX;
-    var y = t.y != null ? t.y : t.pointY;
-    var n = net();
-    if (!n) return fallbackRet();
-    var body;
-    if (opt.ext) {
-        body = { marchType: marchType, x: x, y: y, armyList: [], armyListNew: [], heroList: [], trapList: [], ext: opt.ext };
-    } else {
-        body = { marchType: marchType, x: x, y: y };
-        if (opt.bodyExtra && typeof opt.bodyExtra === 'object') Object.assign(body, opt.bodyExtra);
-    }
-    try { return await n.send(CMD_MARCH_WORLD_POINT, body); }
-    catch (err) { log.warn('902 pickUp error. marchType=%d;x=%s;y=%s', marchType, x, y, err); return notSentRet(); }
+  opt = opt || {};
+  var t = opt.target || {};
+  var marchType = opt.marchType | 0;
+  var x = t.x != null ? t.x : t.pointX;
+  var y = t.y != null ? t.y : t.pointY;
+  var n = net();
+  if (!n) return fallbackRet();
+  var body;
+  if (opt.ext) {
+    body = {
+      marchType: marchType,
+      x: x,
+      y: y,
+      armyList: [],
+      armyListNew: [],
+      heroList: [],
+      trapList: [],
+      ext: opt.ext,
+    };
+  } else {
+    body = { marchType: marchType, x: x, y: y };
+    if (opt.bodyExtra && typeof opt.bodyExtra === 'object') Object.assign(body, opt.bodyExtra);
+  }
+  try {
+    return await n.send(CMD_MARCH_WORLD_POINT, body);
+  } catch (err) {
+    log.warn('902 pickUp error. marchType=%d;x=%s;y=%s', marchType, x, y, err);
+    return notSentRet();
+  }
 }
 
 /**
@@ -298,10 +364,14 @@ async function pickUp(opt) {
  * @returns {Promise<object>} net.Ret
  */
 async function recall(marchId) {
-    var n = net();
-    if (!n) return fallbackRet();
-    try { return await n.send(CMD_RECALL_MARCH, { marchId: marchId }); }
-    catch (err) { log.warn('904 recall error. marchId=%s', marchId, err); return notSentRet(); }
+  var n = net();
+  if (!n) return fallbackRet();
+  try {
+    return await n.send(CMD_RECALL_MARCH, { marchId: marchId });
+  } catch (err) {
+    log.warn('904 recall error. marchId=%s', marchId, err);
+    return notSentRet();
+  }
 }
 
 /**
@@ -318,13 +388,21 @@ async function recall(marchId) {
  * @returns {Promise<object>} net.Ret
  */
 async function speedUp(marchId, opt) {
-    opt = opt || {};
-    var itemId = opt.itemId != null ? (opt.itemId | 0)
-        : (opt.advanced ? ITEM_SPEED_UP_ADVANCED : ITEM_SPEED_UP_NORMAL);
-    var n = net();
-    if (!n) return fallbackRet();
-    try { return await n.send(CMD_MARCH_SPEED_UP, { marchId: marchId, itemId: itemId }); }
-    catch (err) { log.warn('920 speedUp error. marchId=%s;itemId=%d', marchId, itemId, err); return notSentRet(); }
+  opt = opt || {};
+  var itemId =
+    opt.itemId != null
+      ? opt.itemId | 0
+      : opt.advanced
+        ? ITEM_SPEED_UP_ADVANCED
+        : ITEM_SPEED_UP_NORMAL;
+  var n = net();
+  if (!n) return fallbackRet();
+  try {
+    return await n.send(CMD_MARCH_SPEED_UP, { marchId: marchId, itemId: itemId });
+  } catch (err) {
+    log.warn('920 speedUp error. marchId=%s;itemId=%d', marchId, itemId, err);
+    return notSentRet();
+  }
 }
 
 // ── 生命周期（全局单点常驻 10019 → 边沿检测 → 内部复播） ────────────────
@@ -335,18 +413,22 @@ var _known = new Map();
 
 /** 10019 推送处理：解码 → 同步进快照缓存 → 与上次已知态比对 → 仅状态边沿迁移时复播；到家后清基线防内存涨 */
 function _onPush(ev) {
-    var m = decode(ev && ev.data);
-    if (!m || !m.id) return;
-    _cacheApply(m);
-    var prev = _known.get(m.id);
-    _known.set(m.id, m);
-    if (prev && prev.state !== m.state) {
-        for (var sub of [..._stateSubs]) {
-            if (sub.to != null && m.state !== sub.to) continue;
-            try { sub.cb(m, prev); } catch (err) { log.warn('march state listener threw', err); }
-        }
+  var m = decode(ev && ev.data);
+  if (!m || !m.id) return;
+  _cacheApply(m);
+  var prev = _known.get(m.id);
+  _known.set(m.id, m);
+  if (prev && prev.state !== m.state) {
+    for (var sub of [..._stateSubs]) {
+      if (sub.to != null && m.state !== sub.to) continue;
+      try {
+        sub.cb(m, prev);
+      } catch (err) {
+        log.warn('march state listener threw', err);
+      }
     }
-    if (m.state === State.ARRIVED_HOME) _known.delete(m.id);
+  }
+  if (m.state === State.ARRIVED_HOME) _known.delete(m.id);
 }
 
 /**
@@ -357,11 +439,13 @@ function _onPush(ev) {
  * @returns {Function} off（feat 需在卸载/重挂前调用防重激活重复注册）
  */
 function onStateChange(cb, opt) {
-    if (typeof cb !== 'function') return function () {};
-    var to = (opt && typeof opt.to === 'number') ? opt.to : null;
-    var sub = { cb: cb, to: to };
-    _stateSubs.add(sub);
-    return function off() { _stateSubs.delete(sub); };
+  if (typeof cb !== 'function') return function () {};
+  var to = opt && typeof opt.to === 'number' ? opt.to : null;
+  var sub = { cb: cb, to: to };
+  _stateSubs.add(sub);
+  return function off() {
+    _stateSubs.delete(sub);
+  };
 }
 
 /**
@@ -369,7 +453,9 @@ function onStateChange(cb, opt) {
  * @param {function(object, object=):void} cb (m:March, prev?:March)
  * @returns {Function} off
  */
-function onHomeReturn(cb) { return onStateChange(cb, { to: State.ARRIVED_HOME }); }
+function onHomeReturn(cb) {
+  return onStateChange(cb, { to: State.ARRIVED_HOME });
+}
 
 // ── 快照（list({cache:true}) 的后端；856 播种 + 10019 边沿实时维护 + TTL 兑底刷新） ──
 /** @type {Map<string,object>} id → March（本人全量在途视图，与 list() 同归一化形状） */
@@ -394,17 +480,22 @@ const SNAPSHOT_TTL_MS = 8000;
  * @param {object} m decode() 产出的 March
  */
 function _cacheApply(m) {
-    if (!m || !m.id) return;
-    if (m.state === State.ARRIVED_HOME) { _cache.delete(m.id); return; }
-    var prev = _cache.get(m.id);
-    if (prev) {
-        if ((!m.target || (m.target.x === 0 && m.target.y === 0)) && prev.target) m.target = prev.target;
-        if (!m.type && prev.type) m.type = prev.type;
-        if (!(m.marchArrive > 0) && prev.marchArrive > 0) m.marchArrive = prev.marchArrive;
-        if (!(m.marchStartTime > 0) && prev.marchStartTime > 0) m.marchStartTime = prev.marchStartTime;
-        if (!(m.returnArriveTime > 0) && prev.returnArriveTime > 0) m.returnArriveTime = prev.returnArriveTime;
-    }
-    _cache.set(m.id, m);
+  if (!m || !m.id) return;
+  if (m.state === State.ARRIVED_HOME) {
+    _cache.delete(m.id);
+    return;
+  }
+  var prev = _cache.get(m.id);
+  if (prev) {
+    if ((!m.target || (m.target.x === 0 && m.target.y === 0)) && prev.target)
+      m.target = prev.target;
+    if (!m.type && prev.type) m.type = prev.type;
+    if (!(m.marchArrive > 0) && prev.marchArrive > 0) m.marchArrive = prev.marchArrive;
+    if (!(m.marchStartTime > 0) && prev.marchStartTime > 0) m.marchStartTime = prev.marchStartTime;
+    if (!(m.returnArriveTime > 0) && prev.returnArriveTime > 0)
+      m.returnArriveTime = prev.returnArriveTime;
+  }
+  _cache.set(m.id, m);
 }
 
 /**
@@ -412,27 +503,34 @@ function _cacheApply(m) {
  * @param {object[]|null} arr _fetch() 结果
  */
 function _seed(arr) {
-    if (!arr) return;
-    _cache.clear();
-    for (var i = 0; i < arr.length; i++) { var m = arr[i]; if (m && m.id) _cache.set(m.id, m); }
-    _lastSync = Date.now();
+  if (!arr) return;
+  _cache.clear();
+  for (var i = 0; i < arr.length; i++) {
+    var m = arr[i];
+    if (m && m.id) _cache.set(m.id, m);
+  }
+  _lastSync = Date.now();
 }
 
 /** 快照是否需重同步：有新鲜数据(false)；否则距上次尝试≥TTL 才再打(true)——失败也按 TTL 节流。 */
 function _stale() {
-    var now = Date.now();
-    if (_lastSync && now - _lastSync <= SNAPSHOT_TTL_MS) return false;
-    return !(_lastAttempt && now - _lastAttempt < SNAPSHOT_TTL_MS);
+  var now = Date.now();
+  if (_lastSync && now - _lastSync <= SNAPSHOT_TTL_MS) return false;
+  return !(_lastAttempt && now - _lastAttempt < SNAPSHOT_TTL_MS);
 }
 
 /** 打一次 856 刷新快照（成功才 _seed）。并发合流复用在飞 Promise；永不 reject。 */
 function _refresh() {
-    if (_syncing) return _syncing;
-    _lastAttempt = Date.now();
-    _syncing = (async function () {
-        try { _seed(await _fetch()); } finally { _syncing = null; }
-    })();
-    return _syncing;
+  if (_syncing) return _syncing;
+  _lastAttempt = Date.now();
+  _syncing = (async function () {
+    try {
+      _seed(await _fetch());
+    } finally {
+      _syncing = null;
+    }
+  })();
+  return _syncing;
 }
 
 /**
@@ -440,11 +538,11 @@ function _refresh() {
  * @returns {Promise<object[]>} March 数组（本人全量在途；不保证强一致：边沿实时更新 + TTL 兑底）
  */
 async function _cached() {
-    if (_stale()) await _refresh();
-    else if (_syncing) await _syncing;
-    var out = [];
-    for (var m of _cache.values()) out.push(m);
-    return out;
+  if (_stale()) await _refresh();
+  else if (_syncing) await _syncing;
+  var out = [];
+  for (var m of _cache.values()) out.push(m);
+  return out;
 }
 
 // 模块加载即挂一条常驻 10019（全局单点，非 ctx 级、非引用计数）；dispatch 懒构造据此判 net.10019 有人订阅
@@ -452,20 +550,20 @@ bus.on('net.' + CMD_USER_MARCH_INFO, _onPush);
 
 /** 行军统一抽象单例 */
 export const march = {
-    State,
-    NOT_SENT,
-    ITEM_SPEED_UP_NORMAL,
-    ITEM_SPEED_UP_ADVANCED,
-    isOccupying,
-    decode,
-    list,
-    byId,
-    freeSlots,
-    canMarch,
-    attack,
-    pickUp,
-    recall,
-    speedUp,
-    onStateChange,
-    onHomeReturn,
+  State,
+  NOT_SENT,
+  ITEM_SPEED_UP_NORMAL,
+  ITEM_SPEED_UP_ADVANCED,
+  isOccupying,
+  decode,
+  list,
+  byId,
+  freeSlots,
+  canMarch,
+  attack,
+  pickUp,
+  recall,
+  speedUp,
+  onStateChange,
+  onHomeReturn,
 };

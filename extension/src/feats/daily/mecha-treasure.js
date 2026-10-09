@@ -91,23 +91,21 @@ const CODE_NOT_SENT = -1;
  * @type {object}
  */
 const cfg = {
+  /**
+   * 活跃扫描间隔：默认1分钟。本轮扫描发现可攻打使徒时用这档，勤扫趁使徒未「潜逃」多打
+   */
+  activeScanInterval: 1000 * 60,
 
-    /**
-     * 活跃扫描间隔：默认1分钟。本轮扫描发现可攻打使徒时用这档，勤扫趁使徒未「潜逃」多打
-     */
-    activeScanInterval: 1000 * 60,
+  /**
+   * 空转扫描间隔：默认10分钟。连续 EMPTY_STREAK_IDLE 次扫描都没使徒后降到这档，少刷 8802。
+   * 推送 10912 仍是主触发源，新使徒一刷出即被推醒，不必等这档定时
+   */
+  idleScanInterval: 1000 * 60 * 10,
 
-    /**
-     * 空转扫描间隔：默认10分钟。连续 EMPTY_STREAK_IDLE 次扫描都没使徒后降到这档，少刷 8802。
-     * 推送 10912 仍是主触发源，新使徒一刷出即被推醒，不必等这档定时
-     */
-    idleScanInterval: 1000 * 60 * 10,
-
-    /**
-     * 攻打间隔：默认5秒（消费逐条之间的休眠）。902 过快会被服务器限流，逐条之间休眠规避
-     */
-    marchInterval: 1000 * 5,
-
+  /**
+   * 攻打间隔：默认5秒（消费逐条之间的休眠）。902 过快会被服务器限流，逐条之间休眠规避
+   */
+  marchInterval: 1000 * 5,
 };
 
 /** @type {number} 连续这么多次扫描都没使徒，才把扫描间隔从 active 降到 idle（去抖：单次漏扫不立即降频） */
@@ -143,7 +141,7 @@ var installed = false;
  * @returns {boolean}
  */
 function aliveFn() {
-    return ctxRef ? ctxRef.alive() : false;
+  return ctxRef ? ctxRef.alive() : false;
 }
 
 /**
@@ -152,7 +150,9 @@ function aliveFn() {
  * @returns {Promise<void>}
  */
 function sleep(ms) {
-    return new Promise(function (resolve) { setTimeout(resolve, ms); });
+  return new Promise(function (resolve) {
+    setTimeout(resolve, ms);
+  });
 }
 
 /**
@@ -163,19 +163,23 @@ function sleep(ms) {
  * @returns {number}
  */
 function int64ToNumber(v) {
-    if (v == null) return 0;
-    if (typeof v === 'number') return isFinite(v) ? v : 0;
-    if (typeof v === 'object') {
-        if (typeof v.toNumber === 'function') {
-            try { return Number(v.toNumber()) || 0; } catch (e) { /* 落到高低位拼装 */ }
-        }
-        var hi = Number(v._high != null ? v._high : v.high);
-        var lo = Number(v._low != null ? v._low : v.low);
-        if (isFinite(hi) && isFinite(lo)) return (hi >>> 0) * 4294967296 + (lo >>> 0);
-        return 0;
+  if (v == null) return 0;
+  if (typeof v === 'number') return isFinite(v) ? v : 0;
+  if (typeof v === 'object') {
+    if (typeof v.toNumber === 'function') {
+      try {
+        return Number(v.toNumber()) || 0;
+      } catch (e) {
+        /* 落到高低位拼装 */
+      }
     }
-    var n = Number(v);
-    return isFinite(n) ? n : 0;
+    var hi = Number(v._high != null ? v._high : v.high);
+    var lo = Number(v._low != null ? v._low : v.low);
+    if (isFinite(hi) && isFinite(lo)) return (hi >>> 0) * 4294967296 + (lo >>> 0);
+    return 0;
+  }
+  var n = Number(v);
+  return isFinite(n) ? n : 0;
 }
 
 /**
@@ -184,9 +188,13 @@ function int64ToNumber(v) {
  * @returns {string}
  */
 function safeStringify(v) {
-    if (v == null) return '';
-    if (typeof v === 'string') return v;
-    try { return JSON.stringify(v); } catch (e) { return String(v); }
+  if (v == null) return '';
+  if (typeof v === 'string') return v;
+  try {
+    return JSON.stringify(v);
+  } catch (e) {
+    return String(v);
+  }
 }
 
 /**
@@ -195,64 +203,81 @@ function safeStringify(v) {
  * @returns {Promise<number>}
  */
 async function cycleRun() {
-    await doScan();
-    if (!aliveFn()) return 0;   // pause 中途：consume 不再进入，cycle 在 alive 检查处自然停摆
-    await consume();
-    if (cycle.pending) return 0;
-    return nextScanInterval();
+  await doScan();
+  if (!aliveFn()) return 0; // pause 中途：consume 不再进入，cycle 在 alive 检查处自然停摆
+  await consume();
+  if (cycle.pending) return 0;
+  return nextScanInterval();
 }
 
 /** @type {{kick: function(), pending: boolean}} 调和循环驱动器（fallback 取 active 档，防异常停摆） */
-const cycle = createCycle({ log: log, alive: aliveFn, run: cycleRun, fallback: cfg.activeScanInterval });
+const cycle = createCycle({
+  log: log,
+  alive: aliveFn,
+  run: cycleRun,
+  fallback: cfg.activeScanInterval,
+});
 
 /**
  * 生产端：找活动 → 拉 8802 type=2 → 过滤可攻打使徒 → 整批替换 queue → 交消费。永不 reject。
  * @returns {Promise<void>}
  */
 async function doScan() {
-    try {
-        // 活动并未开启（限时活动，窗口外对 8802 发请求只会被拒）：清空队列，交下拍兜底，算一次空扫
-        var activity = getMechaTreasureActivity();
-        if (!activity) {
-            log.debug('no activity found.');
-            queue.length = 0;
-            emptyStreak++;
-            return;
-        }
-
-        // 在途闸门（游戏面板也在拉同一 cmd）：不静默断链，本轮跳过，由下拍兜底定时补
-        if (net.isSending(CMD_MONSTER_LIST)) {
-            log.debug('8802 in flight, skip this round.');
-            return;
-        }
-
-        var ret = await net.sendPBV2(CMD_MONSTER_LIST, { aid: activity.id, type: MONSTER_LIST_TYPE_WORLD });
-        if (!aliveFn()) return;
-
-        if (!ret.ok || !ret.data) {
-            log.info('monster list rejected. activityId=%d;code=%d;data=%s', activity.id, ret.code, safeStringify(ret.reason || ret.data));
-            queue.length = 0;
-            emptyStreak++;
-            return;
-        }
-
-        var monsters = filterMonsters(activity, ret.data.worldMonsters || []);
-        if (!monsters.length) {
-            log.debug('no attackable monster. total=%d', (ret.data.worldMonsters || []).length);
-            queue.length = 0;
-            emptyStreak++;
-            return;
-        }
-
-        // 每轮 8802 是全量快照，整批替换队列（追加会累积重复使徒）
-        queue = monsters;
-        emptyStreak = 0;
-        log.debug('monsters loaded. count=%d;raw=%d', queue.length, (ret.data.worldMonsters || []).length);
-    } catch (err) {
-        log.warn('scan error.', err);
-        queue.length = 0;
-        emptyStreak++;
+  try {
+    // 活动并未开启（限时活动，窗口外对 8802 发请求只会被拒）：清空队列，交下拍兜底，算一次空扫
+    var activity = getMechaTreasureActivity();
+    if (!activity) {
+      log.debug('no activity found.');
+      queue.length = 0;
+      emptyStreak++;
+      return;
     }
+
+    // 在途闸门（游戏面板也在拉同一 cmd）：不静默断链，本轮跳过，由下拍兜底定时补
+    if (net.isSending(CMD_MONSTER_LIST)) {
+      log.debug('8802 in flight, skip this round.');
+      return;
+    }
+
+    var ret = await net.sendPBV2(CMD_MONSTER_LIST, {
+      aid: activity.id,
+      type: MONSTER_LIST_TYPE_WORLD,
+    });
+    if (!aliveFn()) return;
+
+    if (!ret.ok || !ret.data) {
+      log.info(
+        'monster list rejected. activityId=%d;code=%d;data=%s',
+        activity.id,
+        ret.code,
+        safeStringify(ret.reason || ret.data),
+      );
+      queue.length = 0;
+      emptyStreak++;
+      return;
+    }
+
+    var monsters = filterMonsters(activity, ret.data.worldMonsters || []);
+    if (!monsters.length) {
+      log.debug('no attackable monster. total=%d', (ret.data.worldMonsters || []).length);
+      queue.length = 0;
+      emptyStreak++;
+      return;
+    }
+
+    // 每轮 8802 是全量快照，整批替换队列（追加会累积重复使徒）
+    queue = monsters;
+    emptyStreak = 0;
+    log.debug(
+      'monsters loaded. count=%d;raw=%d',
+      queue.length,
+      (ret.data.worldMonsters || []).length,
+    );
+  } catch (err) {
+    log.warn('scan error.', err);
+    queue.length = 0;
+    emptyStreak++;
+  }
 }
 
 /**
@@ -266,25 +291,36 @@ async function doScan() {
  * @returns {object[]} 归一化使徒（[{uuid,x,y,uid,expireAt}]）
  */
 function filterMonsters(activity, list) {
-    var extra = (activity && activity.extra) || {};
-    var attacked = Array.isArray(extra.attackMonsterIds) ? extra.attackMonsterIds : [];
-    var myUid = String(gameData.myPid() || '');
-    var nowMs = (gameData.serverTime() | 0) * 1000;
-    var out = [];
-    for (var i = 0; i < list.length; i++) {
-        var m = list[i];
-        if (!m || m.uuid == null) continue;
-        var uuid = String(m.uuid);
-        if (!m.x && !m.y) continue;                                        // 无坐标（-1/-1 之类未落地形态）不打
-        if (myUid && String(m.uid) === myUid) continue;                     // 闸门 b：不能打自己发现的
-        if (m.hasMarch === true) continue;                                  // 服务器已标注该使徒有在途行军
-        if (attacked.some(function (u) { return String(u) === uuid; })) continue;   // 闸门 a：服务端权威已攻打
-        if (dispatched.has(uuid) || rejected.has(uuid)) continue;                    // 本地影子已攻打 / 已拉黑
-        var expireAt = int64ToNumber(m.expireMilli);
-        if (expireAt > 0 && expireAt <= nowMs) continue;                    // 已潜逃
-        out.push({ uuid: uuid, x: m.x | 0, y: m.y | 0, uid: String(m.uid == null ? '' : m.uid), expireAt: expireAt });
-    }
-    return out;
+  var extra = (activity && activity.extra) || {};
+  var attacked = Array.isArray(extra.attackMonsterIds) ? extra.attackMonsterIds : [];
+  var myUid = String(gameData.myPid() || '');
+  var nowMs = (gameData.serverTime() | 0) * 1000;
+  var out = [];
+  for (var i = 0; i < list.length; i++) {
+    var m = list[i];
+    if (!m || m.uuid == null) continue;
+    var uuid = String(m.uuid);
+    if (!m.x && !m.y) continue; // 无坐标（-1/-1 之类未落地形态）不打
+    if (myUid && String(m.uid) === myUid) continue; // 闸门 b：不能打自己发现的
+    if (m.hasMarch === true) continue; // 服务器已标注该使徒有在途行军
+    if (
+      attacked.some(function (u) {
+        return String(u) === uuid;
+      })
+    )
+      continue; // 闸门 a：服务端权威已攻打
+    if (dispatched.has(uuid) || rejected.has(uuid)) continue; // 本地影子已攻打 / 已拉黑
+    var expireAt = int64ToNumber(m.expireMilli);
+    if (expireAt > 0 && expireAt <= nowMs) continue; // 已潜逃
+    out.push({
+      uuid: uuid,
+      x: m.x | 0,
+      y: m.y | 0,
+      uid: String(m.uid == null ? '' : m.uid),
+      expireAt: expireAt,
+    });
+  }
+  return out;
 }
 
 /**
@@ -292,17 +328,17 @@ function filterMonsters(activity, list) {
  * @returns {Promise<void>}
  */
 async function consume() {
-    while (queue.length && aliveFn()) {
-        var item = queue.shift();
-        try {
-            await attackFlow(item);
-        } catch (err) {
-            log.warn('attack flow threw.', err);
-        }
-        if (queue.length && aliveFn()) {
-            await sleep(cfg.marchInterval);
-        }
+  while (queue.length && aliveFn()) {
+    var item = queue.shift();
+    try {
+      await attackFlow(item);
+    } catch (err) {
+      log.warn('attack flow threw.', err);
     }
+    if (queue.length && aliveFn()) {
+      await sleep(cfg.marchInterval);
+    }
+  }
 }
 
 /**
@@ -311,7 +347,7 @@ async function consume() {
  * @returns {number} 毫秒
  */
 function nextScanInterval() {
-    return emptyStreak >= EMPTY_STREAK_IDLE ? cfg.idleScanInterval : cfg.activeScanInterval;
+  return emptyStreak >= EMPTY_STREAK_IDLE ? cfg.idleScanInterval : cfg.activeScanInterval;
 }
 
 /**
@@ -322,31 +358,42 @@ function nextScanInterval() {
  * @returns {Promise<void>}
  */
 async function attackFlow(item) {
-    // 闸门 d：同一使徒同一时间只能有我一条 189 行军（已在途中则跳过，等这条结束再由下轮补打）
-    if (await hasMarchAtTarget(item.x, item.y)) {
-        log.debug('target already has march in flight, skip. uuid=%s;x=%d;y=%d', item.uuid, item.x, item.y);
-        return;
-    }
+  // 闸门 d：同一使徒同一时间只能有我一条 189 行军（已在途中则跳过，等这条结束再由下轮补打）
+  if (await hasMarchAtTarget(item.x, item.y)) {
+    log.debug(
+      'target already has march in flight, skip. uuid=%s;x=%d;y=%d',
+      item.uuid,
+      item.x,
+      item.y,
+    );
+    return;
+  }
 
-    var ret = await marchAttack(item);
-    if (!aliveFn()) return;
+  var ret = await marchAttack(item);
+  if (!aliveFn()) return;
 
-    if (ret.ok) {
-        dispatched.add(item.uuid);
-        log.info('attack march started. uuid=%s;x=%d;y=%d', item.uuid, item.x, item.y);
-        return;
-    }
+  if (ret.ok) {
+    dispatched.add(item.uuid);
+    log.info('attack march started. uuid=%s;x=%d;y=%d', item.uuid, item.x, item.y);
+    return;
+  }
 
-    // 未真正发出（902 在途/异常）：不拉黑，下轮自愈
-    if (ret.code === CODE_NOT_SENT) {
-        log.debug('attack march not sent. uuid=%s', item.uuid);
-        return;
-    }
+  // 未真正发出（902 在途/异常）：不拉黑，下轮自愈
+  if (ret.code === CODE_NOT_SENT) {
+    log.debug('attack march not sent. uuid=%s', item.uuid);
+    return;
+  }
 
-    // 可预期的业务拒绝（跨组/已被抢/时序竞争）：当日拉黑，同一目标重发不会自己变好，只会被拒刷屏
-    rejected.add(item.uuid);
-    log.info('attack march rejected. uuid=%s;x=%d;y=%d;code=%d;data=%s',
-        item.uuid, item.x, item.y, ret.code, safeStringify(ret.reason || ret.data));
+  // 可预期的业务拒绝（跨组/已被抢/时序竞争）：当日拉黑，同一目标重发不会自己变好，只会被拒刷屏
+  rejected.add(item.uuid);
+  log.info(
+    'attack march rejected. uuid=%s;x=%d;y=%d;code=%d;data=%s',
+    item.uuid,
+    item.x,
+    item.y,
+    ret.code,
+    safeStringify(ret.reason || ret.data),
+  );
 }
 
 /**
@@ -358,10 +405,10 @@ async function attackFlow(item) {
  * @returns {Promise<boolean>}
  */
 async function hasMarchAtTarget(x, y) {
-    var marches = await march.list();
-    return marches.some(function (m) {
-        return m.type === MARCH_TYPE && m.target.x === x && m.target.y === y;
-    });
+  var marches = await march.list();
+  return marches.some(function (m) {
+    return m.type === MARCH_TYPE && m.target.x === x && m.target.y === y;
+  });
 }
 
 /**
@@ -372,10 +419,14 @@ async function hasMarchAtTarget(x, y) {
  * @returns {Promise<object>} 整个 902 的 Ret，code=902 状态码，data=成功载荷或 null
  */
 async function marchAttack(item) {
-    if (!item || net.isSending(CMD_MARCH_WORLD_POINT)) {
-        return net.Ret.from(CODE_NOT_SENT, null);
-    }
-    return march.pickUp({ marchType: MARCH_TYPE, target: { x: item.x, y: item.y }, bodyExtra: { isAirCraftCarrier: true } });
+  if (!item || net.isSending(CMD_MARCH_WORLD_POINT)) {
+    return net.Ret.from(CODE_NOT_SENT, null);
+  }
+  return march.pickUp({
+    marchType: MARCH_TYPE,
+    target: { x: item.x, y: item.y },
+    bodyExtra: { isAirCraftCarrier: true },
+  });
 }
 
 /**
@@ -384,21 +435,21 @@ async function marchAttack(item) {
  * @param {object} ev net.on 事件 {cmd, status, data, ord, ts, raw}
  */
 function onActivityExtraPush(ev) {
-    if (!aliveFn()) return;
+  if (!aliveFn()) return;
 
-    var aid = ev && ev.data && ev.data.aid;
-    if (!isMechaTreasureAid(aid)) {
-        return;
-    }
+  var aid = ev && ev.data && ev.data.aid;
+  if (!isMechaTreasureAid(aid)) {
+    return;
+  }
 
-    var extra = ev.data && ev.data.extra;
-    var hasMonster = extra && extra.worldUIRed && extra.worldUIRed >= 1;
-    if (!hasMonster) {
-        return;
-    }
+  var extra = ev.data && ev.data.extra;
+  var hasMonster = extra && extra.worldUIRed && extra.worldUIRed >= 1;
+  if (!hasMonster) {
+    return;
+  }
 
-    log.info('activity extra push received, trigger scan. aid=%d', aid);
-    cycle.kick();
+  log.info('activity extra push received, trigger scan. aid=%d', aid);
+  cycle.kick();
 }
 
 /**
@@ -407,13 +458,13 @@ function onActivityExtraPush(ev) {
  * @param {object} ev net.on 事件 {cmd, data}
  */
 function onMarchUpdate(ev) {
-    if (!aliveFn()) return;
-    var m = march.decode(ev && ev.data);
-    if (!m || m.type !== MARCH_TYPE || m.state !== march.State.ARRIVED_HOME) return;
-    var now = Date.now();
-    if (now - lastPushScanAt < PUSH_SCAN_MIN_GAP) return;
-    lastPushScanAt = now;
-    cycle.kick();
+  if (!aliveFn()) return;
+  var m = march.decode(ev && ev.data);
+  if (!m || m.type !== MARCH_TYPE || m.state !== march.State.ARRIVED_HOME) return;
+  var now = Date.now();
+  if (now - lastPushScanAt < PUSH_SCAN_MIN_GAP) return;
+  lastPushScanAt = now;
+  cycle.kick();
 }
 
 /**
@@ -422,9 +473,9 @@ function onMarchUpdate(ev) {
  * @returns {boolean}
  */
 function isMechaTreasureAid(aid) {
-    if (!aid) return false;
-    var activity = activityCtl.getActivityByActivityId(aid);
-    return !!activity && activity.showUiType === SHOW_UI_TYPE_MECHA_TREASURE;
+  if (!aid) return false;
+  var activity = activityCtl.getActivityByActivityId(aid);
+  return !!activity && activity.showUiType === SHOW_UI_TYPE_MECHA_TREASURE;
 }
 
 /**
@@ -432,11 +483,12 @@ function isMechaTreasureAid(aid) {
  * @returns {object|undefined}
  */
 function getMechaTreasureActivity() {
-    return activityCtl.getActivityList()
-        .find(function (activity) {
-            return activity.showUiType === SHOW_UI_TYPE_MECHA_TREASURE
-                && activityCtl.checkActivityIsOpen(activity.id) === true;
-        });
+  return activityCtl.getActivityList().find(function (activity) {
+    return (
+      activity.showUiType === SHOW_UI_TYPE_MECHA_TREASURE &&
+      activityCtl.checkActivityIsOpen(activity.id) === true
+    );
+  });
 }
 
 /**
@@ -445,36 +497,38 @@ function getMechaTreasureActivity() {
  * @returns {boolean}
  */
 function install(ctx) {
-    ctxRef = ctx;
-    if (installed) {
-        return true;
-    }
-
-    var missing = [];
-
-    net = ctx.net;
-    if (!net.install()) {
-        missing.push('pocketcc.net');
-        net = null;
-    }
-
-    var mods = game.requireAll(['ActivityController']);
-
-    activityCtl = mods.ActivityController
-        && mods.ActivityController.ActivityController
-        && mods.ActivityController.ActivityController.Instance
-        || missing.push('ActivityController');
-
-    if (missing.length) {
-        net = null; activityCtl = null;
-        log.warn('install failed. missing=%d;deps=%s', missing.length, missing.join(';'));
-        return false;
-    }
-
-    installed = true;
-    log.info('installed.');
-
+  ctxRef = ctx;
+  if (installed) {
     return true;
+  }
+
+  var missing = [];
+
+  net = ctx.net;
+  if (!net.install()) {
+    missing.push('pocketcc.net');
+    net = null;
+  }
+
+  var mods = game.requireAll(['ActivityController']);
+
+  activityCtl =
+    (mods.ActivityController &&
+      mods.ActivityController.ActivityController &&
+      mods.ActivityController.ActivityController.Instance) ||
+    missing.push('ActivityController');
+
+  if (missing.length) {
+    net = null;
+    activityCtl = null;
+    log.warn('install failed. missing=%d;deps=%s', missing.length, missing.join(';'));
+    return false;
+  }
+
+  installed = true;
+  log.info('installed.');
+
+  return true;
 }
 
 /**
@@ -484,15 +538,15 @@ function install(ctx) {
  * @param {object} ctx reactor 上下文
  */
 function run(ctx) {
-    ctxRef = ctx;
-    emptyStreak = 0;
-    queue = [];
-    lastPushScanAt = 0;
-    ctx.on.push(CMD_PUSH_ONE_ACTIVITY_EXTRA, onActivityExtraPush);
-    ctx.on.push(CMD_USER_MARCH_INFO, onMarchUpdate);
-    log.info('started, listening push cmd=%d;marchType=%d.', CMD_PUSH_ONE_ACTIVITY_EXTRA, MARCH_TYPE);
-    // 启动即主动查一次；本轮结束后 cycle 会武装兜底定时
-    cycle.kick();
+  ctxRef = ctx;
+  emptyStreak = 0;
+  queue = [];
+  lastPushScanAt = 0;
+  ctx.on.push(CMD_PUSH_ONE_ACTIVITY_EXTRA, onActivityExtraPush);
+  ctx.on.push(CMD_USER_MARCH_INFO, onMarchUpdate);
+  log.info('started, listening push cmd=%d;marchType=%d.', CMD_PUSH_ONE_ACTIVITY_EXTRA, MARCH_TYPE);
+  // 启动即主动查一次；本轮结束后 cycle 会武装兜底定时
+  cycle.kick();
 }
 
 /**
@@ -500,16 +554,18 @@ function run(ctx) {
  * 面板仅出启用开关，扫描/攻打间隔均为 cfg 内置常量
  */
 reactor.register({
-    id: 'mechaTreasure',
-    label: '重装母舰',
-    storageKey: 'pocketcc.feat.mechaTreasure',
-    symbols: ['activityController', 'dataCenter?'],
-    scenes: ['Home', 'NWorldMap'],
-    offInCombat: true,
-    // 面板仅出启用开关；扫描/攻打间隔均为 cfg 内置常量，不作为可持久化配置项。
-    defaults: { enabled: false },
-    fields: [],
-    toModuleCfg: function () { return {}; },
-    install: install,
-    run: run,
+  id: 'mechaTreasure',
+  label: '重装母舰',
+  storageKey: 'pocketcc.feat.mechaTreasure',
+  symbols: ['activityController', 'dataCenter?'],
+  scenes: ['Home', 'NWorldMap'],
+  offInCombat: true,
+  // 面板仅出启用开关；扫描/攻打间隔均为 cfg 内置常量，不作为可持久化配置项。
+  defaults: { enabled: false },
+  fields: [],
+  toModuleCfg: function () {
+    return {};
+  },
+  install: install,
+  run: run,
 });

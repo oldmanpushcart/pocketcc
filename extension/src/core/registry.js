@@ -71,14 +71,20 @@ const INTERNAL_FEATURES = [
     internal: true,
     defaults: { enabled: false, ingestUrl: 'http://127.0.0.1:7391/ingest', flushSec: 2, note: '' },
     fields: [
-      { key: 'ingestUrl', type: 'string', label: '转发地址', placeholder: 'http://127.0.0.1:7391/ingest' },
+      {
+        key: 'ingestUrl',
+        type: 'string',
+        label: '转发地址',
+        placeholder: 'http://127.0.0.1:7391/ingest',
+      },
       { key: 'flushSec', type: 'number', label: '落盘间隔(秒)', min: 1, step: 1 },
       { key: 'note', type: 'string', label: '本次标签', placeholder: '如：芯片祝福STEP2（可空）' },
     ],
     apply: (cfg) => {
       const rc = window.pocketcc && window.pocketcc.netCollect;
       if (!rc) return;
-      if (cfg && cfg.enabled) rc.start(cfg); else rc.stop();
+      if (cfg && cfg.enabled) rc.start(cfg);
+      else rc.stop();
     },
   },
 ];
@@ -149,8 +155,12 @@ export async function loadAllConfigs() {
     return;
   }
   for (const f of features().concat(GROUPS)) {
-    let saved = null;
-    try { saved = await storage.get(f.storageKey); } catch (e) { saved = null; }
+    let saved;
+    try {
+      saved = await storage.get(f.storageKey);
+    } catch (e) {
+      saved = null;
+    }
     const c = configs[f.id] || (configs[f.id] = {});
     for (const k of Object.keys(c)) delete c[k]; // 原地覆写：新旧键集可能不同
     if (isDetailHiddenFeature(f)) {
@@ -191,14 +201,30 @@ export async function migrateLegacyKeys(uid) {
   if (uid == null) return;
   let moved = 0;
   for (const f of features()) {
-    let existing = null;
-    try { existing = await storage.get(f.storageKey); } catch (e) { existing = null; } // 命名空间读
+    let existing;
+    try {
+      existing = await storage.get(f.storageKey);
+    } catch (e) {
+      existing = null;
+    } // 命名空间读
     if (existing) continue;
-    let legacy = null;
-    try { legacy = await storage.getRaw(f.storageKey); } catch (e) { legacy = null; }   // 原始无前缀读
+    let legacy;
+    try {
+      legacy = await storage.getRaw(f.storageKey);
+    } catch (e) {
+      legacy = null;
+    } // 原始无前缀读
     if (!legacy) continue;
-    try { await storage.set(f.storageKey, { ...f.defaults, ...legacy }); } catch (e) { continue; }
-    try { await storage.removeRaw(f.storageKey); } catch (e) { /* 删失败仅残留一个孤儿旧键，不影响读取 */ }
+    try {
+      await storage.set(f.storageKey, { ...f.defaults, ...legacy });
+    } catch (e) {
+      continue;
+    }
+    try {
+      await storage.removeRaw(f.storageKey);
+    } catch (e) {
+      /* 删失败仅残留一个孤儿旧键，不影响读取 */
+    }
     moved++;
   }
   if (moved) log.info('legacy config keys migrated to uid=%s (count=%d)', uid, moved);
@@ -245,7 +271,10 @@ export function saveGroup(id) {
  */
 export function applyFeature(f) {
   const cfg = configs[f.id];
-  if (f.internal) { if (f.apply) f.apply(cfg); return; }
+  if (f.internal) {
+    if (f.apply) f.apply(cfg);
+    return;
+  }
   reactor.setConfig(f.id, Object.assign({ enabled: cfg.enabled }, f.toModuleCfg(cfg)));
 }
 
@@ -260,8 +289,9 @@ export function startFeatures() {
   for (const f of features()) {
     // internal 有 apply 的执行一次以恢复持久化态（如网络/事件日志开关），须在两个底座 install 之后；
     // 其余功能仅在启用时推配置起停。
-    if (f.internal) { if (f.apply) applyFeature(f); }
-    else if (configs[f.id].enabled) applyFeature(f);
+    if (f.internal) {
+      if (f.apply) applyFeature(f);
+    } else if (configs[f.id].enabled) applyFeature(f);
   }
 }
 
@@ -276,8 +306,13 @@ async function reloadForPlayer(reason) {
   log.info('%s, reloading configs for uid', reason);
   await loadAllConfigs(); // 存储层已按 UID 设前缀
   for (const f of features()) {
-    if (f.internal) { if (f.apply) applyFeature(f); }
-    else reactor.setConfig(f.id, Object.assign({ enabled: configs[f.id].enabled }, f.toModuleCfg(configs[f.id])));
+    if (f.internal) {
+      if (f.apply) applyFeature(f);
+    } else
+      reactor.setConfig(
+        f.id,
+        Object.assign({ enabled: configs[f.id].enabled }, f.toModuleCfg(configs[f.id])),
+      );
   }
   // configs 已刷新为新 UID 的值后再通知 UI 重同步控件（否则 UI 在 loadAllConfigs 完成前抢跑会读到旧值）。
   bus.emit('player.configs-reloaded', { uid: playerGetUid() });
@@ -287,4 +322,6 @@ async function reloadForPlayer(reason) {
 // 降级自愈：启动时 UID 未到位（waitUid 超时）则以默认配置跑着，ready 后补读盘并按真实配置重推。
 // 正常路径不触发（loadAllConfigs 已带盘数据，degraded 为 false）。不跑 migrateLegacyKeys，
 // 接受这种罕见路径下旧全局键不迁移。
-bus.on('player.ready', () => { if (loadedDegraded) reloadForPlayer('player ready after degraded start'); });
+bus.on('player.ready', () => {
+  if (loadedDegraded) reloadForPlayer('player ready after degraded start');
+});

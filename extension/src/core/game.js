@@ -15,31 +15,31 @@ const log = createLog('GAME');
  * @returns {object|null} 模块导出，缺失为 null
  */
 function requireOne(name) {
-    // 空/非字符串模块名直接返回 null：__require(undefined) 会在游戏内部对 name 调 .split 抛错，
-    // 打出带整条调用栈的「require module failed」噪声（SYM 键名笔误曾触发，此处从源头拦截）。
-    if (typeof name !== 'string' || !name) return null;
-    try {
-        return __require(name);
-    } catch (err) {
-        log.debug('require module failed. module=%s', name, err);
-        return null;
-    }
+  // 空/非字符串模块名直接返回 null：__require(undefined) 会在游戏内部对 name 调 .split 抛错，
+  // 打出带整条调用栈的「require module failed」噪声（SYM 键名笔误曾触发，此处从源头拦截）。
+  if (typeof name !== 'string' || !name) return null;
+  try {
+    return __require(name);
+  } catch (err) {
+    log.debug('require module failed. module=%s', name, err);
+    return null;
+  }
 }
 
 /** 游戏模块访问入口，挂到 window.pocketcc.game（调试面可直接控制台取单例） */
 export const game = {
-    /** 单取模块，缺失返回 null */
-    get: requireOne,
-    /**
-     * 批量取模块成 {name: module|null}，供各功能 install 组 missing 清单
-     * @param {string[]} names 模块名列表
-     * @returns {Object<string, object|null>}
-     */
-    requireAll: function (names) {
-        var mods = {};
-        for (var i = 0; i < names.length; i++) {
-            mods[names[i]] = requireOne(names[i]);
-        }
-        return mods;
-    },
+  /** 单取模块，缺失返回 null */
+  get: requireOne,
+  /**
+   * 批量取模块成 {name: module|null}，供各功能 install 组 missing 清单
+   * @param {string[]} names 模块名列表
+   * @returns {Object<string, object|null>}
+   */
+  requireAll: function (names) {
+    var mods = {};
+    for (var i = 0; i < names.length; i++) {
+      mods[names[i]] = requireOne(names[i]);
+    }
+    return mods;
+  },
 };

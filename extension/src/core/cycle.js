@@ -33,9 +33,23 @@ var MAX_ARM_MS = 24 * 3600 * 1000;
  * @returns {string}
  */
 function fmtAt(ms) {
-    var d = new Date(Date.now() + ms);
-    function p(n) { return (n < 10 ? '0' : '') + n; }
-    return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate()) + ' ' + p(d.getHours()) + ':' + p(d.getMinutes()) + ':' + p(d.getSeconds());
+  var d = new Date(Date.now() + ms);
+  function p(n) {
+    return (n < 10 ? '0' : '') + n;
+  }
+  return (
+    d.getFullYear() +
+    '-' +
+    p(d.getMonth() + 1) +
+    '-' +
+    p(d.getDate()) +
+    ' ' +
+    p(d.getHours()) +
+    ':' +
+    p(d.getMinutes()) +
+    ':' +
+    p(d.getSeconds())
+  );
 }
 
 /**
@@ -44,58 +58,72 @@ function fmtAt(ms) {
  * @returns {{kick: () => void, readonly pending: boolean}}
  */
 export function createCycle(o) {
-    const log = o.log || createLog('CYCLE');
-    const run = o.run;
-    const alive = o.alive;
-    const fallback = o.fallback;
-    let running = false;
-    let pending = false;
-    let timer = null;
+  const log = o.log || createLog('CYCLE');
+  const run = o.run;
+  const alive = o.alive;
+  const fallback = o.fallback;
+  let running = false;
+  let pending = false;
+  let timer = null;
 
-    function clearTimer() {
-        if (timer) { clearTimeout(timer); timer = null; }
+  function clearTimer() {
+    if (timer) {
+      clearTimeout(timer);
+      timer = null;
     }
+  }
 
-    /** 睡 delay 毫秒后择机起一轮；睡期间可能 pause，故到点仍要复查 alive。 */
-    function arm(delay) {
-        clearTimer();
-        if (!alive()) return;
-        timer = setTimeout(function () {
-            timer = null;
-            if (alive()) exec();
-        }, Math.max(0, delay));
+  /** 睡 delay 毫秒后择机起一轮；睡期间可能 pause，故到点仍要复查 alive。 */
+  function arm(delay) {
+    clearTimer();
+    if (!alive()) return;
+    timer = setTimeout(
+      function () {
+        timer = null;
+        if (alive()) exec();
+      },
+      Math.max(0, delay),
+    );
+  }
+
+  /** 外部触发汇入口：非在飞则立即起一轮，在飞则置 pending（本轮结束后由 run() 决定补扫）。 */
+  function kick() {
+    if (!alive()) return;
+    if (running) {
+      pending = true;
+      return;
     }
+    exec();
+  }
 
-    /** 外部触发汇入口：非在飞则立即起一轮，在飞则置 pending（本轮结束后由 run() 决定补扫）。 */
-    function kick() {
-        if (!alive()) return;
-        if (running) { pending = true; return; }
-        exec();
+  /** 单轮外壳：置在飞 → 跑 run → 按返回的 delay 重排。任何抛错都落到 fallback，绝不因一次异常停摆。 */
+  async function exec() {
+    running = true;
+    pending = false;
+    clearTimer();
+    let delay;
+    try {
+      delay = await run();
+    } catch (err) {
+      log.warn('cycle run threw.', err);
+      delay = fallback;
     }
-
-    /** 单轮外壳：置在飞 → 跑 run → 按返回的 delay 重排。任何抛错都落到 fallback，绝不因一次异常停摆。 */
-    async function exec() {
-        running = true;
-        pending = false;
-        clearTimer();
-        let delay;
-        try {
-            delay = await run();
-        } catch (err) {
-            log.warn('cycle run threw.', err);
-            delay = fallback;
-        }
-        running = false;
-        if (!alive()) return;
-        if (typeof delay !== 'number' || !isFinite(delay)) delay = fallback;
-        if (delay <= 0) { exec(); return; }
-        if (delay > MAX_ARM_MS) delay = MAX_ARM_MS;
-        log.info('next check at [%s] (after %d sec).', fmtAt(delay), Math.round(delay / 1000));
-        arm(delay);
+    running = false;
+    if (!alive()) return;
+    if (typeof delay !== 'number' || !isFinite(delay)) delay = fallback;
+    if (delay <= 0) {
+      exec();
+      return;
     }
+    if (delay > MAX_ARM_MS) delay = MAX_ARM_MS;
+    log.info('next check at [%s] (after %d sec).', fmtAt(delay), Math.round(delay / 1000));
+    arm(delay);
+  }
 
-    return {
-        kick: kick,
-        get pending() { return pending; },
-    };
+  return {
+    kick: kick,
+    get pending() {
+      return pending;
+    },
+  };
 }

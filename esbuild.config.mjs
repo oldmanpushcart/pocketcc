@@ -12,9 +12,17 @@ const common = {
 };
 
 const builds = [
-  { ...common, entryPoints: ['extension/src/content.entry.js'], outfile: 'extension/dist/content.js' },
+  {
+    ...common,
+    entryPoints: ['extension/src/content.entry.js'],
+    outfile: 'extension/dist/content.js',
+  },
   { ...common, entryPoints: ['extension/src/bridge.js'], outfile: 'extension/dist/bridge.js' },
-  { ...common, entryPoints: ['extension/src/background.js'], outfile: 'extension/dist/background.js' },
+  {
+    ...common,
+    entryPoints: ['extension/src/background.js'],
+    outfile: 'extension/dist/background.js',
+  },
 ];
 
 if (watch) {

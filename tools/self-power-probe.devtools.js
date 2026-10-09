@@ -11,7 +11,9 @@
 (function selfPowerProbe() {
   const PC = window.pocketcc;
   if (!PC || !PC.game) {
-    console.error('[self-power-probe] window.pocketcc 未就绪：确认已加载扩展、已登录、MAIN world 上下文。');
+    console.error(
+      '[self-power-probe] window.pocketcc 未就绪：确认已加载扩展、已登录、MAIN world 上下文。',
+    );
     return;
   }
   const H = (m) => console.log('%c\n===== ' + m + ' =====', 'color:#4a90d9;font-weight:bold');
@@ -19,34 +21,68 @@
   const RE = /pow|combat|battle|force|fight|strength|zhan|lijun|army/i;
 
   let DATA, U;
-  try { DATA = PC.game.get('DataCenter').DATA; } catch (e) { console.error('取 DataCenter.DATA 失败:', e && e.message); return; }
+  try {
+    DATA = PC.game.get('DataCenter').DATA;
+  } catch (e) {
+    console.error('取 DataCenter.DATA 失败:', e && e.message);
+    return;
+  }
   U = DATA && DATA.UserData;
 
   // 安全打印一个值：原始类型直显，字符串截断，对象只列 own keys（避免刷屏/循环引用）
   const brief = (v) => {
     if (v === null) return 'null';
-    if (typeof v === 'string') return v.length > 48 ? ('str(' + v.length + '):' + v.slice(0, 48) + '…') : JSON.stringify(v);
+    if (typeof v === 'string')
+      return v.length > 48 ? 'str(' + v.length + '):' + v.slice(0, 48) + '…' : JSON.stringify(v);
     if (typeof v !== 'object') return String(v);
-    let keys = [];
-    try { keys = Object.keys(v); } catch (e) { keys = ['(不可枚举)']; }
-    return 'obj{' + keys.slice(0, 12).join(',') + (keys.length > 12 ? '…+' + (keys.length - 12) : '') + '}';
+    let keys;
+    try {
+      keys = Object.keys(v);
+    } catch (e) {
+      keys = ['(不可枚举)'];
+    }
+    return (
+      'obj{' +
+      keys.slice(0, 12).join(',') +
+      (keys.length > 12 ? '…+' + (keys.length - 12) : '') +
+      '}'
+    );
   };
 
   // ── A. UserData 直属键：全量列出 + 命中战力特征者重点打印 ────────────
   H('A. UserData 直属键');
-  if (!U) { console.log('UserData 取不到'); return; }
+  if (!U) {
+    console.log('UserData 取不到');
+    return;
+  }
   const ukeys = Object.keys(U);
   console.log('共 ' + ukeys.length + ' 个 own keys');
   const uHits = [];
   ukeys.forEach((k) => {
-    let v; try { v = U[k]; } catch (e) { v = '(读抛出:' + e.message + ')'; }
+    let v;
+    try {
+      v = U[k];
+    } catch (e) {
+      v = '(读抛出:' + e.message + ')';
+    }
     const isFn = typeof v === 'function';
-    if (RE.test(k)) { uHits.push({ k, v, isFn }); console.log('%c[命中键名] ' + k + ' = ' + (isFn ? '(函数)' : brief(v)), 'color:#e0a800'); }
+    if (RE.test(k)) {
+      uHits.push({ k, v, isFn });
+      console.log('%c[命中键名] ' + k + ' = ' + (isFn ? '(函数)' : brief(v)), 'color:#e0a800');
+    }
   });
   // 命中键名是函数 → 尝试无参调用看返回是否为数字（候选 getter）
   uHits.forEach((h) => {
-    if (h.isFn) { try { const r = h.v.call(U); console.log('  调用 ' + h.k + '() →', brief(r), r); } catch (e) { console.log('  调用 ' + h.k + '() 抛:', e && e.message); } }
-    else { console.log('  ' + h.k + ' 原值 =', h.v); }
+    if (h.isFn) {
+      try {
+        const r = h.v.call(U);
+        console.log('  调用 ' + h.k + '() →', brief(r), r);
+      } catch (e) {
+        console.log('  调用 ' + h.k + '() 抛:', e && e.message);
+      }
+    } else {
+      console.log('  ' + h.k + ' 原值 =', h.v);
+    }
   });
   console.log('WorldCoord =', JSON.stringify(U.WorldCoord), '| Level =', U.Level, '| UID =', U.UID);
 
@@ -54,13 +90,31 @@
   H('B. UserData 下钻一层命中');
   let depthHits = 0;
   ukeys.forEach((k) => {
-    let sub; try { sub = U[k]; } catch (e) { return; }
+    let sub;
+    try {
+      sub = U[k];
+    } catch (e) {
+      return;
+    }
     if (!sub || typeof sub !== 'object') return;
-    let sk = []; try { sk = Object.keys(sub); } catch (e) { return; }
+    let sk;
+    try {
+      sk = Object.keys(sub);
+    } catch (e) {
+      return;
+    }
     sk.forEach((s) => {
       if (!RE.test(s)) return;
-      let sv; try { sv = sub[s]; } catch (e) { sv = '(读抛)'; }
-      if (typeof sv === 'number' || (sv && typeof sv === 'object')) { console.log('  UserData.' + k + '.' + s + ' =', brief(sv), sv); depthHits++; }
+      let sv;
+      try {
+        sv = sub[s];
+      } catch (e) {
+        sv = '(读抛)';
+      }
+      if (typeof sv === 'number' || (sv && typeof sv === 'object')) {
+        console.log('  UserData.' + k + '.' + s + ' =', brief(sv), sv);
+        depthHits++;
+      }
     });
   });
   if (!depthHits) console.log('  （下钻一层无命中）');
@@ -71,14 +125,36 @@
   console.log('DATA own keys:', dkeys.join(', '));
   dkeys.forEach((k) => {
     if (!RE.test(k)) return;
-    let v; try { v = DATA[k]; } catch (e) { v = '(读抛)'; }
+    let v;
+    try {
+      v = DATA[k];
+    } catch (e) {
+      v = '(读抛)';
+    }
     console.log('%c[DATA 命中] ' + k + ' = ' + brief(v), 'color:#e0a800');
   });
-  ['getPower', 'GetPower', 'power', 'Power', 'battlePower', 'BattlePower', 'totalPower', 'combatPower', 'fightPower', 'getBattlePower'].forEach((name) => {
+  [
+    'getPower',
+    'GetPower',
+    'power',
+    'Power',
+    'battlePower',
+    'BattlePower',
+    'totalPower',
+    'combatPower',
+    'fightPower',
+    'getBattlePower',
+  ].forEach((name) => {
     try {
-      if (typeof U[name] === 'function') { const r = U[name].call(U); console.log('  U.' + name + '() →', brief(r), r); }
-      else if (name in U) { console.log('  U.' + name + ' =', U[name]); }
-    } catch (e) { console.log('  U.' + name + ' 抛:', e && e.message); }
+      if (typeof U[name] === 'function') {
+        const r = U[name].call(U);
+        console.log('  U.' + name + '() →', brief(r), r);
+      } else if (name in U) {
+        console.log('  U.' + name + ' =', U[name]);
+      }
+    } catch (e) {
+      console.log('  U.' + name + ' 抛:', e && e.message);
+    }
   });
 
   console.log('%c\n贴回以上 A/B/C 三段即可确定本地战力字段/getter。', 'color:#7cb342');

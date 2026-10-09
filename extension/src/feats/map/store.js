@@ -38,13 +38,26 @@ const LEGACY_META = 'map.world.meta';
 const SUB_KEYS = ['r', 't', 'm', 'b', 'p'];
 
 /** 数值→数字（null/''/非有限/0 一律视为无→null）；pid/aid 均可安全走 Number（< 2^53） */
-function numOrNull(v) { if (v == null || v === '') return null; const n = Number(v); return (isFinite(n) && n !== 0) ? n : null; }
+function numOrNull(v) {
+  if (v == null || v === '') return null;
+  const n = Number(v);
+  return isFinite(n) && n !== 0 ? n : null;
+}
 /** 从子对象的 playerInfo（嵌套 JSON 串或对象）取显示名 username/nickname */
 function piUser(o) {
   if (!o) return null;
   let pi = o.playerInfo;
-  if (typeof pi === 'string') { try { pi = JSON.parse(pi); } catch (_) { pi = null; } }
-  if (pi && typeof pi === 'object') { const n = pi.username || pi.nickname; if (n) return String(n); }
+  if (typeof pi === 'string') {
+    try {
+      pi = JSON.parse(pi);
+    } catch (_) {
+      pi = null;
+    }
+  }
+  if (pi && typeof pi === 'object') {
+    const n = pi.username || pi.nickname;
+    if (n) return String(n);
+  }
   return null;
 }
 /**
@@ -55,14 +68,35 @@ function piUser(o) {
  * @returns {{oid:?number, aid:?number, power:?number, army:?number, name:?string}}
  */
 function extractOwner(p) {
-  const P = p.p, R = p.r, M = p.m, B = p.b, T = p.t;
-  const oid = numOrNull(P && P.pid) || numOrNull(R && R.ownerId) || numOrNull(M && M.ownerId)
-    || numOrNull(T && T.ownerId) || numOrNull(B && B.pid) || numOrNull(M && (M.uid != null ? M.uid : M.ownerUid)) || null;
-  const aid = numOrNull(P && P.aid) || numOrNull(R && R.aid) || numOrNull(M && M.allianceId)
-    || numOrNull(B && B.aid) || numOrNull(T && T.aid) || null;
+  const P = p.p,
+    R = p.r,
+    M = p.m,
+    B = p.b,
+    T = p.t;
+  const oid =
+    numOrNull(P && P.pid) ||
+    numOrNull(R && R.ownerId) ||
+    numOrNull(M && M.ownerId) ||
+    numOrNull(T && T.ownerId) ||
+    numOrNull(B && B.pid) ||
+    numOrNull(M && (M.uid != null ? M.uid : M.ownerUid)) ||
+    null;
+  const aid =
+    numOrNull(P && P.aid) ||
+    numOrNull(R && R.aid) ||
+    numOrNull(M && M.allianceId) ||
+    numOrNull(B && B.aid) ||
+    numOrNull(T && T.aid) ||
+    null;
   const power = numOrNull(P && P.power) || numOrNull(M && M.power) || null;
   const army = numOrNull(P && P.armyPower) || null; // 玩家城池兵力（军团强度，整数，可达 1e37，显示走 getLargeNumberShow 口径）
-  const name = piUser(P) || piUser(B) || piUser(R) || piUser(T) || (M && M.ownerName ? String(M.ownerName) : null) || null;
+  const name =
+    piUser(P) ||
+    piUser(B) ||
+    piUser(R) ||
+    piUser(T) ||
+    (M && M.ownerName ? String(M.ownerName) : null) ||
+    null;
   return { oid: oid, aid: aid, power: power, army: army, name: name };
 }
 
@@ -108,7 +142,13 @@ function extractOwner(p) {
 
 /** 新建一份桶元信息（bound 用 Infinity 哨兵表示「还没覆盖任何格」） */
 function newBucketMeta() {
-  return { ts: 0, done: false, count: 0, round: 0, bound: { minX: Infinity, minY: Infinity, maxX: -Infinity, maxY: -Infinity } };
+  return {
+    ts: 0,
+    done: false,
+    count: 0,
+    round: 0,
+    bound: { minX: Infinity, minY: Infinity, maxX: -Infinity, maxY: -Infinity },
+  };
 }
 
 export class MapStore {
@@ -119,7 +159,10 @@ export class MapStore {
     this.marches = new Map();
     /** @type {MapMeta} 索引（默认本服尺寸、未扫） */
     this.meta = {
-      cols: SERVER.cols, rows: SERVER.rows, mapType: 0, buckets: {},
+      cols: SERVER.cols,
+      rows: SERVER.rows,
+      mapType: 0,
+      buckets: {},
     };
     /** @type {number|null} 当前驻留内存的视角桶（null=未驻留任何桶，即尚未懒加载过） */
     this.loadedVk = null;
@@ -150,9 +193,10 @@ export class MapStore {
     if (this.indexLoaded) return true;
     if (this._indexPromise) return this._indexPromise;
     this._indexPromise = (async () => {
-      let meta = null;
-      try { meta = await storage.slot.get(SLOT_META); }
-      catch (err) {
+      let meta;
+      try {
+        meta = await storage.slot.get(SLOT_META);
+      } catch (err) {
         // 命名空间未就绪（UID 未到）≠ 盘上没索引：留待下次重读，且绝不在此刻走迁移分支
         log.warn('index read failed (namespace not ready?), will retry. %s', err && err.message);
         this._indexPromise = null;
@@ -161,11 +205,19 @@ export class MapStore {
       if (meta && typeof meta === 'object') {
         this._applyIndex(meta, defaultVk);
         this.indexLoaded = true;
-        log.info('index loaded. buckets=%d cols=%d rows=%d', Object.keys(this.meta.buckets).length, this.meta.cols, this.meta.rows);
+        log.info(
+          'index loaded. buckets=%d cols=%d rows=%d',
+          Object.keys(this.meta.buckets).length,
+          this.meta.cols,
+          this.meta.rows,
+        );
         return true;
       }
       const res = await this._migrateLegacy();
-      if (res === 'blocked') { this._indexPromise = null; return false; }   // 迁移被 UID 挡住：不算就绪，下次重试
+      if (res === 'blocked') {
+        this._indexPromise = null;
+        return false;
+      } // 迁移被 UID 挡住：不算就绪，下次重试
       this.indexLoaded = true;
       return true;
     })();
@@ -182,17 +234,29 @@ export class MapStore {
     this.meta.cols = meta.cols || this.meta.cols;
     this.meta.rows = meta.rows || this.meta.rows;
     this.meta.mapType = meta.mapType || 0;
-    this.meta.buckets = (meta.buckets && typeof meta.buckets === 'object') ? meta.buckets : {};
+    this.meta.buckets = meta.buckets && typeof meta.buckets === 'object' ? meta.buckets : {};
     if (!Object.keys(this.meta.buckets).length && (meta.ts || meta.done || meta.bound)) {
       const bd = meta.bound && isFinite(meta.bound.minX) ? meta.bound : newBucketMeta().bound;
-      this.meta.buckets[String(defaultVk)] = { ts: meta.ts || 0, done: !!meta.done, count: 0, round: 0, bound: bd };
+      this.meta.buckets[String(defaultVk)] = {
+        ts: meta.ts || 0,
+        done: !!meta.done,
+        count: 0,
+        round: 0,
+        bound: bd,
+      };
     }
     // 经 JSON 后 bound 的 Infinity 变 null，逐桶还原哨兵；缺项补默认
     for (const key of Object.keys(this.meta.buckets)) {
       const b = this.meta.buckets[key];
-      if (!b || typeof b !== 'object') { this.meta.buckets[key] = newBucketMeta(); continue; }
+      if (!b || typeof b !== 'object') {
+        this.meta.buckets[key] = newBucketMeta();
+        continue;
+      }
       if (!b.bound || !isFinite(b.bound.minX)) b.bound = newBucketMeta().bound;
-      b.ts = b.ts | 0; b.done = !!b.done; b.count = b.count | 0; b.round = b.round | 0;
+      b.ts = b.ts | 0;
+      b.done = !!b.done;
+      b.count = b.count | 0;
+      b.round = b.round | 0;
     }
   }
 
@@ -203,7 +267,7 @@ export class MapStore {
    * @returns {Promise<'migrated'|'empty'|'blocked'>}
    */
   async _migrateLegacy() {
-    let legacyMeta = null, legacyEnt = null;
+    let legacyMeta, legacyEnt;
     try {
       legacyMeta = await storage.data.get(LEGACY_META);
       legacyEnt = await storage.data.get(LEGACY_ENT);
@@ -217,34 +281,69 @@ export class MapStore {
     // 按 vk 列分组（旧档无 vk 列时退按点自身 k，都无则 0）
     /** @type {Map<number, object>} */
     const groups = new Map();
-    const COLS = ['x', 'y', 't', 'it', 'lv', 'bd', 'sd', 'k', 'oid', 'aid', 'pw', 'ap', 'ow', 'ver'];
+    const COLS = [
+      'x',
+      'y',
+      't',
+      'it',
+      'lv',
+      'bd',
+      'sd',
+      'k',
+      'oid',
+      'aid',
+      'pw',
+      'ap',
+      'ow',
+      'ver',
+    ];
     if (d) {
-      const hasVk = Array.isArray(d.vk), hasK = Array.isArray(d.k);
+      const hasVk = Array.isArray(d.vk),
+        hasK = Array.isArray(d.k);
       for (let i = 0; i < n; i++) {
-        const vk = hasVk && d.vk[i] != null ? (d.vk[i] | 0) : (hasK && d.k[i] != null ? (d.k[i] | 0) : 0);
+        const vk = hasVk && d.vk[i] != null ? d.vk[i] | 0 : hasK && d.k[i] != null ? d.k[i] | 0 : 0;
         let g = groups.get(vk);
         if (!g) {
           g = { fmt: 8, cols: d.cols || this.meta.cols, rows: d.rows || this.meta.rows };
           for (const c of COLS) g[c] = Array.isArray(d[c]) ? [] : null;
           groups.set(vk, g);
         }
-        for (const c of COLS) { const arr = g[c]; if (arr) arr.push(d[c][i]); }
+        for (const c of COLS) {
+          const arr = g[c];
+          if (arr) arr.push(d[c][i]);
+        }
       }
     }
-    this._applyIndex((legacyMeta && typeof legacyMeta === 'object') ? legacyMeta : {}, 0);
+    this._applyIndex(legacyMeta && typeof legacyMeta === 'object' ? legacyMeta : {}, 0);
     // 逐桶写实体键；桶元信息补齐 count（沿用旧索引里的 ts/done/bound，若有）
     for (const [vk, g] of groups) {
-      try { await storage.slot.set(SLOT_ENT_PFX + vk, g); }
-      catch (err) { log.warn('legacy bucket %d write failed: %s', vk, err && err.message); continue; }
+      try {
+        await storage.slot.set(SLOT_ENT_PFX + vk, g);
+      } catch (err) {
+        log.warn('legacy bucket %d write failed: %s', vk, err && err.message);
+        continue;
+      }
       const b = this.bucketMeta(vk);
       b.count = g.x.length;
-      if (!b.ts && legacyMeta && legacyMeta.ts) b.ts = legacyMeta.ts | 0;  // 旧旧档只有一个总时间戳，均摊给各桶免遭「建议重扫」
+      if (!b.ts && legacyMeta && legacyMeta.ts) b.ts = legacyMeta.ts | 0; // 旧旧档只有一个总时间戳，均摊给各桶免遭「建议重扫」
     }
-    try { await storage.slot.set(SLOT_META, this._indexObject()); }
-    catch (err) { log.warn('legacy index write failed: %s', err && err.message); return 'blocked'; }
+    try {
+      await storage.slot.set(SLOT_META, this._indexObject());
+    } catch (err) {
+      log.warn('legacy index write failed: %s', err && err.message);
+      return 'blocked';
+    }
     // 旧键清掉：共享 blob 从此不再背着地图全量点（其他 feat 的读写也随之瘦身）
-    try { await storage.data.remove(LEGACY_ENT); } catch (err) { /* 孤儿键不影响新格式 */ }
-    try { await storage.data.remove(LEGACY_META); } catch (err) { /* 同上 */ }
+    try {
+      await storage.data.remove(LEGACY_ENT);
+    } catch (err) {
+      /* 孤儿键不影响新格式 */
+    }
+    try {
+      await storage.data.remove(LEGACY_META);
+    } catch (err) {
+      /* 同上 */
+    }
     log.info('legacy map data migrated. buckets=%d points=%d', groups.size, n);
     return 'migrated';
   }
@@ -255,7 +354,10 @@ export class MapStore {
     for (const key of Object.keys(this.meta.buckets)) {
       const b = this.meta.buckets[key];
       buckets[key] = {
-        ts: b.ts | 0, done: !!b.done, count: b.count | 0, round: b.round | 0,
+        ts: b.ts | 0,
+        done: !!b.done,
+        count: b.count | 0,
+        round: b.round | 0,
         bound: isFinite(b.bound.minX) ? b.bound : { minX: 0, minY: 0, maxX: 0, maxY: 0 },
       };
     }
@@ -272,7 +374,10 @@ export class MapStore {
    */
   useBucket(vk) {
     const target = vk | 0;
-    this._useChain = this._useChain.then(() => this._useBucketNow(target), () => this._useBucketNow(target));
+    this._useChain = this._useChain.then(
+      () => this._useBucketNow(target),
+      () => this._useBucketNow(target),
+    );
     return this._useChain;
   }
 
@@ -280,18 +385,25 @@ export class MapStore {
   async _useBucketNow(vk) {
     if (this.loadedVk === vk) return this.entities.size > 0;
     await this.ensureIndex(vk);
-    if (!this.indexLoaded) { log.warn('index not ready, cannot load bucket %d', vk); return false; }
+    if (!this.indexLoaded) {
+      log.warn('index not ready, cannot load bucket %d', vk);
+      return false;
+    }
     if (this.loadedVk === vk) return this.entities.size > 0;
     if (this.loadedVk != null) {
-      await this.persist();                       // 旧桶脏数据先落盘（无变化则内部跳过）
-      this.entities.clear();                      // 再丢弃内存：全图不常驻，驻留量恒为一个桶
+      await this.persist(); // 旧桶脏数据先落盘（无变化则内部跳过）
+      this.entities.clear(); // 再丢弃内存：全图不常驻，驻留量恒为一个桶
       this.marches.clear();
       this.loadedVk = null;
     }
-    let d = null;
-    try { d = await storage.slot.get(SLOT_ENT_PFX + vk); }
-    catch (err) { log.warn('bucket %d read failed: %s', vk, err && err.message); return false; }
-    this.loadedVk = vk;                           // 空桶也置驻留，让后续扫描可直接写入
+    let d;
+    try {
+      d = await storage.slot.get(SLOT_ENT_PFX + vk);
+    } catch (err) {
+      log.warn('bucket %d read failed: %s', vk, err && err.message);
+      return false;
+    }
+    this.loadedVk = vk; // 空桶也置驻留，让后续扫描可直接写入
     if (d && Array.isArray(d.x)) {
       this.deserialize(d, vk);
       log.info('bucket %d loaded. entities=%d', vk, this.entities.size);
@@ -309,7 +421,10 @@ export class MapStore {
    */
   retarget(vk) {
     const target = vk | 0;
-    if (this.loadedVk == null) { this.loadedVk = target; return true; }
+    if (this.loadedVk == null) {
+      this.loadedVk = target;
+      return true;
+    }
     if (this.loadedVk === target) return true;
     if (this.entities.size) return false;
     this.loadedVk = target;
@@ -317,7 +432,9 @@ export class MapStore {
   }
 
   /** @returns {boolean} 指定桶是否已在内存 */
-  isResident(vk) { return this.loadedVk === (vk | 0); }
+  isResident(vk) {
+    return this.loadedVk === (vk | 0);
+  }
 
   // ── 写入 ──────────────────────────────────────────────────────────
 
@@ -331,16 +448,20 @@ export class MapStore {
   upsertPoint(p, vk, rnd) {
     if (!p || p.x == null || p.y == null || p.pointType == null) return false;
     // game → cell：x 奇归偶折半，y 透传（见 coord.gameToCell 同式，此处内联避免额外分配）
-    const cellX = ((p.x & 1) ? p.x - 1 : p.x) / 2;
+    const cellX = (p.x & 1 ? p.x - 1 : p.x) / 2;
     const cellY = p.y;
-    const bucket = vk != null ? vk : (p.k != null ? p.k : 0);
+    const bucket = vk != null ? vk : p.k != null ? p.k : 0;
     // 单桶驻留不变量：未驻留桶的数据不在内存里，写进去会串桶。业务层扫描前已 ensureBucket，
     // 真走到这里只可能是竞态/自愈改号，未驻留时接管（loadedVk=null 说明是首轮直接写）。
     if (this.loadedVk == null) this.loadedVk = bucket;
     else if (this.loadedVk !== bucket) {
       if (!this._mismatchWarned) {
         this._mismatchWarned = true;
-        log.warn('point for bucket %d dropped (resident=%d): bucket not loaded.', bucket, this.loadedVk);
+        log.warn(
+          'point for bucket %d dropped (resident=%d): bucket not loaded.',
+          bucket,
+          this.loadedVk,
+        );
       }
       return false;
     }
@@ -348,7 +469,10 @@ export class MapStore {
     const key = bucket + ':' + idx;
     const v = p.v == null ? 0 : p.v;
     // 从子对象抽取 itemId/level/bid/shield（首个命中为准），供子类/等级筛选与详情、护盾过滤用
-    let itemId = null, level = null, bid = null, shield = null;
+    let itemId = null,
+      level = null,
+      bid = null,
+      shield = null;
     for (let s = 0; s < SUB_KEYS.length; s++) {
       const o = p[SUB_KEYS[s]];
       if (o && typeof o === 'object') {
@@ -359,14 +483,40 @@ export class MapStore {
       }
     }
     const prev = this.entities.get(key);
-    if (prev && prev.v === v && prev.pointType === p.pointType && prev.itemId === itemId && prev.level === level && prev.bid === bid && prev.shield === shield) {
+    if (
+      prev &&
+      prev.v === v &&
+      prev.pointType === p.pointType &&
+      prev.itemId === itemId &&
+      prev.level === level &&
+      prev.bid === bid &&
+      prev.shield === shield
+    ) {
       if (rnd != null) prev.rnd = rnd; // 同版本去重跳过，但仍算「本轮再确认」，不被块内清扫误删
       return false;
     }
     const own = extractOwner(p);
     const now = Date.now();
     this.entities.set(key, {
-      cellIndex: idx, vk: bucket, cellX, cellY, pointType: p.pointType, itemId, level, bid, shield, oid: own.oid, aid: own.aid, power: own.power, army: own.army, oname: own.name, v, k: p.k, rnd, ts: now, id: p.id,
+      cellIndex: idx,
+      vk: bucket,
+      cellX,
+      cellY,
+      pointType: p.pointType,
+      itemId,
+      level,
+      bid,
+      shield,
+      oid: own.oid,
+      aid: own.aid,
+      power: own.power,
+      army: own.army,
+      oname: own.name,
+      v,
+      k: p.k,
+      rnd,
+      ts: now,
+      id: p.id,
     });
     const b = this.bucketMeta(bucket).bound;
     if (cellX < b.minX) b.minX = cellX;
@@ -394,7 +544,10 @@ export class MapStore {
 
   /** 设置地图类型（来自 game-api 探测；变化会触发底图重建判定） */
   setMapType(mapType) {
-    if (mapType && mapType !== this.meta.mapType) { this.meta.mapType = mapType; this.dirty = true; }
+    if (mapType && mapType !== this.meta.mapType) {
+      this.meta.mapType = mapType;
+      this.dirty = true;
+    }
   }
 
   /**
@@ -405,7 +558,10 @@ export class MapStore {
   bucketMeta(vk) {
     const key = String(vk);
     let b = this.meta.buckets[key];
-    if (!b) { b = newBucketMeta(); this.meta.buckets[key] = b; }
+    if (!b) {
+      b = newBucketMeta();
+      this.meta.buckets[key] = b;
+    }
     return b;
   }
 
@@ -443,13 +599,14 @@ export class MapStore {
    * @returns {number} 清扫条数
    */
   purgeRange(vk, cx0, cy0, cw, ch, keepRound) {
-    if (this.loadedVk !== (vk | 0)) return 0;                 // 非驻留桶：内存里本就没有它的数据，无可清扫
-    const cx1 = cx0 + cw, cy1 = cy0 + ch;
+    if (this.loadedVk !== (vk | 0)) return 0; // 非驻留桶：内存里本就没有它的数据，无可清扫
+    const cx1 = cx0 + cw,
+      cy1 = cy0 + ch;
     let n = 0;
     for (const [key, e] of this.entities) {
-      if (e.rnd === keepRound) continue;                      // 本轮已写/已再确认
+      if (e.rnd === keepRound) continue; // 本轮已写/已再确认
       if (e.cellX >= cx0 && e.cellX < cx1 && e.cellY >= cy0 && e.cellY < cy1) {
-        this.entities.delete(key);                            // 迭代中删 Map 条目安全
+        this.entities.delete(key); // 迭代中删 Map 条目安全
         n++;
       }
     }
@@ -466,7 +623,7 @@ export class MapStore {
    * @param {number} ch 块高（cell）
    */
   touchBlock(vk, cx, cy, cw, ch) {
-    if (this.loadedVk !== (vk | 0)) return;                   // 非驻留桶不记覆盖度（数据也不在内存）
+    if (this.loadedVk !== (vk | 0)) return; // 非驻留桶不记覆盖度（数据也不在内存）
     const b = this.bucketMeta(vk).bound;
     if (cx < b.minX) b.minX = cx;
     if (cx + cw > b.maxX) b.maxX = cx + cw;
@@ -488,7 +645,7 @@ export class MapStore {
     const b = vk | 0;
     if (this.loadedVk === b) return this.entities.size;
     const m = this.meta.buckets[String(b)];
-    return m ? (m.count | 0) : 0;
+    return m ? m.count | 0 : 0;
   }
 
   /**
@@ -523,13 +680,55 @@ export class MapStore {
    * @returns {object} 可 JSON 化的紧凑对象
    */
   serialize() {
-    const x = [], y = [], t = [], it = [], lv = [], bd = [], sd = [], k = [], oid = [], aid = [], pw = [], ap = [], ow = [], ver = [];
+    const x = [],
+      y = [],
+      t = [],
+      it = [],
+      lv = [],
+      bd = [],
+      sd = [],
+      k = [],
+      oid = [],
+      aid = [],
+      pw = [],
+      ap = [],
+      ow = [],
+      ver = [];
     for (const e of this.entities.values()) {
-      x.push(e.cellX); y.push(e.cellY); t.push(e.pointType); it.push(e.itemId == null ? null : e.itemId); lv.push(e.level == null ? null : e.level); ver.push(e.v);
-      bd.push(e.bid == null ? null : e.bid); sd.push(e.shield == null ? null : e.shield); k.push(e.k == null ? null : e.k);
-      oid.push(e.oid == null ? null : e.oid); aid.push(e.aid == null ? null : e.aid); pw.push(e.power == null ? null : e.power); ap.push(e.army == null ? null : e.army); ow.push(e.oname == null ? null : e.oname);
+      x.push(e.cellX);
+      y.push(e.cellY);
+      t.push(e.pointType);
+      it.push(e.itemId == null ? null : e.itemId);
+      lv.push(e.level == null ? null : e.level);
+      ver.push(e.v);
+      bd.push(e.bid == null ? null : e.bid);
+      sd.push(e.shield == null ? null : e.shield);
+      k.push(e.k == null ? null : e.k);
+      oid.push(e.oid == null ? null : e.oid);
+      aid.push(e.aid == null ? null : e.aid);
+      pw.push(e.power == null ? null : e.power);
+      ap.push(e.army == null ? null : e.army);
+      ow.push(e.oname == null ? null : e.oname);
     }
-    return { fmt: 8, cols: this.meta.cols, rows: this.meta.rows, x, y, t, it, lv, bd, sd, k, oid, aid, pw, ap, ow, ver };
+    return {
+      fmt: 8,
+      cols: this.meta.cols,
+      rows: this.meta.rows,
+      x,
+      y,
+      t,
+      it,
+      lv,
+      bd,
+      sd,
+      k,
+      oid,
+      aid,
+      pw,
+      ap,
+      ow,
+      ver,
+    };
   }
 
   /**
@@ -547,10 +746,13 @@ export class MapStore {
     const hasBid = Array.isArray(d.bd);
     const hasShield = Array.isArray(d.sd);
     const hasK = Array.isArray(d.k);
-    const hasVk = Array.isArray(d.vk);        // 仅迁移路径会出现：按桶过滤行，跳过不属于本桶的
+    const hasVk = Array.isArray(d.vk); // 仅迁移路径会出现：按桶过滤行，跳过不属于本桶的
     for (let i = 0; i < d.x.length; i++) {
       if (hasVk && (d.vk[i] | 0) !== bucket) continue;
-      const cellX = d.x[i], cellY = d.y[i], pointType = d.t[i], v = (d.ver ? d.ver[i] : 0);
+      const cellX = d.x[i],
+        cellY = d.y[i],
+        pointType = d.t[i],
+        v = d.ver ? d.ver[i] : 0;
       const itemId = hasAttr && d.it ? (d.it[i] == null ? null : d.it[i]) : null;
       const level = hasAttr && d.lv ? (d.lv[i] == null ? null : d.lv[i]) : null;
       const bid = hasBid ? (d.bd[i] == null ? null : d.bd[i]) : null;
@@ -559,10 +761,27 @@ export class MapStore {
       const oid = hasOwner ? (d.oid[i] == null ? null : d.oid[i]) : null;
       const aid = hasOwner ? (d.aid && d.aid[i] != null ? d.aid[i] : null) : null;
       const power = hasOwner ? (d.pw && d.pw[i] != null ? d.pw[i] : null) : null;
-      const army = hasOwner && d.ap ? (d.ap[i] == null ? null : d.ap[i]) : null;   // 旧档无 ap 列→兵力降级 null（重扫后补齐）
+      const army = hasOwner && d.ap ? (d.ap[i] == null ? null : d.ap[i]) : null; // 旧档无 ap 列→兵力降级 null（重扫后补齐）
       const oname = hasOwner ? (d.ow && d.ow[i] != null ? d.ow[i] : null) : null;
       const idx = cellToIndex(cellX, cellY, cols);
-      this.entities.set(bucket + ':' + idx, { cellIndex: idx, vk: bucket, cellX, cellY, pointType, itemId, level, bid, shield, k, oid, aid, power, army, oname, v });
+      this.entities.set(bucket + ':' + idx, {
+        cellIndex: idx,
+        vk: bucket,
+        cellX,
+        cellY,
+        pointType,
+        itemId,
+        level,
+        bid,
+        shield,
+        k,
+        oid,
+        aid,
+        power,
+        army,
+        oname,
+        v,
+      });
     }
   }
 
@@ -574,16 +793,22 @@ export class MapStore {
    * @returns {Promise<void>}
    */
   persist(force) {
-    this._persistChain = this._persistChain.then(() => this._persistOnce(force), () => this._persistOnce(force));
+    this._persistChain = this._persistChain.then(
+      () => this._persistOnce(force),
+      () => this._persistOnce(force),
+    );
     return this._persistChain;
   }
 
   /** persist 的实际执行体（轮到本次才判脏，故并发的两笔 persist 不会重复整写同一个桶） */
   async _persistOnce(force) {
-    if (!this.indexLoaded) return;              // 索引未读回 = 盘上情况未知，此时写回会覆掉已有桶表（见文件头铁律）
+    if (!this.indexLoaded) return; // 索引未读回 = 盘上情况未知，此时写回会覆掉已有桶表（见文件头铁律）
     if (!this.dirty && !force) return;
     const now = Date.now();
-    for (const key of this._dirtyBuckets) { const b = this.meta.buckets[key]; if (b) b.ts = now; }
+    for (const key of this._dirtyBuckets) {
+      const b = this.meta.buckets[key];
+      if (b) b.ts = now;
+    }
     // 驻留桶的点数写进索引：未驻留的桶也能在面板显示「已存 N 点」，不必读实体。
     // 条件是「有数据」或「索引里本来就有这个桶」——刚被 clearBucket 删掉条目的空桶不能再建回去，
     // 否则面板会把「已清空」显示成「有数据时间」。
@@ -592,11 +817,16 @@ export class MapStore {
     }
     const vk = this.loadedVk;
     try {
-      if (vk != null) await storage.slot.set(SLOT_ENT_PFX + vk, this.serialize());   // 实体先落，索引带准确 count 后落
+      if (vk != null) await storage.slot.set(SLOT_ENT_PFX + vk, this.serialize()); // 实体先落，索引带准确 count 后落
       await storage.slot.set(SLOT_META, this._indexObject());
       this.dirty = false;
       this._dirtyBuckets.clear();
-      log.info('persisted. vk=%s entities=%d buckets=%d', vk, this.entities.size, Object.keys(this.meta.buckets).length);
+      log.info(
+        'persisted. vk=%s entities=%d buckets=%d',
+        vk,
+        this.entities.size,
+        Object.keys(this.meta.buckets).length,
+      );
     } catch (err) {
       log.warn('persist failed: %s', err && err.message);
     }
@@ -632,12 +862,14 @@ export class MapStore {
       this.entities.clear();
       this.marches.clear();
     } else {
-      n = m ? (m.count | 0) : 0;
+      n = m ? m.count | 0 : 0;
     }
     delete this.meta.buckets[key];
     this._dirtyBuckets.delete(key);
     this.dirty = true;
-    Promise.resolve(storage.slot.remove(SLOT_ENT_PFX + b)).catch((err) => log.warn('drop bucket %d failed: %s', b, err && err.message));
+    Promise.resolve(storage.slot.remove(SLOT_ENT_PFX + b)).catch((err) =>
+      log.warn('drop bucket %d failed: %s', b, err && err.message),
+    );
     return n;
   }
 
@@ -648,7 +880,8 @@ export class MapStore {
    */
   async clearPersisted() {
     const vks = Object.keys(this.meta.buckets);
-    if (this.loadedVk != null && vks.indexOf(String(this.loadedVk)) === -1) vks.push(String(this.loadedVk));
+    if (this.loadedVk != null && vks.indexOf(String(this.loadedVk)) === -1)
+      vks.push(String(this.loadedVk));
     this.clear();
     try {
       for (const s of vks) await storage.slot.remove(SLOT_ENT_PFX + s);

@@ -40,9 +40,15 @@ export const CATEGORIES = {
  */
 export const MENU = [
   {
-    id: 'daily', kind: 'category', label: CATEGORIES.daily, children: [
+    id: 'daily',
+    kind: 'category',
+    label: CATEGORIES.daily,
+    children: [
       {
-        id: 'dailyTasks', kind: 'group', label: '日常任务', defaultEnabled: true,
+        id: 'dailyTasks',
+        kind: 'group',
+        label: '日常任务',
+        defaultEnabled: true,
         storageKey: 'pocketcc.group.dailyTasks',
         // 日常任务各子项一般只出 checkbox，详细参数用默认值/存量值；需要可调参数与独立开关的功能（如花车空投）抽为与本组平级的 feature 卡片
         children: [
@@ -74,25 +80,35 @@ export const MENU = [
     ],
   },
   {
-    id: 'activity', kind: 'category', label: CATEGORIES.activity, children: [
+    id: 'activity',
+    kind: 'category',
+    label: CATEGORIES.activity,
+    children: [
       // 活动类功能：定时开窗的活动玩法挂这里（与日常任务的周期型玩法区分）
       { id: 'launchSilo', kind: 'feature', label: '占领发射井', showFields: true },
     ],
   },
   {
-    id: 'battle', kind: 'category', label: CATEGORIES.battle, children: [
+    id: 'battle',
+    kind: 'category',
+    label: CATEGORIES.battle,
+    children: [
       { id: 'quickAttack', kind: 'feature', label: '快捷战斗' },
       { id: 'imperialDecree', kind: 'feature', label: '奉旨出征', showFields: true },
       { id: 'autoDefense', kind: 'feature', label: '自动防御', showFields: true },
     ],
   },
   {
-    id: 'map', kind: 'category', label: CATEGORIES.map, children: [
-      { id: 'globalMap', kind: 'feature', label: '全局地图', showFields: true },
-    ],
+    id: 'map',
+    kind: 'category',
+    label: CATEGORIES.map,
+    children: [{ id: 'globalMap', kind: 'feature', label: '全局地图', showFields: true }],
   },
   {
-    id: 'system', kind: 'category', label: CATEGORIES.system, children: [
+    id: 'system',
+    kind: 'category',
+    label: CATEGORIES.system,
+    children: [
       { id: 'chatWindow', kind: 'feature', label: '聊天窗口', showFields: true },
       { id: 'reconnect', kind: 'feature', label: '自动重连', showFields: true },
       { id: 'netLog', kind: 'feature', label: '网络日志' },
@@ -133,10 +149,11 @@ export function allMenuItemIds() {
  */
 export function fieldVisibleFeatureIds() {
   const set = new Set();
-  const walk = (nodes) => nodes.forEach((n) => {
-    if (n.kind === 'feature' && n.showFields) set.add(n.id);
-    if (n.children) walk(n.children);
-  });
+  const walk = (nodes) =>
+    nodes.forEach((n) => {
+      if (n.kind === 'feature' && n.showFields) set.add(n.id);
+      if (n.children) walk(n.children);
+    });
   walk(MENU);
   return set;
 }
@@ -147,10 +164,16 @@ export function fieldVisibleFeatureIds() {
  */
 export function groupConfigs() {
   const groups = [];
-  const walk = (nodes) => nodes.forEach((n) => {
-    if (n.kind === 'group') groups.push({ id: n.id, storageKey: n.storageKey, defaults: { enabled: !!n.defaultEnabled } });
-    if (n.children) walk(n.children);
-  });
+  const walk = (nodes) =>
+    nodes.forEach((n) => {
+      if (n.kind === 'group')
+        groups.push({
+          id: n.id,
+          storageKey: n.storageKey,
+          defaults: { enabled: !!n.defaultEnabled },
+        });
+      if (n.children) walk(n.children);
+    });
   walk(MENU);
   return groups;
 }

@@ -44,8 +44,7 @@ import { createCycle } from '../../core/cycle.js';
 /** @type {ReturnType<createLog>} 模块日志器（tag=ALLIANCE-BEHEMOTH） */
 const log = createLog('ALLIANCE-BEHEMOTH');
 
-/** @type {number} RequestId.ALLIANCE_BEHEMOTH_LIST，拉守卫列表（游戏登录链已发，本功能只读快照、不主动发） */
-const CMD_LIST = 7101;
+// 协议参考：7101 RequestId.ALLIANCE_BEHEMOTH_LIST 拉守卫列表（游戏登录链已发，本功能只读快照、不主动发，故未定义常量）
 
 /** @type {number} RequestId.ALLIANCE_BEHEMOTH_DONATE，等级捐献（type LEVEL） */
 const CMD_DONATE = 7102;
@@ -97,7 +96,7 @@ var lastEnergyPoint = 0;
  * @returns {boolean}
  */
 function aliveFn() {
-    return ctxRef ? ctxRef.alive() : false;
+  return ctxRef ? ctxRef.alive() : false;
 }
 
 // ── 排程 ──────────────────────────────────────────────────────────────
@@ -107,24 +106,25 @@ function aliveFn() {
  * @returns {number} 毫秒
  */
 function nextTickDelay(snap) {
-    var ms;
-    var e = snap && snap.energy;
-    if (snap && snap.donated) ms = CHAIN_GAP_MS;
-    else if (e && e.point > 0) ms = rejectStreak >= 3 ? IDLE_TICK_MS : BUSY_TICK_MS;
-    else if (e) ms = (e.nextRecoverSec > 0 ? e.nextRecoverSec : RECOVER_SEC) * 1000 + RECOVER_BUFFER_MS;
-    else ms = rejectStreak >= 3 ? IDLE_TICK_MS * 2 : IDLE_TICK_MS;
-    // 游戏 nextRecoverSec 为显式回点时刻：直接睡到该点，仅以 24h 硬顶兜住异常超长值/时钟漂移（离线错过 push 10021 也由下次启动或到点重读自愈）。
-    // BUSY=5min、IDLE=15min 等自选档恒 < 24h，不受此顶影响。
-    if (ms > 24 * 3600 * 1000) ms = 24 * 3600 * 1000;
-    return ms;
+  var ms;
+  var e = snap && snap.energy;
+  if (snap && snap.donated) ms = CHAIN_GAP_MS;
+  else if (e && e.point > 0) ms = rejectStreak >= 3 ? IDLE_TICK_MS : BUSY_TICK_MS;
+  else if (e)
+    ms = (e.nextRecoverSec > 0 ? e.nextRecoverSec : RECOVER_SEC) * 1000 + RECOVER_BUFFER_MS;
+  else ms = rejectStreak >= 3 ? IDLE_TICK_MS * 2 : IDLE_TICK_MS;
+  // 游戏 nextRecoverSec 为显式回点时刻：直接睡到该点，仅以 24h 硬顶兜住异常超长值/时钟漂移（离线错过 push 10021 也由下次启动或到点重读自愈）。
+  // BUSY=5min、IDLE=15min 等自选档恒 < 24h，不受此顶影响。
+  if (ms > 24 * 3600 * 1000) ms = 24 * 3600 * 1000;
+  return ms;
 }
 
 /** cycle 单轮：跑一次 tickBody → 若期间攒下推触就立即补扫 → 否则按 snap 择下拍。 */
 async function cycleRun() {
-    var snap = await tickBody();
-    if (!aliveFn()) return 0;
-    if (cycle.pending) return 0;
-    return nextTickDelay(snap || undefined);
+  var snap = await tickBody();
+  if (!aliveFn()) return 0;
+  if (cycle.pending) return 0;
+  return nextTickDelay(snap || undefined);
 }
 
 const cycle = createCycle({ log: log, alive: aliveFn, run: cycleRun, fallback: IDLE_TICK_MS });
@@ -138,16 +138,20 @@ const cycle = createCycle({ log: log, alive: aliveFn, run: cycleRun, fallback: I
  * @returns {Promise<{ok:boolean, code:number, payload:object|null}>} 归一化结果
  */
 async function sendRawPB(cmd, body) {
-    if (net.isSending(cmd)) return { ok: false, code: CODE_NOT_SENT, payload: null };
-    var ret;
-    try {
-        ret = await net.sendPB(cmd, body);
-    } catch (err) {
-        log.debug('cmd %d send failed: %s', cmd, err && err.message);
-        return { ok: false, code: CODE_NOT_SENT, payload: null };
-    }
-    var d = ret && ret.data;
-    return { ok: !!(ret && ret.ok), code: ret ? ret.code : CODE_NOT_SENT, payload: (d && typeof d === 'object') ? d : null };
+  if (net.isSending(cmd)) return { ok: false, code: CODE_NOT_SENT, payload: null };
+  var ret;
+  try {
+    ret = await net.sendPB(cmd, body);
+  } catch (err) {
+    log.debug('cmd %d send failed: %s', cmd, err && err.message);
+    return { ok: false, code: CODE_NOT_SENT, payload: null };
+  }
+  var d = ret && ret.data;
+  return {
+    ok: !!(ret && ret.ok),
+    code: ret ? ret.code : CODE_NOT_SENT,
+    payload: d && typeof d === 'object' ? d : null,
+  };
 }
 
 /**
@@ -156,7 +160,9 @@ async function sendRawPB(cmd, body) {
  * @returns {Promise<void>}
  */
 function sleep(ms) {
-    return new Promise(function (resolve) { setTimeout(resolve, Math.max(0, ms | 0)); });
+  return new Promise(function (resolve) {
+    setTimeout(resolve, Math.max(0, ms | 0));
+  });
 }
 
 // ── 目标选择 ──────────────────────────────────────────────────────────
@@ -166,13 +172,13 @@ function sleep(ms) {
  * @returns {{costId:number, costCount:number}|null}
  */
 function levelCost(level) {
-    var row = l10n.tableRow('behemoth_level', level);
-    if (!row || !row.lvup_cost) return null;
-    var parts = String(row.lvup_cost).split(',');
-    var costId = parseInt(parts[0], 10);
-    var costCount = parseInt(parts[1], 10);
-    if (!(costId > 0) || !(costCount > 0)) return null;
-    return { costId: costId, costCount: costCount };
+  var row = l10n.tableRow('behemoth_level', level);
+  if (!row || !row.lvup_cost) return null;
+  var parts = String(row.lvup_cost).split(',');
+  var costId = parseInt(parts[0], 10);
+  var costCount = parseInt(parts[1], 10);
+  if (!(costId > 0) || !(costCount > 0)) return null;
+  return { costId: costId, costCount: costCount };
 }
 
 /**
@@ -181,16 +187,21 @@ function levelCost(level) {
  * @returns {{behemothId:number, level:number, costId:number, costCount:number}|null}
  */
 function pickTarget(items) {
-    for (var i = 0; i < items.length; i++) {
-        var it = items[i];
-        if (!it.isUnlock || !(it.level > 0)) continue;
-        if (it.levelCap > 0 && it.level >= it.levelCap) continue;   // 满级不可捐
-        var cost = levelCost(it.level);
-        if (!cost) continue;
-        if (gameData.itemAmount(cost.costId) < cost.costCount) continue;   // 道具不足
-        return { behemothId: it.behemothId, level: it.level, costId: cost.costId, costCount: cost.costCount };
-    }
-    return null;
+  for (var i = 0; i < items.length; i++) {
+    var it = items[i];
+    if (!it.isUnlock || !(it.level > 0)) continue;
+    if (it.levelCap > 0 && it.level >= it.levelCap) continue; // 满级不可捐
+    var cost = levelCost(it.level);
+    if (!cost) continue;
+    if (gameData.itemAmount(cost.costId) < cost.costCount) continue; // 道具不足
+    return {
+      behemothId: it.behemothId,
+      level: it.level,
+      costId: cost.costId,
+      costCount: cost.costCount,
+    };
+  }
+  return null;
 }
 
 // ── 主流程 ────────────────────────────────────────────────────────────
@@ -199,52 +210,83 @@ function pickTarget(items) {
  * @returns {Promise<object|null>} 排程线索 {donated, energy}；守卫未开/数据不可用返回 null（走闲档）
  */
 async function tickBody() {
-    var bh = gameData.allianceBehemoth();
-    if (!bh || !bh.open) {
-        log.debug('behemoth unavailable or not open (not in alliance / feature off).');
-        return null;
-    }
-    var energy = gameData.energy(ENERGY_BEHEMOTH);
-    if (!energy) return { donated: false, energy: null };
-    if (energy.point <= 0) return { donated: false, energy: energy };
+  var bh = gameData.allianceBehemoth();
+  if (!bh || !bh.open) {
+    log.debug('behemoth unavailable or not open (not in alliance / feature off).');
+    return null;
+  }
+  var energy = gameData.energy(ENERGY_BEHEMOTH);
+  if (!energy) return { donated: false, energy: null };
+  if (energy.point <= 0) return { donated: false, energy: energy };
 
-    var target = pickTarget(bh.items);
-    if (!target) {
-        log.debug('no donateable behemoth (locked/max/item not enough), skip.');
-        return { donated: false, energy: energy };
-    }
+  var target = pickTarget(bh.items);
+  if (!target) {
+    log.debug('no donateable behemoth (locked/max/item not enough), skip.');
+    return { donated: false, energy: energy };
+  }
 
-    var donated = 0;
-    var curLevel = target.level;
-    var loopMax = Math.min(energy.point, LOOP_MAX_PER_TICK);
-    for (var i = 0; i < loopMax; i++) {
-        if (!aliveFn()) break;
-        // 每枚前按当前等级重取消耗行并校验道具（升级后换行、或中途被耗尽都能即时收手）
-        var cost = levelCost(curLevel);
-        if (!cost) { log.debug('behemoth: no level_cost row at level=%d, stop.', curLevel); break; }
-        if (gameData.itemAmount(cost.costId) < cost.costCount) {
-            log.debug('behemoth: item not enough. cost=%d(%d/%d)', cost.costId, gameData.itemAmount(cost.costId), cost.costCount);
-            break;
-        }
-        var res = await sendRawPB(CMD_DONATE, { header: {}, allianceBehemothDonate: { behemothId: target.behemothId, level: curLevel } });
-        if (!aliveFn()) break;
-        var ack = res.payload && res.payload.allianceBehemothDonate;
-        if (res.ok && ack && !ack.errorCode) {
-            rejectStreak = 0;
-            donated++;
-            var nb = ack.behemoth || {};
-            if (nb.level) curLevel = Number(nb.level) || curLevel;   // 升级则刷新等级镜像
-            log.info('behemoth donate ok. id=%d;#%d;level=%d;addExp=%s', target.behemothId, donated, curLevel, ack.addExp);
-        } else {
-            // 业务拒（errorCode，header.s 仍可能为 0）或发送异常/在途频控：任一枚失败即收手，交下轮/排程
-            rejectStreak++;
-            var msg = ack && ack.errorCode ? l10n.net(ack.errorCode) : (res.code === CODE_NOT_SENT ? 'not sent' : ('code=' + res.code));
-            log.warn('behemoth donate rejected (streak #%d). id=%d;level=%d;%s', rejectStreak, target.behemothId, curLevel, msg);
-            break;
-        }
-        if (i < loopMax - 1) await sleep(DONATE_GAP_MS);
+  var donated = 0;
+  var curLevel = target.level;
+  var loopMax = Math.min(energy.point, LOOP_MAX_PER_TICK);
+  for (var i = 0; i < loopMax; i++) {
+    if (!aliveFn()) break;
+    // 每枚前按当前等级重取消耗行并校验道具（升级后换行、或中途被耗尽都能即时收手）
+    var cost = levelCost(curLevel);
+    if (!cost) {
+      log.debug('behemoth: no level_cost row at level=%d, stop.', curLevel);
+      break;
     }
-    return { donated: donated > 0, energy: donated > 0 ? (gameData.energy(ENERGY_BEHEMOTH) || energy) : energy };
+    if (gameData.itemAmount(cost.costId) < cost.costCount) {
+      log.debug(
+        'behemoth: item not enough. cost=%d(%d/%d)',
+        cost.costId,
+        gameData.itemAmount(cost.costId),
+        cost.costCount,
+      );
+      break;
+    }
+    var res = await sendRawPB(CMD_DONATE, {
+      header: {},
+      allianceBehemothDonate: { behemothId: target.behemothId, level: curLevel },
+    });
+    if (!aliveFn()) break;
+    var ack = res.payload && res.payload.allianceBehemothDonate;
+    if (res.ok && ack && !ack.errorCode) {
+      rejectStreak = 0;
+      donated++;
+      var nb = ack.behemoth || {};
+      if (nb.level) curLevel = Number(nb.level) || curLevel; // 升级则刷新等级镜像
+      log.info(
+        'behemoth donate ok. id=%d;#%d;level=%d;addExp=%s',
+        target.behemothId,
+        donated,
+        curLevel,
+        ack.addExp,
+      );
+    } else {
+      // 业务拒（errorCode，header.s 仍可能为 0）或发送异常/在途频控：任一枚失败即收手，交下轮/排程
+      rejectStreak++;
+      var msg =
+        ack && ack.errorCode
+          ? l10n.net(ack.errorCode)
+          : res.code === CODE_NOT_SENT
+            ? 'not sent'
+            : 'code=' + res.code;
+      log.warn(
+        'behemoth donate rejected (streak #%d). id=%d;level=%d;%s',
+        rejectStreak,
+        target.behemothId,
+        curLevel,
+        msg,
+      );
+      break;
+    }
+    if (i < loopMax - 1) await sleep(DONATE_GAP_MS);
+  }
+  return {
+    donated: donated > 0,
+    energy: donated > 0 ? gameData.energy(ENERGY_BEHEMOTH) || energy : energy,
+  };
 }
 
 /**
@@ -253,15 +295,15 @@ async function tickBody() {
  * @returns {boolean}
  */
 function install(ctx) {
-    ctxRef = ctx;
-    net = ctx.net;
-    if (!net || !net.install()) {
-        log.warn('install failed: pocketcc.net unavailable');
-        net = null;
-        return false;
-    }
-    log.info('installed.');
-    return true;
+  ctxRef = ctx;
+  net = ctx.net;
+  if (!net || !net.install()) {
+    log.warn('install failed: pocketcc.net unavailable');
+    net = null;
+    return false;
+  }
+  log.info('installed.');
+  return true;
 }
 
 /**
@@ -270,29 +312,29 @@ function install(ctx) {
  * @param {object} ctx reactor 上下文
  */
 function run(ctx) {
-    ctxRef = ctx;
-    rejectStreak = 0;
-    log.info('started.');
+  ctxRef = ctx;
+  rejectStreak = 0;
+  log.info('started.');
 
-    // 以当前点数作为基准：自家捐赠带来的 point 递减推送会因「非回升」被过滤，不再触捐
-    var e = gameData.energy(ENERGY_BEHEMOTH);
-    lastEnergyPoint = e ? e.point : 0;
+  // 以当前点数作为基准：自家捐赠带来的 point 递减推送会因「非回升」被过滤，不再触捐
+  var e = gameData.energy(ENERGY_BEHEMOTH);
+  lastEnergyPoint = e ? e.point : 0;
 
-    // 能量池推送 10021：只在点数「回升」（自然回点）时唤醒捐赠。
-    // 抓包实证：每捐一次把 point 往下扣也推一条 10021（reason=ALLIANCE_BEHEMOTH_DONATE），
-    // 一次捐光连推多条递减——不看方向逐条 cycle.kick 就是「捐→被推→再捐」的自我反馈风暴。
-    ctx.on.push(CMD_PUSH_ENERGY, function (ev) {
-        var d = ev && ev.data;
-        if (!d || Number(d.type) !== ENERGY_BEHEMOTH) return;
-        var pt = Number(d.point) || 0;
-        var prev = lastEnergyPoint;
-        lastEnergyPoint = pt;
-        if (pt <= prev) return;   // 持平/下降：非回升（多为消耗回执），忽略
-        log.debug('push 10021 energy type=13 recovered (%d→%d), tick.', prev, pt);
-        cycle.kick();
-    });
+  // 能量池推送 10021：只在点数「回升」（自然回点）时唤醒捐赠。
+  // 抓包实证：每捐一次把 point 往下扣也推一条 10021（reason=ALLIANCE_BEHEMOTH_DONATE），
+  // 一次捐光连推多条递减——不看方向逐条 cycle.kick 就是「捐→被推→再捐」的自我反馈风暴。
+  ctx.on.push(CMD_PUSH_ENERGY, function (ev) {
+    var d = ev && ev.data;
+    if (!d || Number(d.type) !== ENERGY_BEHEMOTH) return;
+    var pt = Number(d.point) || 0;
+    var prev = lastEnergyPoint;
+    lastEnergyPoint = pt;
+    if (pt <= prev) return; // 持平/下降：非回升（多为消耗回执），忽略
+    log.debug('push 10021 energy type=13 recovered (%d→%d), tick.', prev, pt);
+    cycle.kick();
+  });
 
-    cycle.kick();   // 首个 tick 立即跑：加载时多半已错过推送，本地态直接可用
+  cycle.kick(); // 首个 tick 立即跑：加载时多半已错过推送，本地态直接可用
 }
 
 /**
@@ -301,15 +343,17 @@ function run(ctx) {
  * 能量池 id / 恢复周期 / 单捐间距等均为本文件内置常量。
  */
 reactor.register({
-    id: 'allianceBehemoth',
-    label: '联盟守卫',
-    storageKey: 'pocketcc.feat.allianceBehemoth',
-    symbols: ['dataCenter', 'gameDefine', 'tableManager'],
-    scenes: ['Home', 'NWorldMap'],
-    offInCombat: false,
-    defaults: { enabled: false },
-    fields: [],
-    toModuleCfg: function () { return {}; },
-    install: install,
-    run: run,
+  id: 'allianceBehemoth',
+  label: '联盟守卫',
+  storageKey: 'pocketcc.feat.allianceBehemoth',
+  symbols: ['dataCenter', 'gameDefine', 'tableManager'],
+  scenes: ['Home', 'NWorldMap'],
+  offInCombat: false,
+  defaults: { enabled: false },
+  fields: [],
+  toModuleCfg: function () {
+    return {};
+  },
+  install: install,
+  run: run,
 });

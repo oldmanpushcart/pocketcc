@@ -20,13 +20,24 @@ import { gameData, l10n } from './game-api.js';
  * @type {Object<number,string>}
  */
 const ITEM_NAMES = {
-    // 遗迹 2 级道具池（relic-reward）
-    600002: '大体力药剂', 3300001: '金币砰砰宝箱', 500001: '训练加速1小时', 2300002: '紫色万能碎片',
-    2560001: '技能抽卡券', 1700013: '3级强化部件宝箱', 323001: '核心建筑设计图', 3610009: '科技道具自选箱',
-    1600029: '职业道具自选宝箱', 1700402: '绿色材料随机箱', 99910001: '元素反应器零件', 99910101: '元素宝箱',
-    2800000: '军阵通用手册',
-    // 卡车争夺奖励池（truck-intercept；1600029 与遗迹池同名，已在上登记）
-    820016: '高级催化剂', 69359: '中级重装芯片宝箱', 2300003: '橙色万能碎片',
+  // 遗迹 2 级道具池（relic-reward）
+  600002: '大体力药剂',
+  3300001: '金币砰砰宝箱',
+  500001: '训练加速1小时',
+  2300002: '紫色万能碎片',
+  2560001: '技能抽卡券',
+  1700013: '3级强化部件宝箱',
+  323001: '核心建筑设计图',
+  3610009: '科技道具自选箱',
+  1600029: '职业道具自选宝箱',
+  1700402: '绿色材料随机箱',
+  99910001: '元素反应器零件',
+  99910101: '元素宝箱',
+  2800000: '军阵通用手册',
+  // 卡车争夺奖励池（truck-intercept；1600029 与遗迹池同名，已在上登记）
+  820016: '高级催化剂',
+  69359: '中级重装芯片宝箱',
+  2300003: '橙色万能碎片',
 };
 
 /**
@@ -35,7 +46,7 @@ const ITEM_NAMES = {
  * @returns {number} 持有数量；数据源/方法不可用返回 0
  */
 function amount(itemId) {
-    return gameData.itemAmount(itemId);
+  return gameData.itemAmount(itemId);
 }
 
 /**
@@ -45,10 +56,13 @@ function amount(itemId) {
  * @returns {string}
  */
 function label(itemId, rawName) {
-    var id = Number(itemId);
-    if (ITEM_NAMES[id]) return ITEM_NAMES[id];
-    if (rawName) { var t = l10n.text(rawName); if (t && t !== String(rawName)) return t; }
-    return '道具 ' + id;
+  var id = Number(itemId);
+  if (ITEM_NAMES[id]) return ITEM_NAMES[id];
+  if (rawName) {
+    var t = l10n.text(rawName);
+    if (t && t !== String(rawName)) return t;
+  }
+  return '道具 ' + id;
 }
 
 /**
@@ -58,12 +72,12 @@ function label(itemId, rawName) {
  * @returns {{itemId:number, rawName:string}}
  */
 function fromReward(rewardId) {
-    var items = gameData.rewardItems(rewardId);
-    var it = (items && items.length) ? items[0] : null;
-    return {
-        itemId: it ? Number(it.id) || 0 : 0,
-        rawName: it && it.name ? String(it.name) : '',
-    };
+  var items = gameData.rewardItems(rewardId);
+  var it = items && items.length ? items[0] : null;
+  return {
+    itemId: it ? Number(it.id) || 0 : 0,
+    rawName: it && it.name ? String(it.name) : '',
+  };
 }
 
 /**
@@ -72,16 +86,16 @@ function fromReward(rewardId) {
  * @returns {Array<{id:number,name:string}>|null}
  */
 function sortResolve(itemId) {
-    var id = Number(itemId);
-    var nm = ITEM_NAMES[id];
-    return nm ? [{ id: id, name: nm }] : null;
+  var id = Number(itemId);
+  var nm = ITEM_NAMES[id];
+  return nm ? [{ id: id, name: nm }] : null;
 }
 
 /** 物品查询/标识工具单例 */
 export const item = {
-    ITEM_NAMES,
-    amount,
-    label,
-    fromReward,
-    sortResolve,
+  ITEM_NAMES,
+  amount,
+  label,
+  fromReward,
+  sortResolve,
 };

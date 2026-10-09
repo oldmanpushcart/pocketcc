@@ -17,21 +17,26 @@ import { nav, worldMap, gameData } from '../../core/game-api.js';
 const log = createLog('FLY_HOME');
 
 bind({
-    id: 'flyHome',
-    keys: ['Tab'],
-    display: 'Tab',
-    label: '飞回基地',
-    where: '大世界',
-    scenes: ['NWorldMap'],
-    handler: function () {
-        var pos = gameData.myWorldPos();
-        if (!pos) {
-            log.warn('base coordinate unavailable (UserData.WorldCoord), skip TAB fly.');
-            return false;   // 不消费：让 TAB 走默认焦点移动
-        }
-        var r = nav.flyTo({ x: pos.x, y: pos.y, z: worldMap.viewServerId() || worldMap.serverId(), click: false });
-        if (r.ok) log.info('fly to base. x=%d;y=%d', pos.x, pos.y);
-        else log.warn('fly to base failed. err=%s', r.err);
-        return true;
-    },
+  id: 'flyHome',
+  keys: ['Tab'],
+  display: 'Tab',
+  label: '飞回基地',
+  where: '大世界',
+  scenes: ['NWorldMap'],
+  handler: function () {
+    var pos = gameData.myWorldPos();
+    if (!pos) {
+      log.warn('base coordinate unavailable (UserData.WorldCoord), skip TAB fly.');
+      return false; // 不消费：让 TAB 走默认焦点移动
+    }
+    var r = nav.flyTo({
+      x: pos.x,
+      y: pos.y,
+      z: worldMap.viewServerId() || worldMap.serverId(),
+      click: false,
+    });
+    if (r.ok) log.info('fly to base. x=%d;y=%d', pos.x, pos.y);
+    else log.warn('fly to base failed. err=%s', r.err);
+    return true;
+  },
 });

@@ -18,14 +18,14 @@ const pending = new Map();
 let ns = null;
 
 window.addEventListener('message', (event) => {
-    if (event.source !== window) return;
-    const msg = event.data;
-    if (!msg || msg.__ns !== NS || msg.dir !== 'bridge->main') return;
-    const entry = pending.get(msg.id);
-    if (!entry) return;
-    pending.delete(msg.id);
-    if (msg.error) entry.reject(new Error(msg.error));
-    else entry.resolve(msg.result);
+  if (event.source !== window) return;
+  const msg = event.data;
+  if (!msg || msg.__ns !== NS || msg.dir !== 'bridge->main') return;
+  const entry = pending.get(msg.id);
+  if (!entry) return;
+  pending.delete(msg.id);
+  if (msg.error) entry.reject(new Error(msg.error));
+  else entry.resolve(msg.result);
 });
 
 /**
@@ -34,16 +34,16 @@ window.addEventListener('message', (event) => {
  * @param {string|null} prefix 键前缀
  */
 export function setNamespace(prefix) {
-    if (prefix === ns) {
-        log.warn('setNamespace: already %s', prefix);
-        return;
-    }
-    ns = prefix;
-    // blob 内存缓存的归属跟着命名空间走：换前缀必须丢掉上一位玩家（以及前缀未设期间）的快照，
-    // 否则下一次整块写回会把旧快照覆写到新前缀键上。队列里在飞的那笔写入无法撤销，
-    // 但换号已由 player.js 安排整页 reload 重建，实际不经过这条路。
-    for (const k of Object.keys(blobs)) delete blobs[k];
-    log.info('namespace: %s (blob cache dropped)', ns || '(none)');
+  if (prefix === ns) {
+    log.warn('setNamespace: already %s', prefix);
+    return;
+  }
+  ns = prefix;
+  // blob 内存缓存的归属跟着命名空间走：换前缀必须丢掉上一位玩家（以及前缀未设期间）的快照，
+  // 否则下一次整块写回会把旧快照覆写到新前缀键上。队列里在飞的那笔写入无法撤销，
+  // 但换号已由 player.js 安排整页 reload 重建，实际不经过这条路。
+  for (const k of Object.keys(blobs)) delete blobs[k];
+  log.info('namespace: %s (blob cache dropped)', ns || '(none)');
 }
 
 /**
@@ -51,7 +51,7 @@ export function setNamespace(prefix) {
  * @returns {string|null}
  */
 export function getNamespace() {
-    return ns;
+  return ns;
 }
 
 /**
@@ -64,23 +64,24 @@ export function getNamespace() {
  * @returns {Promise<*>} 操作结果（前缀未设时写丢弃、读 reject）
  */
 function call(op, key, value, raw) {
-    let fullKey;
-    if (raw) {
-        fullKey = key;
-    } else if (!ns) {
-        // UID 未就绪：写丢弃（切号窗口期宁可丢也不串号）；读必须报错而非回 null——
-        // null 与「键不存在」在调用方眼里同形，会把「还没法读」误判成「盘上没数据」。
-        if (op === 'get') return Promise.reject(new Error(`storage get blocked: namespace not set (${key})`));
-        log.warn('drop %s %s: namespace not set', op, key);
-        return Promise.resolve();
-    } else {
-        fullKey = ns + key;
-    }
-    const id = `${NS}-${++seq.n}`;
-    return new Promise((resolve, reject) => {
-        pending.set(id, { resolve, reject });
-        window.postMessage({ __ns: NS, dir: 'main->bridge', id, op, key: fullKey, value }, '*');
-    });
+  let fullKey;
+  if (raw) {
+    fullKey = key;
+  } else if (!ns) {
+    // UID 未就绪：写丢弃（切号窗口期宁可丢也不串号）；读必须报错而非回 null——
+    // null 与「键不存在」在调用方眼里同形，会把「还没法读」误判成「盘上没数据」。
+    if (op === 'get')
+      return Promise.reject(new Error(`storage get blocked: namespace not set (${key})`));
+    log.warn('drop %s %s: namespace not set', op, key);
+    return Promise.resolve();
+  } else {
+    fullKey = ns + key;
+  }
+  const id = `${NS}-${++seq.n}`;
+  return new Promise((resolve, reject) => {
+    pending.set(id, { resolve, reject });
+    window.postMessage({ __ns: NS, dir: 'main->bridge', id, op, key: fullKey, value }, '*');
+  });
 }
 
 // === 两块 JSON blob：配置 vs 数据，各占一个存储 key（UID 前缀下即两个键） ===
@@ -107,11 +108,14 @@ const queues = Object.create(null);
  * @returns {Promise<*>} 任务结果
  */
 function enqueue(blobKey, task) {
-    const prev = queues[blobKey] || Promise.resolve();
-    const next = prev.then(task, task);
-    // 无论成功/失败都放行下一笔；错误由调用方自行 catch
-    queues[blobKey] = next.then(() => {}, () => {});
-    return next;
+  const prev = queues[blobKey] || Promise.resolve();
+  const next = prev.then(task, task);
+  // 无论成功/失败都放行下一笔；错误由调用方自行 catch
+  queues[blobKey] = next.then(
+    () => {},
+    () => {},
+  );
+  return next;
 }
 
 /**
@@ -123,10 +127,10 @@ function enqueue(blobKey, task) {
  * @returns {Promise<object>} blob
  */
 async function loadBlob(blobKey) {
-    if (blobs[blobKey]) return blobs[blobKey];
-    const v = await call('get', blobKey);
-    blobs[blobKey] = (v && typeof v === 'object') ? v : {};
-    return blobs[blobKey];
+  if (blobs[blobKey]) return blobs[blobKey];
+  const v = await call('get', blobKey);
+  blobs[blobKey] = v && typeof v === 'object' ? v : {};
+  return blobs[blobKey];
 }
 
 /**
@@ -136,8 +140,8 @@ async function loadBlob(blobKey) {
  * @returns {Promise<*>}
  */
 async function blobGet(blobKey, name) {
-    const b = await loadBlob(blobKey);
-    return b[name];
+  const b = await loadBlob(blobKey);
+  return b[name];
 }
 
 /**
@@ -148,19 +152,19 @@ async function blobGet(blobKey, name) {
  * @returns {Promise<*>}
  */
 async function blobSet(blobKey, name, value) {
-    return enqueue(blobKey, async () => {
-        if (!ns) {
-            if (value !== undefined) log.warn('drop set %s/%s: namespace not set', blobKey, name);
-            return;
-        }
-        const b = await loadBlob(blobKey);
-        if (value === undefined) {
-            if (name in b) delete b[name];
-        } else {
-            b[name] = value;
-        }
-        await call('set', blobKey, b);
-    });
+  return enqueue(blobKey, async () => {
+    if (!ns) {
+      if (value !== undefined) log.warn('drop set %s/%s: namespace not set', blobKey, name);
+      return;
+    }
+    const b = await loadBlob(blobKey);
+    if (value === undefined) {
+      if (name in b) delete b[name];
+    } else {
+      b[name] = value;
+    }
+    await call('set', blobKey, b);
+  });
 }
 
 /**
@@ -176,32 +180,32 @@ async function blobSet(blobKey, name, value) {
  * @returns {Promise<*>}
  */
 function slot(op, name, value) {
-    if (op === 'get') return call('get', name);
-    return enqueue('slot:' + name, () => call(op, name, value));
+  if (op === 'get') return call('get', name);
+  return enqueue('slot:' + name, () => call(op, name, value));
 }
 
 /** 存储入口，挂到 window.pocketcc.storage（配置 blob / 数据 blob / 独立键 / 绕过前缀的 raw 通道） */
 export const storage = {
-    // 配置 blob 逻辑读写：key 沿用调用点原有的字面 storageKey（如 'pocketcc.feat.allianceRally'）。
-    get: (key) => blobGet(CONFIG_KEY, key),
-    set: (key, value) => blobSet(CONFIG_KEY, key, value),
-    remove: (key) => blobSet(CONFIG_KEY, key, undefined),
-    // 供后续「导出配置」使用：返回配置 blob 的浅拷贝（不含 data）。
-    getAllConfig: () => loadBlob(CONFIG_KEY).then((b) => Object.assign({}, b)),
-    // 数据 blob：与配置完全分离，频繁写入互不干扰。
-    data: {
-        get: (name) => blobGet(DATA_KEY, name),
-        set: (name, value) => blobSet(DATA_KEY, name, value),
-        remove: (name) => blobSet(DATA_KEY, name, undefined),
-    },
-    // 独立键通道（仍在 UID 前缀下）：大体量数据分键存取，不牵连共享 blob 里的其他 feat。
-    slot: {
-        get: (name) => slot('get', name),
-        set: (name, value) => slot('set', name, value),
-        remove: (name) => slot('remove', name),
-    },
-    // 绕过 UID 前缀 + 绕过 blob：仅 migrateLegacyKeys / 图标位置旧全局键认领用。
-    getRaw: (key) => call('get', key, undefined, true),
-    setRaw: (key, value) => call('set', key, value, true),
-    removeRaw: (key) => call('remove', key, undefined, true),
+  // 配置 blob 逻辑读写：key 沿用调用点原有的字面 storageKey（如 'pocketcc.feat.allianceRally'）。
+  get: (key) => blobGet(CONFIG_KEY, key),
+  set: (key, value) => blobSet(CONFIG_KEY, key, value),
+  remove: (key) => blobSet(CONFIG_KEY, key, undefined),
+  // 供后续「导出配置」使用：返回配置 blob 的浅拷贝（不含 data）。
+  getAllConfig: () => loadBlob(CONFIG_KEY).then((b) => Object.assign({}, b)),
+  // 数据 blob：与配置完全分离，频繁写入互不干扰。
+  data: {
+    get: (name) => blobGet(DATA_KEY, name),
+    set: (name, value) => blobSet(DATA_KEY, name, value),
+    remove: (name) => blobSet(DATA_KEY, name, undefined),
+  },
+  // 独立键通道（仍在 UID 前缀下）：大体量数据分键存取，不牵连共享 blob 里的其他 feat。
+  slot: {
+    get: (name) => slot('get', name),
+    set: (name, value) => slot('set', name, value),
+    remove: (name) => slot('remove', name),
+  },
+  // 绕过 UID 前缀 + 绕过 blob：仅 migrateLegacyKeys / 图标位置旧全局键认领用。
+  getRaw: (key) => call('get', key, undefined, true),
+  setRaw: (key, value) => call('set', key, value, true),
+  removeRaw: (key) => call('remove', key, undefined, true),
 };

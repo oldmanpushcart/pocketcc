@@ -13,44 +13,46 @@
  * @returns {{consume:function():Promise<void>}}
  */
 export function createDrain(o) {
-    /** @type {Logger} 调用方传入的日志器 */
-    const log = o.log;
-    /** @type {boolean} 消费闸门：同一时刻只允许一个 consume 循环 */
-    let consuming = false;
+  /** @type {Logger} 调用方传入的日志器 */
+  const log = o.log;
+  /** @type {boolean} 消费闸门：同一时刻只允许一个 consume 循环 */
+  let consuming = false;
 
-    /**
-     * 休眠
-     * @param {number} ms 毫秒
-     * @returns {Promise<void>}
-     */
-    function sleep(ms) {
-        return new Promise(function (resolve) { setTimeout(resolve, ms); });
-    }
+  /**
+   * 休眠
+   * @param {number} ms 毫秒
+   * @returns {Promise<void>}
+   */
+  function sleep(ms) {
+    return new Promise(function (resolve) {
+      setTimeout(resolve, ms);
+    });
+  }
 
-    /**
-     * 消费循环：队列非空且 alive 则逐条 process，条间休眠；重入直接返回
-     * @returns {Promise<void>}
-     */
-    async function consume() {
-        if (consuming) return;
-        consuming = true;
+  /**
+   * 消费循环：队列非空且 alive 则逐条 process，条间休眠；重入直接返回
+   * @returns {Promise<void>}
+   */
+  async function consume() {
+    if (consuming) return;
+    consuming = true;
+    try {
+      while (o.queue.get().length && o.alive()) {
+        const item = o.queue.get().shift();
         try {
-            while (o.queue.get().length && o.alive()) {
-                const item = o.queue.get().shift();
-                try {
-                    await o.process(item);
-                } catch (err) {
-                    log.warn('drain item threw!', err);
-                }
-                if (o.queue.get().length && o.alive()) {
-                    await sleep(o.interval());
-                }
-            }
-        } finally {
-            consuming = false;
+          await o.process(item);
+        } catch (err) {
+          log.warn('drain item threw!', err);
         }
+        if (o.queue.get().length && o.alive()) {
+          await sleep(o.interval());
+        }
+      }
+    } finally {
+      consuming = false;
     }
+  }
 
-    /** @returns {{consume: function(): Promise<void>}} 消费入口 */
-    return { consume: consume };
+  /** @returns {{consume: function(): Promise<void>}} 消费入口 */
+  return { consume: consume };
 }

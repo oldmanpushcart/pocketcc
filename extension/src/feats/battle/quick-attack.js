@@ -41,13 +41,44 @@ import { march } from '../../core/march.js';
  * @type {Array<{key:string, label:string, cls:string, field:string, marchTypes:{attack:number, attackV2?:number}, marchMembers?:{attack:string, attackV2?:string}}>}
  */
 const QUICK_ATTACK_TARGETS = [
-    { key: 'city',     label: '城市',   cls: 'NWorldCityPopup',      field: 'tileInfo',  marchTypes: { attack: 13 } }, // ATTACK_PLAYER（跨服战场经 resolve 漂移到 150/170/110/181）
-    { key: 'monster',  label: '野怪',   cls: 'NWorldMapEnemy',       field: 'tileInfo',  marchTypes: { attack: 5 } },  // ATTACK_MONSTER
-    { key: 'nMonster', label: '新野怪', cls: 'NWorldMapNEnemy',      field: '_tileInfo', marchTypes: { attack: 5 } },  // ATTACK_MONSTER
-    { key: 'mine',     label: '矿点',   cls: 'NWorldResourcePopup',  field: 'tileInfo',  marchTypes: { attack: 3 } },  // GATHER_RESOURCE 位
-    // 世界 BOSS：普通=ATTACK_WORLDBOSS(14)；BOSS_V2 实体=ATTACK_WORLD_BOSS_V2(298)，行军类型走游戏枚举成员名，
-    // 口径同游戏 WorldBossDetailPanel._onClickAttackBtn（tileInfo.type===WorldMapEntityType.BOSS_V2）。
-    { key: 'boss',     label: '世界BOSS', cls: 'WorldBossDetailPanel', field: 'tileInfo', marchTypes: { attack: 14, attackV2: 298 }, marchMembers: { attack: 'attackWorldBoss', attackV2: 'attackWorldBossV2' } },
+  {
+    key: 'city',
+    label: '城市',
+    cls: 'NWorldCityPopup',
+    field: 'tileInfo',
+    marchTypes: { attack: 13 },
+  }, // ATTACK_PLAYER（跨服战场经 resolve 漂移到 150/170/110/181）
+  {
+    key: 'monster',
+    label: '野怪',
+    cls: 'NWorldMapEnemy',
+    field: 'tileInfo',
+    marchTypes: { attack: 5 },
+  }, // ATTACK_MONSTER
+  {
+    key: 'nMonster',
+    label: '新野怪',
+    cls: 'NWorldMapNEnemy',
+    field: '_tileInfo',
+    marchTypes: { attack: 5 },
+  }, // ATTACK_MONSTER
+  {
+    key: 'mine',
+    label: '矿点',
+    cls: 'NWorldResourcePopup',
+    field: 'tileInfo',
+    marchTypes: { attack: 3 },
+  }, // GATHER_RESOURCE 位
+  // 世界 BOSS：普通=ATTACK_WORLDBOSS(14)；BOSS_V2 实体=ATTACK_WORLD_BOSS_V2(298)，行军类型走游戏枚举成员名，
+  // 口径同游戏 WorldBossDetailPanel._onClickAttackBtn（tileInfo.type===WorldMapEntityType.BOSS_V2）。
+  {
+    key: 'boss',
+    label: '世界BOSS',
+    cls: 'WorldBossDetailPanel',
+    field: 'tileInfo',
+    marchTypes: { attack: 14, attackV2: 298 },
+    marchMembers: { attack: 'attackWorldBoss', attackV2: 'attackWorldBossV2' },
+  },
 ];
 
 /**
@@ -66,11 +97,14 @@ const TRIPLE_INTERVAL_MS = 1000;
  * @returns {object} { tripleIntervalMs, targets: { <key>: { enabled, marchTypes } } }
  */
 function buildModuleCfg() {
-    var targets = {};
-    QUICK_ATTACK_TARGETS.forEach(function (spec) {
-        targets[spec.key] = { enabled: true, marchTypes: { attack: spec.marchTypes.attack, attackV2: spec.marchTypes.attackV2 } };
-    });
-    return { tripleIntervalMs: TRIPLE_INTERVAL_MS, targets: targets };
+  var targets = {};
+  QUICK_ATTACK_TARGETS.forEach(function (spec) {
+    targets[spec.key] = {
+      enabled: true,
+      marchTypes: { attack: spec.marchTypes.attack, attackV2: spec.marchTypes.attackV2 },
+    };
+  });
+  return { tripleIntervalMs: TRIPLE_INTERVAL_MS, targets: targets };
 }
 
 /** @type {ReturnType<createLog>} 模块日志器（tag=QUICK_ATTACK） */
@@ -114,7 +148,7 @@ var installed = false;
  * @returns {boolean}
  */
 function aliveFn() {
-    return ctxRef ? ctxRef.alive() : false;
+  return ctxRef ? ctxRef.alive() : false;
 }
 
 // ── 键盘监听挂/摘 ──────────────────────────────────────────────────────
@@ -122,18 +156,18 @@ function aliveFn() {
  * 挂 document keydown 捕获监听（幂等：已挂则直接返回）
  */
 function attachKey() {
-    if (keyListening) return;
-    document.addEventListener('keydown', onKeyDown, true);
-    keyListening = true;
+  if (keyListening) return;
+  document.addEventListener('keydown', onKeyDown, true);
+  keyListening = true;
 }
 
 /**
  * 摘 document keydown 监听（幂等）
  */
 function detachKey() {
-    if (!keyListening) return;
-    document.removeEventListener('keydown', onKeyDown, true);
-    keyListening = false;
+  if (!keyListening) return;
+  document.removeEventListener('keydown', onKeyDown, true);
+  keyListening = false;
 }
 
 // ── 面板 onShow / onDisable 包装（拦在面板自己身上）─────────────────────
@@ -144,31 +178,31 @@ function detachKey() {
  * @param {object} comp 面板组件实例（this）
  */
 function onPanelShow(spec, comp) {
-    if (!aliveFn()) return;
-    var t = cfg.targets[spec.key];
-    if (!t || !t.enabled) return;
+  if (!aliveFn()) return;
+  var t = cfg.targets[spec.key];
+  if (!t || !t.enabled) return;
 
-    var tile = comp[spec.field];
-    if (!tile || tile.tileX == null || tile.tileY == null) {
-        log.debug('panel shown without tile coords, skip. key=%s', spec.key);
-        return;
-    }
+  var tile = comp[spec.field];
+  if (!tile || tile.tileX == null || tile.tileY == null) {
+    log.debug('panel shown without tile coords, skip. key=%s', spec.key);
+    return;
+  }
 
-    detachKey();
-    activePanel = {
-        spec: spec,
-        comp: comp,
-        target: {
-            x: tile.tileX | 0,
-            y: tile.tileY | 0,
-            serverId: tile.serverId,
-            subMap: tile.subMap,
-            // 地块实体类型原值（boss 场景靠它区分普通/BOSS_V2，换算见 resolveMarchType）
-            entityType: tile.type,
-        },
-    };
-    attachKey();
-    log.debug('panel active. key=%s;x=%d;y=%d', spec.key, activePanel.target.x, activePanel.target.y);
+  detachKey();
+  activePanel = {
+    spec: spec,
+    comp: comp,
+    target: {
+      x: tile.tileX | 0,
+      y: tile.tileY | 0,
+      serverId: tile.serverId,
+      subMap: tile.subMap,
+      // 地块实体类型原值（boss 场景靠它区分普通/BOSS_V2，换算见 resolveMarchType）
+      entityType: tile.type,
+    },
+  };
+  attachKey();
+  log.debug('panel active. key=%s;x=%d;y=%d', spec.key, activePanel.target.x, activePanel.target.y);
 }
 
 /**
@@ -176,10 +210,10 @@ function onPanelShow(spec, comp) {
  * @param {object} comp 面板组件实例（this）
  */
 function onPanelDisable(comp) {
-    if (activePanel && activePanel.comp === comp) {
-        detachKey();
-        activePanel = null;
-    }
+  if (activePanel && activePanel.comp === comp) {
+    detachKey();
+    activePanel = null;
+  }
 }
 
 /**
@@ -190,20 +224,25 @@ function onPanelDisable(comp) {
  * @returns {function} 还原函数
  */
 function wrapProto(proto, name, after) {
-    var hadOwn = Object.prototype.hasOwnProperty.call(proto, name);
-    var orig = hadOwn ? proto[name] : (typeof proto[name] === 'function' ? proto[name] : null);
-    var wrapper = function () {
-        var ret;
-        if (orig) ret = orig.apply(this, arguments);
-        try { after(this, arguments); } catch (err) { log.warn('%s wrapper threw.', name, err); }
-        return ret;
-    };
-    proto[name] = wrapper;
-    return function () {
-        if (proto[name] === wrapper) {
-            if (hadOwn) proto[name] = orig; else delete proto[name];
-        }
-    };
+  var hadOwn = Object.prototype.hasOwnProperty.call(proto, name);
+  var orig = hadOwn ? proto[name] : typeof proto[name] === 'function' ? proto[name] : null;
+  var wrapper = function () {
+    var ret;
+    if (orig) ret = orig.apply(this, arguments);
+    try {
+      after(this, arguments);
+    } catch (err) {
+      log.warn('%s wrapper threw.', name, err);
+    }
+    return ret;
+  };
+  proto[name] = wrapper;
+  return function () {
+    if (proto[name] === wrapper) {
+      if (hadOwn) proto[name] = orig;
+      else delete proto[name];
+    }
+  };
 }
 
 /**
@@ -211,30 +250,36 @@ function wrapProto(proto, name, after) {
  * @param {object} spec 场景定义
  */
 function hookSpec(spec) {
-    if (hooks.has(spec.cls)) return;
-    var Klass = classOf[spec.cls];
-    if (!Klass || !Klass.prototype) {
-        log.warn('panel class unavailable, skip hook. cls=%s', spec.cls);
-        return;
-    }
-    var proto = Klass.prototype;
-    var restores = [
-        wrapProto(proto, 'onShow', function (self) { onPanelShow(spec, self); }),
-        wrapProto(proto, 'onDisable', function (self) { onPanelDisable(self); }),
-    ];
-    hooks.set(spec.cls, restores);
+  if (hooks.has(spec.cls)) return;
+  var Klass = classOf[spec.cls];
+  if (!Klass || !Klass.prototype) {
+    log.warn('panel class unavailable, skip hook. cls=%s', spec.cls);
+    return;
+  }
+  var proto = Klass.prototype;
+  var restores = [
+    wrapProto(proto, 'onShow', function (self) {
+      onPanelShow(spec, self);
+    }),
+    wrapProto(proto, 'onDisable', function (self) {
+      onPanelDisable(self);
+    }),
+  ];
+  hooks.set(spec.cls, restores);
 }
 
 /**
  * 摘掉全部面板钩子 + 键盘监听 + activePanel（功能停用时）。
  */
 function unhookAll() {
-    hooks.forEach(function (restores) {
-        restores.forEach(function (r) { r(); });
+  hooks.forEach(function (restores) {
+    restores.forEach(function (r) {
+      r();
     });
-    hooks.clear();
-    detachKey();
-    activePanel = null;
+  });
+  hooks.clear();
+  detachKey();
+  activePanel = null;
 }
 
 // ── 键盘分派 ───────────────────────────────────────────────────────────
@@ -246,22 +291,22 @@ function unhookAll() {
  * @returns {{digit:number|null, triple:boolean}}
  */
 function readHotkey(e) {
-    if (isTypingTarget(e)) return { digit: null, triple: false };
-    if (e.ctrlKey || e.altKey || e.metaKey) return { digit: null, triple: false };
+  if (isTypingTarget(e)) return { digit: null, triple: false };
+  if (e.ctrlKey || e.altKey || e.metaKey) return { digit: null, triple: false };
 
-    var digit = 0;
-    var m = typeof e.code === 'string' && /^Digit([1-8])$/.exec(e.code);
-    if (m) {
-        digit = parseInt(m[1], 10);
-    } else {
-        var k = e.key;
-        if (k >= '1' && k <= '8') digit = k.charCodeAt(0) - 48;
-        else {
-            var symbols = { '!': 1, '@': 2, '#': 3, '$': 4, '%': 5, '^': 6, '&': 7, '*': 8 };
-            if (symbols[k]) digit = symbols[k];
-        }
+  var digit = 0;
+  var m = typeof e.code === 'string' && /^Digit([1-8])$/.exec(e.code);
+  if (m) {
+    digit = parseInt(m[1], 10);
+  } else {
+    var k = e.key;
+    if (k >= '1' && k <= '8') digit = k.charCodeAt(0) - 48;
+    else {
+      var symbols = { '!': 1, '@': 2, '#': 3, $: 4, '%': 5, '^': 6, '&': 7, '*': 8 };
+      if (symbols[k]) digit = symbols[k];
     }
-    return { digit: digit || null, triple: !!e.shiftKey };
+  }
+  return { digit: digit || null, triple: !!e.shiftKey };
 }
 
 /**
@@ -269,34 +314,34 @@ function readHotkey(e) {
  * @param {KeyboardEvent} e 键盘事件
  */
 function onKeyDown(e) {
-    if (!aliveFn() || !activePanel) return;
+  if (!aliveFn() || !activePanel) return;
 
-    // 兜底：onDisable 漏触发时（切场景/对象池复用未 destroy），面板实际已不在场则直接放弃并收摊
-    var comp = activePanel.comp;
-    var node = comp && comp.node;
-    if (!comp || comp.isValid === false || (node && node.activeInHierarchy === false)) {
-        detachKey();
-        activePanel = null;
-        return;
-    }
+  // 兜底：onDisable 漏触发时（切场景/对象池复用未 destroy），面板实际已不在场则直接放弃并收摊
+  var comp = activePanel.comp;
+  var node = comp && comp.node;
+  if (!comp || comp.isValid === false || (node && node.activeInHierarchy === false)) {
+    detachKey();
+    activePanel = null;
+    return;
+  }
 
-    var hk = readHotkey(e);
-    if (!hk.digit) return;
+  var hk = readHotkey(e);
+  if (!hk.digit) return;
 
-    var t = cfg.targets[activePanel.spec.key];
-    if (!t || !t.enabled) return;
+  var t = cfg.targets[activePanel.spec.key];
+  if (!t || !t.enabled) return;
 
-    e.preventDefault();
-    e.stopPropagation();
+  e.preventDefault();
+  e.stopPropagation();
 
-    var planList = [{ kind: 'preset', index: hk.digit }];
-    if (hk.triple) {
-        planList.push({ kind: 'minimal' }, { kind: 'minimal' });
-    }
+  var planList = [{ kind: 'preset', index: hk.digit }];
+  if (hk.triple) {
+    planList.push({ kind: 'minimal' }, { kind: 'minimal' });
+  }
 
-    attackFlow(activePanel.spec, activePanel.target, planList).catch(function (err) {
-        log.warn('attack flow threw!', err);
-    });
+  attackFlow(activePanel.spec, activePanel.target, planList).catch(function (err) {
+    log.warn('attack flow threw!', err);
+  });
 }
 
 /**
@@ -307,51 +352,68 @@ function onKeyDown(e) {
  * @param {object[]} planList 逐项 {kind:'preset'|'minimal', index?}
  */
 async function attackFlow(spec, target, planList) {
-    var base = (cfg.targets[spec.key] && cfg.targets[spec.key].marchTypes.attack) | 0;
-    if (!base) {
-        log.warn('no marchType configured, abort. key=%s', spec.key);
-        return;
+  var base = (cfg.targets[spec.key] && cfg.targets[spec.key].marchTypes.attack) | 0;
+  if (!base) {
+    log.warn('no marchType configured, abort. key=%s', spec.key);
+    return;
+  }
+  var marchType = resolveMarchType(spec, target);
+
+  for (var i = 0; i < planList.length; i++) {
+    if (!aliveFn()) return;
+
+    if (!march.canMarch()) {
+      log.info('no free march slot, abort. key=%s;step=%d', spec.key, i + 1);
+      return;
     }
-    var marchType = resolveMarchType(spec, target);
-
-    for (var i = 0; i < planList.length; i++) {
-        if (!aliveFn()) return;
-
-        if (!march.canMarch()) {
-            log.info('no free march slot, abort. key=%s;step=%d', spec.key, i + 1);
-            return;
-        }
-        if (net.isSending(CMD_MARCH_WORLD_POINT)) {
-            log.info('902 in flight, abort. key=%s;step=%d', spec.key, i + 1);
-            return;
-        }
-
-        var step = planList[i];
-        var plan = new Battle().plan();
-        if (step.kind === 'preset') plan.preset(step.index).adjust(); else plan.minimal();
-        var marchData = plan.build();
-
-        if (!marchData.armyListNew.length) {
-            log.warn('no army to dispatch, abort. key=%s;step=%d;kind=%s', spec.key, i + 1, step.kind);
-            return;
-        }
-
-        var ret = await march.attack({ marchType: marchType, target: target, data: marchData });
-        if (!aliveFn()) return;
-
-        if (ret.ok) {
-            log.info('attack ok. key=%s;step=%d/%d;marchType=%d(base=%d);x=%d;y=%d',
-                spec.key, i + 1, planList.length, marchType, base, target.x, target.y);
-        } else {
-            log.info('attack rejected, abort combo. key=%s;step=%d;code=%d;marchType=%d;base=%d;flags=%s;data=%s',
-                spec.key, i + 1, ret.code, marchType, base, JSON.stringify(marchApi.flags()), ret.data);
-            return;
-        }
-
-        if (i < planList.length - 1) {
-            await sleep(cfg.tripleIntervalMs);
-        }
+    if (net.isSending(CMD_MARCH_WORLD_POINT)) {
+      log.info('902 in flight, abort. key=%s;step=%d', spec.key, i + 1);
+      return;
     }
+
+    var step = planList[i];
+    var plan = new Battle().plan();
+    if (step.kind === 'preset') plan.preset(step.index).adjust();
+    else plan.minimal();
+    var marchData = plan.build();
+
+    if (!marchData.armyListNew.length) {
+      log.warn('no army to dispatch, abort. key=%s;step=%d;kind=%s', spec.key, i + 1, step.kind);
+      return;
+    }
+
+    var ret = await march.attack({ marchType: marchType, target: target, data: marchData });
+    if (!aliveFn()) return;
+
+    if (ret.ok) {
+      log.info(
+        'attack ok. key=%s;step=%d/%d;marchType=%d(base=%d);x=%d;y=%d',
+        spec.key,
+        i + 1,
+        planList.length,
+        marchType,
+        base,
+        target.x,
+        target.y,
+      );
+    } else {
+      log.info(
+        'attack rejected, abort combo. key=%s;step=%d;code=%d;marchType=%d;base=%d;flags=%s;data=%s',
+        spec.key,
+        i + 1,
+        ret.code,
+        marchType,
+        base,
+        JSON.stringify(marchApi.flags()),
+        ret.data,
+      );
+      return;
+    }
+
+    if (i < planList.length - 1) {
+      await sleep(cfg.tripleIntervalMs);
+    }
+  }
 }
 
 /**
@@ -361,21 +423,29 @@ async function attackFlow(spec, target, planList) {
  * @returns {number}
  */
 function resolveMarchType(spec, target) {
-    var t = (cfg.targets[spec.key] && cfg.targets[spec.key].marchTypes) || {};
-    var v2 = !!(t.attackV2 && marchApi.isBossV2(target.entityType));
-    var base;
-    if (spec.marchMembers && spec.marchMembers.attack) {
-        // 注册表声明了枚举成员名的场景（世界 BOSS 两型）：以游戏 MarchType 运行时值为权威源，marchTypes 数值仅漂移兜底
-        base = v2 && spec.marchMembers.attackV2
-            ? marchApi.typeOf(spec.marchMembers.attackV2, t.attackV2 | 0)
-            : marchApi.typeOf(spec.marchMembers.attack, t.attack | 0);
-    } else {
-        base = t.attack | 0;
-        if (v2) base = t.attackV2 | 0;
-    }
-    var resolved = marchApi.resolve(base, MARCH_FALLBACK);
-    if (resolved !== base) log.info('marchType 漂移. key=%s;base=%d->%d;flags=%s', spec.key, base, resolved, JSON.stringify(marchApi.flags()));
-    return resolved;
+  var t = (cfg.targets[spec.key] && cfg.targets[spec.key].marchTypes) || {};
+  var v2 = !!(t.attackV2 && marchApi.isBossV2(target.entityType));
+  var base;
+  if (spec.marchMembers && spec.marchMembers.attack) {
+    // 注册表声明了枚举成员名的场景（世界 BOSS 两型）：以游戏 MarchType 运行时值为权威源，marchTypes 数值仅漂移兜底
+    base =
+      v2 && spec.marchMembers.attackV2
+        ? marchApi.typeOf(spec.marchMembers.attackV2, t.attackV2 | 0)
+        : marchApi.typeOf(spec.marchMembers.attack, t.attack | 0);
+  } else {
+    base = t.attack | 0;
+    if (v2) base = t.attackV2 | 0;
+  }
+  var resolved = marchApi.resolve(base, MARCH_FALLBACK);
+  if (resolved !== base)
+    log.info(
+      'marchType 漂移. key=%s;base=%d->%d;flags=%s',
+      spec.key,
+      base,
+      resolved,
+      JSON.stringify(marchApi.flags()),
+    );
+  return resolved;
 }
 
 /**
@@ -384,7 +454,9 @@ function resolveMarchType(spec, target) {
  * @returns {Promise<void>}
  */
 function sleep(ms) {
-    return new Promise(function (resolve) { setTimeout(resolve, Math.max(0, ms | 0)); });
+  return new Promise(function (resolve) {
+    setTimeout(resolve, Math.max(0, ms | 0));
+  });
 }
 
 /**
@@ -394,24 +466,29 @@ function sleep(ms) {
  * @returns {object} 当前 cfg
  */
 function configure(partial) {
-    if (!partial) return cfg;
-    if (typeof partial.tripleIntervalMs === 'number' && partial.tripleIntervalMs >= 0) {
-        cfg.tripleIntervalMs = partial.tripleIntervalMs;
-    }
-    var targets = partial.targets;
-    if (targets) {
-        QUICK_ATTACK_TARGETS.forEach(function (spec) {
-            var t = targets[spec.key];
-            if (!t) return;
-            var cur = cfg.targets[spec.key] || (cfg.targets[spec.key] = { enabled: true, marchTypes: { attack: spec.marchTypes.attack, attackV2: spec.marchTypes.attackV2 } });
-            if (typeof t.enabled === 'boolean') cur.enabled = t.enabled;
-            if (t.marchTypes && typeof t.marchTypes.attack === 'number' && t.marchTypes.attack > 0) {
-                cur.marchTypes.attack = t.marchTypes.attack;
-            }
+  if (!partial) return cfg;
+  if (typeof partial.tripleIntervalMs === 'number' && partial.tripleIntervalMs >= 0) {
+    cfg.tripleIntervalMs = partial.tripleIntervalMs;
+  }
+  var targets = partial.targets;
+  if (targets) {
+    QUICK_ATTACK_TARGETS.forEach(function (spec) {
+      var t = targets[spec.key];
+      if (!t) return;
+      var cur =
+        cfg.targets[spec.key] ||
+        (cfg.targets[spec.key] = {
+          enabled: true,
+          marchTypes: { attack: spec.marchTypes.attack, attackV2: spec.marchTypes.attackV2 },
         });
-    }
-    if (partial.enabled === false) unhookAll();
-    return cfg;
+      if (typeof t.enabled === 'boolean') cur.enabled = t.enabled;
+      if (t.marchTypes && typeof t.marchTypes.attack === 'number' && t.marchTypes.attack > 0) {
+        cur.marchTypes.attack = t.marchTypes.attack;
+      }
+    });
+  }
+  if (partial.enabled === false) unhookAll();
+  return cfg;
 }
 
 /**
@@ -420,35 +497,36 @@ function configure(partial) {
  * @returns {boolean}
  */
 function install(ctx) {
-    ctxRef = ctx;
-    if (installed) return true;
+  ctxRef = ctx;
+  if (installed) return true;
 
-    var missing = [];
+  var missing = [];
 
-    net = ctx.net;
-    if (!net.install()) {
-        missing.push('pocketcc.net');
-        net = null;
-    }
+  net = ctx.net;
+  if (!net.install()) {
+    missing.push('pocketcc.net');
+    net = null;
+  }
 
-    dataCenter = game.get('DataCenter');
-    dataCenter = (dataCenter && dataCenter.DATA) || (missing.push('DataCenter'), null);
+  dataCenter = game.get('DataCenter');
+  dataCenter = (dataCenter && dataCenter.DATA) || (missing.push('DataCenter'), null);
 
-    QUICK_ATTACK_TARGETS.forEach(function (spec) {
-        var mod = game.get(spec.cls);
-        classOf[spec.cls] = (mod && mod.default) || null;
-        if (!classOf[spec.cls]) log.warn('panel class not found. cls=%s', spec.cls);
-    });
+  QUICK_ATTACK_TARGETS.forEach(function (spec) {
+    var mod = game.get(spec.cls);
+    classOf[spec.cls] = (mod && mod.default) || null;
+    if (!classOf[spec.cls]) log.warn('panel class not found. cls=%s', spec.cls);
+  });
 
-    if (missing.length) {
-        net = null; dataCenter = null;
-        log.warn('install failed. missing=%s', missing.join(';'));
-        return false;
-    }
+  if (missing.length) {
+    net = null;
+    dataCenter = null;
+    log.warn('install failed. missing=%s', missing.join(';'));
+    return false;
+  }
 
-    installed = true;
-    log.info('installed.');
-    return true;
+  installed = true;
+  log.info('installed.');
+  return true;
 }
 
 /**
@@ -456,27 +534,36 @@ function install(ctx) {
  * @param {object} ctx reactor 上下文
  */
 function run(ctx) {
-    ctxRef = ctx;
-    activePanel = null;
-    detachKey();
-    QUICK_ATTACK_TARGETS.forEach(hookSpec);
-    log.info('started, hooks=%d; battlefield=%s', hooks.size, JSON.stringify(marchApi.flags()));
+  ctxRef = ctx;
+  activePanel = null;
+  detachKey();
+  QUICK_ATTACK_TARGETS.forEach(hookSpec);
+  log.info('started, hooks=%d; battlefield=%s', hooks.size, JSON.stringify(marchApi.flags()));
 }
 
 /**
  * 向 reactor 注册本功能说明书：场景限定 NWorldMap，不声明 offInCombat（战斗设置本就是战斗时的手动辅助）。
  */
 reactor.register({
-    id: 'quickAttack',
-    label: '快捷攻击',
-    storageKey: 'pocketcc.feat.quickAttack',
-    symbols: ['dataCenter', 'marchType', 'worldUtils', 'presetMarch', 'heroController', 'mechaController', 'formationAdv', 'marchStorage'],
-    scenes: ['NWorldMap'],
-    // 战斗设置类：不声明 offInCombat，战斗模式下依然生效（快捷战斗本就是战斗时的手动辅）
-    defaults: { enabled: false },
-    fields: [],
-    toModuleCfg: buildModuleCfg,
-    install: install,
-    configure: configure,
-    run: run,
+  id: 'quickAttack',
+  label: '快捷攻击',
+  storageKey: 'pocketcc.feat.quickAttack',
+  symbols: [
+    'dataCenter',
+    'marchType',
+    'worldUtils',
+    'presetMarch',
+    'heroController',
+    'mechaController',
+    'formationAdv',
+    'marchStorage',
+  ],
+  scenes: ['NWorldMap'],
+  // 战斗设置类：不声明 offInCombat，战斗模式下依然生效（快捷战斗本就是战斗时的手动辅）
+  defaults: { enabled: false },
+  fields: [],
+  toModuleCfg: buildModuleCfg,
+  install: install,
+  configure: configure,
+  run: run,
 });

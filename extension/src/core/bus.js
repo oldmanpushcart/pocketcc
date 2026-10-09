@@ -17,11 +17,11 @@ const map = new Map();
  * @returns {Function} unsubscribe；入参非法时为空操作函数
  */
 function on(type, handler) {
-    if (typeof type !== 'string' || typeof handler !== 'function') return () => {};
-    let set = map.get(type);
-    if (!set) map.set(type, set = new Set());
-    set.add(handler);
-    return () => off(type, handler);
+  if (typeof type !== 'string' || typeof handler !== 'function') return () => {};
+  let set = map.get(type);
+  if (!set) map.set(type, (set = new Set()));
+  set.add(handler);
+  return () => off(type, handler);
 }
 
 /**
@@ -30,11 +30,14 @@ function on(type, handler) {
  * @param {Function} [handler] 省略则删除该 type 下的全部订阅
  */
 function off(type, handler) {
-    const set = map.get(type);
-    if (!set) return;
-    if (handler === undefined) { map.delete(type); return; }
-    set.delete(handler);
-    if (!set.size) map.delete(type);
+  const set = map.get(type);
+  if (!set) return;
+  if (handler === undefined) {
+    map.delete(type);
+    return;
+  }
+  set.delete(handler);
+  if (!set.size) map.delete(type);
 }
 
 /**
@@ -43,12 +46,16 @@ function off(type, handler) {
  * @param {*} payload 载荷
  */
 function emit(type, payload) {
-    const set = map.get(type);
-    if (!set || !set.size) return;
-    // 快照迭代：handler 内部 on/off（如 pause 时退订）不影响本轮派发
-    for (const h of [...set]) {
-        try { h(payload); } catch (err) { log.warn('handler for %s threw', type, err); }
+  const set = map.get(type);
+  if (!set || !set.size) return;
+  // 快照迭代：handler 内部 on/off（如 pause 时退订）不影响本轮派发
+  for (const h of [...set]) {
+    try {
+      h(payload);
+    } catch (err) {
+      log.warn('handler for %s threw', type, err);
     }
+  }
 }
 
 /**
@@ -57,8 +64,8 @@ function emit(type, payload) {
  * @returns {boolean}
  */
 function has(type) {
-    const set = map.get(type);
-    return !!(set && set.size);
+  const set = map.get(type);
+  return !!(set && set.size);
 }
 
 /** 全局唯一内部事件总线，挂到 window.pocketcc.bus */

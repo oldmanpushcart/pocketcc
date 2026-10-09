@@ -59,8 +59,8 @@ const SITE_FUNTYPE_ITEM = 4;
  * @type {number[]}
  */
 const L2_ITEM_POOL = [
-    600002, 3300001, 500001, 2300002, 2560001, 1700013, 323001,
-    3610009, 1600029, 1700402, 99910001, 99910101, 2800000,
+  600002, 3300001, 500001, 2300002, 2560001, 1700013, 323001, 3610009, 1600029, 1700402, 99910001,
+  99910101, 2800000,
 ];
 
 /** @type {number} 全天低频轮询间隔（毫秒）：漏扫/领取瞬断最迟一个周期内补 */
@@ -97,7 +97,7 @@ var rejected = { day: '', sites: [] };
  * @returns {boolean}
  */
 function aliveFn() {
-    return ctxRef ? ctxRef.alive() : false;
+  return ctxRef ? ctxRef.alive() : false;
 }
 
 // ── 小工具 ──────────────────────────────────────────────────────────────
@@ -106,10 +106,10 @@ function aliveFn() {
  * @returns {string}
  */
 function todayStr() {
-    var d = new Date();
-    var m = d.getMonth() + 1;
-    var day = d.getDate();
-    return d.getFullYear() + '-' + (m < 10 ? '0' + m : m) + '-' + (day < 10 ? '0' + day : day);
+  var d = new Date();
+  var m = d.getMonth() + 1;
+  var day = d.getDate();
+  return d.getFullYear() + '-' + (m < 10 ? '0' + m : m) + '-' + (day < 10 ? '0' + day : day);
 }
 
 /**
@@ -118,9 +118,13 @@ function todayStr() {
  * @returns {string}
  */
 function safeStringify(v) {
-    if (v == null) return String(v);
-    if (typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean') return String(v);
-    try { return JSON.stringify(v); } catch (e) { return String(v); }
+  if (v == null) return String(v);
+  if (typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean') return String(v);
+  try {
+    return JSON.stringify(v);
+  } catch (e) {
+    return String(v);
+  }
 }
 
 /**
@@ -129,11 +133,15 @@ function safeStringify(v) {
  * @returns {object|null} 解析后的业务数据；非对象返回 null
  */
 function payloadOf(ret) {
-    var d = ret && ret.data;
-    if (typeof d === 'string') {
-        try { d = JSON.parse(d); } catch (e) { return null; }
+  var d = ret && ret.data;
+  if (typeof d === 'string') {
+    try {
+      d = JSON.parse(d);
+    } catch (e) {
+      return null;
     }
-    return (d && typeof d === 'object') ? d : null;
+  }
+  return d && typeof d === 'object' ? d : null;
 }
 
 /**
@@ -142,7 +150,9 @@ function payloadOf(ret) {
  * @returns {Promise<void>}
  */
 function sleep(ms) {
-    return new Promise(function (resolve) { setTimeout(resolve, Math.max(0, ms | 0)); });
+  return new Promise(function (resolve) {
+    setTimeout(resolve, Math.max(0, ms | 0));
+  });
 }
 
 /**
@@ -150,13 +160,16 @@ function sleep(ms) {
  * @param {number} sec
  * @returns {string}
  */
+// eslint-disable-next-line no-unused-vars -- 预留工具（JSDoc 已注明：当前面板不展示，供日志/未来用）
 function fmtHMS(sec) {
-    sec = Math.max(0, sec | 0);
-    var h = Math.floor(sec / 3600);
-    var m = Math.floor((sec % 3600) / 60);
-    var s = sec % 60;
-    var p = function (n) { return n < 10 ? '0' + n : '' + n; };
-    return p(h) + ':' + p(m) + ':' + p(s);
+  sec = Math.max(0, sec | 0);
+  var h = Math.floor(sec / 3600);
+  var m = Math.floor((sec % 3600) / 60);
+  var s = sec % 60;
+  var p = function (n) {
+    return n < 10 ? '0' + n : '' + n;
+  };
+  return p(h) + ':' + p(m) + ':' + p(s);
 }
 
 // ── 优先级（configure / rankMap） ────────────────────────────────────────
@@ -166,15 +179,24 @@ function fmtHMS(sec) {
  * @returns {number[]} 规范化后的完整池顺序
  */
 function migrateOrder(raw) {
-    var incoming = Array.isArray(raw) ? raw.map(function (x) { return Number(x); }).filter(function (n) { return isFinite(n); }) : [];
-    var out = [];
-    for (var i = 0; i < incoming.length; i++) {
-        if (L2_ITEM_POOL.indexOf(incoming[i]) !== -1 && out.indexOf(incoming[i]) === -1) out.push(incoming[i]);
-    }
-    for (var j = 0; j < L2_ITEM_POOL.length; j++) {
-        if (out.indexOf(L2_ITEM_POOL[j]) === -1) out.push(L2_ITEM_POOL[j]);
-    }
-    return out;
+  var incoming = Array.isArray(raw)
+    ? raw
+        .map(function (x) {
+          return Number(x);
+        })
+        .filter(function (n) {
+          return isFinite(n);
+        })
+    : [];
+  var out = [];
+  for (var i = 0; i < incoming.length; i++) {
+    if (L2_ITEM_POOL.indexOf(incoming[i]) !== -1 && out.indexOf(incoming[i]) === -1)
+      out.push(incoming[i]);
+  }
+  for (var j = 0; j < L2_ITEM_POOL.length; j++) {
+    if (out.indexOf(L2_ITEM_POOL[j]) === -1) out.push(L2_ITEM_POOL[j]);
+  }
+  return out;
 }
 
 /**
@@ -182,9 +204,9 @@ function migrateOrder(raw) {
  * @param {object} partial { order: number[] }（toModuleCfg 产出）
  */
 function configure(partial) {
-    order = migrateOrder(partial && partial.order);
-    rankMap = new Map();
-    for (var i = 0; i < order.length; i++) rankMap.set(order[i], i);
+  order = migrateOrder(partial && partial.order);
+  rankMap = new Map();
+  for (var i = 0; i < order.length; i++) rankMap.set(order[i], i);
 }
 
 // ── 发包 ────────────────────────────────────────────────────────────────
@@ -195,15 +217,15 @@ function configure(partial) {
  * @returns {Promise<{ok:boolean, code:number, data:*, payload:object|null}>}
  */
 async function sendRaw(cmd, body) {
-    if (net.isSending(cmd)) return { ok: false, code: CODE_NOT_SENT, data: null, payload: null };
-    var ret;
-    try {
-        ret = await net.send(cmd, body);
-    } catch (err) {
-        log.debug('cmd %d send failed: %s', cmd, err && err.message);
-        return { ok: false, code: CODE_NOT_SENT, data: null, payload: null };
-    }
-    return { ok: ret.ok, code: ret.code, data: ret.data, payload: payloadOf(ret) };
+  if (net.isSending(cmd)) return { ok: false, code: CODE_NOT_SENT, data: null, payload: null };
+  var ret;
+  try {
+    ret = await net.send(cmd, body);
+  } catch (err) {
+    log.debug('cmd %d send failed: %s', cmd, err && err.message);
+    return { ok: false, code: CODE_NOT_SENT, data: null, payload: null };
+  }
+  return { ok: ret.ok, code: ret.code, data: ret.data, payload: payloadOf(ret) };
 }
 
 // ── 当日拉黑 ─────────────────────────────────────────────────────────────
@@ -211,9 +233,9 @@ async function sendRaw(cmd, body) {
  * 跨日收敛：日期一变即清空内存拉黑表（storage 侧读回时同样按 date 过滤）
  */
 function ensureDay() {
-    var today = todayStr();
-    if (rejected.day === today) return;
-    rejected = { day: today, sites: [] };
+  var today = todayStr();
+  if (rejected.day === today) return;
+  rejected = { day: today, sites: [] };
 }
 
 /**
@@ -221,12 +243,21 @@ function ensureDay() {
  * @returns {Promise<void>}
  */
 async function loadRejected() {
-    ensureDay();
-    var saved = null;
-    try { saved = await storage.data.get(DATA_NAME); } catch (e) { saved = null; }
-    if (saved && typeof saved === 'object' && saved.date === todayStr() && Array.isArray(saved.sites)) {
-        rejected = { day: saved.date, sites: saved.sites.map(Number).filter(isFinite) };
-    }
+  ensureDay();
+  var saved;
+  try {
+    saved = await storage.data.get(DATA_NAME);
+  } catch (e) {
+    saved = null;
+  }
+  if (
+    saved &&
+    typeof saved === 'object' &&
+    saved.date === todayStr() &&
+    Array.isArray(saved.sites)
+  ) {
+    rejected = { day: saved.date, sites: saved.sites.map(Number).filter(isFinite) };
+  }
 }
 
 /**
@@ -235,10 +266,13 @@ async function loadRejected() {
  * @returns {Promise<void>}
  */
 async function rejectToday(wonderId) {
-    ensureDay();
-    if (rejected.sites.indexOf(wonderId) === -1) rejected.sites.push(wonderId);
-    try { await storage.data.set(DATA_NAME, { date: rejected.day, sites: rejected.sites }); }
-    catch (err) { log.warn('persist rejected failed.', err); }
+  ensureDay();
+  if (rejected.sites.indexOf(wonderId) === -1) rejected.sites.push(wonderId);
+  try {
+    await storage.data.set(DATA_NAME, { date: rejected.day, sites: rejected.sites });
+  } catch (err) {
+    log.warn('persist rejected failed.', err);
+  }
 }
 
 // ── 领取主链 ─────────────────────────────────────────────────────────────
@@ -249,73 +283,120 @@ async function rejectToday(wonderId) {
  * @returns {Promise<void>}
  */
 async function claimSite(site) {
-    var wonderId = site.wonderId;
-    var q = await sendRaw(CMD_QUERY, { wonderId: wonderId });
-    if (!aliveFn()) return;
-    if (!q.ok || !q.payload) {
-        if (q.code !== CODE_NOT_SENT) log.info('relic query rejected. site=%d;code=%d;data=%s', wonderId, q.code, safeStringify(q.data));
-        return;
-    }
-    var d = q.payload;
-    var cfgId = Number(d.id) || 0;
-    var row = cfgId ? l10n.tableRow('sp_fortress_item', cfgId) : null;
-    var chooseNum = row ? Number(row.choose_num) || 0 : 0;
-    var joinSec = row ? Number(row.join_time) || 0 : 0;
-    var have = Array.isArray(d.have) ? d.have.map(Number) : [];
-    var select = Array.isArray(d.select) ? d.select.map(Number) : [];
-    var joinTime = Number(d.joinTime) || 0;
-    var endTime = Number(d.endTime) || 0;
-    // 逐候选解析主道具 itemId + 展示名（配置 id → rewardItems → items[0]）；解析失败记 itemId=0，池外不领
-    var selectIds = [];
-    var selectNames = [];
-    for (var si = 0; si < select.length; si++) {
-        var r = item.fromReward(select[si]);
-        if (!r.itemId) log.debug('reward cfg %d unresolvable item (site=%d).', select[si], wonderId);
-        selectIds.push(r.itemId);
-        selectNames.push(r.itemId ? item.label(r.itemId, r.rawName) : '');
-    }
-    mirror[wonderId] = { cfgId: cfgId, name: String(site.name || ''), select: select, selectIds: selectIds, selectNames: selectNames, have: have, joinTime: joinTime, endTime: endTime, chooseNum: chooseNum, joinSec: joinSec };
+  var wonderId = site.wonderId;
+  var q = await sendRaw(CMD_QUERY, { wonderId: wonderId });
+  if (!aliveFn()) return;
+  if (!q.ok || !q.payload) {
+    if (q.code !== CODE_NOT_SENT)
+      log.info(
+        'relic query rejected. site=%d;code=%d;data=%s',
+        wonderId,
+        q.code,
+        safeStringify(q.data),
+      );
+    return;
+  }
+  var d = q.payload;
+  var cfgId = Number(d.id) || 0;
+  var row = cfgId ? l10n.tableRow('sp_fortress_item', cfgId) : null;
+  var chooseNum = row ? Number(row.choose_num) || 0 : 0;
+  var joinSec = row ? Number(row.join_time) || 0 : 0;
+  var have = Array.isArray(d.have) ? d.have.map(Number) : [];
+  var select = Array.isArray(d.select) ? d.select.map(Number) : [];
+  var joinTime = Number(d.joinTime) || 0;
+  var endTime = Number(d.endTime) || 0;
+  // 逐候选解析主道具 itemId + 展示名（配置 id → rewardItems → items[0]）；解析失败记 itemId=0，池外不领
+  var selectIds = [];
+  var selectNames = [];
+  for (var si = 0; si < select.length; si++) {
+    var r = item.fromReward(select[si]);
+    if (!r.itemId) log.debug('reward cfg %d unresolvable item (site=%d).', select[si], wonderId);
+    selectIds.push(r.itemId);
+    selectNames.push(r.itemId ? item.label(r.itemId, r.rawName) : '');
+  }
+  mirror[wonderId] = {
+    cfgId: cfgId,
+    name: String(site.name || ''),
+    select: select,
+    selectIds: selectIds,
+    selectNames: selectNames,
+    have: have,
+    joinTime: joinTime,
+    endTime: endTime,
+    chooseNum: chooseNum,
+    joinSec: joinSec,
+  };
 
-    // ready 判据（红点口径）：有空余名额 且 过入盟冷却
-    if (!(chooseNum - have.length > 0)) return;
-    if (joinSec > 0 && (gameData.serverTime() - joinTime) <= joinSec) {
-        log.debug('relic site %d in join cooldown, skip.', wonderId);
-        return;
-    }
+  // ready 判据（红点口径）：有空余名额 且 过入盟冷却
+  if (!(chooseNum - have.length > 0)) return;
+  if (joinSec > 0 && gameData.serverTime() - joinTime <= joinSec) {
+    log.debug('relic site %d in join cooldown, skip.', wonderId);
+    return;
+  }
 
-    // 候选：have 未含、且 select[idx] 解析出的主道具 itemId 在优先级池内（池外不领），按 rank 升序
-    var cand = [];
-    for (var idx = 0; idx < select.length; idx++) {
-        if (have.indexOf(idx) !== -1) continue;
-        var rank = rankMap.get(selectIds[idx]);
-        if (rank === undefined) continue;
-        cand.push({ idx: idx, rank: rank, rewardId: select[idx], itemId: selectIds[idx], name: selectNames[idx] });
-    }
-    cand.sort(function (a, b) { return a.rank - b.rank; });
+  // 候选：have 未含、且 select[idx] 解析出的主道具 itemId 在优先级池内（池外不领），按 rank 升序
+  var cand = [];
+  for (var idx = 0; idx < select.length; idx++) {
+    if (have.indexOf(idx) !== -1) continue;
+    var rank = rankMap.get(selectIds[idx]);
+    if (rank === undefined) continue;
+    cand.push({
+      idx: idx,
+      rank: rank,
+      rewardId: select[idx],
+      itemId: selectIds[idx],
+      name: selectNames[idx],
+    });
+  }
+  cand.sort(function (a, b) {
+    return a.rank - b.rank;
+  });
 
-    var slots = chooseNum - have.length;
-    for (var k = 0; k < cand.length && slots > 0; k++) {
-        if (!aliveFn()) break;
-        var c = cand[k];
-        var resp = await sendRaw(CMD_CLAIM, { wonderId: wonderId, index: c.idx });
-        if (!aliveFn()) break;
-        if (resp.ok) {
-            // 应答带更新后的 have（服务端为准），合并进镜像
-            var nh = (resp.payload && Array.isArray(resp.payload.have)) ? resp.payload.have.map(Number) : null;
-            if (nh) { have = nh; mirror[wonderId].have = have; }
-            else { have.push(c.idx); mirror[wonderId].have = have; }
-            slots = chooseNum - have.length;
-            log.info('relic claim ok. site=%d(%s);idx=%d;reward=%d;item=%d(%s);have=%d/%d', wonderId, site.name || '', c.idx, c.rewardId, c.itemId, c.name || '?', have.length, chooseNum);
-            bus.emit('ui.refresh');
-        } else if (resp.code === CODE_NOT_SENT) {
-            break;   // 在途/超时：本轮此遗迹收手，留给下次唤醒/轮询
-        } else {
-            log.info('relic claim rejected, blacklist today. site=%d;idx=%d;code=%d;data=%s', wonderId, c.idx, resp.code, safeStringify(resp.data));
-            await rejectToday(wonderId);
-            return;
-        }
-        if (slots > 0) await sleep(CLAIM_GAP_MS);
+  var slots = chooseNum - have.length;
+  for (var k = 0; k < cand.length && slots > 0; k++) {
+    if (!aliveFn()) break;
+    var c = cand[k];
+    var resp = await sendRaw(CMD_CLAIM, { wonderId: wonderId, index: c.idx });
+    if (!aliveFn()) break;
+    if (resp.ok) {
+      // 应答带更新后的 have（服务端为准），合并进镜像
+      var nh =
+        resp.payload && Array.isArray(resp.payload.have) ? resp.payload.have.map(Number) : null;
+      if (nh) {
+        have = nh;
+        mirror[wonderId].have = have;
+      } else {
+        have.push(c.idx);
+        mirror[wonderId].have = have;
+      }
+      slots = chooseNum - have.length;
+      log.info(
+        'relic claim ok. site=%d(%s);idx=%d;reward=%d;item=%d(%s);have=%d/%d',
+        wonderId,
+        site.name || '',
+        c.idx,
+        c.rewardId,
+        c.itemId,
+        c.name || '?',
+        have.length,
+        chooseNum,
+      );
+      bus.emit('ui.refresh');
+    } else if (resp.code === CODE_NOT_SENT) {
+      break; // 在途/超时：本轮此遗迹收手，留给下次唤醒/轮询
+    } else {
+      log.info(
+        'relic claim rejected, blacklist today. site=%d;idx=%d;code=%d;data=%s',
+        wonderId,
+        c.idx,
+        resp.code,
+        safeStringify(resp.data),
+      );
+      await rejectToday(wonderId);
+      return;
     }
+    if (slots > 0) await sleep(CLAIM_GAP_MS);
+  }
 }
 
 /**
@@ -323,18 +404,18 @@ async function claimSite(site) {
  * @returns {Promise<void>}
  */
 async function scanOnce() {
-    var sites = gameData.relicRewardSites(SITE_LEVEL, SITE_FUNTYPE_ITEM);
-    if (!sites.length) {
-        log.debug('no level-2 item relic found.');
-        return;
-    }
-    ensureDay();
-    for (var i = 0; i < sites.length; i++) {
-        if (!aliveFn()) break;
-        if (rejected.sites.indexOf(sites[i].wonderId) !== -1) continue;
-        await claimSite(sites[i]);
-    }
-    bus.emit('ui.refresh');
+  var sites = gameData.relicRewardSites(SITE_LEVEL, SITE_FUNTYPE_ITEM);
+  if (!sites.length) {
+    log.debug('no level-2 item relic found.');
+    return;
+  }
+  ensureDay();
+  for (var i = 0; i < sites.length; i++) {
+    if (!aliveFn()) break;
+    if (rejected.sites.indexOf(sites[i].wonderId) !== -1) continue;
+    await claimSite(sites[i]);
+  }
+  bus.emit('ui.refresh');
 }
 
 /**
@@ -343,14 +424,14 @@ async function scanOnce() {
  * @returns {number} 毫秒
  */
 function nextPollDelay() {
-    var nowMs = gameData.serverTime() * 1000;
-    var ms = POLL_INTERVAL;
-    for (var w in mirror) {
-        var et = (Number(mirror[w].endTime) || 0) * 1000 + FLIP_BUFFER_MS;
-        if (et > nowMs && et - nowMs < ms) ms = et - nowMs;
-    }
-    log.debug('next scan in %d s', Math.round(ms / 1000));
-    return Math.max(1000, ms);
+  var nowMs = gameData.serverTime() * 1000;
+  var ms = POLL_INTERVAL;
+  for (var w in mirror) {
+    var et = (Number(mirror[w].endTime) || 0) * 1000 + FLIP_BUFFER_MS;
+    if (et > nowMs && et - nowMs < ms) ms = et - nowMs;
+  }
+  log.debug('next scan in %d s', Math.round(ms / 1000));
+  return Math.max(1000, ms);
 }
 
 /**
@@ -358,9 +439,9 @@ function nextPollDelay() {
  * @returns {Promise<number>}
  */
 async function cycleRun() {
-    await scanOnce();
-    if (cycle.pending) return 0;
-    return nextPollDelay();
+  await scanOnce();
+  if (cycle.pending) return 0;
+  return nextPollDelay();
 }
 
 /** @type {{kick: function(), pending: boolean}} 调和循环驱动器（fallback 取 POLL_INTERVAL，防异常停摆） */
@@ -373,15 +454,15 @@ const cycle = createCycle({ log: log, alive: aliveFn, run: cycleRun, fallback: P
  * @returns {boolean}
  */
 function install(ctx) {
-    ctxRef = ctx;
-    net = ctx.net;
-    if (!net || !net.install()) {
-        log.warn('install failed: pocketcc.net unavailable');
-        net = null;
-        return false;
-    }
-    log.info('installed.');
-    return true;
+  ctxRef = ctx;
+  net = ctx.net;
+  if (!net || !net.install()) {
+    log.warn('install failed: pocketcc.net unavailable');
+    net = null;
+    return false;
+  }
+  log.info('installed.');
+  return true;
 }
 
 /**
@@ -390,11 +471,11 @@ function install(ctx) {
  * @param {object} ctx reactor 上下文
  */
 function run(ctx) {
-    ctxRef = ctx;
-    log.info('started.');
-    loadRejected().then(function () {
-        if (aliveFn()) cycle.kick();   // 首拍立即扫；后续由 cycle 按 nextPollDelay 择时重排
-    });
+  ctxRef = ctx;
+  log.info('started.');
+  loadRejected().then(function () {
+    if (aliveFn()) cycle.kick(); // 首拍立即扫；后续由 cycle 按 nextPollDelay 择时重排
+  });
 }
 
 /**
@@ -403,21 +484,25 @@ function run(ctx) {
  *   轮询/间距/池为内置常量；优先级顺序（order）为唯一持久配置。
  */
 reactor.register({
-    id: 'relicReward',
-    label: '遗迹奖励',
-    storageKey: 'pocketcc.feat.relicReward',
-    symbols: ['dataCenter', 'worldSite', 'rewardCtrl', 'tableManager'],
-    scenes: ['Home', 'NWorldMap'],
-    defaults: { enabled: false, order: L2_ITEM_POOL.slice() },
-    fields: [
-        {
-            key: 'order', type: 'sortlist', label: '远古遗迹-道具 · 领取优先级',
-            hint: '拖动调整顺序，顺序靠前优先领取',
-            resolve: item.sortResolve,
-        },
-    ],
-    toModuleCfg: function (c) { return { order: Array.isArray(c.order) ? c.order.slice() : L2_ITEM_POOL.slice() }; },
-    install: install,
-    configure: configure,
-    run: run,
+  id: 'relicReward',
+  label: '遗迹奖励',
+  storageKey: 'pocketcc.feat.relicReward',
+  symbols: ['dataCenter', 'worldSite', 'rewardCtrl', 'tableManager'],
+  scenes: ['Home', 'NWorldMap'],
+  defaults: { enabled: false, order: L2_ITEM_POOL.slice() },
+  fields: [
+    {
+      key: 'order',
+      type: 'sortlist',
+      label: '远古遗迹-道具 · 领取优先级',
+      hint: '拖动调整顺序，顺序靠前优先领取',
+      resolve: item.sortResolve,
+    },
+  ],
+  toModuleCfg: function (c) {
+    return { order: Array.isArray(c.order) ? c.order.slice() : L2_ITEM_POOL.slice() };
+  },
+  install: install,
+  configure: configure,
+  run: run,
 });

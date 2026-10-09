@@ -1,0 +1,6 @@
+node_modules/
+extension/dist/
+dashcam/store/
+references/
+package-lock.json
+*.log

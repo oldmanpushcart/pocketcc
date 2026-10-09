@@ -8,10 +8,10 @@
  * @returns {string}
  */
 export function todayStr() {
-    var d = new Date();
-    var m = d.getMonth() + 1;
-    var day = d.getDate();
-    return d.getFullYear() + '-' + (m < 10 ? '0' + m : m) + '-' + (day < 10 ? '0' + day : day);
+  var d = new Date();
+  var m = d.getMonth() + 1;
+  var day = d.getDate();
+  return d.getFullYear() + '-' + (m < 10 ? '0' + m : m) + '-' + (day < 10 ? '0' + day : day);
 }
 
 /**
@@ -20,7 +20,11 @@ export function todayStr() {
  * @returns {string}
  */
 export function safeStringify(v) {
-    if (v == null) return String(v);
-    if (typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean') return String(v);
-    try { return JSON.stringify(v); } catch (err) { return String(v); }
+  if (v == null) return String(v);
+  if (typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean') return String(v);
+  try {
+    return JSON.stringify(v);
+  } catch (err) {
+    return String(v);
+  }
 }

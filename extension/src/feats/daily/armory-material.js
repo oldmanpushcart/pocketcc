@@ -79,9 +79,9 @@ const MIN_WAKE_MS = 3000;
  * @type {object}
  */
 const cfg = {
-    /** 兜底轮询间隔（默认 30 秒）：仅在拿不到可靠队列态（空队列 / st 未初始化 / 取不到耗时配置）时用作唤醒兜底；
-     *  有在产料时 cycleRun 会直接睡到队首到期（见 nextWakeDelayMs），不再固定 30 秒轮询 */
-    cycleInterval: 1000 * 30,
+  /** 兜底轮询间隔（默认 30 秒）：仅在拿不到可靠队列态（空队列 / st 未初始化 / 取不到耗时配置）时用作唤醒兜底；
+   *  有在产料时 cycleRun 会直接睡到队首到期（见 nextWakeDelayMs），不再固定 30 秒轮询 */
+  cycleInterval: 1000 * 30,
 };
 
 /** @type {object|null} 网络底座（promise 封装 pocketcc.net） */
@@ -132,7 +132,7 @@ var synced = false;
  * @returns {boolean}
  */
 function aliveFn() {
-    return ctxRef ? ctxRef.alive() : false;
+  return ctxRef ? ctxRef.alive() : false;
 }
 
 /**
@@ -141,33 +141,57 @@ function aliveFn() {
  * @returns {object|null}
  */
 function parseData(d) {
-    if (d == null) return null;
-    if (typeof d === 'object') return d;
-    try { return JSON.parse(d); } catch (e) { return null; }
+  if (d == null) return null;
+  if (typeof d === 'object') return d;
+  try {
+    return JSON.parse(d);
+  } catch (e) {
+    return null;
+  }
 }
 
 // ─────────────────────── 游戏态只读访问（try/catch 降级） ───────────────────────
 
 /** @returns {object|null} DataCenter.DATA（注：dataCenter 本身已是 DATA，勿再取 .DATA） */
-function data() { try { return dataCenter || null; } catch (e) { return null; } }
+function data() {
+  try {
+    return dataCenter || null;
+  } catch (e) {
+    return null;
+  }
+}
 
 /** @returns {object|null} DATA.UserData */
-function userData() { var d = data(); try { return d && d.UserData || null; } catch (e) { return null; } }
+function userData() {
+  var d = data();
+  try {
+    return (d && d.UserData) || null;
+  } catch (e) {
+    return null;
+  }
+}
 
 /** @returns {number} 当前服务器时间（秒）；取不到 0 */
-function serverTime() { var d = data(); try { return Number(d.ServerTime) || 0; } catch (e) { return 0; } }
+function serverTime() {
+  var d = data();
+  try {
+    return Number(d.ServerTime) || 0;
+  } catch (e) {
+    return 0;
+  }
+}
 
 /**
  * 客户端生产队列镜像（原始值，可能为 null——面板从未开过则未初始化）。
  * @returns {{st:number, wait:number[]}|null} 有镜像返回浅拷贝，无镜像返回 null
  */
 function rawMeterial() {
-    var u = userData();
-    try {
-        var m = u && u.ArmyEquipSystemMeterial;
-        if (m && Array.isArray(m.wait)) return { st: Number(m.st) || 0, wait: m.wait.slice() };
-    } catch (e) { }
-    return null;
+  var u = userData();
+  try {
+    var m = u && u.ArmyEquipSystemMeterial;
+    if (m && Array.isArray(m.wait)) return { st: Number(m.st) || 0, wait: m.wait.slice() };
+  } catch (e) {}
+  return null;
 }
 
 /**
@@ -178,7 +202,7 @@ function rawMeterial() {
  * @returns {{st:number, wait:number[]}} shadow 的浅拷贝
  */
 function currentState() {
-    return { st: shadow.st, wait: shadow.wait.slice() };
+  return { st: shadow.st, wait: shadow.wait.slice() };
 }
 
 /**
@@ -186,11 +210,11 @@ function currentState() {
  * 只在 run() 点火时调用一次，避免陈旧镜像反复覆盖 shadow。
  */
 function seedShadow() {
-    if (seeded) return;   // 页内仅播种一次：resume 重入保留权威 shadow，不用可能为空的镜像覆盖
-    seeded = true;
-    var m = rawMeterial();
-    shadow = m ? { st: m.st, wait: m.wait } : { st: 1, wait: [] };
-    blocked = false;
+  if (seeded) return; // 页内仅播种一次：resume 重入保留权威 shadow，不用可能为空的镜像覆盖
+  seeded = true;
+  var m = rawMeterial();
+  shadow = m ? { st: m.st, wait: m.wait } : { st: 1, wait: [] };
+  blocked = false;
 }
 
 /**
@@ -199,9 +223,13 @@ function seedShadow() {
  * @returns {number} 持有数量；不可用回 0
  */
 function itemAmount(itemId) {
-    var u = userData();
-    if (!u || typeof u.getItemAmount !== 'function') return 0;
-    try { return Number(u.getItemAmount(+itemId)) || 0; } catch (e) { return 0; }
+  var u = userData();
+  if (!u || typeof u.getItemAmount !== 'function') return 0;
+  try {
+    return Number(u.getItemAmount(+itemId)) || 0;
+  } catch (e) {
+    return 0;
+  }
 }
 
 /**
@@ -211,13 +239,13 @@ function itemAmount(itemId) {
  * @returns {number}
  */
 function configNum(key, def) {
-    try {
-        if (gameTools && typeof gameTools.getDataConfigData === 'function') {
-            var v = Number(gameTools.getDataConfigData(key));
-            if (v > 0) return v;
-        }
-    } catch (e) { }
-    return def;
+  try {
+    if (gameTools && typeof gameTools.getDataConfigData === 'function') {
+      var v = Number(gameTools.getDataConfigData(key));
+      if (v > 0) return v;
+    }
+  } catch (e) {}
+  return def;
 }
 
 /**
@@ -227,14 +255,14 @@ function configNum(key, def) {
  * @returns {boolean} 可生产返回 true；未解锁返回 false
  */
 function productionUnlocked() {
-    var u = userData();
-    if (!u) return false;
-    try {
-        var noviceOn = typeof u.FunctionOn === 'function' && u.FunctionOn(NOVICE_SWITCH) === true;
-        var needLv = configNum(CFG_UNLOCK_LEVEL, 0);
-        if (noviceOn && needLv > 0 && (Number(u.Level) || 0) < needLv) return false;
-    } catch (e) { }
-    return true;
+  var u = userData();
+  if (!u) return false;
+  try {
+    var noviceOn = typeof u.FunctionOn === 'function' && u.FunctionOn(NOVICE_SWITCH) === true;
+    var needLv = configNum(CFG_UNLOCK_LEVEL, 0);
+    if (noviceOn && needLv > 0 && (Number(u.Level) || 0) < needLv) return false;
+  } catch (e) {}
+  return true;
 }
 
 /**
@@ -243,7 +271,11 @@ function productionUnlocked() {
  * @returns {object|null}
  */
 function tableRow(id) {
-    try { return (tableMgr && tableMgr.getTableDataById(ITEM_TABLE, String(id))) || null; } catch (e) { return null; }
+  try {
+    return (tableMgr && tableMgr.getTableDataById(ITEM_TABLE, String(id))) || null;
+  } catch (e) {
+    return null;
+  }
 }
 
 /**
@@ -251,7 +283,15 @@ function tableRow(id) {
  * @returns {object[]}
  */
 function producibleBases() {
-    try { return (tableMgr && tableMgr.getTableByKey(ITEM_TABLE, 'type', ARMY_MATERIAL_TYPE, 'quality', BASE_QUALITY)) || []; } catch (e) { return []; }
+  try {
+    return (
+      (tableMgr &&
+        tableMgr.getTableByKey(ITEM_TABLE, 'type', ARMY_MATERIAL_TYPE, 'quality', BASE_QUALITY)) ||
+      []
+    );
+  } catch (e) {
+    return [];
+  }
 }
 
 // ─────────────────────── 稀缺度算法 ───────────────────────
@@ -264,24 +304,24 @@ function producibleBases() {
  * @returns {number} 归一化持有量（基础料等价单位）
  */
 function familyNormalizedHoldings(baseId) {
-    var total = 0;
-    var value = 1;        // 当前等级折成基础料的系数
-    var cur = baseId;
-    var seen = new Set();
-    var guard = 0;
-    while (cur != null && cur > 0 && guard++ < MAX_CHAIN_DEPTH) {
-        if (seen.has(cur)) break;   // 环保护
-        seen.add(cur);
-        var row = tableRow(cur);
-        if (!row) break;
-        total += itemAmount(cur) * value;
-        var ratio = Number(row.para1) > 0 ? Number(row.para1) : DEFAULT_FUSION_RATIO;
-        var next = Number(row.para2);
-        if (!(next > 0) || next === cur) break;   // 链尾
-        value *= ratio;
-        cur = next;
-    }
-    return total;
+  var total = 0;
+  var value = 1; // 当前等级折成基础料的系数
+  var cur = baseId;
+  var seen = new Set();
+  var guard = 0;
+  while (cur != null && cur > 0 && guard++ < MAX_CHAIN_DEPTH) {
+    if (seen.has(cur)) break; // 环保护
+    seen.add(cur);
+    var row = tableRow(cur);
+    if (!row) break;
+    total += itemAmount(cur) * value;
+    var ratio = Number(row.para1) > 0 ? Number(row.para1) : DEFAULT_FUSION_RATIO;
+    var next = Number(row.para2);
+    if (!(next > 0) || next === cur) break; // 链尾
+    value *= ratio;
+    cur = next;
+  }
+  return total;
 }
 
 /**
@@ -291,27 +331,27 @@ function familyNormalizedHoldings(baseId) {
  * @returns {number|null} 该排的基础料 id；无可生产集回 null
  */
 function scarcestBase(wait) {
-    var bases = producibleBases();
-    if (!bases || !bases.length) return null;
-    var perYield = configNum(CFG_YIELD, 1);
-    // 统计各基础料在队列中的条数（wait 里存的就是基础料 id）
-    var queuedCount = {};
-    for (var i = 0; i < wait.length; i++) {
-        var id = Number(wait[i]);
-        if (id > 0) queuedCount[id] = (queuedCount[id] || 0) + 1;
+  var bases = producibleBases();
+  if (!bases || !bases.length) return null;
+  var perYield = configNum(CFG_YIELD, 1);
+  // 统计各基础料在队列中的条数（wait 里存的就是基础料 id）
+  var queuedCount = {};
+  for (var i = 0; i < wait.length; i++) {
+    var id = Number(wait[i]);
+    if (id > 0) queuedCount[id] = (queuedCount[id] || 0) + 1;
+  }
+  var best = null;
+  var bestScore = Infinity;
+  for (var j = 0; j < bases.length; j++) {
+    var b = Number(bases[j].id);
+    if (!(b > 0)) continue;
+    var score = familyNormalizedHoldings(b) + (queuedCount[b] || 0) * perYield;
+    if (score < bestScore || (score === bestScore && best != null && b < best)) {
+      bestScore = score;
+      best = b;
     }
-    var best = null;
-    var bestScore = Infinity;
-    for (var j = 0; j < bases.length; j++) {
-        var b = Number(bases[j].id);
-        if (!(b > 0)) continue;
-        var score = familyNormalizedHoldings(b) + (queuedCount[b] || 0) * perYield;
-        if (score < bestScore || (score === bestScore && best != null && b < best)) {
-            bestScore = score;
-            best = b;
-        }
-    }
-    return best;
+  }
+  return best;
 }
 
 // ─────────────────────── 生产/收割动作 ───────────────────────
@@ -322,34 +362,39 @@ function scarcestBase(wait) {
  * @returns {Promise<void>}
  */
 async function harvestDue() {
-    var produceTime = configNum(CFG_PRODUCE_TIME, 0);
-    for (var n = 0; n < MAX_HARVEST_PER_CYCLE && aliveFn(); n++) {
-        var s = currentState();
-        var haveSt = produceTime > 0 && s.st !== 1 && s.wait.length > 0;
-        var dueByTime = haveSt && (produceTime + s.st - serverTime() < 0);
-        // 首轮强制权威读：1645 应答恒含当前 {st,wait}，先判队列是否已满，杜绝启动时盲发 1643（用户诉求）
-        // 之后：有可靠 st 且到期 → 收；无可靠 st 但队列有在产料或疑似满员 → 试发一次让服务端到期收割并回带权威态自愈
-        var forceSync = !synced;
-        var shouldProbe = !haveSt && (blocked || s.wait.length > 0);
-        if (!dueByTime && !forceSync && !shouldProbe) return;
-        if (net.isSending(CMD_PRODUCE_GET)) return;
-        var ret;
-        try { ret = await net.send(CMD_PRODUCE_GET, {}); } catch (e) { log.warn('harvest send threw.', e); return; }
-        if (!aliveFn()) return;
-        synced = true;   // 点火后已完成一次权威读，不再强制；失败则退回 produce 试探（由 blocked 兜底）
-        var d = parseData(ret && ret.data);
-        if (ret && ret.ok && d) {
-            if (d.st != null) shadow.st = Number(d.st) || 0;
-            if (Array.isArray(d.wait)) shadow.wait = d.wait.slice();
-            log.debug('harvest/sync. code=%d;waitRemain=%d', ret.code, shadow.wait.length);
-            // 解除闸门：应答带回短于上限的 wait，或虽无 wait 但确有 reward（收割成功即腾槽），避免形态不符时永久锁死
-            if (Array.isArray(d.wait) ? d.wait.length < MAX_QUEUE : !!d.reward) blocked = false;
-        } else {
-            // 无到期项/被拒：结束本轮（正常到期路径记 info，blocked 无 st 的探测路径静默）
-            if (haveSt) log.info('harvest no-op/rejected. code=%s', ret && ret.code);
-            return;
-        }
+  var produceTime = configNum(CFG_PRODUCE_TIME, 0);
+  for (var n = 0; n < MAX_HARVEST_PER_CYCLE && aliveFn(); n++) {
+    var s = currentState();
+    var haveSt = produceTime > 0 && s.st !== 1 && s.wait.length > 0;
+    var dueByTime = haveSt && produceTime + s.st - serverTime() < 0;
+    // 首轮强制权威读：1645 应答恒含当前 {st,wait}，先判队列是否已满，杜绝启动时盲发 1643（用户诉求）
+    // 之后：有可靠 st 且到期 → 收；无可靠 st 但队列有在产料或疑似满员 → 试发一次让服务端到期收割并回带权威态自愈
+    var forceSync = !synced;
+    var shouldProbe = !haveSt && (blocked || s.wait.length > 0);
+    if (!dueByTime && !forceSync && !shouldProbe) return;
+    if (net.isSending(CMD_PRODUCE_GET)) return;
+    var ret;
+    try {
+      ret = await net.send(CMD_PRODUCE_GET, {});
+    } catch (e) {
+      log.warn('harvest send threw.', e);
+      return;
     }
+    if (!aliveFn()) return;
+    synced = true; // 点火后已完成一次权威读，不再强制；失败则退回 produce 试探（由 blocked 兜底）
+    var d = parseData(ret && ret.data);
+    if (ret && ret.ok && d) {
+      if (d.st != null) shadow.st = Number(d.st) || 0;
+      if (Array.isArray(d.wait)) shadow.wait = d.wait.slice();
+      log.debug('harvest/sync. code=%d;waitRemain=%d', ret.code, shadow.wait.length);
+      // 解除闸门：应答带回短于上限的 wait，或虽无 wait 但确有 reward（收割成功即腾槽），避免形态不符时永久锁死
+      if (Array.isArray(d.wait) ? d.wait.length < MAX_QUEUE : !!d.reward) blocked = false;
+    } else {
+      // 无到期项/被拒：结束本轮（正常到期路径记 info，blocked 无 st 的探测路径静默）
+      if (haveSt) log.info('harvest no-op/rejected. code=%s', ret && ret.code);
+      return;
+    }
+  }
 }
 
 /**
@@ -358,35 +403,50 @@ async function harvestDue() {
  * @returns {Promise<void>}
  */
 async function fillQueue() {
-    if (blocked) return;   // 疑似满员：停止补产，等收割腾槽后由 harvestDue 解除
-    if (!productionUnlocked()) { log.debug('produce locked: novice switch on & level < %d', CFG_UNLOCK_LEVEL); return; }   // 等级判定：新手调整未达门槛不补产（镜像游戏锁产）
-    var queue = currentState().wait.slice();
-    var guard = 0;
-    while (queue.length < MAX_QUEUE && aliveFn() && guard++ < MAX_QUEUE) {
-        var base = scarcestBase(queue);
-        if (base == null) { log.debug('no producible base.'); return; }
-        if (net.isSending(CMD_PRODUCE)) return;
-        var ret;
-        try { ret = await net.send(CMD_PRODUCE, { itemId: base }); } catch (e) { log.warn('produce send threw.', e); return; }
-        if (!aliveFn()) return;
-        var d = parseData(ret && ret.data);
-        if (ret && ret.ok && d && Array.isArray(d.wait)) {
-            queue = d.wait.slice();
-            shadow.wait = queue;
-            if (d.st != null) shadow.st = Number(d.st) || 0;
-            log.debug('produce queued. itemId=%d;queue=%d', base, queue.length);
-        } else if (ret && !ret.ok) {
-            // 服务器明确拒绝（满员 common_159995 / param error 等）：认定队列已满，置 blocked 停止后续补产，
-            // 等下一次收割（1645）成功腾槽再解除——杜绝满员时反复发 1643 刷屏。
-            blocked = true;
-            log.info('produce rejected, assume queue full -> halt until harvested. itemId=%d;code=%s', base, ret && ret.code);
-            return;
-        } else {
-            // 应答 ok 但形态异常（缺 wait）：无法确证槽位，保守结束本轮但不锁闸门（非满员拒绝，不应误当已满）
-            log.warn('produce ack malformed (no wait). itemId=%d', base);
-            return;
-        }
+  if (blocked) return; // 疑似满员：停止补产，等收割腾槽后由 harvestDue 解除
+  if (!productionUnlocked()) {
+    log.debug('produce locked: novice switch on & level < %d', CFG_UNLOCK_LEVEL);
+    return;
+  } // 等级判定：新手调整未达门槛不补产（镜像游戏锁产）
+  var queue = currentState().wait.slice();
+  var guard = 0;
+  while (queue.length < MAX_QUEUE && aliveFn() && guard++ < MAX_QUEUE) {
+    var base = scarcestBase(queue);
+    if (base == null) {
+      log.debug('no producible base.');
+      return;
     }
+    if (net.isSending(CMD_PRODUCE)) return;
+    var ret;
+    try {
+      ret = await net.send(CMD_PRODUCE, { itemId: base });
+    } catch (e) {
+      log.warn('produce send threw.', e);
+      return;
+    }
+    if (!aliveFn()) return;
+    var d = parseData(ret && ret.data);
+    if (ret && ret.ok && d && Array.isArray(d.wait)) {
+      queue = d.wait.slice();
+      shadow.wait = queue;
+      if (d.st != null) shadow.st = Number(d.st) || 0;
+      log.debug('produce queued. itemId=%d;queue=%d', base, queue.length);
+    } else if (ret && !ret.ok) {
+      // 服务器明确拒绝（满员 common_159995 / param error 等）：认定队列已满，置 blocked 停止后续补产，
+      // 等下一次收割（1645）成功腾槽再解除——杜绝满员时反复发 1643 刷屏。
+      blocked = true;
+      log.info(
+        'produce rejected, assume queue full -> halt until harvested. itemId=%d;code=%s',
+        base,
+        ret && ret.code,
+      );
+      return;
+    } else {
+      // 应答 ok 但形态异常（缺 wait）：无法确证槽位，保守结束本轮但不锁闸门（非满员拒绝，不应误当已满）
+      log.warn('produce ack malformed (no wait). itemId=%d', base);
+      return;
+    }
+  }
 }
 
 /**
@@ -396,14 +456,14 @@ async function fillQueue() {
  * @returns {number} 下拍间隔（毫秒）；<=0 由 createCycle 立即再跑
  */
 function nextWakeDelayMs() {
-    var s = currentState();
-    var produceTime = configNum(CFG_PRODUCE_TIME, 0);
-    if (produceTime > 0 && s.st !== 1 && s.wait.length > 0) {
-        var remainMs = (produceTime + s.st - serverTime()) * 1000;   // 队首距到期的毫秒（与 harvestDue 同判据）
-        if (remainMs <= 0) return MIN_WAKE_MS;                       // 本轮未收走（满员闸门/异常）：短隔后再试，不空转
-        return Math.max(remainMs + HARVEST_BUFFER_MS, MIN_WAKE_MS);   // 睡到到期 + 缓冲
-    }
-    return cfg.cycleInterval;
+  var s = currentState();
+  var produceTime = configNum(CFG_PRODUCE_TIME, 0);
+  if (produceTime > 0 && s.st !== 1 && s.wait.length > 0) {
+    var remainMs = (produceTime + s.st - serverTime()) * 1000; // 队首距到期的毫秒（与 harvestDue 同判据）
+    if (remainMs <= 0) return MIN_WAKE_MS; // 本轮未收走（满员闸门/异常）：短隔后再试，不空转
+    return Math.max(remainMs + HARVEST_BUFFER_MS, MIN_WAKE_MS); // 睡到到期 + 缓冲
+  }
+  return cfg.cycleInterval;
 }
 
 /**
@@ -411,11 +471,11 @@ function nextWakeDelayMs() {
  * @returns {Promise<number>} 下拍间隔（毫秒）；在飞攒到触发则立即补扫
  */
 async function cycleRun() {
-    await harvestDue();
-    if (!aliveFn()) return 0;
-    await fillQueue();
-    if (cycle.pending) return 0;
-    return nextWakeDelayMs();
+  await harvestDue();
+  if (!aliveFn()) return 0;
+  await fillQueue();
+  if (cycle.pending) return 0;
+  return nextWakeDelayMs();
 }
 
 /** @type {{kick: function(), pending: boolean}} 调和循环驱动器（fallback 取 cycleInterval，防异常停摆） */
@@ -427,42 +487,45 @@ const cycle = createCycle({ log: log, alive: aliveFn, run: cycleRun, fallback: c
  * @returns {boolean}
  */
 function install(ctx) {
-    ctxRef = ctx;
-    if (installed) return true;
+  ctxRef = ctx;
+  if (installed) return true;
 
-    var missing = [];
+  var missing = [];
 
-    net = ctx.net;
-    if (!net || !net.install || !net.install()) {
-        missing.push('pocketcc.net');
-        net = null;
-    }
+  net = ctx.net;
+  if (!net || !net.install || !net.install()) {
+    missing.push('pocketcc.net');
+    net = null;
+  }
 
-    var tmMod = game.get('TableManager');
-    tableMgr = tmMod && tmMod.TABLE || null;
-    if (!tableMgr) missing.push('TableManager.TABLE');
+  var tmMod = game.get('TableManager');
+  tableMgr = (tmMod && tmMod.TABLE) || null;
+  if (!tableMgr) missing.push('TableManager.TABLE');
 
-    var tnMod = game.get('TableName');
-    var tnEnum = tnMod && (tnMod.TableName || (tnMod.default && tnMod.default.TableName));
-    if (tnEnum && tnEnum.ITEM) ITEM_TABLE = tnEnum.ITEM;   // 取不到保留兜底 'item'
+  var tnMod = game.get('TableName');
+  var tnEnum = tnMod && (tnMod.TableName || (tnMod.default && tnMod.default.TableName));
+  if (tnEnum && tnEnum.ITEM) ITEM_TABLE = tnEnum.ITEM; // 取不到保留兜底 'item'
 
-    var dcMod = game.get('DataCenter');
-    dataCenter = dcMod && dcMod.DATA || null;
-    if (!dataCenter) missing.push('DataCenter.DATA');
+  var dcMod = game.get('DataCenter');
+  dataCenter = (dcMod && dcMod.DATA) || null;
+  if (!dataCenter) missing.push('DataCenter.DATA');
 
-    var gtMod = game.get('GameTools');
-    gameTools = (gtMod && gtMod.default) ? gtMod.default : gtMod;
-    if (!gameTools || typeof gameTools.getDataConfigData !== 'function') missing.push('GameTools');
+  var gtMod = game.get('GameTools');
+  gameTools = gtMod && gtMod.default ? gtMod.default : gtMod;
+  if (!gameTools || typeof gameTools.getDataConfigData !== 'function') missing.push('GameTools');
 
-    if (missing.length) {
-        net = null; tableMgr = null; dataCenter = null; gameTools = null;
-        log.warn('install failed. missing=%d;deps=%s', missing.length, missing.join(';'));
-        return false;
-    }
+  if (missing.length) {
+    net = null;
+    tableMgr = null;
+    dataCenter = null;
+    gameTools = null;
+    log.warn('install failed. missing=%d;deps=%s', missing.length, missing.join(';'));
+    return false;
+  }
 
-    installed = true;
-    log.info('installed.');
-    return true;
+  installed = true;
+  log.info('installed.');
+  return true;
 }
 
 /**
@@ -471,11 +534,11 @@ function install(ctx) {
  * @param {object} ctx reactor 上下文
  */
 function run(ctx) {
-    ctxRef = ctx;
-    seedShadow();
-    synced = false;   // 每次点火（含 resume）都重做一次权威读，拾取外部变更后的真实队列态
-    log.info('started. queue=%d', shadow.wait.length);
-    cycle.kick();
+  ctxRef = ctx;
+  seedShadow();
+  synced = false; // 每次点火（含 resume）都重做一次权威读，拾取外部变更后的真实队列态
+  log.info('started. queue=%d', shadow.wait.length);
+  cycle.kick();
 }
 
 /**
@@ -483,15 +546,17 @@ function run(ctx) {
  * 面板仅出启用开关；轮询/队列上限/融合折算均为上方内置常量，不作为可持久化配置项（与 domainTreasure 同口径）。
  */
 reactor.register({
-    id: 'armoryMaterial',
-    label: '军火库生产材料',
-    storageKey: 'pocketcc.feat.armoryMaterial',
-    symbols: ['tableManager', 'tableName', 'dataCenter', 'gameTools'],
-    scenes: ['Home', 'NWorldMap'],
-    offInCombat: true,
-    defaults: { enabled: false },
-    fields: [],
-    toModuleCfg: function () { return {}; },
-    install: install,
-    run: run,
+  id: 'armoryMaterial',
+  label: '军火库生产材料',
+  storageKey: 'pocketcc.feat.armoryMaterial',
+  symbols: ['tableManager', 'tableName', 'dataCenter', 'gameTools'],
+  scenes: ['Home', 'NWorldMap'],
+  offInCombat: true,
+  defaults: { enabled: false },
+  fields: [],
+  toModuleCfg: function () {
+    return {};
+  },
+  install: install,
+  run: run,
 });

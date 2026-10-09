@@ -20,10 +20,16 @@
 
 /** %s 的取值串化：字符串原样、对象 JSON、其余 String()；失败降级 String，绝不抛 */
 function stringify(v) {
-    if (v == null) return String(v);
-    if (typeof v === 'string') return v;
-    if (typeof v === 'object') { try { return JSON.stringify(v); } catch (e) { return String(v); } }
-    return String(v);
+  if (v == null) return String(v);
+  if (typeof v === 'string') return v;
+  if (typeof v === 'object') {
+    try {
+      return JSON.stringify(v);
+    } catch (e) {
+      return String(v);
+    }
+  }
+  return String(v);
 }
 
 /**
@@ -33,18 +39,18 @@ function stringify(v) {
  * @returns {{msg:string, rest:Array}} 替换后的整行文本 + 仍要交给 console 的尾参
  */
 function printf(fmt, args) {
-    if (typeof fmt !== 'string') return { msg: stringify(fmt), rest: args };
-    if (!args.length || fmt.indexOf('%') === -1) return { msg: fmt, rest: args };
-    var i = 0;
-    var msg = fmt.replace(/%([sdif%])/g, function (tok, t) {
-        if (t === '%') return '%';               // %% → 字面 %，不-consuming 参数
-        if (i >= args.length) return tok;         // 参数不够：占位原样留着
-        var a = args[i++];
-        if (t === 's') return stringify(a);
-        var n = (t === 'f') ? parseFloat(a) : parseInt(a, 10);
-        return Number.isNaN(n) ? 'NaN' : String(n);
-    });
-    return { msg: msg, rest: args.slice(i) };
+  if (typeof fmt !== 'string') return { msg: stringify(fmt), rest: args };
+  if (!args.length || fmt.indexOf('%') === -1) return { msg: fmt, rest: args };
+  var i = 0;
+  var msg = fmt.replace(/%([sdif%])/g, function (tok, t) {
+    if (t === '%') return '%'; // %% → 字面 %，不-consuming 参数
+    if (i >= args.length) return tok; // 参数不够：占位原样留着
+    var a = args[i++];
+    if (t === 's') return stringify(a);
+    var n = t === 'f' ? parseFloat(a) : parseInt(a, 10);
+    return Number.isNaN(n) ? 'NaN' : String(n);
+  });
+  return { msg: msg, rest: args.slice(i) };
 }
 
 /**
@@ -53,15 +59,15 @@ function printf(fmt, args) {
  * @returns {Logger} 三级日志器
  */
 export function createLog(module) {
-    const prefix = `[POCKETCC://${module}]`;
-    function emit(sink, fmt, args) {
-        const line = printf(fmt, args);
-        if (line.rest.length) sink.call(console, `${prefix} ${line.msg}`, ...line.rest);
-        else sink.call(console, `${prefix} ${line.msg}`);
-    }
-    return {
-        info: (fmt, ...args) => emit(console.info, fmt, args),
-        debug: (fmt, ...args) => emit(console.debug, fmt, args),
-        warn: (fmt, ...args) => emit(console.warn, fmt, args),
-    };
+  const prefix = `[POCKETCC://${module}]`;
+  function emit(sink, fmt, args) {
+    const line = printf(fmt, args);
+    if (line.rest.length) sink.call(console, `${prefix} ${line.msg}`, ...line.rest);
+    else sink.call(console, `${prefix} ${line.msg}`);
+  }
+  return {
+    info: (fmt, ...args) => emit(console.info, fmt, args),
+    debug: (fmt, ...args) => emit(console.debug, fmt, args),
+    warn: (fmt, ...args) => emit(console.warn, fmt, args),
+  };
 }

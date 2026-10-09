@@ -139,8 +139,8 @@ var honorCappedDay = '';
  * @returns {string}
  */
 function dayKey() {
-    var d = new Date();
-    return d.getFullYear() + '-' + (d.getMonth() + 1) + '-' + d.getDate();
+  var d = new Date();
+  return d.getFullYear() + '-' + (d.getMonth() + 1) + '-' + d.getDate();
 }
 
 /**
@@ -148,7 +148,7 @@ function dayKey() {
  * @returns {boolean}
  */
 function aliveFn() {
-    return ctxRef ? ctxRef.alive() : false;
+  return ctxRef ? ctxRef.alive() : false;
 }
 
 // ── 排程 ──────────────────────────────────────────────────────────────
@@ -158,30 +158,34 @@ function aliveFn() {
  * @returns {number} 毫秒
  */
 function nextTickDelay(snap) {
-    var ms;
-    var pools = [];
-    if (snap) {
-        if (snap.sciEnergy) pools.push({ e: snap.sciEnergy, fallbackSec: SCIENCE_RECOVER_SEC });
-        if (snap.relEnergy) pools.push({ e: snap.relEnergy, fallbackSec: RELIC_RECOVER_SEC });
-    }
-    if (snap && snap.donated) ms = CHAIN_GAP_MS;
-    else if (pools.some((x) => x.e.point > 0)) ms = rejectStreak >= 3 ? IDLE_TICK_MS : BUSY_TICK_MS;
-    else if (pools.length) {
-        // 两池都空：按较早的回点唤醒；getter 没给秒数的池按各自整周期兜底，防 0 延迟热循环
-        ms = Math.min.apply(null, pools.map((x) => (x.e.nextRecoverSec > 0 ? x.e.nextRecoverSec : x.fallbackSec) * 1000)) + RECOVER_BUFFER_MS;
-    } else ms = rejectStreak >= 3 ? IDLE_TICK_MS * 2 : IDLE_TICK_MS;
-    // 回点唤醒封顶到巡检档倍数，避免超长定时器（离线错过 push 10021 也由它自愈）
-    if (ms > IDLE_TICK_MS * 8) ms = IDLE_TICK_MS * 8;
-    log.debug('next check in %d s', Math.round(ms / 1000));
-    return ms;
+  var ms;
+  var pools = [];
+  if (snap) {
+    if (snap.sciEnergy) pools.push({ e: snap.sciEnergy, fallbackSec: SCIENCE_RECOVER_SEC });
+    if (snap.relEnergy) pools.push({ e: snap.relEnergy, fallbackSec: RELIC_RECOVER_SEC });
+  }
+  if (snap && snap.donated) ms = CHAIN_GAP_MS;
+  else if (pools.some((x) => x.e.point > 0)) ms = rejectStreak >= 3 ? IDLE_TICK_MS : BUSY_TICK_MS;
+  else if (pools.length) {
+    // 两池都空：按较早的回点唤醒；getter 没给秒数的池按各自整周期兜底，防 0 延迟热循环
+    ms =
+      Math.min.apply(
+        null,
+        pools.map((x) => (x.e.nextRecoverSec > 0 ? x.e.nextRecoverSec : x.fallbackSec) * 1000),
+      ) + RECOVER_BUFFER_MS;
+  } else ms = rejectStreak >= 3 ? IDLE_TICK_MS * 2 : IDLE_TICK_MS;
+  // 回点唤醒封顶到巡检档倍数，避免超长定时器（离线错过 push 10021 也由它自愈）
+  if (ms > IDLE_TICK_MS * 8) ms = IDLE_TICK_MS * 8;
+  log.debug('next check in %d s', Math.round(ms / 1000));
+  return ms;
 }
 
 /** cycle 单轮：跑一次 tickBody → 若期间攒下推触就立即补扫 → 否则按 snap 择下拍。 */
 async function cycleRun() {
-    var snap = await tickBody();
-    if (!aliveFn()) return 0;
-    if (cycle.pending) return 0;
-    return nextTickDelay(snap || undefined);
+  var snap = await tickBody();
+  if (!aliveFn()) return 0;
+  if (cycle.pending) return 0;
+  return nextTickDelay(snap || undefined);
 }
 
 const cycle = createCycle({ log: log, alive: aliveFn, run: cycleRun, fallback: IDLE_TICK_MS });
@@ -193,11 +197,15 @@ const cycle = createCycle({ log: log, alive: aliveFn, run: cycleRun, fallback: I
  * @returns {object|null} 解析后的业务数据；非对象返回 null
  */
 function payloadOf(ret) {
-    var d = ret && ret.data;
-    if (typeof d === 'string') {
-        try { d = JSON.parse(d); } catch (err) { return null; }
+  var d = ret && ret.data;
+  if (typeof d === 'string') {
+    try {
+      d = JSON.parse(d);
+    } catch (err) {
+      return null;
     }
-    return (d && typeof d === 'object') ? d : null;
+  }
+  return d && typeof d === 'object' ? d : null;
 }
 
 /**
@@ -206,7 +214,9 @@ function payloadOf(ret) {
  * @returns {Promise<void>}
  */
 function sleep(ms) {
-    return new Promise(function (resolve) { setTimeout(resolve, Math.max(0, ms | 0)); });
+  return new Promise(function (resolve) {
+    setTimeout(resolve, Math.max(0, ms | 0));
+  });
 }
 
 /**
@@ -216,7 +226,7 @@ function sleep(ms) {
  * @returns {Promise<{ok:boolean, code:number, data:*, payload:object|null}>} 归一化结果
  */
 async function sendDonate(scienceId, num) {
-    return sendRaw(CMD_DONATE, { scienceId: scienceId, type: 1, num: num });
+  return sendRaw(CMD_DONATE, { scienceId: scienceId, type: 1, num: num });
 }
 
 /**
@@ -225,7 +235,7 @@ async function sendDonate(scienceId, num) {
  * @returns {Promise<{ok:boolean, code:number, data:*, payload:object|null}>} 归一化结果
  */
 async function sendDonateRelic(siteId) {
-    return sendRaw(CMD_DONATE_RELIC, { id: siteId, type: 1 });
+  return sendRaw(CMD_DONATE_RELIC, { id: siteId, type: 1 });
 }
 
 /**
@@ -235,15 +245,15 @@ async function sendDonateRelic(siteId) {
  * @returns {Promise<{ok:boolean, code:number, data:*, payload:object|null}>}
  */
 async function sendRaw(cmd, body) {
-    if (net.isSending(cmd)) return { ok: false, code: CODE_NOT_SENT, data: null, payload: null };
-    var ret;
-    try {
-        ret = await net.send(cmd, body);
-    } catch (err) {
-        log.debug('cmd %d send failed: %s', cmd, err && err.message);
-        return { ok: false, code: CODE_NOT_SENT, data: null, payload: null };
-    }
-    return { ok: ret.ok, code: ret.code, data: ret.data, payload: payloadOf(ret) };
+  if (net.isSending(cmd)) return { ok: false, code: CODE_NOT_SENT, data: null, payload: null };
+  var ret;
+  try {
+    ret = await net.send(cmd, body);
+  } catch (err) {
+    log.debug('cmd %d send failed: %s', cmd, err && err.message);
+    return { ok: false, code: CODE_NOT_SENT, data: null, payload: null };
+  }
+  return { ok: ret.ok, code: ret.code, data: ret.data, payload: payloadOf(ret) };
 }
 
 // ── 主流程 ────────────────────────────────────────────────────────────
@@ -252,42 +262,45 @@ async function sendRaw(cmd, body) {
  * @returns {Promise<object|null>} 排程线索 {donated, sciEnergy, relEnergy}；数据不可用返回 null（走闲档）
  */
 async function tickBody() {
-    var sc = gameData.allianceScience();
-    if (!sc) {
-        log.debug('science data unavailable (not in alliance?)');
-        return null;
-    }
+  var sc = gameData.allianceScience();
+  if (!sc) {
+    log.debug('science data unavailable (not in alliance?)');
+    return null;
+  }
 
-    // 荣誉当日已封顶（上一轮从应答 addPoint==0 实测）：科技/遗迹两链都靠同一荣誉计数，直接停捐到次日。
-    // 返回 null 走巡检档（不发包），避免每 tick 拿大池反复连捐刷屏。
-    if (honorCappedDay && honorCappedDay === dayKey()) {
-        log.debug('donate honor capped today (server addPoint=0), skip until reset.');
-        return null;
-    }
+  // 荣誉当日已封顶（上一轮从应答 addPoint==0 实测）：科技/遗迹两链都靠同一荣誉计数，直接停捐到次日。
+  // 返回 null 走巡检档（不发包），避免每 tick 拿大池反复连捐刷屏。
+  if (honorCappedDay && honorCappedDay === dayKey()) {
+    log.debug('donate honor capped today (server addPoint=0), skip until reset.');
+    return null;
+  }
 
-    // 荣誉到顶必停（用户定案的硬闸，不配置）：两条链路共用此计数，取不到上限则不设此闸
-    if (sc.honorCap > 0 && sc.dailyHonor >= sc.honorCap) {
-        log.debug('daily honor capped (%d/%d), skip today.', sc.dailyHonor, sc.honorCap);
-        return { donated: false, sciEnergy: gameData.energy(ENERGY_DONATE), relEnergy: gameData.energy(ENERGY_RELIC) };
-    }
+  // 荣誉到顶必停（用户定案的硬闸，不配置）：两条链路共用此计数，取不到上限则不设此闸
+  if (sc.honorCap > 0 && sc.dailyHonor >= sc.honorCap) {
+    log.debug('daily honor capped (%d/%d), skip today.', sc.dailyHonor, sc.honorCap);
+    return {
+      donated: false,
+      sciEnergy: gameData.energy(ENERGY_DONATE),
+      relEnergy: gameData.energy(ENERGY_RELIC),
+    };
+  }
 
-    var donated = false;
-    var sci = await donateScience(sc).catch(function (err) {
-        log.warn('science donate threw.', err);
-        return null;
-    });
-    if (sci && sci.donated) donated = true;
-    if (!aliveFn()) return null;
+  var donated = false;
+  var sci = await donateScience(sc).catch(function (err) {
+    log.warn('science donate threw.', err);
+    return null;
+  });
+  if (sci && sci.donated) donated = true;
+  if (!aliveFn()) return null;
 
-    var rel = await donateRelic().catch(function (err) {
-        log.warn('relic donate threw.', err);
-        return null;
-    });
-    if (rel && rel.donated) donated = true;
-    if (!aliveFn()) return null;
+  var rel = await donateRelic().catch(function (err) {
+    log.warn('relic donate threw.', err);
+    return null;
+  });
+  if (rel && rel.donated) donated = true;
+  if (!aliveFn()) return null;
 
-    if (donated) sc = gameData.allianceScience() || sc;   // 刷新荣誉读数供排程参考
-    return { donated: donated, sciEnergy: sci && sci.energy, relEnergy: rel && rel.energy };
+  return { donated: donated, sciEnergy: sci && sci.energy, relEnergy: rel && rel.energy };
 }
 
 /**
@@ -298,59 +311,81 @@ async function tickBody() {
  * @returns {Promise<{donated:boolean, energy:object|null}>} energy 为捐后（或本轮判定用）对应池快照
  */
 async function donateScience(sc) {
-    // 目标由 ACL 合成：推荐项非自身可捐（满级/研究中）则已自动回退到首个可捐项，这里不再盲信推荐位
-    if (!sc.donateTarget) {
-        log.debug('science: no donateable target (recommend capped/upgrading or none unlocked), skip.');
-        return { donated: false, energy: gameData.energy(ENERGY_DONATE) };
-    }
-    var target = { id: sc.donateTarget.id, name: sc.donateTarget.name, recommended: sc.donateRecommended };
+  // 目标由 ACL 合成：推荐项非自身可捐（满级/研究中）则已自动回退到首个可捐项，这里不再盲信推荐位
+  if (!sc.donateTarget) {
+    log.debug('science: no donateable target (recommend capped/upgrading or none unlocked), skip.');
+    return { donated: false, energy: gameData.energy(ENERGY_DONATE) };
+  }
+  var target = {
+    id: sc.donateTarget.id,
+    name: sc.donateTarget.name,
+    recommended: sc.donateRecommended,
+  };
 
-    // sid 10900 的剩余捐赠次数走独立建筑池，其余走通用科技池；读错池会拿错枚数
-    var poolType = target.id === SID_BUILDING_DONATE ? ENERGY_BUILDING : ENERGY_DONATE;
-    var energy = gameData.energy(poolType);
-    if (!energy) return { donated: false, energy: null };
-    if (energy.point <= 0) return { donated: false, energy: energy };
+  // sid 10900 的剩余捐赠次数走独立建筑池，其余走通用科技池；读错池会拿错枚数
+  var poolType = target.id === SID_BUILDING_DONATE ? ENERGY_BUILDING : ENERGY_DONATE;
+  var energy = gameData.energy(poolType);
+  if (!energy) return { donated: false, energy: null };
+  if (energy.point <= 0) return { donated: false, energy: energy };
 
-    var cost = sc.costCoin;
-    var done = 0;
-    // 单 tick 突发锁到 SCIENCE_LOOP_MAX_PER_TICK 枚（建筑池 6 可能很大）；未捐完靠 donated→CHAIN_GAP 复查续捐
-    var loopMax = Math.min(energy.point, SCIENCE_LOOP_MAX_PER_TICK);
-    for (var i = 0; i < loopMax; i++) {
-        if (!aliveFn()) break;
-        if (cost > 0 && gameData.coins() < cost) {
-            log.debug('science: coin not enough. cost=%d;coins=%d', cost, gameData.coins());
-            break;
-        }
-        var res = await sendDonate(target.id, 1);   // num 固定 1（合法批量值）
-        if (!aliveFn()) break;
-        if (res.ok && res.payload && res.payload.sid != null) {
-            rejectStreak = 0;
-            done++;
-            var addPt = Number(res.payload.addPoint) || 0;
-            log.info('science donate ok. sid=%d(%s);#%d;addExp=%s;honor(+)%s;crit=%s',
-                target.id, target.recommended ? '推荐' : '顺位首项', done, res.payload.addExp, addPt, !!res.payload.crit);
-            // 服务端回 addPoint==0：今日荣誉已封顶（正常捐一枚 addPoint=50），再捐只烧金币不出荣誉。
-            // 记当日封顶使两链停捐并跳出循环，从根上消除“大池逐枚连捐 + 荣誉门失效”的刷屏。
-            if (addPt === 0) {
-                honorCappedDay = dayKey();
-                log.info('science: honor capped by server (addPoint=0). stop donating for today.');
-                break;
-            }
-        } else {
-            // 服务器拒绝带字典键载荷（'<键,参数>' 格式），l10n.net 翻成人话便于定位是哪道闸没过
-            rejectStreak++;
-            var smsg = l10n.net(res.data);
-            if (isExpectedReject(res)) {
-                // 次数不足/荣誉已满/跨战区等「当前本就不能做」的可预期拒绝：降级 info，不占 ⚠️ 面板；退避与回点唤醒不变
-                log.info('science donate skipped (expected). sid=%d;num=1;code=%d;msg=%s', target.id, res.code, smsg);
-            } else {
-                log.warn('science donate rejected (streak #%d). sid=%d;num=1;code=%d;msg=%s', rejectStreak, target.id, res.code, smsg);
-            }
-            break;   // 任一枚被拒即收手，交下轮/排程
-        }
-        if (i < loopMax - 1) await sleep(SCIENCE_DONATE_GAP_MS);
+  var cost = sc.costCoin;
+  var done = 0;
+  // 单 tick 突发锁到 SCIENCE_LOOP_MAX_PER_TICK 枚（建筑池 6 可能很大）；未捐完靠 donated→CHAIN_GAP 复查续捐
+  var loopMax = Math.min(energy.point, SCIENCE_LOOP_MAX_PER_TICK);
+  for (var i = 0; i < loopMax; i++) {
+    if (!aliveFn()) break;
+    if (cost > 0 && gameData.coins() < cost) {
+      log.debug('science: coin not enough. cost=%d;coins=%d', cost, gameData.coins());
+      break;
     }
-    return { donated: done > 0, energy: done > 0 ? (gameData.energy(poolType) || energy) : energy };
+    var res = await sendDonate(target.id, 1); // num 固定 1（合法批量值）
+    if (!aliveFn()) break;
+    if (res.ok && res.payload && res.payload.sid != null) {
+      rejectStreak = 0;
+      done++;
+      var addPt = Number(res.payload.addPoint) || 0;
+      log.info(
+        'science donate ok. sid=%d(%s);#%d;addExp=%s;honor(+)%s;crit=%s',
+        target.id,
+        target.recommended ? '推荐' : '顺位首项',
+        done,
+        res.payload.addExp,
+        addPt,
+        !!res.payload.crit,
+      );
+      // 服务端回 addPoint==0：今日荣誉已封顶（正常捐一枚 addPoint=50），再捐只烧金币不出荣誉。
+      // 记当日封顶使两链停捐并跳出循环，从根上消除“大池逐枚连捐 + 荣誉门失效”的刷屏。
+      if (addPt === 0) {
+        honorCappedDay = dayKey();
+        log.info('science: honor capped by server (addPoint=0). stop donating for today.');
+        break;
+      }
+    } else {
+      // 服务器拒绝带字典键载荷（'<键,参数>' 格式），l10n.net 翻成人话便于定位是哪道闸没过
+      rejectStreak++;
+      var smsg = l10n.net(res.data);
+      if (isExpectedReject(res)) {
+        // 次数不足/荣誉已满/跨战区等「当前本就不能做」的可预期拒绝：降级 info，不占 ⚠️ 面板；退避与回点唤醒不变
+        log.info(
+          'science donate skipped (expected). sid=%d;num=1;code=%d;msg=%s',
+          target.id,
+          res.code,
+          smsg,
+        );
+      } else {
+        log.warn(
+          'science donate rejected (streak #%d). sid=%d;num=1;code=%d;msg=%s',
+          rejectStreak,
+          target.id,
+          res.code,
+          smsg,
+        );
+      }
+      break; // 任一枚被拒即收手，交下轮/排程
+    }
+    if (i < loopMax - 1) await sleep(SCIENCE_DONATE_GAP_MS);
+  }
+  return { donated: done > 0, energy: done > 0 ? gameData.energy(poolType) || energy : energy };
 }
 
 /**
@@ -361,12 +396,12 @@ async function donateScience(sc) {
  * @returns {boolean}
  */
 function isRelicPhaseBan(res) {
-    var raw = res && res.data;
-    if (raw == null) return false;
-    var key = String(raw).split(',')[0].trim();
-    if (key.indexOf('cross_server') >= 0 || key.indexOf('cross_zone') >= 0) return true;
-    var zh = l10n.net(raw);
-    return zh.indexOf('跨战区') >= 0 || zh.indexOf('跨服') >= 0;
+  var raw = res && res.data;
+  if (raw == null) return false;
+  var key = String(raw).split(',')[0].trim();
+  if (key.indexOf('cross_server') >= 0 || key.indexOf('cross_zone') >= 0) return true;
+  var zh = l10n.net(raw);
+  return zh.indexOf('跨战区') >= 0 || zh.indexOf('跨服') >= 0;
 }
 
 /**
@@ -377,14 +412,19 @@ function isRelicPhaseBan(res) {
  * @returns {boolean}
  */
 function isExpectedReject(res) {
-    var raw = res && res.data;
-    if (raw == null) return false;
-    var key = String(raw).split(',')[0].trim();
-    if (key.indexOf('cross_server') >= 0 || key.indexOf('cross_zone') >= 0) return true;
-    var zh = l10n.net(raw);
-    return zh.indexOf('跨战区') >= 0 || zh.indexOf('跨服') >= 0
-        || zh.indexOf('次数不足') >= 0 || zh.indexOf('荣誉已满') >= 0
-        || zh.indexOf('已达上限') >= 0 || zh.indexOf('达到上限') >= 0;
+  var raw = res && res.data;
+  if (raw == null) return false;
+  var key = String(raw).split(',')[0].trim();
+  if (key.indexOf('cross_server') >= 0 || key.indexOf('cross_zone') >= 0) return true;
+  var zh = l10n.net(raw);
+  return (
+    zh.indexOf('跨战区') >= 0 ||
+    zh.indexOf('跨服') >= 0 ||
+    zh.indexOf('次数不足') >= 0 ||
+    zh.indexOf('荣誉已满') >= 0 ||
+    zh.indexOf('已达上限') >= 0 ||
+    zh.indexOf('达到上限') >= 0
+  );
 }
 
 /**
@@ -393,56 +433,82 @@ function isExpectedReject(res) {
  * @returns {Promise<{donated:boolean, energy:object|null}>}
  */
 async function donateRelic() {
-    if (!gameData.functionOn('Relic_upgrade_time')) return { donated: false, energy: null };
-    var rl = gameData.allianceRelic();
-    if (!rl) return { donated: false, energy: null };
-    var energy = gameData.energy(ENERGY_RELIC);
-    if (!energy) return { donated: false, energy: null };
-    if (energy.point <= 0) return { donated: false, energy: energy };
-    // 阶段性全局禁用（如跨战区）静默期内：直接跳过、不发包，避免每 tick 重复撞墙刷日志
-    if (relicBanUntil && Date.now() < relicBanUntil) return { donated: false, energy: energy };
+  if (!gameData.functionOn('Relic_upgrade_time')) return { donated: false, energy: null };
+  var rl = gameData.allianceRelic();
+  if (!rl) return { donated: false, energy: null };
+  var energy = gameData.energy(ENERGY_RELIC);
+  if (!energy) return { donated: false, energy: null };
+  if (energy.point <= 0) return { donated: false, energy: energy };
+  // 阶段性全局禁用（如跨战区）静默期内：直接跳过、不发包，避免每 tick 重复撞墙刷日志
+  if (relicBanUntil && Date.now() < relicBanUntil) return { donated: false, energy: energy };
 
-    // 目标由 ACL 合成：推荐位要塞非自身可捐（满级/经验已满）则已自动回退首个可捐要塞
-    if (!rl.donateTarget) {
-        log.debug('relic: no donateable site (recommend capped/full or none), skip.');
-        return { donated: false, energy: energy };
-    }
-    var target = { id: rl.donateTarget.id, name: rl.donateTarget.name, recommended: rl.donateRecommended };
+  // 目标由 ACL 合成：推荐位要塞非自身可捐（满级/经验已满）则已自动回退首个可捐要塞
+  if (!rl.donateTarget) {
+    log.debug('relic: no donateable site (recommend capped/full or none), skip.');
+    return { donated: false, energy: energy };
+  }
+  var target = {
+    id: rl.donateTarget.id,
+    name: rl.donateTarget.name,
+    recommended: rl.donateRecommended,
+  };
 
-    var cost = rl.relicCostCoin;
-    var done = 0;
-    for (var i = 0; i < energy.point; i++) {
-        if (!aliveFn()) break;
-        if (cost > 0 && gameData.coins() < cost) {
-            log.debug('relic: coin not enough. cost=%d;coins=%d', cost, gameData.coins());
-            break;
-        }
-        var res = await sendDonateRelic(target.id);
-        if (!aliveFn()) break;
-        if (!(res.ok && res.payload && res.payload.curPoint != null)) {
-            // 跨战区等阶段性全局禁用：重试无意义，独立静默冷却并降级为 info，不计入 rejectStreak（免得污染科技排程/两链互相掩盖）
-            if (isRelicPhaseBan(res)) {
-                relicBanUntil = Date.now() + RELIC_BAN_COOLDOWN_MS;
-                log.info('relic donate locked by phase ban. site=%d;code=%d;msg=%s;pause=%dmin',
-                    target.id, res.code, l10n.net(res.data), RELIC_BAN_COOLDOWN_MS / 60000);
-                break;
-            }
-            rejectStreak++;
-            var rmsg = l10n.net(res.data);
-            if (isExpectedReject(res)) {
-                log.info('relic donate skipped (expected). site=%d;code=%d;msg=%s', target.id, res.code, rmsg);
-            } else {
-                log.warn('relic donate rejected (streak #%d). site=%d;code=%d;msg=%s', rejectStreak, target.id, res.code, rmsg);
-            }
-            break;
-        }
-        rejectStreak = 0;
-        done++;
-        log.info('relic donate ok. site=%d(%s);#%d;honor=%s;crit=%s',
-            target.id, target.recommended ? '推荐' : '顺位首项', done, res.payload.curPoint, !!res.payload.crit);
-        if (i < energy.point - 1) await sleep(RELIC_GAP_MS);
+  var cost = rl.relicCostCoin;
+  var done = 0;
+  for (var i = 0; i < energy.point; i++) {
+    if (!aliveFn()) break;
+    if (cost > 0 && gameData.coins() < cost) {
+      log.debug('relic: coin not enough. cost=%d;coins=%d', cost, gameData.coins());
+      break;
     }
-    return { donated: done > 0, energy: done > 0 ? (gameData.energy(ENERGY_RELIC) || energy) : energy };
+    var res = await sendDonateRelic(target.id);
+    if (!aliveFn()) break;
+    if (!(res.ok && res.payload && res.payload.curPoint != null)) {
+      // 跨战区等阶段性全局禁用：重试无意义，独立静默冷却并降级为 info，不计入 rejectStreak（免得污染科技排程/两链互相掩盖）
+      if (isRelicPhaseBan(res)) {
+        relicBanUntil = Date.now() + RELIC_BAN_COOLDOWN_MS;
+        log.info(
+          'relic donate locked by phase ban. site=%d;code=%d;msg=%s;pause=%dmin',
+          target.id,
+          res.code,
+          l10n.net(res.data),
+          RELIC_BAN_COOLDOWN_MS / 60000,
+        );
+        break;
+      }
+      rejectStreak++;
+      var rmsg = l10n.net(res.data);
+      if (isExpectedReject(res)) {
+        log.info(
+          'relic donate skipped (expected). site=%d;code=%d;msg=%s',
+          target.id,
+          res.code,
+          rmsg,
+        );
+      } else {
+        log.warn(
+          'relic donate rejected (streak #%d). site=%d;code=%d;msg=%s',
+          rejectStreak,
+          target.id,
+          res.code,
+          rmsg,
+        );
+      }
+      break;
+    }
+    rejectStreak = 0;
+    done++;
+    log.info(
+      'relic donate ok. site=%d(%s);#%d;honor=%s;crit=%s',
+      target.id,
+      target.recommended ? '推荐' : '顺位首项',
+      done,
+      res.payload.curPoint,
+      !!res.payload.crit,
+    );
+    if (i < energy.point - 1) await sleep(RELIC_GAP_MS);
+  }
+  return { donated: done > 0, energy: done > 0 ? gameData.energy(ENERGY_RELIC) || energy : energy };
 }
 
 /**
@@ -451,15 +517,15 @@ async function donateRelic() {
  * @returns {boolean}
  */
 function install(ctx) {
-    ctxRef = ctx;
-    net = ctx.net;
-    if (!net || !net.install()) {
-        log.warn('install failed: pocketcc.net unavailable');
-        net = null;
-        return false;
-    }
-    log.info('installed.');
-    return true;
+  ctxRef = ctx;
+  net = ctx.net;
+  if (!net || !net.install()) {
+    log.warn('install failed: pocketcc.net unavailable');
+    net = null;
+    return false;
+  }
+  log.info('installed.');
+  return true;
 }
 
 /**
@@ -468,34 +534,38 @@ function install(ctx) {
  * @param {object} ctx reactor 上下文
  */
 function run(ctx) {
-    ctxRef = ctx;
-    rejectStreak = 0;
-    relicBanUntil = 0;
-    log.info('started.');
+  ctxRef = ctx;
+  rejectStreak = 0;
+  relicBanUntil = 0;
+  log.info('started.');
 
-    // 以当前点数作为基准：自家捐赠带来的 point 递减推送会因“非回升”被过滤，不再触捐
-    lastEnergyPoint = {};
-    var e4 = gameData.energy(ENERGY_DONATE); if (e4) lastEnergyPoint[ENERGY_DONATE] = e4.point;
-    var e6 = gameData.energy(ENERGY_BUILDING); if (e6) lastEnergyPoint[ENERGY_BUILDING] = e6.point;
-    var e7 = gameData.energy(ENERGY_RELIC); if (e7) lastEnergyPoint[ENERGY_RELIC] = e7.point;
+  // 以当前点数作为基准：自家捐赠带来的 point 递减推送会因“非回升”被过滤，不再触捐
+  lastEnergyPoint = {};
+  var e4 = gameData.energy(ENERGY_DONATE);
+  if (e4) lastEnergyPoint[ENERGY_DONATE] = e4.point;
+  var e6 = gameData.energy(ENERGY_BUILDING);
+  if (e6) lastEnergyPoint[ENERGY_BUILDING] = e6.point;
+  var e7 = gameData.energy(ENERGY_RELIC);
+  if (e7) lastEnergyPoint[ENERGY_RELIC] = e7.point;
 
-    // 能量池推送 10021：只在点数“回升”（自然回点）时唤醒捐赠。
-    // 抓包实证：每捐一次会把 point 往下扣并同样推一条 10021（reason=alliance_donate/WONDER_DONATE_*），
-    // 一次捐光 10 点会连推 10 条递减——若不看方向逐条 cycle.kick，就是“捐→被推→再捐”的自我反馈风暴。
-    // 捐赠额度只能靠回点产生，10430/10432（列表/荣誉变更）不新增额度，故不再订阅它们做轮询。
-    ctx.on.push(CMD_PUSH_ENERGY, function (ev) {
-        var d = ev && ev.data;
-        if (!d || (d.type !== ENERGY_DONATE && d.type !== ENERGY_RELIC && d.type !== ENERGY_BUILDING)) return;
-        var type = d.type;
-        var pt = Number(d.point) || 0;
-        var prev = lastEnergyPoint[type];
-        lastEnergyPoint[type] = pt;
-        if (prev != null && pt <= prev) return;   // 持平/下降：非回升（多为消耗回执），忽略
-        log.debug('push 10021 energy type=%s recovered (%s→%s), tick.', type, prev, pt);
-        cycle.kick();
-    });
+  // 能量池推送 10021：只在点数“回升”（自然回点）时唤醒捐赠。
+  // 抓包实证：每捐一次会把 point 往下扣并同样推一条 10021（reason=alliance_donate/WONDER_DONATE_*），
+  // 一次捐光 10 点会连推 10 条递减——若不看方向逐条 cycle.kick，就是“捐→被推→再捐”的自我反馈风暴。
+  // 捐赠额度只能靠回点产生，10430/10432（列表/荣誉变更）不新增额度，故不再订阅它们做轮询。
+  ctx.on.push(CMD_PUSH_ENERGY, function (ev) {
+    var d = ev && ev.data;
+    if (!d || (d.type !== ENERGY_DONATE && d.type !== ENERGY_RELIC && d.type !== ENERGY_BUILDING))
+      return;
+    var type = d.type;
+    var pt = Number(d.point) || 0;
+    var prev = lastEnergyPoint[type];
+    lastEnergyPoint[type] = pt;
+    if (prev != null && pt <= prev) return; // 持平/下降：非回升（多为消耗回执），忽略
+    log.debug('push 10021 energy type=%s recovered (%s→%s), tick.', type, prev, pt);
+    cycle.kick();
+  });
 
-    cycle.kick();   // 首个 tick 立即跑：加载时多半已错过推送，本地态直接可用
+  cycle.kick(); // 首个 tick 立即跑：加载时多半已错过推送，本地态直接可用
 }
 
 /**
@@ -504,15 +574,17 @@ function run(ctx) {
  * 均为内置口径）；能量池 id / 恢复周期 / 单捐间距等均为本文件内置常量。
  */
 reactor.register({
-    id: 'allianceScience',
-    label: '联盟科技',
-    storageKey: 'pocketcc.feat.allianceScience',
-    symbols: ['dataCenter', 'worldSite', 'gameDefine', 'tableManager'],
-    scenes: ['Home', 'NWorldMap'],
-    offInCombat: true,
-    defaults: { enabled: false },
-    fields: [],
-    toModuleCfg: function () { return {}; },
-    install: install,
-    run: run,
+  id: 'allianceScience',
+  label: '联盟科技',
+  storageKey: 'pocketcc.feat.allianceScience',
+  symbols: ['dataCenter', 'worldSite', 'gameDefine', 'tableManager'],
+  scenes: ['Home', 'NWorldMap'],
+  offInCombat: true,
+  defaults: { enabled: false },
+  fields: [],
+  toModuleCfg: function () {
+    return {};
+  },
+  install: install,
+  run: run,
 });

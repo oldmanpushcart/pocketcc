@@ -27,7 +27,17 @@ const log = createLog('HOTKEY');
  * 反向判定比白名单稳（文本类 type 繁多：text/search/url/tel/email/password/number/date…）。
  * @type {Set<string>}
  */
-const NON_TEXT_INPUT = new Set(['button', 'submit', 'reset', 'checkbox', 'radio', 'image', 'range', 'color', 'file']);
+const NON_TEXT_INPUT = new Set([
+  'button',
+  'submit',
+  'reset',
+  'checkbox',
+  'radio',
+  'image',
+  'range',
+  'color',
+  'file',
+]);
 
 /**
  * 判定「此刻焦点是否在可文字输入元素里」，供绑键功能决定是否让位于打字。
@@ -39,7 +49,8 @@ const NON_TEXT_INPUT = new Set(['button', 'submit', 'reset', 'checkbox', 'radio'
  */
 export function isTypingTarget(e) {
   // 穿透 Shadow DOM：composedPath()[0] 是事件路径最内层真实目标；老环境无 API 时退化 e.target
-  var t = (e && typeof e.composedPath === 'function' ? e.composedPath()[0] : null) || (e && e.target);
+  var t =
+    (e && typeof e.composedPath === 'function' ? e.composedPath()[0] : null) || (e && e.target);
   if (!t || !t.tagName) return false;
   if (t.tagName === 'TEXTAREA') return true;
   if (t.isContentEditable) return true;
@@ -81,15 +92,20 @@ let listening = false;
  * @returns {boolean}
  */
 function matchKey(binding, e) {
-    if (binding.match) return binding.match(e);
-    var keys = binding.keys || [];
-    for (var i = 0; i < keys.length; i++) {
-        var t = keys[i];
-        if (e.code === t) return true;
-        if (/^Key[A-Z]$/.test(t) && typeof e.key === 'string' && e.key.length === 1 &&
-            e.key.toLowerCase() === t.charAt(3).toLowerCase()) return true;
-    }
-    return false;
+  if (binding.match) return binding.match(e);
+  var keys = binding.keys || [];
+  for (var i = 0; i < keys.length; i++) {
+    var t = keys[i];
+    if (e.code === t) return true;
+    if (
+      /^Key[A-Z]$/.test(t) &&
+      typeof e.key === 'string' &&
+      e.key.length === 1 &&
+      e.key.toLowerCase() === t.charAt(3).toLowerCase()
+    )
+      return true;
+  }
+  return false;
 }
 
 /**
@@ -98,9 +114,9 @@ function matchKey(binding, e) {
  * @returns {boolean}
  */
 function sceneAllow(binding) {
-    var sc = binding.scenes;
-    if (!sc || !sc.length) return true;
-    return sc.indexOf(getCurrentScene()) !== -1;
+  var sc = binding.scenes;
+  if (!sc || !sc.length) return true;
+  return sc.indexOf(getCurrentScene()) !== -1;
 }
 
 /**
@@ -109,20 +125,24 @@ function sceneAllow(binding) {
  * @param {KeyboardEvent} e 键盘事件
  */
 function dispatch(e) {
-    if (isTypingTarget(e)) return;
-    if (e.ctrlKey || e.altKey || e.metaKey) return;
-    var iter = bindings.values();
-    for (var step = iter.next(); !step.done; step = iter.next()) {
-        var b = step.value;
-        if (!matchKey(b, e) || !sceneAllow(b)) continue;
-        var consumed;
-        try { consumed = b.handler(e); }
-        catch (err) { log.warn('handler %s threw: %s', b.id, err && err.message); continue; }
-        if (consumed === false) continue;   // 不消费：透传，继续看后续绑定
-        e.preventDefault();
-        e.stopPropagation();
-        return;
+  if (isTypingTarget(e)) return;
+  if (e.ctrlKey || e.altKey || e.metaKey) return;
+  var iter = bindings.values();
+  for (var step = iter.next(); !step.done; step = iter.next()) {
+    var b = step.value;
+    if (!matchKey(b, e) || !sceneAllow(b)) continue;
+    var consumed;
+    try {
+      consumed = b.handler(e);
+    } catch (err) {
+      log.warn('handler %s threw: %s', b.id, err && err.message);
+      continue;
     }
+    if (consumed === false) continue; // 不消费：透传，继续看后续绑定
+    e.preventDefault();
+    e.stopPropagation();
+    return;
+  }
 }
 
 /**
@@ -131,9 +151,12 @@ function dispatch(e) {
  * @returns {boolean}
  */
 function keyOverlap(a, b) {
-    if (a.match || b.match) return false;
-    var ka = a.keys || []; var kb = b.keys || [];
-    return ka.some(function (k) { return kb.indexOf(k) !== -1; });
+  if (a.match || b.match) return false;
+  var ka = a.keys || [];
+  var kb = b.keys || [];
+  return ka.some(function (k) {
+    return kb.indexOf(k) !== -1;
+  });
 }
 /**
  * 场景维度是否与既有绑定重叠（任一未声明场景=全域，视为重叠）。
@@ -141,10 +164,13 @@ function keyOverlap(a, b) {
  * @returns {boolean}
  */
 function sceneOverlap(a, b) {
-    var sa = a.scenes; var sb = b.scenes;
-    if (!sa || !sa.length) return true;
-    if (!sb || !sb.length) return true;
-    return sa.some(function (s) { return sb.indexOf(s) !== -1; });
+  var sa = a.scenes;
+  var sb = b.scenes;
+  if (!sa || !sa.length) return true;
+  if (!sb || !sb.length) return true;
+  return sa.some(function (s) {
+    return sb.indexOf(s) !== -1;
+  });
 }
 
 /**
@@ -153,25 +179,34 @@ function sceneOverlap(a, b) {
  * @param {HotkeyBinding} binding 绑定声明
  */
 export function bind(binding) {
-    if (!binding || typeof binding.id !== 'string' || typeof binding.handler !== 'function') {
-        log.warn('bind: invalid binding'); return;
-    }
-    if (bindings.has(binding.id)) { log.warn('bind: duplicate id %s', binding.id); return; }
-    var iter = bindings.values();
-    for (var step = iter.next(); !step.done; step = iter.next()) {
-        var ex = step.value;
-        if (keyOverlap(ex, binding) && sceneOverlap(ex, binding))
-            log.warn('bind: key conflict between %s and %s', binding.id, ex.id);
-    }
-    bindings.set(binding.id, binding);
-    if (!listening) { window.addEventListener('keydown', dispatch, true); listening = true; }
+  if (!binding || typeof binding.id !== 'string' || typeof binding.handler !== 'function') {
+    log.warn('bind: invalid binding');
+    return;
+  }
+  if (bindings.has(binding.id)) {
+    log.warn('bind: duplicate id %s', binding.id);
+    return;
+  }
+  var iter = bindings.values();
+  for (var step = iter.next(); !step.done; step = iter.next()) {
+    var ex = step.value;
+    if (keyOverlap(ex, binding) && sceneOverlap(ex, binding))
+      log.warn('bind: key conflict between %s and %s', binding.id, ex.id);
+  }
+  bindings.set(binding.id, binding);
+  if (!listening) {
+    window.addEventListener('keydown', dispatch, true);
+    listening = true;
+  }
 }
 
 /**
  * 注销一条热键绑定（预留：目前热键常驻，不摘全局监听，只删该条）。
  * @param {string} id 绑定 id
  */
-export function unbind(id) { bindings.delete(id); }
+export function unbind(id) {
+  bindings.delete(id);
+}
 
 /**
  * @typedef {object} HotkeyDoc 展示型键位（不参与 dispatch，仅进「快捷键一览」）
@@ -187,14 +222,20 @@ export function unbind(id) { bindings.delete(id); }
  * @param {HotkeyDoc} entry 键位说明
  */
 export function doc(entry) {
-    if (!entry || typeof entry.id !== 'string') { log.warn('doc: invalid entry'); return; }
-    if (bindings.has(entry.id)) { log.warn('doc: id %s already a bound hotkey, skip', entry.id); return; }
-    docs.set(entry.id, {
-        id: entry.id,
-        display: entry.display || entry.id,
-        label: entry.label || entry.id,
-        where: entry.where || '',
-    });
+  if (!entry || typeof entry.id !== 'string') {
+    log.warn('doc: invalid entry');
+    return;
+  }
+  if (bindings.has(entry.id)) {
+    log.warn('doc: id %s already a bound hotkey, skip', entry.id);
+    return;
+  }
+  docs.set(entry.id, {
+    id: entry.id,
+    display: entry.display || entry.id,
+    label: entry.label || entry.id,
+    where: entry.where || '',
+  });
 }
 
 /**
@@ -203,17 +244,19 @@ export function doc(entry) {
  * @returns {Array<{id:string, display:string, label:string, where:string, group:string}>}
  */
 export function list() {
-    var out = [];
-    // 展示型键位置前（全域/浮层类总开关），其后接注册表统一分派的游戏裸键
-    docs.forEach(function (d) { out.push(Object.assign({ group: 'global' }, d)); });
-    bindings.forEach(function (b) {
-        out.push({
-            id: b.id,
-            display: b.display || (b.keys || []).join('/'),
-            label: b.label || b.id,
-            where: b.where || '',
-            group: 'game',
-        });
+  var out = [];
+  // 展示型键位置前（全域/浮层类总开关），其后接注册表统一分派的游戏裸键
+  docs.forEach(function (d) {
+    out.push(Object.assign({ group: 'global' }, d));
+  });
+  bindings.forEach(function (b) {
+    out.push({
+      id: b.id,
+      display: b.display || (b.keys || []).join('/'),
+      label: b.label || b.id,
+      where: b.where || '',
+      group: 'game',
     });
-    return out;
+  });
+  return out;
 }

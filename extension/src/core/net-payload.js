@@ -15,10 +15,17 @@
  * @returns {*} 业务载荷（对象或裸串）；空返回 null
  */
 export function payloadOf(retOrData) {
-    var d = retOrData == null
-        ? null
-        : (typeof retOrData === 'object' && 'code' in retOrData && 'data' in retOrData ? retOrData.data : retOrData);
-    if (d == null || d === '') return null;
-    if (typeof d !== 'string') return d;
-    try { return JSON.parse(d); } catch (err) { return d; }
+  var d =
+    retOrData == null
+      ? null
+      : typeof retOrData === 'object' && 'code' in retOrData && 'data' in retOrData
+        ? retOrData.data
+        : retOrData;
+  if (d == null || d === '') return null;
+  if (typeof d !== 'string') return d;
+  try {
+    return JSON.parse(d);
+  } catch (err) {
+    return d;
+  }
 }

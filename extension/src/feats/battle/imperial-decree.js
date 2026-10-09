@@ -81,7 +81,7 @@ var cfg = { consuls: [] };
  * @returns {boolean}
  */
 function aliveFn() {
-    return ctxRef ? ctxRef.alive() : false;
+  return ctxRef ? ctxRef.alive() : false;
 }
 
 /**
@@ -89,11 +89,11 @@ function aliveFn() {
  * @returns {Set<string>}
  */
 function consulSet() {
-    var s = new Set();
-    for (var c of (cfg.consuls || [])) {
-        if (c && c.uid != null && c.uid !== '') s.add(String(c.uid));
-    }
-    return s;
+  var s = new Set();
+  for (var c of cfg.consuls || []) {
+    if (c && c.uid != null && c.uid !== '') s.add(String(c.uid));
+  }
+  return s;
 }
 
 /**
@@ -102,9 +102,13 @@ function consulSet() {
  * @returns {object|null}
  */
 function safeParse(s) {
-    if (s == null || s === '') return null;
-    if (typeof s === 'object') return s;
-    try { return JSON.parse(s); } catch (e) { return null; }
+  if (s == null || s === '') return null;
+  if (typeof s === 'object') return s;
+  try {
+    return JSON.parse(s);
+  } catch (e) {
+    return null;
+  }
 }
 
 /**
@@ -114,16 +118,16 @@ function safeParse(s) {
  * @returns {boolean}
  */
 function mentionsMe(raw) {
-    var custom = safeParse(raw.custom);
-    var at = custom && custom.atData;
-    if (!at || !Array.isArray(at.uid)) return false;
-    var myUid = String(getUid() || '');
-    var myStr = gameData.strUid();
-    for (var u of at.uid) {
-        var su = String(u && u.uid != null ? u.uid : u);
-        if ((myUid && su === myUid) || (myStr && su === myStr)) return true;
-    }
-    return false;
+  var custom = safeParse(raw.custom);
+  var at = custom && custom.atData;
+  if (!at || !Array.isArray(at.uid)) return false;
+  var myUid = String(getUid() || '');
+  var myStr = gameData.strUid();
+  for (var u of at.uid) {
+    var su = String(u && u.uid != null ? u.uid : u);
+    if ((myUid && su === myUid) || (myStr && su === myStr)) return true;
+  }
+  return false;
 }
 
 /**
@@ -131,10 +135,12 @@ function mentionsMe(raw) {
  * @returns {string}
  */
 function myNick() {
-    try {
-        var u = (dataCenter && dataCenter.UserData) || null;
-        return String((u && u.Name) || '');
-    } catch (e) { return ''; }
+  try {
+    var u = (dataCenter && dataCenter.UserData) || null;
+    return String((u && u.Name) || '');
+  } catch (e) {
+    return '';
+  }
 }
 
 /**
@@ -145,9 +151,9 @@ function myNick() {
  * @returns {boolean}
  */
 function isMention(raw, text) {
-    if (mentionsMe(raw)) return true;
-    var nick = myNick();
-    return !!nick && String(text || '').indexOf('@' + nick) >= 0;
+  if (mentionsMe(raw)) return true;
+  var nick = myNick();
+  return !!nick && String(text || '').indexOf('@' + nick) >= 0;
 }
 
 /**
@@ -156,11 +162,11 @@ function isMention(raw, text) {
  * @returns {boolean} 是否首次见到
  */
 function firstSeen(id) {
-    if (seenIds.has(id)) return false;
-    seenIds.add(id);
-    seenQueue.push(id);
-    while (seenQueue.length > SEEN_MAX) seenIds.delete(seenQueue.shift());
-    return true;
+  if (seenIds.has(id)) return false;
+  seenIds.add(id);
+  seenQueue.push(id);
+  while (seenQueue.length > SEEN_MAX) seenIds.delete(seenQueue.shift());
+  return true;
 }
 
 /**
@@ -169,18 +175,18 @@ function firstSeen(id) {
  * @param {object|object[]} payload 原始消息
  */
 function onMessages(kind, payload) {
-    if (!aliveFn()) return;
-    var chat = window.pocketcc && window.pocketcc.chat;
-    if (!chat) return;
-    var items = Array.isArray(payload) ? payload : [payload];
-    for (var raw of items) {
-        if (!raw || typeof raw !== 'object') continue;
-        try {
-            handleMsg(chat, raw, kind);
-        } catch (err) {
-            log.warn('handle message threw. kind=%s', kind, err);
-        }
+  if (!aliveFn()) return;
+  var chat = window.pocketcc && window.pocketcc.chat;
+  if (!chat) return;
+  var items = Array.isArray(payload) ? payload : [payload];
+  for (var raw of items) {
+    if (!raw || typeof raw !== 'object') continue;
+    try {
+      handleMsg(chat, raw, kind);
+    } catch (err) {
+      log.warn('handle message threw. kind=%s', kind, err);
     }
+  }
 }
 
 /**
@@ -190,52 +196,92 @@ function onMessages(kind, payload) {
  * @param {string} kind 'push' | 'pm'
  */
 function handleMsg(chat, raw, kind) {
-    var norm = chat.normalize(raw, kind);
-    if (!norm || norm.isSelf) return;                       // 自己的回声不接（也防复旨自触发）
+  var norm = chat.normalize(raw, kind);
+  if (!norm || norm.isSelf) return; // 自己的回声不接（也防复旨自触发）
 
-    var fromUid = String((norm.from && norm.from.uid) || '');
-    var text = String(raw.m != null ? raw.m : norm.text || '');
-    var m = DECREE_RE.exec(text);
-    var isConsul = !!fromUid && consulSet().has(fromUid);
-    var mention = isMention(raw, text);
-    // 留痕：来自执政官或文本形似旨令的消息，不论卡在哪个闸门都记一笔（排障用：
-    // 名单 UID 对不上/没 @/全角符号格式不合，此前全部静默吞掉无从诊断）
-    if (isConsul || m) {
-        // 诊断面：my/str 为本人双 UID，at=消息 atData.uid 名单（mention 判据的比对双方直接可见），
-        // cs=名单人数（区分「名单没配上」与「配了但 UID 不对」）
-        var custom = safeParse(raw.custom);
-        var at = (custom && custom.atData && Array.isArray(custom.atData.uid))
-            ? custom.atData.uid.map(function (u) { return String(u && u.uid != null ? u.uid : u); }).join(',')
-            : '';
-        log.info('eval. from=%s(%s);consul=%s;mention=%s;format=%s;chan=%s;my=%s(%s);nick=%s;at=[%s];cs=%d;text=%s',
-            (norm.from && norm.from.name) || '?', fromUid, isConsul, mention, !!m, norm.channel,
-            String(getUid() || ''), gameData.strUid() || '', myNick(), at, consulSet().size, text);
-    }
-    if (!isConsul) return;                                  // 非执政官的消息一律无视
-    if (!m) return;                                         // 未命中 X:Y #N 格式
-    if (!mention) return;                                   // 必须 @我（atData 或文本字面 @昵称）
+  var fromUid = String((norm.from && norm.from.uid) || '');
+  var text = String(raw.m != null ? raw.m : norm.text || '');
+  var m = DECREE_RE.exec(text);
+  var isConsul = !!fromUid && consulSet().has(fromUid);
+  var mention = isMention(raw, text);
+  // 留痕：来自执政官或文本形似旨令的消息，不论卡在哪个闸门都记一笔（排障用：
+  // 名单 UID 对不上/没 @/全角符号格式不合，此前全部静默吞掉无从诊断）
+  if (isConsul || m) {
+    // 诊断面：my/str 为本人双 UID，at=消息 atData.uid 名单（mention 判据的比对双方直接可见），
+    // cs=名单人数（区分「名单没配上」与「配了但 UID 不对」）
+    var custom = safeParse(raw.custom);
+    var at =
+      custom && custom.atData && Array.isArray(custom.atData.uid)
+        ? custom.atData.uid
+            .map(function (u) {
+              return String(u && u.uid != null ? u.uid : u);
+            })
+            .join(',')
+        : '';
+    log.info(
+      'eval. from=%s(%s);consul=%s;mention=%s;format=%s;chan=%s;my=%s(%s);nick=%s;at=[%s];cs=%d;text=%s',
+      (norm.from && norm.from.name) || '?',
+      fromUid,
+      isConsul,
+      mention,
+      !!m,
+      norm.channel,
+      String(getUid() || ''),
+      gameData.strUid() || '',
+      myNick(),
+      at,
+      consulSet().size,
+      text,
+    );
+  }
+  if (!isConsul) return; // 非执政官的消息一律无视
+  if (!m) return; // 未命中 X:Y #N 格式
+  if (!mention) return; // 必须 @我（atData 或文本字面 @昵称）
 
-    var uuid = String(raw.uuid != null ? raw.uuid : (norm.id != null ? norm.id : ''));
-    if (uuid && !firstSeen(uuid)) return;                   // 同一条旨令只处理一次（含拒签回信，防重复推送刷屏）
+  var uuid = String(raw.uuid != null ? raw.uuid : norm.id != null ? norm.id : '');
+  if (uuid && !firstSeen(uuid)) return; // 同一条旨令只处理一次（含拒签回信，防重复推送刷屏）
 
-    var order = {
-        x: +m[1], y: +m[2], preset: +m[3], uuid: uuid,
-        channel: norm.channel, roomId: raw.roomId,
-        fromUid: fromUid, fromName: (norm.from && norm.from.name) || '',
-    };
-    if (order.x > SERVER.gameXMax || order.y > SERVER.gameYMax) {
-        reply(chat, order, '坐标 (' + order.x + ',' + order.y + ') 越界，本服地图 ' + SERVER.gameXMax + '×' + SERVER.gameYMax);
-        return;
-    }
-    if (order.preset < 1 || order.preset > PRESET_MAX) {
-        reply(chat, order, '旨令部队号 #' + order.preset + ' 超界（仅预设 1~' + PRESET_MAX + '）');
-        return;
-    }
+  var order = {
+    x: +m[1],
+    y: +m[2],
+    preset: +m[3],
+    uuid: uuid,
+    channel: norm.channel,
+    roomId: raw.roomId,
+    fromUid: fromUid,
+    fromName: (norm.from && norm.from.name) || '',
+  };
+  if (order.x > SERVER.gameXMax || order.y > SERVER.gameYMax) {
+    reply(
+      chat,
+      order,
+      '坐标 (' +
+        order.x +
+        ',' +
+        order.y +
+        ') 越界，本服地图 ' +
+        SERVER.gameXMax +
+        '×' +
+        SERVER.gameYMax,
+    );
+    return;
+  }
+  if (order.preset < 1 || order.preset > PRESET_MAX) {
+    reply(chat, order, '旨令部队号 #' + order.preset + ' 超界（仅预设 1~' + PRESET_MAX + '）');
+    return;
+  }
 
-    log.info('decree received. from=%s;x=%d;y=%d;preset=%d;chan=%s', order.fromName, order.x, order.y, order.preset, order.channel);
-    execFlow(order).catch(function (err) {
-        log.warn('decree flow threw!', err);
-    });
+  log.info(
+    'decree received. from=%s;x=%d;y=%d;preset=%d;chan=%s',
+    order.fromName,
+    order.x,
+    order.y,
+    order.preset,
+    order.channel,
+  );
+  execFlow(order).catch(function (err) {
+    log.warn('decree flow threw!', err);
+  });
 }
 
 /**
@@ -243,18 +289,18 @@ function handleMsg(chat, raw, kind) {
  * @param {object} order 旨令 {x,y,preset,channel,roomId,fromUid,fromName}
  */
 async function execFlow(order) {
-    var chat = window.pocketcc && window.pocketcc.chat;
-    if (!chat) return;
-    if (busy) {
-        reply(chat, order, '旨令已收到，前令行军中请稍候');
-        return;
-    }
-    busy = true;
-    try {
-        await dispatch(chat, order);
-    } finally {
-        busy = false;
-    }
+  var chat = window.pocketcc && window.pocketcc.chat;
+  if (!chat) return;
+  if (busy) {
+    reply(chat, order, '旨令已收到，前令行军中请稍候');
+    return;
+  }
+  busy = true;
+  try {
+    await dispatch(chat, order);
+  } finally {
+    busy = false;
+  }
 }
 
 /**
@@ -263,58 +309,71 @@ async function execFlow(order) {
  * @param {object} order 旨令
  */
 async function dispatch(chat, order) {
-    // 1) 行军名额闸门（口径同快捷攻击：myMarchNumMAX - myMarchNum >= 1）
-    if (!march.canMarch()) {
-        log.info('no free march slot, reject. x=%d;y=%d', order.x, order.y);
-        reply(chat, order, '行军队列已满，无法出征');
-        return;
-    }
+  // 1) 行军名额闸门（口径同快捷攻击：myMarchNumMAX - myMarchNum >= 1）
+  if (!march.canMarch()) {
+    log.info('no free march slot, reject. x=%d;y=%d', order.x, order.y);
+    reply(chat, order, '行军队列已满，无法出征');
+    return;
+  }
 
-    // 2) 预设部队造行军数据（Battle 预设号 1 起，内部减 1）
-    var marchData = new Battle().plan().preset(order.preset).adjust().build();
-    if (!marchData.armyListNew.length) {
-        log.info('preset empty, reject. preset=%d;x=%d;y=%d', order.preset, order.x, order.y);
-        reply(chat, order, '预设 #' + order.preset + ' 无兵可派');
-        return;
-    }
+  // 2) 预设部队造行军数据（Battle 预设号 1 起，内部减 1）
+  var marchData = new Battle().plan().preset(order.preset).adjust().build();
+  if (!marchData.armyListNew.length) {
+    log.info('preset empty, reject. preset=%d;x=%d;y=%d', order.preset, order.x, order.y);
+    reply(chat, order, '预设 #' + order.preset + ' 无兵可派');
+    return;
+  }
 
-    // 3) 901 探明目标实体（请求点即目标点，回点窗以它为中心恒覆盖）
-    var point = await probeTarget(order.x, order.y);
-    if (point === undefined) {
-        reply(chat, order, '目标探查失败，请核实坐标或稍后重试');
-        return;
-    }
-    if (point === null) {
-        reply(chat, order, '目标 (' + order.x + ',' + order.y + ') 无可攻打对象');
-        return;
-    }
+  // 3) 901 探明目标实体（请求点即目标点，回点窗以它为中心恒覆盖）
+  var point = await probeTarget(order.x, order.y);
+  if (point === undefined) {
+    reply(chat, order, '目标探查失败，请核实坐标或稍后重试');
+    return;
+  }
+  if (point === null) {
+    reply(chat, order, '目标 (' + order.x + ',' + order.y + ') 无可攻打对象');
+    return;
+  }
 
-    // 4) marchType：pointType 基础值 + BOSS 两型经游戏 MarchType 枚举取名值（成员名收在 game-api SYM）+ 跨服漂移换算
-    var base = ATTACK_BY_POINT_TYPE[point.pointType];
-    if (base == null && marchApi.isBossV2(point.pointType)) base = marchApi.typeOf('attackWorldBossV2', 298);
-    else if (base == null && marchApi.isBoss(point.pointType)) base = marchApi.typeOf('attackWorldBoss', 14);
-    if (base == null) {
-        log.info('point not attackable. x=%d;y=%d;pointType=%d', order.x, order.y, point.pointType);
-        reply(chat, order, '目标 (' + order.x + ',' + order.y + ') 无可攻打对象');
-        return;
-    }
-    var marchType = marchApi.resolve(base, MARCH_FALLBACK);
+  // 4) marchType：pointType 基础值 + BOSS 两型经游戏 MarchType 枚举取名值（成员名收在 game-api SYM）+ 跨服漂移换算
+  var base = ATTACK_BY_POINT_TYPE[point.pointType];
+  if (base == null && marchApi.isBossV2(point.pointType))
+    base = marchApi.typeOf('attackWorldBossV2', 298);
+  else if (base == null && marchApi.isBoss(point.pointType))
+    base = marchApi.typeOf('attackWorldBoss', 14);
+  if (base == null) {
+    log.info('point not attackable. x=%d;y=%d;pointType=%d', order.x, order.y, point.pointType);
+    reply(chat, order, '目标 (' + order.x + ',' + order.y + ') 无可攻打对象');
+    return;
+  }
+  var marchType = marchApi.resolve(base, MARCH_FALLBACK);
 
-    // 5) 发 902
-    if (net.isSending(CMD_MARCH_WORLD_POINT)) {
-        reply(chat, order, '行军指令繁忙，请稍候重发');
-        return;
-    }
-    var ret = await march.attack({ marchType: marchType, target: { x: order.x, y: order.y }, data: marchData });
-    if (!aliveFn()) return;                                 // 已暂停：结果不再复旨（新激活补扫语义不适用旨令）
+  // 5) 发 902
+  if (net.isSending(CMD_MARCH_WORLD_POINT)) {
+    reply(chat, order, '行军指令繁忙，请稍候重发');
+    return;
+  }
+  var ret = await march.attack({
+    marchType: marchType,
+    target: { x: order.x, y: order.y },
+    data: marchData,
+  });
+  if (!aliveFn()) return; // 已暂停：结果不再复旨（新激活补扫语义不适用旨令）
 
-    if (ret.ok) {
-        log.info('decree done. x=%d;y=%d;preset=%d;marchType=%d(base=%d)', order.x, order.y, order.preset, marchType, base);
-        reply(chat, order, '得令');
-    } else {
-        log.info('decree rejected. x=%d;y=%d;code=%d;data=%s', order.x, order.y, ret.code, ret.data);
-        reply(chat, order, failureText(ret));
-    }
+  if (ret.ok) {
+    log.info(
+      'decree done. x=%d;y=%d;preset=%d;marchType=%d(base=%d)',
+      order.x,
+      order.y,
+      order.preset,
+      marchType,
+      base,
+    );
+    reply(chat, order, '得令');
+  } else {
+    log.info('decree rejected. x=%d;y=%d;code=%d;data=%s', order.x, order.y, ret.code, ret.data);
+    reply(chat, order, failureText(ret));
+  }
 }
 
 /**
@@ -324,28 +383,34 @@ async function dispatch(chat, order) {
  * @returns {Promise<object|null|undefined>} 命中点位对象；查无实体 null；请求失败 undefined
  */
 async function probeTarget(x, y) {
-    var u = (dataCenter && dataCenter.UserData) || {};
-    var body = {
-        x: x, y: y, k: u.ServerId | 0, rid: 0,
-        width: 20, height: 20, marchInfo: false, viewLevel: 1,
-    };
-    var ret;
-    try {
-        ret = await net.send(CMD_GET_WORLD_INFO, body);
-    } catch (err) {
-        log.warn('901 probe send error. x=%d;y=%d', x, y, err);
-        return undefined;
-    }
-    if (!ret || !ret.ok) {
-        log.warn('901 probe not ok. x=%d;y=%d;code=%s', x, y, ret && ret.code);
-        return undefined;
-    }
-    var data = safeParse(ret.data) || {};
-    var list = Array.isArray(data.pointList) ? data.pointList : [];
-    for (var p of list) {
-        if (p && (p.x | 0) === x && (p.y | 0) === y) return p;
-    }
-    return null;
+  var u = (dataCenter && dataCenter.UserData) || {};
+  var body = {
+    x: x,
+    y: y,
+    k: u.ServerId | 0,
+    rid: 0,
+    width: 20,
+    height: 20,
+    marchInfo: false,
+    viewLevel: 1,
+  };
+  var ret;
+  try {
+    ret = await net.send(CMD_GET_WORLD_INFO, body);
+  } catch (err) {
+    log.warn('901 probe send error. x=%d;y=%d', x, y, err);
+    return undefined;
+  }
+  if (!ret || !ret.ok) {
+    log.warn('901 probe not ok. x=%d;y=%d;code=%s', x, y, ret && ret.code);
+    return undefined;
+  }
+  var data = safeParse(ret.data) || {};
+  var list = Array.isArray(data.pointList) ? data.pointList : [];
+  for (var p of list) {
+    if (p && (p.x | 0) === x && (p.y | 0) === y) return p;
+  }
+  return null;
 }
 
 /**
@@ -355,11 +420,11 @@ async function probeTarget(x, y) {
  * @returns {string}
  */
 function failureText(ret) {
-    if (ret.code === march.NOT_SENT) return '出征失败：发送超时或未发出';
-    var rawStr = String(ret.data == null ? '' : ret.data).trim();
-    var zh = rawStr ? l10n.net(rawStr) : '';
-    if (!zh || zh === rawStr) return '出征失败（code=' + ret.code + '）';
-    return zh;
+  if (ret.code === march.NOT_SENT) return '出征失败：发送超时或未发出';
+  var rawStr = String(ret.data == null ? '' : ret.data).trim();
+  var zh = rawStr ? l10n.net(rawStr) : '';
+  if (!zh || zh === rawStr) return '出征失败（code=' + ret.code + '）';
+  return zh;
 }
 
 /**
@@ -371,22 +436,30 @@ function failureText(ret) {
  * @param {string} conclusion 结语文案
  */
 function reply(chat, order, conclusion) {
-    var name = String(order.fromName || '');
-    var text = (name ? '@' + name + ' ' : '') + conclusion;
-    var opts = {
-        c: order.channel != null ? +order.channel : 0,
-    };
-    if (name) opts.atData = { uid: [String(order.fromUid)], name: [name], msgId: '' }; // 昵称缺失降级纯文本，不塞空 atData
-    if (opts.c === 1) opts.uid = String(order.fromUid);      // 私聊：回给下令者
-    if (opts.c === 5 && order.roomId) opts.group = String(order.roomId); // 群聊：动态房
-    chat.send(text, opts).then(function (ret) {
-        // 频道消息 670 应答：成功 data 是 '{"success":1,...}' JSON 串，业务拒时为裸串
-        var parsed = safeParse(ret && ret.data);
-        if (!ret || !ret.ok || (parsed && parsed.success !== 1)) {
-            log.info('reply rejected. chan=%s;code=%s;data=%s', opts.c, ret && ret.code, ret && ret.data);
-        }
-    }).catch(function (err) {
-        log.warn('reply threw. chan=%s', opts.c, err);
+  var name = String(order.fromName || '');
+  var text = (name ? '@' + name + ' ' : '') + conclusion;
+  var opts = {
+    c: order.channel != null ? +order.channel : 0,
+  };
+  if (name) opts.atData = { uid: [String(order.fromUid)], name: [name], msgId: '' }; // 昵称缺失降级纯文本，不塞空 atData
+  if (opts.c === 1) opts.uid = String(order.fromUid); // 私聊：回给下令者
+  if (opts.c === 5 && order.roomId) opts.group = String(order.roomId); // 群聊：动态房
+  chat
+    .send(text, opts)
+    .then(function (ret) {
+      // 频道消息 670 应答：成功 data 是 '{"success":1,...}' JSON 串，业务拒时为裸串
+      var parsed = safeParse(ret && ret.data);
+      if (!ret || !ret.ok || (parsed && parsed.success !== 1)) {
+        log.info(
+          'reply rejected. chan=%s;code=%s;data=%s',
+          opts.c,
+          ret && ret.code,
+          ret && ret.data,
+        );
+      }
+    })
+    .catch(function (err) {
+      log.warn('reply threw. chan=%s', opts.c, err);
     });
 }
 
@@ -396,9 +469,9 @@ function reply(chat, order, conclusion) {
  * @returns {object} 当前 cfg
  */
 function configure(partial) {
-    if (!partial) return cfg;
-    cfg.consuls = Array.isArray(partial.consuls) ? partial.consuls : [];
-    return cfg;
+  if (!partial) return cfg;
+  cfg.consuls = Array.isArray(partial.consuls) ? partial.consuls : [];
+  return cfg;
 }
 
 /**
@@ -407,30 +480,31 @@ function configure(partial) {
  * @returns {boolean}
  */
 function install(ctx) {
-    ctxRef = ctx;
-    if (installed) return true;
+  ctxRef = ctx;
+  if (installed) return true;
 
-    var missing = [];
+  var missing = [];
 
-    net = ctx.net;
-    if (!net || !net.install()) {
-        missing.push('pocketcc.net');
-        net = null;
-    }
+  net = ctx.net;
+  if (!net || !net.install()) {
+    missing.push('pocketcc.net');
+    net = null;
+  }
 
-    var dc = game.get('DataCenter');
-    dataCenter = (dc && dc.DATA) || null;
-    if (!dataCenter) missing.push('DataCenter');
+  var dc = game.get('DataCenter');
+  dataCenter = (dc && dc.DATA) || null;
+  if (!dataCenter) missing.push('DataCenter');
 
-    if (missing.length) {
-        net = null; dataCenter = null;
-        log.warn('install failed. missing=%s', missing.join(';'));
-        return false;
-    }
+  if (missing.length) {
+    net = null;
+    dataCenter = null;
+    log.warn('install failed. missing=%s', missing.join(';'));
+    return false;
+  }
 
-    installed = true;
-    log.info('installed.');
-    return true;
+  installed = true;
+  log.info('installed.');
+  return true;
 }
 
 /**
@@ -438,10 +512,14 @@ function install(ctx) {
  * @param {object} ctx reactor 上下文
  */
 function run(ctx) {
-    ctxRef = ctx;
-    ctx.on.event('newChatPush', function (p) { onMessages('push', p); });
-    ctx.on.event('chatpushpm', function (p) { onMessages('pm', p); });
-    log.info('started, consuls=%d', (cfg.consuls || []).length);
+  ctxRef = ctx;
+  ctx.on.event('newChatPush', function (p) {
+    onMessages('push', p);
+  });
+  ctx.on.event('chatpushpm', function (p) {
+    onMessages('pm', p);
+  });
+  log.info('started, consuls=%d', (cfg.consuls || []).length);
 }
 
 /**
@@ -449,23 +527,31 @@ function run(ctx) {
  * （旨令即战时指挥，战斗模式下照常奉旨）。
  */
 reactor.register({
-    id: 'imperialDecree',
-    label: '奉旨出征',
-    storageKey: 'pocketcc.feat.imperialDecree',
-    symbols: ['dataCenter', 'marchType', 'worldUtils', 'tableManager', 'localManager'],
-    scenes: ['Home', 'NWorldMap'],
-    defaults: {
-        enabled: false,
-        consuls: [],
+  id: 'imperialDecree',
+  label: '奉旨出征',
+  storageKey: 'pocketcc.feat.imperialDecree',
+  symbols: ['dataCenter', 'marchType', 'worldUtils', 'tableManager', 'localManager'],
+  scenes: ['Home', 'NWorldMap'],
+  defaults: {
+    enabled: false,
+    consuls: [],
+  },
+  fields: [
+    {
+      key: 'consuls',
+      label: '执政官名单',
+      itemLabel: '执政官',
+      type: 'uidlist',
+      max: 10,
+      placeholder: '请输入玩家UID',
+      hint: '仅名单内玩家 @我 发送 X:Y #N（坐标+预设号）才会奉旨出征',
     },
-    fields: [
-        { key: 'consuls', label: '执政官名单', itemLabel: '执政官', type: 'uidlist', max: 10, placeholder: '请输入玩家UID', hint: '仅名单内玩家 @我 发送 X:Y #N（坐标+预设号）才会奉旨出征' },
-    ],
-    // 面板值经 toModuleCfg 透传给 configure（同 player-like 口径）：漏传则运行时名单永远为空
-    toModuleCfg: function (c) {
-        return { consuls: c.consuls };
-    },
-    install: install,
-    configure: configure,
-    run: run,
+  ],
+  // 面板值经 toModuleCfg 透传给 configure（同 player-like 口径）：漏传则运行时名单永远为空
+  toModuleCfg: function (c) {
+    return { consuls: c.consuls };
+  },
+  install: install,
+  configure: configure,
+  run: run,
 });

@@ -19,7 +19,7 @@ let installed = false;
  * @returns {boolean}
  */
 export function isCombat() {
-    return combat;
+  return combat;
 }
 
 /**
@@ -27,11 +27,11 @@ export function isCombat() {
  * @param {boolean} on true=战斗态，false=日常态
  */
 export function setCombatMode(on) {
-    on = !!on;
-    if (on === combat) return;
-    combat = on;
-    log.info('mode: %s', combat ? 'combat' : 'daily');
-    bus.emit('mode.change', { combat: combat });
+  on = !!on;
+  if (on === combat) return;
+  combat = on;
+  log.info('mode: %s', combat ? 'combat' : 'daily');
+  bus.emit('mode.change', { combat: combat });
 }
 
 /**
@@ -39,15 +39,17 @@ export function setCombatMode(on) {
  *   战斗态且功能声明 offInCombat → 不放行（暂停）；否则放行。
  */
 export function installModeGate() {
-    if (installed) return;
-    installed = true;
-    reactor.registerGate({
-        id: 'mode',
-        /**
-         * mode 门控判定
-         * @param {object} spec 功能注册说明书
-         * @returns {boolean} 是否放行
-         */
-        ok: function (spec) { return !(combat && spec.offInCombat); },
-    });
+  if (installed) return;
+  installed = true;
+  reactor.registerGate({
+    id: 'mode',
+    /**
+     * mode 门控判定
+     * @param {object} spec 功能注册说明书
+     * @returns {boolean} 是否放行
+     */
+    ok: function (spec) {
+      return !(combat && spec.offInCombat);
+    },
+  });
 }

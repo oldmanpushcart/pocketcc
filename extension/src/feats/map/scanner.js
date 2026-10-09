@@ -47,7 +47,11 @@ var hooks = {};
  */
 function safeParse(s) {
   if (typeof s !== 'string' || !s) return s;
-  try { return JSON.parse(s); } catch (e) { return s; }
+  try {
+    return JSON.parse(s);
+  } catch (e) {
+    return s;
+  }
 }
 
 /**
@@ -73,11 +77,20 @@ export function buildBlockQueue(startBlock) {
   let order = 0;
   for (let j = 0; j < ny; j++) {
     for (let c = 0; c < nx; c++) {
-      const i = (j & 1) ? nx - 1 - c : c;
-      const gx = i * gw, gy = offY + j * gh; // 顶对齐：行网格从 y=0 起，仅末行探出图底（向外 padding，渲染层完整绘制）
+      const i = j & 1 ? nx - 1 - c : c;
+      const gx = i * gw,
+        gy = offY + j * gh; // 顶对齐：行网格从 y=0 起，仅末行探出图底（向外 padding，渲染层完整绘制）
       out.push({
-        i, j, gx, gy, gw, gh,
-        cx0: gx / 2, cy0: gy, cw: gw / 2, ch: gh, // cell 矩形（x 折半；末行 cy0+ch 可超图底，purge/touch 与图内点取交安全）
+        i,
+        j,
+        gx,
+        gy,
+        gw,
+        gh,
+        cx0: gx / 2,
+        cy0: gy,
+        cw: gw / 2,
+        ch: gh, // cell 矩形（x 折半；末行 cy0+ch 可超图底，purge/touch 与图内点取交安全）
         order: order++,
       });
     }
@@ -111,8 +124,14 @@ async function processBlock(b) {
   const rw = Math.ceil(b.gw);
   const rh = Math.ceil(b.gh);
   const body = {
-    x: rx, y: ry, k: curK, rid: curRid,
-    width: rw, height: rh, marchInfo: true, viewLevel: cfg.viewLevel | 0,
+    x: rx,
+    y: ry,
+    k: curK,
+    rid: curRid,
+    width: rw,
+    height: rh,
+    marchInfo: true,
+    viewLevel: cfg.viewLevel | 0,
   };
   let ret;
   try {
@@ -131,7 +150,10 @@ async function processBlock(b) {
   // 不允许就沿用 0 桶继续，宁可桶号不精确，也不能让本批数据被单桶驻留守卫丢弃。
   if (!curK && data.k) {
     const healK = data.k | 0;
-    if (mapStore.retarget(healK)) { curK = healK; curRound = mapStore.beginRound(curK); }
+    if (mapStore.retarget(healK)) {
+      curK = healK;
+      curRound = mapStore.beginRound(curK);
+    }
   }
   const list = Array.isArray(data.pointList) ? data.pointList : [];
   let added = 0;
@@ -140,7 +162,12 @@ async function processBlock(b) {
   const marches = Array.isArray(data.marchList) ? data.marchList : [];
   if (marches.length) {
     for (const m of marches) {
-      if (m && m.marchId != null) mapStore.upsertMarch(String(m.marchId), (m.begin && m.begin.bx) | 0, (m.begin && m.begin.by) | 0);
+      if (m && m.marchId != null)
+        mapStore.upsertMarch(
+          String(m.marchId),
+          (m.begin && m.begin.bx) | 0,
+          (m.begin && m.begin.by) | 0,
+        );
     }
   }
   mapStore.touchBlock(curK, b.cx0, b.cy0, b.cw, b.ch);
@@ -148,19 +175,31 @@ async function processBlock(b) {
   // 邻块重叠带里本轮已扫的新点轮次号相同不会误删；块请求失败时早退，不清不写老数据保持原样。
   mapStore.purgeRange(curK, b.cx0, b.cy0, b.cw, b.ch, curRound);
   doneCount++;
-  if (hooks.onBlock) { try { hooks.onBlock(b, added, doneCount, totalCount); } catch (e) { } }
-  if (hooks.onProgress) { try { hooks.onProgress(doneCount, totalCount); } catch (e) { } }
+  if (hooks.onBlock) {
+    try {
+      hooks.onBlock(b, added, doneCount, totalCount);
+    } catch (e) {}
+  }
+  if (hooks.onProgress) {
+    try {
+      hooks.onProgress(doneCount, totalCount);
+    } catch (e) {}
+  }
   // 周期落盘：每 10 块一次（只序列化当前驻留桶，开销随桶长而非全图长）
-  if (doneCount % 10 === 0) Promise.resolve(mapStore.persist()).catch(() => { });
+  if (doneCount % 10 === 0) Promise.resolve(mapStore.persist()).catch(() => {});
   if (doneCount >= totalCount) finish();
 }
 
 /** 收尾：标本桶 done、落盘、触发 onDone、复位开关 */
 function finish() {
   mapStore.markDone(curK);
-  Promise.resolve(mapStore.persist(true)).catch(() => { });
+  Promise.resolve(mapStore.persist(true)).catch(() => {});
   running = false;
-  if (hooks.onDone) { try { hooks.onDone(); } catch (e) { } }
+  if (hooks.onDone) {
+    try {
+      hooks.onDone();
+    } catch (e) {}
+  }
   log.info('scan round done. k=%s blocks=%d entities=%d', curK, doneCount, mapStore.size(curK));
 }
 
@@ -205,18 +244,24 @@ export function stop() {
   if (!running) return;
   running = false;
   queue = [];
-  Promise.resolve(mapStore.persist(true)).catch(() => { });
+  Promise.resolve(mapStore.persist(true)).catch(() => {});
   log.info('scan stopped. done=%d/%d', doneCount, totalCount);
 }
 
 /** @returns {boolean} 是否正在扫描 */
-export function isRunning() { return running; }
+export function isRunning() {
+  return running;
+}
 
 /** @returns {{done:number, total:number, running:boolean}} 进度快照（overlay 轮询/事件用） */
-export function progress() { return { done: doneCount, total: totalCount, running }; }
+export function progress() {
+  return { done: doneCount, total: totalCount, running };
+}
 
 /** @returns {number} 本轮生效的服务器号 k（跳转时复用，0=未定） */
-export function currentK() { return curK; }
+export function currentK() {
+  return curK;
+}
 
 /**
  * 热设视口层级（高度）：不改队列，仅影响后续块的 901 viewLevel（下一块即生效）。

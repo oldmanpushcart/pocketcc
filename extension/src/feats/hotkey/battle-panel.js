@@ -37,18 +37,18 @@ const DISPATCH_PATH = ['button'];
  * @returns {object|null} 目标节点或 null
  */
 function resolveNode(root, segments) {
-    var node = root;
-    for (var i = 0; i < segments.length; i++) {
-        if (!node) return null;
-        var seg = String(segments[i]);
-        if (/^\d+$/.test(seg)) {
-            var kids = node.children;
-            node = (kids && kids[+seg]) || null;
-        } else {
-            node = (node.getChildByName && node.getChildByName(seg)) || null;
-        }
+  var node = root;
+  for (var i = 0; i < segments.length; i++) {
+    if (!node) return null;
+    var seg = String(segments[i]);
+    if (/^\d+$/.test(seg)) {
+      var kids = node.children;
+      node = (kids && kids[+seg]) || null;
+    } else {
+      node = (node.getChildByName && node.getChildByName(seg)) || null;
     }
-    return node || null;
+  }
+  return node || null;
 }
 
 /**
@@ -59,13 +59,13 @@ function resolveNode(root, segments) {
  * @returns {object|null}
  */
 function activePanel() {
-    var scene = cc.director.getScene();
-    if (!scene) return null;
-    var segs = (scene.name === PANEL_PATH[0]) ? PANEL_PATH.slice(1) : PANEL_PATH;
-    var panel = resolveNode(scene, segs);
-    if (!panel) panel = resolveNode(scene, PANEL_PATH);
-    if (!panel || panel.activeInHierarchy === false) return null;
-    return panel;
+  var scene = cc.director.getScene();
+  if (!scene) return null;
+  var segs = scene.name === PANEL_PATH[0] ? PANEL_PATH.slice(1) : PANEL_PATH;
+  var panel = resolveNode(scene, segs);
+  if (!panel) panel = resolveNode(scene, PANEL_PATH);
+  if (!panel || panel.activeInHierarchy === false) return null;
+  return panel;
 }
 
 /**
@@ -76,15 +76,15 @@ function activePanel() {
  * @returns {object|null} cc.Button 组件或 null
  */
 function findButton(node) {
-    if (!node || !node.getComponent || !cc.Button) return null;
-    var btn = node.getComponent(cc.Button);
+  if (!node || !node.getComponent || !cc.Button) return null;
+  var btn = node.getComponent(cc.Button);
+  if (btn) return btn;
+  var normal = node.getChildByName && node.getChildByName('normal');
+  if (normal) {
+    btn = normal.getComponent(cc.Button);
     if (btn) return btn;
-    var normal = node.getChildByName && node.getChildByName('normal');
-    if (normal) {
-        btn = normal.getComponent(cc.Button);
-        if (btn) return btn;
-    }
-    return null;
+  }
+  return null;
 }
 
 /**
@@ -95,15 +95,19 @@ function findButton(node) {
  * @returns {boolean} 是否找到并触发了 Button 组件
  */
 function clickNode(node) {
-    var btn = findButton(node);
-    if (!btn) return false;
-    var bnode = btn.node || node;
-    var evs = btn.clickEvents;
-    if (evs && evs.length) {
-        for (var i = 0; i < evs.length; i++) fireClickEvent(evs[i], bnode, i);
-    }
-    try { bnode.emit('click', btn); } catch (e) { log.debug('emit click failed', e); }
-    return true;
+  var btn = findButton(node);
+  if (!btn) return false;
+  var bnode = btn.node || node;
+  var evs = btn.clickEvents;
+  if (evs && evs.length) {
+    for (var i = 0; i < evs.length; i++) fireClickEvent(evs[i], bnode, i);
+  }
+  try {
+    bnode.emit('click', btn);
+  } catch (e) {
+    log.debug('emit click failed', e);
+  }
+  return true;
 }
 
 /**
@@ -119,24 +123,36 @@ function clickNode(node) {
  * @returns {boolean} 是否成功触发绑定 handler
  */
 function fireClickEvent(ce, senderNode, i) {
-    var evt = { type: 'click', target: senderNode, getCurrentTarget: function () { return senderNode; } };
-    // 首选：以数组走引擎 emit（与真实点击同一条内部路径，组件解析交给引擎，最稳）
-    try {
-        ce.emit([evt, ce.customEventData]);
+  var evt = {
+    type: 'click',
+    target: senderNode,
+    getCurrentTarget: function () {
+      return senderNode;
+    },
+  };
+  // 首选：以数组走引擎 emit（与真实点击同一条内部路径，组件解析交给引擎，最稳）
+  try {
+    ce.emit([evt, ce.customEventData]);
+    return true;
+  } catch (e) {
+    log.debug('clickEvents[%d] array emit failed', i, e);
+  }
+  // 兜底：emit 异常时按绑定字段直调 handler（同样以 senderNode 作事件 target）
+  try {
+    var tnode = ce.target,
+      cname = ce.component,
+      hname = ce.handler;
+    if (tnode && cname && hname) {
+      var comp = typeof cname === 'string' ? tnode.getComponent(cname) : cname;
+      if (comp && typeof comp[hname] === 'function') {
+        comp[hname].call(comp, evt, ce.customEventData);
         return true;
-    } catch (e) { log.debug('clickEvents[%d] array emit failed', i, e); }
-    // 兜底：emit 异常时按绑定字段直调 handler（同样以 senderNode 作事件 target）
-    try {
-        var tnode = ce.target, cname = ce.component, hname = ce.handler;
-        if (tnode && cname && hname) {
-            var comp = (typeof cname === 'string') ? tnode.getComponent(cname) : cname;
-            if (comp && typeof comp[hname] === 'function') {
-                comp[hname].call(comp, evt, ce.customEventData);
-                return true;
-            }
-        }
-    } catch (e) { log.debug('clickEvents[%d] direct call failed', i, e); }
-    return false;
+      }
+    }
+  } catch (e) {
+    log.debug('clickEvents[%d] direct call failed', i, e);
+  }
+  return false;
 }
 
 /**
@@ -146,13 +162,13 @@ function fireClickEvent(ce, senderNode, i) {
  * @returns {{digit:number|null, dispatch:boolean}}
  */
 function readHotkey(e) {
-    var digit = null;
-    var dispatch = false;
-    var m = typeof e.code === 'string' && /^Digit([1-8])$/.exec(e.code);
-    if (m) digit = parseInt(m[1], 10);
-    else if (e.key >= '1' && e.key <= '8') digit = e.key.charCodeAt(0) - 48;
-    if (e.code === 'KeyG' || e.key === 'g' || e.key === 'G') dispatch = true;
-    return { digit: digit, dispatch: dispatch };
+  var digit = null;
+  var dispatch = false;
+  var m = typeof e.code === 'string' && /^Digit([1-8])$/.exec(e.code);
+  if (m) digit = parseInt(m[1], 10);
+  else if (e.key >= '1' && e.key <= '8') digit = e.key.charCodeAt(0) - 48;
+  if (e.code === 'KeyG' || e.key === 'g' || e.key === 'G') dispatch = true;
+  return { digit: digit, dispatch: dispatch };
 }
 
 /**
@@ -161,9 +177,9 @@ function readHotkey(e) {
  * @returns {boolean}
  */
 function match(e) {
-    if (typeof e.code === 'string' && /^Digit[1-8]$/.test(e.code)) return true;
-    if (typeof e.key === 'string' && e.key >= '1' && e.key <= '8') return true;
-    return e.code === 'KeyG' || e.key === 'g' || e.key === 'G';
+  if (typeof e.code === 'string' && /^Digit[1-8]$/.test(e.code)) return true;
+  if (typeof e.key === 'string' && e.key >= '1' && e.key <= '8') return true;
+  return e.code === 'KeyG' || e.key === 'g' || e.key === 'G';
 }
 
 /**
@@ -173,36 +189,41 @@ function match(e) {
  * @returns {boolean} 是否消费本次按键
  */
 function handler(e) {
-    var hk = readHotkey(e);
-    if (hk.digit == null && !hk.dispatch) return false;
+  var hk = readHotkey(e);
+  if (hk.digit == null && !hk.dispatch) return false;
 
-    var panel = activePanel();
-    if (!panel) return false;  // 面板不在场：不消费事件，透传给游戏与快捷战斗
+  var panel = activePanel();
+  if (!panel) return false; // 面板不在场：不消费事件，透传给游戏与快捷战斗
 
-    var target = hk.dispatch
-        ? resolveNode(panel, DISPATCH_PATH)
-        : (function () {
-            var list = resolveNode(panel, PRESET_LIST_PATH);
-            return list ? resolveNode(list, [hk.digit - 1]) : null;
-        })();
-    if (!target) {
-        log.debug('hotkey hit but node missing. digit=%s;dispatch=%s', hk.digit, hk.dispatch);
-        return false;
-    }
+  var target = hk.dispatch
+    ? resolveNode(panel, DISPATCH_PATH)
+    : (function () {
+        var list = resolveNode(panel, PRESET_LIST_PATH);
+        return list ? resolveNode(list, [hk.digit - 1]) : null;
+      })();
+  if (!target) {
+    log.debug('hotkey hit but node missing. digit=%s;dispatch=%s', hk.digit, hk.dispatch);
+    return false;
+  }
 
-    if (!clickNode(target)) log.warn('target has no cc.Button (self or .normal). digit=%s;dispatch=%s', hk.digit, hk.dispatch);
-    else log.debug('battle panel hotkey fired. digit=%s;dispatch=%s', hk.digit, hk.dispatch);
-    return true;
+  if (!clickNode(target))
+    log.warn(
+      'target has no cc.Button (self or .normal). digit=%s;dispatch=%s',
+      hk.digit,
+      hk.dispatch,
+    );
+  else log.debug('battle panel hotkey fired. digit=%s;dispatch=%s', hk.digit, hk.dispatch);
+  return true;
 }
 
 bind({
-    id: 'battlePanelHotkeys',
-    // keys 仅作展示/说明用途；实际匹配走下面的自定义 match（1-8 数字键 + G）
-    keys: ['Digit1', 'Digit2', 'Digit3', 'Digit4', 'Digit5', 'Digit6', 'Digit7', 'Digit8', 'KeyG'],
-    match: match,
-    display: '1-8/G',
-    label: '战斗面板 预设/出征',
-    where: '大世界',
-    scenes: ['NWorldMap'],
-    handler: handler,
+  id: 'battlePanelHotkeys',
+  // keys 仅作展示/说明用途；实际匹配走下面的自定义 match（1-8 数字键 + G）
+  keys: ['Digit1', 'Digit2', 'Digit3', 'Digit4', 'Digit5', 'Digit6', 'Digit7', 'Digit8', 'KeyG'],
+  match: match,
+  display: '1-8/G',
+  label: '战斗面板 预设/出征',
+  where: '大世界',
+  scenes: ['NWorldMap'],
+  handler: handler,
 });

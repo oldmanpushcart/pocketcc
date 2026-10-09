@@ -119,16 +119,16 @@ const TRUCK_ITEM_POOL = [820016, 69359, 1600029, 2300003];
  * @type {object}
  */
 const cfg = {
-    /** @type {number} 活跃刷新间隔：未同步到刷新点（daily.refreshMs=0）时的退化档 */
-    activeRefresh: 1000 * 60 * 2,
-    /** @type {number} 空转刷新间隔：拿不到刷新点/刷新点已过时的退避档 */
-    idleRefresh: 1000 * 60 * 10,
-    /** @type {number} 6474 列表重随机最小间隔（游戏侧 0.5s 防抖，我们留足余量） */
-    reloadGap: 1000 * 3,
-    /** @type {number} 同一车连打（6476）间距（重载荷战斗接口节流，防刷屏） */
-    lootGap: 1000 * 2,
-    /** @type {number} 0 点刷新点（nextRefreshLootNumTime）到点后的余量，避开服务器结算时序 */
-    flipBuffer: 1000 * 20,
+  /** @type {number} 活跃刷新间隔：未同步到刷新点（daily.refreshMs=0）时的退化档 */
+  activeRefresh: 1000 * 60 * 2,
+  /** @type {number} 空转刷新间隔：拿不到刷新点/刷新点已过时的退避档 */
+  idleRefresh: 1000 * 60 * 10,
+  /** @type {number} 6474 列表重随机最小间隔（游戏侧 0.5s 防抖，我们留足余量） */
+  reloadGap: 1000 * 3,
+  /** @type {number} 同一车连打（6476）间距（重载荷战斗接口节流，防刷屏） */
+  lootGap: 1000 * 2,
+  /** @type {number} 0 点刷新点（nextRefreshLootNumTime）到点后的余量，避开服务器结算时序 */
+  flipBuffer: 1000 * 20,
 };
 
 /**
@@ -140,10 +140,10 @@ const cfg = {
  * @type {{capDefault:number, slotMs:number, hopCap:number, presetDefault:string}}
  */
 const REFRESH = {
-    capDefault: 300,                              // 今日刷新上限默认值（面板可改）
-    slotMs: 3600000,                              // 一格 = 1 小时
-    hopCap: 1000 * 60 * 10,                       // 长睡分段上限：0 占比格与日界前分段醒来按同一张表重算（幂等），兼防刷新点被推正后睡过头
-    presetDefault: 'normal',
+  capDefault: 300, // 今日刷新上限默认值（面板可改）
+  slotMs: 3600000, // 一格 = 1 小时
+  hopCap: 1000 * 60 * 10, // 长睡分段上限：0 占比格与日界前分段醒来按同一张表重算（幂等），兼防刷新点被推正后睡过头
+  presetDefault: 'normal',
 };
 
 /**
@@ -152,19 +152,19 @@ const REFRESH = {
  * @type {Object<string, number[]>}
  */
 const REFRESH_PRESETS = {
-    /** 密集：全天都盯，深夜也不归零（Σ=94） */
-    dense: [6, 6, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 3, 3, 2, 2],
-    /** 正常（默认）：热点密·白天中·深夜稀（Σ=70） */
-    normal: [6, 6, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 1, 1, 1, 1],
-    /** 省心：只盯热点与上午，20 点后不刷（Σ=54） */
-    calm: [6, 6, 3, 3, 3, 3, 3, 3, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 0, 0, 0, 0],
+  /** 密集：全天都盯，深夜也不归零（Σ=94） */
+  dense: [6, 6, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 3, 3, 2, 2],
+  /** 正常（默认）：热点密·白天中·深夜稀（Σ=70） */
+  normal: [6, 6, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 1, 1, 1, 1],
+  /** 省心：只盯热点与上午，20 点后不刷（Σ=54） */
+  calm: [6, 6, 3, 3, 3, 3, 3, 3, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 0, 0, 0, 0],
 };
 
 /** 模板档位的面板文案（值 = select 选项 label） */
 const PRESET_LABELS = {
-    dense: '密集（全天高频，深夜也刷）',
-    normal: '正常（热点密·白天中·深夜稀）',
-    calm: '省心（只盯热点与上午，20 点后不刷）',
+  dense: '密集（全天高频，深夜也刷）',
+  normal: '正常（热点密·白天中·深夜稀）',
+  calm: '省心（只盯热点与上午，20 点后不刷）',
 };
 
 /** @type {number} 今日刷新次数上限（configure 从面板写入，<=0 回退默认） */
@@ -238,7 +238,9 @@ var stats = { day: '', refreshUsed: 0, tried: 0, win: 0, fail: 0, rejected: 0 };
  * 功能是否仍在运行（定时器与在飞流程的存活判定）
  * @returns {boolean}
  */
-function aliveFn() { return ctxRef ? ctxRef.alive() : false; }
+function aliveFn() {
+  return ctxRef ? ctxRef.alive() : false;
+}
 
 // ── 小工具 ──────────────────────────────────────────────────────────────
 /**
@@ -246,9 +248,10 @@ function aliveFn() { return ctxRef ? ctxRef.alive() : false; }
  * @returns {string}
  */
 function todayStr() {
-    var d = new Date();
-    var m = d.getMonth() + 1, day = d.getDate();
-    return d.getFullYear() + '-' + (m < 10 ? '0' + m : m) + '-' + (day < 10 ? '0' + day : day);
+  var d = new Date();
+  var m = d.getMonth() + 1,
+    day = d.getDate();
+  return d.getFullYear() + '-' + (m < 10 ? '0' + m : m) + '-' + (day < 10 ? '0' + day : day);
 }
 
 /**
@@ -257,9 +260,9 @@ function todayStr() {
  * @returns {string}
  */
 function int64Key(v) {
-    if (v == null) return '';
-    if (typeof v === 'object' && '_low' in v) return v._high + ':' + v._low;
-    return String(v);
+  if (v == null) return '';
+  if (typeof v === 'object' && '_low' in v) return v._high + ':' + v._low;
+  return String(v);
 }
 
 /**
@@ -268,11 +271,11 @@ function int64Key(v) {
  * @returns {number}
  */
 function int64ToNum(v) {
-    if (v == null) return 0;
-    if (typeof v === 'number') return v;
-    if (typeof v === 'object' && '_low' in v) return (v._high >>> 0) * 4294967296 + (v._low >>> 0);
-    var n = Number(v);
-    return isNaN(n) ? 0 : n;
+  if (v == null) return 0;
+  if (typeof v === 'number') return v;
+  if (typeof v === 'object' && '_low' in v) return (v._high >>> 0) * 4294967296 + (v._low >>> 0);
+  var n = Number(v);
+  return isNaN(n) ? 0 : n;
 }
 
 /**
@@ -281,9 +284,13 @@ function int64ToNum(v) {
  * @returns {string}
  */
 function safeStringify(v) {
-    if (v == null) return String(v);
-    if (typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean') return String(v);
-    try { return JSON.stringify(v); } catch (e) { return String(v); }
+  if (v == null) return String(v);
+  if (typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean') return String(v);
+  try {
+    return JSON.stringify(v);
+  } catch (e) {
+    return String(v);
+  }
 }
 
 /**
@@ -291,7 +298,11 @@ function safeStringify(v) {
  * @param {number} ms
  * @returns {Promise<void>}
  */
-function sleep(ms) { return new Promise(function (r) { setTimeout(r, Math.max(0, ms | 0)); }); }
+function sleep(ms) {
+  return new Promise(function (r) {
+    setTimeout(r, Math.max(0, ms | 0));
+  });
+}
 
 // ── 优先级（configure / rankMap / 匹配） ────────────────────────────────
 /**
@@ -300,11 +311,14 @@ function sleep(ms) { return new Promise(function (r) { setTimeout(r, Math.max(0,
  * @returns {number[]}
  */
 function migrateOrder(raw) {
-    var incoming = Array.isArray(raw) ? raw.map(Number).filter(isFinite) : [];
-    var out = [];
-    for (var i = 0; i < incoming.length; i++) if (TRUCK_ITEM_POOL.indexOf(incoming[i]) !== -1 && out.indexOf(incoming[i]) === -1) out.push(incoming[i]);
-    for (var j = 0; j < TRUCK_ITEM_POOL.length; j++) if (out.indexOf(TRUCK_ITEM_POOL[j]) === -1) out.push(TRUCK_ITEM_POOL[j]);
-    return out;
+  var incoming = Array.isArray(raw) ? raw.map(Number).filter(isFinite) : [];
+  var out = [];
+  for (var i = 0; i < incoming.length; i++)
+    if (TRUCK_ITEM_POOL.indexOf(incoming[i]) !== -1 && out.indexOf(incoming[i]) === -1)
+      out.push(incoming[i]);
+  for (var j = 0; j < TRUCK_ITEM_POOL.length; j++)
+    if (out.indexOf(TRUCK_ITEM_POOL[j]) === -1) out.push(TRUCK_ITEM_POOL[j]);
+  return out;
 }
 
 /**
@@ -312,33 +326,47 @@ function migrateOrder(raw) {
  * @param {object} partial { order:number[], off:number[], preset:number }（toModuleCfg 产出）
  */
 function configure(partial) {
-    order = migrateOrder(partial && partial.order);
-    disabled = new Set(((partial && partial.off) || []).map(Number).filter(function (n) { return isFinite(n) && TRUCK_ITEM_POOL.indexOf(n) !== -1; }));
-    presetIdx = Math.max(1, Number(partial && partial.preset) || 1);
-    // 品级集合：只保留合法 1~5；空集合语义=不限制（不因其误清而静默屏蔽全部）
-    var gs = ((partial && partial.grades) || []).map(Number).filter(function (n) { return ALL_GRADES.indexOf(n) !== -1; });
-    gradeSet = new Set(gs);
-    threatOn = !(partial && partial.threat === false);
-    // 战力比阈值：面板可调（<=0 或非数回退默认），驱动 assess 与面板上限展示
-    var rc = Number(partial && partial.ratioCounter), rms = Number(partial && partial.ratioSame), rr = Number(partial && partial.ratioCountered);
-    ratio.counter = rc > 0 ? rc : RATIO_DEFAULT.counter;
-    ratio.same = rms > 0 ? rms : RATIO_DEFAULT.same;
-    ratio.countered = rr > 0 ? rr : RATIO_DEFAULT.countered;
-    // 今日刷新上限 + 时段模板：面板可调（非数/非法档回退默认）；cap 按模板占比分到 24 格，直接决定各格间隔
-    var nextCap = Math.max(1, Math.floor(Number(partial && partial.refreshCap) || REFRESH.capDefault));
-    var nextPreset = REFRESH_PRESETS[partial && partial.refreshPreset] ? partial.refreshPreset : REFRESH.presetDefault;
-    if (nextCap !== refreshCap || nextPreset !== refreshPreset) {
-        refreshCap = nextCap; refreshPreset = nextPreset;
-        slotCounts = allocateSlots(REFRESH_PRESETS[refreshPreset], refreshCap);
-        // 时刻表变了：kick 立即跑一轮落到新表（睡眠中被打断、在飞时合并为 pending，本轮尾返 0 补扫）；
-        // 格点仍幂等——nextGridPointMs 只取未来格点、不回填已错过点，这次即时刷多出的一次往返由 reloadGap 节流 + refreshUsed≥cap 总闸封顶。
-        if (aliveFn()) cycle.kick();
-    }
-    rankMap = new Map();
-    for (var i = 0; i < order.length; i++) rankMap.set(order[i], i);
-    if (threatOn && (presetIdx !== prevPreset || !my.ready)) cycle.kick();   // 换攻击预设/尚未探到：唤醒一轮刷新展示快照（配额耗尽也能探；缓存作废靠 powerFp 比对，不在此处做）
-    prevPreset = presetIdx;
-    bus.emit('ui.refresh');   // 阈值/开关变更后即时重算面板“可打上限”展示
+  order = migrateOrder(partial && partial.order);
+  disabled = new Set(
+    ((partial && partial.off) || []).map(Number).filter(function (n) {
+      return isFinite(n) && TRUCK_ITEM_POOL.indexOf(n) !== -1;
+    }),
+  );
+  presetIdx = Math.max(1, Number(partial && partial.preset) || 1);
+  // 品级集合：只保留合法 1~5；空集合语义=不限制（不因其误清而静默屏蔽全部）
+  var gs = ((partial && partial.grades) || []).map(Number).filter(function (n) {
+    return ALL_GRADES.indexOf(n) !== -1;
+  });
+  gradeSet = new Set(gs);
+  threatOn = !(partial && partial.threat === false);
+  // 战力比阈值：面板可调（<=0 或非数回退默认），驱动 assess 与面板上限展示
+  var rc = Number(partial && partial.ratioCounter),
+    rms = Number(partial && partial.ratioSame),
+    rr = Number(partial && partial.ratioCountered);
+  ratio.counter = rc > 0 ? rc : RATIO_DEFAULT.counter;
+  ratio.same = rms > 0 ? rms : RATIO_DEFAULT.same;
+  ratio.countered = rr > 0 ? rr : RATIO_DEFAULT.countered;
+  // 今日刷新上限 + 时段模板：面板可调（非数/非法档回退默认）；cap 按模板占比分到 24 格，直接决定各格间隔
+  var nextCap = Math.max(
+    1,
+    Math.floor(Number(partial && partial.refreshCap) || REFRESH.capDefault),
+  );
+  var nextPreset = REFRESH_PRESETS[partial && partial.refreshPreset]
+    ? partial.refreshPreset
+    : REFRESH.presetDefault;
+  if (nextCap !== refreshCap || nextPreset !== refreshPreset) {
+    refreshCap = nextCap;
+    refreshPreset = nextPreset;
+    slotCounts = allocateSlots(REFRESH_PRESETS[refreshPreset], refreshCap);
+    // 时刻表变了：kick 立即跑一轮落到新表（睡眠中被打断、在飞时合并为 pending，本轮尾返 0 补扫）；
+    // 格点仍幂等——nextGridPointMs 只取未来格点、不回填已错过点，这次即时刷多出的一次往返由 reloadGap 节流 + refreshUsed≥cap 总闸封顶。
+    if (aliveFn()) cycle.kick();
+  }
+  rankMap = new Map();
+  for (var i = 0; i < order.length; i++) rankMap.set(order[i], i);
+  if (threatOn && (presetIdx !== prevPreset || !my.ready)) cycle.kick(); // 换攻击预设/尚未探到：唤醒一轮刷新展示快照（配额耗尽也能探；缓存作废靠 powerFp 比对，不在此处做）
+  prevPreset = presetIdx;
+  bus.emit('ui.refresh'); // 阈值/开关变更后即时重算面板“可打上限”展示
 }
 
 /**
@@ -348,19 +376,23 @@ function configure(partial) {
  * @returns {{rank:number, itemId:number}}
  */
 function matchWanted(view) {
-    var list = (view && view.lootRewardResult) || [];
-    var best = -1, bestId = 0;
-    for (var i = 0; i < list.length; i++) {
-        var entry = list[i] || {};
-        var id = Number(entry.itemId);
-        if (!isFinite(id)) continue;
-        if (Number(entry.itemCount) <= 0) continue;   // 已被抢空的槽（itemCount=0）不参与命中
-        if (disabled.has(id)) continue;
-        var rank = rankMap.get(id);
-        if (rank === undefined) continue;   // 池外物品不参与
-        if (best === -1 || rank < best) { best = rank; bestId = id; }
+  var list = (view && view.lootRewardResult) || [];
+  var best = -1,
+    bestId = 0;
+  for (var i = 0; i < list.length; i++) {
+    var entry = list[i] || {};
+    var id = Number(entry.itemId);
+    if (!isFinite(id)) continue;
+    if (Number(entry.itemCount) <= 0) continue; // 已被抢空的槽（itemCount=0）不参与命中
+    if (disabled.has(id)) continue;
+    var rank = rankMap.get(id);
+    if (rank === undefined) continue; // 池外物品不参与
+    if (best === -1 || rank < best) {
+      best = rank;
+      bestId = id;
     }
-    return { rank: best, itemId: bestId };
+  }
+  return { rank: best, itemId: bestId };
 }
 
 // ── 当日拉黑 ─────────────────────────────────────────────────────────────
@@ -368,10 +400,10 @@ function matchWanted(view) {
  * 跨日收敛：日期一变即清空内存拉黑表与当日计数表
  */
 function ensureDay() {
-    var today = todayStr();
-    if (blocked.day === today && stats.day === today) return;
-    blocked = { day: today, trucks: [] };
-    stats = { day: today, refreshUsed: 0, tried: 0, win: 0, fail: 0, rejected: 0 };
+  var today = todayStr();
+  if (blocked.day === today && stats.day === today) return;
+  blocked = { day: today, trucks: [] };
+  stats = { day: today, refreshUsed: 0, tried: 0, win: 0, fail: 0, rejected: 0 };
 }
 
 /**
@@ -379,12 +411,21 @@ function ensureDay() {
  * @returns {Promise<void>}
  */
 async function loadBlocked() {
-    ensureDay();
-    var saved = null;
-    try { saved = await storage.data.get(DATA_NAME); } catch (e) { saved = null; }
-    if (saved && typeof saved === 'object' && saved.date === todayStr() && Array.isArray(saved.trucks)) {
-        blocked = { day: saved.date, trucks: saved.trucks.map(String) };
-    }
+  ensureDay();
+  var saved;
+  try {
+    saved = await storage.data.get(DATA_NAME);
+  } catch (e) {
+    saved = null;
+  }
+  if (
+    saved &&
+    typeof saved === 'object' &&
+    saved.date === todayStr() &&
+    Array.isArray(saved.trucks)
+  ) {
+    blocked = { day: saved.date, trucks: saved.trucks.map(String) };
+  }
 }
 
 /**
@@ -392,28 +433,41 @@ async function loadBlocked() {
  * @returns {Promise<void>}
  */
 async function loadStats() {
-    ensureDay();
-    var saved = null;
-    try { saved = await storage.data.get(DATA_NAME_STATS); } catch (e) { saved = null; }
-    if (saved && typeof saved === 'object' && saved.date === todayStr()) {
-        stats = {
-            day: saved.date,
-            refreshUsed: Number(saved.refreshUsed) || 0,
-            tried: Number(saved.tried) || 0,
-            win: Number(saved.win) || 0,
-            fail: Number(saved.fail) || 0,
-            rejected: Number(saved.rejected) || 0,
-        };
-    }
+  ensureDay();
+  var saved;
+  try {
+    saved = await storage.data.get(DATA_NAME_STATS);
+  } catch (e) {
+    saved = null;
+  }
+  if (saved && typeof saved === 'object' && saved.date === todayStr()) {
+    stats = {
+      day: saved.date,
+      refreshUsed: Number(saved.refreshUsed) || 0,
+      tried: Number(saved.tried) || 0,
+      win: Number(saved.win) || 0,
+      fail: Number(saved.fail) || 0,
+      rejected: Number(saved.rejected) || 0,
+    };
+  }
 }
 
 /**
  * 落盘当日计数（fire-and-forget，失败仅记日志；storage.data 串行队列保证不串写）
  */
 function saveStats() {
-    storage.data.set(DATA_NAME_STATS, {
-        date: stats.day, refreshUsed: stats.refreshUsed, tried: stats.tried, win: stats.win, fail: stats.fail, rejected: stats.rejected,
-    }).catch(function (err) { log.warn('persist truck stats failed.', err); });
+  storage.data
+    .set(DATA_NAME_STATS, {
+      date: stats.day,
+      refreshUsed: stats.refreshUsed,
+      tried: stats.tried,
+      win: stats.win,
+      fail: stats.fail,
+      rejected: stats.rejected,
+    })
+    .catch(function (err) {
+      log.warn('persist truck stats failed.', err);
+    });
 }
 
 /**
@@ -422,10 +476,13 @@ function saveStats() {
  * @returns {Promise<void>}
  */
 async function rejectToday(key) {
-    ensureDay();
-    if (blocked.trucks.indexOf(key) === -1) blocked.trucks.push(key);
-    try { await storage.data.set(DATA_NAME, { date: blocked.day, trucks: blocked.trucks }); }
-    catch (err) { log.warn('persist blocked failed.', err); }
+  ensureDay();
+  if (blocked.trucks.indexOf(key) === -1) blocked.trucks.push(key);
+  try {
+    await storage.data.set(DATA_NAME, { date: blocked.day, trucks: blocked.trucks });
+  } catch (err) {
+    log.warn('persist blocked failed.', err);
+  }
 }
 
 // ── 每日配额同步 ─────────────────────────────────────────────────────────
@@ -436,11 +493,15 @@ async function rejectToday(key) {
  * @returns {Promise<{ok:boolean, code:number, data:*}>}
  */
 async function send(cmd, body) {
-    if (net.isSending(cmd)) return { ok: false, code: CODE_NOT_SENT, data: null };
-    var ret;
-    try { ret = await net.sendPBV2(cmd, body); }
-    catch (err) { log.debug('cmd %d send failed: %s', cmd, err && err.message); return { ok: false, code: CODE_NOT_SENT, data: null }; }
-    return { ok: ret.ok, code: ret.code, data: ret.data };
+  if (net.isSending(cmd)) return { ok: false, code: CODE_NOT_SENT, data: null };
+  var ret;
+  try {
+    ret = await net.sendPBV2(cmd, body);
+  } catch (err) {
+    log.debug('cmd %d send failed: %s', cmd, err && err.message);
+    return { ok: false, code: CODE_NOT_SENT, data: null };
+  }
+  return { ok: ret.ok, code: ret.code, data: ret.data };
 }
 
 /**
@@ -448,10 +509,10 @@ async function send(cmd, body) {
  * @returns {object|null}
  */
 function ensureNet() {
-    if (net) return net;
-    var g = (typeof window !== 'undefined') && window.pocketcc && window.pocketcc.net;
-    if (g && g.install && g.install()) net = g;
-    return net || null;
+  if (net) return net;
+  var g = typeof window !== 'undefined' && window.pocketcc && window.pocketcc.net;
+  if (g && g.install && g.install()) net = g;
+  return net || null;
 }
 
 /**
@@ -462,15 +523,25 @@ function ensureNet() {
  * @returns {Promise<{ok:boolean, code:number, data:*}>}
  */
 async function sendLegacy(cmd, body) {
-    var n = ensureNet();
-    if (!n) return { ok: false, code: CODE_NOT_SENT, data: null };
-    if (n.isSending(cmd)) return { ok: false, code: CODE_NOT_SENT, data: null };
-    var r;
-    try { r = await n.send(cmd, body); }
-    catch (err) { log.debug('cmd %d send failed: %s', cmd, err && err.message); return { ok: false, code: CODE_NOT_SENT, data: null }; }
-    var d = r.data;
-    if (typeof d === 'string') { try { d = JSON.parse(d); } catch (e) { /* 非 JSON 保留原串 */ } }
-    return { ok: r.ok, code: r.code, data: d };
+  var n = ensureNet();
+  if (!n) return { ok: false, code: CODE_NOT_SENT, data: null };
+  if (n.isSending(cmd)) return { ok: false, code: CODE_NOT_SENT, data: null };
+  var r;
+  try {
+    r = await n.send(cmd, body);
+  } catch (err) {
+    log.debug('cmd %d send failed: %s', cmd, err && err.message);
+    return { ok: false, code: CODE_NOT_SENT, data: null };
+  }
+  var d = r.data;
+  if (typeof d === 'string') {
+    try {
+      d = JSON.parse(d);
+    } catch (e) {
+      /* 非 JSON 保留原串 */
+    }
+  }
+  return { ok: r.ok, code: r.code, data: d };
 }
 
 /**
@@ -479,9 +550,9 @@ async function sendLegacy(cmd, body) {
  * @returns {Promise<void>}
  */
 async function fetchRefresh() {
-    var r = await send(CMD_REFRESH, { funcType: FUNC_TYPE });
-    if (r.code === CODE_NOT_SENT || !r.data || typeof r.data !== 'object') return;
-    applyRefresh(r.data);
+  var r = await send(CMD_REFRESH, { funcType: FUNC_TYPE });
+  if (r.code === CODE_NOT_SENT || !r.data || typeof r.data !== 'object') return;
+  applyRefresh(r.data);
 }
 
 /**
@@ -489,23 +560,25 @@ async function fetchRefresh() {
  * @param {object} d 应答 data（含 funcType/lootNum/nextRefreshLootNumTime）
  */
 function applyRefresh(d) {
-    if (d.funcType != null && Number(d.funcType) !== FUNC_TYPE) return;
-    if (typeof d.lootNum === 'number') daily.used = d.lootNum;
-    if (d.nextRefreshLootNumTime != null) daily.refreshMs = int64ToNum(d.nextRefreshLootNumTime);
-    // func_type 上限（随版本基本不变，每次刷列表前取一次即可）
-    var row = l10n.tableRow('escort_truck_func_type', FUNC_TYPE);
-    if (row) {
-        daily.maxDaily = Number(row.loot_num_max_daily) || 0;
-        daily.sameTruckMax = Number(row.loot_num_max_same_truck) || 0;
-        daily.openLevel = Number(row.open_level) || 0;
-    }
+  if (d.funcType != null && Number(d.funcType) !== FUNC_TYPE) return;
+  if (typeof d.lootNum === 'number') daily.used = d.lootNum;
+  if (d.nextRefreshLootNumTime != null) daily.refreshMs = int64ToNum(d.nextRefreshLootNumTime);
+  // func_type 上限（随版本基本不变，每次刷列表前取一次即可）
+  var row = l10n.tableRow('escort_truck_func_type', FUNC_TYPE);
+  if (row) {
+    daily.maxDaily = Number(row.loot_num_max_daily) || 0;
+    daily.sameTruckMax = Number(row.loot_num_max_same_truck) || 0;
+    daily.openLevel = Number(row.open_level) || 0;
+  }
 }
 
 /**
  * 今日剩余拦截次数
  * @returns {number}
  */
-function dailyLeft() { return daily.maxDaily > 0 ? Math.max(0, daily.maxDaily - daily.used) : 0; }
+function dailyLeft() {
+  return daily.maxDaily > 0 ? Math.max(0, daily.maxDaily - daily.used) : 0;
+}
 
 // ── 编队 ────────────────────────────────────────────────────────────────
 /**
@@ -514,17 +587,19 @@ function dailyLeft() { return daily.maxDaily > 0 ? Math.max(0, daily.maxDaily - 
  * @returns {object|null} 无兵可派返回 null
  */
 function buildTroop() {
-    // 启用判定时复用 probeSelf 算好的未过滤 raw 编成（与 999 分母同源）；否则沿用过滤+重算版
-    var data = (threatOn && my.raw) ? my.raw : new Battle().plan().preset(presetIdx).adjust().build();
-    if (!data || !data.armyListNew || !data.armyListNew.length) return null;
-    var armyPosList = data.armyListNew.map(function (a) {
-        var e = { pos: a.pos | 0, armyId: a.armyId, armyNum: a.armyNum | 0 };
-        if (a.heroCap) e.heroCap = a.heroCap;
-        if (a.skinId) e.skinId = a.skinId;
-        return e;
-    });
-    var heroList = (data.heroList || []).map(function (id) { return { heroId: id }; });
-    return { heroList: heroList, armyPosList: armyPosList, formationV2: data.formationV2 | 0 };
+  // 启用判定时复用 probeSelf 算好的未过滤 raw 编成（与 999 分母同源）；否则沿用过滤+重算版
+  var data = threatOn && my.raw ? my.raw : new Battle().plan().preset(presetIdx).adjust().build();
+  if (!data || !data.armyListNew || !data.armyListNew.length) return null;
+  var armyPosList = data.armyListNew.map(function (a) {
+    var e = { pos: a.pos | 0, armyId: a.armyId, armyNum: a.armyNum | 0 };
+    if (a.heroCap) e.heroCap = a.heroCap;
+    if (a.skinId) e.skinId = a.skinId;
+    return e;
+  });
+  var heroList = (data.heroList || []).map(function (id) {
+    return { heroId: id };
+  });
+  return { heroList: heroList, armyPosList: armyPosList, formationV2: data.formationV2 | 0 };
 }
 
 // ── 战力/军种探测 + 克制判定 ──────────────────────────────
@@ -534,11 +609,15 @@ function buildTroop() {
  * @returns {string}
  */
 function i64Str(v) {
-    if (v == null) return '';
-    if (typeof v === 'object' && typeof v._high === 'number' && typeof v._low === 'number') {
-        try { return ((BigInt(v._high) << 32n) | BigInt(v._low >>> 0)).toString(); } catch (e) { return ''; }
+  if (v == null) return '';
+  if (typeof v === 'object' && typeof v._high === 'number' && typeof v._low === 'number') {
+    try {
+      return ((BigInt(v._high) << 32n) | BigInt(v._low >>> 0)).toString();
+    } catch (e) {
+      return '';
     }
-    return String(v);
+  }
+  return String(v);
 }
 
 /**
@@ -547,10 +626,10 @@ function i64Str(v) {
  * @returns {boolean}
  */
 function gradeOk(grade) {
-    if (gradeSet.size === 0) return true;
-    var g = Number(grade) || 0;
-    if (!g) return true;
-    return gradeSet.has(g);
+  if (gradeSet.size === 0) return true;
+  var g = Number(grade) || 0;
+  if (!g) return true;
+  return gradeSet.has(g);
 }
 
 /**
@@ -559,11 +638,11 @@ function gradeOk(grade) {
  * @returns {number} 101陆 / 201海 / 301空 / 0 未知
  */
 function heroBranch(id) {
-    if (id == null) return 0;
-    var r = l10n.tableRow('hero', id);
-    var t = r && (r.army_type != null ? r.army_type : r.armyType);
-    var n = Number(t);
-    return (n === BRANCH.LAND || n === BRANCH.SEA || n === BRANCH.AIR) ? n : 0;
+  if (id == null) return 0;
+  var r = l10n.tableRow('hero', id);
+  var t = r && (r.army_type != null ? r.army_type : r.armyType);
+  var n = Number(t);
+  return n === BRANCH.LAND || n === BRANCH.SEA || n === BRANCH.AIR ? n : 0;
 }
 
 /**
@@ -572,14 +651,19 @@ function heroBranch(id) {
  * @returns {number} 101/201/301/0
  */
 function majorityBranch(heroIds) {
-    var cnt = {}, best = 0, bc = 0;
-    (heroIds || []).forEach(function (id) {
-        var b = heroBranch(id);
-        if (!b) return;
-        cnt[b] = (cnt[b] || 0) + 1;
-        if (cnt[b] > bc) { bc = cnt[b]; best = b; }
-    });
-    return best;
+  var cnt = {},
+    best = 0,
+    bc = 0;
+  (heroIds || []).forEach(function (id) {
+    var b = heroBranch(id);
+    if (!b) return;
+    cnt[b] = (cnt[b] || 0) + 1;
+    if (cnt[b] > bc) {
+      bc = cnt[b];
+      best = b;
+    }
+  });
+  return best;
 }
 
 /**
@@ -588,16 +672,24 @@ function majorityBranch(heroIds) {
  * @returns {Promise<number>} 101/201/301/0
  */
 async function enemyBranch(scoutId) {
-    if (!scoutId) return 0;
-    var r = await sendLegacy(CMD_REPORT, { reportId: scoutId });
-    if (!r || !r.ok || !r.data || typeof r.data !== 'object') return 0;
-    var rs = r.data.reportStr;
-    if (typeof rs === 'string') { try { rs = JSON.parse(rs); } catch (e) { return 0; } }
-    var def = rs && rs.battle && rs.battle.defender;
-    var pl = def && def.players && def.players[0];
-    var heroes = (pl && pl.heroList) || [];
-    var ids = heroes.map(function (h) { return (h && h.id != null) ? h.id : h; });
-    return majorityBranch(ids);
+  if (!scoutId) return 0;
+  var r = await sendLegacy(CMD_REPORT, { reportId: scoutId });
+  if (!r || !r.ok || !r.data || typeof r.data !== 'object') return 0;
+  var rs = r.data.reportStr;
+  if (typeof rs === 'string') {
+    try {
+      rs = JSON.parse(rs);
+    } catch (e) {
+      return 0;
+    }
+  }
+  var def = rs && rs.battle && rs.battle.defender;
+  var pl = def && def.players && def.players[0];
+  var heroes = (pl && pl.heroList) || [];
+  var ids = heroes.map(function (h) {
+    return h && h.id != null ? h.id : h;
+  });
+  return majorityBranch(ids);
 }
 
 /**
@@ -607,10 +699,10 @@ async function enemyBranch(scoutId) {
  * @returns {string}
  */
 function troopFingerprint(raw) {
-    var n = 0;
-    var list = raw.armyListNew || [];
-    for (var i = 0; i < list.length; i++) n += (list[i].armyNum | 0);
-    return presetIdx + '|' + (raw.heroList || []).join(',') + '|' + n + '|' + (raw.formationV2 | 0);
+  var n = 0;
+  var list = raw.armyListNew || [];
+  for (var i = 0; i < list.length; i++) n += list[i].armyNum | 0;
+  return presetIdx + '|' + (raw.heroList || []).join(',') + '|' + n + '|' + (raw.formationV2 | 0);
 }
 
 /**
@@ -622,48 +714,71 @@ function troopFingerprint(raw) {
  * @returns {Promise<void>}
  */
 async function probeSelf(force) {
-    my.ready = false; my.power = 0; my.branch = 0; my.raw = null; my.tried = false;
-    var raw = new Battle().plan().preset(presetIdx).build();
-    if (!raw || !raw.armyListNew.length) { my.tried = true; log.debug('preset %d raw empty, threat probe skipped.', presetIdx); bus.emit('ui.refresh'); return; }
-    my.raw = raw;
-    my.branch = majorityBranch(raw.heroList);
-    var fp = troopFingerprint(raw);
-    var same = fp === powerFp && powerCache > 0;              // 缓存是否属于本轮编成（换预设/游戏内改队会变）
-    var stale = !same || powerAge >= POWER_CACHE_EVERY || (Date.now() - powerAt) > POWER_MAX_AGE_MS;
-    if ((force || stale) && !powerProbing) {
-        var atPreset = presetIdx;
-        powerAge = 0; powerProbing = true;
-        var pow = -1, code = -1;
-        try {
-            var r = await sendLegacy(CMD_POWER, { armyListNew: raw.armyListNew, heroList: raw.heroList, formation: 0, formationV2: raw.formationV2 | 0 });
-            code = r && r.code;
-            pow = (r && r.ok && r.data && typeof r.data === 'object') ? (Number(r.data.battlePowerVal) || 0) : -1;
-        } finally { powerProbing = false; }
-        if (atPreset !== presetIdx) {
-            // 在飞期间面板换了预设：本次应答与刚算的 raw/branch 均属旧编成，整块作废（buildTroop 需回落到按新预设实时重算），
-            // 不把判定留在“旧队出兵 + 无战力过滤”的窗口里；configure 已 kick，cycle pending 会用新预设补探一轮
-            my.raw = null; my.branch = 0; my.tried = true;
-            log.debug('999 answer dropped: preset %d -> %d, re-probe next round.', atPreset, presetIdx);
-            bus.emit('ui.refresh'); return;
-        }
-        if (pow >= 0) {
-            powerCache = pow; powerFp = fp; powerAt = Date.now();
-            log.debug('999 power refreshed: %d (cache every %d lists).', powerCache, POWER_CACHE_EVERY);
-        } else {
-            // 没拿到新值（在途碰撞/异常/真拒）：同编成旧战力保留直接用（不把“只打能赢”打成 fail-open），旧编成缓存则下面当作未探到；
-            // 年龄拉到只差一次列表往返：重试挂在“真实列表往返”上，避免持续被拒时999每轮刷屏（同本 feat 的撞限额教训）
-            powerAge = POWER_CACHE_EVERY - 1;
-            if (same) log.debug('999 refresh failed(code=%d), keep cached power=%d.', code, powerCache);
-            else log.debug('999 power unavailable(code=%d), degrade: skip power/counter filter.', code);
-        }
-    } else if (force || stale) {
-        log.debug('999 probe already in flight, reuse power=%d.', powerCache);   // 面板按钮撞上循环在途：不另开一枪，直接用现有缓存刷新展示
-    }
-    my.power = (powerFp === fp && powerCache > 0) ? powerCache : 0;   // 只认同源战力：旧编成的缓存对新编成一律当作未探到
-    my.ready = my.power > 0;
+  my.ready = false;
+  my.power = 0;
+  my.branch = 0;
+  my.raw = null;
+  my.tried = false;
+  var raw = new Battle().plan().preset(presetIdx).build();
+  if (!raw || !raw.armyListNew.length) {
     my.tried = true;
-    if (my.ready) log.debug('self probe: power=%d branch=%d.', my.power, my.branch);
-    bus.emit('ui.refresh');   // 刷新面板“我方战力/军种 + 三军种可打上限”展示
+    log.debug('preset %d raw empty, threat probe skipped.', presetIdx);
+    bus.emit('ui.refresh');
+    return;
+  }
+  my.raw = raw;
+  my.branch = majorityBranch(raw.heroList);
+  var fp = troopFingerprint(raw);
+  var same = fp === powerFp && powerCache > 0; // 缓存是否属于本轮编成（换预设/游戏内改队会变）
+  var stale = !same || powerAge >= POWER_CACHE_EVERY || Date.now() - powerAt > POWER_MAX_AGE_MS;
+  if ((force || stale) && !powerProbing) {
+    var atPreset = presetIdx;
+    powerAge = 0;
+    powerProbing = true;
+    var pow, code;
+    try {
+      var r = await sendLegacy(CMD_POWER, {
+        armyListNew: raw.armyListNew,
+        heroList: raw.heroList,
+        formation: 0,
+        formationV2: raw.formationV2 | 0,
+      });
+      code = r && r.code;
+      pow =
+        r && r.ok && r.data && typeof r.data === 'object' ? Number(r.data.battlePowerVal) || 0 : -1;
+    } finally {
+      powerProbing = false;
+    }
+    if (atPreset !== presetIdx) {
+      // 在飞期间面板换了预设：本次应答与刚算的 raw/branch 均属旧编成，整块作废（buildTroop 需回落到按新预设实时重算），
+      // 不把判定留在“旧队出兵 + 无战力过滤”的窗口里；configure 已 kick，cycle pending 会用新预设补探一轮
+      my.raw = null;
+      my.branch = 0;
+      my.tried = true;
+      log.debug('999 answer dropped: preset %d -> %d, re-probe next round.', atPreset, presetIdx);
+      bus.emit('ui.refresh');
+      return;
+    }
+    if (pow >= 0) {
+      powerCache = pow;
+      powerFp = fp;
+      powerAt = Date.now();
+      log.debug('999 power refreshed: %d (cache every %d lists).', powerCache, POWER_CACHE_EVERY);
+    } else {
+      // 没拿到新值（在途碰撞/异常/真拒）：同编成旧战力保留直接用（不把“只打能赢”打成 fail-open），旧编成缓存则下面当作未探到；
+      // 年龄拉到只差一次列表往返：重试挂在“真实列表往返”上，避免持续被拒时999每轮刷屏（同本 feat 的撞限额教训）
+      powerAge = POWER_CACHE_EVERY - 1;
+      if (same) log.debug('999 refresh failed(code=%d), keep cached power=%d.', code, powerCache);
+      else log.debug('999 power unavailable(code=%d), degrade: skip power/counter filter.', code);
+    }
+  } else if (force || stale) {
+    log.debug('999 probe already in flight, reuse power=%d.', powerCache); // 面板按钮撞上循环在途：不另开一枪，直接用现有缓存刷新展示
+  }
+  my.power = powerFp === fp && powerCache > 0 ? powerCache : 0; // 只认同源战力：旧编成的缓存对新编成一律当作未探到
+  my.ready = my.power > 0;
+  my.tried = true;
+  if (my.ready) log.debug('self probe: power=%d branch=%d.', my.power, my.branch);
+  bus.emit('ui.refresh'); // 刷新面板“我方战力/军种 + 三军种可打上限”展示
 }
 
 /**
@@ -672,9 +787,13 @@ async function probeSelf(force) {
  * @returns {Promise<void>}
  */
 function probeForPanel(cfg) {
-    presetIdx = Math.max(1, Number(cfg && cfg.preset) || presetIdx);
-    if (!ensureNet()) { my.tried = true; bus.emit('ui.refresh'); return Promise.resolve(); }
-    return probeSelf(true);   // 面板按钮是显式动作：无视缓存强制重查
+  presetIdx = Math.max(1, Number(cfg && cfg.preset) || presetIdx);
+  if (!ensureNet()) {
+    my.tried = true;
+    bus.emit('ui.refresh');
+    return Promise.resolve();
+  }
+  return probeSelf(true); // 面板按钮是显式动作：无视缓存强制重查
 }
 
 /**
@@ -686,27 +805,38 @@ function probeForPanel(cfg) {
  * @returns {{go:boolean, why:string}}
  */
 function assess(enemyPower, enemyBranch) {
-    if (!my.ready || !my.power) return { go: true, why: 'degraded:no-my-power' };
-    if (!enemyPower) return { go: false, why: 'no-enemy-power' };
-    if (!enemyBranch) return { go: false, why: 'unknown-enemy-branch' };
-    var me = my.branch;
-    var r = enemyPower / my.power;
-    var lim;
-    if (me && BEATS[me] === enemyBranch) lim = ratio.counter;          // 我克敌
-    else if (me && BEATS[enemyBranch] === me) lim = ratio.countered;   // 我被克
-    else lim = ratio.same;                                            // 同军种 / 我方军种未知（保守）
-    return { go: r <= lim + 1e-9, why: (me || '?') + 'vs' + enemyBranch + ':' + r.toFixed(2) + '<=' + lim };
+  if (!my.ready || !my.power) return { go: true, why: 'degraded:no-my-power' };
+  if (!enemyPower) return { go: false, why: 'no-enemy-power' };
+  if (!enemyBranch) return { go: false, why: 'unknown-enemy-branch' };
+  var me = my.branch;
+  var r = enemyPower / my.power;
+  var lim;
+  if (me && BEATS[me] === enemyBranch)
+    lim = ratio.counter; // 我克敌
+  else if (me && BEATS[enemyBranch] === me)
+    lim = ratio.countered; // 我被克
+  else lim = ratio.same; // 同军种 / 我方军种未知（保守）
+  return {
+    go: r <= lim + 1e-9,
+    why: (me || '?') + 'vs' + enemyBranch + ':' + r.toFixed(2) + '<=' + lim,
+  };
 }
 
 /** 军种码 → 中文简称 */
-function branchName(b) { return b === 101 ? '陆' : b === 201 ? '海' : b === 301 ? '空' : '?'; }
+function branchName(b) {
+  return b === 101 ? '陆' : b === 201 ? '海' : b === 301 ? '空' : '?';
+}
 
 /** 大数字紧凑串（近似游戏 K/M/B/T 阶梯，仅用于面板展示） */
 function fmtPower(n) {
-    n = Number(n) || 0;
-    var u = ['', 'K', 'M', 'B', 'T']; var i = 0;
-    while (n >= 1000 && i < u.length - 1) { n /= 1000; i++; }
-    return i ? n.toFixed(1) + u[i] : String(Math.round(n));
+  n = Number(n) || 0;
+  var u = ['', 'K', 'M', 'B', 'T'];
+  var i = 0;
+  while (n >= 1000 && i < u.length - 1) {
+    n /= 1000;
+    i++;
+  }
+  return i ? n.toFixed(1) + u[i] : String(Math.round(n));
 }
 
 /**
@@ -715,16 +845,23 @@ function fmtPower(n) {
  * @returns {{ready:boolean, list?:Array<{b:number, rel:string, lim:number, ceil:number}>}}
  */
 function branchCeilings() {
-    if (!my.ready || !my.power) return { ready: false };
-    var me = my.branch;
-    var list = [101, 201, 301].map(function (b) {
-        var rel, lim;
-        if (me && BEATS[me] === b) { rel = '我克'; lim = ratio.counter; }
-        else if (me && BEATS[b] === me) { rel = '被克'; lim = ratio.countered; }
-        else { rel = '同军'; lim = ratio.same; }
-        return { b: b, rel: rel, lim: lim, ceil: my.power * lim };
-    });
-    return { ready: true, list: list };
+  if (!my.ready || !my.power) return { ready: false };
+  var me = my.branch;
+  var list = [101, 201, 301].map(function (b) {
+    var rel, lim;
+    if (me && BEATS[me] === b) {
+      rel = '我克';
+      lim = ratio.counter;
+    } else if (me && BEATS[b] === me) {
+      rel = '被克';
+      lim = ratio.countered;
+    } else {
+      rel = '同军';
+      lim = ratio.same;
+    }
+    return { b: b, rel: rel, lim: lim, ceil: my.power * lim };
+  });
+  return { ready: true, list: list };
 }
 
 // ── 单车攻击判定 + 连打 ──────────────────────────────────────
@@ -734,9 +871,13 @@ function branchCeilings() {
  * @returns {{lootMax:number, failMax:number}|null}
  */
 function truckSpec(truckSpecId) {
-    var s = l10n.tableRow('escort_truck', truckSpecId);
-    if (!s) return null;
-    return { lootMax: Number(s.loot_num_max) || 0, failMax: Number(s.fail_times) || 0, grade: Number(s.grade) || 0 };
+  var s = l10n.tableRow('escort_truck', truckSpecId);
+  if (!s) return null;
+  return {
+    lootMax: Number(s.loot_num_max) || 0,
+    failMax: Number(s.fail_times) || 0,
+    grade: Number(s.grade) || 0,
+  };
 }
 
 /**
@@ -745,13 +886,14 @@ function truckSpec(truckSpecId) {
  * @returns {boolean}
  */
 function attackable(cand) {
-    var v = cand.view, spec = cand.spec;
-    if (daily.openLevel > 0 && gameData.level() < daily.openLevel) return false;        // ①未达功能解锁等级
-    if (daily.used >= daily.maxDaily) return false;                                     // ②每日配额
-    if ((v.myLootNum | 0) >= daily.sameTruckMax) return false;                          // ③我对该车成功数
-    if ((v.myLootFailNum | 0) >= spec.failMax) return false;                            // ④我对该车失败数
-    if ((v.lootNum | 0) >= spec.lootMax) return false;                                  // ⑤该车被抢空
-    return true;
+  var v = cand.view,
+    spec = cand.spec;
+  if (daily.openLevel > 0 && gameData.level() < daily.openLevel) return false; // ①未达功能解锁等级
+  if (daily.used >= daily.maxDaily) return false; // ②每日配额
+  if ((v.myLootNum | 0) >= daily.sameTruckMax) return false; // ③我对该车成功数
+  if ((v.myLootFailNum | 0) >= spec.failMax) return false; // ④我对该车失败数
+  if ((v.lootNum | 0) >= spec.lootMax) return false; // ⑤该车被抢空
+  return true;
 }
 
 /**
@@ -762,37 +904,81 @@ function attackable(cand) {
  * @returns {Promise<string>} 'done'（正常收敛/无兵）| 'blacklisted'（服务器拒绝已拉黑）| 'notsent'（在途/异常收手）
  */
 async function lootFlow(cand) {
-    var v = cand.view;
-    var maxTries = (cand.spec.failMax || 5) + (daily.sameTruckMax || 2) + 2;
-    var tries = 0;
-    while (aliveFn() && dailyLeft() > 0 && attackable(cand) && matchWanted(v).rank !== -1) {
-        if (++tries > maxTries) { log.warn('truck %s hit per-round try cap %d, stop (counters not converging?).', cand.key, maxTries); return 'done'; }
-        var troop = buildTroop();
-        if (!troop) { log.debug('preset %d has no dispatchable army, stop truck %s.', presetIdx, cand.key); return 'done'; }
-        var ret = await send(CMD_LOOT, { funcType: FUNC_TYPE, truckId: v.truckId, troop: troop });
-        if (!aliveFn()) return 'done';
-        if (ret.code === CODE_NOT_SENT) return 'notsent';    // 在途/异常：本轮此车收手，留待下轮
-        if (!ret.ok || !ret.data || typeof ret.data !== 'object') {
-            log.info('loot rejected, blacklist today. truck=%s;code=%d;data=%s', cand.key, ret.code, safeStringify(ret.data));
-            stats.rejected++; saveStats(); bus.emit('ui.refresh');   // 服务器硬拒（已在上方排除 CODE_NOT_SENT）：计入拒绝旁路量，不计入 tried
-            await rejectToday(cand.key);
-            return 'blacklisted';
-        }
-        var d = ret.data;
-        if (typeof d.lootNum === 'number') daily.used = d.lootNum;
-        var nv = d.lootTruckView;
-        if (nv) { v.lootNum = nv.lootNum | 0; v.myLootNum = nv.myLootNum | 0; v.myLootFailNum = nv.myLootFailNum | 0; if (Array.isArray(nv.lootRewardResult)) v.lootRewardResult = nv.lootRewardResult; }
-        if (typeof d.isWin === 'boolean') { stats.tried++; if (d.isWin) stats.win++; else stats.fail++; saveStats(); bus.emit('ui.refresh'); }   // 真打了一仗：胜/负入注（tried=win+fail 恒成立）
-        if (d.isWin) {
-            log.info('loot WIN. truck=%s;item=%d(%s);truckLoot=%d/%d;daily=%d/%d', cand.key, cand.itemId, cand.itemName || '?', v.lootNum | 0, cand.spec.lootMax, daily.used, daily.maxDaily);
-            bus.emit('ui.refresh');
-        } else {
-            log.info('loot fail. truck=%s;fail=%d/%d;daily=%d/%d', cand.key, v.myLootFailNum | 0, cand.spec.failMax, daily.used, daily.maxDaily);
-        }
-        if (!aliveFn()) return 'done';
-        await sleep(cfg.lootGap);
+  var v = cand.view;
+  var maxTries = (cand.spec.failMax || 5) + (daily.sameTruckMax || 2) + 2;
+  var tries = 0;
+  while (aliveFn() && dailyLeft() > 0 && attackable(cand) && matchWanted(v).rank !== -1) {
+    if (++tries > maxTries) {
+      log.warn(
+        'truck %s hit per-round try cap %d, stop (counters not converging?).',
+        cand.key,
+        maxTries,
+      );
+      return 'done';
     }
-    return 'done';
+    var troop = buildTroop();
+    if (!troop) {
+      log.debug('preset %d has no dispatchable army, stop truck %s.', presetIdx, cand.key);
+      return 'done';
+    }
+    var ret = await send(CMD_LOOT, { funcType: FUNC_TYPE, truckId: v.truckId, troop: troop });
+    if (!aliveFn()) return 'done';
+    if (ret.code === CODE_NOT_SENT) return 'notsent'; // 在途/异常：本轮此车收手，留待下轮
+    if (!ret.ok || !ret.data || typeof ret.data !== 'object') {
+      log.info(
+        'loot rejected, blacklist today. truck=%s;code=%d;data=%s',
+        cand.key,
+        ret.code,
+        safeStringify(ret.data),
+      );
+      stats.rejected++;
+      saveStats();
+      bus.emit('ui.refresh'); // 服务器硬拒（已在上方排除 CODE_NOT_SENT）：计入拒绝旁路量，不计入 tried
+      await rejectToday(cand.key);
+      return 'blacklisted';
+    }
+    var d = ret.data;
+    if (typeof d.lootNum === 'number') daily.used = d.lootNum;
+    var nv = d.lootTruckView;
+    if (nv) {
+      v.lootNum = nv.lootNum | 0;
+      v.myLootNum = nv.myLootNum | 0;
+      v.myLootFailNum = nv.myLootFailNum | 0;
+      if (Array.isArray(nv.lootRewardResult)) v.lootRewardResult = nv.lootRewardResult;
+    }
+    if (typeof d.isWin === 'boolean') {
+      stats.tried++;
+      if (d.isWin) stats.win++;
+      else stats.fail++;
+      saveStats();
+      bus.emit('ui.refresh');
+    } // 真打了一仗：胜/负入注（tried=win+fail 恒成立）
+    if (d.isWin) {
+      log.info(
+        'loot WIN. truck=%s;item=%d(%s);truckLoot=%d/%d;daily=%d/%d',
+        cand.key,
+        cand.itemId,
+        cand.itemName || '?',
+        v.lootNum | 0,
+        cand.spec.lootMax,
+        daily.used,
+        daily.maxDaily,
+      );
+      bus.emit('ui.refresh');
+    } else {
+      log.info(
+        'loot fail. truck=%s;fail=%d/%d;daily=%d/%d',
+        cand.key,
+        v.myLootFailNum | 0,
+        cand.spec.failMax,
+        daily.used,
+        daily.maxDaily,
+      );
+    }
+    if (!aliveFn()) return 'done';
+    await sleep(cfg.lootGap);
+  }
+  return 'done';
 }
 
 // ── 刷列表（生产） ───────────────────────────────────────────────────────
@@ -802,41 +988,55 @@ async function lootFlow(cand) {
  * @returns {Promise<void>}
  */
 async function doScan() {
-    try {
-        await fetchRefresh();
-        if (!aliveFn()) return;
-        if (threatOn) await probeSelf();   // 解耦：每轮一进来先探我方快照（不依赖配额/新列表），保证面板展示与后续判定都有数据
-        if (daily.maxDaily <= 0) {
-            log.debug('escort_truck_func_type row unavailable, skip scan.');
-            queue.length = 0;
-        } else if (dailyLeft() <= 0) {
-            log.debug('daily loot exhausted (%d/%d), stop scan.', daily.used, daily.maxDaily);
-            queue.length = 0;
-        } else if (listOpened && Date.now() - lastReloadAt < cfg.reloadGap) {
-            log.debug('reload too soon (<%dms since last), skip this round.', cfg.reloadGap);   // 距上次重随机太近：本轮不出新列表（格点不补，下一格点照常）
-        } else {
-            var cmd = listOpened ? CMD_RELOAD : CMD_OPEN;
-            var ret = await send(cmd, { funcType: FUNC_TYPE, localServerDisable: 1 });
-            lastReloadAt = Date.now();
-            if (!aliveFn()) return;
-            if (ret.code !== CODE_NOT_SENT) { stats.refreshUsed++; powerAge++; saveStats(); bus.emit('ui.refresh'); }   // 真实列表往返（含空/拒）计一次刷新预算，同时推战力缓存年龄
-            if (!ret.ok || !ret.data || !Array.isArray(ret.data.lootTruckViewList)) {
-                log.debug('loot list empty/rejected. cmd=%d;code=%d', cmd, ret.code);
-                queue.length = 0;
-            } else {
-                listOpened = true;
-                if (typeof ret.data.lootNum === 'number') daily.used = ret.data.lootNum;   // 列表应答也带当日已用，随手校准
-                skipRound = new Set();                                                     // 新列表（重随机）→ 清上轮“打不过”跳过集
-                if (!aliveFn()) return;
-                queue = buildCandidates(ret.data.lootTruckViewList);
-                if (threatOn && queue.length && my.ready) { queue = await refineThreat(queue); if (!aliveFn()) return; }
-                if (queue.length) log.debug('loot list ready. candidates=%d;daily=%d/%d', queue.length, daily.used, daily.maxDaily);
-            }
-        }
-    } catch (err) {
-        log.warn('scan error.', err);
+  try {
+    await fetchRefresh();
+    if (!aliveFn()) return;
+    if (threatOn) await probeSelf(); // 解耦：每轮一进来先探我方快照（不依赖配额/新列表），保证面板展示与后续判定都有数据
+    if (daily.maxDaily <= 0) {
+      log.debug('escort_truck_func_type row unavailable, skip scan.');
+      queue.length = 0;
+    } else if (dailyLeft() <= 0) {
+      log.debug('daily loot exhausted (%d/%d), stop scan.', daily.used, daily.maxDaily);
+      queue.length = 0;
+    } else if (listOpened && Date.now() - lastReloadAt < cfg.reloadGap) {
+      log.debug('reload too soon (<%dms since last), skip this round.', cfg.reloadGap); // 距上次重随机太近：本轮不出新列表（格点不补，下一格点照常）
+    } else {
+      var cmd = listOpened ? CMD_RELOAD : CMD_OPEN;
+      var ret = await send(cmd, { funcType: FUNC_TYPE, localServerDisable: 1 });
+      lastReloadAt = Date.now();
+      if (!aliveFn()) return;
+      if (ret.code !== CODE_NOT_SENT) {
+        stats.refreshUsed++;
+        powerAge++;
+        saveStats();
+        bus.emit('ui.refresh');
+      } // 真实列表往返（含空/拒）计一次刷新预算，同时推战力缓存年龄
+      if (!ret.ok || !ret.data || !Array.isArray(ret.data.lootTruckViewList)) {
+        log.debug('loot list empty/rejected. cmd=%d;code=%d', cmd, ret.code);
         queue.length = 0;
+      } else {
+        listOpened = true;
+        if (typeof ret.data.lootNum === 'number') daily.used = ret.data.lootNum; // 列表应答也带当日已用，随手校准
+        skipRound = new Set(); // 新列表（重随机）→ 清上轮“打不过”跳过集
+        if (!aliveFn()) return;
+        queue = buildCandidates(ret.data.lootTruckViewList);
+        if (threatOn && queue.length && my.ready) {
+          queue = await refineThreat(queue);
+          if (!aliveFn()) return;
+        }
+        if (queue.length)
+          log.debug(
+            'loot list ready. candidates=%d;daily=%d/%d',
+            queue.length,
+            daily.used,
+            daily.maxDaily,
+          );
+      }
     }
+  } catch (err) {
+    log.warn('scan error.', err);
+    queue.length = 0;
+  }
 }
 
 /**
@@ -846,31 +1046,42 @@ async function doScan() {
  * @returns {object[]} 候选（{view,key,rank,itemId,itemName,spec}）
  */
 function buildCandidates(list) {
-    var myAid = gameData.myAid();
-    ensureDay();
-    var cands = [];
-    for (var i = 0; i < list.length; i++) {
-        var view = list[i];
-        if (!view) continue;
-        var key = int64Key(view.truckId);
-        if (!key || blocked.trucks.indexOf(key) !== -1) continue;   // 当日被服务器拒绝拉黑
-        if (skipRound.has(key)) continue;                            // 本轮已判“打不过”跳过（内存态，与拒绝拉黑分离）
-        var m = matchWanted(view);
-        if (m.rank === -1) continue;                                    // 无命中已勾选物品
-        var uv = view.userView || {};
-        if (myAid > 0 && int64ToNum(uv.allianceId) === myAid) continue; // ⑥同联盟（dailyEscort 不可打）
-        var spec = truckSpec(view.truckSpecId);
-        if (!spec) continue;
-        if (!gradeOk(spec.grade)) continue;                             // 品级不在拦截范围
-        if (threatOn && my.ready) {                                     // 战力粗筛（只排“克制也打不过”的硬天花板）
-            var bp = Number(view.battlePower) || 0;
-            if (bp && bp > my.power * ratio.counter) continue;
-        }
-        var cand = { view: view, key: key, rank: m.rank, itemId: m.itemId, itemName: item.label(m.itemId), spec: spec, grade: spec.grade };
-        if (attackable(cand)) cands.push(cand);
+  var myAid = gameData.myAid();
+  ensureDay();
+  var cands = [];
+  for (var i = 0; i < list.length; i++) {
+    var view = list[i];
+    if (!view) continue;
+    var key = int64Key(view.truckId);
+    if (!key || blocked.trucks.indexOf(key) !== -1) continue; // 当日被服务器拒绝拉黑
+    if (skipRound.has(key)) continue; // 本轮已判“打不过”跳过（内存态，与拒绝拉黑分离）
+    var m = matchWanted(view);
+    if (m.rank === -1) continue; // 无命中已勾选物品
+    var uv = view.userView || {};
+    if (myAid > 0 && int64ToNum(uv.allianceId) === myAid) continue; // ⑥同联盟（dailyEscort 不可打）
+    var spec = truckSpec(view.truckSpecId);
+    if (!spec) continue;
+    if (!gradeOk(spec.grade)) continue; // 品级不在拦截范围
+    if (threatOn && my.ready) {
+      // 战力粗筛（只排“克制也打不过”的硬天花板）
+      var bp = Number(view.battlePower) || 0;
+      if (bp && bp > my.power * ratio.counter) continue;
     }
-    cands.sort(function (a, b) { return a.rank - b.rank; });
-    return cands;
+    var cand = {
+      view: view,
+      key: key,
+      rank: m.rank,
+      itemId: m.itemId,
+      itemName: item.label(m.itemId),
+      spec: spec,
+      grade: spec.grade,
+    };
+    if (attackable(cand)) cands.push(cand);
+  }
+  cands.sort(function (a, b) {
+    return a.rank - b.rank;
+  });
+  return cands;
 }
 
 /**
@@ -881,24 +1092,31 @@ function buildCandidates(list) {
  * @returns {Promise<object[]>} 细判后的可打候选
  */
 async function refineThreat(cands) {
-    if (!my.ready) return cands;
-    var MAX_THREAT_LOOK = 15;
-    var out = [], looked = 0;
-    for (var i = 0; i < cands.length; i++) {
-        if (!aliveFn()) return out;                                   // 已 pause：未处理的下轮 rebuild
-        var c = cands[i];
-        var eb = 0;
-        if (looked < MAX_THREAT_LOOK) {
-            var scout = i64Str(c.view.scoutReportId);
-            if (scout) { eb = await enemyBranch(scout); looked++; }
-        } else {
-            break;                                                    // 达本轮 927 上限，余下不评不入队
-        }
-        var a = assess(Number(c.view.battlePower) || 0, eb);
-        if (a.go) out.push(c);
-        else { skipRound.add(c.key); log.debug('threat skip truck %s (%s).', c.key, a.why); }
+  if (!my.ready) return cands;
+  var MAX_THREAT_LOOK = 15;
+  var out = [],
+    looked = 0;
+  for (var i = 0; i < cands.length; i++) {
+    if (!aliveFn()) return out; // 已 pause：未处理的下轮 rebuild
+    var c = cands[i];
+    var eb = 0;
+    if (looked < MAX_THREAT_LOOK) {
+      var scout = i64Str(c.view.scoutReportId);
+      if (scout) {
+        eb = await enemyBranch(scout);
+        looked++;
+      }
+    } else {
+      break; // 达本轮 927 上限，余下不评不入队
     }
-    return out;
+    var a = assess(Number(c.view.battlePower) || 0, eb);
+    if (a.go) out.push(c);
+    else {
+      skipRound.add(c.key);
+      log.debug('threat skip truck %s (%s).', c.key, a.why);
+    }
+  }
+  return out;
 }
 
 // ── 消费 ────────────────────────────────────────────────────────────────
@@ -907,27 +1125,44 @@ async function refineThreat(cands) {
  * @returns {Promise<void>}
  */
 async function consume() {
-    var rejectStreak = 0;
-    while (queue.length && aliveFn()) {
-        if (dailyLeft() <= 0) { log.debug('daily loot exhausted, drain stopped.'); queue.length = 0; break; }
-        var cand = queue.shift();
-        var res;
-        try { res = await lootFlow(cand); } catch (err) { log.warn('loot flow threw.', err); }
-        // 连续两台不同车被服务器硬拒（非在途哨兵）→ 判为全局闸门（配额耗尽/功能未开/系统繁忙），
-        // 立即清空本轮队列停摆，避免逐车撞限额并把当天所有目标车误拉黑（对齐撞限额刷屏既有教训）。
-        if (res === 'blacklisted') {
-            if (++rejectStreak >= 2) { log.info('consecutive server rejects (%d), likely a global gate; halt queue this round.', rejectStreak); queue.length = 0; break; }
-        } else {
-            rejectStreak = 0;
-        }
+  var rejectStreak = 0;
+  while (queue.length && aliveFn()) {
+    if (dailyLeft() <= 0) {
+      log.debug('daily loot exhausted, drain stopped.');
+      queue.length = 0;
+      break;
     }
+    var cand = queue.shift();
+    var res;
+    try {
+      res = await lootFlow(cand);
+    } catch (err) {
+      log.warn('loot flow threw.', err);
+    }
+    // 连续两台不同车被服务器硬拒（非在途哨兵）→ 判为全局闸门（配额耗尽/功能未开/系统繁忙），
+    // 立即清空本轮队列停摆，避免逐车撞限额并把当天所有目标车误拉黑（对齐撞限额刷屏既有教训）。
+    if (res === 'blacklisted') {
+      if (++rejectStreak >= 2) {
+        log.info(
+          'consecutive server rejects (%d), likely a global gate; halt queue this round.',
+          rejectStreak,
+        );
+        queue.length = 0;
+        break;
+      }
+    } else {
+      rejectStreak = 0;
+    }
+  }
 }
 
 /**
  * 当前服务器本地时刻（ms）。serverTime() 为秒，×1000 对齐 daily.refreshMs（ms）。
  * @returns {number}
  */
-function serverNowMs() { return gameData.serverTime() * 1000; }
+function serverNowMs() {
+  return gameData.serverTime() * 1000;
+}
 
 /**
  * 本游戏日的 0 点绝对时刻（ms）：以 daily.refreshMs（下一个刷新点）回推 24h。
@@ -936,13 +1171,15 @@ function serverNowMs() { return gameData.serverTime() * 1000; }
  * @returns {number}
  */
 function dayStartMs(nowMs) {
-    var d = daily.refreshMs - 86400000;
-    while (d + 86400000 <= nowMs) d += 86400000;
-    return d;
+  var d = daily.refreshMs - 86400000;
+  while (d + 86400000 <= nowMs) d += 86400000;
+  return d;
 }
 
 /** 当前时刻落在第几格（-1 = 尚未同步到刷新点） */
-function curSlotOf(nowMs) { return daily.refreshMs ? Math.floor((nowMs - dayStartMs(nowMs)) / REFRESH.slotMs) : -1; }
+function curSlotOf(nowMs) {
+  return daily.refreshMs ? Math.floor((nowMs - dayStartMs(nowMs)) / REFRESH.slotMs) : -1;
+}
 
 /**
  * 把 cap 按 24 格占比分配为整数次数（最大余数法）：先按比例取整，剩下名额按小数部分降序补齐（同分按格序）。
@@ -952,21 +1189,35 @@ function curSlotOf(nowMs) { return daily.refreshMs ? Math.floor((nowMs - dayStar
  * @returns {number[]} 24 格各自的刷新次数
  */
 function allocateSlots(weights, cap) {
-    var ws = [], sum = 0, i;
-    for (i = 0; i < 24; i++) { var w = Math.max(0, Number(weights[i]) || 0); ws.push(w); sum += w; }
-    if (sum <= 0 || cap <= 0) return new Array(24).fill(0);
-    var counts = [], fracs = [], used = 0;
-    for (i = 0; i < 24; i++) {
-        var exact = cap * ws[i] / sum, n = Math.floor(exact);
-        counts.push(n); fracs.push({ slot: i, frac: exact - n }); used += n;
-    }
-    fracs.sort(function (a, b) { return b.frac - a.frac || a.slot - b.slot; });
-    // 余数 = Σfrac且每项 <1 → 正小数的个数必 >= 余数，逐个 +1 即可补齐（最多 23 轮）
-    for (var k = 0; k < 24 && used < cap; k++) {
-        if (fracs[k].frac <= 0) break;
-        counts[fracs[k].slot]++; used++;
-    }
-    return counts;
+  var ws = [],
+    sum = 0,
+    i;
+  for (i = 0; i < 24; i++) {
+    var w = Math.max(0, Number(weights[i]) || 0);
+    ws.push(w);
+    sum += w;
+  }
+  if (sum <= 0 || cap <= 0) return new Array(24).fill(0);
+  var counts = [],
+    fracs = [],
+    used = 0;
+  for (i = 0; i < 24; i++) {
+    var exact = (cap * ws[i]) / sum,
+      n = Math.floor(exact);
+    counts.push(n);
+    fracs.push({ slot: i, frac: exact - n });
+    used += n;
+  }
+  fracs.sort(function (a, b) {
+    return b.frac - a.frac || a.slot - b.slot;
+  });
+  // 余数 = Σfrac且每项 <1 → 正小数的个数必 >= 余数，逐个 +1 即可补齐（最多 23 轮）
+  for (var k = 0; k < 24 && used < cap; k++) {
+    if (fracs[k].frac <= 0) break;
+    counts[fracs[k].slot]++;
+    used++;
+  }
+  return counts;
 }
 
 /**
@@ -977,17 +1228,18 @@ function allocateSlots(weights, cap) {
  * @returns {number|null}
  */
 function nextGridPointMs(nowMs) {
-    var dayStart = dayStartMs(nowMs);
-    for (var i = 0; i < 24; i++) {
-        var n = slotCounts[i] | 0;
-        if (n <= 0) continue;                                   // 0 占比格：整小时不刷
-        var start = dayStart + i * REFRESH.slotMs, step = REFRESH.slotMs / n;
-        var k = Math.ceil((nowMs - start) / step);
-        if (k < 0) k = 0;                                       // 尚未开始的格：取其首点
-        if (k >= n) continue;                                   // 本格点位已全部走过：顺延
-        return start + k * step;
-    }
-    return null;
+  var dayStart = dayStartMs(nowMs);
+  for (var i = 0; i < 24; i++) {
+    var n = slotCounts[i] | 0;
+    if (n <= 0) continue; // 0 占比格：整小时不刷
+    var start = dayStart + i * REFRESH.slotMs,
+      step = REFRESH.slotMs / n;
+    var k = Math.ceil((nowMs - start) / step);
+    if (k < 0) k = 0; // 尚未开始的格：取其首点
+    if (k >= n) continue; // 本格点位已全部走过：顺延
+    return start + k * step;
+  }
+  return null;
 }
 
 /**
@@ -999,36 +1251,50 @@ function nextGridPointMs(nowMs) {
  * @returns {number} 毫秒
  */
 function planNextRefresh() {
-    var nowMs = serverNowMs();
-    var delay, reason;
-    if (daily.maxDaily > 0 && dailyLeft() <= 0) {               // ① 成功配额耗尽
-        var ms = daily.refreshMs - nowMs + cfg.flipBuffer;
-        delay = ms > 0 ? ms : cfg.idleRefresh;
-        reason = ms > 0 ? 'quota' : 'idle-fallback';
-    } else if (stats.refreshUsed >= refreshCap) {               // ② 实际刷新次数触顶（手动/异常放大兼底）
-        var m2 = daily.refreshMs - nowMs;
-        delay = m2 > 0 ? m2 : cfg.idleRefresh;
-        reason = m2 > 0 ? 'budget' : 'idle-fallback';
-    } else if (!daily.refreshMs) {                              // 未同步到刷新点：时刻表无从对齐
-        delay = cfg.activeRefresh;
-        reason = 'no-refresh-point';
+  var nowMs = serverNowMs();
+  var delay, reason;
+  if (daily.maxDaily > 0 && dailyLeft() <= 0) {
+    // ① 成功配额耗尽
+    var ms = daily.refreshMs - nowMs + cfg.flipBuffer;
+    delay = ms > 0 ? ms : cfg.idleRefresh;
+    reason = ms > 0 ? 'quota' : 'idle-fallback';
+  } else if (stats.refreshUsed >= refreshCap) {
+    // ② 实际刷新次数触顶（手动/异常放大兼底）
+    var m2 = daily.refreshMs - nowMs;
+    delay = m2 > 0 ? m2 : cfg.idleRefresh;
+    reason = m2 > 0 ? 'budget' : 'idle-fallback';
+  } else if (!daily.refreshMs) {
+    // 未同步到刷新点：时刻表无从对齐
+    delay = cfg.activeRefresh;
+    reason = 'no-refresh-point';
+  } else {
+    var next = nextGridPointMs(nowMs);
+    if (next == null) {
+      // ④ 今日格点走完：睡到日界重开
+      var m3 = daily.refreshMs - nowMs;
+      delay = m3 > 0 ? m3 : cfg.idleRefresh;
+      reason = m3 > 0 ? 'day-done' : 'idle-fallback';
     } else {
-        var next = nextGridPointMs(nowMs);
-        if (next == null) {                                     // ④ 今日格点走完：睡到日界重开
-            var m3 = daily.refreshMs - nowMs;
-            delay = m3 > 0 ? m3 : cfg.idleRefresh;
-            reason = m3 > 0 ? 'day-done' : 'idle-fallback';
-        } else {
-            delay = next - nowMs;
-            reason = delay > REFRESH.hopCap ? 'grid-hop' : 'grid';   // grid-hop：长睡分段，醒来重查表
-            if (delay < cfg.reloadGap) delay = cfg.reloadGap;       // 绝对地板（列表重随机节流）
-            else if (delay > REFRESH.hopCap) delay = REFRESH.hopCap;
-        }
+      delay = next - nowMs;
+      reason = delay > REFRESH.hopCap ? 'grid-hop' : 'grid'; // grid-hop：长睡分段，醒来重查表
+      if (delay < cfg.reloadGap)
+        delay = cfg.reloadGap; // 绝对地板（列表重随机节流）
+      else if (delay > REFRESH.hopCap) delay = REFRESH.hopCap;
     }
-    var slot = curSlotOf(nowMs), step = slot >= 0 && (slotCounts[slot] | 0) > 0 ? REFRESH.slotMs / (slotCounts[slot] | 0) : 0;
-    log.debug('next refresh in %ds. reason=%s; slot=%d step=%ds; refreshUsed=%d/%d; dailyLeft=%d',
-        Math.round(delay / 1000), reason, slot, Math.round(step / 1000), stats.refreshUsed, refreshCap, dailyLeft());
-    return delay;
+  }
+  var slot = curSlotOf(nowMs),
+    step = slot >= 0 && (slotCounts[slot] | 0) > 0 ? REFRESH.slotMs / (slotCounts[slot] | 0) : 0;
+  log.debug(
+    'next refresh in %ds. reason=%s; slot=%d step=%ds; refreshUsed=%d/%d; dailyLeft=%d',
+    Math.round(delay / 1000),
+    reason,
+    slot,
+    Math.round(step / 1000),
+    stats.refreshUsed,
+    refreshCap,
+    dailyLeft(),
+  );
+  return delay;
 }
 
 /**
@@ -1037,12 +1303,12 @@ function planNextRefresh() {
  * @returns {Promise<number>} 下拍 delay（毫秒）；0 = 立即再跑（alive=false 或 pending 补扫）。
  */
 async function cycleRun() {
-    await doScan();
-    if (!aliveFn()) return 0;
-    await consume();
-    if (!aliveFn()) return 0;
-    if (cycle.pending) return 0;
-    return planNextRefresh();
+  await doScan();
+  if (!aliveFn()) return 0;
+  await consume();
+  if (!aliveFn()) return 0;
+  if (cycle.pending) return 0;
+  return planNextRefresh();
 }
 
 const cycle = createCycle({ log: log, alive: aliveFn, run: cycleRun, fallback: cfg.activeRefresh });
@@ -1052,15 +1318,18 @@ const cycle = createCycle({ log: log, alive: aliveFn, run: cycleRun, fallback: c
  * @param {object} ev net 事件 {cmd, data}
  */
 function onRefreshPush(ev) {
-    if (!aliveFn()) return;
-    var p = ev && ev.data;                 // PBV2 推送经 Event.#dataOf 得 {header,data}，业务对象在 .data（与 send 的 ret.data 口径不同）
-    if (!p || typeof p !== 'object') return;
-    if (p.header && (p.header.s | 0) !== 0) return;   // 非 0 状态推送不参与配额覆盖
-    var d = p.data || p;
-    if (!d || typeof d !== 'object') return;
-    var before = dailyLeft();
-    applyRefresh(d);
-    if (before <= 0 && dailyLeft() > 0) { log.info('loot quota restored by push, wake scan.'); cycle.kick(); }
+  if (!aliveFn()) return;
+  var p = ev && ev.data; // PBV2 推送经 Event.#dataOf 得 {header,data}，业务对象在 .data（与 send 的 ret.data 口径不同）
+  if (!p || typeof p !== 'object') return;
+  if (p.header && (p.header.s | 0) !== 0) return; // 非 0 状态推送不参与配额覆盖
+  var d = p.data || p;
+  if (!d || typeof d !== 'object') return;
+  var before = dailyLeft();
+  applyRefresh(d);
+  if (before <= 0 && dailyLeft() > 0) {
+    log.info('loot quota restored by push, wake scan.');
+    cycle.kick();
+  }
 }
 
 // ── 生命周期 ─────────────────────────────────────────────────────────────
@@ -1070,11 +1339,15 @@ function onRefreshPush(ev) {
  * @returns {boolean}
  */
 function install(ctx) {
-    ctxRef = ctx;
-    net = ctx.net;
-    if (!net || !net.install()) { log.warn('install failed: pocketcc.net unavailable'); net = null; return false; }
-    log.info('installed.');
-    return true;
+  ctxRef = ctx;
+  net = ctx.net;
+  if (!net || !net.install()) {
+    log.warn('install failed: pocketcc.net unavailable');
+    net = null;
+    return false;
+  }
+  log.info('installed.');
+  return true;
 }
 
 /**
@@ -1082,11 +1355,19 @@ function install(ctx) {
  * @param {object} ctx
  */
 function run(ctx) {
-    ctxRef = ctx;
-    listOpened = false; lastReloadAt = 0; powerCache = 0; powerAge = 0; powerFp = ''; powerAt = 0; powerProbing = false;   // 冷启动作废战力缓存，首轮必真实探一次
-    ctx.on.push(CMD_REFRESH_PUSH, onRefreshPush);   // 订阅须挂 run：pause 会统一摘 triggers，install 只跑一次不重挂
-    log.info('started.');
-    Promise.all([loadBlocked(), loadStats()]).then(function () { if (aliveFn()) cycle.kick(); });
+  ctxRef = ctx;
+  listOpened = false;
+  lastReloadAt = 0;
+  powerCache = 0;
+  powerAge = 0;
+  powerFp = '';
+  powerAt = 0;
+  powerProbing = false; // 冷启动作废战力缓存，首轮必真实探一次
+  ctx.on.push(CMD_REFRESH_PUSH, onRefreshPush); // 订阅须挂 run：pause 会统一摘 triggers，install 只跑一次不重挂
+  log.info('started.');
+  Promise.all([loadBlocked(), loadStats()]).then(function () {
+    if (aliveFn()) cycle.kick();
+  });
 }
 
 /**
@@ -1094,85 +1375,198 @@ function run(ctx) {
  *   面板两字段——目标物品 sortlist（勾选=参与、拖拽=优先级，checkable）+ 攻击部队 select(1-8)；
  *   刷新/间距/池为内置常量，funcType 恒 1 不进配置。
  */
-var presetOptions = [1, 2, 3, 4, 5, 6, 7, 8].map(function (i) { return { value: i, label: '预设部队 ' + i }; });
+var presetOptions = [1, 2, 3, 4, 5, 6, 7, 8].map(function (i) {
+  return { value: i, label: '预设部队 ' + i };
+});
 
 reactor.register({
-    id: 'truckIntercept',
-    label: '卡车争夺',
-    storageKey: 'pocketcc.feat.truckIntercept',
-    symbols: ['dataCenter', 'tableManager'],
-    scenes: ['Home', 'NWorldMap'],
-    offInCombat: true,
-    defaults: { enabled: false, order: TRUCK_ITEM_POOL.slice(), off: [], preset: 1, grades: ALL_GRADES.slice(), threat: true, ratioCounter: RATIO_DEFAULT.counter, ratioSame: RATIO_DEFAULT.same, ratioCountered: RATIO_DEFAULT.countered, refreshCap: REFRESH.capDefault, refreshPreset: REFRESH.presetDefault },
-    fields: [
-        {
-            key: 'grades', type: 'multiopts', label: '目标品级',
-            hint: '勾选要拦截的运输车品级；全不勾=不限制品级',
-            gridMin: 48,   // 5 个短标签（普通/高级/…）收进一行（默认 72px 列宽会排成 4+1 两行）
-            options: ALL_GRADES.map(function (g) { return { value: g, label: GRADE_LABELS[g] || ('' + g) }; }),
-        },
-        {
-            key: 'order', type: 'sortlist', checkable: true, offKey: 'off',
-            label: '目标物品',
-            hint: '勾选要拦截的物品，越靠上优先级越高；命中其一即视为可打目标',
-            resolve: item.sortResolve,
-        },
-        { key: 'preset', label: '攻击部队', section: '拦截编队', type: 'select', options: presetOptions },
-        {
-            key: 'dailyState', label: '今日拦截', section: '拦截编队', type: 'text',
-            get: function () { return daily.maxDaily > 0 ? (daily.used + '/' + daily.maxDaily) : '—'; },
-        },
-        {
-            key: 'refreshPreset', type: 'select', section: '刷新策略', label: '时段模板',
-            options: Object.keys(REFRESH_PRESETS).map(function (k) { return { value: k, label: PRESET_LABELS[k] }; }),
-            hint: '一天内哪些小时多刷（游戏日 24 格占比）；占比低的格自然变疏，归零格不刷',
-        },
-        {
-            key: 'refreshCap', type: 'number', section: '刷新策略', label: '今日刷新上限', min: 1, step: 10,
-            hint: '一天计划刷多少次卡车列表：按模板占比铺到 24 个小时格，cap 越大整体越密（正常模板 cap=300 → 热点约 2.4 分钟、白天约 4.6 分钟、深夜约 15 分钟一次）',
-        },
-        {
-            key: 'refreshState', label: '今日刷新 / 今日攻击', section: '刷新策略', type: 'text', multiline: true, inline: true,
-            get: function () {
-                var slot = curSlotOf(serverNowMs()), n = slot >= 0 ? (slotCounts[slot] | 0) : 0;
-                var per = slot < 0 ? '—' : (n > 0 ? Math.round(REFRESH.slotMs / n / 1000) + 's' : '不刷');   // — = 尚未同步到刷新点，时刻表无从对齐
-                return '刷新 ' + stats.refreshUsed + '/' + refreshCap + ' · 本小时间隔 ' + per
-                    + '\n尝试 ' + stats.tried + ' · 胜 ' + stats.win + ' · 负 ' + stats.fail + ' · 拒 ' + stats.rejected;
-            },
-        },
-        { key: 'threat', type: 'checkbox', section: '拦截判定', secCollapsible: true, secCollapsed: true, label: '只打能赢（战力+克制判定）' },
-        { key: 'ratioCounter', label: '我克敌·战力比上限', section: '拦截判定', min: 0.1, step: 0.05, float: true },
-        { key: 'ratioSame', label: '同军种·战力比上限', section: '拦截判定', min: 0.1, step: 0.05, float: true },
-        { key: 'ratioCountered', label: '我被克·战力比上限', section: '拦截判定', min: 0.1, step: 0.05, float: true },
-        { key: 'probeBtn', type: 'button', section: '拦截判定', label: '↻ 刷新我方战力', busyText: '刷新中…', onClick: function (cfg) { return probeForPanel(cfg); } },
-        {
-            key: 'threatView', label: '我方战力 / 可打上限（陆·海·空）', section: '拦截判定', type: 'text', multiline: true,
-            get: function () {
-                if (!my.ready) return my.tried ? '未探到（该预设无兵 / 未解锁卡车功能）\n点上方「刷新我方战力」重试' : '探测中…（也可点上方「刷新我方战力」）';
-                var c = branchCeilings();
-                var lines = ['我方：' + fmtPower(my.power) + ' · ' + (my.branch ? branchName(my.branch) + '军' : '军种未知')];
-                c.list.forEach(function (x) {
-                    lines.push(branchName(x.b) + '军（' + x.rel + '≤' + x.lim + '）：敌 ≤ ' + fmtPower(x.ceil));
-                });
-                return lines.join('\n');
-            },
-        },
-    ],
-    toModuleCfg: function (c) {
-        return {
-            order: Array.isArray(c.order) ? c.order.slice() : TRUCK_ITEM_POOL.slice(),
-            off: Array.isArray(c.off) ? c.off.slice() : [],
-            preset: Number(c.preset) || 1,
-            grades: Array.isArray(c.grades) ? c.grades.slice() : ALL_GRADES.slice(),
-            threat: c.threat !== false,
-            ratioCounter: Number(c.ratioCounter) || RATIO_DEFAULT.counter,
-            ratioSame: Number(c.ratioSame) || RATIO_DEFAULT.same,
-            ratioCountered: Number(c.ratioCountered) || RATIO_DEFAULT.countered,
-            refreshCap: Number(c.refreshCap) || REFRESH.capDefault,
-            refreshPreset: REFRESH_PRESETS[c.refreshPreset] ? c.refreshPreset : REFRESH.presetDefault,
-        };
+  id: 'truckIntercept',
+  label: '卡车争夺',
+  storageKey: 'pocketcc.feat.truckIntercept',
+  symbols: ['dataCenter', 'tableManager'],
+  scenes: ['Home', 'NWorldMap'],
+  offInCombat: true,
+  defaults: {
+    enabled: false,
+    order: TRUCK_ITEM_POOL.slice(),
+    off: [],
+    preset: 1,
+    grades: ALL_GRADES.slice(),
+    threat: true,
+    ratioCounter: RATIO_DEFAULT.counter,
+    ratioSame: RATIO_DEFAULT.same,
+    ratioCountered: RATIO_DEFAULT.countered,
+    refreshCap: REFRESH.capDefault,
+    refreshPreset: REFRESH.presetDefault,
+  },
+  fields: [
+    {
+      key: 'grades',
+      type: 'multiopts',
+      label: '目标品级',
+      hint: '勾选要拦截的运输车品级；全不勾=不限制品级',
+      gridMin: 48, // 5 个短标签（普通/高级/…）收进一行（默认 72px 列宽会排成 4+1 两行）
+      options: ALL_GRADES.map(function (g) {
+        return { value: g, label: GRADE_LABELS[g] || '' + g };
+      }),
     },
-    install: install,
-    configure: configure,
-    run: run,
+    {
+      key: 'order',
+      type: 'sortlist',
+      checkable: true,
+      offKey: 'off',
+      label: '目标物品',
+      hint: '勾选要拦截的物品，越靠上优先级越高；命中其一即视为可打目标',
+      resolve: item.sortResolve,
+    },
+    {
+      key: 'preset',
+      label: '攻击部队',
+      section: '拦截编队',
+      type: 'select',
+      options: presetOptions,
+    },
+    {
+      key: 'dailyState',
+      label: '今日拦截',
+      section: '拦截编队',
+      type: 'text',
+      get: function () {
+        return daily.maxDaily > 0 ? daily.used + '/' + daily.maxDaily : '—';
+      },
+    },
+    {
+      key: 'refreshPreset',
+      type: 'select',
+      section: '刷新策略',
+      label: '时段模板',
+      options: Object.keys(REFRESH_PRESETS).map(function (k) {
+        return { value: k, label: PRESET_LABELS[k] };
+      }),
+      hint: '一天内哪些小时多刷（游戏日 24 格占比）；占比低的格自然变疏，归零格不刷',
+    },
+    {
+      key: 'refreshCap',
+      type: 'number',
+      section: '刷新策略',
+      label: '今日刷新上限',
+      min: 1,
+      step: 10,
+      hint: '一天计划刷多少次卡车列表：按模板占比铺到 24 个小时格，cap 越大整体越密（正常模板 cap=300 → 热点约 2.4 分钟、白天约 4.6 分钟、深夜约 15 分钟一次）',
+    },
+    {
+      key: 'refreshState',
+      label: '今日刷新 / 今日攻击',
+      section: '刷新策略',
+      type: 'text',
+      multiline: true,
+      inline: true,
+      get: function () {
+        var slot = curSlotOf(serverNowMs()),
+          n = slot >= 0 ? slotCounts[slot] | 0 : 0;
+        var per = slot < 0 ? '—' : n > 0 ? Math.round(REFRESH.slotMs / n / 1000) + 's' : '不刷'; // — = 尚未同步到刷新点，时刻表无从对齐
+        return (
+          '刷新 ' +
+          stats.refreshUsed +
+          '/' +
+          refreshCap +
+          ' · 本小时间隔 ' +
+          per +
+          '\n尝试 ' +
+          stats.tried +
+          ' · 胜 ' +
+          stats.win +
+          ' · 负 ' +
+          stats.fail +
+          ' · 拒 ' +
+          stats.rejected
+        );
+      },
+    },
+    {
+      key: 'threat',
+      type: 'checkbox',
+      section: '拦截判定',
+      secCollapsible: true,
+      secCollapsed: true,
+      label: '只打能赢（战力+克制判定）',
+    },
+    {
+      key: 'ratioCounter',
+      label: '我克敌·战力比上限',
+      section: '拦截判定',
+      min: 0.1,
+      step: 0.05,
+      float: true,
+    },
+    {
+      key: 'ratioSame',
+      label: '同军种·战力比上限',
+      section: '拦截判定',
+      min: 0.1,
+      step: 0.05,
+      float: true,
+    },
+    {
+      key: 'ratioCountered',
+      label: '我被克·战力比上限',
+      section: '拦截判定',
+      min: 0.1,
+      step: 0.05,
+      float: true,
+    },
+    {
+      key: 'probeBtn',
+      type: 'button',
+      section: '拦截判定',
+      label: '↻ 刷新我方战力',
+      busyText: '刷新中…',
+      onClick: function (cfg) {
+        return probeForPanel(cfg);
+      },
+    },
+    {
+      key: 'threatView',
+      label: '我方战力 / 可打上限（陆·海·空）',
+      section: '拦截判定',
+      type: 'text',
+      multiline: true,
+      get: function () {
+        if (!my.ready)
+          return my.tried
+            ? '未探到（该预设无兵 / 未解锁卡车功能）\n点上方「刷新我方战力」重试'
+            : '探测中…（也可点上方「刷新我方战力」）';
+        var c = branchCeilings();
+        var lines = [
+          '我方：' +
+            fmtPower(my.power) +
+            ' · ' +
+            (my.branch ? branchName(my.branch) + '军' : '军种未知'),
+        ];
+        c.list.forEach(function (x) {
+          lines.push(
+            branchName(x.b) + '军（' + x.rel + '≤' + x.lim + '）：敌 ≤ ' + fmtPower(x.ceil),
+          );
+        });
+        return lines.join('\n');
+      },
+    },
+  ],
+  toModuleCfg: function (c) {
+    return {
+      order: Array.isArray(c.order) ? c.order.slice() : TRUCK_ITEM_POOL.slice(),
+      off: Array.isArray(c.off) ? c.off.slice() : [],
+      preset: Number(c.preset) || 1,
+      grades: Array.isArray(c.grades) ? c.grades.slice() : ALL_GRADES.slice(),
+      threat: c.threat !== false,
+      ratioCounter: Number(c.ratioCounter) || RATIO_DEFAULT.counter,
+      ratioSame: Number(c.ratioSame) || RATIO_DEFAULT.same,
+      ratioCountered: Number(c.ratioCountered) || RATIO_DEFAULT.countered,
+      refreshCap: Number(c.refreshCap) || REFRESH.capDefault,
+      refreshPreset: REFRESH_PRESETS[c.refreshPreset] ? c.refreshPreset : REFRESH.presetDefault,
+    };
+  },
+  install: install,
+  configure: configure,
+  run: run,
 });

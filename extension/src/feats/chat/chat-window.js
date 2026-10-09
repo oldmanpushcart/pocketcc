@@ -73,10 +73,14 @@ for (const d of CHAN_DEFS) if (d.c != null && d.key !== 'pm') KEY_BY_C[d.c] = d.
  * @param {number} c 频道号
  * @returns {boolean}
  */
-function isDynamicRoomChan(c) { return c !== 0 && c !== 1 && c !== 2 && c !== 5; }
+function isDynamicRoomChan(c) {
+  return c !== 0 && c !== 1 && c !== 2 && c !== 5;
+}
 
 /** 频道号 -> 会话键前缀（'cross'、'c6' 等） */
-function chanKeyOf(c) { return KEY_BY_C[c] || ('c' + c); }
+function chanKeyOf(c) {
+  return KEY_BY_C[c] || 'c' + c;
+}
 
 /** 会话键 -> 频道号；取不到返回 null */
 function chanOfKey(key) {
@@ -103,7 +107,9 @@ function chanLabelOfKey(key) {
  * @param {*} s 应答 data 原文（文案键或任意文本）
  * @returns {string} 译文或原文
  */
-function locText(s) { return l10n.net(s); }
+function locText(s) {
+  return l10n.net(s);
+}
 
 /**
  * 语言键+参数 → 游戏当前语言文本（转发 core/game-api l10n.text，与游戏 getText(key,...paras) 同源；
@@ -112,7 +118,9 @@ function locText(s) { return l10n.net(s); }
  * @param {...*} paras 模板参数
  * @returns {string}
  */
-function locGetText(key) { return l10n.text.apply(null, arguments); }
+function locGetText(...paras) {
+  return l10n.text.apply(null, paras);
+}
 
 /**
  * 配置表行查询（转发 core/game-api l10n.tableRow，只读；未命中返回 null）。
@@ -120,13 +128,21 @@ function locGetText(key) { return l10n.text.apply(null, arguments); }
  * @param {*} id 行 id
  * @returns {object|null}
  */
-function tableRow(semantic, id) { return l10n.tableRow(semantic, id); }
+function tableRow(semantic, id) {
+  return l10n.tableRow(semantic, id);
+}
 
 /** 空判（对齐游戏 r.Obj.isEmpty） */
-function isEm(v) { return v == null || v === ''; }
+function isEm(v) {
+  return v == null || v === '';
+}
 
 /** @type {object} 面板推入的模块配置（configure 更新） */
-var cfg = { quick: { world: true, alliance: true, pm: true, cross: true, group: false }, opacity: 75, showDate: true };
+var cfg = {
+  quick: { world: true, alliance: true, pm: true, cross: true, group: false },
+  opacity: 75,
+  showDate: true,
+};
 
 /** @type {ChatOverlay|null} 浮层视图实例 */
 var overlay = null;
@@ -177,7 +193,21 @@ var lastSendAt = 0;
 function bufOf(key, title) {
   var b = bufs.get(key);
   if (!b) {
-    b = { key, title: title || key, c: null, roomId: '', list: [], ids: new Set(), unread: 0, loaded: false, pullPages: 0, speakers: new Map(), lastAt: 0, readOnce: false, lastPreview: '' };
+    b = {
+      key,
+      title: title || key,
+      c: null,
+      roomId: '',
+      list: [],
+      ids: new Set(),
+      unread: 0,
+      loaded: false,
+      pullPages: 0,
+      speakers: new Map(),
+      lastAt: 0,
+      readOnce: false,
+      lastPreview: '',
+    };
     var d = CHAN_DEFS.find((x) => x.key === key);
     if (d) b.c = d.c;
     bufs.set(key, b);
@@ -211,7 +241,11 @@ function syncRoomIds() {
 function safeParse(s) {
   if (s == null || s === '') return null;
   if (typeof s === 'object') return s;
-  try { return JSON.parse(s); } catch (e) { return null; }
+  try {
+    return JSON.parse(s);
+  } catch (e) {
+    return null;
+  }
 }
 
 /**
@@ -223,7 +257,10 @@ function safeParse(s) {
 function stripRich(s) {
   return String(s == null ? '' : s)
     .replace(/<br\s*\/?>/gi, ' ')
-    .replace(/<\/?(?:color|c|b|i|u|font|outline|shadow|link|on|img|image|sprite|quad)\b[^>]*>/gi, '')
+    .replace(
+      /<\/?(?:color|c|b|i|u|font|outline|shadow|link|on|img|image|sprite|quad)\b[^>]*>/gi,
+      '',
+    )
     .replace(/<\/?[a-z][^>]*>/gi, '') // 兜底：剔除其余任何 HTML 形标签（如系统推送内联的 <img src="battle_win"/>），防漏进纯文本浮层
     .replace(/[\u001e\u001f]/g, ' ')
     .replace(/[ \t]{2,}/g, ' ')
@@ -239,7 +276,9 @@ function sanitizeSegments(segs) {
   for (var i = 0; i < segs.length; i++) {
     var sg = segs[i];
     if (sg && typeof sg.s === 'string' && /[<>\u001e\u001f]/.test(sg.s)) {
-      var c = Object.assign({}, sg); c.s = stripRich(sg.s); segs[i] = c;
+      var c = Object.assign({}, sg);
+      c.s = stripRich(sg.s);
+      segs[i] = c;
     }
   }
   return segs;
@@ -259,21 +298,37 @@ function linkifyCoords(segs) {
   var out = null; // 懒建：首个命中前不拷贝，无命中路径零分配
   for (var i = 0; i < segs.length; i++) {
     var sg = segs[i];
-    var isText = sg && sg.type === 'text' && typeof sg.s === 'string' && (sg.s.indexOf('(') >= 0 || sg.s.indexOf('（') >= 0);
-    if (!isText) { if (out) out.push(sg); continue; }
+    var isText =
+      sg &&
+      sg.type === 'text' &&
+      typeof sg.s === 'string' &&
+      (sg.s.indexOf('(') >= 0 || sg.s.indexOf('（') >= 0);
+    if (!isText) {
+      if (out) out.push(sg);
+      continue;
+    }
     var re = new RegExp(COORD_LINK_RE.source, 'g');
-    var last = 0; var m; var hit = false;
+    var last = 0;
+    var m;
+    var hit = false;
     while ((m = re.exec(sg.s)) !== null) {
-      var x = +m[1]; var y = +m[2];
+      var x = +m[1];
+      var y = +m[2];
       if (x === 0 && y === 0) continue; // (0,0) 视为非坐标占位，跳过
       if (!out) out = segs.slice(0, i);
       hit = true;
       if (m.index > last) out.push({ type: 'text', s: sg.s.slice(last, m.index) });
-      out.push({ type: 'chip', s: m[0], action: { type: 'pos', x: x, y: y, z: null, subMap: null, click: false }, jumpHint: x + ',' + y });
+      out.push({
+        type: 'chip',
+        s: m[0],
+        action: { type: 'pos', x: x, y: y, z: null, subMap: null, click: false },
+        jumpHint: x + ',' + y,
+      });
       last = re.lastIndex;
     }
-    if (hit) { if (last < sg.s.length) out.push({ type: 'text', s: sg.s.slice(last) }); }
-    else if (out) out.push(sg);
+    if (hit) {
+      if (last < sg.s.length) out.push({ type: 'text', s: sg.s.slice(last) });
+    } else if (out) out.push(sg);
   }
   return out || segs;
 }
@@ -287,15 +342,19 @@ function linkifyCoords(segs) {
 function historyList(ret) {
   var d = ret && ret.data;
   if (!d || typeof d !== 'object') return [];
-  var l = d.list != null ? d.list : (d.data && typeof d.data === 'object' ? d.data.list : null);
+  var l = d.list != null ? d.list : d.data && typeof d.data === 'object' ? d.data.list : null;
   return Array.isArray(l) ? l : [];
 }
 
 /** @returns {string} 本人数字 UID */
-function myUid() { return String(getUid() || ''); }
+function myUid() {
+  return String(getUid() || '');
+}
 
 /** @returns {string} 本人 StrUid（快速登录模式下与 UID 不同，PM 的 fu/tu 用它） */
-function myStrUid() { return gameData.strUid() || myUid(); }
+function myStrUid() {
+  return gameData.strUid() || myUid();
+}
 
 /**
  * 时间归一：频道 t 为秒串、PM/time 为毫秒——统一成毫秒。
@@ -304,7 +363,7 @@ function myStrUid() { return gameData.strUid() || myUid(); }
  * @returns {number}
  */
 function toMs(t, ms) {
-  var v = ms != null ? +ms : (t != null ? +t : Date.now());
+  var v = ms != null ? +ms : t != null ? +t : Date.now();
   if (v < 1e11) v *= 1000;
   return v;
 }
@@ -319,7 +378,9 @@ function hhmm(ms) {
   var d = new Date(ms);
   var p = (n) => (n < 10 ? '0' : '') + n;
   var hms = p(d.getHours()) + ':' + p(d.getMinutes()) + ':' + p(d.getSeconds());
-  return cfg.showDate ? d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate()) + ' ' + hms : hms;
+  return cfg.showDate
+    ? d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate()) + ' ' + hms
+    : hms;
 }
 
 /**
@@ -337,33 +398,48 @@ function buildEntry(raw, kind) {
   var responseData = custom.responseData || null;
   var fp = safeParse(raw.fp) || {};
   var f = safeParse(raw.f) || {};
-  var uid = String((norm.from && norm.from.uid) || raw.uid || (typeof raw.fu === 'object' ? raw.fu.uid : raw.fu) || '');
+  var uid = String(
+    (norm.from && norm.from.uid) ||
+      raw.uid ||
+      (typeof raw.fu === 'object' ? raw.fu.uid : raw.fu) ||
+      '',
+  );
   var name = (norm.from && norm.from.name) || raw.u || raw.n || fp.username || f.n || '';
   if (!name) name = uid ? '玩家' + uid.slice(-4) : '?';
   if (uid === '-1') name = ''; // 系统消息（fu/uid=="-1"）无发送者昵称，正文模板即全部
   var self = !!uid && (uid === myUid() || uid === myStrUid());
 
   // 正文：历史项可能只有 content 无 m（游戏侧预处理口径），这里同源兼容；@编码还原 + 链接转 chip
-  var text = String((norm.text != null && norm.text !== '') ? norm.text : (raw.content != null ? raw.content : ''))
-    .split(AT_ALL_TOKEN).join('@' + AT_ALL_LABEL);
+  var text = String(
+    norm.text != null && norm.text !== '' ? norm.text : raw.content != null ? raw.content : '',
+  )
+    .split(AT_ALL_TOKEN)
+    .join('@' + AT_ALL_LABEL);
   var cls = classify(raw, norm, { translate: locGetText });
   var segments;
   if (cls.kind === 'system' || cls.kind === 'custom_system') {
     // P3：正文是语言键模板（\x1e/\x1f/|/; 规则，UpdateData:714-730），走游戏 getText 同键翻译；
     // 富卡片系统消息（cst∈ChatCustomSystemType）前置卡型 chip
     segments = decodeSystemText(cls.sys, atData);
-    if (cls.kind === 'custom_system' && CST_LABEL[cls.cst]) segments = [{ type: 'chip', s: '[' + CST_LABEL[cls.cst] + ']' }].concat(segments);
+    if (cls.kind === 'custom_system' && CST_LABEL[cls.cst])
+      segments = [{ type: 'chip', s: '[' + CST_LABEL[cls.cst] + ']' }].concat(segments);
   } else if (cls.kind === 'ct') {
     // ct 内容（红包/图片/寻人）：游戏展示文本为 getText(m)（UpdateData:732），chip 标类型 + 正文译文
-    segments = [{ type: 'chip', s: cls.label }].concat(text ? decodeAtCodes(locGetText(text), atData) : []);
+    segments = [{ type: 'chip', s: cls.label }].concat(
+      text ? decodeAtCodes(locGetText(text), atData) : [],
+    );
   } else if (cls.kind !== 'chat') {
     segments = linkSegments(cls, norm);
   } else if (kind === 'pm' && /^(\d+)\s*,\s*(\d+)$/.test(text)) {
     var mm = /^(\d+)\s*,\s*(\d+)$/.exec(text);
-    segments = [{
-      type: 'chip', s: '[位置 ' + mm[1] + ',' + mm[2] + ']',
-      action: { type: 'pos', x: +mm[1], y: +mm[2], z: null, click: false }, jumpHint: mm[1] + ',' + mm[2],
-    }];
+    segments = [
+      {
+        type: 'chip',
+        s: '[位置 ' + mm[1] + ',' + mm[2] + ']',
+        action: { type: 'pos', x: +mm[1], y: +mm[2], z: null, click: false },
+        jumpHint: mm[1] + ',' + mm[2],
+      },
+    ];
   } else {
     segments = richSplit(text, custom.richParas, atData); // P4：内联表情/道具/建筑富文本 + @还原
   }
@@ -376,24 +452,31 @@ function buildEntry(raw, kind) {
   // 会话键
   var key;
   if (kind === 'pm') {
-    var tu = typeof raw.tu === 'object' ? String((raw.tu && raw.tu.uid) || '') : String(raw.tu || '');
+    var tu =
+      typeof raw.tu === 'object' ? String((raw.tu && raw.tu.uid) || '') : String(raw.tu || '');
     var other = self ? tu : uid;
     key = 'pm:' + (other || 'unknown');
   } else if (raw.roomId && isDynamicRoomChan(+norm.channel)) {
     key = chanKeyOf(+norm.channel) + ':' + String(raw.roomId); // 跨服/活动动态房：一房一会话（条目随活动出现/消亡，游戏 roomChatChange 吸收）
   } else {
-    key = KEY_BY_C[norm.channel != null ? +norm.channel : -1] || ('c' + norm.channel);
+    key = KEY_BY_C[norm.channel != null ? +norm.channel : -1] || 'c' + norm.channel;
   }
 
   // 被 @ 判据：atData 点名本人，或文本含 @全体成员（弱高亮）
   var mention = false;
   if (!self && atData && atData.uid) {
-    for (var u of atData.uid) { var su = String(u && u.uid != null ? u.uid : u); if (su === myUid() || su === myStrUid()) { mention = true; break; } }
+    for (var u of atData.uid) {
+      var su = String(u && u.uid != null ? u.uid : u);
+      if (su === myUid() || su === myStrUid()) {
+        mention = true;
+        break;
+      }
+    }
   }
   if (!self && text.indexOf('@' + AT_ALL_LABEL) >= 0) mention = true;
 
   var entry = {
-    id: raw.uuid != null ? String(raw.uuid) : (norm.id != null ? String(norm.id) : 'x' + Date.now()),
+    id: raw.uuid != null ? String(raw.uuid) : norm.id != null ? String(norm.id) : 'x' + Date.now(),
     uid,
     timeMs: toMs(raw.t != null ? raw.t : norm.time, raw.time),
     timeStr: hhmm(toMs(raw.t != null ? raw.t : norm.time, raw.time)),
@@ -403,10 +486,22 @@ function buildEntry(raw, kind) {
     pmDir: null,
     segments,
     plain,
-    quote: responseData ? { name: String(responseData.name || ''), msg: String(responseData.msg || ''), id: responseData.uuid || responseData.msgId || null } : null,
+    quote: responseData
+      ? {
+          name: String(responseData.name || ''),
+          msg: String(responseData.msg || ''),
+          id: responseData.uuid || responseData.msgId || null,
+        }
+      : null,
     raw, // 保留原始项供 chatupdate 原位合并后重新 buildEntry/classify（生命周期 P2）
   };
-  return { entry, key, self, otherUid: kind === 'pm' && self ? String((typeof raw.tu === 'object' ? raw.tu.uid : raw.tu) || '') : '' };
+  return {
+    entry,
+    key,
+    self,
+    otherUid:
+      kind === 'pm' && self ? String((typeof raw.tu === 'object' ? raw.tu.uid : raw.tu) || '') : '',
+  };
 }
 
 /**
@@ -421,7 +516,8 @@ function linkSegments(cls, norm) {
   if (cls.kind === 'revoke') return [{ type: 'chip', s: cls.label || '[已撤回]' }];
   var label = cls.kind === 'emoji' ? emojiLabel(cls, norm) : cls.label;
   var hint = '';
-  if (cls.action && cls.action.type === 'pos') hint = cls.action.x + ',' + cls.action.y + ' 跳转地图';
+  if (cls.action && cls.action.type === 'pos')
+    hint = cls.action.x + ',' + cls.action.y + ' 跳转地图';
   else if (cls.action && cls.action.type === 'march') hint = '跳转行军线';
   else if (cls.action && cls.action.type === 'battle') hint = '查看战报详情';
   return [{ type: 'chip', s: label, action: cls.action || null, jumpHint: hint || label }];
@@ -446,10 +542,21 @@ function emojiLabel(cls, norm) {
     var r1 = tableRow('emotionNew', !isEm(llm.emotionId) ? llm.emotionId : llm.iconID);
     if (r1) return '[' + locGetText(r1.name) + ']';
   }
-  var icons = !isEm(llm.iconIDs) ? llm.iconIDs : (!isEm(llm.iconID) ? llm.iconID : (norm && !isEm(norm.emotionId) ? norm.emotionId : null));
+  var icons = !isEm(llm.iconIDs)
+    ? llm.iconIDs
+    : !isEm(llm.iconID)
+      ? llm.iconID
+      : norm && !isEm(norm.emotionId)
+        ? norm.emotionId
+        : null;
   if (icons == null) return cls.label;
   var s = '';
-  String(icons).split('|').forEach(function (h) { var r2 = tableRow('emotion', h); s += r2 ? '[' + locGetText(r2.name) + ']' : '[表情]'; });
+  String(icons)
+    .split('|')
+    .forEach(function (h) {
+      var r2 = tableRow('emotion', h);
+      s += r2 ? '[' + locGetText(r2.name) + ']' : '[表情]';
+    });
   return s || cls.label;
 }
 
@@ -462,7 +569,10 @@ function emojiLabel(cls, norm) {
 function decodeSystemText(sys, atData) {
   if (!sys || isEm(sys.key)) return [];
   var args = sys.args || [];
-  if (sys.argsAreKeys) args = args.map(function (a) { return locGetText(a); });
+  if (sys.argsAreKeys)
+    args = args.map(function (a) {
+      return locGetText(a);
+    });
   return decodeAtCodes(locGetText.apply(null, [sys.key].concat(args)), atData);
 }
 
@@ -474,7 +584,14 @@ function decodeSystemText(sys, atData) {
  * @returns {string|null}
  */
 function richTagText(ty, id) {
-  var row = ty === 0 ? tableRow('emotionNew', id) : ty === 1 ? tableRow('item', id) : ty === 2 ? tableRow('building', id) : null;
+  var row =
+    ty === 0
+      ? tableRow('emotionNew', id)
+      : ty === 1
+        ? tableRow('item', id)
+        : ty === 2
+          ? tableRow('building', id)
+          : null;
   if (!row) return null;
   var nm = locGetText(row.name);
   return ty === 0 ? '[' + nm + ']' : ty === 1 ? '#' + nm + '#' : '{' + nm + '}';
@@ -490,19 +607,32 @@ function richTagText(ty, id) {
  */
 function richSplit(text, richParas, atData) {
   if (!/\uf8f8|\[\d+:\d+\]/.test(text)) return decodeAtCodes(text, atData);
-  var out = []; var qi = 0; var last = 0; var m;
+  var out = [];
+  var qi = 0;
+  var last = 0;
+  var m;
   var re = /\uf8f8|\[(\d+):(\d+)\]/g;
-  var pushText = function (s) { if (s) out = out.concat(decodeAtCodes(s, atData)); };
+  var pushText = function (s) {
+    if (s) out = out.concat(decodeAtCodes(s, atData));
+  };
   while ((m = re.exec(text)) !== null) {
     pushText(text.slice(last, m.index));
-    var ty; var id;
+    var ty;
+    var id;
     if (m[0] === '\uf8f8') {
       var pr = String((richParas && richParas[qi++]) || '').split(',');
-      if (pr.length !== 2 || isEm(pr[1])) { last = re.lastIndex; continue; } // 对齐游戏 U()：非法项替空
-      ty = +pr[0]; id = pr[1];
-    } else { ty = +m[1]; id = m[2]; }
+      if (pr.length !== 2 || isEm(pr[1])) {
+        last = re.lastIndex;
+        continue;
+      } // 对齐游戏 U()：非法项替空
+      ty = +pr[0];
+      id = pr[1];
+    } else {
+      ty = +m[1];
+      id = m[2];
+    }
     var txt = richTagText(ty, id);
-    pushText(txt != null ? txt : (m[0] === '\uf8f8' ? '' : '[' + ty + ':' + id + ']'));
+    pushText(txt != null ? txt : m[0] === '\uf8f8' ? '' : '[' + ty + ':' + id + ']');
     last = re.lastIndex;
   }
   pushText(text.slice(last));
@@ -521,9 +651,15 @@ function reactionsSegments(list) {
   if (!Array.isArray(list)) return [];
   var parts = [];
   for (var r of list) {
-    var n = r && +r.count || 0;
+    var n = (r && +r.count) || 0;
     if (n <= 0) continue;
-    parts.push('[' + (REACT_LABEL[r.reactionType] || String(r.reactionType || '?')) + ' ×' + (n > 99 ? '99+' : n) + ']');
+    parts.push(
+      '[' +
+        (REACT_LABEL[r.reactionType] || String(r.reactionType || '?')) +
+        ' ×' +
+        (n > 99 ? '99+' : n) +
+        ']',
+    );
   }
   return parts.length ? [{ type: 'chip', s: parts.join(' ') }] : [];
 }
@@ -536,17 +672,35 @@ function reactionsSegments(list) {
  */
 function decodeAtCodes(text, atData) {
   // 游戏 m 保留字面 "@昵称"（atData 仅作并列上色名单）；RS序号RS 兼容旧格式/系统消息，其余文本段再按字面 @name 切
-  var names = (atData && Array.isArray(atData.name) && atData.name.length)
-    ? atData.name.map(function (nm) { return '@' + String(nm).split(AT_ALL_TOKEN).join('@' + AT_ALL_LABEL); }).filter(function (t) { return t.length > 1; })
-    : [];
+  var names =
+    atData && Array.isArray(atData.name) && atData.name.length
+      ? atData.name
+          .map(function (nm) {
+            return (
+              '@' +
+              String(nm)
+                .split(AT_ALL_TOKEN)
+                .join('@' + AT_ALL_LABEL)
+            );
+          })
+          .filter(function (t) {
+            return t.length > 1;
+          })
+      : [];
   var segs = [];
-  var pushPlain = function (s) { if (s) segs = segs.concat(splitLiteralAt(s, names)); };
+  var pushPlain = function (s) {
+    if (s) segs = segs.concat(splitLiteralAt(s, names));
+  };
   var re = new RegExp(RS + '(\\d+)' + RS, 'g');
-  var last = 0; var m;
+  var last = 0;
+  var m;
   while ((m = re.exec(text)) !== null) {
     if (m.index > last) pushPlain(text.slice(last, m.index));
     var nm = atData && atData.name ? atData.name[+m[1]] : null;
-    segs.push({ type: 'at', s: '@' + (nm != null ? String(nm).replace(AT_ALL_TOKEN, AT_ALL_LABEL) : '?') });
+    segs.push({
+      type: 'at',
+      s: '@' + (nm != null ? String(nm).replace(AT_ALL_TOKEN, AT_ALL_LABEL) : '?'),
+    });
     last = re.lastIndex;
   }
   if (last < text.length) pushPlain(text.slice(last));
@@ -561,19 +715,33 @@ function decodeAtCodes(text, atData) {
  */
 function splitLiteralAt(s, names) {
   if (!names.length || s.indexOf('@') < 0) return [{ type: 'text', s: s }];
-  var sorted = names.slice().sort(function (a, b) { return b.length - a.length; });
-  var out = []; var buf = ''; var i = 0;
+  var sorted = names.slice().sort(function (a, b) {
+    return b.length - a.length;
+  });
+  var out = [];
+  var buf = '';
+  var i = 0;
   while (i < s.length) {
     if (s[i] === '@') {
       var hit = null;
-      for (var k = 0; k < sorted.length; k++) { if (s.startsWith(sorted[k], i)) { hit = sorted[k]; break; } }
+      for (var k = 0; k < sorted.length; k++) {
+        if (s.startsWith(sorted[k], i)) {
+          hit = sorted[k];
+          break;
+        }
+      }
       if (hit) {
-        if (buf) { out.push({ type: 'text', s: buf }); buf = ''; }
+        if (buf) {
+          out.push({ type: 'text', s: buf });
+          buf = '';
+        }
         out.push({ type: 'at', s: hit });
-        i += hit.length; continue;
+        i += hit.length;
+        continue;
       }
     }
-    buf += s[i]; i++;
+    buf += s[i];
+    i++;
   }
   if (buf) out.push({ type: 'text', s: buf });
   return out.length ? out : [{ type: 'text', s: s }];
@@ -594,8 +762,13 @@ function insertOrdered(b, entry) {
     b.ids.add(entry.id);
     return true;
   }
-  var lo = 0; var hi = list.length;
-  while (lo < hi) { var mid = (lo + hi) >> 1; if (list[mid].timeMs <= entry.timeMs) lo = mid + 1; else hi = mid; }
+  var lo = 0;
+  var hi = list.length;
+  while (lo < hi) {
+    var mid = (lo + hi) >> 1;
+    if (list[mid].timeMs <= entry.timeMs) lo = mid + 1;
+    else hi = mid;
+  }
   list.splice(lo, 0, entry);
   b.ids.add(entry.id);
   return false;
@@ -614,17 +787,25 @@ function pushEntry(key, entry) {
     // 真回声：合并掉同文本的乐观条目（self + local: 前缀 + 60s 时窗内文本相同 → 原位替换）
     for (var i = b.list.length - 1; i >= 0; i--) {
       var o = b.list[i];
-      if (o.self && String(o.id).indexOf('local:') === 0 && o.plain === entry.plain && Math.abs(entry.timeMs - o.timeMs) < 60000) {
+      if (
+        o.self &&
+        String(o.id).indexOf('local:') === 0 &&
+        o.plain === entry.plain &&
+        Math.abs(entry.timeMs - o.timeMs) < 60000
+      ) {
         b.ids.delete(o.id);
         b.list[i] = entry;
         b.ids.add(entry.id);
-        refreshView(key, entry);
+        refreshView(key);
         return false;
       }
     }
   }
   var atTail = insertOrdered(b, entry); // 常态追尾；系统/战报补投带历史时间戳时按时间序插入
-  while (b.list.length > BUF_LIMIT) { var drop = b.list.shift(); b.ids.delete(drop.id); }
+  while (b.list.length > BUF_LIMIT) {
+    var drop = b.list.shift();
+    b.ids.delete(drop.id);
+  }
   b.lastAt = Math.max(b.lastAt, entry.timeMs);
   if (!entry.self) {
     b.speakers.set(entry.uid, entry.name); // 近期发言者（@选人数据源）
@@ -639,7 +820,7 @@ function pushEntry(key, entry) {
 }
 
 /** 乐观条目替换真回声后刷新当前视图 */
-function refreshView(key, entry) {
+function refreshView(key) {
   if (overlay && overlay.isVisible() && key === activeKey) overlay.renderMessages(bufOf(key).list);
 }
 
@@ -658,8 +839,12 @@ function ingest(kind, payload) {
     try {
       var r = buildEntry(raw, kind);
       // 发送者名只用于初始化私聊会话标题；动态房/固定频道不得拿玩家名当 title（否则侧栏活动名被污染）
-      var b = bufOf(r.key, (r.key.indexOf('pm:') === 0 && !r.self && r.entry.name) ? r.entry.name : undefined);
-      if (r.self && r.key.indexOf('pm:') === 0 && b.title !== b.key) r.entry.pmDir = '-> ' + b.title; // 实时追加路径也要带方向标注
+      var b = bufOf(
+        r.key,
+        r.key.indexOf('pm:') === 0 && !r.self && r.entry.name ? r.entry.name : undefined,
+      );
+      if (r.self && r.key.indexOf('pm:') === 0 && b.title !== b.key)
+        r.entry.pmDir = '-> ' + b.title; // 实时追加路径也要带方向标注
       if (raw.roomId) b.roomId = String(raw.roomId);
       pushEntry(r.key, r.entry);
     } catch (e) {
@@ -686,7 +871,9 @@ function revokeInPlace(id, deletedAt) {
       r.entry.id = id; // 锁回原 uuid，避免合并后 id 漂移
       b.list[idx] = r.entry;
       return true;
-    } catch (e) { return false; }
+    } catch (e) {
+      return false;
+    }
   }
   return false;
 }
@@ -702,13 +889,20 @@ function onDel(payload) {
   var touched = false;
   for (var p of arr) {
     if (!p || typeof p !== 'object' || p.uuid == null) continue;
-    if ((+p.deletedAt || 0) > 0) { if (revokeInPlace(String(p.uuid), +p.deletedAt)) touched = true; }
-    else removeIds.add(String(p.uuid));
+    if ((+p.deletedAt || 0) > 0) {
+      if (revokeInPlace(String(p.uuid), +p.deletedAt)) touched = true;
+    } else removeIds.add(String(p.uuid));
   }
   if (removeIds.size) {
     for (var b of bufs.values()) {
       var before = b.list.length;
-      b.list = b.list.filter((e) => { if (removeIds.has(e.id)) { b.ids.delete(e.id); return false; } return true; });
+      b.list = b.list.filter((e) => {
+        if (removeIds.has(e.id)) {
+          b.ids.delete(e.id);
+          return false;
+        }
+        return true;
+      });
       if (b.list.length !== before) touched = true;
     }
   }
@@ -725,7 +919,15 @@ function onUpdate(payload) {
     if (!p || typeof p !== 'object' || p.uuid == null) continue;
     var id = String(p.uuid);
     var owner = null;
-    for (var b of bufs.values()) { for (var e of b.list) { if (e.id === id) { owner = b; break; } } if (owner) break; }
+    for (var b of bufs.values()) {
+      for (var e of b.list) {
+        if (e.id === id) {
+          owner = b;
+          break;
+        }
+      }
+      if (owner) break;
+    }
     if (owner) {
       var idx = owner.list.findIndex((e) => e.id === id);
       var merged = Object.assign({}, owner.list[idx].raw || {}, p); // 补丁覆盖原 raw（不 mutate 原对象）
@@ -734,7 +936,9 @@ function onUpdate(payload) {
         r.entry.id = id; // 锁回原 uuid，避免合并后 id 漂移
         owner.list[idx] = r.entry;
         if (overlay && overlay.isVisible() && owner.key === activeKey) renderActive();
-      } catch (e2) { /* 重建失败保留原条目 */ }
+      } catch (e2) {
+        /* 重建失败保留原条目 */
+      }
     } else {
       if (p.m != null || p.content != null) ingest(+p.c === 1 ? 'pm' : 'push', p);
     }
@@ -756,7 +960,13 @@ function onChatInfoList(ev) {
   var infos = (d && d.data && d.data.infos) || (d && d.infos) || null;
   if (!Array.isArray(infos) || !infos.length) return;
   var sys = [];
-  for (var it of infos) { try { sys.push(chat.toSysItem(it)); } catch (e) { /* 单项脏数据跳过 */ } }
+  for (var it of infos) {
+    try {
+      sys.push(chat.toSysItem(it));
+    } catch (e) {
+      /* 单项脏数据跳过 */
+    }
+  }
   if (sys.length) ingest('push', sys);
 }
 
@@ -764,7 +974,12 @@ function onChatInfoList(ev) {
 function delOne(id) {
   for (var b of bufs.values()) {
     for (var i = 0; i < b.list.length; i++) {
-      if (b.list[i].id === id) { b.list.splice(i, 1); b.ids.delete(id); if (overlay && overlay.isVisible() && b.key === activeKey) renderActive(); return; }
+      if (b.list[i].id === id) {
+        b.list.splice(i, 1);
+        b.ids.delete(id);
+        if (overlay && overlay.isVisible() && b.key === activeKey) renderActive();
+        return;
+      }
     }
   }
 }
@@ -793,10 +1008,10 @@ function renderActive() {
   var list = b.list;
   if (b.key.indexOf('pm:') === 0) {
     var other = b.title !== b.key ? b.title : '';
-    for (var e of list) e.pmDir = e.self ? ('-> ' + other) : '';
+    for (var e of list) e.pmDir = e.self ? '-> ' + other : '';
   }
   // 切频道先重置顶部状态（在 renderMessages 前，避免覆盖随后 #fillViewport 同步触发的 loading）：私聊无翻页、频道达上限显“全部”
-  setStatus(b.key.indexOf('pm:') === 0 ? '' : (b.pullPages >= MAX_PULL_PAGES ? 'end' : ''));
+  setStatus(b.key.indexOf('pm:') === 0 ? '' : b.pullPages >= MAX_PULL_PAGES ? 'end' : '');
   overlay.renderMessages(list);
   b.unread = 0;
   b.readOnce = true; // 本会话已查看：后续 applySummary 不再用服务端未读覆盖（交本地增量/清零接管）
@@ -821,17 +1036,24 @@ async function loadChannelHistory() {
     try {
       var sys = await chat.systemMessages({ channel: -1 });
       if (sys && sys.length) items = items.concat(sys);
-    } catch (e) { log.warn('system messages unavailable: %s', e && e.message); }
+    } catch (e) {
+      log.warn('system messages unavailable: %s', e && e.message);
+    }
     absorbHistoryItems(items);
     await absorbExtraRooms();
     for (var d of CHAN_DEFS) if (d.key !== 'pm') bufOf(d.key).loaded = true;
     channelHistoryState = 'done';
-    try { await applySummary(); } catch (e) { log.warn('summary unavailable: %s', e && e.message); }
+    try {
+      await applySummary();
+    } catch (e) {
+      log.warn('summary unavailable: %s', e && e.message);
+    }
     if (overlay && overlay.isVisible()) renderActive();
   } catch (e) {
     channelHistoryState = 'idle';
     log.warn('load channel history failed: %s', e && e.message);
-    if (overlay) overlay.toast('历史拉取失败：' + (e && e.message ? e.message.slice(0, 40) : '未知错误'));
+    if (overlay)
+      overlay.toast('历史拉取失败：' + (e && e.message ? e.message.slice(0, 40) : '未知错误'));
   }
 }
 
@@ -844,11 +1066,14 @@ function absorbHistoryItems(list) {
   var entries = [];
   for (var raw of list) {
     try {
-      var kind = (+raw.c === 1 || (raw.fu != null && raw.tu != null && raw.roomId == null)) ? 'pm' : 'push';
+      var kind =
+        +raw.c === 1 || (raw.fu != null && raw.tu != null && raw.roomId == null) ? 'pm' : 'push';
       var r = buildEntry(raw, kind);
       if (raw.roomId) bufOf(r.key).roomId = String(raw.roomId);
       entries.push({ key: r.key, entry: r.entry });
-    } catch (e) { /* 单条解析失败跳过 */ }
+    } catch (e) {
+      /* 单条解析失败跳过 */
+    }
   }
   entries.sort((a, b) => a.entry.timeMs - b.entry.timeMs);
   for (var it of entries) pushEntrySilent(it.key, it.entry);
@@ -868,16 +1093,23 @@ async function absorbExtraRooms() {
   for (var h of chat.chatHeads()) {
     if (!h.id || h.channel === 1 || joined.has(h.id) || tried.has(h.id)) continue;
     tried.add(h.id);
-    var key = isDynamicRoomChan(h.channel) ? chanKeyOf(h.channel) + ':' + h.id : KEY_BY_C[h.channel]; // 动态房一房一话钥；固定频道单键
+    var key = isDynamicRoomChan(h.channel)
+      ? chanKeyOf(h.channel) + ':' + h.id
+      : KEY_BY_C[h.channel]; // 动态房一房一话钥；固定频道单键
     if (!key) continue;
     var kb = bufOf(key);
     if (!kb.roomId) kb.roomId = h.id; // 先发 roomId 给发送/翻页用，哪怕历史被拒
-    if (isDynamicRoomChan(h.channel)) { kb.c = h.channel; if (h.name && kb.title === key) kb.title = h.name; }
+    if (isDynamicRoomChan(h.channel)) {
+      kb.c = h.channel;
+      if (h.name && kb.title === key) kb.title = h.name;
+    }
     try {
       var r = await chat.historyRooms([h.id]);
       absorbHistoryItems(historyList(r));
       kb.loaded = true;
-    } catch (e) { /* 未进房房间可能被拒，静默跳过 */ }
+    } catch (e) {
+      /* 未进房房间可能被拒，静默跳过 */
+    }
   }
 }
 
@@ -886,7 +1118,10 @@ function pushEntrySilent(key, entry) {
   var b = bufOf(key);
   if (b.ids.has(entry.id)) return;
   insertOrdered(b, entry); // 与 pushEntry 同源：跨批次 absorb（主拉取 + 补拉房间）也按时间序合并
-  while (b.list.length > BUF_LIMIT) { var drop = b.list.shift(); b.ids.delete(drop.id); }
+  while (b.list.length > BUF_LIMIT) {
+    var drop = b.list.shift();
+    b.ids.delete(drop.id);
+  }
   b.lastAt = Math.max(b.lastAt, entry.timeMs);
   if (!entry.self) b.speakers.set(entry.uid, entry.name);
 }
@@ -900,9 +1135,12 @@ async function loadOlder() {
   if (olderInflight) return; // 自动补齐与手动滚顶可能并发，同游标只允许一发
   var b = bufOf(activeKey);
   if (b.key.indexOf('pm:') === 0) return; // 私聊历史一次性全量，无翻页
-  if (!b.loaded) return;                   // 全量还没回来，先不翻
+  if (!b.loaded) return; // 全量还没回来，先不翻
   if (!b.roomId) return;
-  if (b.pullPages >= MAX_PULL_PAGES) { setStatus('end'); return; } // 已达上限：显式告知“已加载全部”
+  if (b.pullPages >= MAX_PULL_PAGES) {
+    setStatus('end');
+    return;
+  } // 已达上限：显式告知“已加载全部”
   // 翻页游标必须是服务器真实消息 uuid（游标即 MsgId）：跳过系统播报（uid=="-1"/isGameMsg，来自 GET_CHAT_PUSH_LIST，
   // 其 uuid 非 loadHistoryV2 合法游标，误用会导致翻页死锁）、本地乐观条目、合成 id
   var oldest = null;
@@ -913,7 +1151,10 @@ async function loadOlder() {
   }
   if (!oldest) return;
   // 游标首位为 'x' 的是合成 id（无服务器 uuid），不可用
-  if (String(oldest.id).charAt(0) === 'x') { log.info('oldest entry has synthetic id, skip paging'); return; }
+  if (String(oldest.id).charAt(0) === 'x') {
+    log.info('oldest entry has synthetic id, skip paging');
+    return;
+  }
   olderInflight = true;
   b.pullPages++;
   setStatus('loading');
@@ -924,7 +1165,11 @@ async function loadOlder() {
     if (!ret || !ret.ok) {
       b.pullPages--;
       setStatus('error');
-      log.warn('older history rejected: code=%s data=%s', ret && ret.code, String(ret && ret.data).slice(0, 160));
+      log.warn(
+        'older history rejected: code=%s data=%s',
+        ret && ret.code,
+        String(ret && ret.data).slice(0, 160),
+      );
       return;
     }
     var list = historyList(ret);
@@ -934,30 +1179,44 @@ async function loadOlder() {
         var r = buildEntry(raw, 'push');
         if (r.key !== b.key) continue;
         entries.push(r.entry);
-      } catch (e2) { }
+      } catch (e2) {}
     }
     entries.sort((x, y) => x.timeMs - y.timeMs);
     var headMs = b.list.length ? b.list[0].timeMs : Infinity; // 插入前队首时间：判断这批旧史是否严格更旧
     var fresh = [];
-    for (var en of entries) if (!b.ids.has(en.id)) { insertOrdered(b, en); fresh.push(en); } // 按时间归并：954 系统消息可能比翻页旧史更旧，不能整块前置
+    for (var en of entries)
+      if (!b.ids.has(en.id)) {
+        insertOrdered(b, en);
+        fresh.push(en);
+      } // 按时间归并：954 系统消息可能比翻页旧史更旧，不能整块前置
     if (fresh.length) {
-      while (b.list.length > BUF_LIMIT) { var dropOld = b.list.pop(); b.ids.delete(dropOld.id); }
+      while (b.list.length > BUF_LIMIT) {
+        var dropOld = b.list.pop();
+        b.ids.delete(dropOld.id);
+      }
       if (overlay && overlay.isVisible() && activeKey === b.key) {
         // 整批都早于原队首（常态）→ 增量前插保阅读位置；否则（与更旧的系统消息交错）→ 整列按时间重排
         if (fresh[fresh.length - 1].timeMs < headMs) overlay.prependMessages(fresh);
         else overlay.renderMessages(b.list, true);
       }
     }
-    if (!entries.length) { b.pullPages = MAX_PULL_PAGES; setStatus('end'); } // 确认成功的空页=真到头，锁止
+    if (!entries.length) {
+      b.pullPages = MAX_PULL_PAGES;
+      setStatus('end');
+    } // 确认成功的空页=真到头，锁止
     else setStatus(b.pullPages >= MAX_PULL_PAGES ? 'end' : '');
   } catch (e) {
     log.warn('older history failed: %s', e && e.message);
     setStatus('error');
-  } finally { olderInflight = false; }
+  } finally {
+    olderInflight = false;
+  }
 }
 
 /** 顶部历史状态条（仅浮层可见时）：'loading'/'end'/'error'/'' 隐去 */
-function setStatus(state) { if (overlay && overlay.isVisible()) overlay.setHistoryStatus(state); }
+function setStatus(state) {
+  if (overlay && overlay.isVisible()) overlay.setHistoryStatus(state);
+}
 
 /**
  * 引用「定位原消息」时目标不在已加载区间：用 loadHistoryAround 拉取该消息前后上下文入缓冲后二次跳转。
@@ -972,26 +1231,53 @@ async function locateMessage(uuid) {
   var b = bufOf(key);
   var chat = window.pocketcc.chat;
   var roomId = b.roomId;
-  if (!roomId && b.c != null) { // 缓冲未带 roomId：按频道从 chatHeads 兜底解析（world/alliance/group 固定单会话）
+  if (!roomId && b.c != null) {
+    // 缓冲未带 roomId：按频道从 chatHeads 兜底解析（world/alliance/group 固定单会话）
     var heads = chat.chatHeads ? chat.chatHeads() : [];
-    for (var h of heads) { if (h.channel === b.c && h.id) { roomId = b.roomId = String(h.id); break; } }
+    for (var h of heads) {
+      if (h.channel === b.c && h.id) {
+        roomId = b.roomId = String(h.id);
+        break;
+      }
+    }
   }
   log.info('locate: key=%s roomId=%s uuid=%s', key, roomId || '(empty)', uuid);
-  if (!roomId || !chat.aroundHistory) { if (overlay) overlay.toast('定位失败：会话房间未知'); return; }
+  if (!roomId || !chat.aroundHistory) {
+    if (overlay) overlay.toast('定位失败：会话房间未知');
+    return;
+  }
   locateInflight = true;
   try {
     var ret = await chat.aroundHistory(roomId, uuid, { beforeCount: 40, afterCount: 40 });
     var list = historyList(ret);
     var hit = false;
-    for (var it of list) if (String(it.uuid) === String(uuid)) { hit = true; break; }
-    log.info('locate aroundHistory: ok=%s items=%d anchorInList=%s', ret && ret.ok, list.length, hit);
-    if (!list.length) { if (overlay) overlay.toast('原消息已超期或不可加载'); return; }
+    for (var it of list)
+      if (String(it.uuid) === String(uuid)) {
+        hit = true;
+        break;
+      }
+    log.info(
+      'locate aroundHistory: ok=%s items=%d anchorInList=%s',
+      ret && ret.ok,
+      list.length,
+      hit,
+    );
+    if (!list.length) {
+      if (overlay) overlay.toast('原消息已超期或不可加载');
+      return;
+    }
     absorbHistoryItems(list);
-    if (activeKey === key && overlay && overlay.isVisible()) { renderActive(); overlay.jumpToMessage(uuid); }
+    if (activeKey === key && overlay && overlay.isVisible()) {
+      renderActive();
+      overlay.jumpToMessage(uuid);
+    }
   } catch (e) {
     log.warn('around history locate failed: %s', e && e.message);
-    if (overlay) overlay.toast('定位失败：' + (e && e.message ? String(e.message).slice(0, 30) : '未知'));
-  } finally { locateInflight = false; }
+    if (overlay)
+      overlay.toast('定位失败：' + (e && e.message ? String(e.message).slice(0, 30) : '未知'));
+  } finally {
+    locateInflight = false;
+  }
 }
 
 /**
@@ -1009,14 +1295,15 @@ async function applySummary() {
   var list = data && data.list;
   if (!list || typeof list !== 'object') return;
   var byRoom = new Map();
-  for (var [k, bb] of bufs) if (bb.roomId) byRoom.set(String(bb.roomId), bb);
+  for (var [, bb] of bufs) if (bb.roomId) byRoom.set(String(bb.roomId), bb);
   var touched = false;
   for (var rid in list) {
     var info = list[rid];
     if (!info || !info.lastMessage) continue;
     var b = byRoom.get(String(rid));
     if (!b) continue;
-    b.lastPreview = stripRich(info.lastMessage); touched = true;
+    b.lastPreview = stripRich(info.lastMessage);
+    touched = true;
   }
   if (touched && overlay && overlay.isVisible()) updateSide();
 }
@@ -1036,14 +1323,17 @@ async function loadPmHistory(key) {
     var chat = window.pocketcc.chat;
     var ret = await chat.history(uid);
     var list = historyList(ret);
-    b.list = []; b.ids = new Set();
+    b.list = [];
+    b.ids = new Set();
     var entries = [];
     for (var raw of list) {
-      try { entries.push(buildEntry(raw, 'pm').entry); } catch (e) { }
+      try {
+        entries.push(buildEntry(raw, 'pm').entry);
+      } catch (e) {}
     }
     entries.sort((x, y) => x.timeMs - y.timeMs);
     for (var en of entries) pushEntrySilent(key, en);
-    chat.markRead(uid).catch(() => { });
+    chat.markRead(uid).catch(() => {});
     if (overlay && overlay.isVisible() && activeKey === key) renderActive();
   } catch (e) {
     log.warn('pm history failed: %s', e && e.message);
@@ -1057,8 +1347,14 @@ async function loadPmHistory(key) {
  * @returns {void}
  */
 function ensureHistory(key) {
-  if (key.indexOf('pm:') === 0) { loadPmHistory(key); return; }
-  if (key.indexOf(':') > 0 && familyOf(key) === 'cross') { loadDynRoom(key); return; }
+  if (key.indexOf('pm:') === 0) {
+    loadPmHistory(key);
+    return;
+  }
+  if (key.indexOf(':') > 0 && familyOf(key) === 'cross') {
+    loadDynRoom(key);
+    return;
+  }
   var b = bufOf(key);
   if (!b.loaded) loadChannelHistory();
 }
@@ -1120,7 +1416,10 @@ function lastSub(b) {
 function updateSide() {
   if (!overlay) return;
   var fam = familyOf(activeKey);
-  if (!fam) { overlay.setSideList([], activeKey); return; }
+  if (!fam) {
+    overlay.setSideList([], activeKey);
+    return;
+  }
   var chat = window.pocketcc.chat;
   var heads = chat && chat.chatHeads ? chat.chatHeads() : [];
   var items = [];
@@ -1129,7 +1428,14 @@ function updateSide() {
     for (var [k, b] of bufs) {
       if (k.indexOf('pm:') !== 0) continue;
       has.add(k);
-      items.push({ key: k, title: b.title !== k ? b.title : 'U' + k.slice(-4), sub: pmInfoText(k), unread: b.unread, ts: b.lastAt, avatar: (pmInfoCache.get(k) || {}).av });
+      items.push({
+        key: k,
+        title: b.title !== k ? b.title : 'U' + k.slice(-4),
+        sub: pmInfoText(k),
+        unread: b.unread,
+        ts: b.lastAt,
+        avatar: (pmInfoCache.get(k) || {}).av,
+      });
     }
     for (var h of heads) {
       if (h.channel !== 1 || !h.id) continue;
@@ -1138,7 +1444,14 @@ function updateSide() {
       has.add(pk);
       if (h.name) bufOf(pk).title = h.name;
       var pb = bufOf(pk);
-      items.push({ key: pk, title: pb.title !== pk ? pb.title : 'U' + String(h.id).slice(-4), sub: pmInfoText(pk), unread: pb.unread, ts: pb.lastAt, avatar: (pmInfoCache.get(pk) || {}).av });
+      items.push({
+        key: pk,
+        title: pb.title !== pk ? pb.title : 'U' + String(h.id).slice(-4),
+        sub: pmInfoText(pk),
+        unread: pb.unread,
+        ts: pb.lastAt,
+        avatar: (pmInfoCache.get(pk) || {}).av,
+      });
     }
   } else {
     for (var h2 of heads) {
@@ -1150,11 +1463,24 @@ function updateSide() {
       if (h2.name && cb.title === ck) cb.title = h2.name;
       if (has.has(ck)) continue;
       has.add(ck);
-      items.push({ key: ck, title: cb.title !== ck ? cb.title : chanLabelOfKey(ck), sub: lastSub(cb), unread: cb.unread, ts: cb.lastAt });
+      items.push({
+        key: ck,
+        title: cb.title !== ck ? cb.title : chanLabelOfKey(ck),
+        sub: lastSub(cb),
+        unread: cb.unread,
+        ts: cb.lastAt,
+      });
     }
-    for (var [k3, b3] of bufs) { // 推信学过但 chatHeads 尚无条目的房间也列出
+    for (var [k3, b3] of bufs) {
+      // 推信学过但 chatHeads 尚无条目的房间也列出
       if (has.has(k3) || familyOf(k3) !== 'cross' || k3 === 'cross') continue;
-      items.push({ key: k3, title: b3.title !== k3 ? b3.title : chanLabelOfKey(k3), sub: lastSub(b3), unread: b3.unread, ts: b3.lastAt });
+      items.push({
+        key: k3,
+        title: b3.title !== k3 ? b3.title : chanLabelOfKey(k3),
+        sub: lastSub(b3),
+        unread: b3.unread,
+        ts: b3.lastAt,
+      });
     }
     if (!items.length) items.push({ key: 'cross', title: '跨服', sub: '暂无跨服/活动频道', ts: 0 });
   }
@@ -1190,15 +1516,27 @@ function servePmInfo() {
   if (!pk) return;
   var uid = pk.slice(3);
   var net = window.pocketcc.net;
-  if (!net || !/^\d+$/.test(uid)) { pmInfoCache.set(pk, { state: 'fail', txt: '' }); servePmInfo(); return; } // 不可查形态直接定案，不占带宽
+  if (!net || !/^\d+$/.test(uid)) {
+    pmInfoCache.set(pk, { state: 'fail', txt: '' });
+    servePmInfo();
+    return;
+  } // 不可查形态直接定案，不占带宽
   pmInfoServing = true;
   pmInfoCache.set(pk, { state: 'pending', txt: '' });
-  net.send(CMD_PLAYER_INFO, { uid }).then((ret) => {
-    var d = safeParse(ret && ret.data);
-    if (!ret || !ret.ok || !d || typeof d !== 'object') { pmInfoCache.set(pk, { state: 'fail', txt: '' }); return; }
-    pmStoreSet(uid, d); // 回填内存视图缓存 + 写穿盘
-    if (overlay && overlay.isVisible() && familyOf(activeKey) === 'pm') updateSide();
-  }).catch(() => { pmInfoCache.set(pk, { state: 'fail', txt: '' }); })
+  net
+    .send(CMD_PLAYER_INFO, { uid })
+    .then((ret) => {
+      var d = safeParse(ret && ret.data);
+      if (!ret || !ret.ok || !d || typeof d !== 'object') {
+        pmInfoCache.set(pk, { state: 'fail', txt: '' });
+        return;
+      }
+      pmStoreSet(uid, d); // 回填内存视图缓存 + 写穿盘
+      if (overlay && overlay.isVisible() && familyOf(activeKey) === 'pm') updateSide();
+    })
+    .catch(() => {
+      pmInfoCache.set(pk, { state: 'fail', txt: '' });
+    })
     .finally(() => {
       pmInfoServing = false;
       if (pmInfoQueue.length) setTimeout(servePmInfo, PM_INFO_GAP_MS);
@@ -1230,9 +1568,19 @@ function pmStoreSet(uid, d) {
   if (!/^\d+$/.test(uid) || !d || typeof d !== 'object') return;
   var ts = Date.now();
   pmInfoStore[uid] = { d: d, ts: ts };
-  try { Promise.resolve(storage.data.set(PM_INFO_STORE_KEY, Object.assign({}, pmInfoStore))).catch(() => { }); } catch (e) { }
+  try {
+    Promise.resolve(storage.data.set(PM_INFO_STORE_KEY, Object.assign({}, pmInfoStore))).catch(
+      () => {},
+    );
+  } catch (e) {}
   var pk = 'pm:' + uid;
-  pmInfoCache.set(pk, { state: 'done', txt: pmBitsText(d), av: resolveAvatar(d, { uid: uid, name: (bufOf(pk) && bufOf(pk).title) || '' }), d: d, ts: ts });
+  pmInfoCache.set(pk, {
+    state: 'done',
+    txt: pmBitsText(d),
+    av: resolveAvatar(d, { uid: uid, name: (bufOf(pk) && bufOf(pk).title) || '' }),
+    d: d,
+    ts: ts,
+  });
 }
 
 /**
@@ -1242,20 +1590,31 @@ function pmStoreSet(uid, d) {
  */
 function loadPmInfoCache() {
   if (pmInfoDiskLoaded) return Promise.resolve();
-  return storage.data.get(PM_INFO_STORE_KEY).then((blob) => {
-    pmInfoDiskLoaded = true;
-    if (!blob || typeof blob !== 'object') return;
-    pmInfoStore = blob;
-    for (var uid in pmInfoStore) {
-      var rec = pmInfoStore[uid];
-      if (!rec || !rec.d || typeof rec.d !== 'object') continue;
-      var pk = 'pm:' + uid;
-      var cur = pmInfoCache.get(pk);
-      if (cur && cur.state === 'done' && (cur.ts || 0) >= (rec.ts || 0)) continue; // 内存比盘新（本次已查）不覆盖
-      pmInfoCache.set(pk, { state: 'done', txt: pmBitsText(rec.d), av: resolveAvatar(rec.d, { uid: uid, name: (bufOf(pk) && bufOf(pk).title) || '' }), d: rec.d, ts: rec.ts || 0 });
-    }
-    if (overlay && overlay.isVisible() && familyOf(activeKey) === 'pm') updateSide();
-  }).catch(() => { /* 读盘失败/命名空间未就绪：下次进私聊再试 */ });
+  return storage.data
+    .get(PM_INFO_STORE_KEY)
+    .then((blob) => {
+      pmInfoDiskLoaded = true;
+      if (!blob || typeof blob !== 'object') return;
+      pmInfoStore = blob;
+      for (var uid in pmInfoStore) {
+        var rec = pmInfoStore[uid];
+        if (!rec || !rec.d || typeof rec.d !== 'object') continue;
+        var pk = 'pm:' + uid;
+        var cur = pmInfoCache.get(pk);
+        if (cur && cur.state === 'done' && (cur.ts || 0) >= (rec.ts || 0)) continue; // 内存比盘新（本次已查）不覆盖
+        pmInfoCache.set(pk, {
+          state: 'done',
+          txt: pmBitsText(rec.d),
+          av: resolveAvatar(rec.d, { uid: uid, name: (bufOf(pk) && bufOf(pk).title) || '' }),
+          d: rec.d,
+          ts: rec.ts || 0,
+        });
+      }
+      if (overlay && overlay.isVisible() && familyOf(activeKey) === 'pm') updateSide();
+    })
+    .catch(() => {
+      /* 读盘失败/命名空间未就绪：下次进私聊再试 */
+    });
 }
 
 /**
@@ -1269,7 +1628,7 @@ function maybeRefreshPmInfo(key) {
   var uid = key.slice(3);
   if (!/^\d+$/.test(uid)) return;
   var ci = pmInfoCache.get(key);
-  var stale = !ci || ci.state !== 'done' || (Date.now() - (ci.ts || 0) > PM_INFO_TTL_MS);
+  var stale = !ci || ci.state !== 'done' || Date.now() - (ci.ts || 0) > PM_INFO_TTL_MS;
   if (!stale) return;
   if (pmInfoQueue.indexOf(key) < 0) pmInfoQueue.push(key);
   servePmInfo();
@@ -1284,9 +1643,13 @@ function maybeRefreshPmInfo(key) {
 function backfillPmInfo() {
   var chat = window.pocketcc.chat;
   var keys = new Set();
-  for (var [k] of bufs) { if (k.indexOf('pm:') === 0) keys.add(k); }
+  for (var [k] of bufs) {
+    if (k.indexOf('pm:') === 0) keys.add(k);
+  }
   if (chat && chat.chatHeads) {
-    for (var h of chat.chatHeads()) { if (h.channel === 1 && h.id) keys.add('pm:' + h.id); }
+    for (var h of chat.chatHeads()) {
+      if (h.channel === 1 && h.id) keys.add('pm:' + h.id);
+    }
   }
   var enq = 0;
   for (var key of keys) {
@@ -1296,7 +1659,10 @@ function backfillPmInfo() {
     if (ci && ci.state === 'done') continue; // 已有（盘/本次）不重抓
     if (ci && ci.state === 'pending') continue; // 在途
     if (ci && ci.state === 'fail') continue; // 已定案失败，不在此重试（点开时 maybeRefreshPmInfo 再试）
-    if (pmInfoQueue.indexOf(key) < 0) { pmInfoQueue.push(key); enq++; }
+    if (pmInfoQueue.indexOf(key) < 0) {
+      pmInfoQueue.push(key);
+      enq++;
+    }
   }
   if (enq) servePmInfo();
 }
@@ -1323,9 +1689,11 @@ function seedPmList() {
     try {
       var ret = await chat.pmList({ channel: 1 });
       var list = (ret && ret.data && ret.data.data && ret.data.data.list) || [];
-      var meS = myStrUid(); var meU = myUid();
+      var meS = myStrUid();
+      var meU = myUid();
       for (var it of list) {
-        var fu = String(it.fu || ''); var tu = String(it.tu || '');
+        var fu = String(it.fu || '');
+        var tu = String(it.tu || '');
         var selfSent = !!fu && (fu === meS || fu === meU);
         var other = selfSent ? tu : fu;
         if (!other || other === meS || other === meU) continue;
@@ -1333,13 +1701,18 @@ function seedPmList() {
         var pk = 'pm:' + other;
         var pb = bufOf(pk);
         if (prof.username && pb.title === pb.key) pb.title = String(prof.username);
-        pb.lastAt = Math.max(pb.lastAt, toMs(it.t != null ? it.t : null, it.time != null ? it.time : null));
+        pb.lastAt = Math.max(
+          pb.lastAt,
+          toMs(it.t != null ? it.t : null, it.time != null ? it.time : null),
+        );
       }
       pmListFetched = true;
       if (overlay && overlay.isVisible() && familyOf(activeKey) === 'pm') updateSide();
     } catch (e) {
       log.warn('pm list seed failed: %s', e && e.message);
-    } finally { pmListPromise = null; }
+    } finally {
+      pmListPromise = null;
+    }
   })();
   return pmListPromise;
 }
@@ -1353,8 +1726,14 @@ function seedPmList() {
  */
 function syncChannels() {
   if (!overlay) return;
-  var quick = CHAN_DEFS.filter((d) => cfg.quick[d.key]).map((d) => ({ key: d.key, label: d.label }));
-  var more = CHAN_DEFS.filter((d) => !cfg.quick[d.key]).map((d) => ({ key: d.key, label: d.label }));
+  var quick = CHAN_DEFS.filter((d) => cfg.quick[d.key]).map((d) => ({
+    key: d.key,
+    label: d.label,
+  }));
+  var more = CHAN_DEFS.filter((d) => !cfg.quick[d.key]).map((d) => ({
+    key: d.key,
+    label: d.label,
+  }));
   // pm:xxx / cross:xxx 选中时高亮其家族 chip
   overlay.setChannels(quick, more, familyOf(activeKey) || activeKey);
   updateSide();
@@ -1370,7 +1749,10 @@ function activateKey(key) {
     var cacheP = loadPmInfoCache(); // 进私聊家族：先用盘缓存回填侧栏（不批量重抓）
     var listP = seedPmList(); // 异步枚举全部私聊会话补入左侧列表（不阻塞当前 chip 选中）
     // 盘缓存 + 会话列表都就绪后，回填空数据玩家（串行逐个，非并行）
-    Promise.all([Promise.resolve(cacheP), Promise.resolve(listP)]).then(backfillPmInfo, backfillPmInfo);
+    Promise.all([Promise.resolve(cacheP), Promise.resolve(listP)]).then(
+      backfillPmInfo,
+      backfillPmInfo,
+    );
     // 私聊 chip：先用游戏会话列表（chatHeads c=1，含浮层装前会话）预建缓冲，再进最近一个
     var chat0 = window.pocketcc.chat;
     if (chat0 && chat0.chatHeads) {
@@ -1381,21 +1763,37 @@ function activateKey(key) {
       }
     }
     var latest = null;
-    for (var [k, b] of bufs) if (k.indexOf('pm:') === 0 && (!latest || b.lastAt > latest.ts)) latest = { k, ts: b.lastAt };
-    if (!latest) { if (overlay) { overlay.setActive(key); activeKey = key; overlay.renderMessages([]); overlay.toast('双击消息或点发送者名字开私聊'); updateSide(); } return; }
+    for (var [k, b] of bufs)
+      if (k.indexOf('pm:') === 0 && (!latest || b.lastAt > latest.ts)) latest = { k, ts: b.lastAt };
+    if (!latest) {
+      if (overlay) {
+        overlay.setActive(key);
+        activeKey = key;
+        overlay.renderMessages([]);
+        overlay.toast('双击消息或点发送者名字开私聊');
+        updateSide();
+      }
+      return;
+    }
     key = latest.k;
   } else if (key === 'cross') {
     // 跨服 chip：进最近有消息的活动/跨服房间；都没有则进空态缓冲（发送不携 roomId，服务器路由）
     syncRoomIdsCross();
     var first = null;
-    for (var [k2, b2] of bufs) if (k2 !== 'cross' && familyOf(k2) === 'cross' && (!first || b2.lastAt > first.ts)) first = { k: k2, ts: b2.lastAt };
+    for (var [k2, b2] of bufs)
+      if (k2 !== 'cross' && familyOf(k2) === 'cross' && (!first || b2.lastAt > first.ts))
+        first = { k: k2, ts: b2.lastAt };
     if (first && first.ts) key = first.k;
   }
   activeKey = key;
   maybeRefreshPmInfo(key); // 切进具体私聊会话：缓存缺失/过期才刷新该一个（不批量抓）
   var ab = bufOf(key);
   ab.pullPages = 0; // 重新进入允许再拨一段旧史（MAX_PULL_PAGES 是单次进入的防 runaway 上限）
-  if (overlay) { overlay.setActive(familyOf(key) || key); overlay.setTitle(viewTitle(key)); renderActive(); } // chip 高亮按家族键（pm:xxx/cross:xxx 归 pm/cross）
+  if (overlay) {
+    overlay.setActive(familyOf(key) || key);
+    overlay.setTitle(viewTitle(key));
+    renderActive();
+  } // chip 高亮按家族键（pm:xxx/cross:xxx 归 pm/cross）
   ensureHistory(key);
   syncChannels();
 }
@@ -1410,8 +1808,10 @@ function viewTitle(key) {
   if (d && key.indexOf(':') < 0) return d.label;
   var b = bufs.get(key);
   if (!b) return '聊天';
-  if (key.indexOf('pm:') === 0) return '私聊 · ' + (b.title !== key ? b.title : 'U' + key.slice(-4));
-  if (familyOf(key) === 'cross' && key.indexOf(':') > 0) return b.title !== key ? b.title : chanLabelOfKey(key);
+  if (key.indexOf('pm:') === 0)
+    return '私聊 · ' + (b.title !== key ? b.title : 'U' + key.slice(-4));
+  if (familyOf(key) === 'cross' && key.indexOf(':') > 0)
+    return b.title !== key ? b.title : chanLabelOfKey(key);
   return b.title !== key ? b.title : '聊天';
 }
 
@@ -1437,16 +1837,31 @@ function syncRoomIdsCross() {
 
 /** @type {{[k:string]: string}} 未知应答形态兜底时的字段→中文标签 */
 const INFO_LABELS = {
-  name: '名字', nickname: '昵称', nickName: '昵称', level: '等级', power: '战力', combat: '战力',
-  vipLevel: 'VIP', headIcon: '头像', serverId: '服号', sex: '性别', allianceName: '联盟',
-  alliance: '联盟', aid: '联盟ID', pos: '坐标', x: '坐标X', y: '坐标Y', title: '称号', pwr: '战力',
+  name: '名字',
+  nickname: '昵称',
+  nickName: '昵称',
+  level: '等级',
+  power: '战力',
+  combat: '战力',
+  vipLevel: 'VIP',
+  headIcon: '头像',
+  serverId: '服号',
+  sex: '性别',
+  allianceName: '联盟',
+  alliance: '联盟',
+  aid: '联盟ID',
+  pos: '坐标',
+  x: '坐标X',
+  y: '坐标Y',
+  title: '称号',
+  pwr: '战力',
 };
 
 /** 战力/大数字单位阶梯：与游戏 NumUtils.getLargeNumberShow 完全一致 —— K,M,B,T 后接 aa..zz，每档 ×1000（下标 j 对应阈值 1000^(len-j)） */
 const POWER_UNITS = (function () {
   var u = ['K', 'M', 'B', 'T'];
   for (var c = 97; c <= 122; c++) u.push(String.fromCharCode(c) + String.fromCharCode(c));
-  return u;   // 长度 30
+  return u; // 长度 30
 })();
 
 /**
@@ -1466,9 +1881,9 @@ function fmtPower(v, round, plain) {
   var len = POWER_UNITS.length;
   for (var n = 0; n < len; n++) {
     var r = 1e3;
-    for (var s = n + 1; s < len; s++) r *= 1e3;   // r = 1000^(len - n)，从大阈值往下扫，首个 v>=r 即为当档
+    for (var s = n + 1; s < len; s++) r *= 1e3; // r = 1000^(len - n)，从大阈值往下扫，首个 v>=r 即为当档
     if (v >= r) {
-      var l = v > 100 * r ? 0 : (v > 10 * r ? 1 : 2);
+      var l = v > 100 * r ? 0 : v > 10 * r ? 1 : 2;
       var unit = POWER_UNITS[len - n - 1];
       if (round) return (v / r).toFixed(l) + unit;
       var c = Math.pow(10, l);
@@ -1492,11 +1907,19 @@ function infoLines(d, uid) {
   if (d.level != null) lines.push('等级: ' + d.level);
   if (d.power != null) lines.push('战力: ' + fmtPower(d.power));
   // armyPower 暂不展示：换算公式未明（用户口径）
-  if (d.allianceName) lines.push('联盟: ' + d.allianceName + (d.allianceTag ? ' [' + d.allianceTag + ']' : ''));
-  if (d.x != null && d.y != null) lines.push({
-    s: '坐标: ' + d.x + ',' + d.y + (d.serverId != null ? '@' + d.serverId : ''),
-    action: { type: 'pos', x: +d.x, y: +d.y, z: d.serverId != null ? +d.serverId : null, click: true },
-  });
+  if (d.allianceName)
+    lines.push('联盟: ' + d.allianceName + (d.allianceTag ? ' [' + d.allianceTag + ']' : ''));
+  if (d.x != null && d.y != null)
+    lines.push({
+      s: '坐标: ' + d.x + ',' + d.y + (d.serverId != null ? '@' + d.serverId : ''),
+      action: {
+        type: 'pos',
+        x: +d.x,
+        y: +d.y,
+        z: d.serverId != null ? +d.serverId : null,
+        click: true,
+      },
+    });
   if (d.serverId != null) lines.push('服务器: ' + d.serverId);
   if (d.like != null) lines.push('获赞: ' + d.like);
   if (!lines.length) {
@@ -1509,7 +1932,7 @@ function infoLines(d, uid) {
       lines.push((INFO_LABELS[k] || INFO_LABELS[k.toLowerCase()] || k) + ': ' + String(v));
     }
   }
-  var shownUid = d.uid != null ? String(d.uid) : (uid != null && uid !== '' ? String(uid) : '');
+  var shownUid = d.uid != null ? String(d.uid) : uid != null && uid !== '' ? String(uid) : '';
   // UID 行带 copy 动作 → 视图层渲染为复制链接（点击即拷、不关卡片）；14 位数字串直显，禁止 Number 化防精度丢失
   if (shownUid) lines.unshift({ s: 'UID: ' + shownUid, copy: shownUid });
   return lines;
@@ -1539,12 +1962,18 @@ const AVATAR_KEYS = ['avatarurl', 'headimgurl_custom', 'headimgurl'];
 function resolveAvatar(d, entry) {
   var wx = safeParse(d && d.playerInfo);
   var src = [wx, d]; // 内层资料串优先，其次顶层（真机键位未定，两处都探）
-  var rawVal = ''; var usedKey = '';
+  var rawVal = '';
+  var usedKey = '';
   for (var i = 0; i < src.length && !rawVal; i++) {
-    var o = src[i]; if (!o || typeof o !== 'object') continue;
+    var o = src[i];
+    if (!o || typeof o !== 'object') continue;
     for (var k = 0; k < AVATAR_KEYS.length; k++) {
       var v = o[AVATAR_KEYS[k]];
-      if (typeof v === 'string' && v.trim()) { rawVal = v.trim(); usedKey = AVATAR_KEYS[k]; break; }
+      if (typeof v === 'string' && v.trim()) {
+        rawVal = v.trim();
+        usedKey = AVATAR_KEYS[k];
+        break;
+      }
     }
   }
   // 头像字段可能是 http(s) 真实 URL（平台/用户上传），也可能是游戏自带头像图集名（hero_icon…_global 等，
@@ -1553,10 +1982,15 @@ function resolveAvatar(d, entry) {
   if (usedKey) log.info('playerInfo avatar hit: %s -> %s', usedKey, url ? 'url' : 'placeholder');
   var nick = infoNick(d) || (entry && entry.name) || '';
   var uid = String((entry && entry.uid) || (d && d.uid) || '');
-  var initial = nick ? Array.from(nick)[0].toUpperCase() : (uid ? 'U' + uid.slice(-4) : '?');
+  var initial = nick ? Array.from(nick)[0].toUpperCase() : uid ? 'U' + uid.slice(-4) : '?';
   var hue;
   if (uid && /\d/.test(uid)) hue = Math.abs(parseInt(uid.slice(-6), 10) || 0) % 360;
-  else { var h = 0; var s = nick || uid || '?'; for (var j = 0; j < s.length; j++) h = (h * 31 + s.charCodeAt(j)) | 0; hue = Math.abs(h) % 360; }
+  else {
+    var h = 0;
+    var s = nick || uid || '?';
+    for (var j = 0; j < s.length; j++) h = (h * 31 + s.charCodeAt(j)) | 0;
+    hue = Math.abs(h) % 360;
+  }
   return { url: url, initial: initial, hue: hue };
 }
 
@@ -1571,26 +2005,45 @@ function resolveAvatar(d, entry) {
 async function doRevoke(entry) {
   var net = window.pocketcc.net;
   if (!net || !overlay) return;
-  if (!entry || !entry.self) { overlay.toast('只能撤回自己的消息'); return; }
-  if (String(entry.id).indexOf('local:') === 0) { overlay.toast('消息尚未发送完成，稍后再试'); return; }
+  if (!entry || !entry.self) {
+    overlay.toast('只能撤回自己的消息');
+    return;
+  }
+  if (String(entry.id).indexOf('local:') === 0) {
+    overlay.toast('消息尚未发送完成，稍后再试');
+    return;
+  }
   var b = bufOf(activeKey);
   var limit = +gameConf.dataConfig(630061) || 60; // 撤回时限配置（game-api 取不到时默认 60s）
   var nowSec = gameData.serverTime() || Math.floor(Date.now() / 1000);
-  if (nowSec - Math.floor(entry.timeMs / 1000) > limit) { overlay.toast('超过 ' + limit + ' 秒时限，不能撤回'); return; }
-  var channel = b.c != null ? b.c : (activeKey.indexOf('pm:') === 0 ? 1 : chanOfKey(activeKey));
-  if (channel == null) { overlay.toast('无法确定该消息的频道'); return; }
+  if (nowSec - Math.floor(entry.timeMs / 1000) > limit) {
+    overlay.toast('超过 ' + limit + ' 秒时限，不能撤回');
+    return;
+  }
+  var channel = b.c != null ? b.c : activeKey.indexOf('pm:') === 0 ? 1 : chanOfKey(activeKey);
+  if (channel == null) {
+    overlay.toast('无法确定该消息的频道');
+    return;
+  }
   var roomId = b.roomId || '';
   if (activeKey.indexOf('pm:') === 0) roomId = activeKey.slice(3); // 私聊房标识=对方 uid（游戏 NowChoiceKey.Id 同形）
   // 游戏 revokeMsg 同源：无下划线 → Int64.fromString(roomId)，其余 → 0（game-api bits 封装）
-  var toUid = bits.int64(roomId.indexOf('_') <= 0 ? (roomId || '0') : '0');
+  var toUid = bits.int64(roomId.indexOf('_') <= 0 ? roomId || '0' : '0');
   try {
-    var ret = await net.sendPBV2(CMD_RECALL_CHAT, { roomId: roomId, uuid: String(entry.id), channel: channel, toUid: toUid });
+    var ret = await net.sendPBV2(CMD_RECALL_CHAT, {
+      roomId: roomId,
+      uuid: String(entry.id),
+      channel: channel,
+      toUid: toUid,
+    });
     if (ret && ret.ok) {
       revokeInPlace(String(entry.id), Date.now()); // 原位转撤回卡，与游戏观感一致（服务器 chatdel 再幂等确认）
       overlay.toast('已撤回');
     } else {
       log.info('recall rejected: %s', String(ret && ret.data).slice(0, 200));
-      overlay.toast('撤回失败：' + locText(String(ret && ret.data != null ? ret.data : '无应答')).slice(0, 30));
+      overlay.toast(
+        '撤回失败：' + locText(String(ret && ret.data != null ? ret.data : '无应答')).slice(0, 30),
+      );
     }
   } catch (e) {
     log.warn('recall failed: %s', e && e.message);
@@ -1611,9 +2064,13 @@ function checkFriend(entry) {
   if (!fr) return null;
   try {
     if (fr.has(entry.uid) || fr.has(+entry.uid)) return true;
-    for (var k of fr.keys()) { if (String(k) === String(entry.uid)) return true; }
+    for (var k of fr.keys()) {
+      if (String(k) === String(entry.uid)) return true;
+    }
     return false;
-  } catch (e) { return null; }
+  } catch (e) {
+    return null;
+  }
 }
 
 /**
@@ -1644,7 +2101,7 @@ function pickField(it, keys) {
   for (var k of keys) {
     var v = it[k];
     if (v == null || v === '') continue;
-    if (typeof v === 'object') v = (v.uid != null ? v.uid : v.low);
+    if (typeof v === 'object') v = v.uid != null ? v.uid : v.low;
     if (v != null && v !== '') return String(v);
   }
   return '';
@@ -1659,8 +2116,12 @@ function pickField(it, keys) {
  */
 function parseMemberList(d, diag) {
   var arr = findMemberArray(d);
-  if (!arr.length && d && typeof d.data === 'object' && d.data != null) arr = findMemberArray(d.data); // 信封多一层时下钻
-  if (!arr.length) { diag.push('shape unknown: ' + JSON.stringify(d).slice(0, 240)); return []; }
+  if (!arr.length && d && typeof d.data === 'object' && d.data != null)
+    arr = findMemberArray(d.data); // 信封多一层时下钻
+  if (!arr.length) {
+    diag.push('shape unknown: ' + JSON.stringify(d).slice(0, 240));
+    return [];
+  }
   var list = [];
   var seen = new Set();
   var skippedSample = null;
@@ -1671,11 +2132,15 @@ function parseMemberList(d, diag) {
       var wx = safeParse(it.playerInfo); // 成员条目昵称藏在微信资料内层串（实证口径）
       name = wx ? String(wx.username || wx.nickname || '') : '';
     }
-    if (!uid || !name || seen.has(uid)) { if (!skippedSample && (!uid || !name)) skippedSample = it; continue; }
+    if (!uid || !name || seen.has(uid)) {
+      if (!skippedSample && (!uid || !name)) skippedSample = it;
+      continue;
+    }
     seen.add(uid);
     list.push({ uid, name });
   }
-  if (skippedSample) diag.push('unparsed item sample: ' + JSON.stringify(skippedSample).slice(0, 240));
+  if (skippedSample)
+    diag.push('unparsed item sample: ' + JSON.stringify(skippedSample).slice(0, 240));
   diag.push('items=' + arr.length + ' parsed=' + list.length);
   return list;
 }
@@ -1698,13 +2163,18 @@ async function ensureMembers() {
     var diag = [];
     var list = parseMemberList(safeParse(ret && ret.data), diag);
     if (!list.length) {
-      log.info('alliance members empty/rejected: ok=%s resp=%s', ret && ret.ok, String(ret && ret.data).slice(0, 240));
+      log.info(
+        'alliance members empty/rejected: ok=%s resp=%s',
+        ret && ret.ok,
+        String(ret && ret.data).slice(0, 240),
+      );
       return [];
     }
     membersCache = { list, at: Date.now() };
     log.info('alliance members fetched: %s', diag.join(' | '));
     var totalCount = +alliance.MemberCount || 0;
-    if (totalCount && list.length < totalCount) log.warn('members incomplete (paged?) items=%d memberCount=%d', list.length, totalCount);
+    if (totalCount && list.length < totalCount)
+      log.warn('members incomplete (paged?) items=%d memberCount=%d', list.length, totalCount);
     return list;
   } catch (e) {
     log.warn('fetch alliance members failed: %s', e && e.message);
@@ -1720,18 +2190,30 @@ async function ensureMembers() {
 function sendTarget(key) {
   if (key.indexOf('pm:') === 0) {
     var uid = key.slice(3);
-    if (!uid || uid === 'unknown') { if (overlay) overlay.toast('先选择私聊对象'); return null; }
+    if (!uid || uid === 'unknown') {
+      if (overlay) overlay.toast('先选择私聊对象');
+      return null;
+    }
     return { c: 1, uid };
   }
-  if (key === 'pm') { if (overlay) overlay.toast('先选择私聊对象，或点发送者名字开私聊'); return null; }
+  if (key === 'pm') {
+    if (overlay) overlay.toast('先选择私聊对象，或点发送者名字开私聊');
+    return null;
+  }
   if (key.indexOf(':') > 0 && familyOf(key) === 'cross') return { c: chanOfKey(key) }; // 跨服/活动发送不携 roomId（游戏同世界 else 分支，服务器路由到已 join 房）
   var d = CHAN_DEFS.find((x) => x.key === key);
-  if (!d) { if (overlay) overlay.toast('该频道暂不支持发送'); return null; }
-  var opts = { c: d.c };  // 直接传数字 c（send 内部 opts.c 优先，免走 channel 名映射；c=0 世界也不会被 || 吃掉）
+  if (!d) {
+    if (overlay) overlay.toast('该频道暂不支持发送');
+    return null;
+  }
+  var opts = { c: d.c }; // 直接传数字 c（send 内部 opts.c 优先，免走 channel 名映射；c=0 世界也不会被 || 吃掉）
   if (d.c === 5) {
     var b = bufOf(key);
     if (!b.roomId) syncRoomIds(); // roomId 兜底：不依赖玩家在游戏里切过频道（见 syncRoomIds）
-    if (!b.roomId) { if (overlay) overlay.toast('未发现可发送的群聊频道（需已加入群）'); return null; }
+    if (!b.roomId) {
+      if (overlay) overlay.toast('未发现可发送的群聊频道（需已加入群）');
+      return null;
+    }
     opts.group = b.roomId;
   }
   return opts;
@@ -1747,7 +2229,7 @@ function sendTarget(key) {
 function encodeAt(text, atList) {
   var encoded = text;
   var atData = null;
-  for (var a of (atList || [])) {
+  for (var a of atList || []) {
     var token = '@' + a.name;
     if (encoded.indexOf(token) < 0) continue; // 文本里已无此 @ → 不进 atData（对齐游戏 checkAtData 剪枝）
     if (a.all) {
@@ -1776,19 +2258,30 @@ async function doSend(text, atList, quoteEntry) {
   if (!chat) return false;
   var now = Date.now();
   if (now - lastSendAt < COOLDOWN_MS) {
-    if (overlay) overlay.toast('发送太快，请 ' + Math.ceil((COOLDOWN_MS - (now - lastSendAt)) / 1000) + 's 后再试');
+    if (overlay)
+      overlay.toast(
+        '发送太快，请 ' + Math.ceil((COOLDOWN_MS - (now - lastSendAt)) / 1000) + 's 后再试',
+      );
     return false;
   }
   var target = sendTarget(activeKey);
   if (!target) return false;
   var enc = encodeAt(text, atList);
-  var responseData = quoteEntry ? { name: quoteEntry.name, msg: quoteEntry.plain, uuid: quoteEntry.id } : null;
+  var responseData = quoteEntry
+    ? { name: quoteEntry.name, msg: quoteEntry.plain, uuid: quoteEntry.id }
+    : null;
   lastSendAt = now;
   if (overlay) overlay.startCooldown(Math.ceil(COOLDOWN_MS / 1000));
   // 乐观条目（回声到达时原位合并）
   var bAct = bufOf(activeKey);
   var localEntry = {
-    id: 'local:' + now, uid: myUid(), timeMs: now, timeStr: hhmm(now), name: '我', self: true, mention: false,
+    id: 'local:' + now,
+    uid: myUid(),
+    timeMs: now,
+    timeStr: hhmm(now),
+    name: '我',
+    self: true,
+    mention: false,
     pmDir: activeKey.indexOf('pm:') === 0 && bAct.title !== activeKey ? '-> ' + bAct.title : null,
     segments: decodeAtCodes(enc.encoded, enc.atData),
     plain: text,
@@ -1804,13 +2297,16 @@ async function doSend(text, atList, quoteEntry) {
     var ok = !!(ret && ret.ok && +payload.success === 1);
     if (!ok) {
       delOne(localEntry.id);
-      var reason = typeof (ret && ret.data) === 'string' ? ret.data : (payload.msg || payload.message || '');
-      if (overlay) overlay.toast('发送失败：' + (locText(String(reason || '服务器拒绝')).slice(0, 40)));
+      var reason =
+        typeof (ret && ret.data) === 'string' ? ret.data : payload.msg || payload.message || '';
+      if (overlay)
+        overlay.toast('发送失败：' + locText(String(reason || '服务器拒绝')).slice(0, 40));
     }
     return ok;
   } catch (e) {
     delOne(localEntry.id);
-    if (overlay) overlay.toast('发送异常：' + (e && e.message ? String(e.message).slice(0, 40) : ''));
+    if (overlay)
+      overlay.toast('发送异常：' + (e && e.message ? String(e.message).slice(0, 40) : ''));
     return false;
   }
 }
@@ -1825,15 +2321,23 @@ async function doSharePos(x, y) {
   var chat = window.pocketcc.chat;
   if (!chat) return;
   var now = Date.now();
-  if (now - lastSendAt < COOLDOWN_MS) { if (overlay) overlay.toast('发送太快，稍后再试'); return; }
+  if (now - lastSendAt < COOLDOWN_MS) {
+    if (overlay) overlay.toast('发送太快，稍后再试');
+    return;
+  }
   var target = sendTarget(activeKey);
   if (!target) return;
   lastSendAt = now;
-  if (overlay) { overlay.startCooldown(Math.ceil(COOLDOWN_MS / 1000)); }
+  if (overlay) {
+    overlay.startCooldown(Math.ceil(COOLDOWN_MS / 1000));
+  }
   try {
     var ret = await chat.sharePos(x, y, Object.assign({}, target));
     var payload = safeParse(ret && ret.data) || {}; // 同 doSend：Ret.data 是应答字符串原文
-    if (overlay) overlay.toast(ret && ret.ok && +payload.success === 1 ? '已分享坐标 ' + x + ',' + y : '分享失败');
+    if (overlay)
+      overlay.toast(
+        ret && ret.ok && +payload.success === 1 ? '已分享坐标 ' + x + ',' + y : '分享失败',
+      );
   } catch (e) {
     log.warn('share pos failed: %s', e && e.message);
     if (overlay) overlay.toast('分享异常');
@@ -1866,16 +2370,31 @@ function onKeydown(e) {
  */
 function jumpTo(action) {
   if (!action || !overlay) return;
-  if (action.type === 'battle') { queryBattle(action); return; } // 战报卡：纯只读 MAIL_QUERY 查询 + 浮层展示（见下方 queryBattle）
-  var r = action.type === 'march' ? nav.flyMarch(action)
-    : action.type === 'pos' ? nav.flyTo(action)
-      : { ok: false, err: 'nomarch' };
+  if (action.type === 'battle') {
+    queryBattle(action);
+    return;
+  } // 战报卡：纯只读 MAIL_QUERY 查询 + 浮层展示（见下方 queryBattle）
+  var r =
+    action.type === 'march'
+      ? nav.flyMarch(action)
+      : action.type === 'pos'
+        ? nav.flyTo(action)
+        : { ok: false, err: 'nomarch' };
   if (r.ok) {
-    overlay.toast(action.type === 'march' ? '跳转行军线' : (action.click ? '跳转并选中 ' : '定位到 ') + action.x + ',' + action.y);
+    overlay.toast(
+      action.type === 'march'
+        ? '跳转行军线'
+        : (action.click ? '跳转并选中 ' : '定位到 ') + action.x + ',' + action.y,
+    );
     return;
   }
-  overlay.toast(r.err === 'unavailable' ? '世界地图导航不可用'
-    : r.err === 'nomarch' ? '该卡片暂不能直接跳转' : '跳转异常');
+  overlay.toast(
+    r.err === 'unavailable'
+      ? '世界地图导航不可用'
+      : r.err === 'nomarch'
+        ? '该卡片暂不能直接跳转'
+        : '跳转异常',
+  );
 }
 
 /** @type {boolean} 战报查询在途闸门（防连点爆发重复请求，同 servePmInfo 口径） */
@@ -1890,7 +2409,10 @@ var battleInflight = false;
 async function queryBattle(action) {
   if (battleInflight || !overlay) return;
   var net = window.pocketcc.net;
-  if (!net || !action || !action.uid || !action.mailId) { overlay.toast('战报暂不可查'); return; }
+  if (!net || !action || !action.uid || !action.mailId) {
+    overlay.toast('战报暂不可查');
+    return;
+  }
   battleInflight = true;
   try {
     var ret = await net.send(CMD_MAIL_QUERY, { uid: action.uid, mailId: action.mailId });
@@ -1899,8 +2421,13 @@ async function queryBattle(action) {
     var inner = resp && resp.d != null ? safeParse(resp.d) : resp;
     var mail = inner && inner.mail ? inner.mail : inner;
     if (!ret || !ret.ok || !mail || typeof mail !== 'object') {
-      log.info('mail query empty: ok=%s respKeys=%s', ret && ret.ok, resp && Object.keys(resp).join(','));
-      overlay.toast('战报暂不可查'); return;
+      log.info(
+        'mail query empty: ok=%s respKeys=%s',
+        ret && ret.ok,
+        resp && Object.keys(resp).join(','),
+      );
+      overlay.toast('战报暂不可查');
+      return;
     }
     overlay.showInfoPop('战报详情', battleRows(mail));
   } catch (e) {
@@ -1937,13 +2464,18 @@ function battleRows(mail) {
 function makeHandlers() {
   return {
     onSend: (text, atList, quote) => doSend(text, atList, quote),
-    onSharePos: (x, y) => { doSharePos(x, y); },
-    onJump: (action) => { jumpTo(action); },
+    onSharePos: (x, y) => {
+      doSharePos(x, y);
+    },
+    onJump: (action) => {
+      jumpTo(action);
+    },
     onRequestAtList: () => {
       var b = bufOf(activeKey);
       var speakers = [];
       var seen = new Set([myUid(), myStrUid()]);
-      for (var [uid, name] of b.speakers) if (!seen.has(String(uid))) speakers.push({ uid: String(uid), name });
+      for (var [uid, name] of b.speakers)
+        if (!seen.has(String(uid))) speakers.push({ uid: String(uid), name });
       speakers.sort((a, x) => a.name.localeCompare(x.name, 'zh'));
       var allowAll = activeKey === 'alliance' || activeKey === 'group';
       overlay.openAtPicker(speakers.slice(0, 50), allowAll);
@@ -1952,17 +2484,26 @@ function makeHandlers() {
         ensureMembers().then((ms) => {
           if (!ms.length || !overlay) return;
           var merged = ms.slice();
-          for (var s of speakers) if (!merged.some((m) => String(m.uid) === String(s.uid))) merged.push(s);
+          for (var s of speakers)
+            if (!merged.some((m) => String(m.uid) === String(s.uid))) merged.push(s);
           overlay.setAtCandidates(merged);
         });
       }
     },
     onChannelSelect: (key) => activateKey(key),
     onSideSelect: (key) => activateKey(key),
-    onLoadOlder: () => { loadOlder(); },
-    onQuote: (entry) => { if (overlay) overlay.setQuote(entry); },
-    onLocateMessage: (uuid) => { locateMessage(uuid); },
-    onRevoke: (entry) => { doRevoke(entry); },
+    onLoadOlder: () => {
+      loadOlder();
+    },
+    onQuote: (entry) => {
+      if (overlay) overlay.setQuote(entry);
+    },
+    onLocateMessage: (uuid) => {
+      locateMessage(uuid);
+    },
+    onRevoke: (entry) => {
+      doRevoke(entry);
+    },
     onNamePm: (entry) => {
       if (!entry || entry.self || !entry.uid) return;
       if (activeKey.indexOf('pm:') === 0) return;
@@ -1974,35 +2515,61 @@ function makeHandlers() {
     onNameInfo: (entry) => {
       var net = window.pocketcc.net;
       if (!net || !entry || !entry.uid || entry.self || !overlay) return;
-      net.send(CMD_PLAYER_INFO, { uid: String(entry.uid) }).then((ret) => {
-        var d = safeParse(ret && ret.data);
-        if (!ret || !ret.ok || !d || typeof d !== 'object') {
-          log.info('PlayerInfo rejected: %s', String(ret && ret.data).slice(0, 200));
-          overlay.showInfoPop(entry.name || '玩家信息', ['获取失败：' + locText(String(ret && ret.data != null ? ret.data : '无应答')).slice(0, 40)]);
-          return;
-        }
-        pmStoreSet(String(entry.uid), d); // 查看信息也写穿缓存（侧栏副行/头像随之更新）
-        if (overlay && overlay.isVisible() && familyOf(activeKey) === 'pm') updateSide();
-        overlay.showInfoPop(infoNick(d) || entry.name || '玩家信息', infoLines(d, entry.uid), resolveAvatar(d, entry));
-      }).catch((e) => {
-        log.warn('PlayerInfo failed: %s', e && e.message);
-        overlay.showInfoPop(entry.name || '玩家信息', ['查询异常']);
-      });
+      net
+        .send(CMD_PLAYER_INFO, { uid: String(entry.uid) })
+        .then((ret) => {
+          var d = safeParse(ret && ret.data);
+          if (!ret || !ret.ok || !d || typeof d !== 'object') {
+            log.info('PlayerInfo rejected: %s', String(ret && ret.data).slice(0, 200));
+            overlay.showInfoPop(entry.name || '玩家信息', [
+              '获取失败：' +
+                locText(String(ret && ret.data != null ? ret.data : '无应答')).slice(0, 40),
+            ]);
+            return;
+          }
+          pmStoreSet(String(entry.uid), d); // 查看信息也写穿缓存（侧栏副行/头像随之更新）
+          if (overlay && overlay.isVisible() && familyOf(activeKey) === 'pm') updateSide();
+          overlay.showInfoPop(
+            infoNick(d) || entry.name || '玩家信息',
+            infoLines(d, entry.uid),
+            resolveAvatar(d, entry),
+          );
+        })
+        .catch((e) => {
+          log.warn('PlayerInfo failed: %s', e && e.message);
+          overlay.showInfoPop(entry.name || '玩家信息', ['查询异常']);
+        });
     },
     onNameAddFriend: (entry) => {
       var net = window.pocketcc.net;
       if (!net || !entry || !entry.uid || entry.self) return;
       // 好友判定已由菜单侧 onCheckFriend 用 Friends Map 分流；这里是确认非好友后的发申请，服务器自拒兼做兜底
-      net.send(CMD_ADD_FRIEND, { uid: String(entry.uid) }).then((ret) => {
-        log.info('AddFriend resp: %s', String(ret && ret.data).slice(0, 200));
-        if (overlay) overlay.toast(ret && ret.ok ? '好友申请已发送' : '加好友被拒：' + String(ret && ret.data != null ? ret.data : '').slice(0, 30));
-      }).catch((e) => {
-        log.warn('AddFriend failed: %s', e && e.message);
-        if (overlay) overlay.toast('加好友异常');
-      });
+      net
+        .send(CMD_ADD_FRIEND, { uid: String(entry.uid) })
+        .then((ret) => {
+          log.info('AddFriend resp: %s', String(ret && ret.data).slice(0, 200));
+          if (overlay)
+            overlay.toast(
+              ret && ret.ok
+                ? '好友申请已发送'
+                : '加好友被拒：' + String(ret && ret.data != null ? ret.data : '').slice(0, 30),
+            );
+        })
+        .catch((e) => {
+          log.warn('AddFriend failed: %s', e && e.message);
+          if (overlay) overlay.toast('加好友异常');
+        });
     },
-    onVisibleChange: (visible) => { if (!visible && overlay) { /* 隐藏仅停渲染，订阅与缓冲继续 */ } },
-    onGeomChange: (geom) => { try { Promise.resolve(storage.set(GEOM_KEY, geom)).catch(() => { }); } catch (e) { } },
+    onVisibleChange: (visible) => {
+      if (!visible && overlay) {
+        /* 隐藏仅停渲染，订阅与缓冲继续 */
+      }
+    },
+    onGeomChange: (geom) => {
+      try {
+        Promise.resolve(storage.set(GEOM_KEY, geom)).catch(() => {});
+      } catch (e) {}
+    },
   };
 }
 
@@ -2014,7 +2581,10 @@ function makeHandlers() {
 function install(ctx) {
   ctxRef = ctx;
   if (installed) return true;
-  if (!window.pocketcc.chat) { log.warn('chat base unavailable'); return false; }
+  if (!window.pocketcc.chat) {
+    log.warn('chat base unavailable');
+    return false;
+  }
   overlay = new ChatOverlay(makeHandlers());
   overlay.mount();
   overlay.setOpacity(cfg.opacity);
@@ -2023,11 +2593,19 @@ function install(ctx) {
   window.addEventListener('keydown', onKeydown, true);
   // 跨服房间随活动出现/消亡（游戏吸收 roomChatChange 后维护 chatHeads），开层时定时对账侧栏
   window.setInterval(function () {
-    if (overlay && overlay.isVisible() && familyOf(activeKey)) { syncRoomIdsCross(); updateSide(); }
+    if (overlay && overlay.isVisible() && familyOf(activeKey)) {
+      syncRoomIdsCross();
+      updateSide();
+    }
   }, 30000);
   installed = true;
   // 几何存档：读盘失败（命名空间未设等）静默用默认
-  storage.get(GEOM_KEY).then((g) => { if (g && overlay) overlay.setGeom(g); }).catch(() => { });
+  storage
+    .get(GEOM_KEY)
+    .then((g) => {
+      if (g && overlay) overlay.setGeom(g);
+    })
+    .catch(() => {});
   log.info('chat window installed (Ctrl+K).');
   return true;
 }
@@ -2052,7 +2630,10 @@ function configure(c) {
   if (c.opacity != null) cfg.opacity = c.opacity;
   var dateToggled = c.showDate != null && !!c.showDate !== cfg.showDate;
   if (c.showDate != null) cfg.showDate = !!c.showDate;
-  if (overlay) { overlay.setOpacity(cfg.opacity); syncChannels(); }
+  if (overlay) {
+    overlay.setOpacity(cfg.opacity);
+    syncChannels();
+  }
   if (dateToggled) retimeAll();
 }
 
@@ -2063,10 +2644,18 @@ function configure(c) {
  */
 function run(ctx) {
   ctxRef = ctx;
-  ctx.on.event('newChatPush', function (p) { ingest('push', p); });
-  ctx.on.event('chatpushpm', function (p) { ingest('pm', p); });
-  ctx.on.event('chatdel', function (p) { onDel(p); });
-  ctx.on.event('chatupdate', function (p) { onUpdate(p); });
+  ctx.on.event('newChatPush', function (p) {
+    ingest('push', p);
+  });
+  ctx.on.event('chatpushpm', function (p) {
+    ingest('pm', p);
+  });
+  ctx.on.event('chatdel', function (p) {
+    onDel(p);
+  });
+  ctx.on.event('chatupdate', function (p) {
+    onUpdate(p);
+  });
   // CHAT_INFO_LIST(10919)：被攻击/主动攻击等系统战报消息的实时推（走主协议 bus.net.<cmd>，非聊天 socket 事件）
   ctx.on.push(CMD_CHAT_INFO_LIST, onChatInfoList);
 }
@@ -2078,7 +2667,11 @@ reactor.register({
   symbols: ['dataCenter', 'tableManager', 'tableUtils', 'long64Bit', 'chatCommon?', 'navFly?'],
   defaults: {
     enabled: true,
-    quickWorld: true, quickAlliance: true, quickPm: true, quickCross: true, quickGroup: false,
+    quickWorld: true,
+    quickAlliance: true,
+    quickPm: true,
+    quickCross: true,
+    quickGroup: false,
     showDate: true,
     opacity: 75,
   },
@@ -2093,12 +2686,20 @@ reactor.register({
   ],
   toModuleCfg: function (c) {
     return {
-      quick: { world: !!c.quickWorld, alliance: !!c.quickAlliance, pm: !!c.quickPm, cross: !!c.quickCross, group: !!c.quickGroup },
+      quick: {
+        world: !!c.quickWorld,
+        alliance: !!c.quickAlliance,
+        pm: !!c.quickPm,
+        cross: !!c.quickCross,
+        group: !!c.quickGroup,
+      },
       showDate: !!c.showDate,
       opacity: c.opacity,
     };
   },
-  install: function (ctx) { return install(ctx); },
+  install: function (ctx) {
+    return install(ctx);
+  },
   configure: configure,
   run: run,
 });

@@ -13,7 +13,7 @@ const FONT = "system-ui,-apple-system,'Segoe UI',sans-serif";
  * @returns {string} svg 字符串
  */
 export function iconSVG(combat, size) {
-    return combat ? combatSVG(size) : dailySVG(size);
+  return combat ? combatSVG(size) : dailySVG(size);
 }
 
 /**
@@ -22,7 +22,7 @@ export function iconSVG(combat, size) {
  * @returns {string} svg 字符串
  */
 function dailySVG(size) {
-    return `<svg viewBox="0 0 48 48" width="${size}" height="${size}">
+  return `<svg viewBox="0 0 48 48" width="${size}" height="${size}">
     <defs>
       <radialGradient id="pcBodyCold" cx="50%" cy="42%" r="68%">
         <stop offset="0%" stop-color="#1c2b46"/><stop offset="70%" stop-color="#0e1626"/><stop offset="100%" stop-color="#070c16"/>
@@ -43,7 +43,7 @@ function dailySVG(size) {
  * @returns {string} svg 字符串
  */
 function combatSVG(size) {
-    return `<svg viewBox="0 0 48 48" width="${size}" height="${size}">
+  return `<svg viewBox="0 0 48 48" width="${size}" height="${size}">
     <defs>
       <radialGradient id="pcBodyHot" cx="50%" cy="42%" r="68%">
         <stop offset="0%" stop-color="#4a1410"/><stop offset="70%" stop-color="#2a0b08"/><stop offset="100%" stop-color="#170503"/>

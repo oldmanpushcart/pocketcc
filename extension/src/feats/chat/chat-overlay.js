@@ -195,8 +195,11 @@ const CSS = `
  */
 function esc(s) {
   return String(s == null ? '' : s)
-    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
 }
 
 /**
@@ -206,9 +209,9 @@ function esc(s) {
  */
 function avInner(av) {
   if (av && av.url) {
-    return `<img class="pcw-avimg" src="${esc(av.url)}" data-avph="${esc(av.initial || '?')}" style="--h:${(av.hue | 0)}" alt="">`;
+    return `<img class="pcw-avimg" src="${esc(av.url)}" data-avph="${esc(av.initial || '?')}" style="--h:${av.hue | 0}" alt="">`;
   }
-  return `<div class="pcw-avph" style="--h:${av ? (av.hue | 0) : 210}">${esc((av && av.initial) || '?')}</div>`;
+  return `<div class="pcw-avph" style="--h:${av ? av.hue | 0 : 210}">${esc((av && av.initial) || '?')}</div>`;
 }
 
 /**
@@ -238,7 +241,8 @@ function clampGeom(g) {
   const w = Math.max(MIN_W, Math.min(g.w, window.innerWidth));
   const h = Math.max(MIN_H, Math.min(g.h, window.innerHeight));
   return {
-    w, h,
+    w,
+    h,
     x: Math.max(0, Math.min(g.x, window.innerWidth - Math.min(w, 60))),
     y: Math.max(0, Math.min(g.y, window.innerHeight - Math.min(h, 40))),
   };
@@ -248,14 +252,18 @@ function clampGeom(g) {
  * 聊天浮层视图。生命周期由 chat-window 驱动：mount → set* / render* → unmount。
  */
 export class ChatOverlay {
-
   /**
    * @param {object} handlers 回调面（见文件头注释）
    */
   constructor(handlers) {
     this.#h = handlers || {};
     /** @type {{x:number,y:number,w:number,h:number}} 窗口几何（位置+尺寸） */
-    this.#geom = clampGeom({ x: window.innerWidth - DEFAULT_W - 60, y: 80, w: DEFAULT_W, h: DEFAULT_H });
+    this.#geom = clampGeom({
+      x: window.innerWidth - DEFAULT_W - 60,
+      y: 80,
+      w: DEFAULT_W,
+      h: DEFAULT_H,
+    });
     /** @type {Array<{uid:string, name:string, all?:boolean}>} 本次待发的 @ 列表（发送时交业务层编码） */
     this.#atList = [];
     /** @type {number|null} 冷却倒计时剩余秒 */
@@ -272,11 +280,20 @@ export class ChatOverlay {
     this.#topGate = false;
   }
 
-  #h; #geom; #atList; #cooldownLeft; #cooldownTimer; #toastTimer; #pinned; #topGate; #newMsgCount;
+  #h;
+  #geom;
+  #atList;
+  #cooldownLeft;
+  #cooldownTimer;
+  #toastTimer;
+  #pinned;
+  #topGate;
+  #newMsgCount;
   /** @type {HTMLElement|null} host 容器 */ #host = null;
   /** @type {ShadowRoot|null} shadow 根 */ #root = null;
   /** @type {HTMLElement|null} 窗口主体 */ #win = null;
-  /** @type {HTMLElement|null} 「N 条新消息」浮标（他人新消息不自动滚，点击跳最新） */ #newMsgPill = null;
+  /** @type {HTMLElement|null} 「N 条新消息」浮标（他人新消息不自动滚，点击跳最新） */ #newMsgPill =
+    null;
   /** @type {HTMLElement|null} 左侧会话列表（私聊/跨服家族视图） */ #side = null;
   /** @type {HTMLElement|null} 侧栏宽度拖拽把手 */ #sdrag = null;
   /** @type {number} 侧栏当前宽度（px，随几何存档持久） */ #sideW = 170;
@@ -292,8 +309,12 @@ export class ChatOverlay {
   /** @type {HTMLElement|null} 名字操作菜单浮层 */ #namePop = null;
   /** @type {HTMLElement|null} 玩家信息卡浮层 */ #infoPop = null;
   /** @type {HTMLElement|null} 消息右键菜单浮层（引用/撤回） */ #msgPop = null;
-  /** @type {{x:number, y:number}} 名字菜单最近一次弹出点（win 坐标，信息卡沿用） */ #menuPos = { x: 8, y: 8 };
-  /** @type {Array<{uid:string, name:string, all?:boolean}>} @ 候选全量（过滤框按子串筛） */ #atCands = [];
+  /** @type {{x:number, y:number}} 名字菜单最近一次弹出点（win 坐标，信息卡沿用） */ #menuPos = {
+    x: 8,
+    y: 8,
+  };
+  /** @type {Array<{uid:string, name:string, all?:boolean}>} @ 候选全量（过滤框按子串筛） */ #atCands =
+    [];
   /** @type {boolean} @ 候选是否置顶全体成员 */ #atAllowAll = false;
   /** @type {string} @ 候选过滤词 */ #atFilter = '';
   /** @type {HTMLElement|null} toast */ #toast = null;
@@ -354,7 +375,9 @@ export class ChatOverlay {
     root.appendChild(win);
     document.body.appendChild(host);
 
-    this.#host = host; this.#root = root; this.#win = win;
+    this.#host = host;
+    this.#root = root;
+    this.#win = win;
     this.#chips = win.querySelector('.pcw-chips');
     this.#side = win.querySelector('.pcw-side');
     this.#sdrag = win.querySelector('.pcw-sdrag');
@@ -362,7 +385,11 @@ export class ChatOverlay {
     this.#msgs = win.querySelector('.pcw-msgs');
     this.#loadTip = win.querySelector('.pcw-loadtip');
     this.#newMsgPill = win.querySelector('.pcw-newmsg');
-    if (this.#newMsgPill) this.#newMsgPill.addEventListener('click', () => { this.#scrollBottom(); this.#clearNewMsg(); });
+    if (this.#newMsgPill)
+      this.#newMsgPill.addEventListener('click', () => {
+        this.#scrollBottom();
+        this.#clearNewMsg();
+      });
     this.#qbar = win.querySelector('.pcw-qbar');
     this.#input = win.querySelector('.pcw-input');
     this.#sendBtn = win.querySelector('.send');
@@ -394,8 +421,8 @@ export class ChatOverlay {
         if (!this.#win) return;
         const nvw = window.innerWidth;
         const g = this.#geom;
-        const dispW = Math.min(g.w, lastVW);          // 旧视口下的显示宽
-        const rightGap = lastVW - (g.x + dispW);      // 窗右缘到视口右边距（可为负=允许超界 60px 那档）
+        const dispW = Math.min(g.w, lastVW); // 旧视口下的显示宽
+        const rightGap = lastVW - (g.x + dispW); // 窗右缘到视口右边距（可为负=允许超界 60px 那档）
         this.#geom = clampGeom({ x: nvw - rightGap - Math.min(g.w, nvw), y: g.y, w: g.w, h: g.h });
         lastVW = nvw;
         this.#applyGeom();
@@ -408,9 +435,20 @@ export class ChatOverlay {
 
   /** 卸载浮层（移除 host，冷却/toast 定时器一并清理） */
   unmount() {
-    if (this.#cooldownTimer) { clearInterval(this.#cooldownTimer); this.#cooldownTimer = null; }
-    if (this.#toastTimer) { clearTimeout(this.#toastTimer); this.#toastTimer = null; }
-    if (this.#host) { this.#host.remove(); this.#host = null; this.#root = null; this.#win = null; }
+    if (this.#cooldownTimer) {
+      clearInterval(this.#cooldownTimer);
+      this.#cooldownTimer = null;
+    }
+    if (this.#toastTimer) {
+      clearTimeout(this.#toastTimer);
+      this.#toastTimer = null;
+    }
+    if (this.#host) {
+      this.#host.remove();
+      this.#host = null;
+      this.#root = null;
+      this.#win = null;
+    }
   }
 
   // ─────────────────────── 可见性 ───────────────────────
@@ -423,8 +461,11 @@ export class ChatOverlay {
     if (!this.#win) this.mount();
     const vis = this.#win.hidden;
     this.#win.hidden = !vis;
-    if (vis) { this.#autoGrow(); this.#scrollBottom(); this.#notify('onVisibleChange', true); }
-    else this.#notify('onVisibleChange', false);
+    if (vis) {
+      this.#autoGrow();
+      this.#scrollBottom();
+      this.#notify('onVisibleChange', true);
+    } else this.#notify('onVisibleChange', false);
     return vis;
   }
 
@@ -471,15 +512,21 @@ export class ChatOverlay {
       this.#side.innerHTML = '';
       return;
     }
-    this.#side.innerHTML = items.map((c, i) =>
-      `<div class="pcw-conv${c.key === active ? ' active' : ''}" data-i="${i}">` +
-      (c.avatar ? `<div class="pcw-convav" title="查看玩家信息">${avInner(c.avatar)}</div>` : '') +
-      `<div class="pcw-convtc">` +
-      `<div class="pcw-convt">${esc(c.title)}</div>` +
-      `<div class="pcw-convs">${esc(c.sub || '')}</div>` +
-      `</div>` +
-      (c.unread ? `<span class="pcw-convb">${c.unread > 99 ? '99+' : c.unread}</span>` : '') +
-      `</div>`).join('');
+    this.#side.innerHTML = items
+      .map(
+        (c, i) =>
+          `<div class="pcw-conv${c.key === active ? ' active' : ''}" data-i="${i}">` +
+          (c.avatar
+            ? `<div class="pcw-convav" title="查看玩家信息">${avInner(c.avatar)}</div>`
+            : '') +
+          `<div class="pcw-convtc">` +
+          `<div class="pcw-convt">${esc(c.title)}</div>` +
+          `<div class="pcw-convs">${esc(c.sub || '')}</div>` +
+          `</div>` +
+          (c.unread ? `<span class="pcw-convb">${c.unread > 99 ? '99+' : c.unread}</span>` : '') +
+          `</div>`,
+      )
+      .join('');
     bindAvFallback(this.#side);
     Array.from(this.#side.querySelectorAll('.pcw-conv')).forEach((el) => {
       el.addEventListener('click', () => {
@@ -487,13 +534,14 @@ export class ChatOverlay {
         if (c) this.#notify('onSideSelect', c.key);
       });
       const avEl = el.querySelector('.pcw-convav');
-      if (avEl) avEl.addEventListener('click', (ev) => {
-        ev.stopPropagation(); // 点头像只弹信息，不触发整行切会话
-        const c = items[+el.dataset.i];
-        if (!c) return;
-        const uid = c.key.indexOf('pm:') === 0 ? c.key.slice(3) : c.key;
-        this.#notify('onNameInfo', { uid: uid, name: c.title, self: false });
-      });
+      if (avEl)
+        avEl.addEventListener('click', (ev) => {
+          ev.stopPropagation(); // 点头像只弹信息，不触发整行切会话
+          const c = items[+el.dataset.i];
+          if (!c) return;
+          const uid = c.key.indexOf('pm:') === 0 ? c.key.slice(3) : c.key;
+          this.#notify('onNameInfo', { uid: uid, name: c.title, self: false });
+        });
     });
     this.#side.style.width = this.#sideW + 'px';
     this.#side.classList.add('show');
@@ -560,13 +608,18 @@ export class ChatOverlay {
         badge.textContent = n > 99 ? '99+' : String(n);
         b.appendChild(badge);
       }
-      b.addEventListener('click', () => { this.#morePop.hidden = true; this.#notify('onChannelSelect', def.key); });
+      b.addEventListener('click', () => {
+        this.#morePop.hidden = true;
+        this.#notify('onChannelSelect', def.key);
+      });
       frag.appendChild(b);
     }
     const moreBtn = document.createElement('button');
     moreBtn.className = 'pcw-chip';
     moreBtn.textContent = '更多▾';
-    moreBtn.addEventListener('click', () => { this.#morePop.hidden = !this.#morePop.hidden; });
+    moreBtn.addEventListener('click', () => {
+      this.#morePop.hidden = !this.#morePop.hidden;
+    });
     frag.appendChild(moreBtn);
     this.#chips.replaceChildren(frag);
   }
@@ -574,13 +627,18 @@ export class ChatOverlay {
   /** 重绘「更多」频道菜单 */
   #renderMorePop() {
     if (!this.#morePop) return;
-    const items = this.#moreDefs.map((def) => {
-      const n = this.#unread.get(def.key) || 0;
-      return `<button class="pcw-popitem" data-key="${esc(def.key)}">${esc(def.label)}${n > 0 ? ' (' + (n > 99 ? '99+' : n) + ')' : ''}</button>`;
-    }).join('');
+    const items = this.#moreDefs
+      .map((def) => {
+        const n = this.#unread.get(def.key) || 0;
+        return `<button class="pcw-popitem" data-key="${esc(def.key)}">${esc(def.label)}${n > 0 ? ' (' + (n > 99 ? '99+' : n) + ')' : ''}</button>`;
+      })
+      .join('');
     this.#morePop.innerHTML = items || '<div class="pcw-empty">暂无其他会话</div>';
     this.#morePop.querySelectorAll('.pcw-popitem').forEach((b) => {
-      b.addEventListener('click', () => { this.#morePop.hidden = true; this.#notify('onChannelSelect', b.dataset.key); });
+      b.addEventListener('click', () => {
+        this.#morePop.hidden = true;
+        this.#notify('onChannelSelect', b.dataset.key);
+      });
     });
   }
 
@@ -595,7 +653,7 @@ export class ChatOverlay {
     if (!this.#msgs) return;
     const prevTop = this.#msgs.scrollTop; // keepScroll 用：重排前阅读位置
     const frag = document.createDocumentFragment();
-    for (const e of (entries || [])) frag.appendChild(this.#buildRow(e));
+    for (const e of entries || []) frag.appendChild(this.#buildRow(e));
     if (!frag.childNodes.length) {
       const tip = document.createElement('div');
       tip.className = 'pcw-empty';
@@ -635,8 +693,10 @@ export class ChatOverlay {
     // 限 DOM 规模：只留最近 300 个节点
     while (this.#msgs.childElementCount > 300) this.#msgs.firstElementChild.remove();
     // 贴底（#pinned，正在看最新一条）或自己发的 → 自动跟随到底部；已向上翻阅 → 不打断，只累加底部浮标（点浮标或手动滚回底部才清）
-    if (entry.self || this.#pinned) { this.#pinned = true; this.#scrollBottom(); }
-    else this.#bumpNewMsg();
+    if (entry.self || this.#pinned) {
+      this.#pinned = true;
+      this.#scrollBottom();
+    } else this.#bumpNewMsg();
   }
 
   /** 底部「N 条新消息」浮标计数 +1 并显示（他人新消息到达、不自动滚动时） */
@@ -644,14 +704,18 @@ export class ChatOverlay {
     this.#newMsgCount++;
     if (this.#newMsgPill) {
       this.#newMsgPill.hidden = false;
-      this.#newMsgPill.textContent = '↓ ' + (this.#newMsgCount > 99 ? '99+' : this.#newMsgCount) + ' 条新消息';
+      this.#newMsgPill.textContent =
+        '↓ ' + (this.#newMsgCount > 99 ? '99+' : this.#newMsgCount) + ' 条新消息';
     }
   }
 
   /** 清除「新消息」浮标（用户点击浮标跳最新，或手动滚回底部时） */
   #clearNewMsg() {
     this.#newMsgCount = 0;
-    if (this.#newMsgPill) { this.#newMsgPill.hidden = true; this.#newMsgPill.textContent = ''; }
+    if (this.#newMsgPill) {
+      this.#newMsgPill.hidden = true;
+      this.#newMsgPill.textContent = '';
+    }
   }
 
   /**
@@ -667,7 +731,8 @@ export class ChatOverlay {
     this.#msgs.insertBefore(frag, this.#msgs.firstChild);
     this.#msgs.scrollTop = this.#msgs.scrollHeight - prevH;
     // 补一页后仍不满一屏（scrollTop 被钳到顶部附近）→ 接力翻下一页
-    if (this.#msgs.scrollHeight <= this.#msgs.clientHeight + 4 || this.#msgs.scrollTop <= 2) this.#notify('onLoadOlder');
+    if (this.#msgs.scrollHeight <= this.#msgs.clientHeight + 4 || this.#msgs.scrollTop <= 2)
+      this.#notify('onLoadOlder');
   }
 
   /** 清空消息区 */
@@ -683,10 +748,19 @@ export class ChatOverlay {
   setHistoryStatus(state) {
     if (!this.#loadTip) return;
     const t = this.#loadTip;
-    if (state === 'loading') { t.hidden = false; t.textContent = '正在加载更早的消息…'; }
-    else if (state === 'end') { t.hidden = false; t.textContent = '— 已加载全部历史 —'; }
-    else if (state === 'error') { t.hidden = false; t.textContent = '历史加载失败，继续上滚重试'; }
-    else { t.hidden = true; t.textContent = ''; }
+    if (state === 'loading') {
+      t.hidden = false;
+      t.textContent = '正在加载更早的消息…';
+    } else if (state === 'end') {
+      t.hidden = false;
+      t.textContent = '— 已加载全部历史 —';
+    } else if (state === 'error') {
+      t.hidden = false;
+      t.textContent = '历史加载失败，继续上滚重试';
+    } else {
+      t.hidden = true;
+      t.textContent = '';
+    }
   }
 
   /**
@@ -720,7 +794,7 @@ export class ChatOverlay {
       nameEl.addEventListener('click', (ev) => this.openNameMenu(e, ev));
     }
     line.appendChild(nameEl);
-    for (const seg of (e.segments || [{ type: 'text', s: '' }])) {
+    for (const seg of e.segments || [{ type: 'text', s: '' }]) {
       if (seg.type === 'at') {
         const at = document.createElement('span');
         at.className = 'pcw-at';
@@ -733,10 +807,15 @@ export class ChatOverlay {
         chip.textContent = seg.s;
         if (jumpable) {
           chip.title = '点击跳转到游戏：' + (seg.jumpHint || seg.s);
-          chip.addEventListener('click', (ev) => { ev.stopPropagation(); this.#notify('onJump', seg.action, e); });
+          chip.addEventListener('click', (ev) => {
+            ev.stopPropagation();
+            this.#notify('onJump', seg.action, e);
+          });
         } else {
           chip.title = '点击复制: ' + (seg.copy != null ? seg.copy : seg.s);
-          chip.addEventListener('click', () => this.#copyText(String(seg.copy != null ? seg.copy : seg.s)));
+          chip.addEventListener('click', () =>
+            this.#copyText(String(seg.copy != null ? seg.copy : seg.s)),
+          );
         }
         line.appendChild(chip);
       } else {
@@ -761,7 +840,10 @@ export class ChatOverlay {
     this.#qbar.hidden = !this.#quote;
     if (this.#quote) {
       this.#qbar.querySelector('.pcw-qtext').textContent =
-        '引用 ' + (this.#quote.name || '') + ': ' + (this.#quote.segments ? this.#quote.segments.map((s) => s.s).join('') : '');
+        '引用 ' +
+        (this.#quote.name || '') +
+        ': ' +
+        (this.#quote.segments ? this.#quote.segments.map((s) => s.s).join('') : '');
     }
   }
 
@@ -771,7 +853,11 @@ export class ChatOverlay {
    * @returns {void}
    */
   setInput(text) {
-    if (this.#input) { this.#input.value = text || ''; this.#autoGrow(); this.focusInput(); }
+    if (this.#input) {
+      this.#input.value = text || '';
+      this.#autoGrow();
+      this.focusInput();
+    }
   }
 
   /** 聚焦输入框 */
@@ -781,7 +867,10 @@ export class ChatOverlay {
 
   /** 发送被业务层接受后：清输入与 @ 列表 */
   clearInput() {
-    if (this.#input) { this.#input.value = ''; this.#autoGrow(); }
+    if (this.#input) {
+      this.#input.value = '';
+      this.#autoGrow();
+    }
     this.#atList = [];
     this.setQuote(null);
   }
@@ -794,7 +883,7 @@ export class ChatOverlay {
     const cs = getComputedStyle(el);
     const lh = Math.ceil(parseFloat(cs.lineHeight) || (parseFloat(cs.fontSize) || 13) * 1.5);
     if (!el.value) {
-      el.style.height = (lh + 12) + 'px'; // padding 5×2 + 上下边框 1×2
+      el.style.height = lh + 12 + 'px'; // padding 5×2 + 上下边框 1×2
       el.style.overflowY = 'hidden';
       return;
     }
@@ -816,7 +905,9 @@ export class ChatOverlay {
     this.#paintSendBtn();
     this.#cooldownTimer = setInterval(() => {
       if (--this.#cooldownLeft <= 0) {
-        clearInterval(this.#cooldownTimer); this.#cooldownTimer = null; this.#cooldownLeft = 0;
+        clearInterval(this.#cooldownTimer);
+        this.#cooldownTimer = null;
+        this.#cooldownLeft = 0;
       }
       this.#paintSendBtn();
     }, 1000);
@@ -874,11 +965,19 @@ export class ChatOverlay {
     const list = [];
     if (this.#atAllowAll) list.push({ uid: '', name: AT_ALL_LABEL, all: true });
     for (const s of this.#atCands) {
-      if (!q || String(s.name || '').toLowerCase().indexOf(q) >= 0) list.push(s);
+      if (
+        !q ||
+        String(s.name || '')
+          .toLowerCase()
+          .indexOf(q) >= 0
+      )
+        list.push(s);
       if (list.length >= 80) break; // 渲染上限，防大列表卡 DOM
     }
-    box.innerHTML = list.map((s, i) => `<button class="pcw-popitem" data-i="${i}">${esc('@' + s.name)}</button>`).join('')
-      || '<div class="pcw-empty">无匹配对象</div>';
+    box.innerHTML =
+      list
+        .map((s, i) => `<button class="pcw-popitem" data-i="${i}">${esc('@' + s.name)}</button>`)
+        .join('') || '<div class="pcw-empty">无匹配对象</div>';
     Array.from(box.querySelectorAll('.pcw-popitem')).forEach((b) => {
       b.addEventListener('click', () => {
         const s = list[+b.dataset.i];
@@ -905,8 +1004,11 @@ export class ChatOverlay {
       { label: '@ ' + (e.name || ''), fn: () => this.#insertAt({ uid: e.uid, name: e.name }) },
     ];
     if (friend !== false) acts.push({ label: '发起私聊', fn: () => this.#notify('onNamePm', e) });
-    if (friend !== true) acts.push({ label: '加好友', fn: () => this.#notify('onNameAddFriend', e) });
-    this.#namePop.innerHTML = acts.map((a, i) => `<button class="pcw-popitem" data-i="${i}">${esc(a.label)}</button>`).join('');
+    if (friend !== true)
+      acts.push({ label: '加好友', fn: () => this.#notify('onNameAddFriend', e) });
+    this.#namePop.innerHTML = acts
+      .map((a, i) => `<button class="pcw-popitem" data-i="${i}">${esc(a.label)}</button>`)
+      .join('');
     Array.from(this.#namePop.querySelectorAll('.pcw-popitem')).forEach((b) => {
       b.addEventListener('click', () => {
         this.#namePop.hidden = true;
@@ -940,16 +1042,21 @@ export class ChatOverlay {
   showInfoPop(title, lines, av) {
     if (!this.#infoPop || !this.#win) return;
     const jumpActs = [];
-    const rows = (lines || []).map((ln) => {
-      const it = (ln && typeof ln === 'object') ? ln : { s: String(ln == null ? '' : ln) };
-      if (it.copy) return `<div class="pcw-inforow"><span class="pcw-copylink" data-copy="${esc(String(it.copy))}">${esc(it.s)}</span></div>`;
-      if (!it.action) return `<div class="pcw-inforow">${esc(it.s)}</div>`;
-      const idx = jumpActs.push(it.action) - 1;
-      return `<div class="pcw-inforow"><span class="pcw-jumplink" data-jump="${idx}">${esc(it.s)}</span></div>`;
-    }).join('');
-    this.#infoPop.innerHTML = (av
-      ? `<div class="pcw-popav">${avInner(av)}<div class="pcw-infotitle">${esc(title || '玩家信息')}</div></div>`
-      : `<div class="pcw-infotitle">${esc(title || '玩家信息')}</div>`) + (rows || '<div class="pcw-inforow">（无可用信息）</div>');
+    const rows = (lines || [])
+      .map((ln) => {
+        const it = ln && typeof ln === 'object' ? ln : { s: String(ln == null ? '' : ln) };
+        if (it.copy)
+          return `<div class="pcw-inforow"><span class="pcw-copylink" data-copy="${esc(String(it.copy))}">${esc(it.s)}</span></div>`;
+        if (!it.action) return `<div class="pcw-inforow">${esc(it.s)}</div>`;
+        const idx = jumpActs.push(it.action) - 1;
+        return `<div class="pcw-inforow"><span class="pcw-jumplink" data-jump="${idx}">${esc(it.s)}</span></div>`;
+      })
+      .join('');
+    this.#infoPop.innerHTML =
+      (av
+        ? `<div class="pcw-popav">${avInner(av)}<div class="pcw-infotitle">${esc(title || '玩家信息')}</div></div>`
+        : `<div class="pcw-infotitle">${esc(title || '玩家信息')}</div>`) +
+      (rows || '<div class="pcw-inforow">（无可用信息）</div>');
     bindAvFallback(this.#infoPop);
     this.#infoPop.querySelectorAll('.pcw-jumplink').forEach((el) => {
       el.addEventListener('click', (ev) => {
@@ -983,7 +1090,10 @@ export class ChatOverlay {
    */
   #insertAt(s) {
     const token = '@' + s.name + ' ';
-    if (this.#input) { this.#input.value += token; this.#autoGrow(); }
+    if (this.#input) {
+      this.#input.value += token;
+      this.#autoGrow();
+    }
     if (!this.#atList.some((x) => x.name === s.name)) this.#atList.push(s);
     this.focusInput();
   }
@@ -1009,7 +1119,12 @@ export class ChatOverlay {
    */
   setGeom(g) {
     if (!g) return;
-    this.#geom = clampGeom({ x: g.x != null ? g.x : this.#geom.x, y: g.y != null ? g.y : this.#geom.y, w: g.w != null ? g.w : this.#geom.w, h: g.h != null ? g.h : this.#geom.h });
+    this.#geom = clampGeom({
+      x: g.x != null ? g.x : this.#geom.x,
+      y: g.y != null ? g.y : this.#geom.y,
+      w: g.w != null ? g.w : this.#geom.w,
+      h: g.h != null ? g.h : this.#geom.h,
+    });
     if (g.sideW != null && g.sideW >= 100) this.#sideW = Math.min(g.sideW, 360);
     if (this.#side) this.#side.style.width = this.#sideW + 'px';
     this.#applyGeom();
@@ -1031,7 +1146,9 @@ export class ChatOverlay {
     s.top = g.y + 'px';
     s.width = g.w + 'px';
     s.height = g.h + 'px';
-    if (this.#side) this.#side.style.width = Math.max(100, Math.min(this.#sideW, Math.max(100, g.w - 240))) + 'px';
+    if (this.#side)
+      this.#side.style.width =
+        Math.max(100, Math.min(this.#sideW, Math.max(100, g.w - 240))) + 'px';
   }
 
   /**
@@ -1052,7 +1169,22 @@ export class ChatOverlay {
   /** 屏蔽游戏输入：浮层内指针/键盘/滚轮事件冒泡到 win 即止 */
   #wireBlockGameEvents() {
     const stop = (e) => e.stopPropagation();
-    for (const t of ['pointerdown', 'pointerup', 'pointermove', 'mousedown', 'mouseup', 'click', 'dblclick', 'wheel', 'keydown', 'keyup', 'keypress', 'touchstart', 'touchend', 'contextmenu']) {
+    for (const t of [
+      'pointerdown',
+      'pointerup',
+      'pointermove',
+      'mousedown',
+      'mouseup',
+      'click',
+      'dblclick',
+      'wheel',
+      'keydown',
+      'keyup',
+      'keypress',
+      'touchstart',
+      'touchend',
+      'contextmenu',
+    ]) {
       this.#win.addEventListener(t, stop);
     }
     // 焦点进出：host 上 tabindex 防游戏抢焦点丢失由浏览器默认处理，无需干预
@@ -1065,19 +1197,26 @@ export class ChatOverlay {
     let drag = null;
     bar.addEventListener('pointerdown', (e) => {
       // ✕ 按钮也在 titlebar 内：若照常起拖并 setPointerCapture，click 会被重定向到 bar，关闭按钮失效
-      if ((/** @type {HTMLElement} */(e.target)).closest('.pcw-close')) return;
+      if (/** @type {HTMLElement} */ (e.target).closest('.pcw-close')) return;
       drag = { sx: e.clientX, sy: e.clientY, ox: this.#geom.x, oy: this.#geom.y };
       bar.setPointerCapture(e.pointerId);
     });
     bar.addEventListener('pointermove', (e) => {
       if (!drag) return;
-      this.#geom = clampGeom({ x: drag.ox + e.clientX - drag.sx, y: drag.oy + e.clientY - drag.sy, w: this.#geom.w, h: this.#geom.h });
+      this.#geom = clampGeom({
+        x: drag.ox + e.clientX - drag.sx,
+        y: drag.oy + e.clientY - drag.sy,
+        w: this.#geom.w,
+        h: this.#geom.h,
+      });
       this.#applyGeom();
     });
     const end = (e) => {
       if (!drag) return;
       drag = null;
-      try { bar.releasePointerCapture(e.pointerId); } catch (err) { }
+      try {
+        bar.releasePointerCapture(e.pointerId);
+      } catch (err) {}
       this.#notify('onGeomChange', this.getGeom());
     };
     bar.addEventListener('pointerup', end);
@@ -1103,7 +1242,9 @@ export class ChatOverlay {
     const end = (e) => {
       if (!rs) return;
       rs = null;
-      try { hd.releasePointerCapture(e.pointerId); } catch (err) { }
+      try {
+        hd.releasePointerCapture(e.pointerId);
+      } catch (err) {}
       this.#notify('onGeomChange', this.getGeom());
     };
     hd.addEventListener('pointerup', end);
@@ -1124,10 +1265,13 @@ export class ChatOverlay {
       const el = this.#msgs;
       this.#pinned = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
       if (this.#pinned) this.#clearNewMsg(); // 用户手动滚回底部：清「新消息」浮标
-      if (el.scrollTop < 240 && !this.#topGate) { // 提前 240px 预取（不必顶到边缘），#topGate 防惯性连触
+      if (el.scrollTop < 240 && !this.#topGate) {
+        // 提前 240px 预取（不必顶到边缘），#topGate 防惯性连触
         this.#topGate = true;
         this.#notify('onLoadOlder');
-        setTimeout(() => { this.#topGate = false; }, 400);
+        setTimeout(() => {
+          this.#topGate = false;
+        }, 400);
       }
     });
   }
@@ -1136,8 +1280,17 @@ export class ChatOverlay {
   #wireInput() {
     this.#input.addEventListener('input', () => this.#autoGrow());
     this.#input.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); this.#doSend(); }
-      if (e.key === 'Escape') { this.#atPop.hidden = true; this.#morePop.hidden = true; if (this.#namePop) this.#namePop.hidden = true; if (this.#infoPop) this.#infoPop.hidden = true; if (this.#msgPop) this.#msgPop.hidden = true; }
+      if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        this.#doSend();
+      }
+      if (e.key === 'Escape') {
+        this.#atPop.hidden = true;
+        this.#morePop.hidden = true;
+        if (this.#namePop) this.#namePop.hidden = true;
+        if (this.#infoPop) this.#infoPop.hidden = true;
+        if (this.#msgPop) this.#msgPop.hidden = true;
+      }
     });
     this.#sendBtn.addEventListener('click', () => this.#doSend());
     this.#win.querySelector('.btn-at').addEventListener('click', () => {
@@ -1146,26 +1299,53 @@ export class ChatOverlay {
     });
     this.#win.querySelector('.btn-pos').addEventListener('click', () => {
       const m = /^(\d+)\s*,\s*(\d+)$/.exec(this.#input.value.trim());
-      if (m) { this.#notify('onSharePos', +m[1], +m[2]); this.#input.value = ''; }
-      else this.toast('先在输入框里填 711,97 这样的坐标');
+      if (m) {
+        this.#notify('onSharePos', +m[1], +m[2]);
+        this.#input.value = '';
+      } else this.toast('先在输入框里填 711,97 这样的坐标');
     });
     this.#qbar.querySelector('.pcw-qx').addEventListener('click', () => this.setQuote(null));
     // 点窗口空白收起浮层菜单
     this.#win.addEventListener('pointerdown', (e) => {
-      if (!this.#atPop.contains(/** @type {Node} */(e.target))) this.#atPop.hidden = true;
-      if (!this.#morePop.contains(/** @type {Node} */(e.target)) && !(/** @type {HTMLElement} */(e.target)).closest('.pcw-chip')) this.#morePop.hidden = true;
-      if (this.#namePop && !this.#namePop.contains(/** @type {Node} */(e.target)) && !(/** @type {HTMLElement} */(e.target)).closest('.pcw-name')) this.#namePop.hidden = true;
-      if (this.#infoPop && !this.#infoPop.contains(/** @type {Node} */(e.target)) && !(/** @type {HTMLElement} */(e.target)).closest('.pcw-name')) this.#infoPop.hidden = true;
-      if (this.#msgPop && !this.#msgPop.contains(/** @type {Node} */(e.target))) this.#msgPop.hidden = true;
+      if (!this.#atPop.contains(/** @type {Node} */ (e.target))) this.#atPop.hidden = true;
+      if (
+        !this.#morePop.contains(/** @type {Node} */ (e.target)) &&
+        !(/** @type {HTMLElement} */ (e.target).closest('.pcw-chip'))
+      )
+        this.#morePop.hidden = true;
+      if (
+        this.#namePop &&
+        !this.#namePop.contains(/** @type {Node} */ (e.target)) &&
+        !(/** @type {HTMLElement} */ (e.target).closest('.pcw-name'))
+      )
+        this.#namePop.hidden = true;
+      if (
+        this.#infoPop &&
+        !this.#infoPop.contains(/** @type {Node} */ (e.target)) &&
+        !(/** @type {HTMLElement} */ (e.target).closest('.pcw-name'))
+      )
+        this.#infoPop.hidden = true;
+      if (this.#msgPop && !this.#msgPop.contains(/** @type {Node} */ (e.target)))
+        this.#msgPop.hidden = true;
     });
   }
 
   /** 发送动作：交给业务层（Promise 决定清不清输入框）；软换行在出站前压成空格（聊天消息为单行） */
   #doSend() {
-    const text = this.#input.value.trim().replace(/[\r\n]+/g, ' ').trim();
+    const text = this.#input.value
+      .trim()
+      .replace(/[\r\n]+/g, ' ')
+      .trim();
     if (!text) return;
-    const p = this.#h.onSend ? this.#h.onSend(text, this.#atList.slice(), this.#quote) : Promise.resolve(false);
-    Promise.resolve(p).then((ok) => { if (ok) this.clearInput(); }, () => { });
+    const p = this.#h.onSend
+      ? this.#h.onSend(text, this.#atList.slice(), this.#quote)
+      : Promise.resolve(false);
+    Promise.resolve(p).then(
+      (ok) => {
+        if (ok) this.clearInput();
+      },
+      () => {},
+    );
   }
 
   /** 边/角 resize 把手：左、右、底、左下、右下（上边与上角留给标题栏拖拽） */
@@ -1174,7 +1354,14 @@ export class ChatOverlay {
       const dir = hd.dataset.dir;
       let rs = null;
       hd.addEventListener('pointerdown', (e) => {
-        rs = { sx: e.clientX, sy: e.clientY, ox: this.#geom.x, oy: this.#geom.y, ow: this.#geom.w, oh: this.#geom.h };
+        rs = {
+          sx: e.clientX,
+          sy: e.clientY,
+          ox: this.#geom.x,
+          oy: this.#geom.y,
+          ow: this.#geom.w,
+          oh: this.#geom.h,
+        };
         hd.setPointerCapture(e.pointerId);
         e.stopPropagation();
       });
@@ -1182,11 +1369,24 @@ export class ChatOverlay {
         if (!rs) return;
         const dx = e.clientX - rs.sx;
         const dy = e.clientY - rs.sy;
-        let x = rs.ox, y = rs.oy, w = rs.ow, h = rs.oh;
-        if (dir === 'l' || dir === 'bl') { w = rs.ow - dx; x = rs.ox + dx; } // 右缘锚定
-        if (dir === 'r' || dir === 'br') { w = rs.ow + dx; }
-        if (dir === 'b' || dir === 'bl' || dir === 'br') { h = rs.oh + dy; }
-        if ((dir === 'l' || dir === 'bl') && w < MIN_W) { w = MIN_W; x = rs.ox + rs.ow - MIN_W; } // 触最小宽后右缘不再左移
+        let x = rs.ox,
+          y = rs.oy,
+          w = rs.ow,
+          h = rs.oh;
+        if (dir === 'l' || dir === 'bl') {
+          w = rs.ow - dx;
+          x = rs.ox + dx;
+        } // 右缘锚定
+        if (dir === 'r' || dir === 'br') {
+          w = rs.ow + dx;
+        }
+        if (dir === 'b' || dir === 'bl' || dir === 'br') {
+          h = rs.oh + dy;
+        }
+        if ((dir === 'l' || dir === 'bl') && w < MIN_W) {
+          w = MIN_W;
+          x = rs.ox + rs.ow - MIN_W;
+        } // 触最小宽后右缘不再左移
         if (h < MIN_H) h = MIN_H;
         this.#geom = clampGeom({ x, y, w, h });
         this.#applyGeom();
@@ -1194,7 +1394,9 @@ export class ChatOverlay {
       const end = (e) => {
         if (!rs) return;
         rs = null;
-        try { hd.releasePointerCapture(e.pointerId); } catch (err) { }
+        try {
+          hd.releasePointerCapture(e.pointerId);
+        } catch (err) {}
         this.#notify('onGeomChange', this.getGeom());
       };
       hd.addEventListener('pointerup', end);
@@ -1214,14 +1416,22 @@ export class ChatOverlay {
     let selText = '';
     try {
       const sel = (this.#root.getSelection ? this.#root : document).getSelection();
-      if (sel && String(sel).trim() && sel.anchorNode && this.#msgs.contains(sel.anchorNode)) selText = String(sel);
-    } catch (err) { /* 取不到当无选中 */ }
+      if (sel && String(sel).trim() && sel.anchorNode && this.#msgs.contains(sel.anchorNode))
+        selText = String(sel);
+    } catch (err) {
+      /* 取不到当无选中 */
+    }
     const acts = [
-      { label: '复制', fn: () => this.#copyText(selText || String(e.plain != null ? e.plain : e.text || '')) },
+      {
+        label: '复制',
+        fn: () => this.#copyText(selText || String(e.plain != null ? e.plain : e.text || '')),
+      },
       { label: '引用', fn: () => this.#notify('onQuote', e) },
     ];
     if (e.self) acts.push({ label: '撤回', fn: () => this.#notify('onRevoke', e) });
-    this.#msgPop.innerHTML = acts.map((a, i) => `<button class="pcw-popitem" data-i="${i}">${esc(a.label)}</button>`).join('');
+    this.#msgPop.innerHTML = acts
+      .map((a, i) => `<button class="pcw-popitem" data-i="${i}">${esc(a.label)}</button>`)
+      .join('');
     Array.from(this.#msgPop.querySelectorAll('.pcw-popitem')).forEach((b) => {
       b.addEventListener('click', () => {
         this.#msgPop.hidden = true;
@@ -1245,8 +1455,13 @@ export class ChatOverlay {
    * @returns {void}
    */
   #copyText(text) {
-    if (!text) { this.toast('无可复制内容'); return; }
-    const done = () => { this.toast('已复制'); };
+    if (!text) {
+      this.toast('无可复制内容');
+      return;
+    }
+    const done = () => {
+      this.toast('已复制');
+    };
     if (navigator.clipboard && navigator.clipboard.writeText) {
       navigator.clipboard.writeText(text).then(done, () => this.#copyFallback(text, done));
     } else {
@@ -1264,8 +1479,11 @@ export class ChatOverlay {
       ta.select();
       const okc = document.execCommand('copy');
       ta.remove();
-      if (okc) done(); else this.toast('复制失败');
-    } catch (e) { this.toast('复制失败'); }
+      if (okc) done();
+      else this.toast('复制失败');
+    } catch (e) {
+      this.toast('复制失败');
+    }
   }
 
   /** 滚到底 */
@@ -1281,10 +1499,17 @@ export class ChatOverlay {
    * @returns {void}
    */
   #jumpTo(id, allowLoad) {
-    if (id == null || id === '') { this.toast('引用未记录原消息标识，无法定位'); return; }
+    if (id == null || id === '') {
+      this.toast('引用未记录原消息标识，无法定位');
+      return;
+    }
     let row = null;
     // data-id 为带引号的属性值：只需转义 " 与 \，不能用 CSS.escape（那是标识符转义，会把纯数字 uuid 开头转成 \31 …导致永远匹配不到）
-    try { row = this.#msgs.querySelector('[data-id="' + String(id).replace(/["\\]/g, '\\$&') + '"]'); } catch (e) { row = null; }
+    try {
+      row = this.#msgs.querySelector('[data-id="' + String(id).replace(/["\\]/g, '\\$&') + '"]');
+    } catch (e) {
+      row = null;
+    }
     if (row) {
       row.scrollIntoView({ block: 'center' });
       const had = row.classList.contains('mention');
@@ -1302,7 +1527,9 @@ export class ChatOverlay {
    * @param {string} id 目标条目 id（uuid）
    * @returns {void}
    */
-  jumpToMessage(id) { this.#jumpTo(id, false); }
+  jumpToMessage(id) {
+    this.#jumpTo(id, false);
+  }
 
   /**
    * 回调派发（缺省空操作）
@@ -1311,6 +1538,11 @@ export class ChatOverlay {
    * @returns {*} handler 返回值（onCheckFriend 等同步询问用；无 handler 或异常返回 undefined）
    */
   #notify(name, ...args) {
-    try { return this.#h[name] ? this.#h[name](...args) : undefined; } catch (e) { log.warn('handler %s threw: %s', name, e && e.message); return undefined; }
+    try {
+      return this.#h[name] ? this.#h[name](...args) : undefined;
+    } catch (e) {
+      log.warn('handler %s threw: %s', name, e && e.message);
+      return undefined;
+    }
   }
 }

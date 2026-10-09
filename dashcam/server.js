@@ -30,15 +30,22 @@ const PORT = Number(process.env.DASHCAM_PORT) || 7391;
 const HOST = '127.0.0.1';
 const OUT = process.env.DASHCAM_OUT || path.join(__dirname, 'store');
 
-const IDLE_FINALIZE_MS = 3 * 60 * 1000;   // 空闲超此值即定稿（done 批丢失时的兜底）
+const IDLE_FINALIZE_MS = 3 * 60 * 1000; // 空闲超此值即定稿（done 批丢失时的兜底）
 const SWEEP_INTERVAL_MS = 30 * 1000;
-const MAX_BODY = 32 * 1024 * 1024;         // 单批 body 上限 32MB
+const MAX_BODY = 32 * 1024 * 1024; // 单批 body 上限 32MB
 
 // ── 自动 slug 启发式 ──────────────────────────────────────────────
 // 噪声：高频纯轮询/心跳类命令名，派生主题时跳过（可按真机反馈增补）
 const NOISE_NAMES = new Set([
-  'HEART', 'NO_QUEUE_HEART', 'PING', 'GET_WORLD_INFO', 'GET_MIX_TERRITORY_INFO',
-  'GET_TERRITORY_INFO', 'GET_MARCH_TIME', 'GET_BEHEMOTH_WORLD_INFO', 'GET_PLAYER_POINT',
+  'HEART',
+  'NO_QUEUE_HEART',
+  'PING',
+  'GET_WORLD_INFO',
+  'GET_MIX_TERRITORY_INFO',
+  'GET_TERRITORY_INFO',
+  'GET_MARCH_TIME',
+  'GET_BEHEMOTH_WORLD_INFO',
+  'GET_PLAYER_POINT',
 ]);
 // 名字前缀：作主题词时剥掉，更短更可读
 const NAME_PREFIX_RE = /^(GET|REQ|CMD|C2S|SEND)_/;
@@ -61,7 +68,8 @@ function sanitize(raw, max) {
   const s = String(raw == null ? '' : raw)
     .replace(/\.\./g, '_')
     .replace(/[^\w.-]+/g, (m) => (m.includes(' ') || m === '_' ? '_' : ''))
-    .replace(/_+/g, '_').replace(/^[._]+|[._]+$/g, '');
+    .replace(/_+/g, '_')
+    .replace(/^[._]+|[._]+$/g, '');
   return (s || '').slice(0, max || 120);
 }
 
@@ -105,18 +113,6 @@ function deriveSlug(nameCounts) {
 }
 
 /**
- * 生成会话目录（store/<uid>），uid 为空回落 anon。
- * @param {string} uid
- * @returns {string} 目录绝对路径
- */
-function dirFor(uid) {
-  const u = sanitize(uid, 60) || 'anon';
-  const dir = path.join(OUT, u);
-  fs.mkdirSync(dir, { recursive: true });
-  return dir;
-}
-
-/**
  * 解析唯一最终文件名：base 冲突则追加 -NN。
  * @param {string} dir 目录
  * @param {string} startLocal 时间前缀
@@ -150,10 +146,17 @@ function loadIndex(uid, dir) {
     if (fs.existsSync(p)) {
       for (const line of fs.readFileSync(p, 'utf8').split(/\r?\n/)) {
         if (!line.trim()) continue;
-        try { const e = JSON.parse(line); if (e && e.sessionId) m.set(e.sessionId, e); } catch (_) { /* 跳过坏行 */ }
+        try {
+          const e = JSON.parse(line);
+          if (e && e.sessionId) m.set(e.sessionId, e);
+        } catch (_) {
+          /* 跳过坏行 */
+        }
       }
     }
-  } catch (e) { console.error('[dashcam] load index fail', uid, e.message); }
+  } catch (e) {
+    console.error('[dashcam] load index fail', uid, e.message);
+  }
   indexes.set(uid, m);
   return m;
 }
@@ -173,7 +176,9 @@ function writeIndex(uid, dir) {
   try {
     fs.writeFileSync(tmp, text);
     fs.renameSync(tmp, out);
-  } catch (e) { console.error('[dashcam] write index fail', uid, e.message); }
+  } catch (e) {
+    console.error('[dashcam] write index fail', uid, e.message);
+  }
 }
 
 /**
@@ -183,22 +188,35 @@ function writeIndex(uid, dir) {
  */
 function finalizeSession(sessionId, s) {
   const dir = s.dir;
-  const slug = s.note ? '' : deriveSlug(s.nameCounts);   // 有 note 时 note 即主题，不再叠 auto slug
+  const slug = s.note ? '' : deriveSlug(s.nameCounts); // 有 note 时 note 即主题，不再叠 auto slug
   const { name } = resolveName(dir, s.startLocal, s.note, slug);
   const finalRel = path.join(s.uidSeg, name);
   // 重命名失败则保留 .part 不动，交给下次 sweep 重试
   try {
     if (fs.existsSync(s.partFile)) fs.renameSync(s.partFile, path.join(dir, name));
-    else { console.warn('[dashcam] finalize: part missing', s.partFile); }
+    else {
+      console.warn('[dashcam] finalize: part missing', s.partFile);
+    }
   } catch (e) {
     console.error('[dashcam] finalize rename fail', sessionId, e.message);
     return;
   }
-  const top = [...s.nameCounts.entries()].sort((a, b) => b[1] - a[1]).slice(0, 12).map((x) => [x[0], x[1]]);
+  const top = [...s.nameCounts.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 12)
+    .map((x) => [x[0], x[1]]);
   const entry = {
-    file: finalRel.split(path.sep).join('/'), uid: s.uid, sessionId,
-    start: s.start, end: s.lastSeen, durMs: Math.max(0, s.lastSeen - s.start),
-    lines: s.lines, slug, note: s.note, finalized: true, top,
+    file: finalRel.split(path.sep).join('/'),
+    uid: s.uid,
+    sessionId,
+    start: s.start,
+    end: s.lastSeen,
+    durMs: Math.max(0, s.lastSeen - s.start),
+    lines: s.lines,
+    slug,
+    note: s.note,
+    finalized: true,
+    top,
   };
   const idx = loadIndex(s.uid, dir);
   idx.set(sessionId, entry);
@@ -215,9 +233,9 @@ function finalizeSession(sessionId, s) {
  */
 function ingest(headers, ndjson) {
   // Node req.headers 键一律小写带连字符（x-session/x-uid/...），非驼峰。
-  const sessionId = sanitize(headers['x-session'], 120) || ('anon-' + Date.now());
+  const sessionId = sanitize(headers['x-session'], 120) || 'anon-' + Date.now();
   const uid = headers['x-uid'] || '';
-  const noteRaw = decodeNote(headers['x-note']);   // background 侧 encodeURIComponent，含中文
+  const noteRaw = decodeNote(headers['x-note']); // background 侧 encodeURIComponent，含中文
   const startHdr = Number(headers['x-start']);
   const start = Number.isFinite(startHdr) && startHdr > 0 ? startHdr : Date.now();
 
@@ -228,29 +246,37 @@ function ingest(headers, ndjson) {
     fs.mkdirSync(dir, { recursive: true });
     const startLocal = fmtLocal(start);
     s = {
-      uid, uidSeg, dir, start, startLocal,
-      note: sanitizeNote(noteRaw),         // note 允许中文，仅去路径/控制字符
-      nameCounts: new Map(), lines: 0, lastSeen: Date.now(),
+      uid,
+      uidSeg,
+      dir,
+      start,
+      startLocal,
+      note: sanitizeNote(noteRaw), // note 允许中文，仅去路径/控制字符
+      nameCounts: new Map(),
+      lines: 0,
+      lastSeen: Date.now(),
       partFile: path.join(dir, `${startLocal}-${sessionId}.part.ndjson`),
     };
     active.set(sessionId, s);
-    fs.appendFileSync(s.partFile, '');    // touch 空文件，后续 append 续写
+    fs.appendFileSync(s.partFile, ''); // touch 空文件，后续 append 续写
   } else if (noteRaw) {
-    s.note = sanitizeNote(noteRaw);        // 允许录制中改标签，取最后一次
+    s.note = sanitizeNote(noteRaw); // 允许录制中改标签，取最后一次
   }
 
   const text = ndjson.trim();
   if (text) {
     const body = text.endsWith('\n') ? text : text + '\n';
-    fs.appendFileSync(s.partFile, body);   // 同步 append：与 sweep 的重命名串行安全
+    fs.appendFileSync(s.partFile, body); // 同步 append：与 sweep 的重命名串行安全
     s.lines += body.split('\n').filter(Boolean).length;
     for (const line of body.split('\n')) {
       if (!line.trim()) continue;
       try {
         const e = JSON.parse(line);
-        const nm = e.name || (e.dir + ':' + e.cmd);
+        const nm = e.name || e.dir + ':' + e.cmd;
         s.nameCounts.set(nm, (s.nameCounts.get(nm) || 0) + 1);
-      } catch (_) { /* 非单行 JSON，忽略统计 */ }
+      } catch (_) {
+        /* 非单行 JSON，忽略统计 */
+      }
     }
   }
   s.lastSeen = Date.now();
@@ -265,7 +291,11 @@ function ingest(headers, ndjson) {
  */
 function decodeNote(raw) {
   if (!raw) return '';
-  try { return decodeURIComponent(raw); } catch (_) { return String(raw); }
+  try {
+    return decodeURIComponent(raw);
+  } catch (_) {
+    return String(raw);
+  }
 }
 
 /**
@@ -274,7 +304,10 @@ function decodeNote(raw) {
  * @returns {string}
  */
 function sanitizeNote(raw) {
-  const s = String(raw || '').replace(/[\\/:*?"<>|\u0000-\u001f]/g, '').replace(/\.\./g, '_').trim();
+  const s = String(raw || '')
+    .replace(/[\\/:*?"<>|\u0000-\u001f]/g, '')
+    .replace(/\.\./g, '_')
+    .trim();
   return s.slice(0, 40);
 }
 
@@ -285,7 +318,11 @@ function readBody(req) {
     let size = 0;
     req.on('data', (c) => {
       size += c.length;
-      if (size > MAX_BODY) { reject(new Error('payload too large')); req.destroy(); return; }
+      if (size > MAX_BODY) {
+        reject(new Error('payload too large'));
+        req.destroy();
+        return;
+      }
       chunks.push(c);
     });
     req.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')));
@@ -296,15 +333,24 @@ function readBody(req) {
 const server = http.createServer(async (req, res) => {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'POST, GET, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'content-type, x-session, x-uid, x-start, x-note, x-done');
+  res.setHeader(
+    'Access-Control-Allow-Headers',
+    'content-type, x-session, x-uid, x-start, x-note, x-done',
+  );
 
-  if (req.method === 'OPTIONS') { res.writeHead(204); res.end(); return; }
+  if (req.method === 'OPTIONS') {
+    res.writeHead(204);
+    res.end();
+    return;
+  }
 
   const url = (req.url || '').split('?')[0];
 
   if (req.method === 'GET' && (url === '/' || url === '/health')) {
     res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' });
-    res.end(JSON.stringify({ service: 'dashcam', out: OUT, port: PORT, activeSessions: active.size }));
+    res.end(
+      JSON.stringify({ service: 'dashcam', out: OUT, port: PORT, activeSessions: active.size }),
+    );
     return;
   }
 
@@ -346,5 +392,7 @@ process.on('SIGTERM', shutdown);
 
 server.listen(PORT, HOST, () => {
   console.log('[dashcam] listening http://' + HOST + ':' + PORT + '  ->  ' + OUT);
-  console.log('[dashcam] POST /ingest · GET / · 命名 store/<uid>/<startLocal>[-<note>][-<slug>].ndjson · index.ndjson 侧车');
+  console.log(
+    '[dashcam] POST /ingest · GET / · 命名 store/<uid>/<startLocal>[-<note>][-<slug>].ndjson · index.ndjson 侧车',
+  );
 });

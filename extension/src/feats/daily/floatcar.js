@@ -89,8 +89,8 @@ const ERR_RATE_LIMIT = 'march_time_control_info001';
  * @type {object[]}
  */
 const FLOATS = [
-    { id: 'CHIP_BLESSING', label: '芯片祝福', dropType: 256, getType: 257 },
-    { id: 'NEWYEAR2026_PINBALL', label: '2026新年弹珠', dropType: 287, getType: 288 },
+  { id: 'CHIP_BLESSING', label: '芯片祝福', dropType: 256, getType: 257 },
+  { id: 'NEWYEAR2026_PINBALL', label: '2026新年弹珠', dropType: 287, getType: 288 },
 ];
 
 /** @type {Object<number,object>} dropType → 配置项；聊天卡 extra.marchType 与 8852 请求都只认 DROP 值，故以它建索引 */
@@ -106,81 +106,79 @@ for (var g = 0; g < FLOATS.length; g++) GET_TYPE_FALLBACK[FLOATS[g].getType] = t
  * @type {object}
  */
 const cfg = {
+  /**
+   * F 首箱延迟：收到发车卡（= 瓦片 startSecsTime = 服务器 t）之后 30 秒才投第一箱
+   */
+  firstBoxDelayMs: 1000 * 30,
 
-    /**
-     * F 首箱延迟：收到发车卡（= 瓦片 startSecsTime = 服务器 t）之后 30 秒才投第一箱
-     */
-    firstBoxDelayMs: 1000 * 30,
+  /**
+   * P 每箱周期：相邻两箱落地间隔（= 窗口秒数 ÷ 箱数，真机 30 秒/箱）
+   */
+  boxPeriodMs: 1000 * 30,
 
-    /**
-     * P 每箱周期：相邻两箱落地间隔（= 窗口秒数 ÷ 箱数，真机 30 秒/箱）
-     */
-    boxPeriodMs: 1000 * 30,
+  /**
+   * L 提前开探量：相对每箱落地时刻提前多久开始问（吸收服务器与客户端的时间抖动）
+   */
+  probeLeadMs: 1000 * 2,
 
-    /**
-     * L 提前开探量：相对每箱落地时刻提前多久开始问（吸收服务器与客户端的时间抖动）
-     */
-    probeLeadMs: 1000 * 2,
+  /**
+   * 拍内阶梯：相对第 k 箱落地打点的首查 + 补查偏移（吸收落地抖动），替代旧带宽 Y 的每秒连查；
+   * 末级仍真空才结算为 miss 拍
+   */
+  probeLadderMs: [0, 3000, 6000],
 
-    /**
-     * 拍内阶梯：相对第 k 箱落地打点的首查 + 补查偏移（吸收落地抖动），替代旧带宽 Y 的每秒连查；
-     * 末级仍真空才结算为 miss 拍
-     */
-    probeLadderMs: [0, 3000, 6000],
+  /**
+   * M 停止阈值：连续这么多拍"真·空"（既没新箱也没被已派箱遮蔽）就判定这台车没有我能领的箱了。
+   * 取 3 不取 1：拍窗口是刚性网格，服务器某箱晚落几秒就会错过一拍，M≥2 才有容错；
+   * 已派箱数达到卡片推算值后本阈值自动降为 1（见 stopThreshold），8 箱车实测可省掉尾部几拍
+   */
+  emptyPeriodStop: 3,
 
-    /**
-     * M 停止阈值：连续这么多拍"真·空"（既没新箱也没被已派箱遮蔽）就判定这台车没有我能领的箱了。
-     * 取 3 不取 1：拍窗口是刚性网格，服务器某箱晚落几秒就会错过一拍，M≥2 才有容错；
-     * 已派箱数达到卡片推算值后本阈值自动降为 1（见 stopThreshold），8 箱车实测可省掉尾部几拍
-     */
-    emptyPeriodStop: 3,
+  /**
+   * driver 步长封顶：定时器睡到下一个事件时刻，但不超过此值——对账保底醒（真机日志按它估在途名额用的
+   * 枚举判据若有边缘情况，最坏延迟一个封顶自愈）；后台节流下浏览器本就把定时器钳到 ≥1s，同阶无需特判
+   */
+  tickMs: 1000,
 
-    /**
-     * driver 步长封顶：定时器睡到下一个事件时刻，但不超过此值——对账保底醒（真机日志按它估在途名额用的
-     * 枚举判据若有边缘情况，最坏延迟一个封顶自愈）；后台节流下浏览器本就把定时器钳到 ≥1s，同阶无需特判
-     */
-    tickMs: 1000,
+  /**
+   * 活动组拾取行军队列上限，**按活动类型（getType）各自计数**（用户定稿：恒为 5）。
+   * 若真机埋点显示单 type 在途 <5 仍撞 world_130516，即为跨类型共享池证据——只改 myActiveMarches
+   * 的过滤器范围（放开成全体 ACT_MARCHS），闸结构不变
+   */
+  actQueueCap: 5,
 
-    /**
-     * 活动组拾取行军队列上限，**按活动类型（getType）各自计数**（用户定稿：恒为 5）。
-     * 若真机埋点显示单 type 在途 <5 仍撞 world_130516，即为跨类型共享池证据——只改 myActiveMarches
-     * 的过滤器范围（放开成全体 ACT_MARCHS），闸结构不变
-     */
-    actQueueCap: 5,
+  /**
+   * slotFree 唤醒安全垫：服务器名额释放与客户端可见之间隔着 push 合并与渲染收尾（NMARCH_ENDTIME_DELAY=1s 一族），
+   * 到点早醒只会多一次空枚举，晚醒才丢吞吐，故取 1.5s 偏保守
+   */
+  slotFreeMarginMs: 1500,
 
-    /**
-     * slotFree 唤醒安全垫：服务器名额释放与客户端可见之间隔着 push 合并与渲染收尾（NMARCH_ENDTIME_DELAY=1s 一族），
-     * 到点早醒只会多一次空枚举，晚醒才丢吞吐，故取 1.5s 偏保守
-     */
-    slotFreeMarginMs: 1500,
+  /**
+   * 释放时刻字段全缺（行军对象上没有 marchArrive/returnArriveTime）时的退化轮询间隔
+   */
+  slotFreePollMs: 1000 * 5,
 
-    /**
-     * 释放时刻字段全缺（行军对象上没有 marchArrive/returnArriveTime）时的退化轮询间隔
-     */
-    slotFreePollMs: 1000 * 5,
+  /**
+   * 派遣重试间隔：请求发出到下次重试的最小间隔（error 兜底重排、pickup 条间下限也用它）
+   */
+  retryMs: 1000,
 
-    /**
-     * 派遣重试间隔：请求发出到下次重试的最小间隔（error 兜底重排、pickup 条间下限也用它）
-     */
-    retryMs: 1000,
+  /**
+   * E 前终查提前量：reconcile 事件在窗口硬止前这么久做最后一次 8852，替代旧 tailConfirmed 就地闭合逻辑
+   */
+  tailCheckLeadMs: 1000 * 10,
 
-    /**
-     * E 前终查提前量：reconcile 事件在窗口硬止前这么久做最后一次 8852，替代旧 tailConfirmed 就地闭合逻辑
-     */
-    tailCheckLeadMs: 1000 * 10,
+  /**
+   * 同一坐标被拒后的重试退避基数：第 n 次被拒后等 base × 2^(n-1)（封顶 rejectBackoffMaxMs）再派。
+   * 没退避时回放实测：一个整窗不消失的拒绝会让同一坐标撞 151 次 902；而限流类拒绝（march_time_control_info001=操作太频繁）
+   * 最怕的正是打得更密。退避到封顶后每 60 秒试一次，既不给服务器加压也不会错过恢复时机
+   */
+  rejectBackoffBaseMs: 1000 * 5,
 
-    /**
-     * 同一坐标被拒后的重试退避基数：第 n 次被拒后等 base × 2^(n-1)（封顶 rejectBackoffMaxMs）再派。
-     * 没退避时回放实测：一个整窗不消失的拒绝会让同一坐标撞 151 次 902；而限流类拒绝（march_time_control_info001=操作太频繁）
-     * 最怕的正是打得更密。退避到封顶后每 60 秒试一次，既不给服务器加压也不会错过恢复时机
-     */
-    rejectBackoffBaseMs: 1000 * 5,
-
-    /**
-     * 重试退避封顶
-     */
-    rejectBackoffMaxMs: 1000 * 60,
-
+  /**
+   * 重试退避封顶
+   */
+  rejectBackoffMaxMs: 1000 * 60,
 };
 
 /** @type {object|null} 网络底座（promise 封装 pocketcc.net） */
@@ -253,7 +251,7 @@ var installed = false;
  * @returns {boolean}
  */
 function aliveFn() {
-    return ctxRef ? ctxRef.alive() : false;
+  return ctxRef ? ctxRef.alive() : false;
 }
 
 /* ------------------------------------------------------------------ *
@@ -271,76 +269,89 @@ var KIND_PRIO = { slotFree: 0, pickup: 1, reconcile: 2, probe: 3 };
  * @returns {{push:function,peek:function():object|null,pop:function():object|null,size:function():number}}
  */
 function createEventHeap() {
-    /** @type {object[]} */
-    var a = [];
-    /** @type {number} 插入序号（同刻稳定排序） */
-    var seq = 0;
+  /** @type {object[]} */
+  var a = [];
+  /** @type {number} 插入序号（同刻稳定排序） */
+  var seq = 0;
 
-    /**
-     * 比较两个事件：负数表示 x 应先出
-     * @param {object} x 事件
-     * @param {object} y 事件
-     * @returns {number}
-     */
-    function less(x, y) {
-        if (x.atMs !== y.atMs) return x.atMs - y.atMs;
-        var d = (KIND_PRIO[x.kind] || 9) - (KIND_PRIO[y.kind] || 9);
-        return d !== 0 ? d : x.seq - y.seq;
+  /**
+   * 比较两个事件：负数表示 x 应先出
+   * @param {object} x 事件
+   * @param {object} y 事件
+   * @returns {number}
+   */
+  function less(x, y) {
+    if (x.atMs !== y.atMs) return x.atMs - y.atMs;
+    var d = (KIND_PRIO[x.kind] || 9) - (KIND_PRIO[y.kind] || 9);
+    return d !== 0 ? d : x.seq - y.seq;
+  }
+
+  /**
+   * 上浮
+   * @param {number} idx 待上浮下标
+   */
+  function siftUp(idx) {
+    while (idx > 0) {
+      var parent = (idx - 1) >> 1;
+      if (less(a[idx], a[parent]) < 0) {
+        var t = a[parent];
+        a[parent] = a[idx];
+        a[idx] = t;
+        idx = parent;
+      } else break;
     }
+  }
 
-    /**
-     * 上浮
-     * @param {number} idx 待上浮下标
-     */
-    function siftUp(idx) {
-        while (idx > 0) {
-            var parent = (idx - 1) >> 1;
-            if (less(a[idx], a[parent]) < 0) {
-                var t = a[parent]; a[parent] = a[idx]; a[idx] = t;
-                idx = parent;
-            } else break;
-        }
+  /**
+   * 下沉
+   * @param {number} idx 待下沉下标
+   */
+  function siftDown(idx) {
+    var n = a.length;
+    while (true) {
+      var l = idx * 2 + 1,
+        r = l + 1,
+        smallest = idx;
+      if (l < n && less(a[l], a[smallest]) < 0) smallest = l;
+      if (r < n && less(a[r], a[smallest]) < 0) smallest = r;
+      if (smallest === idx) break;
+      var t = a[idx];
+      a[idx] = a[smallest];
+      a[smallest] = t;
+      idx = smallest;
     }
+  }
 
+  return {
     /**
-     * 下沉
-     * @param {number} idx 待下沉下标
+     * 入堆一个事件（自动补 seq）
+     * @param {object} ev {atMs,kind,flowId,payload}
      */
-    function siftDown(idx) {
-        var n = a.length;
-        while (true) {
-            var l = idx * 2 + 1, r = l + 1, smallest = idx;
-            if (l < n && less(a[l], a[smallest]) < 0) smallest = l;
-            if (r < n && less(a[r], a[smallest]) < 0) smallest = r;
-            if (smallest === idx) break;
-            var t = a[idx]; a[idx] = a[smallest]; a[smallest] = t;
-            idx = smallest;
-        }
-    }
-
-    return {
-        /**
-         * 入堆一个事件（自动补 seq）
-         * @param {object} ev {atMs,kind,flowId,payload}
-         */
-        push: function (ev) {
-            ev.seq = ++seq;
-            a.push(ev);
-            siftUp(a.length - 1);
-        },
-        /** @returns {object|null} 堆顶（不弹出） */
-        peek: function () { return a.length ? a[0] : null; },
-        /** @returns {object|null} 弹出堆顶 */
-        pop: function () {
-            if (!a.length) return null;
-            var top = a[0];
-            var last = a.pop();
-            if (a.length) { a[0] = last; siftDown(0); }
-            return top;
-        },
-        /** @returns {number} 当前事件数 */
-        size: function () { return a.length; },
-    };
+    push: function (ev) {
+      ev.seq = ++seq;
+      a.push(ev);
+      siftUp(a.length - 1);
+    },
+    /** @returns {object|null} 堆顶（不弹出） */
+    peek: function () {
+      return a.length ? a[0] : null;
+    },
+    /** @returns {object|null} 弹出堆顶 */
+    pop: function () {
+      if (!a.length) return null;
+      var top = a[0];
+      var last = a.pop();
+      if (a.length) {
+        a[0] = last;
+        siftDown(0);
+      }
+      return top;
+    },
+    /** @returns {number} 当前事件数 */
+    size: function () {
+      return a.length;
+    },
+  };
 }
 
 /**
@@ -351,8 +362,8 @@ function createEventHeap() {
  * @param {object} payload 事件载荷
  */
 function pushEvent(atMs, kind, flowId, payload) {
-    heap.push({ atMs: atMs, kind: kind, flowId: flowId, payload: payload });
-    bumpDriver();
+  heap.push({ atMs: atMs, kind: kind, flowId: flowId, payload: payload });
+  bumpDriver();
 }
 
 /* ------------------------------------------------------------------ *
@@ -364,53 +375,59 @@ function pushEvent(atMs, kind, flowId, payload) {
  * driver 点火：堆非空且未在跑就排一次。重复调用 no-op
  */
 function startDriver() {
-    if (driverTimer != null || !heap.size()) return;
-    scheduleDriver();
+  if (driverTimer != null || !heap.size()) return;
+  scheduleDriver();
 }
 
 /**
  * driver 熄火：清唯一定时器
  */
 function stopDriver() {
-    if (driverTimer == null) return;
-    clearTimeout(driverTimer);
-    driverTimer = null;
+  if (driverTimer == null) return;
+  clearTimeout(driverTimer);
+  driverTimer = null;
 }
 
 /**
  * 排下一次唤醒：睡到 (堆顶.atMs − now)，但不超过 tickMs（保底醒）；堆空/pause 即熄火
  */
 function scheduleDriver() {
-    if (driverTimer != null) { clearTimeout(driverTimer); driverTimer = null; }
-    if (!aliveFn() || !heap.size()) return;
-    var now = Date.now();
-    var delta = Math.min(Math.max(0, heap.peek().atMs - now), cfg.tickMs);
-    driverWakeAt = now + delta;
-    driverTimer = setTimeout(onDriverWake, delta);
+  if (driverTimer != null) {
+    clearTimeout(driverTimer);
+    driverTimer = null;
+  }
+  if (!aliveFn() || !heap.size()) return;
+  var now = Date.now();
+  var delta = Math.min(Math.max(0, heap.peek().atMs - now), cfg.tickMs);
+  driverWakeAt = now + delta;
+  driverTimer = setTimeout(onDriverWake, delta);
 }
 
 /**
  * 事件入堆后择机重排：仅当新堆顶比当前唤醒更早才重启定时器（避免 async 回调高频 push 抖动饿死唤醒）
  */
 function bumpDriver() {
-    if (!heap.size()) return;
-    if (driverTimer == null) { startDriver(); return; }
-    if (heap.peek().atMs < driverWakeAt) scheduleDriver();
+  if (!heap.size()) return;
+  if (driverTimer == null) {
+    startDriver();
+    return;
+  }
+  if (heap.peek().atMs < driverWakeAt) scheduleDriver();
 }
 
 /**
  * 到点批量弹出全部到期事件，逐个过 guard 后 dispatch；然后重排
  */
 function onDriverWake() {
-    driverTimer = null;
-    if (!aliveFn()) return; // pause：堆原地保留，resume 时 run() 重新点火
-    var now = Date.now();
-    while (heap.size() && heap.peek().atMs <= now) {
-        var ev = heap.pop();
-        if (!passGuard(ev, now)) continue;
-        dispatch(ev);
-    }
-    scheduleDriver();
+  driverTimer = null;
+  if (!aliveFn()) return; // pause：堆原地保留，resume 时 run() 重新点火
+  var now = Date.now();
+  while (heap.size() && heap.peek().atMs <= now) {
+    var ev = heap.pop();
+    if (!passGuard(ev, now)) continue;
+    dispatch(ev);
+  }
+  scheduleDriver();
 }
 
 /**
@@ -420,12 +437,12 @@ function onDriverWake() {
  * @returns {boolean} 是否仍需执行
  */
 function passGuard(ev, now) {
-    if (!aliveFn()) return false;
-    if (ev.kind === 'slotFree') return true; // 全局腾位事件：只判 alive，pending 在 handler 内再筛
-    var f = flows.get(ev.flowId);
-    if (!f) return false;
-    if (ev.kind === 'reconcile') return true; // tail 在 E 前、expire 恰在 E，都由 handler 自校验窗口
-    return now < f.E; // probe / pickup 只在窗口内有效
+  if (!aliveFn()) return false;
+  if (ev.kind === 'slotFree') return true; // 全局腾位事件：只判 alive，pending 在 handler 内再筛
+  var f = flows.get(ev.flowId);
+  if (!f) return false;
+  if (ev.kind === 'reconcile') return true; // tail 在 E 前、expire 恰在 E，都由 handler 自校验窗口
+  return now < f.E; // probe / pickup 只在窗口内有效
 }
 
 /**
@@ -433,19 +450,21 @@ function passGuard(ev, now) {
  * @param {object} ev 事件
  */
 function dispatch(ev) {
-    var p;
-    try {
-        if (ev.kind === 'probe') p = onProbe(flows.get(ev.flowId), ev.payload);
-        else if (ev.kind === 'pickup') p = onPickup(ev.payload.item);
-        else if (ev.kind === 'slotFree') p = onSlotFree(ev.payload.getType);
-        else if (ev.kind === 'reconcile') p = onReconcile(flows.get(ev.flowId), ev.payload);
-    } catch (err) {
-        log.warn('dispatch threw. kind=%s', ev.kind, err);
-        return;
-    }
-    if (p && typeof p.catch === 'function') {
-        p.catch(function (err) { log.warn('async handler threw. kind=%s', ev.kind, err); });
-    }
+  var p;
+  try {
+    if (ev.kind === 'probe') p = onProbe(flows.get(ev.flowId), ev.payload);
+    else if (ev.kind === 'pickup') p = onPickup(ev.payload.item);
+    else if (ev.kind === 'slotFree') p = onSlotFree(ev.payload.getType);
+    else if (ev.kind === 'reconcile') p = onReconcile(flows.get(ev.flowId), ev.payload);
+  } catch (err) {
+    log.warn('dispatch threw. kind=%s', ev.kind, err);
+    return;
+  }
+  if (p && typeof p.catch === 'function') {
+    p.catch(function (err) {
+      log.warn('async handler threw. kind=%s', ev.kind, err);
+    });
+  }
 }
 
 /**
@@ -453,9 +472,9 @@ function dispatch(ev) {
  * @returns {number}
  */
 function serverTimeSec() {
-    var st = dataCenter && dataCenter.ServerTime;
-    if (st != null && +st) return +st;
-    return Date.now() / 1000;
+  var st = dataCenter && dataCenter.ServerTime;
+  if (st != null && +st) return +st;
+  return Date.now() / 1000;
 }
 
 /**
@@ -465,7 +484,7 @@ function serverTimeSec() {
  * @returns {Promise<object[]>}
  */
 function listMarches() {
-    return march.list({ cache: true });
+  return march.list({ cache: true });
 }
 
 /**
@@ -476,10 +495,12 @@ function listMarches() {
  * @returns {Promise<boolean>}
  */
 async function hasMarchAtTarget(x, y, getType) {
-    var marches = await listMarches();
-    return marches.some(function (m) {
-        return m.type == getType && m.target.x == x && m.target.y == y;
-    });
+  var marches = await listMarches();
+  return marches.some(function (m) {
+    // 行军字段源自 856 报文，数值/字符串口径不完全可控：保留宽松相等防类型漂移漏匹配（漏匹配=重复派兵，代价更高）
+    // eslint-disable-next-line eqeqeq
+    return m.type == getType && m.target.x == x && m.target.y == y;
+  });
 }
 
 /* ------------------------------------------------------------------ *
@@ -493,8 +514,8 @@ async function hasMarchAtTarget(x, y, getType) {
  * @returns {boolean}
  */
 function isActivityMarch(type) {
-    if (actMarchs) return !!actMarchs[type];
-    return !!GET_TYPE_FALLBACK[type];
+  if (actMarchs) return !!actMarchs[type];
+  return !!GET_TYPE_FALLBACK[type];
 }
 
 /**
@@ -504,10 +525,12 @@ function isActivityMarch(type) {
  * @returns {Promise<object[]>}
  */
 async function myActiveMarches(getType) {
-    var marches = await listMarches();
-    return marches.filter(function (m) {
-        return m.type == getType && isActivityMarch(m.type);
-    });
+  var marches = await listMarches();
+  return marches.filter(function (m) {
+    // 同 hasMarchAtTarget：行军字段口径不完全可控，保留宽松相等
+    // eslint-disable-next-line eqeqeq
+    return m.type == getType && isActivityMarch(m.type);
+  });
 }
 
 /**
@@ -516,8 +539,8 @@ async function myActiveMarches(getType) {
  * @returns {Promise<number>}
  */
 async function freeSlots(getType) {
-    var marches = await myActiveMarches(getType);
-    return Math.max(0, cfg.actQueueCap - marches.length);
+  var marches = await myActiveMarches(getType);
+  return Math.max(0, cfg.actQueueCap - marches.length);
 }
 
 /**
@@ -529,24 +552,25 @@ async function freeSlots(getType) {
  * @returns {Promise<number>} 本地 ms
  */
 async function nextReleaseAt(getType) {
-    var marches = await myActiveMarches(getType);
-    if (!marches.length) return Date.now();
-    var nowSec = serverTimeSec();
-    var now = Date.now();
-    var min = Infinity;
-    for (var i = 0; i < marches.length; i++) {
-        // 读归一化时刻（decode 已从 marchInfo.* 抹平）：到家时刻优先 returnArriveTime，出发段只有 marchArrive；
-        //   加速(920)后的 10019 边沿会把 marchArrive 更新为更早值（state 不变），快照读它即自然收紧腾位打点。
-        //   两者都缺（旧 mapData 摊平或增量推送未带时刻）才回退 slotFreePollMs 轮询唤醒。
-        var m = marches[i];
-        var ra = +m.returnArriveTime, ma = +m.marchArrive;
-        // 只采用「未来」时刻：已到点(过去值)但未并进 returnArriveTime 的行军，若直接用过去的 marchArrive
-        //   会把打点排到 now → 自续排成每 slotFreeMarginMs 的紧轮询（违背本模块替代每秒连查的目标）；故过去年视同无效，回退轮询。
-        var relSec = ra > nowSec ? ra : (ma > nowSec ? ma : nowSec + cfg.slotFreePollMs / 1000);
-        if (relSec < min) min = relSec;
-    }
-    if (!isFinite(min)) return now;
-    return now + Math.max(0, (min - nowSec) * 1000);
+  var marches = await myActiveMarches(getType);
+  if (!marches.length) return Date.now();
+  var nowSec = serverTimeSec();
+  var now = Date.now();
+  var min = Infinity;
+  for (var i = 0; i < marches.length; i++) {
+    // 读归一化时刻（decode 已从 marchInfo.* 抹平）：到家时刻优先 returnArriveTime，出发段只有 marchArrive；
+    //   加速(920)后的 10019 边沿会把 marchArrive 更新为更早值（state 不变），快照读它即自然收紧腾位打点。
+    //   两者都缺（旧 mapData 摊平或增量推送未带时刻）才回退 slotFreePollMs 轮询唤醒。
+    var m = marches[i];
+    var ra = +m.returnArriveTime,
+      ma = +m.marchArrive;
+    // 只采用「未来」时刻：已到点(过去值)但未并进 returnArriveTime 的行军，若直接用过去的 marchArrive
+    //   会把打点排到 now → 自续排成每 slotFreeMarginMs 的紧轮询（违背本模块替代每秒连查的目标）；故过去年视同无效，回退轮询。
+    var relSec = ra > nowSec ? ra : ma > nowSec ? ma : nowSec + cfg.slotFreePollMs / 1000;
+    if (relSec < min) min = relSec;
+  }
+  if (!isFinite(min)) return now;
+  return now + Math.max(0, (min - nowSec) * 1000);
 }
 
 /**
@@ -554,10 +578,10 @@ async function nextReleaseAt(getType) {
  * @param {number} getType 拾取行军类型
  */
 async function scheduleSlotFree(getType) {
-    if (slotFreeScheduled.has(getType)) return;
-    slotFreeScheduled.add(getType);
-    var at = await nextReleaseAt(getType) + cfg.slotFreeMarginMs;
-    pushEvent(Math.max(Date.now(), at), 'slotFree', null, { getType: getType });
+  if (slotFreeScheduled.has(getType)) return;
+  slotFreeScheduled.add(getType);
+  var at = (await nextReleaseAt(getType)) + cfg.slotFreeMarginMs;
+  pushEvent(Math.max(Date.now(), at), 'slotFree', null, { getType: getType });
 }
 
 /**
@@ -568,33 +592,37 @@ async function scheduleSlotFree(getType) {
  * @returns {object|null} {floatId, marchId, dropType, getType, tSec, expSec} 或 null
  */
 function parseParadeShare(msg) {
-    if (!msg || typeof msg !== 'object') return null;
-    if (typeof msg.m !== 'string' || msg.m.indexOf('link') !== 0) return null;
-    if (msg.llm == null || msg.llm === '') return null;
+  if (!msg || typeof msg !== 'object') return null;
+  if (typeof msg.m !== 'string' || msg.m.indexOf('link') !== 0) return null;
+  if (msg.llm == null || msg.llm === '') return null;
 
-    var payload = msg.llm;
-    if (typeof payload === 'string') {
-        try { payload = JSON.parse(payload); } catch (err) { return null; }
+  var payload = msg.llm;
+  if (typeof payload === 'string') {
+    try {
+      payload = JSON.parse(payload);
+    } catch (err) {
+      return null;
     }
-    if (!payload || payload.t !== SHARE_LINK_PARADE_FLOAT_MARCH) return null;
+  }
+  if (!payload || payload.t !== SHARE_LINK_PARADE_FLOAT_MARCH) return null;
 
-    var extra = payload.extra;
-    if (!extra) return null;
-    var float = FLOAT_BY_DROP[extra.marchType];
-    if (!float) return null;
+  var extra = payload.extra;
+  if (!extra) return null;
+  var float = FLOAT_BY_DROP[extra.marchType];
+  if (!float) return null;
 
-    // 64 位 id 只能以 string 流转，禁止 Number()
-    var marchId = extra.marchId != null && extra.marchId !== '' ? String(extra.marchId) : '';
-    if (!marchId) return null;
+  // 64 位 id 只能以 string 流转，禁止 Number()
+  var marchId = extra.marchId != null && extra.marchId !== '' ? String(extra.marchId) : '';
+  if (!marchId) return null;
 
-    return {
-        floatId: float.id,
-        marchId: marchId,
-        dropType: float.dropType,
-        getType: float.getType,
-        tSec: +msg.t || 0,
-        expSec: +extra.expirationTime || 0,
-    };
+  return {
+    floatId: float.id,
+    marchId: marchId,
+    dropType: float.dropType,
+    getType: float.getType,
+    tSec: +msg.t || 0,
+    expSec: +extra.expirationTime || 0,
+  };
 }
 
 /**
@@ -608,47 +636,47 @@ function parseParadeShare(msg) {
  * @returns {object} flow
  */
 function newFlow(seed, nowMs) {
-    var tSec = seed.tSec;
-    var nowSec = serverTimeSec();
-    var delaySec = tSec ? Math.max(0, nowSec - tSec) : 0;
-    // exp−t = 箱数 × 180（真机 1/2/8 箱三点吻合）；缺字段或非 180 整倍时不推算，避免拿脏值当判据
-    var spanSec = (tSec && seed.expSec > tSec) ? seed.expSec - tSec : 0;
-    var lifeMs = spanSec ? spanSec * 1000 : DEFAULT_LIFE_MS;
-    var expect = (spanSec && spanSec % BOX_WINDOW_SEC === 0) ? spanSec / BOX_WINDOW_SEC : 0;
+  var tSec = seed.tSec;
+  var nowSec = serverTimeSec();
+  var delaySec = tSec ? Math.max(0, nowSec - tSec) : 0;
+  // exp−t = 箱数 × 180（真机 1/2/8 箱三点吻合）；缺字段或非 180 整倍时不推算，避免拿脏值当判据
+  var spanSec = tSec && seed.expSec > tSec ? seed.expSec - tSec : 0;
+  var lifeMs = spanSec ? spanSec * 1000 : DEFAULT_LIFE_MS;
+  var expect = spanSec && spanSec % BOX_WINDOW_SEC === 0 ? spanSec / BOX_WINDOW_SEC : 0;
 
-    return {
-        /** @type {number} 流程代际号（事件载荷带它判串台） */
-        uid: ++FLOW_UID_SEQ,
-        marchId: seed.marchId,
-        floatId: seed.floatId,
-        dropType: seed.dropType,
-        getType: seed.getType,
-        S: nowMs - delaySec * 1000,
-        E: nowMs - delaySec * 1000 + lifeMs,
-        /** @type {number} 当前拍号（事件 payload.k 与它比对判陈旧） */
-        k: 0,
-        /** @type {boolean} 本流程是否有 8852 在飞（串行化，防同拍重复探） */
-        inFlight: false,
-        /** @type {number} 连续真·空拍计数（命中新箱清零；被遮蔽不动） */
-        missStreak: 0,
-        /** @type {number} 本流程因无名额被按住的累计次数（收摊对账用，埋点④ slotWaits） */
-        slotWaits: 0,
-        /** @type {Set<string>} 本流程已派出的坐标（"x,y"）；902 队满/退避时退回。size 即已拿到的唯一箱数 */
-        dispatched: new Set(),
-        /** @type {number} 卡片推算的箱数（0=未能推算），只用于放宽收摊阈值与事后对账 */
-        expect: expect,
-        /**
-         * @type {number} 刚性网格末拍号：expect>0 时=expect（卡片既给了箱数，第 N 箱后就不该再有箱），
-         * 否则 0（未能推算箱数，不启用提前收摊，退回纯 missStreak/E 判据）。
-         * 一旦观测到实领箱数超过 expect（卡片少报），当场置 0 关掉提前收摊，退回保守逐拍——错误自灭。
-         */
-        lastK: expect > 0 ? expect : 0,
-        /** @type {Set<string>} 本流程 902 被拒的服务器文案键（收摊时汇总，每日上限就靠它露面） */
-        rejects: new Set(),
-        /** @type {Map<string,{untilMs:number,tries:number}>} 被拒坐标的重试退避（key → 下次可派时刻与已试次数） */
-        rejectBackoff: new Map(),
-        queries: 0,
-    };
+  return {
+    /** @type {number} 流程代际号（事件载荷带它判串台） */
+    uid: ++FLOW_UID_SEQ,
+    marchId: seed.marchId,
+    floatId: seed.floatId,
+    dropType: seed.dropType,
+    getType: seed.getType,
+    S: nowMs - delaySec * 1000,
+    E: nowMs - delaySec * 1000 + lifeMs,
+    /** @type {number} 当前拍号（事件 payload.k 与它比对判陈旧） */
+    k: 0,
+    /** @type {boolean} 本流程是否有 8852 在飞（串行化，防同拍重复探） */
+    inFlight: false,
+    /** @type {number} 连续真·空拍计数（命中新箱清零；被遮蔽不动） */
+    missStreak: 0,
+    /** @type {number} 本流程因无名额被按住的累计次数（收摊对账用，埋点④ slotWaits） */
+    slotWaits: 0,
+    /** @type {Set<string>} 本流程已派出的坐标（"x,y"）；902 队满/退避时退回。size 即已拿到的唯一箱数 */
+    dispatched: new Set(),
+    /** @type {number} 卡片推算的箱数（0=未能推算），只用于放宽收摊阈值与事后对账 */
+    expect: expect,
+    /**
+     * @type {number} 刚性网格末拍号：expect>0 时=expect（卡片既给了箱数，第 N 箱后就不该再有箱），
+     * 否则 0（未能推算箱数，不启用提前收摊，退回纯 missStreak/E 判据）。
+     * 一旦观测到实领箱数超过 expect（卡片少报），当场置 0 关掉提前收摊，退回保守逐拍——错误自灭。
+     */
+    lastK: expect > 0 ? expect : 0,
+    /** @type {Set<string>} 本流程 902 被拒的服务器文案键（收摊时汇总，每日上限就靠它露面） */
+    rejects: new Set(),
+    /** @type {Map<string,{untilMs:number,tries:number}>} 被拒坐标的重试退避（key → 下次可派时刻与已试次数） */
+    rejectBackoff: new Map(),
+    queries: 0,
+  };
 }
 
 /**
@@ -659,7 +687,7 @@ function newFlow(seed, nowMs) {
  * @returns {number} 需要的连续真空拍数
  */
 function stopThreshold(flow) {
-    return (flow.expect > 0 && flow.dispatched.size >= flow.expect) ? 1 : cfg.emptyPeriodStop;
+  return flow.expect > 0 && flow.dispatched.size >= flow.expect ? 1 : cfg.emptyPeriodStop;
 }
 
 /**
@@ -668,11 +696,11 @@ function stopThreshold(flow) {
  * @param {number} k 拍号（1 起）
  */
 function startProbeTick(flow, k) {
-    // 下一拍落地开探时刻若已越过窗口硬止，就不再排（终查/过期由 reconcile 收口）
-    var nextProbeAt = flow.S + cfg.firstBoxDelayMs + cfg.boxPeriodMs * (k - 1) - cfg.probeLeadMs;
-    if (k > 1 && nextProbeAt >= flow.E) return;
-    flow.k = k;
-    scheduleProbe(flow, k, 0);
+  // 下一拍落地开探时刻若已越过窗口硬止，就不再排（终查/过期由 reconcile 收口）
+  var nextProbeAt = flow.S + cfg.firstBoxDelayMs + cfg.boxPeriodMs * (k - 1) - cfg.probeLeadMs;
+  if (k > 1 && nextProbeAt >= flow.E) return;
+  flow.k = k;
+  scheduleProbe(flow, k, 0);
 }
 
 /**
@@ -683,10 +711,14 @@ function startProbeTick(flow, k) {
  * @param {number} [floorMs] 该事件最早可跑时刻（本地 ms，重排/重试用的下限）
  */
 function scheduleProbe(flow, k, idx, floorMs) {
-    var landing = flow.S + cfg.firstBoxDelayMs + cfg.boxPeriodMs * (k - 1);
-    var at = landing - cfg.probeLeadMs + (cfg.probeLadderMs[idx] || 0);
-    if (floorMs != null && floorMs > at) at = floorMs;
-    pushEvent(Math.max(Date.now(), at), 'probe', flow.marchId, { k: k, ladderIdx: idx, uid: flow.uid });
+  var landing = flow.S + cfg.firstBoxDelayMs + cfg.boxPeriodMs * (k - 1);
+  var at = landing - cfg.probeLeadMs + (cfg.probeLadderMs[idx] || 0);
+  if (floorMs != null && floorMs > at) at = floorMs;
+  pushEvent(Math.max(Date.now(), at), 'probe', flow.marchId, {
+    k: k,
+    ladderIdx: idx,
+    uid: flow.uid,
+  });
 }
 
 /**
@@ -695,20 +727,38 @@ function scheduleProbe(flow, k, idx, floorMs) {
  * @param {string} reason 结束原因
  */
 function dropFlow(flow, reason) {
-    flows.delete(flow.marchId);
-    var heldBefore = pendingPickups.length;
-    pendingPickups = pendingPickups.filter(function (it) { return it.flow !== flow; });
-    log.info('flow end. marchId=%s;float=%s;reason=%s;periods=%d;boxes=%d;expect=%d;gridEnd=%d;queries=%d;marchRejects=%s;pendingHeld=%d;slotWaits=%d;pendingFlows=%d',
-        flow.marchId, flow.floatId, reason, flow.k, flow.dispatched.size, flow.expect, flow.lastK, flow.queries,
-        flow.rejects.size ? Array.from(flow.rejects).join('|') : '-', heldBefore - pendingPickups.length,
-        flow.slotWaits || 0, flows.size);
-    // 只对"实领多于推算"告警：少于推算是正常的没抢过别人（这种情况下阈值本就未被放宽，流程会走完 M 拍），
-    // 而多于推算意味着 exp−t=箱数×180 这条关系改了，我们的拍网格与阈值都得重看
-    if (flow.expect > 0 && flow.dispatched.size > flow.expect) {
-        log.warn('more boxes than card prediction. marchId=%s;got=%d;expect=%d;life=%ds',
-            flow.marchId, flow.dispatched.size, flow.expect, Math.round((flow.E - flow.S) / 1000));
-    }
-    if (!flows.size && !pendingPickups.length) stopDriver();
+  flows.delete(flow.marchId);
+  var heldBefore = pendingPickups.length;
+  pendingPickups = pendingPickups.filter(function (it) {
+    return it.flow !== flow;
+  });
+  log.info(
+    'flow end. marchId=%s;float=%s;reason=%s;periods=%d;boxes=%d;expect=%d;gridEnd=%d;queries=%d;marchRejects=%s;pendingHeld=%d;slotWaits=%d;pendingFlows=%d',
+    flow.marchId,
+    flow.floatId,
+    reason,
+    flow.k,
+    flow.dispatched.size,
+    flow.expect,
+    flow.lastK,
+    flow.queries,
+    flow.rejects.size ? Array.from(flow.rejects).join('|') : '-',
+    heldBefore - pendingPickups.length,
+    flow.slotWaits || 0,
+    flows.size,
+  );
+  // 只对"实领多于推算"告警：少于推算是正常的没抢过别人（这种情况下阈值本就未被放宽，流程会走完 M 拍），
+  // 而多于推算意味着 exp−t=箱数×180 这条关系改了，我们的拍网格与阈值都得重看
+  if (flow.expect > 0 && flow.dispatched.size > flow.expect) {
+    log.warn(
+      'more boxes than card prediction. marchId=%s;got=%d;expect=%d;life=%ds',
+      flow.marchId,
+      flow.dispatched.size,
+      flow.expect,
+      Math.round((flow.E - flow.S) / 1000),
+    );
+  }
+  if (!flows.size && !pendingPickups.length) stopDriver();
 }
 
 /**
@@ -716,10 +766,10 @@ function dropFlow(flow, reason) {
  * @returns {string} "YYYY-MM-DD"
  */
 function todayStr() {
-    var d = new Date();
-    var m = d.getMonth() + 1;
-    var day = d.getDate();
-    return d.getFullYear() + '-' + (m < 10 ? '0' + m : m) + '-' + (day < 10 ? '0' + day : day);
+  var d = new Date();
+  var m = d.getMonth() + 1;
+  var day = d.getDate();
+  return d.getFullYear() + '-' + (m < 10 ? '0' + m : m) + '-' + (day < 10 ? '0' + day : day);
 }
 
 /**
@@ -728,7 +778,7 @@ function todayStr() {
  * @returns {boolean}
  */
 function isCapReached(floatId) {
-    return capReachedOn.get(floatId) === todayStr();
+  return capReachedOn.get(floatId) === todayStr();
 }
 
 /**
@@ -739,17 +789,26 @@ function isCapReached(floatId) {
  * @param {*} data 902 拒绝载荷原文
  */
 function markCapReached(flow, data) {
-    capReachedOn.set(flow.floatId, todayStr());
-    pendingPickups = pendingPickups.filter(function (it) { return it.flow.floatId !== flow.floatId; });
-    var closed = 0;
-    for (var entry of Array.from(flows)) {
-        if (entry[1].floatId === flow.floatId) {
-            dropFlow(entry[1], 'daily limit reached');
-            closed++;
-        }
+  capReachedOn.set(flow.floatId, todayStr());
+  pendingPickups = pendingPickups.filter(function (it) {
+    return it.flow.floatId !== flow.floatId;
+  });
+  var closed = 0;
+  for (var entry of Array.from(flows)) {
+    if (entry[1].floatId === flow.floatId) {
+      dropFlow(entry[1], 'daily limit reached');
+      closed++;
     }
-    log.info('float type daily pickup limit reached. float=%s;date=%s;resp=%s;why=%s;flows closed=%d;pending left=%d',
-        flow.floatId, todayStr(), respText(data), whyText(data), closed, pendingPickups.length);
+  }
+  log.info(
+    'float type daily pickup limit reached. float=%s;date=%s;resp=%s;why=%s;flows closed=%d;pending left=%d',
+    flow.floatId,
+    todayStr(),
+    respText(data),
+    whyText(data),
+    closed,
+    pendingPickups.length,
+  );
 }
 
 /**
@@ -757,38 +816,57 @@ function markCapReached(flow, data) {
  * @param {object} msg newChatPush 载荷（游戏 NetChatClient 把 socket "chatpush" 单参转出来）
  */
 function onChatPush(msg) {
-    if (!aliveFn()) return;
+  if (!aliveFn()) return;
 
-    var seed = parseParadeShare(msg);
-    if (!seed) return;
+  var seed = parseParadeShare(msg);
+  if (!seed) return;
 
-    // 类型级当日已满：这台车的每次探测都会撞到同一个拒绝，直接不建流程（其他类型照常）
-    if (isCapReached(seed.floatId)) {
-        log.debug('float type daily limit reached today, skip parade. float=%s;marchId=%s', seed.floatId, seed.marchId);
-        return;
-    }
+  // 类型级当日已满：这台车的每次探测都会撞到同一个拒绝，直接不建流程（其他类型照常）
+  if (isCapReached(seed.floatId)) {
+    log.debug(
+      'float type daily limit reached today, skip parade. float=%s;marchId=%s',
+      seed.floatId,
+      seed.marchId,
+    );
+    return;
+  }
 
-    var nowMs = Date.now();
-    var nowSec = serverTimeSec();
-    if (seed.expSec && nowSec >= seed.expSec) {
-        log.debug('stale parade share skipped. marchId=%s;lag=%ds', seed.marchId, Math.round(nowSec - seed.expSec));
-        return;
-    }
-    if (flows.has(seed.marchId)) {
-        log.debug('flow exists for this parade. marchId=%s', seed.marchId);
-        return;
-    }
+  var nowMs = Date.now();
+  var nowSec = serverTimeSec();
+  if (seed.expSec && nowSec >= seed.expSec) {
+    log.debug(
+      'stale parade share skipped. marchId=%s;lag=%ds',
+      seed.marchId,
+      Math.round(nowSec - seed.expSec),
+    );
+    return;
+  }
+  if (flows.has(seed.marchId)) {
+    log.debug('flow exists for this parade. marchId=%s', seed.marchId);
+    return;
+  }
 
-    var flow = newFlow(seed, nowMs);
-    flows.set(flow.marchId, flow);
-    startProbeTick(flow, 1);
-    // E 前终查（tail）一次；到点再排 expire 收口，替代旧 tailConfirmed/bandEnd 就地闭合
-    pushEvent(Math.max(Date.now(), flow.E - cfg.tailCheckLeadMs), 'reconcile', flow.marchId, { phase: 'tail', uid: flow.uid });
-    log.info('parade flow started. marchId=%s;float=%s;delay=%ds;life=%ds;expect=%d;firstProbeIn=%ds;flows=%d',
-        flow.marchId, flow.floatId, Math.round((nowMs - flow.S) / 1000),
-        Math.round((flow.E - flow.S) / 1000), flow.expect,
-        Math.round((flow.S + cfg.firstBoxDelayMs + cfg.probeLadderMs[0] - cfg.probeLeadMs - nowMs) / 1000), flows.size);
-    startDriver();
+  var flow = newFlow(seed, nowMs);
+  flows.set(flow.marchId, flow);
+  startProbeTick(flow, 1);
+  // E 前终查（tail）一次；到点再排 expire 收口，替代旧 tailConfirmed/bandEnd 就地闭合
+  pushEvent(Math.max(Date.now(), flow.E - cfg.tailCheckLeadMs), 'reconcile', flow.marchId, {
+    phase: 'tail',
+    uid: flow.uid,
+  });
+  log.info(
+    'parade flow started. marchId=%s;float=%s;delay=%ds;life=%ds;expect=%d;firstProbeIn=%ds;flows=%d',
+    flow.marchId,
+    flow.floatId,
+    Math.round((nowMs - flow.S) / 1000),
+    Math.round((flow.E - flow.S) / 1000),
+    flow.expect,
+    Math.round(
+      (flow.S + cfg.firstBoxDelayMs + cfg.probeLadderMs[0] - cfg.probeLeadMs - nowMs) / 1000,
+    ),
+    flows.size,
+  );
+  startDriver();
 }
 
 /**
@@ -798,57 +876,92 @@ function onChatPush(msg) {
  * @param {object} payload {k, ladderIdx}
  */
 async function onProbe(flow, payload) {
-    if (!flow || flow.uid !== payload.uid) return; // 代际不符（同 marchId 收摊后重建）：陈旧事件丢弃
-    // 陈旧事件（本流程已推进到新拍）：payload.k 与 flow.k 不符直接丢
-    if (payload.k !== flow.k) return;
-    // 同拍在飞（理论不该发生，网络抖动兜底）：延后 retryMs 重排同事件，不并发、不 0ms 空转
-    if (flow.inFlight) { scheduleProbe(flow, payload.k, payload.ladderIdx, Date.now() + cfg.retryMs); return; }
+  if (!flow || flow.uid !== payload.uid) return; // 代际不符（同 marchId 收摊后重建）：陈旧事件丢弃
+  // 陈旧事件（本流程已推进到新拍）：payload.k 与 flow.k 不符直接丢
+  if (payload.k !== flow.k) return;
+  // 同拍在飞（理论不该发生，网络抖动兜底）：延后 retryMs 重排同事件，不并发、不 0ms 空转
+  if (flow.inFlight) {
+    scheduleProbe(flow, payload.k, payload.ladderIdx, Date.now() + cfg.retryMs);
+    return;
+  }
 
-    flow.inFlight = true;
-    flow.queries++;
-    var res = await queryBox(flow.dropType, flow.marchId);
-    flow.inFlight = false;
+  flow.inFlight = true;
+  flow.queries++;
+  var res = await queryBox(flow.dropType, flow.marchId);
+  flow.inFlight = false;
 
-    // await 期间流程可能已被结算/过期出队，也可能整个功能已 pause
-    if (!aliveFn() || flows.get(flow.marchId) !== flow) return;
+  // await 期间流程可能已被结算/过期出队，也可能整个功能已 pause
+  if (!aliveFn() || flows.get(flow.marchId) !== flow) return;
 
-    var k = payload.k, j = payload.ladderIdx;
+  var k = payload.k,
+    j = payload.ladderIdx;
 
-    if (res.state === 'hit') {
-        var key = res.x + ',' + res.y;
-        // 命中已被自己遮蔽（已派/退避中/他支在途占位）→ 中性：不累加 missStreak，也不重复派遣
-        if (flow.dispatched.has(key) || inBackoff(flow, key) || (await hasMarchAtTarget(res.x, res.y, flow.getType))) {
-            if (flow.dispatched.has(key)) log.debug('box shadowed by own march. marchId=%s;owner=%s;x=%d;y=%d', flow.marchId, marchOwnerAt(key, flow.marchId), res.x, res.y);
-            else log.debug('box occupied/in-backoff, yield. marchId=%s;x=%d;y=%d', flow.marchId, res.x, res.y);
-            concludeTick(flow, k, false, false);
-            return;
-        }
-        // 命中可动新箱：认账 + 清 miss + 推进网格，再按名额决定立即派还是按住
-        flow.dispatched.add(key);
-        flow.missStreak = 0;
-        if (flow.lastK > 0 && flow.dispatched.size > flow.expect) flow.lastK = 0; // 卡片少报：关提前收摊
-        log.info('box found. marchId=%s;float=%s;x=%d;y=%d;period=%d;free=%d',
-            flow.marchId, flow.floatId, res.x, res.y, k, await freeSlots(flow.getType));
-        await requestPickup(flow, key, res.x, res.y);
-        concludeTick(flow, k, true, false);
-        return;
+  if (res.state === 'hit') {
+    var key = res.x + ',' + res.y;
+    // 命中已被自己遮蔽（已派/退避中/他支在途占位）→ 中性：不累加 missStreak，也不重复派遣
+    if (
+      flow.dispatched.has(key) ||
+      inBackoff(flow, key) ||
+      (await hasMarchAtTarget(res.x, res.y, flow.getType))
+    ) {
+      if (flow.dispatched.has(key))
+        log.debug(
+          'box shadowed by own march. marchId=%s;owner=%s;x=%d;y=%d',
+          flow.marchId,
+          marchOwnerAt(key, flow.marchId),
+          res.x,
+          res.y,
+        );
+      else
+        log.debug(
+          'box occupied/in-backoff, yield. marchId=%s;x=%d;y=%d',
+          flow.marchId,
+          res.x,
+          res.y,
+        );
+      concludeTick(flow, k, false, false);
+      return;
     }
+    // 命中可动新箱：认账 + 清 miss + 推进网格，再按名额决定立即派还是按住
+    flow.dispatched.add(key);
+    flow.missStreak = 0;
+    if (flow.lastK > 0 && flow.dispatched.size > flow.expect) flow.lastK = 0; // 卡片少报：关提前收摊
+    log.info(
+      'box found. marchId=%s;float=%s;x=%d;y=%d;period=%d;free=%d',
+      flow.marchId,
+      flow.floatId,
+      res.x,
+      res.y,
+      k,
+      await freeSlots(flow.getType),
+    );
+    await requestPickup(flow, key, res.x, res.y);
+    concludeTick(flow, k, true, false);
+    return;
+  }
 
-    if (res.state === 'empty') {
-        // 空因文案键只在本次会话首次出现时报一行 info：它才能分辨"没箱"与"今日 10 次已满"
-        if (res.key && !seenEmptyKeys.has(res.key)) {
-            seenEmptyKeys.add(res.key);
-            log.info('new 8852 empty reason. marchId=%s;period=%d;code=%d;resp=%s;why=%s', flow.marchId, k, res.code, res.resp, res.why);
-        } else {
-            log.debug('no box for this parade. marchId=%s;period=%d;code=%d', flow.marchId, k, res.code);
-        }
-        // 阶梯未走完：补查下一级；走完仍真空：记一次 miss 拍并结算
-        if (j + 1 < cfg.probeLadderMs.length) scheduleProbe(flow, k, j + 1);
-        else concludeTick(flow, k, false, true);
-        return;
+  if (res.state === 'empty') {
+    // 空因文案键只在本次会话首次出现时报一行 info：它才能分辨"没箱"与"今日 10 次已满"
+    if (res.key && !seenEmptyKeys.has(res.key)) {
+      seenEmptyKeys.add(res.key);
+      log.info(
+        'new 8852 empty reason. marchId=%s;period=%d;code=%d;resp=%s;why=%s',
+        flow.marchId,
+        k,
+        res.code,
+        res.resp,
+        res.why,
+      );
+    } else {
+      log.debug('no box for this parade. marchId=%s;period=%d;code=%d', flow.marchId, k, res.code);
     }
-    // state==='error'：网络异常，延后 retryMs 重排同一步（不留延后会在持续故障时 0ms 空转刷屏），不改动任何计数
-    scheduleProbe(flow, k, j, Date.now() + cfg.retryMs);
+    // 阶梯未走完：补查下一级；走完仍真空：记一次 miss 拍并结算
+    if (j + 1 < cfg.probeLadderMs.length) scheduleProbe(flow, k, j + 1);
+    else concludeTick(flow, k, false, true);
+    return;
+  }
+  // state==='error'：网络异常，延后 retryMs 重排同一步（不留延后会在持续故障时 0ms 空转刷屏），不改动任何计数
+  scheduleProbe(flow, k, j, Date.now() + cfg.retryMs);
 }
 
 /**
@@ -859,13 +972,19 @@ async function onProbe(flow, payload) {
  * @param {boolean} genuineMiss 是否为走完阶梯的"真·空"（遮蔽/退避等中性命中传 false）
  */
 function concludeTick(flow, k, gotBox, genuineMiss) {
-    if (genuineMiss) flow.missStreak++;
+  if (genuineMiss) flow.missStreak++;
 
-    // 刚性网格末拍：卡片既算出 N 箱，第 lastK 拍一旦没命中可动新箱就不可能再有箱 → 直接收摊（省掉尾部空转拍）
-    if (!gotBox && flow.lastK > 0 && k >= flow.lastK) { dropFlow(flow, 'grid done'); return; }
-    if (!gotBox && flow.missStreak >= stopThreshold(flow)) { dropFlow(flow, 'empty ' + flow.missStreak + ' periods'); return; }
+  // 刚性网格末拍：卡片既算出 N 箱，第 lastK 拍一旦没命中可动新箱就不可能再有箱 → 直接收摊（省掉尾部空转拍）
+  if (!gotBox && flow.lastK > 0 && k >= flow.lastK) {
+    dropFlow(flow, 'grid done');
+    return;
+  }
+  if (!gotBox && flow.missStreak >= stopThreshold(flow)) {
+    dropFlow(flow, 'empty ' + flow.missStreak + ' periods');
+    return;
+  }
 
-    startProbeTick(flow, k + 1);
+  startProbeTick(flow, k + 1);
 }
 
 /**
@@ -875,8 +994,8 @@ function concludeTick(flow, k, gotBox, genuineMiss) {
  * @returns {boolean}
  */
 function inBackoff(flow, key) {
-    var b = flow.rejectBackoff.get(key);
-    return !!(b && Date.now() < b.untilMs);
+  var b = flow.rejectBackoff.get(key);
+  return !!(b && Date.now() < b.untilMs);
 }
 
 /**
@@ -886,11 +1005,11 @@ function inBackoff(flow, key) {
  * @returns {string} 归属流程的 marchIdStr，查不到回 'stale'
  */
 function marchOwnerAt(key, selfId) {
-    for (var entry of flows) {
-        var other = entry[1];
-        if (other.marchId !== selfId && other.dispatched.has(key)) return other.marchId;
-    }
-    return 'stale';
+  for (var entry of flows) {
+    var other = entry[1];
+    if (other.marchId !== selfId && other.dispatched.has(key)) return other.marchId;
+  }
+  return 'stale';
 }
 
 /**
@@ -901,15 +1020,29 @@ function marchOwnerAt(key, selfId) {
  * @param {number} y 纵坐标
  */
 async function requestPickup(flow, key, x, y) {
-    var item = { flow: flow, marchId: flow.marchId, key: key, x: x, y: y, getType: flow.getType, queuedAt: Date.now() };
-    if ((await freeSlots(flow.getType)) > 0) {
-        pushEvent(Date.now(), 'pickup', flow.marchId, { item: item });
-    } else {
-        addPending(item);
-        flow.slotWaits++;
-        await scheduleSlotFree(flow.getType);
-        log.debug('no act slot, held for pickup. marchId=%s;x=%d;y=%d;getType=%d', flow.marchId, x, y, flow.getType);
-    }
+  var item = {
+    flow: flow,
+    marchId: flow.marchId,
+    key: key,
+    x: x,
+    y: y,
+    getType: flow.getType,
+    queuedAt: Date.now(),
+  };
+  if ((await freeSlots(flow.getType)) > 0) {
+    pushEvent(Date.now(), 'pickup', flow.marchId, { item: item });
+  } else {
+    addPending(item);
+    flow.slotWaits++;
+    await scheduleSlotFree(flow.getType);
+    log.debug(
+      'no act slot, held for pickup. marchId=%s;x=%d;y=%d;getType=%d',
+      flow.marchId,
+      x,
+      y,
+      flow.getType,
+    );
+  }
 }
 
 /**
@@ -917,8 +1050,13 @@ async function requestPickup(flow, key, x, y) {
  * @param {object} item 待派项
  */
 function addPending(item) {
-    if (pendingPickups.some(function (it) { return it.key === item.key; })) return;
-    pendingPickups.push(item);
+  if (
+    pendingPickups.some(function (it) {
+      return it.key === item.key;
+    })
+  )
+    return;
+  pendingPickups.push(item);
 }
 
 /**
@@ -927,10 +1065,10 @@ function addPending(item) {
  * @returns {object[]}
  */
 function livePendingFor(getType) {
-    var now = Date.now();
-    return pendingPickups.filter(function (it) {
-        return it.getType === getType && flows.get(it.marchId) === it.flow && now < it.flow.E;
-    });
+  var now = Date.now();
+  return pendingPickups.filter(function (it) {
+    return it.getType === getType && flows.get(it.marchId) === it.flow && now < it.flow.E;
+  });
 }
 
 /**
@@ -940,33 +1078,45 @@ function livePendingFor(getType) {
  * @param {number} getType 拾取行军类型
  */
 async function onSlotFree(getType) {
-    slotFreeScheduled.delete(getType);
-    var dispatched = 0;
-    var slots = await freeSlots(getType);
-    while (aliveFn() && dispatched < slots) {
-        var pend = livePendingFor(getType);
-        if (!pend.length) break;
-        // 选所属 flow 窗口最紧（E 最小）者先派，快过期的箱优先榨名额
-        var item = pend[0];
-        for (var i = 1; i < pend.length; i++) if (pend[i].flow.E < item.flow.E) item = pend[i];
+  slotFreeScheduled.delete(getType);
+  var dispatched = 0;
+  var slots = await freeSlots(getType);
+  while (aliveFn() && dispatched < slots) {
+    var pend = livePendingFor(getType);
+    if (!pend.length) break;
+    // 选所属 flow 窗口最紧（E 最小）者先派，快过期的箱优先榨名额
+    var item = pend[0];
+    for (var i = 1; i < pend.length; i++) if (pend[i].flow.E < item.flow.E) item = pend[i];
 
-        pendingPickups = pendingPickups.filter(function (it) { return it !== item; });
+    pendingPickups = pendingPickups.filter(function (it) {
+      return it !== item;
+    });
 
-        var res = await queryBox(item.flow.dropType, item.flow.marchId);
-        if (!aliveFn() || flows.get(item.marchId) !== item.flow) return; // 期间流程收摊/pause
+    var res = await queryBox(item.flow.dropType, item.flow.marchId);
+    if (!aliveFn() || flows.get(item.marchId) !== item.flow) return; // 期间流程收摊/pause
 
-        if (res.state === 'hit' && (res.x + ',' + res.y) === item.key) {
-            // 箱仍在且坐标一致：入堆（pickup 闸门保证条间 ≥1s）；名额已被本轮占用，dispatched 计数封顶防超发
-            pushEvent(Math.max(Date.now(), lastPickupAt + cfg.retryMs + dispatched * cfg.retryMs), 'pickup', item.marchId, { item: item });
-            dispatched++;
-        } else {
-            // 箱被抢/消失：撤 pending，坐标从已派集合退回（中性不重派）
-            item.flow.dispatched.delete(item.key);
-            log.debug('pending box vanished before dispatch. marchId=%s;x=%d;y=%d', item.marchId, item.x, item.y);
-        }
+    if (res.state === 'hit' && res.x + ',' + res.y === item.key) {
+      // 箱仍在且坐标一致：入堆（pickup 闸门保证条间 ≥1s）；名额已被本轮占用，dispatched 计数封顶防超发
+      pushEvent(
+        Math.max(Date.now(), lastPickupAt + cfg.retryMs + dispatched * cfg.retryMs),
+        'pickup',
+        item.marchId,
+        { item: item },
+      );
+      dispatched++;
+    } else {
+      // 箱被抢/消失：撤 pending，坐标从已派集合退回（中性不重派）
+      item.flow.dispatched.delete(item.key);
+      log.debug(
+        'pending box vanished before dispatch. marchId=%s;x=%d;y=%d',
+        item.marchId,
+        item.x,
+        item.y,
+      );
     }
-    // 仍有同类型 pending（名额不够或被本轮漏掉）→ 按最新释放估算续排
-    if (livePendingFor(getType).length) await scheduleSlotFree(getType);
+  }
+  // 仍有同类型 pending（名额不够或被本轮漏掉）→ 按最新释放估算续排
+  if (livePendingFor(getType).length) await scheduleSlotFree(getType);
 }
 
 /**
@@ -975,82 +1125,109 @@ async function onSlotFree(getType) {
  * @param {object} item 待派项 {flow,marchId,key,x,y,getType,retriedOnce?}
  */
 async function onPickup(item) {
-    var flow = item.flow;
-    if (!flow || flows.get(item.marchId) !== flow) return; // 归属已变（收摊/重建）
-    var now = Date.now();
-    // 条间闸门：距上条 902 不足 retryMs 就顺延自排，不并发（保留 pickup 事件语义，不阻塞堆）
-    if (now - lastPickupAt < cfg.retryMs) {
-        pushEvent(lastPickupAt + cfg.retryMs, 'pickup', item.marchId, { item: item });
-        return;
+  var flow = item.flow;
+  if (!flow || flows.get(item.marchId) !== flow) return; // 归属已变（收摊/重建）
+  var now = Date.now();
+  // 条间闸门：距上条 902 不足 retryMs 就顺延自排，不并发（保留 pickup 事件语义，不阻塞堆）
+  if (now - lastPickupAt < cfg.retryMs) {
+    pushEvent(lastPickupAt + cfg.retryMs, 'pickup', item.marchId, { item: item });
+    return;
+  }
+  lastPickupAt = now;
+
+  var ret = await marchPickUp(item);
+  if (!aliveFn() || flows.get(item.marchId) !== flow) return;
+
+  if (ret.ok) {
+    // 902 走旧 JSON 链路（net.send），受理时应答是整包 JSON 文本、被拒才是 "语言键,参数" 裸串；
+    // payloadOf 归一化后再取 marchInfo，否则字符串取属性恒 undefined，会误报 shape unexpected 且埋点①拿不到时刻
+    var raw = payloadOf(ret);
+    var mi = (raw && (raw.marchInfo || (raw.data && raw.data.marchInfo) || raw)) || {};
+    var hasId = mi.marchId != null;
+    // 埋点①：应答自带出发/到达时刻，返程两字段此刻必为 0（回城 push 合并后才有值，见 SlotModel 迭代打点）
+    log.info(
+      'pick up march started. marchId=%s;x=%d;y=%d;code=%d;marchId64=%s;marchStart=%s;marchArrive=%s;retArrive=%s',
+      item.marchId,
+      item.x,
+      item.y,
+      ret.code,
+      hasId ? String(mi.marchId) : '-',
+      mi.marchStartTime != null ? mi.marchStartTime : '-',
+      mi.marchArrive != null ? mi.marchArrive : '-',
+      mi.returnArriveTime != null ? mi.returnArriveTime : '0',
+    );
+    if (!hasId) {
+      // 应答形态与预期不符：吐一次原始结构，定位 marchId/回程时刻的真实路径（真机参数观测用）
+      var peek = '<unserializable>';
+      try {
+        peek = String(typeof raw === 'string' ? raw : JSON.stringify(raw)).slice(0, 400);
+      } catch (e) {}
+      var shape =
+        typeof raw === 'string'
+          ? 'string'
+          : raw && typeof raw === 'object'
+            ? Object.keys(raw).join('|')
+            : typeof raw;
+      log.warn('pickup resp shape unexpected. keys=%s;raw=%s', shape, peek);
+      return;
     }
-    lastPickupAt = now;
-
-    var ret = await marchPickUp(item);
-    if (!aliveFn() || flows.get(item.marchId) !== flow) return;
-
-    if (ret.ok) {
-        // 902 走旧 JSON 链路（net.send），受理时应答是整包 JSON 文本、被拒才是 "语言键,参数" 裸串；
-        // payloadOf 归一化后再取 marchInfo，否则字符串取属性恒 undefined，会误报 shape unexpected 且埋点①拿不到时刻
-        var raw = payloadOf(ret);
-        var mi = (raw && (raw.marchInfo || (raw.data && raw.data.marchInfo) || raw)) || {};
-        var hasId = mi.marchId != null;
-        // 埋点①：应答自带出发/到达时刻，返程两字段此刻必为 0（回城 push 合并后才有值，见 SlotModel 迭代打点）
-        log.info('pick up march started. marchId=%s;x=%d;y=%d;code=%d;marchId64=%s;marchStart=%s;marchArrive=%s;retArrive=%s',
-            item.marchId, item.x, item.y, ret.code, hasId ? String(mi.marchId) : '-',
-            mi.marchStartTime != null ? mi.marchStartTime : '-', mi.marchArrive != null ? mi.marchArrive : '-',
-            mi.returnArriveTime != null ? mi.returnArriveTime : '0');
-        if (!hasId) {
-            // 应答形态与预期不符：吐一次原始结构，定位 marchId/回程时刻的真实路径（真机参数观测用）
-            var peek = '<unserializable>';
-            try { peek = String(typeof raw === 'string' ? raw : JSON.stringify(raw)).slice(0, 400); } catch (e) { }
-            var shape = typeof raw === 'string' ? 'string' : (raw && typeof raw === 'object' ? Object.keys(raw).join('|') : typeof raw);
-            log.warn('pickup resp shape unexpected. keys=%s;raw=%s', shape, peek);
-            return;
-        }
-        // 行军队列加速（勾选「启用行军加速」且配了目标剩余秒数才做）：对刚受理的拾取行军循环加速直到剩余 ≤ 目标（或道具耗尽/被拒），fire-and-forget
-        if (accelEnabled && accelTargetSec > 0) {
-            var arriveSec = +mi.marchArrive;
-            if (arriveSec > 0) {
-                maybeAccelerate(String(mi.marchId), arriveSec, item.getType).catch(function (err) {
-                    log.warn('speed up threw. marchId=%s', mi.marchId, err);
-                });
-            }
-        }
-        return;
+    // 行军队列加速（勾选「启用行军加速」且配了目标剩余秒数才做）：对刚受理的拾取行军循环加速直到剩余 ≤ 目标（或道具耗尽/被拒），fire-and-forget
+    if (accelEnabled && accelTargetSec > 0) {
+      var arriveSec = +mi.marchArrive;
+      if (arriveSec > 0) {
+        maybeAccelerate(String(mi.marchId), arriveSec, item.getType).catch(function (err) {
+          log.warn('speed up threw. marchId=%s', mi.marchId, err);
+        });
+      }
     }
+    return;
+  }
 
-    var errKey = rejectErrKey(ret.data);
-    // 服务器对成形领车请求的结构化拒绝（限流/目标被占/队满/日限额等）属预期业务态 → info；
-    // 未知键首遇仍由下方 1051 的 warn 单独报警（新枚举发现机制），不丢信号。
-    log.info('pick up march rejected. marchId=%s;x=%d;y=%d;code=%d;resp=%s;why=%s',
-        item.marchId, item.x, item.y, ret.code, respText(ret.data), whyText(ret.data));
+  var errKey = rejectErrKey(ret.data);
+  // 服务器对成形领车请求的结构化拒绝（限流/目标被占/队满/日限额等）属预期业务态 → info；
+  // 未知键首遇仍由下方 1051 的 warn 单独报警（新枚举发现机制），不丢信号。
+  log.info(
+    'pick up march rejected. marchId=%s;x=%d;y=%d;code=%d;resp=%s;why=%s',
+    item.marchId,
+    item.x,
+    item.y,
+    ret.code,
+    respText(ret.data),
+    whyText(ret.data),
+  );
 
-    // 路由表按 errKey 分派（队满不进 rejects/熔断，上限走熔断，其余走退避）
-    if (errKey === ERR_FLOAT_DAILY_LIMIT) {
-        flow.rejects.add(errKey);
-        flow.dispatched.delete(item.key);
-        markCapReached(flow, ret.data);
-        return;
-    }
-    if (errKey === ERR_QUEUE_FULL) {
-        // 队满=行军根本没发出：坐标退回 pending、不记退避、不进熔断、不进 rejects 汇总；按该 getType 打点 slotFree
-        flow.dispatched.delete(item.key);
-        await logQueueFullEvidence(flow, item); // 埋点②
-        addPending(item);
-        await scheduleSlotFree(item.getType);
-        return;
-    }
-
-    // 其余拒绝（含限流 march_time_control_info001 / 目标被占 / 未知键）：记 rejects，坐标退回，退避/单次重派
-    if (errKey) flow.rejects.add(errKey);
+  // 路由表按 errKey 分派（队满不进 rejects/熔断，上限走熔断，其余走退避）
+  if (errKey === ERR_FLOAT_DAILY_LIMIT) {
+    flow.rejects.add(errKey);
     flow.dispatched.delete(item.key);
-    // 未知键的首次遭遇：单次立即重派，仍拒才降退避（新键发现机制）
-    if (errKey && errKey !== ERR_RATE_LIMIT && !item.retriedOnce) {
-        log.warn('unknown reject key (first hit), single retry. marchId=%s;resp=%s', item.marchId, respText(ret.data));
-        pushEvent(Date.now() + cfg.retryMs, 'pickup', item.marchId, { item: Object.assign({}, item, { retriedOnce: true }) });
-        return;
-    }
-    schedulePickupBackoff(flow, item);
+    markCapReached(flow, ret.data);
+    return;
+  }
+  if (errKey === ERR_QUEUE_FULL) {
+    // 队满=行军根本没发出：坐标退回 pending、不记退避、不进熔断、不进 rejects 汇总；按该 getType 打点 slotFree
+    flow.dispatched.delete(item.key);
+    await logQueueFullEvidence(flow); // 埋点②
+    addPending(item);
+    await scheduleSlotFree(item.getType);
+    return;
+  }
+
+  // 其余拒绝（含限流 march_time_control_info001 / 目标被占 / 未知键）：记 rejects，坐标退回，退避/单次重派
+  if (errKey) flow.rejects.add(errKey);
+  flow.dispatched.delete(item.key);
+  // 未知键的首次遭遇：单次立即重派，仍拒才降退避（新键发现机制）
+  if (errKey && errKey !== ERR_RATE_LIMIT && !item.retriedOnce) {
+    log.warn(
+      'unknown reject key (first hit), single retry. marchId=%s;resp=%s',
+      item.marchId,
+      respText(ret.data),
+    );
+    pushEvent(Date.now() + cfg.retryMs, 'pickup', item.marchId, {
+      item: Object.assign({}, item, { retriedOnce: true }),
+    });
+    return;
+  }
+  schedulePickupBackoff(flow, item);
 }
 
 /**
@@ -1059,31 +1236,47 @@ async function onPickup(item) {
  * @param {object} item 待派项
  */
 function schedulePickupBackoff(flow, item) {
-    var tries = ((flow.rejectBackoff.get(item.key) || {}).tries || 0) + 1;
-    var wait = Math.min(cfg.rejectBackoffBaseMs * (1 << Math.min(tries - 1, 5)), cfg.rejectBackoffMaxMs);
-    flow.rejectBackoff.set(item.key, { untilMs: Date.now() + wait, tries: tries });
-    log.debug('pickup retry scheduled. marchId=%s;x=%d;y=%d;tries=%d;backoff=%ds',
-        flow.marchId, item.x, item.y, tries, Math.round(wait / 1000));
-    if (Date.now() + wait < flow.E) pushEvent(Date.now() + wait, 'pickup', flow.marchId, { item: item });
+  var tries = ((flow.rejectBackoff.get(item.key) || {}).tries || 0) + 1;
+  var wait = Math.min(
+    cfg.rejectBackoffBaseMs * (1 << Math.min(tries - 1, 5)),
+    cfg.rejectBackoffMaxMs,
+  );
+  flow.rejectBackoff.set(item.key, { untilMs: Date.now() + wait, tries: tries });
+  log.debug(
+    'pickup retry scheduled. marchId=%s;x=%d;y=%d;tries=%d;backoff=%ds',
+    flow.marchId,
+    item.x,
+    item.y,
+    tries,
+    Math.round(wait / 1000),
+  );
+  if (Date.now() + wait < flow.E)
+    pushEvent(Date.now() + wait, 'pickup', flow.marchId, { item: item });
 }
 
 /**
  * 埋点②：队满拒绝时打印同 getType 在途数与全体 ACT_MARCHS 在途类型分布——
  * 若单 type <5 仍撞队满，即为跨类型共享池证据（触发名额口径重评）
  * @param {object} flow 触发流程
- * @param {object} item 被拒待派项
  */
-async function logQueueFullEvidence(flow, item) {
-    var sameType = (await myActiveMarches(flow.getType)).length;
-    var dist = {};
-    for (var m of await listMarches()) {
-        if (!isActivityMarch(m.type)) continue;
-        dist[m.type] = (dist[m.type] || 0) + 1;
-    }
-    var parts = [];
-    for (var t in dist) if (Object.prototype.hasOwnProperty.call(dist, t)) parts.push(t + '=' + dist[t]);
-    log.info('queue-full evidence. marchId=%s;getType=%d;inTransit(type)=%d;cap=%d;allActMarches=%s',
-        flow.marchId, flow.getType, sameType, cfg.actQueueCap, parts.length ? parts.join(',') : '-');
+async function logQueueFullEvidence(flow) {
+  var sameType = (await myActiveMarches(flow.getType)).length;
+  var dist = {};
+  for (var m of await listMarches()) {
+    if (!isActivityMarch(m.type)) continue;
+    dist[m.type] = (dist[m.type] || 0) + 1;
+  }
+  var parts = [];
+  for (var t in dist)
+    if (Object.prototype.hasOwnProperty.call(dist, t)) parts.push(t + '=' + dist[t]);
+  log.info(
+    'queue-full evidence. marchId=%s;getType=%d;inTransit(type)=%d;cap=%d;allActMarches=%s',
+    flow.marchId,
+    flow.getType,
+    sameType,
+    cfg.actQueueCap,
+    parts.length ? parts.join(',') : '-',
+  );
 }
 
 /**
@@ -1093,24 +1286,37 @@ async function logQueueFullEvidence(flow, item) {
  * @param {object} payload {phase:'tail'|'expire', uid}
  */
 async function onReconcile(flow, payload) {
-    if (!flow || flow.uid !== payload.uid) return; // 代际不符（同 marchId 收摊后重建）：陈旧 tail/expire 不得动新流程
-    if (payload.phase === 'expire') {
-        dropFlow(flow, 'window expired');
-        return;
+  if (!flow || flow.uid !== payload.uid) return; // 代际不符（同 marchId 收摊后重建）：陈旧 tail/expire 不得动新流程
+  if (payload.phase === 'expire') {
+    dropFlow(flow, 'window expired');
+    return;
+  }
+  // tail：先把窗口硬止收口 expire 排上（即便随后 pause 让终查落空、return 提前，流程也一定会在 E 被清理），再终查一次
+  pushEvent(Math.max(Date.now(), flow.E), 'reconcile', flow.marchId, {
+    phase: 'expire',
+    uid: flow.uid,
+  });
+  var res = await queryBox(flow.dropType, flow.marchId);
+  if (!aliveFn() || flows.get(flow.marchId) !== flow) return;
+  if (res.state === 'hit') {
+    var key = res.x + ',' + res.y;
+    if (
+      !flow.dispatched.has(key) &&
+      !inBackoff(flow, key) &&
+      !(await hasMarchAtTarget(res.x, res.y, flow.getType))
+    ) {
+      flow.dispatched.add(key);
+      if (flow.lastK > 0 && flow.dispatched.size > flow.expect) flow.lastK = 0;
+      log.info(
+        'box found (tail). marchId=%s;float=%s;x=%d;y=%d',
+        flow.marchId,
+        flow.floatId,
+        res.x,
+        res.y,
+      );
+      await requestPickup(flow, key, res.x, res.y);
     }
-    // tail：先把窗口硬止收口 expire 排上（即便随后 pause 让终查落空、return 提前，流程也一定会在 E 被清理），再终查一次
-    pushEvent(Math.max(Date.now(), flow.E), 'reconcile', flow.marchId, { phase: 'expire', uid: flow.uid });
-    var res = await queryBox(flow.dropType, flow.marchId);
-    if (!aliveFn() || flows.get(flow.marchId) !== flow) return;
-    if (res.state === 'hit') {
-        var key = res.x + ',' + res.y;
-        if (!flow.dispatched.has(key) && !inBackoff(flow, key) && !(await hasMarchAtTarget(res.x, res.y, flow.getType))) {
-            flow.dispatched.add(key);
-            if (flow.lastK > 0 && flow.dispatched.size > flow.expect) flow.lastK = 0;
-            log.info('box found (tail). marchId=%s;float=%s;x=%d;y=%d', flow.marchId, flow.floatId, res.x, res.y);
-            await requestPickup(flow, key, res.x, res.y);
-        }
-    }
+  }
 }
 
 /**
@@ -1120,9 +1326,9 @@ async function onReconcile(flow, payload) {
  * @returns {string|null} 不是字符串形态（空/对象）时不猜
  */
 function rejectErrKey(data) {
-    if (typeof data !== 'string' || !data) return null;
-    var comma = data.indexOf(',');
-    return comma >= 0 ? data.slice(0, comma) : data;
+  if (typeof data !== 'string' || !data) return null;
+  var comma = data.indexOf(',');
+  return comma >= 0 ? data.slice(0, comma) : data;
 }
 
 /**
@@ -1134,14 +1340,14 @@ function rejectErrKey(data) {
  * @returns {string}
  */
 function whyText(data) {
-    if (typeof data !== 'string' || !data) return '-';
-    try {
-        var t = l10n.net(data);
-        return (t && t !== data) ? t.slice(0, 60) : '-';
-    } catch (err) {
-        // 翻译只是附加信息，绝不能吃掉整条被拒日志（回放实测：这里抛异常时 warn 根本打不出去）
-        return '-';
-    }
+  if (typeof data !== 'string' || !data) return '-';
+  try {
+    var t = l10n.net(data);
+    return t && t !== data ? t.slice(0, 60) : '-';
+  } catch (err) {
+    // 翻译只是附加信息，绝不能吃掉整条被拒日志（回放实测：这里抛异常时 warn 根本打不出去）
+    return '-';
+  }
 }
 
 /**
@@ -1150,14 +1356,14 @@ function whyText(data) {
  * @returns {string}
  */
 function respText(data) {
-    if (data == null || data === '') return '-';
-    var s;
-    try {
-        s = typeof data === 'string' ? data : JSON.stringify(data);
-    } catch (err) {
-        return '[unserializable]';
-    }
-    return s.slice(0, 60);
+  if (data == null || data === '') return '-';
+  var s;
+  try {
+    s = typeof data === 'string' ? data : JSON.stringify(data);
+  } catch (err) {
+    return '[unserializable]';
+  }
+  return s.slice(0, 60);
 }
 
 /**
@@ -1168,22 +1374,29 @@ function respText(data) {
  * @returns {Promise<object>} {state:'hit',x,y} | {state:'empty',code,key,resp} | {state:'error',code}
  */
 async function queryBox(dropType, marchIdStr) {
-    try {
-        var ret = await net.sendPBV2(CMD_FLOAT_PARADE_QUERY_CAN_REWARD_BAG, {
-            queryType: 1,
-            marchType: dropType,
-            marchIdStr: marchIdStr
-        });
-        var pos = ret.data;
-        // 被拒时把原载荷留下来：这是"为什么没箱"的唯一线索（每日上限？被别人领完？箱确实不在）
-        if (!ret.ok) return { state: 'empty', code: ret.code, key: rejectErrKey(pos), resp: respText(pos), why: whyText(pos) };
-        if (!pos) return { state: 'empty', code: ret.code, key: null, resp: '-' };
-        if (!pos.x || !pos.y) return { state: 'empty', code: ret.code, key: null, resp: respText(pos) };
-        return { state: 'hit', x: pos.x, y: pos.y, code: ret.code };
-    } catch (err) {
-        log.warn('query box error! marchId=%s', marchIdStr, err);
-        return { state: 'error', code: CODE_NOT_SENT };
-    }
+  try {
+    var ret = await net.sendPBV2(CMD_FLOAT_PARADE_QUERY_CAN_REWARD_BAG, {
+      queryType: 1,
+      marchType: dropType,
+      marchIdStr: marchIdStr,
+    });
+    var pos = ret.data;
+    // 被拒时把原载荷留下来：这是"为什么没箱"的唯一线索（每日上限？被别人领完？箱确实不在）
+    if (!ret.ok)
+      return {
+        state: 'empty',
+        code: ret.code,
+        key: rejectErrKey(pos),
+        resp: respText(pos),
+        why: whyText(pos),
+      };
+    if (!pos) return { state: 'empty', code: ret.code, key: null, resp: '-' };
+    if (!pos.x || !pos.y) return { state: 'empty', code: ret.code, key: null, resp: respText(pos) };
+    return { state: 'hit', x: pos.x, y: pos.y, code: ret.code };
+  } catch (err) {
+    log.warn('query box error! marchId=%s', marchIdStr, err);
+    return { state: 'error', code: CODE_NOT_SENT };
+  }
 }
 
 /**
@@ -1192,8 +1405,8 @@ async function queryBox(dropType, marchIdStr) {
  * @returns {Promise<Ret>} code=902 状态码
  */
 async function marchPickUp(item) {
-    // 零部队三键（{marchType:getType,x,y}，无 armyList）走 core/march.pickUp；频控由本 feat 的 retryMs/drain 自持
-    return march.pickUp({ marchType: item.getType, target: { x: item.x, y: item.y } });
+  // 零部队三键（{marchType:getType,x,y}，无 armyList）走 core/march.pickUp；频控由本 feat 的 retryMs/drain 自持
+  return march.pickUp({ marchType: item.getType, target: { x: item.x, y: item.y } });
 }
 
 /**
@@ -1203,11 +1416,11 @@ async function marchPickUp(item) {
  * @returns {Promise<number>} 到达 epoch 秒，或 0
  */
 async function pickupArriveSec(marchIdStr) {
-    var ms = await march.list({ cache: true });
-    for (var i = 0; i < ms.length; i++) {
-        if (ms[i].id === marchIdStr) return ms[i].marchArrive > 0 ? +ms[i].marchArrive : 0;
-    }
-    return 0;
+  var ms = await march.list({ cache: true });
+  for (var i = 0; i < ms.length; i++) {
+    if (ms[i].id === marchIdStr) return ms[i].marchArrive > 0 ? +ms[i].marchArrive : 0;
+  }
+  return 0;
 }
 
 /**
@@ -1218,16 +1431,19 @@ async function pickupArriveSec(marchIdStr) {
  * @returns {Promise<number>}
  */
 async function waitArriveDrop(marchIdStr, prevArrive) {
-    var POLL_MS = 600, DEADLINE_MS = 6000;
-    var end = Date.now() + DEADLINE_MS;
-    while (Date.now() < end) {
-        await new Promise(function (r) { setTimeout(r, POLL_MS); });
-        if (!aliveFn()) return prevArrive;
-        var a = await pickupArriveSec(marchIdStr);
-        if (!(a > 0)) return a;               // 行军已从快照消失
-        if (a < prevArrive) return a;          // 加速已反映（到达更早）
-    }
-    return prevArrive;                         // 超时未确认
+  var POLL_MS = 600,
+    DEADLINE_MS = 6000;
+  var end = Date.now() + DEADLINE_MS;
+  while (Date.now() < end) {
+    await new Promise(function (r) {
+      setTimeout(r, POLL_MS);
+    });
+    if (!aliveFn()) return prevArrive;
+    var a = await pickupArriveSec(marchIdStr);
+    if (!(a > 0)) return a; // 行军已从快照消失
+    if (a < prevArrive) return a; // 加速已反映（到达更早）
+  }
+  return prevArrive; // 超时未确认
 }
 
 /**
@@ -1243,35 +1459,64 @@ async function waitArriveDrop(marchIdStr, prevArrive) {
  * @param {number} [getType] 该拾取行军类型（用于加速后重排 slotFree 腾位打点）
  */
 async function maybeAccelerate(marchIdStr, arriveSec, getType) {
-    if (!accelEnabled) return;                              // 面板未勾选「启用行军加速」：不消耗任何道具
-    var target = accelTargetSec | 0;
-    if (target <= 0) return;
-    var normal = march.ITEM_SPEED_UP_NORMAL, advanced = march.ITEM_SPEED_UP_ADVANCED;
-    var arrive = arriveSec;
-    var applied = 0;
-    var MAX_SHOTS = 15;
-    for (var shot = 0; shot < MAX_SHOTS; shot++) {
-        if (!aliveFn()) break;
-        if (!(arrive > 0)) break;
-        var remain = arrive - serverTimeSec();
-        if (!(remain > target)) break;                       // 已达标 / 时刻无效（NaN/非正）：停
-        var prefer = (remain * 0.75 <= target) ? normal : advanced;   // 普通一发可达标就用普通（更省），否则高级逼近
-        var other = prefer === normal ? advanced : normal;
-        var itemId = item.amount(prefer) > 0 ? prefer : (item.amount(other) > 0 ? other : 0);
-        if (!itemId) { log.debug('no speed-up item left, stop accel. marchId=%s;remain=%ds;target=%ds', marchIdStr, Math.round(remain), target); break; }
-        var ret = await march.speedUp(marchIdStr, { itemId: itemId });
-        if (!ret || !ret.ok) { log.info('speed up rejected, stop. marchId=%s;itemId=%d;code=%d', marchIdStr, itemId, ret && ret.code); break; }
-        applied++;
-        log.info('speed up pickup march. marchId=%s;itemId=%d;remain=%ds;after~=%ds;target=%ds;shot=%d',
-            marchIdStr, itemId, Math.round(remain), Math.round(remain * (itemId === advanced ? 0.5 : 0.75)), target, applied);
-        var newArrive = await waitArriveDrop(marchIdStr, arrive);
-        if (!(newArrive > 0)) break;                          // 行军消失
-        if (newArrive >= arrive) break;                        // 未确认到新到达提前：停，防空耗
-        arrive = newArrive;
+  if (!accelEnabled) return; // 面板未勾选「启用行军加速」：不消耗任何道具
+  var target = accelTargetSec | 0;
+  if (target <= 0) return;
+  var normal = march.ITEM_SPEED_UP_NORMAL,
+    advanced = march.ITEM_SPEED_UP_ADVANCED;
+  var arrive = arriveSec;
+  var applied = 0;
+  var MAX_SHOTS = 15;
+  for (var shot = 0; shot < MAX_SHOTS; shot++) {
+    if (!aliveFn()) break;
+    if (!(arrive > 0)) break;
+    var remain = arrive - serverTimeSec();
+    if (!(remain > target)) break; // 已达标 / 时刻无效（NaN/非正）：停
+    var prefer = remain * 0.75 <= target ? normal : advanced; // 普通一发可达标就用普通（更省），否则高级逼近
+    var other = prefer === normal ? advanced : normal;
+    var itemId = item.amount(prefer) > 0 ? prefer : item.amount(other) > 0 ? other : 0;
+    if (!itemId) {
+      log.debug(
+        'no speed-up item left, stop accel. marchId=%s;remain=%ds;target=%ds',
+        marchIdStr,
+        Math.round(remain),
+        target,
+      );
+      break;
     }
-    if (applied > 0 && getType != null) {
-        try { slotFreeScheduled.delete(getType); await scheduleSlotFree(getType); } catch (e) { /* 重排失败无害，靠 TTL 兑底 */ }
+    var ret = await march.speedUp(marchIdStr, { itemId: itemId });
+    if (!ret || !ret.ok) {
+      log.info(
+        'speed up rejected, stop. marchId=%s;itemId=%d;code=%d',
+        marchIdStr,
+        itemId,
+        ret && ret.code,
+      );
+      break;
     }
+    applied++;
+    log.info(
+      'speed up pickup march. marchId=%s;itemId=%d;remain=%ds;after~=%ds;target=%ds;shot=%d',
+      marchIdStr,
+      itemId,
+      Math.round(remain),
+      Math.round(remain * (itemId === advanced ? 0.5 : 0.75)),
+      target,
+      applied,
+    );
+    var newArrive = await waitArriveDrop(marchIdStr, arrive);
+    if (!(newArrive > 0)) break; // 行军消失
+    if (newArrive >= arrive) break; // 未确认到新到达提前：停，防空耗
+    arrive = newArrive;
+  }
+  if (applied > 0 && getType != null) {
+    try {
+      slotFreeScheduled.delete(getType);
+      await scheduleSlotFree(getType);
+    } catch (e) {
+      /* 重排失败无害，靠 TTL 兑底 */
+    }
+  }
 }
 /**
  * 注入面板配置：读行军加速开关与目标秒数（accelEnabled / accelTargetSec，0=不加速）。reactor.setConfig 每次推配置时调用。
@@ -1279,10 +1524,10 @@ async function maybeAccelerate(marchIdStr, arriveSec, getType) {
  * @returns {object} 当前生效的加速开关与目标秒数（仅供日志/调试）
  */
 function configure(partial) {
-    accelEnabled = !!(partial && partial.accelEnabled);
-    var v = partial && +partial.accelTargetSec;
-    accelTargetSec = (v > 0) ? (v | 0) : 0;
-    return { accelEnabled: accelEnabled, accelTargetSec: accelTargetSec };
+  accelEnabled = !!(partial && partial.accelEnabled);
+  var v = partial && +partial.accelTargetSec;
+  accelTargetSec = v > 0 ? v | 0 : 0;
+  return { accelEnabled: accelEnabled, accelTargetSec: accelTargetSec };
 }
 
 /**
@@ -1292,42 +1537,53 @@ function configure(partial) {
  * @returns {boolean}
  */
 function install(ctx) {
-    ctxRef = ctx;
-    if (installed) {
-        return true;
-    }
-
-    var missing = [];
-
-    net = ctx.net;
-    if (!net.install()) {
-        missing.push('pocketcc.net');
-        net = null;
-    }
-
-    var mods = game.requireAll(['DataCenter', 'MarchTools']);
-
-    dataCenter = mods.DataCenter
-        && mods.DataCenter.DATA
-        || missing.push('DataCenter');
-
-    // MarchTools 软依赖：命名导出 ACT_MARCHS（活动行军归属判据）；取不到只回退本地副本，不进 missing
-    actMarchs = (mods.MarchTools && (mods.MarchTools.ACT_MARCHS
-        || (mods.MarchTools.default && mods.MarchTools.default.ACT_MARCHS))) || null;
-    if (!actMarchs) {
-        log.warn('MarchTools.ACT_MARCHS missing, fallback to local getType set. missing=%s', mods.MarchTools ? 'export-shape' : 'module');
-    }
-
-    if (missing.length) {
-        net = null; dataCenter = null;
-        log.warn('install failed. missing=%d;deps=%s', missing.length, missing.join(';'));
-        return false;
-    }
-
-    installed = true;
-    log.info('installed. floats=%s;cap=%d', FLOATS.map(function (f) { return f.id + '(' + f.dropType + '/' + f.getType + ')'; }).join(','), cfg.actQueueCap);
-
+  ctxRef = ctx;
+  if (installed) {
     return true;
+  }
+
+  var missing = [];
+
+  net = ctx.net;
+  if (!net.install()) {
+    missing.push('pocketcc.net');
+    net = null;
+  }
+
+  var mods = game.requireAll(['DataCenter', 'MarchTools']);
+
+  dataCenter = (mods.DataCenter && mods.DataCenter.DATA) || missing.push('DataCenter');
+
+  // MarchTools 软依赖：命名导出 ACT_MARCHS（活动行军归属判据）；取不到只回退本地副本，不进 missing
+  actMarchs =
+    (mods.MarchTools &&
+      (mods.MarchTools.ACT_MARCHS ||
+        (mods.MarchTools.default && mods.MarchTools.default.ACT_MARCHS))) ||
+    null;
+  if (!actMarchs) {
+    log.warn(
+      'MarchTools.ACT_MARCHS missing, fallback to local getType set. missing=%s',
+      mods.MarchTools ? 'export-shape' : 'module',
+    );
+  }
+
+  if (missing.length) {
+    net = null;
+    dataCenter = null;
+    log.warn('install failed. missing=%d;deps=%s', missing.length, missing.join(';'));
+    return false;
+  }
+
+  installed = true;
+  log.info(
+    'installed. floats=%s;cap=%d',
+    FLOATS.map(function (f) {
+      return f.id + '(' + f.dropType + '/' + f.getType + ')';
+    }).join(','),
+    cfg.actQueueCap,
+  );
+
+  return true;
 }
 
 /**
@@ -1336,10 +1592,14 @@ function install(ctx) {
  * @param {object} ctx reactor 上下文
  */
 function run(ctx) {
-    ctxRef = ctx;
-    ctx.on.event('newChatPush', onChatPush);
-    startDriver();
-    log.info('started, listening event=newChatPush;flows=%d;pending=%d.', flows.size, pendingPickups.length);
+  ctxRef = ctx;
+  ctx.on.event('newChatPush', onChatPush);
+  startDriver();
+  log.info(
+    'started, listening event=newChatPush;flows=%d;pending=%d.',
+    flows.size,
+    pendingPickups.length,
+  );
 }
 
 /**
@@ -1347,31 +1607,39 @@ function run(ctx) {
  * 面板只出启用开关，探测节奏全部为 cfg 内置常量。
  */
 reactor.register({
-    id: 'floatCar',
-    label: '花车空投',
-    storageKey: 'pocketcc.feat.floatCar',
-    symbols: ['dataCenter', 'marchTools?'],
-    scenes: ['Home', 'NWorldMap'],
-    offInCombat: true,
-    defaults: { enabled: false, accelEnabled: false, accelTargetSec: 0 },
-    fields: [
-        {
-            // 花车空投已抽为独立 feature 卡片：卡片主体默认收起（点标题行展开），故「行军加速」段不再自带折叠，避免双层折叠
-            key: 'accelEnabled', type: 'checkbox', label: '启用行军加速', section: '行军加速',
-        },
-        {
-            key: 'accelTargetSec', type: 'number', label: '加速至剩余(秒)', min: 0, step: 1, section: '行军加速',
-            // 行内轻提示：循环对拾取行军用加速道具直到剩余 ≤ N 秒（每支前先核背包、普通可达就优先普通）；0=不加速。
-            placeholder: '0=不加速；>0 循环加速至剩余≤此秒',
-        },
-    ],
-    toModuleCfg: function (c) {
-        return {
-            accelEnabled: !!(c && c.accelEnabled),
-            accelTargetSec: (c && +c.accelTargetSec) > 0 ? (+c.accelTargetSec | 0) : 0,
-        };
+  id: 'floatCar',
+  label: '花车空投',
+  storageKey: 'pocketcc.feat.floatCar',
+  symbols: ['dataCenter', 'marchTools?'],
+  scenes: ['Home', 'NWorldMap'],
+  offInCombat: true,
+  defaults: { enabled: false, accelEnabled: false, accelTargetSec: 0 },
+  fields: [
+    {
+      // 花车空投已抽为独立 feature 卡片：卡片主体默认收起（点标题行展开），故「行军加速」段不再自带折叠，避免双层折叠
+      key: 'accelEnabled',
+      type: 'checkbox',
+      label: '启用行军加速',
+      section: '行军加速',
     },
-    configure: configure,
-    install: install,
-    run: run,
+    {
+      key: 'accelTargetSec',
+      type: 'number',
+      label: '加速至剩余(秒)',
+      min: 0,
+      step: 1,
+      section: '行军加速',
+      // 行内轻提示：循环对拾取行军用加速道具直到剩余 ≤ N 秒（每支前先核背包、普通可达就优先普通）；0=不加速。
+      placeholder: '0=不加速；>0 循环加速至剩余≤此秒',
+    },
+  ],
+  toModuleCfg: function (c) {
+    return {
+      accelEnabled: !!(c && c.accelEnabled),
+      accelTargetSec: (c && +c.accelTargetSec) > 0 ? +c.accelTargetSec | 0 : 0,
+    };
+  },
+  configure: configure,
+  install: install,
+  run: run,
 });

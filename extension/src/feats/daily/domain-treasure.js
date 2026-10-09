@@ -64,25 +64,23 @@ const ERR_MARCH_QUEUE_FULL = 'summer_error_01';
  * @type {object}
  */
 const cfg = {
+  /**
+   * 活跃扫描间隔：默认1分钟。本轮扫描发现了可派矿时用这档，勤扫趁名额还空多挖
+   */
+  activeScanInterval: 1000 * 60,
 
-    /**
-     * 活跃扫描间隔：默认1分钟。本轮扫描发现了可派矿时用这档，勤扫趁名额还空多挖
-     */
-    activeScanInterval: 1000 * 60,
+  /**
+   * 空转扫描间隔：默认10分钟。连续 EMPTY_STREAK_IDLE 次扫描都没矿脉后降到这档，少刷 8623。
+   * 推送 10912 仍是主触发源，新矿脉一诞生即被推醒，不必等这档定时
+   */
+  idleScanInterval: 1000 * 60 * 10,
 
-    /**
-     * 空转扫描间隔：默认10分钟。连续 EMPTY_STREAK_IDLE 次扫描都没矿脉后降到这档，少刷 8623。
-     * 推送 10912 仍是主触发源，新矿脉一诞生即被推醒，不必等这档定时
-     */
-    idleScanInterval: 1000 * 60 * 10,
-
-    /**
-     * 挖矿间隔：默认5秒（消费逐条之间的休眠）
-     * 承重约束：必须大于“行军入表延迟”。每条派前现判名额读的是 856（本人全量行军），刚派那条要等服务器写入后才数得到。
-     * 调太小会在入表前连派、尝试超过 para6——超出的会被服务器拒（领域寻宝 902 被拒零成本），不会真超发，只多刷 rejected 日志。
-     */
-    digInterval: 1000 * 5,
-
+  /**
+   * 挖矿间隔：默认5秒（消费逐条之间的休眠）
+   * 承重约束：必须大于“行军入表延迟”。每条派前现判名额读的是 856（本人全量行军），刚派那条要等服务器写入后才数得到。
+   * 调太小会在入表前连派、尝试超过 para6——超出的会被服务器拒（领域寻宝 902 被拒零成本），不会真超发，只多刷 rejected 日志。
+   */
+  digInterval: 1000 * 5,
 };
 
 /** @type {number} 连续这么多次扫描都没矿脉，才把扫描间隔从 active 降到 idle（去抖：单次漏扫不立即降频） */
@@ -123,7 +121,7 @@ var installed = false;
  * @returns {boolean}
  */
 function aliveFn() {
-    return ctxRef ? ctxRef.alive() : false;
+  return ctxRef ? ctxRef.alive() : false;
 }
 
 /**
@@ -132,7 +130,9 @@ function aliveFn() {
  * @returns {Promise<void>}
  */
 function sleep(ms) {
-    return new Promise(function (resolve) { setTimeout(resolve, ms); });
+  return new Promise(function (resolve) {
+    setTimeout(resolve, ms);
+  });
 }
 
 /**
@@ -142,7 +142,7 @@ function sleep(ms) {
  * @returns {string} "x,y"
  */
 function mineKey(x, y) {
-    return x + ',' + y;
+  return x + ',' + y;
 }
 
 /**
@@ -151,60 +151,65 @@ function mineKey(x, y) {
  * @returns {Promise<number>}
  */
 async function cycleRun() {
-    await doScan();
-    if (!aliveFn()) return 0;   // pause 中途：consume 不再进入，cycle 在 alive 检查处自然停摆
-    await consume();
-    if (cycle.pending) return 0;
-    return nextScanInterval();
+  await doScan();
+  if (!aliveFn()) return 0; // pause 中途：consume 不再进入，cycle 在 alive 检查处自然停摆
+  await consume();
+  if (cycle.pending) return 0;
+  return nextScanInterval();
 }
 
 /** @type {{kick: function(), pending: boolean}} 调和循环驱动器（fallback 取 active 档，防异常停摆） */
-const cycle = createCycle({ log: log, alive: aliveFn, run: cycleRun, fallback: cfg.activeScanInterval });
+const cycle = createCycle({
+  log: log,
+  alive: aliveFn,
+  run: cycleRun,
+  fallback: cfg.activeScanInterval,
+});
 
 /**
  * 生产端：找活动 → 名额够 → 拉 8623 → 过滤可派 → 整批替换 queue → 交消费。永不 reject。
  * @returns {Promise<void>}
  */
 async function doScan() {
-    try {
-        // 活动并未开启：清空队列，交下拍兜底。算一次空扫（没矿可检测）
-        var activity = getDomainTreasureActivity();
-        if (!activity) {
-            log.debug('no activity found.');
-            queue.length = 0;
-            emptyStreak++;
-            return;
-        }
-
-        // 活动行军队列不足：满员就不必白发一个 8623。这是"有活干、暂时派不下"，非空扫，清零保持活跃档勤复查名额
-        if (!(await isDomainTreasureActivityMarchEnough(activity))) {
-            log.debug('not enough march slots.');
-            queue.length = 0;
-            emptyStreak = 0;
-            return;
-        }
-
-        // loading 返回 Ret：code=8623 状态码，data=过滤后的可派矿（失败/闸门时为 null）
-        var ret = await loadingDomainTreasureActivityMines(activity);
-        if (!aliveFn()) return;
-
-        if (!ret.ok || !ret.data || !ret.data.length) {
-            log.debug('no mines found. code=%d', ret.code);
-            queue.length = 0;
-            emptyStreak++;
-            return;
-        }
-
-        // 每轮 8623 是全量快照，整批替换队列（追加会累积重复矿）；scanActivity 留给消费段判名额
-        scanActivity = activity;
-        queue = ret.data;
-        emptyStreak = 0;
-        log.debug('mines loaded. count=%d', queue.length);
-    } catch (err) {
-        log.warn('scan error.', err);
-        queue.length = 0;
-        emptyStreak++;
+  try {
+    // 活动并未开启：清空队列，交下拍兜底。算一次空扫（没矿可检测）
+    var activity = getDomainTreasureActivity();
+    if (!activity) {
+      log.debug('no activity found.');
+      queue.length = 0;
+      emptyStreak++;
+      return;
     }
+
+    // 活动行军队列不足：满员就不必白发一个 8623。这是"有活干、暂时派不下"，非空扫，清零保持活跃档勤复查名额
+    if (!(await isDomainTreasureActivityMarchEnough(activity))) {
+      log.debug('not enough march slots.');
+      queue.length = 0;
+      emptyStreak = 0;
+      return;
+    }
+
+    // loading 返回 Ret：code=8623 状态码，data=过滤后的可派矿（失败/闸门时为 null）
+    var ret = await loadingDomainTreasureActivityMines(activity);
+    if (!aliveFn()) return;
+
+    if (!ret.ok || !ret.data || !ret.data.length) {
+      log.debug('no mines found. code=%d', ret.code);
+      queue.length = 0;
+      emptyStreak++;
+      return;
+    }
+
+    // 每轮 8623 是全量快照，整批替换队列（追加会累积重复矿）；scanActivity 留给消费段判名额
+    scanActivity = activity;
+    queue = ret.data;
+    emptyStreak = 0;
+    log.debug('mines loaded. count=%d', queue.length);
+  } catch (err) {
+    log.warn('scan error.', err);
+    queue.length = 0;
+    emptyStreak++;
+  }
 }
 
 /**
@@ -212,23 +217,23 @@ async function doScan() {
  * @returns {Promise<void>}
  */
 async function consume() {
-    while (queue.length && aliveFn()) {
-        // 名额满：停止本轮消费，等下一轮扫描重新判
-        if (!(await isDomainTreasureActivityMarchEnough(scanActivity))) {
-            log.debug('march slots full, drain stopped.');
-            queue.length = 0;
-            break;
-        }
-        var mine = queue.shift();
-        try {
-            await digFlow(mine);
-        } catch (err) {
-            log.warn('dig flow threw.', err);
-        }
-        if (queue.length && aliveFn()) {
-            await sleep(cfg.digInterval);
-        }
+  while (queue.length && aliveFn()) {
+    // 名额满：停止本轮消费，等下一轮扫描重新判
+    if (!(await isDomainTreasureActivityMarchEnough(scanActivity))) {
+      log.debug('march slots full, drain stopped.');
+      queue.length = 0;
+      break;
     }
+    var mine = queue.shift();
+    try {
+      await digFlow(mine);
+    } catch (err) {
+      log.warn('dig flow threw.', err);
+    }
+    if (queue.length && aliveFn()) {
+      await sleep(cfg.digInterval);
+    }
+  }
 }
 
 /**
@@ -237,7 +242,7 @@ async function consume() {
  * @returns {number} 毫秒
  */
 function nextScanInterval() {
-    return emptyStreak >= EMPTY_STREAK_IDLE ? cfg.idleScanInterval : cfg.activeScanInterval;
+  return emptyStreak >= EMPTY_STREAK_IDLE ? cfg.idleScanInterval : cfg.activeScanInterval;
 }
 
 /**
@@ -246,15 +251,15 @@ function nextScanInterval() {
  * @param {object} ev net.on 事件 {cmd, status, data, ord, ts, raw}
  */
 function onActivityExtraPush(ev) {
-    if (!aliveFn()) return;
+  if (!aliveFn()) return;
 
-    var aid = ev && ev.data && ev.data.aid;
-    if (!isDomainTreasureAid(aid)) {
-        return;
-    }
+  var aid = ev && ev.data && ev.data.aid;
+  if (!isDomainTreasureAid(aid)) {
+    return;
+  }
 
-    log.info('new mine push received, trigger scan. aid=%d', aid);
-    cycle.kick();
+  log.info('new mine push received, trigger scan. aid=%d', aid);
+  cycle.kick();
 }
 
 /**
@@ -263,9 +268,9 @@ function onActivityExtraPush(ev) {
  * @returns {boolean}
  */
 function isDomainTreasureAid(aid) {
-    if (!aid) return false;
-    var activity = activityCtl.getActivityByActivityId(aid);
-    return !!activity && activity.type === ACTIVITY_TYPE_DOMAIN_TREASURE;
+  if (!aid) return false;
+  var activity = activityCtl.getActivityByActivityId(aid);
+  return !!activity && activity.type === ACTIVITY_TYPE_DOMAIN_TREASURE;
 }
 
 /**
@@ -275,56 +280,64 @@ function isDomainTreasureAid(aid) {
  * @returns {Promise<void>}
  */
 async function digFlow(mine) {
-    var ret = await diggingDomainTreasureActivityMine(mine);
-    if (!aliveFn()) return;
+  var ret = await diggingDomainTreasureActivityMine(mine);
+  if (!aliveFn()) return;
 
-    if (ret.ok) {
-        log.debug('dig ok. x=%d;y=%d', mine.x, mine.y);
-        return;
-    }
+  if (ret.ok) {
+    log.debug('dig ok. x=%d;y=%d', mine.x, mine.y);
+    return;
+  }
 
-    /*
-     * 矿脉剩余时间不足以行军：服务器拒派，但这条矿还会以 gatherStatus===0 留在后续 8623 快照里，
-     * 不拉黑就每轮白派一次。拉黑到它从名单消失为止（pruneBlacklist 解禁），本轮队列其余矿照派。
-     */
-    if (ret.code === 3 && ret.data === ERR_MINE_TIME_NOT_ENOUGH) {
-        blacklist.add(mineKey(mine.x, mine.y));
-        log.info('dig rejected, mine blacklisted. x=%d;y=%d;code=%d;data=%s',
-            mine.x, mine.y, ret.code, ret.data);
-        return;
-    }
+  /*
+   * 矿脉剩余时间不足以行军：服务器拒派，但这条矿还会以 gatherStatus===0 留在后续 8623 快照里，
+   * 不拉黑就每轮白派一次。拉黑到它从名单消失为止（pruneBlacklist 解禁），本轮队列其余矿照派。
+   */
+  if (ret.code === 3 && ret.data === ERR_MINE_TIME_NOT_ENOUGH) {
+    blacklist.add(mineKey(mine.x, mine.y));
+    log.info(
+      'dig rejected, mine blacklisted. x=%d;y=%d;code=%d;data=%s',
+      mine.x,
+      mine.y,
+      ret.code,
+      ret.data,
+    );
+    return;
+  }
 
-    /*
-     * 服务器主动返回：活动行军队列到达上限
-     * 这种情况是因为主界面在主城区，导致地图数据中拿不到活动行军队列数量，让脚本进行了误判。
-     * 遇到这种情况，主动退让：清空队列，consume 循环随即结束 → 本轮由 cycle 重排。
-     */
-    if (ret.code === 3 && ret.data === ERR_MARCH_QUEUE_FULL) {
-        log.info('dig rejected, march queue full (server), retreat. x=%d;y=%d;code=%d;data=%s',
-            mine.x, mine.y, ret.code, ret.data);
-        queue.length = 0;
-        return;
-    }
+  /*
+   * 服务器主动返回：活动行军队列到达上限
+   * 这种情况是因为主界面在主城区，导致地图数据中拿不到活动行军队列数量，让脚本进行了误判。
+   * 遇到这种情况，主动退让：清空队列，consume 循环随即结束 → 本轮由 cycle 重排。
+   */
+  if (ret.code === 3 && ret.data === ERR_MARCH_QUEUE_FULL) {
+    log.info(
+      'dig rejected, march queue full (server), retreat. x=%d;y=%d;code=%d;data=%s',
+      mine.x,
+      mine.y,
+      ret.code,
+      ret.data,
+    );
+    queue.length = 0;
+    return;
+  }
 
-    log.info('dig rejected. x=%d;y=%d;code=%d;data=%s', mine.x, mine.y, ret.code, ret.data);
+  log.info('dig rejected. x=%d;y=%d;code=%d;data=%s', mine.x, mine.y, ret.code, ret.data);
 }
-
 
 /**
  * 获取活动信息（领域寻宝且仍在期，多个时取第一个）
  * @returns {object|undefined} 活动对象，未开启时 undefined
  */
 function getDomainTreasureActivity() {
-    return activityCtl.getActivityList()
-        .find(function (activity) {
-
-            /*
-             * 还要求在期——getActivityList 不保证只返回开着的，对已结束的活动发 8623/902 只会被拒
-             */
-            return activity.type === ACTIVITY_TYPE_DOMAIN_TREASURE
-                && activityCtl.checkActivityIsOpen(activity.id) === true;
-
-        });
+  return activityCtl.getActivityList().find(function (activity) {
+    /*
+     * 还要求在期——getActivityList 不保证只返回开着的，对已结束的活动发 8623/902 只会被拒
+     */
+    return (
+      activity.type === ACTIVITY_TYPE_DOMAIN_TREASURE &&
+      activityCtl.checkActivityIsOpen(activity.id) === true
+    );
+  });
 }
 
 /**
@@ -334,43 +347,48 @@ function getDomainTreasureActivity() {
  * @returns {Promise<Ret>} code=8623 状态码，data=过滤后的可派矿数组（[{x,y}]）或 null
  */
 async function loadingDomainTreasureActivityMines(activity) {
-    // 闸门未放开（游戏面板也在拉）：不静默断链，回哨兵 Ret
-    if (!activity || net.isSending(CMD_GET_KUANG_LIST)) {
-        return net.Ret.from(CODE_NOT_SENT, null);
+  // 闸门未放开（游戏面板也在拉）：不静默断链，回哨兵 Ret
+  if (!activity || net.isSending(CMD_GET_KUANG_LIST)) {
+    return net.Ret.from(CODE_NOT_SENT, null);
+  }
+
+  try {
+    // type:2 见知识文档；ensureServerResponse=false 由 net 封装固定（心跳会重发）
+    var ret = await net.sendPBV2(CMD_GET_KUANG_LIST, { activityId: activity.id, type: 2 });
+
+    // 请求失败：原样带上 8623 的 code 回传，data=null，供调用方进一步判断
+    if (!ret.ok || !ret.data) {
+      log.info(
+        'loading mines rejected (activity closed?). activityId=%d;code=%d',
+        activity.id,
+        ret.code,
+      );
+      return net.Ret.from(ret.code, null);
     }
 
-    try {
-        // type:2 见知识文档；ensureServerResponse=false 由 net 封装固定（心跳会重发）
-        var ret = await net.sendPBV2(CMD_GET_KUANG_LIST, { activityId: activity.id, type: 2 });
+    /*
+     * 只取可挖掘的矿洞：gatherStatus 0=可挖掘、1=挖掘中、2=已挖掘、3=行军中，只有 0 能派
+     * x,y : 矿洞坐标
+     * 黑名单里的矿（剩余时间不足以行军）一并跳过，不再白派 902
+     */
+    var list = ret.data.otherKuangList || [];
 
-        // 请求失败：原样带上 8623 的 code 回传，data=null，供调用方进一步判断
-        if (!ret.ok || !ret.data) {
-            log.info('loading mines rejected (activity closed?). activityId=%d;code=%d', activity.id, ret.code);
-            return net.Ret.from(ret.code, null);
-        }
+    pruneBlacklist(list);
 
-        /*
-         * 只取可挖掘的矿洞：gatherStatus 0=可挖掘、1=挖掘中、2=已挖掘、3=行军中，只有 0 能派
-         * x,y : 矿洞坐标
-         * 黑名单里的矿（剩余时间不足以行军）一并跳过，不再白派 902
-         */
-        var list = ret.data.otherKuangList || [];
+    var mines = list
+      .filter(function (mine) {
+        return mine.gatherStatus === 0 && !blacklist.has(mineKey(mine.x, mine.y));
+      })
+      .map(function (mine) {
+        return { x: mine.x, y: mine.y };
+      });
 
-        pruneBlacklist(list);
-
-        var mines = list
-            .filter(function (mine) {
-                return mine.gatherStatus === 0 && !blacklist.has(mineKey(mine.x, mine.y));
-            })
-            .map(function (mine) { return { x: mine.x, y: mine.y }; });
-
-        // 带上 8623 的 code 一起回传
-        return net.Ret.from(ret.code, mines);
-
-    } catch (err) {
-        log.warn('loading mines error. activityId=%d', activity && activity.id, err);
-        return net.Ret.from(CODE_NOT_SENT, null);
-    }
+    // 带上 8623 的 code 一起回传
+    return net.Ret.from(ret.code, mines);
+  } catch (err) {
+    log.warn('loading mines error. activityId=%d', activity && activity.id, err);
+    return net.Ret.from(CODE_NOT_SENT, null);
+  }
 }
 
 /**
@@ -379,20 +397,19 @@ async function loadingDomainTreasureActivityMines(activity) {
  * @param {object[]} list otherKuangList 原始数组
  */
 function pruneBlacklist(list) {
-    if (!blacklist.size) return;
+  if (!blacklist.size) return;
 
-    var present = new Set();
-    for (var i = 0; i < list.length; i++) {
-        present.add(mineKey(list[i].x, list[i].y));
-    }
+  var present = new Set();
+  for (var i = 0; i < list.length; i++) {
+    present.add(mineKey(list[i].x, list[i].y));
+  }
 
-    blacklist.forEach(function (key) {
-        if (present.has(key)) return;
-        blacklist.delete(key);
-        log.debug('blacklist pruned. key=%s', key);
-    });
+  blacklist.forEach(function (key) {
+    if (present.has(key)) return;
+    blacklist.delete(key);
+    log.debug('blacklist pruned. key=%s', key);
+  });
 }
-
 
 /**
  * 挖矿（零部队九键 body，含 ext:{}）
@@ -401,11 +418,11 @@ function pruneBlacklist(list) {
  * @returns {Promise<Ret>} 整个 902 的 Ret，code=902 状态码，data=成功载荷或 null
  */
 async function diggingDomainTreasureActivityMine(mine) {
-    if (!mine || net.isSending(CMD_MARCH_WORLD_POINT)) {
-        return net.Ret.from(CODE_NOT_SENT, null);
-    }
-    // 零部队九键（armyList:[]…ext:{}）走 core/march.pickUp（与泰坦祝福同口径）；被拒日志仍由 digFlow 单出口
-    return march.pickUp({ marchType: MARCH_TYPE, target: { x: mine.x, y: mine.y }, ext: {} });
+  if (!mine || net.isSending(CMD_MARCH_WORLD_POINT)) {
+    return net.Ret.from(CODE_NOT_SENT, null);
+  }
+  // 零部队九键（armyList:[]…ext:{}）走 core/march.pickUp（与泰坦祝福同口径）；被拒日志仍由 digFlow 单出口
+  return march.pickUp({ marchType: MARCH_TYPE, target: { x: mine.x, y: mine.y }, ext: {} });
 }
 
 /**
@@ -416,14 +433,14 @@ async function diggingDomainTreasureActivityMine(mine) {
  * @returns {Promise<boolean>}
  */
 async function isDomainTreasureActivityMarchEnough(activity) {
-    var maxMarchNum = Number(activity && activity.para6) || 0;
-    if (maxMarchNum <= 0) return false;
-    var marches = await march.list();
-    var marcheNum = 0;
-    for (var i = 0; i < marches.length; i++) {
-        if (marches[i].type === MARCH_TYPE) marcheNum++;
-    }
-    return marcheNum < maxMarchNum;
+  var maxMarchNum = Number(activity && activity.para6) || 0;
+  if (maxMarchNum <= 0) return false;
+  var marches = await march.list();
+  var marcheNum = 0;
+  for (var i = 0; i < marches.length; i++) {
+    if (marches[i].type === MARCH_TYPE) marcheNum++;
+  }
+  return marcheNum < maxMarchNum;
 }
 
 /**
@@ -432,36 +449,38 @@ async function isDomainTreasureActivityMarchEnough(activity) {
  * @returns {boolean}
  */
 function install(ctx) {
-    ctxRef = ctx;
-    if (installed) {
-        return true;
-    }
-
-    var missing = [];
-
-    net = ctx.net;
-    if (!net.install()) {
-        missing.push('pocketcc.net');
-        net = null;
-    }
-
-    var mods = game.requireAll(['ActivityController']);
-
-    activityCtl = mods.ActivityController
-        && mods.ActivityController.ActivityController
-        && mods.ActivityController.ActivityController.Instance
-        || missing.push('ActivityController');
-
-    if (missing.length) {
-        net = null; activityCtl = null;
-        log.warn('install failed. missing=%d;deps=%s', missing.length, missing.join(';'));
-        return false;
-    }
-
-    installed = true;
-    log.info('installed.');
-
+  ctxRef = ctx;
+  if (installed) {
     return true;
+  }
+
+  var missing = [];
+
+  net = ctx.net;
+  if (!net.install()) {
+    missing.push('pocketcc.net');
+    net = null;
+  }
+
+  var mods = game.requireAll(['ActivityController']);
+
+  activityCtl =
+    (mods.ActivityController &&
+      mods.ActivityController.ActivityController &&
+      mods.ActivityController.ActivityController.Instance) ||
+    missing.push('ActivityController');
+
+  if (missing.length) {
+    net = null;
+    activityCtl = null;
+    log.warn('install failed. missing=%d;deps=%s', missing.length, missing.join(';'));
+    return false;
+  }
+
+  installed = true;
+  log.info('installed.');
+
+  return true;
 }
 
 /**
@@ -470,32 +489,34 @@ function install(ctx) {
  * @param {object} ctx reactor 上下文
  */
 function run(ctx) {
-    ctxRef = ctx;
-    scanActivity = null;
-    emptyStreak = 0;
-    queue = [];
-    // 黑名单也一并复位：换活动实例后老坐标可能与新矿重合；代价只是解禁后再被拒一次（902 被拒零成本）
-    blacklist.clear();
-    ctx.on.push(CMD_PUSH_ONE_ACTIVITY_EXTRA, onActivityExtraPush);
-    log.info('started, listening push cmd=%d.', CMD_PUSH_ONE_ACTIVITY_EXTRA);
-    // 启动即主动查一次；本轮结束后 cycle 会武装兜底定时
-    cycle.kick();
+  ctxRef = ctx;
+  scanActivity = null;
+  emptyStreak = 0;
+  queue = [];
+  // 黑名单也一并复位：换活动实例后老坐标可能与新矿重合；代价只是解禁后再被拒一次（902 被拒零成本）
+  blacklist.clear();
+  ctx.on.push(CMD_PUSH_ONE_ACTIVITY_EXTRA, onActivityExtraPush);
+  log.info('started, listening push cmd=%d.', CMD_PUSH_ONE_ACTIVITY_EXTRA);
+  // 启动即主动查一次；本轮结束后 cycle 会武装兜底定时
+  cycle.kick();
 }
 
 /**
  * 向 reactor 注册本功能说明书：scenes 限定 Home/NWorldMap，战斗模式暂停（offInCombat）。
  */
 reactor.register({
-    id: 'domainTreasure',
-    label: '领域寻宝',
-    storageKey: 'pocketcc.feat.domainTreasure',
-    symbols: ['activityController'],
-    scenes: ['Home', 'NWorldMap'],
-    offInCombat: true,
-    // 面板仅出启用开关；三个扫描/挖矿间隔均为上方 cfg 的内置常量，不作为可持久化配置项。
-    defaults: { enabled: false },
-    fields: [],
-    toModuleCfg: function () { return {}; },
-    install: install,
-    run: run,
+  id: 'domainTreasure',
+  label: '领域寻宝',
+  storageKey: 'pocketcc.feat.domainTreasure',
+  symbols: ['activityController'],
+  scenes: ['Home', 'NWorldMap'],
+  offInCombat: true,
+  // 面板仅出启用开关；三个扫描/挖矿间隔均为上方 cfg 的内置常量，不作为可持久化配置项。
+  defaults: { enabled: false },
+  fields: [],
+  toModuleCfg: function () {
+    return {};
+  },
+  install: install,
+  run: run,
 });

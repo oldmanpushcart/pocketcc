@@ -134,12 +134,12 @@ var installed = false;
  * @returns {boolean}
  */
 function aliveFn() {
-    return ctxRef ? ctxRef.alive() : false;
+  return ctxRef ? ctxRef.alive() : false;
 }
 
 /** @type {string} 本人 UID（字符串口径，与 13226 载荷的 uid 同源；未就绪为 ''） */
 function myUid() {
-    return String(getUid() || '');
+  return String(getUid() || '');
 }
 
 /**
@@ -149,7 +149,7 @@ function myUid() {
  * @returns {string}
  */
 function posKey(x, y) {
-    return (x | 0) + ',' + (y | 0);
+  return (x | 0) + ',' + (y | 0);
 }
 
 /**
@@ -158,7 +158,7 @@ function posKey(x, y) {
  * @returns {boolean}
  */
 function seenPos(key) {
-    return ledger.has(key);
+  return ledger.has(key);
 }
 
 /**
@@ -167,16 +167,22 @@ function seenPos(key) {
  * @returns {void}
  */
 function purgeLedger() {
-    var now = Date.now();
-    var alive = {};
-    ledger.forEach(function (rec, key) {
-        var expiry = rec.endTime > 0 ? rec.endTime : rec.at + LEDGER_FALLBACK_TTL_MS;
-        if (now < expiry) alive[key] = 1;
-        else ledger.delete(key);
-    });
-    pendingKeys = pendingKeys.filter(function (k) { return !!alive[k]; });
-    Object.keys(rejectStreak).forEach(function (k) { if (!alive[k]) delete rejectStreak[k]; });
-    Object.keys(rejected).forEach(function (k) { if (!alive[k]) delete rejected[k]; });
+  var now = Date.now();
+  var alive = {};
+  ledger.forEach(function (rec, key) {
+    var expiry = rec.endTime > 0 ? rec.endTime : rec.at + LEDGER_FALLBACK_TTL_MS;
+    if (now < expiry) alive[key] = 1;
+    else ledger.delete(key);
+  });
+  pendingKeys = pendingKeys.filter(function (k) {
+    return !!alive[k];
+  });
+  Object.keys(rejectStreak).forEach(function (k) {
+    if (!alive[k]) delete rejectStreak[k];
+  });
+  Object.keys(rejected).forEach(function (k) {
+    if (!alive[k]) delete rejected[k];
+  });
 }
 
 /**
@@ -187,12 +193,12 @@ function purgeLedger() {
  * @returns {void}
  */
 function markLedger(key, endTime, sent) {
-    var rec = ledger.get(key) || {};
-    rec.endTime = endTime > 0 ? endTime : (rec.endTime || 0);
-    rec.at = rec.at || Date.now();
-    if (sent) rec.sent = true;
-    ledger.set(key, rec);
-    if (pendingKeys.indexOf(key) < 0) pendingKeys.push(key);
+  var rec = ledger.get(key) || {};
+  rec.endTime = endTime > 0 ? endTime : rec.endTime || 0;
+  rec.at = rec.at || Date.now();
+  if (sent) rec.sent = true;
+  ledger.set(key, rec);
+  if (pendingKeys.indexOf(key) < 0) pendingKeys.push(key);
 }
 
 /**
@@ -203,25 +209,29 @@ function markLedger(key, endTime, sent) {
  * @returns {void}
  */
 function clearByUuid(uuid) {
-    if (uuid) {
-        var hitKey = null;
-        ledger.forEach(function (rec, key) { if (rec.uuid === uuid) hitKey = key; });
-        if (hitKey) {
-            ledger.delete(hitKey);
-            pendingKeys = pendingKeys.filter(function (k) { return k !== hitKey; });
-            delete rejectStreak[hitKey];
-            delete rejected[hitKey];
-            log.debug('box cleared by uuid. key=%s;uuid=%s', hitKey, uuid);
-            return;
-        }
+  if (uuid) {
+    var hitKey = null;
+    ledger.forEach(function (rec, key) {
+      if (rec.uuid === uuid) hitKey = key;
+    });
+    if (hitKey) {
+      ledger.delete(hitKey);
+      pendingKeys = pendingKeys.filter(function (k) {
+        return k !== hitKey;
+      });
+      delete rejectStreak[hitKey];
+      delete rejected[hitKey];
+      log.debug('box cleared by uuid. key=%s;uuid=%s', hitKey, uuid);
+      return;
     }
-    var key = pendingKeys.shift();
-    if (key) {
-        ledger.delete(key);
-        delete rejectStreak[key];
-        delete rejected[key];
-        log.debug('box cleared by fifo. key=%s;uuid=%s', key, uuid || 'n/a');
-    }
+  }
+  var key = pendingKeys.shift();
+  if (key) {
+    ledger.delete(key);
+    delete rejectStreak[key];
+    delete rejected[key];
+    log.debug('box cleared by fifo. key=%s;uuid=%s', key, uuid || 'n/a');
+  }
 }
 
 /**
@@ -232,42 +242,46 @@ function clearByUuid(uuid) {
  * @param {object} ev net.on 事件 {cmd, status, data, ord, ts, raw}
  */
 function onActivityPush(ev) {
-    if (!aliveFn()) return;
+  if (!aliveFn()) return;
 
-    var data = ev && ev.data;
-    if (!data || data.type !== ACTIVITY_TYPE_TITAN_BLESSING) return;
+  var data = ev && ev.data;
+  if (!data || data.type !== ACTIVITY_TYPE_TITAN_BLESSING) return;
 
-    if (data.id) activityId = data.id;
+  if (data.id) activityId = data.id;
 
-    var extra = data.extra || {};
+  var extra = data.extra || {};
 
-    // 本期领取额度闸门：left<=0 即触顶。仅在状态翻转时打日志（否则一簇 3 条推=刷 3 行）。
-    // 触顶即清空残留队列（已入队但未派的箱不再派），并置闸让主链/消费一并停手；
-    // 不停监听——下一轮活动 left 回升，闸门自动复位
-    var reached = extra.left <= 0;
-    if (reached !== claimLimitReached) {
-        claimLimitReached = reached;
-        if (reached) {
-            log.info('period claim limit reached, stop picking. left=%s;totalNum=%s', extra.left, extra.totalNum);
-            queue.length = 0;
-            fallbackPending = false;
-        } else {
-            log.info('claim quota refreshed, resume picking. left=%s', extra.left);
-        }
+  // 本期领取额度闸门：left<=0 即触顶。仅在状态翻转时打日志（否则一簇 3 条推=刷 3 行）。
+  // 触顶即清空残留队列（已入队但未派的箱不再派），并置闸让主链/消费一并停手；
+  // 不停监听——下一轮活动 left 回升，闸门自动复位
+  var reached = extra.left <= 0;
+  if (reached !== claimLimitReached) {
+    claimLimitReached = reached;
+    if (reached) {
+      log.info(
+        'period claim limit reached, stop picking. left=%s;totalNum=%s',
+        extra.left,
+        extra.totalNum,
+      );
+      queue.length = 0;
+      fallbackPending = false;
+    } else {
+      log.info('claim quota refreshed, resume picking. left=%s', extra.left);
     }
-    if (reached) return;
+  }
+  if (reached) return;
 
-    // hasRed == false，表示这是一条领取完成的通知，可以忽略。
-    if (!extra.hasRed) {
-        return;
-    }
+  // hasRed == false，表示这是一条领取完成的通知，可以忽略。
+  if (!extra.hasRed) {
+    return;
+  }
 
-    if (fallbackPending || Date.now() - fallbackScanAt < FALLBACK_SCAN_COOLDOWN_MS) return;
-    fallbackPending = true;
+  if (fallbackPending || Date.now() - fallbackScanAt < FALLBACK_SCAN_COOLDOWN_MS) return;
+  fallbackPending = true;
 
-    log.debug('activity push (fallback), enqueue. id=%d;left=%s', data.id, extra.left);
-    queue.push({ src: 'activity' });
-    kick();
+  log.debug('activity push (fallback), enqueue. id=%d;left=%s', data.id, extra.left);
+  queue.push({ src: 'activity' });
+  kick();
 }
 
 /**
@@ -277,34 +291,34 @@ function onActivityPush(ev) {
  * @param {object} ev net 事件，ev.data={uid:string, playerInfo:string, x, y, endTime:ms}
  */
 function onGiftPush(ev) {
-    if (!aliveFn()) return;
+  if (!aliveFn()) return;
 
-    var d = ev && ev.data;
-    if (!d || !isFinite(d.x) || !isFinite(d.y)) return;
+  var d = ev && ev.data;
+  if (!d || !isFinite(d.x) || !isFinite(d.y)) return;
 
-    // 额度闸门：本期已领满，任何新箱派过去都会被服务器拒（left 由 10904 刷新，一簇必到，够及时）
-    if (claimLimitReached) return;
+  // 额度闸门：本期已领满，任何新箱派过去都会被服务器拒（left 由 10904 刷新，一簇必到，够及时）
+  if (claimLimitReached) return;
 
-    var key = posKey(d.x, d.y);
-    // 两侧都 String()：推送里 uid 是字符串，getUid() 也是字符串口径；切勿用 gameData.myPid()（Number 会丢精度）
-    if (String(d.uid) === myUid()) {
-        log.debug('gift skip. reason=self; key=%s;uid=%s', key, d.uid);
-        return;
-    }
-    if (seenPos(key)) {
-        log.debug('gift skip. reason=already-handled; key=%s', key);
-        return;
-    }
-    // 被服务器连拒达阈的坐标本会话不再重派（防字段口径意外退化成刷屏）
-    if (rejected[key]) {
-        log.debug('gift skip. reason=blacklisted; key=%s', key);
-        return;
-    }
+  var key = posKey(d.x, d.y);
+  // 两侧都 String()：推送里 uid 是字符串，getUid() 也是字符串口径；切勿用 gameData.myPid()（Number 会丢精度）
+  if (String(d.uid) === myUid()) {
+    log.debug('gift skip. reason=self; key=%s;uid=%s', key, d.uid);
+    return;
+  }
+  if (seenPos(key)) {
+    log.debug('gift skip. reason=already-handled; key=%s', key);
+    return;
+  }
+  // 被服务器连拒达阈的坐标本会话不再重派（防字段口径意外退化成刷屏）
+  if (rejected[key]) {
+    log.debug('gift skip. reason=blacklisted; key=%s', key);
+    return;
+  }
 
-    markLedger(key, d.endTime > 0 ? d.endTime : 0, false);
-    log.debug('gift push received (main), enqueue. key=%s;from=%s', key, d.uid);
-    queue.push({ src: 'gift', x: d.x | 0, y: d.y | 0 });
-    kick();
+  markLedger(key, d.endTime > 0 ? d.endTime : 0, false);
+  log.debug('gift push received (main), enqueue. key=%s;from=%s', key, d.uid);
+  queue.push({ src: 'gift', x: d.x | 0, y: d.y | 0 });
+  kick();
 }
 
 /**
@@ -312,10 +326,10 @@ function onGiftPush(ev) {
  * @param {object} ev net 事件，ev.data={reward, uuid}
  */
 function onRewardPush(ev) {
-    var d = ev && ev.data;
-    if (!d || !d.uuid) return;
-    var items = (d.reward && d.reward.items) || [];
-    log.info('reward received. uuid=%s;items=%d', d.uuid, items.length);
+  var d = ev && ev.data;
+  if (!d || !d.uuid) return;
+  var items = (d.reward && d.reward.items) || [];
+  log.info('reward received. uuid=%s;items=%d', d.uuid, items.length);
 }
 
 /**
@@ -323,9 +337,9 @@ function onRewardPush(ev) {
  * @param {object} ev net 事件，ev.data={uuid}
  */
 function onGiftClearPush(ev) {
-    if (!aliveFn()) return;
-    var d = ev && ev.data;
-    clearByUuid(d && d.uuid ? String(d.uuid) : '');
+  if (!aliveFn()) return;
+  var d = ev && ev.data;
+  clearByUuid(d && d.uuid ? String(d.uuid) : '');
 }
 
 /**
@@ -333,18 +347,24 @@ function onGiftClearPush(ev) {
  * @returns {void}
  */
 function kick() {
-    drain.consume().catch(function (err) {
-        log.warn('consume loop threw!', err);
-    });
+  drain.consume().catch(function (err) {
+    log.warn('consume loop threw!', err);
+  });
 }
 
 /** @type {object} 串行消费器（队列逐条拾取 + 间隔休眠避限流） */
 var drain = createDrain({
-    log: log,
-    queue: { get: function () { return queue; } },
-    alive: aliveFn,
-    process: pickUpFlow,
-    interval: function () { return cfg.consumeInterval; },
+  log: log,
+  queue: {
+    get: function () {
+      return queue;
+    },
+  },
+  alive: aliveFn,
+  process: pickUpFlow,
+  interval: function () {
+    return cfg.consumeInterval;
+  },
 });
 
 /**
@@ -353,10 +373,10 @@ var drain = createDrain({
  * @returns {object} 当前 cfg
  */
 function configure(partial) {
-    if (partial && typeof partial.consumeInterval === 'number' && partial.consumeInterval >= 0) {
-        cfg.consumeInterval = partial.consumeInterval;
-    }
-    return cfg;
+  if (partial && typeof partial.consumeInterval === 'number' && partial.consumeInterval >= 0) {
+    cfg.consumeInterval = partial.consumeInterval;
+  }
+  return cfg;
 }
 
 /**
@@ -365,53 +385,59 @@ function configure(partial) {
  * @returns {Promise<void>}
  */
 async function pickUpFlow(ev) {
-    purgeLedger();
-    if (!aliveFn()) return;
-    // 额度闸门（与入队闸双保险）：入队后、派兵前才收到 left<=0 的竞态靠这道拦住
-    if (claimLimitReached) return;
+  purgeLedger();
+  if (!aliveFn()) return;
+  // 额度闸门（与入队闸双保险）：入队后、派兵前才收到 left<=0 的竞态靠这道拦住
+  if (claimLimitReached) return;
 
-    var key, endTime = 0;
-    if (ev.src === 'gift') {
-        key = posKey(ev.x, ev.y);
-        var rec = ledger.get(key);
-        endTime = (rec && rec.endTime) || 0;
-        if (rejected[key]) {
-            log.debug('pick up skip. reason=blacklisted; key=%s', key);
-            return;
-        }
-    } else {
-        // 兜底链：本簇新箱已由主链处理时，9595 查回的坐标会被下面的台账闸拦住（不派、不刷屏）
-        fallbackPending = false;
-        fallbackScanAt = Date.now();
-        if (!activityId) {
-            log.debug('find box skip. reason=no-activity-id');
-            return;
-        }
-        var pos = await queryBoxPosition();
-        if (!aliveFn() || !pos) return;
-        key = posKey(pos.x, pos.y);
-        ev.x = pos.x;
-        ev.y = pos.y;
+  var key,
+    endTime = 0;
+  if (ev.src === 'gift') {
+    key = posKey(ev.x, ev.y);
+    var rec = ledger.get(key);
+    endTime = (rec && rec.endTime) || 0;
+    if (rejected[key]) {
+      log.debug('pick up skip. reason=blacklisted; key=%s', key);
+      return;
     }
-
-    // 台账闸只拦兜底链（它无坐标、靠 9595 反查，可能查回主链已处理的箱）；
-    // 主链在入队时已记台账并过了闸，这里再查会把自己拦住
-    if (ev.src !== 'gift' && seenPos(key)) {
-        log.debug('pick up skip. reason=already-handled; key=%s;src=%s', key, ev.src);
-        return;
+  } else {
+    // 兜底链：本簇新箱已由主链处理时，9595 查回的坐标会被下面的台账闸拦住（不派、不刷屏）
+    fallbackPending = false;
+    fallbackScanAt = Date.now();
+    if (!activityId) {
+      log.debug('find box skip. reason=no-activity-id');
+      return;
     }
+    var pos = await queryBoxPosition();
+    if (!aliveFn() || !pos) return;
+    key = posKey(pos.x, pos.y);
+    ev.x = pos.x;
+    ev.y = pos.y;
+  }
 
-    markLedger(key, endTime, true);
-    var ret = await marchPickUp(ev.x, ev.y);
-    if (!aliveFn()) return;
+  // 台账闸只拦兜底链（它无坐标、靠 9595 反查，可能查回主链已处理的箱）；
+  // 主链在入队时已记台账并过了闸，这里再查会把自己拦住
+  if (ev.src !== 'gift' && seenPos(key)) {
+    log.debug('pick up skip. reason=already-handled; key=%s;src=%s', key, ev.src);
+    return;
+  }
 
-    if (ret.ok) {
-        log.info('pick up march started. key=%s;src=%s;code=%d', key, ev.src, ret.code);
-        delete rejectStreak[key];
-        return;
-    }
-    log.info('pick up march rejected. key=%s;src=%s;reason=code-%d;streak=%d',
-        key, ev.src, ret.code, bumpReject(key));
+  markLedger(key, endTime, true);
+  var ret = await marchPickUp(ev.x, ev.y);
+  if (!aliveFn()) return;
+
+  if (ret.ok) {
+    log.info('pick up march started. key=%s;src=%s;code=%d', key, ev.src, ret.code);
+    delete rejectStreak[key];
+    return;
+  }
+  log.info(
+    'pick up march rejected. key=%s;src=%s;reason=code-%d;streak=%d',
+    key,
+    ev.src,
+    ret.code,
+    bumpReject(key),
+  );
 }
 
 /**
@@ -420,13 +446,13 @@ async function pickUpFlow(ev) {
  * @returns {number} 当前连续被拒次数
  */
 function bumpReject(key) {
-    var n = (rejectStreak[key] || 0) + 1;
-    rejectStreak[key] = n;
-    if (n >= REJECT_STREAK_BLACKLIST) {
-        rejected[key] = Date.now();
-        log.info('coordinate blacklisted for this session. key=%s;streak=%d', key, n);
-    }
-    return n;
+  var n = (rejectStreak[key] || 0) + 1;
+  rejectStreak[key] = n;
+  if (n >= REJECT_STREAK_BLACKLIST) {
+    rejected[key] = Date.now();
+    log.info('coordinate blacklisted for this session. key=%s;streak=%d', key, n);
+  }
+  return n;
 }
 
 /**
@@ -436,19 +462,19 @@ function bumpReject(key) {
  * @returns {Promise<object|null>} {x,y,serverId} 或 null
  */
 async function queryBoxPosition() {
-    try {
-        var ret = await net.sendPBV2(CMD_HERO_EQUIP_WISH_FIND_BOX, { activityId: activityId });
-        var pos = ret.data;
-        if (!ret.ok || !pos || (pos.x === 0 && pos.y === 0)) {
-            log.debug('find box empty. reason=no-box; activityId=%d;code=%d', activityId, ret.code);
-            return null;
-        }
-        log.debug('box found. x=%d;y=%d;serverId=%s', pos.x, pos.y, pos.serverId);
-        return pos;
-    } catch (err) {
-        log.warn('query box error!', err);
-        return null;
+  try {
+    var ret = await net.sendPBV2(CMD_HERO_EQUIP_WISH_FIND_BOX, { activityId: activityId });
+    var pos = ret.data;
+    if (!ret.ok || !pos || (pos.x === 0 && pos.y === 0)) {
+      log.debug('find box empty. reason=no-box; activityId=%d;code=%d', activityId, ret.code);
+      return null;
     }
+    log.debug('box found. x=%d;y=%d;serverId=%s', pos.x, pos.y, pos.serverId);
+    return pos;
+  } catch (err) {
+    log.warn('query box error!', err);
+    return null;
+  }
 }
 
 /**
@@ -458,7 +484,11 @@ async function queryBoxPosition() {
  * @returns {Promise<Ret>} code=902 状态码
  */
 async function marchPickUp(x, y) {
-    return march.pickUp({ marchType: MARCH_TYPE_TITAN_BLESSING_GIFT, target: { x: x, y: y }, ext: {} });
+  return march.pickUp({
+    marchType: MARCH_TYPE_TITAN_BLESSING_GIFT,
+    target: { x: x, y: y },
+    ext: {},
+  });
 }
 
 /**
@@ -467,29 +497,29 @@ async function marchPickUp(x, y) {
  * @returns {boolean}
  */
 function install(ctx) {
-    ctxRef = ctx;
-    if (installed) {
-        return true;
-    }
-
-    var missing = [];
-
-    net = ctx.net;
-    if (!net.install()) {
-        missing.push('pocketcc.net');
-        net = null;
-    }
-
-    if (missing.length) {
-        net = null;
-        log.warn('install failed. missing=%d;deps=%s', missing.length, missing.join(';'));
-        return false;
-    }
-
-    installed = true;
-    log.info('installed.');
-
+  ctxRef = ctx;
+  if (installed) {
     return true;
+  }
+
+  var missing = [];
+
+  net = ctx.net;
+  if (!net.install()) {
+    missing.push('pocketcc.net');
+    net = null;
+  }
+
+  if (missing.length) {
+    net = null;
+    log.warn('install failed. missing=%d;deps=%s', missing.length, missing.join(';'));
+    return false;
+  }
+
+  installed = true;
+  log.info('installed.');
+
+  return true;
 }
 
 /**
@@ -500,39 +530,46 @@ function install(ctx) {
  * @param {object} ctx reactor 上下文
  */
 function run(ctx) {
-    ctxRef = ctx;
-    ctx.on.push(CMD_PUSH_GIFT, onGiftPush);
-    ctx.on.push(CMD_PUSH_ONE_ACTIVITY, onActivityPush);
-    ctx.on.push(CMD_PUSH_REWARD_GET, onRewardPush);
-    ctx.on.push(CMD_PUSH_GIFT_CLEAR, onGiftClearPush);
+  ctxRef = ctx;
+  ctx.on.push(CMD_PUSH_GIFT, onGiftPush);
+  ctx.on.push(CMD_PUSH_ONE_ACTIVITY, onActivityPush);
+  ctx.on.push(CMD_PUSH_REWARD_GET, onRewardPush);
+  ctx.on.push(CMD_PUSH_GIFT_CLEAR, onGiftClearPush);
 
-    ledger = new Map();
-    pendingKeys = [];
-    rejectStreak = {};
-    rejected = {};
-    fallbackPending = false;
-    fallbackScanAt = 0;
-    claimLimitReached = false;
+  ledger = new Map();
+  pendingKeys = [];
+  rejectStreak = {};
+  rejected = {};
+  fallbackPending = false;
+  fallbackScanAt = 0;
+  claimLimitReached = false;
 
-    log.info('started, listening push cmd=%d(main);%d(fallback);%d;%d(ledger).',
-        CMD_PUSH_GIFT, CMD_PUSH_ONE_ACTIVITY, CMD_PUSH_REWARD_GET, CMD_PUSH_GIFT_CLEAR);
+  log.info(
+    'started, listening push cmd=%d(main);%d(fallback);%d;%d(ledger).',
+    CMD_PUSH_GIFT,
+    CMD_PUSH_ONE_ACTIVITY,
+    CMD_PUSH_REWARD_GET,
+    CMD_PUSH_GIFT_CLEAR,
+  );
 }
 
 /**
  * 向 reactor 注册本功能说明书：scenes 限定 Home/NWorldMap，战斗模式暂停（offInCombat）。
  */
 reactor.register({
-    id: 'titanBlessing',
-    label: '泰坦祝福',
-    storageKey: 'pocketcc.feat.titanBlessing',
-    symbols: ['dataCenter'],
-    scenes: ['Home', 'NWorldMap'],
-    offInCombat: true,
-    defaults: { enabled: false },
-    fields: [],
-    // 消费间隔不在面板配置，固定回内置常量
-    toModuleCfg: function () { return { consumeInterval: CONSUME_INTERVAL_MS }; },
-    install: install,
-    configure: configure,
-    run: run,
+  id: 'titanBlessing',
+  label: '泰坦祝福',
+  storageKey: 'pocketcc.feat.titanBlessing',
+  symbols: ['dataCenter'],
+  scenes: ['Home', 'NWorldMap'],
+  offInCombat: true,
+  defaults: { enabled: false },
+  fields: [],
+  // 消费间隔不在面板配置，固定回内置常量
+  toModuleCfg: function () {
+    return { consumeInterval: CONSUME_INTERVAL_MS };
+  },
+  install: install,
+  configure: configure,
+  run: run,
 });

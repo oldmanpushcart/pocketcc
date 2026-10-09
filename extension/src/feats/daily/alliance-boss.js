@@ -156,7 +156,7 @@ var installed = false;
  * @returns {boolean}
  */
 function aliveFn() {
-    return ctxRef ? ctxRef.alive() : false;
+  return ctxRef ? ctxRef.alive() : false;
 }
 
 /**
@@ -165,7 +165,9 @@ function aliveFn() {
  * @returns {Promise<void>}
  */
 function sleep(ms) {
-    return new Promise(function (r) { setTimeout(r, ms); });
+  return new Promise(function (r) {
+    setTimeout(r, ms);
+  });
 }
 
 // ── 当日记账 ──────────────────────────────────────────────────────────
@@ -174,22 +176,22 @@ function sleep(ms) {
  * @returns {string}
  */
 function todayStr() {
-    var d = new Date();
-    var m = d.getMonth() + 1;
-    var day = d.getDate();
-    return d.getFullYear() + '-' + (m < 10 ? '0' + m : m) + '-' + (day < 10 ? '0' + day : day);
+  var d = new Date();
+  var m = d.getMonth() + 1;
+  var day = d.getDate();
+  return d.getFullYear() + '-' + (m < 10 ? '0' + m : m) + '-' + (day < 10 ? '0' + day : day);
 }
 
 /**
  * 滚到今日（跨日自动归零）
  */
 function rollToday() {
-    var today = todayStr();
-    if (dailyState.date !== today) {
-        dailyState.date = today;
-        dailyState.donated = {};
-        dailyState.attacked = {};
-    }
+  var today = todayStr();
+  if (dailyState.date !== today) {
+    dailyState.date = today;
+    dailyState.donated = {};
+    dailyState.attacked = {};
+  }
 }
 
 /**
@@ -197,30 +199,37 @@ function rollToday() {
  * @returns {Promise<void>}
  */
 async function loadDaily() {
-    try {
-        var saved = await storage.data.get(DAILY_STATE_NAME);
-        dailyStateLoaded = true;
-        rollToday();
-        if (saved && typeof saved === 'object' && saved.date === dailyState.date) {
-            // 旧结构 donated 是单个数字，按型号记账后不再适用；非对象一律忽略（当日最多按规则重捐，服务器 25008 上限兜底）
-            dailyState.donated = (saved.donated && typeof saved.donated === 'object') ? saved.donated : {};
-            dailyState.attacked = (saved.attacked && typeof saved.attacked === 'object') ? saved.attacked : {};
-        }
-    } catch (err) {
-        log.warn('daily state load failed, retry next run. %s', err && err.message);
+  try {
+    var saved = await storage.data.get(DAILY_STATE_NAME);
+    dailyStateLoaded = true;
+    rollToday();
+    if (saved && typeof saved === 'object' && saved.date === dailyState.date) {
+      // 旧结构 donated 是单个数字，按型号记账后不再适用；非对象一律忽略（当日最多按规则重捐，服务器 25008 上限兜底）
+      dailyState.donated = saved.donated && typeof saved.donated === 'object' ? saved.donated : {};
+      dailyState.attacked =
+        saved.attacked && typeof saved.attacked === 'object' ? saved.attacked : {};
     }
+  } catch (err) {
+    log.warn('daily state load failed, retry next run. %s', err && err.message);
+  }
 }
 
 /**
  * 记账变更后落盘（写失败不阻断主流程），顺带推面板刷新只读字段
  */
 function persistDaily() {
-    if (dailyStateLoaded) {
-        Promise.resolve(storage.data.set(DAILY_STATE_NAME, {
-            date: dailyState.date, donated: dailyState.donated, attacked: dailyState.attacked,
-        })).catch(function (err) { log.warn('daily state save failed.', err); });
-    }
-    bus.emit('ui.refresh');
+  if (dailyStateLoaded) {
+    Promise.resolve(
+      storage.data.set(DAILY_STATE_NAME, {
+        date: dailyState.date,
+        donated: dailyState.donated,
+        attacked: dailyState.attacked,
+      }),
+    ).catch(function (err) {
+      log.warn('daily state save failed.', err);
+    });
+  }
+  bus.emit('ui.refresh');
 }
 
 /**
@@ -229,8 +238,8 @@ function persistDaily() {
  * @returns {boolean}
  */
 function hasAttacked(bossId) {
-    rollToday();
-    return !!(dailyState.attacked && dailyState.attacked[String(bossId)]);
+  rollToday();
+  return !!(dailyState.attacked && dailyState.attacked[String(bossId)]);
 }
 
 /**
@@ -238,9 +247,9 @@ function hasAttacked(bossId) {
  * @param {number} bossId 机甲型号 id
  */
 function markAttacked(bossId) {
-    rollToday();
-    dailyState.attacked[String(bossId)] = { ok: 1, at: Date.now() };
-    persistDaily();
+  rollToday();
+  dailyState.attacked[String(bossId)] = { ok: 1, at: Date.now() };
+  persistDaily();
 }
 
 /**
@@ -249,8 +258,8 @@ function markAttacked(bossId) {
  * @returns {number}
  */
 function donatedOf(bossId) {
-    rollToday();
-    return (dailyState.donated && dailyState.donated[String(bossId)]) | 0;
+  rollToday();
+  return (dailyState.donated && dailyState.donated[String(bossId)]) | 0;
 }
 
 /**
@@ -259,9 +268,9 @@ function donatedOf(bossId) {
  * @param {number} n 本次成功代捐枚数
  */
 function bumpDonated(bossId, n) {
-    rollToday();
-    dailyState.donated[String(bossId)] = donatedOf(bossId) + (n | 0);
-    persistDaily();
+  rollToday();
+  dailyState.donated[String(bossId)] = donatedOf(bossId) + (n | 0);
+  persistDaily();
 }
 
 /**
@@ -270,14 +279,14 @@ function bumpDonated(bossId, n) {
  * @returns {string}
  */
 function formatTodayDonate() {
-    if (!dailyStateLoaded) return '-';
-    var snap = gameData.allianceBoss();
-    if (!snap || !snap.bossId) return '-';
-    var want = donateTarget(snap.bossId);
-    if (!want.known) return '需数未取到';
-    var need = ' · 需' + want.need;   // known 已保证 need>0
-    if (want.count <= 0) return (want.idx < 0 ? '未命中' : '该段不捐') + need;
-    return donatedOf(snap.bossId) + ' / ' + want.count + need;
+  if (!dailyStateLoaded) return '-';
+  var snap = gameData.allianceBoss();
+  if (!snap || !snap.bossId) return '-';
+  var want = donateTarget(snap.bossId);
+  if (!want.known) return '需数未取到';
+  var need = ' · 需' + want.need; // known 已保证 need>0
+  if (want.count <= 0) return (want.idx < 0 ? '未命中' : '该段不捐') + need;
+  return donatedOf(snap.bossId) + ' / ' + want.count + need;
 }
 
 /**
@@ -286,13 +295,13 @@ function formatTodayDonate() {
  * @returns {string}
  */
 function formatAttack() {
-    if (!dailyStateLoaded) return '-';
-    var keys = Object.keys(dailyState.attacked || {});
-    if (!keys.length) return '未攻打';
-    var last = keys[keys.length - 1];
-    var rec = dailyState.attacked[last] || {};
-    var t = rec.at ? new Date(rec.at) : null;
-    return '已打 ' + last + (t ? ' · ' + t.toTimeString().slice(0, 5) : '');
+  if (!dailyStateLoaded) return '-';
+  var keys = Object.keys(dailyState.attacked || {});
+  if (!keys.length) return '未攻打';
+  var last = keys[keys.length - 1];
+  var rec = dailyState.attacked[last] || {};
+  var t = rec.at ? new Date(rec.at) : null;
+  return '已打 ' + last + (t ? ' · ' + t.toTimeString().slice(0, 5) : '');
 }
 
 // ── 本地数据与闸门 ────────────────────────────────────────────────────
@@ -301,7 +310,7 @@ function formatAttack() {
  * @returns {number}
  */
 function nowSec() {
-    return +(dataCenter && dataCenter.ServerTime) || 0;
+  return +(dataCenter && dataCenter.ServerTime) || 0;
 }
 
 /**
@@ -310,16 +319,16 @@ function nowSec() {
  * @returns {boolean} 是否放行
  */
 function passJoinGate() {
-    var u = (dataCenter && dataCenter.UserData) || {};
-    var aid = u.Alliance && u.Alliance.Aid;
-    if (!aid) return false;
-    var limit = parseInt(String(gameConf.dataConfig(CFG_KEY_JOIN_LIMIT)), 10) || 0;
-    var joinTime = Number(u.Alliance.JoinTime) || 0;
-    if (joinTime + limit > nowSec()) {
-        log.debug('join time not enough, skip. joinTime=%d;limit=%d', joinTime, limit);
-        return false;
-    }
-    return true;
+  var u = (dataCenter && dataCenter.UserData) || {};
+  var aid = u.Alliance && u.Alliance.Aid;
+  if (!aid) return false;
+  var limit = parseInt(String(gameConf.dataConfig(CFG_KEY_JOIN_LIMIT)), 10) || 0;
+  var joinTime = Number(u.Alliance.JoinTime) || 0;
+  if (joinTime + limit > nowSec()) {
+    log.debug('join time not enough, skip. joinTime=%d;limit=%d', joinTime, limit);
+    return false;
+  }
+  return true;
 }
 
 /**
@@ -328,7 +337,7 @@ function passJoinGate() {
  * @returns {boolean}
  */
 function localUninitialized(snap) {
-    return !snap || snap.state < 0 || (!snap.bossId && !snap.pointSid);
+  return !snap || snap.state < 0 || (!snap.bossId && !snap.pointSid);
 }
 
 /**
@@ -337,7 +346,7 @@ function localUninitialized(snap) {
  * @returns {object|null} 表行；未选型号/表未加载时 null
  */
 function bossRow(bossId) {
-    return bossId ? l10n.tableRow('Alliance_Boss', bossId) : null;
+  return bossId ? l10n.tableRow('Alliance_Boss', bossId) : null;
 }
 
 /**
@@ -347,18 +356,19 @@ function bossRow(bossId) {
  * @returns {{need:number, count:number, known:boolean, idx:number}} need=召唤所需碎片数，idx=命中规则下标（-1 无命中）
  */
 function donateTarget(bossId) {
-    var row = bossRow(bossId);
-    var need = row ? Number(row.num) || 0 : 0;
-    // num 取不到（表行缺失/字段未填）时不猜档位：归到最低档按错档位猛捐比少捐一次贵得多
-    if (need <= 0) return { need: 0, count: 0, known: false, idx: -1 };
-    var rules = Array.isArray(cfg.donateRules) ? cfg.donateRules : [];
-    for (var i = 0; i < rules.length; i++) {
-        var r = rules[i] || {};
-        var from = r.from | 0;
-        var to = r.to | 0;
-        if (need >= from && (to <= 0 || need < to)) return { need: need, count: r.count | 0, known: true, idx: i };
-    }
-    return { need: need, count: 0, known: true, idx: -1 };
+  var row = bossRow(bossId);
+  var need = row ? Number(row.num) || 0 : 0;
+  // num 取不到（表行缺失/字段未填）时不猜档位：归到最低档按错档位猛捐比少捐一次贵得多
+  if (need <= 0) return { need: 0, count: 0, known: false, idx: -1 };
+  var rules = Array.isArray(cfg.donateRules) ? cfg.donateRules : [];
+  for (var i = 0; i < rules.length; i++) {
+    var r = rules[i] || {};
+    var from = r.from | 0;
+    var to = r.to | 0;
+    if (need >= from && (to <= 0 || need < to))
+      return { need: need, count: r.count | 0, known: true, idx: i };
+  }
+  return { need: need, count: 0, known: true, idx: -1 };
 }
 
 /**
@@ -368,7 +378,7 @@ function donateTarget(bossId) {
  * @returns {boolean}
  */
 function donateProgressFull(boss, need) {
-    return need > 0 && Number(boss.exp) >= need;
+  return need > 0 && Number(boss.exp) >= need;
 }
 
 /**
@@ -378,7 +388,7 @@ function donateProgressFull(boss, need) {
  * @returns {boolean}
  */
 function isAttackable(state) {
-    return state === STATE.FIGHTING || state === STATE.BROKEN;
+  return state === STATE.FIGHTING || state === STATE.BROKEN;
 }
 
 /**
@@ -387,8 +397,8 @@ function isAttackable(state) {
  * @returns {boolean}
  */
 function hasDonateWork(bossId) {
-    var t = donateTarget(bossId);
-    return t.count > 0 && donatedOf(bossId) < t.count;
+  var t = donateTarget(bossId);
+  return t.count > 0 && donatedOf(bossId) < t.count;
 }
 
 // ── 排程 ──────────────────────────────────────────────────────────────
@@ -399,14 +409,14 @@ function hasDonateWork(bossId) {
  * @returns {number|null} 无可排时刻返回 null
  */
 function flipDelayMs() {
-    var snap = gameData.allianceBoss();
-    if (!snap) return null;
-    var at = 0;
-    if (snap.state === STATE.RESERVED) at = snap.summonTime;
-    else if (snap.state === STATE.FIGHTING && !hasAttacked(snap.bossId)) at = snap.endTime;
-    if (!at) return null;
-    var ms = (at - nowSec()) * 1000 + STATE_FLIP_BUFFER_MS;
-    return ms > 0 ? Math.min(ms, IDLE_TICK_MS * 8) : null;
+  var snap = gameData.allianceBoss();
+  if (!snap) return null;
+  var at = 0;
+  if (snap.state === STATE.RESERVED) at = snap.summonTime;
+  else if (snap.state === STATE.FIGHTING && !hasAttacked(snap.bossId)) at = snap.endTime;
+  if (!at) return null;
+  var ms = (at - nowSec()) * 1000 + STATE_FLIP_BUFFER_MS;
+  return ms > 0 ? Math.min(ms, IDLE_TICK_MS * 8) : null;
 }
 
 /**
@@ -415,12 +425,15 @@ function flipDelayMs() {
  * @returns {number} 毫秒
  */
 function nextTickDelay() {
-    var snap = gameData.allianceBoss();
-    var working = (snap && snap.state === STATE.DONATING && hasDonateWork(snap.bossId))
-        || (snap && isAttackable(snap.state) && cfg.preset > 0 && !hasAttacked(snap.bossId));
-    var ms = working ? BUSY_TICK_MS : (flipDelayMs() || (coldMisses >= 3 ? COLD_BACKOFF_MS : IDLE_TICK_MS));
-    log.debug('next check in %d s', Math.round(ms / 1000));
-    return ms;
+  var snap = gameData.allianceBoss();
+  var working =
+    (snap && snap.state === STATE.DONATING && hasDonateWork(snap.bossId)) ||
+    (snap && isAttackable(snap.state) && cfg.preset > 0 && !hasAttacked(snap.bossId));
+  var ms = working
+    ? BUSY_TICK_MS
+    : flipDelayMs() || (coldMisses >= 3 ? COLD_BACKOFF_MS : IDLE_TICK_MS);
+  log.debug('next check in %d s', Math.round(ms / 1000));
+  return ms;
 }
 
 /**
@@ -429,9 +442,9 @@ function nextTickDelay() {
  * @returns {Promise<number>}
  */
 async function cycleRun() {
-    await tickBody();
-    if (cycle.pending) return 0;
-    return nextTickDelay();
+  await tickBody();
+  if (cycle.pending) return 0;
+  return nextTickDelay();
 }
 
 /** @type {{kick: function(), pending: boolean}} 调和循环驱动器（fallback 取 IDLE_TICK_MS，防异常停摆） */
@@ -444,11 +457,15 @@ const cycle = createCycle({ log: log, alive: aliveFn, run: cycleRun, fallback: I
  * @returns {object|null} 解析后的业务数据；非对象返回 null
  */
 function payloadOf(ret) {
-    var d = ret && ret.data;
-    if (typeof d === 'string') {
-        try { d = JSON.parse(d); } catch (err) { return null; }
+  var d = ret && ret.data;
+  if (typeof d === 'string') {
+    try {
+      d = JSON.parse(d);
+    } catch (err) {
+      return null;
     }
-    return (d && typeof d === 'object') ? d : null;
+  }
+  return d && typeof d === 'object' ? d : null;
 }
 
 /**
@@ -458,13 +475,13 @@ function payloadOf(ret) {
  * @returns {Promise<object>} net.Ret
  */
 async function ask(cmd, data) {
-    if (net.isSending(cmd)) return net.Ret.from(CODE_NOT_SENT, null);
-    try {
-        return await net.send(cmd, data);
-    } catch (err) {
-        log.debug('cmd %d send failed: %s', cmd, err && err.message);
-        return net.Ret.from(CODE_NOT_SENT, null);
-    }
+  if (net.isSending(cmd)) return net.Ret.from(CODE_NOT_SENT, null);
+  try {
+    return await net.send(cmd, data);
+  } catch (err) {
+    log.debug('cmd %d send failed: %s', cmd, err && err.message);
+    return net.Ret.from(CODE_NOT_SENT, null);
+  }
 }
 
 /**
@@ -473,19 +490,19 @@ async function ask(cmd, data) {
  * @returns {object|null} 归一化快照
  */
 function normalizeBoss(b) {
-    if (!b || typeof b !== 'object') return null;
-    return {
-        state: b.state | 0,
-        bossId: b.bossId | 0,
-        x: b.x | 0,
-        y: b.y | 0,
-        exp: Number(b.exp) || 0,
-        hp: Number(b.hp) || 0,
-        endTime: Number(b.endTime) || 0,
-        summonTime: Number(b.expireTime) || 0,
-        pointSid: b.pointSid | 0,
-        help: b.help | 0,
-    };
+  if (!b || typeof b !== 'object') return null;
+  return {
+    state: b.state | 0,
+    bossId: b.bossId | 0,
+    x: b.x | 0,
+    y: b.y | 0,
+    exp: Number(b.exp) || 0,
+    hp: Number(b.hp) || 0,
+    endTime: Number(b.endTime) || 0,
+    summonTime: Number(b.expireTime) || 0,
+    pointSid: b.pointSid | 0,
+    help: b.help | 0,
+  };
 }
 
 /**
@@ -493,15 +510,15 @@ function normalizeBoss(b) {
  * @returns {Promise<object|null>} {boss:归一化快照, todayTime, todayFree}；失败/无数据返回 null
  */
 async function requestInfo() {
-    var ret = await ask(CMD_GET_INFO, {});
-    if (!ret.ok) {
-        log.debug('get info not ok. code=%d', ret.code);
-        return null;
-    }
-    var d = payloadOf(ret);
-    var boss = d && normalizeBoss(d.allianceBoss);
-    if (!boss) return null;
-    return { boss: boss, todayTime: Number(d.todayTime) || 0, todayFree: Number(d.todayFree) || 0 };
+  var ret = await ask(CMD_GET_INFO, {});
+  if (!ret.ok) {
+    log.debug('get info not ok. code=%d', ret.code);
+    return null;
+  }
+  var d = payloadOf(ret);
+  var boss = d && normalizeBoss(d.allianceBoss);
+  if (!boss) return null;
+  return { boss: boss, todayTime: Number(d.todayTime) || 0, todayFree: Number(d.todayFree) || 0 };
 }
 
 /**
@@ -511,10 +528,10 @@ async function requestInfo() {
  * @returns {Promise<{ok:boolean, code:number, data:*}>} 归一化结果
  */
 async function sendDonate(count) {
-    var ret = await ask(CMD_DONATE, { count: count });
-    var d = payloadOf(ret);
-    var accepted = ret.ok && !(d && d.ret != null && Number(d.ret) !== 1);
-    return { ok: accepted, code: ret.code, data: ret.data };
+  var ret = await ask(CMD_DONATE, { count: count });
+  var d = payloadOf(ret);
+  var accepted = ret.ok && !(d && d.ret != null && Number(d.ret) !== 1);
+  return { ok: accepted, code: ret.code, data: ret.data };
 }
 
 /**
@@ -527,36 +544,39 @@ async function sendDonate(count) {
  * @returns {Promise<void>}
  */
 async function tickBody() {
-    var boss = gameData.allianceBoss();
-    var info = null;
-    if (!boss) {
-        log.debug('alliance boss data unavailable (no Alliance in UserData?)');
-        return;
-    }
+  var boss = gameData.allianceBoss();
+  var info = null;
+  if (!boss) {
+    log.debug('alliance boss data unavailable (no Alliance in UserData?)');
+    return;
+  }
 
-    // 主动补查（对应文件头「触发」）：加载时多半已错过 push，本地是构造默认值 → 问一次全量，纯当数据用（不回写游戏本地）
-    if (localUninitialized(boss)) {
-        info = await requestInfo();
-        if (!aliveFn()) return;
-        if (!info) {
-            coldMisses++;
-            log.debug('cold start 1160 got nothing (miss #%d), maybe this server has no alliance boss', coldMisses);
-            return;
-        }
-        coldMisses = 0;
-        boss = info.boss;
-        log.debug('local data cold, fetched by 1160. state=%d;bossId=%d', boss.state, boss.bossId);
-    } else {
-        coldMisses = 0;
+  // 主动补查（对应文件头「触发」）：加载时多半已错过 push，本地是构造默认值 → 问一次全量，纯当数据用（不回写游戏本地）
+  if (localUninitialized(boss)) {
+    info = await requestInfo();
+    if (!aliveFn()) return;
+    if (!info) {
+      coldMisses++;
+      log.debug(
+        'cold start 1160 got nothing (miss #%d), maybe this server has no alliance boss',
+        coldMisses,
+      );
+      return;
     }
+    coldMisses = 0;
+    boss = info.boss;
+    log.debug('local data cold, fetched by 1160. state=%d;bossId=%d', boss.state, boss.bossId);
+  } else {
+    coldMisses = 0;
+  }
 
-    if (boss.state === STATE.DONATING) {
-        await donateFlow(boss, info);
-    } else if (isAttackable(boss.state)) {
-        await attackFlow(boss);
-    } else {
-        log.debug('state %d not actionable (bossId=%d)', boss.state, boss.bossId);
-    }
+  if (boss.state === STATE.DONATING) {
+    await donateFlow(boss, info);
+  } else if (isAttackable(boss.state)) {
+    await attackFlow(boss);
+  } else {
+    log.debug('state %d not actionable (bossId=%d)', boss.state, boss.bossId);
+  }
 }
 
 /**
@@ -566,70 +586,87 @@ async function tickBody() {
  * @returns {Promise<void>}
  */
 async function donateFlow(boss, preloaded) {
-    var t = donateTarget(boss.bossId);
-    if (!t.known) {
-        log.debug('Alliance_Boss row / num unavailable, skip donate. bossId=%d', boss.bossId);
-        return;
-    }
-    if (t.count <= 0) {
-        log.debug('no donate rule hits num=%d. bossId=%d;rules=%d', t.need, boss.bossId, (cfg.donateRules || []).length);
-        return;
-    }
-    if (!passJoinGate()) return;
-    var done = donatedOf(boss.bossId);
-    if (done >= t.count) {
-        log.debug('daily donate count reached for this model (%d/%d), skip', done, t.count);
-        return;
-    }
-    if (donateProgressFull(boss, t.need)) {
-        log.info('donate progress full, wait for summon. exp=%d need=%d bossId=%d', boss.exp, t.need, boss.bossId);
-        return;
-    }
+  var t = donateTarget(boss.bossId);
+  if (!t.known) {
+    log.debug('Alliance_Boss row / num unavailable, skip donate. bossId=%d', boss.bossId);
+    return;
+  }
+  if (t.count <= 0) {
+    log.debug(
+      'no donate rule hits num=%d. bossId=%d;rules=%d',
+      t.need,
+      boss.bossId,
+      (cfg.donateRules || []).length,
+    );
+    return;
+  }
+  if (!passJoinGate()) return;
+  var done = donatedOf(boss.bossId);
+  if (done >= t.count) {
+    log.debug('daily donate count reached for this model (%d/%d), skip', done, t.count);
+    return;
+  }
+  if (donateProgressFull(boss, t.need)) {
+    log.info(
+      'donate progress full, wait for summon. exp=%d need=%d bossId=%d',
+      boss.exp,
+      t.need,
+      boss.bossId,
+    );
+    return;
+  }
 
-    var info = preloaded || await requestInfo();
-    if (!aliveFn() || !info) return;
+  var info = preloaded || (await requestInfo());
+  if (!aliveFn() || !info) return;
 
-    var limit = parseInt(String(gameConf.dataConfig(CFG_KEY_DONATE_MAX)), 10) || 0;
-    var serverRemain = limit > 0 ? Math.max(0, limit - (info.todayTime | 0)) : (t.count | 0);
-    if (serverRemain <= 0) {
-        log.info('server donate quota used up today. todayTime=%d limit=%d', info.todayTime, limit);
-        return;
-    }
+  var limit = parseInt(String(gameConf.dataConfig(CFG_KEY_DONATE_MAX)), 10) || 0;
+  var serverRemain = limit > 0 ? Math.max(0, limit - (info.todayTime | 0)) : t.count | 0;
+  if (serverRemain <= 0) {
+    log.info('server donate quota used up today. todayTime=%d limit=%d', info.todayTime, limit);
+    return;
+  }
 
-    var plan = Math.min(t.count - done, serverRemain);
+  var plan = Math.min(t.count - done, serverRemain);
 
-    // 免费捐：每日首枚不扣碎片（count:0），先把它捐掉——碎片不够的日子也不能白丢这一枚进度
-    if (info.todayFree > 0 && plan > 0) {
-        var freeRet = await sendDonate(0);
-        if (!aliveFn()) return;
-        if (freeRet.ok) {
-            bumpDonated(boss.bossId, 1);
-            plan -= 1;
-            log.info('free donate ok. todayTime=%d;donated=%d', info.todayTime, donatedOf(boss.bossId));
-        } else {
-            log.info('free donate rejected (already used?). code=%d;data=%s', freeRet.code, freeRet.data);
-        }
-        if (plan <= 0) return;
-        await sleep(DONATE_GAP_MS);          // 同 cmd 连发会撞频控
-        if (!aliveFn()) return;
-    }
-
-    // 付费捐：其余从背包扣，不够就本轮放弃（不做部分捐赠）
-    var have = item.amount(ITEM_SHARD);
-    if (have < plan) {
-        log.debug('shard not enough, give up this round. need=%d;have=%d', plan, have);
-        return;
-    }
-
-    var paid = await sendDonate(plan);
+  // 免费捐：每日首枚不扣碎片（count:0），先把它捐掉——碎片不够的日子也不能白丢这一枚进度
+  if (info.todayFree > 0 && plan > 0) {
+    var freeRet = await sendDonate(0);
     if (!aliveFn()) return;
-    if (paid.ok) {
-        bumpDonated(boss.bossId, plan);
-        log.info('donate ok. count=%d;bossId=%d;num=%d;shard %d->%d;left=%d',
-            plan, boss.bossId, t.need, have, item.amount(ITEM_SHARD), donateLeft(boss.bossId));
+    if (freeRet.ok) {
+      bumpDonated(boss.bossId, 1);
+      plan -= 1;
+      log.info('free donate ok. todayTime=%d;donated=%d', info.todayTime, donatedOf(boss.bossId));
     } else {
-        log.info('donate rejected. count=%d;code=%d;data=%s', plan, paid.code, paid.data);
+      log.info('free donate rejected (already used?). code=%d;data=%s', freeRet.code, freeRet.data);
     }
+    if (plan <= 0) return;
+    await sleep(DONATE_GAP_MS); // 同 cmd 连发会撞频控
+    if (!aliveFn()) return;
+  }
+
+  // 付费捐：其余从背包扣，不够就本轮放弃（不做部分捐赠）
+  var have = item.amount(ITEM_SHARD);
+  if (have < plan) {
+    log.debug('shard not enough, give up this round. need=%d;have=%d', plan, have);
+    return;
+  }
+
+  var paid = await sendDonate(plan);
+  if (!aliveFn()) return;
+  if (paid.ok) {
+    bumpDonated(boss.bossId, plan);
+    log.info(
+      'donate ok. count=%d;bossId=%d;num=%d;shard %d->%d;left=%d',
+      plan,
+      boss.bossId,
+      t.need,
+      have,
+      item.amount(ITEM_SHARD),
+      donateLeft(boss.bossId),
+    );
+  } else {
+    log.info('donate rejected. count=%d;code=%d;data=%s', plan, paid.code, paid.data);
+  }
 }
 
 /**
@@ -638,7 +675,7 @@ async function donateFlow(boss, preloaded) {
  * @returns {number}
  */
 function donateLeft(bossId) {
-    return Math.max(0, donateTarget(bossId).count - donatedOf(bossId));
+  return Math.max(0, donateTarget(bossId).count - donatedOf(bossId));
 }
 
 /**
@@ -648,14 +685,18 @@ function donateLeft(bossId) {
  * @returns {Array<{from:number,to:number,count:number}>}
  */
 function normalizeRules(list) {
-    if (!Array.isArray(list)) return [];
-    var out = [];
-    for (var i = 0; i < list.length; i++) {
-        var r = list[i];
-        if (!r || typeof r !== 'object') continue;
-        out.push({ from: Math.max(0, r.from | 0), to: Math.max(0, r.to | 0), count: Math.min(99, Math.max(0, r.count | 0)) });
-    }
-    return out;
+  if (!Array.isArray(list)) return [];
+  var out = [];
+  for (var i = 0; i < list.length; i++) {
+    var r = list[i];
+    if (!r || typeof r !== 'object') continue;
+    out.push({
+      from: Math.max(0, r.from | 0),
+      to: Math.max(0, r.to | 0),
+      count: Math.min(99, Math.max(0, r.count | 0)),
+    });
+  }
+  return out;
 }
 
 /**
@@ -664,50 +705,72 @@ function normalizeRules(list) {
  * @returns {Promise<void>}
  */
 async function attackFlow(boss) {
-    if (cfg.preset <= 0) return;
-    if (!passJoinGate()) return;
-    if (hasAttacked(boss.bossId)) {
-        log.debug('already attacked this boss today, skip. bossId=%d;state=%d', boss.bossId, boss.state);
-        return;
-    }
-    if (!(boss.x > 0 && boss.y > 0)) {
-        log.debug('boss has no tile yet, skip. state=%d', boss.state);
-        return;
-    }
+  if (cfg.preset <= 0) return;
+  if (!passJoinGate()) return;
+  if (hasAttacked(boss.bossId)) {
+    log.debug(
+      'already attacked this boss today, skip. bossId=%d;state=%d',
+      boss.bossId,
+      boss.state,
+    );
+    return;
+  }
+  if (!(boss.x > 0 && boss.y > 0)) {
+    log.debug('boss has no tile yet, skip. state=%d', boss.state);
+    return;
+  }
 
-    var u = (dataCenter && dataCenter.UserData) || {};
-    // 机甲地块不在本服（跨服 KVK 期间会长可能在别的服召唤）：拿它的 x/y 发 902 会打到同坐标的无关地块。
-    // 游戏只在 isKVKOpen() 时比 PointSid == UserData.ServerId，这里无条件比（非 KVK 时本来就相等，只会更严不会误打）。
-    var serverId = u.ServerId | 0;
-    if (serverId && boss.pointSid && boss.pointSid !== serverId) {
-        log.debug('boss tile not on my server, skip. pointSid=%d;serverId=%d', boss.pointSid, serverId);
-        return;
-    }
-    if (!march.canMarch()) {
-        log.debug('no free march slot, wait next check.');
-        return;
-    }
-    if (net.isSending(CMD_MARCH_WORLD_POINT)) return;
+  var u = (dataCenter && dataCenter.UserData) || {};
+  // 机甲地块不在本服（跨服 KVK 期间会长可能在别的服召唤）：拿它的 x/y 发 902 会打到同坐标的无关地块。
+  // 游戏只在 isKVKOpen() 时比 PointSid == UserData.ServerId，这里无条件比（非 KVK 时本来就相等，只会更严不会误打）。
+  var serverId = u.ServerId | 0;
+  if (serverId && boss.pointSid && boss.pointSid !== serverId) {
+    log.debug('boss tile not on my server, skip. pointSid=%d;serverId=%d', boss.pointSid, serverId);
+    return;
+  }
+  if (!march.canMarch()) {
+    log.debug('no free march slot, wait next check.');
+    return;
+  }
+  if (net.isSending(CMD_MARCH_WORLD_POINT)) return;
 
-    // 预设部队 → armyListNew/heroList/trapList/formationV2/extraArmy（已按可派额度与军阵状态过滤）
-    var plan = new Battle().plan().preset(cfg.preset).adjust().build();
-    if (!plan.armyListNew.length) {
-        log.debug('preset %d has no dispatchable army, skip. bossId=%d', cfg.preset, boss.bossId);
-        return;
-    }
+  // 预设部队 → armyListNew/heroList/trapList/formationV2/extraArmy（已按可派额度与军阵状态过滤）
+  var plan = new Battle().plan().preset(cfg.preset).adjust().build();
+  if (!plan.armyListNew.length) {
+    log.debug('preset %d has no dispatchable army, skip. bossId=%d', cfg.preset, boss.bossId);
+    return;
+  }
 
-    var ret = await march.attack({ marchType: MARCH_TYPE, target: { x: boss.x, y: boss.y }, data: plan });
-    if (!aliveFn()) return;
+  var ret = await march.attack({
+    marchType: MARCH_TYPE,
+    target: { x: boss.x, y: boss.y },
+    data: plan,
+  });
+  if (!aliveFn()) return;
 
-    if (ret.ok) {
-        // 一次即收：不论战斗期还是损毁期，同一型号当日只成功发起一次
-        markAttacked(boss.bossId);
-        log.info('attack sent. bossId=%d;state=%d;preset=%d;armies=%d;x=%d;y=%d',
-            boss.bossId, boss.state, cfg.preset, plan.armyListNew.length, boss.x, boss.y);
-    } else {
-        // 被拒不落账：多半是行军槽/体力/服务器换态瞬间的时序问题，下轮再补；持续失败由慢查档自然收敛
-        log.info('attack rejected. bossId=%d;x=%d;y=%d;code=%d;data=%s', boss.bossId, boss.x, boss.y, ret.code, ret.data);
-    }
+  if (ret.ok) {
+    // 一次即收：不论战斗期还是损毁期，同一型号当日只成功发起一次
+    markAttacked(boss.bossId);
+    log.info(
+      'attack sent. bossId=%d;state=%d;preset=%d;armies=%d;x=%d;y=%d',
+      boss.bossId,
+      boss.state,
+      cfg.preset,
+      plan.armyListNew.length,
+      boss.x,
+      boss.y,
+    );
+  } else {
+    // 被拒不落账：多半是行军槽/体力/服务器换态瞬间的时序问题，下轮再补；持续失败由慢查档自然收敛
+    log.info(
+      'attack rejected. bossId=%d;x=%d;y=%d;code=%d;data=%s',
+      boss.bossId,
+      boss.x,
+      boss.y,
+      ret.code,
+      ret.data,
+    );
+  }
 }
 
 /**
@@ -716,10 +779,11 @@ async function attackFlow(boss) {
  * @returns {object} 当前 cfg
  */
 function configure(partial) {
-    if (!partial) return cfg;
-    if (Array.isArray(partial.donateRules)) cfg.donateRules = normalizeRules(partial.donateRules);
-    if (typeof partial.preset === 'number') cfg.preset = (partial.preset >= 0 && partial.preset <= 8) ? (partial.preset | 0) : 0;
-    return cfg;
+  if (!partial) return cfg;
+  if (Array.isArray(partial.donateRules)) cfg.donateRules = normalizeRules(partial.donateRules);
+  if (typeof partial.preset === 'number')
+    cfg.preset = partial.preset >= 0 && partial.preset <= 8 ? partial.preset | 0 : 0;
+  return cfg;
 }
 
 /**
@@ -728,29 +792,30 @@ function configure(partial) {
  * @returns {boolean}
  */
 function install(ctx) {
-    ctxRef = ctx;
-    if (installed) return true;
+  ctxRef = ctx;
+  if (installed) return true;
 
-    var missing = [];
+  var missing = [];
 
-    net = ctx.net;
-    if (!net.install()) {
-        missing.push('pocketcc.net');
-        net = null;
-    }
+  net = ctx.net;
+  if (!net.install()) {
+    missing.push('pocketcc.net');
+    net = null;
+  }
 
-    var dc = game.get('DataCenter');
-    dataCenter = (dc && dc.DATA) || (missing.push('DataCenter'), null);
+  var dc = game.get('DataCenter');
+  dataCenter = (dc && dc.DATA) || (missing.push('DataCenter'), null);
 
-    if (missing.length) {
-        net = null; dataCenter = null;
-        log.warn('install failed. missing=%s', missing.join(';'));
-        return false;
-    }
+  if (missing.length) {
+    net = null;
+    dataCenter = null;
+    log.warn('install failed. missing=%s', missing.join(';'));
+    return false;
+  }
 
-    installed = true;
-    log.info('installed.');
-    return true;
+  installed = true;
+  log.info('installed.');
+  return true;
 }
 
 /**
@@ -759,19 +824,27 @@ function install(ctx) {
  * @param {object} ctx reactor 上下文
  */
 async function run(ctx) {
-    ctxRef = ctx;
-    log.info('started;marchType=%d;donateRules=%d;preset=%d', MARCH_TYPE, (cfg.donateRules || []).length, cfg.preset);
+  ctxRef = ctx;
+  log.info(
+    'started;marchType=%d;donateRules=%d;preset=%d',
+    MARCH_TYPE,
+    (cfg.donateRules || []).length,
+    cfg.preset,
+  );
 
-    await loadDaily();
-    if (!aliveFn()) return;
+  await loadDaily();
+  if (!aliveFn()) return;
 
-    // pause 已摘掉上轮的订阅，这里每次激活重挂一次（不设幂等标记，否则 resume 后收不到通知）
-    ctx.on.push(CMD_PUSH_ALLIANCE_BOSS, function (ev) {
-        log.debug('push 10435 arrived. state=%s', ev && ev.data && ev.data.allianceBoss && ev.data.allianceBoss.state);
-        cycle.kick();
-    });
+  // pause 已摘掉上轮的订阅，这里每次激活重挂一次（不设幂等标记，否则 resume 后收不到通知）
+  ctx.on.push(CMD_PUSH_ALLIANCE_BOSS, function (ev) {
+    log.debug(
+      'push 10435 arrived. state=%s',
+      ev && ev.data && ev.data.allianceBoss && ev.data.allianceBoss.state,
+    );
+    cycle.kick();
+  });
 
-    cycle.kick();   // 首个 tick 立即跑：加载时多半已错过捐献/开打通知
+  cycle.kick(); // 首个 tick 立即跑：加载时多半已错过捐献/开打通知
 }
 
 /**
@@ -780,47 +853,65 @@ async function run(ctx) {
  * 间隔/上限/道具 id 等均为本文件内置常量（CFG_KEY_* / ITEM_SHARD / *_TICK_MS）。
  */
 reactor.register({
-    id: 'allianceBoss',
-    label: '联盟机甲',
-    storageKey: 'pocketcc.feat.allianceBoss',
-    symbols: ['dataCenter', 'tableManager', 'tableUtils'],
-    scenes: ['Home', 'NWorldMap'],
-    offInCombat: true,
-    defaults: {
-        enabled: false,
-        // 默认一条兵底规则（[0, 不封顶) → 3 枚，含每日免费那枚），不捐就改成 0 枚或删行
-        donateRules: [{ from: 0, to: 0, count: 3 }],
-        preset: 0,        // 攻打预设队号 0-8，0=不攻打
-    },
-    fields: (function () {
-        var options = [{ value: 0, label: '不攻打' }];
-        for (var i = 1; i <= 8; i++) options.push({ value: i, label: '预设部队 ' + i });
-        return [
-            {
-                key: 'donateRules', label: '代捐档位', section: '捐献碎片', type: 'ranges',
-                // 行已按区间记法渲染「[ 0 ~ 300 ) → 3」，列头只需说出两个比较符；限 4 字以免折行
-                cols: ['大于等于', '小于', '代捐枚数'],
-                hint: '按召唤所需碎片数分档',   // 10 个全角字≈110px，单行；「0 = 不封顶」已放进各格 title
-            },
-            {
-                key: 'todayDonate', label: '今日已代捐', section: '捐献碎片', type: 'text',
-                get: function () { return formatTodayDonate(); },
-            },
-            {
-                key: 'shardOwned', label: '碎片持有', section: '捐献碎片', type: 'text',
-                get: function () { return String(item.amount(ITEM_SHARD)); },
-            },
-            { key: 'preset', label: '攻击部队', section: '攻打', type: 'select', options: options },
-            {
-                key: 'attackState', label: '本轮攻打', section: '攻打', type: 'text',
-                get: function () { return formatAttack(); },
-            },
-        ];
-    })(),
-    toModuleCfg: function (c) {
-        return { donateRules: normalizeRules(c.donateRules), preset: c.preset | 0 };
-    },
-    install: install,
-    configure: configure,
-    run: run,
+  id: 'allianceBoss',
+  label: '联盟机甲',
+  storageKey: 'pocketcc.feat.allianceBoss',
+  symbols: ['dataCenter', 'tableManager', 'tableUtils'],
+  scenes: ['Home', 'NWorldMap'],
+  offInCombat: true,
+  defaults: {
+    enabled: false,
+    // 默认一条兵底规则（[0, 不封顶) → 3 枚，含每日免费那枚），不捐就改成 0 枚或删行
+    donateRules: [{ from: 0, to: 0, count: 3 }],
+    preset: 0, // 攻打预设队号 0-8，0=不攻打
+  },
+  fields: (function () {
+    var options = [{ value: 0, label: '不攻打' }];
+    for (var i = 1; i <= 8; i++) options.push({ value: i, label: '预设部队 ' + i });
+    return [
+      {
+        key: 'donateRules',
+        label: '代捐档位',
+        section: '捐献碎片',
+        type: 'ranges',
+        // 行已按区间记法渲染「[ 0 ~ 300 ) → 3」，列头只需说出两个比较符；限 4 字以免折行
+        cols: ['大于等于', '小于', '代捐枚数'],
+        hint: '按召唤所需碎片数分档', // 10 个全角字≈110px，单行；「0 = 不封顶」已放进各格 title
+      },
+      {
+        key: 'todayDonate',
+        label: '今日已代捐',
+        section: '捐献碎片',
+        type: 'text',
+        get: function () {
+          return formatTodayDonate();
+        },
+      },
+      {
+        key: 'shardOwned',
+        label: '碎片持有',
+        section: '捐献碎片',
+        type: 'text',
+        get: function () {
+          return String(item.amount(ITEM_SHARD));
+        },
+      },
+      { key: 'preset', label: '攻击部队', section: '攻打', type: 'select', options: options },
+      {
+        key: 'attackState',
+        label: '本轮攻打',
+        section: '攻打',
+        type: 'text',
+        get: function () {
+          return formatAttack();
+        },
+      },
+    ];
+  })(),
+  toModuleCfg: function (c) {
+    return { donateRules: normalizeRules(c.donateRules), preset: c.preset | 0 };
+  },
+  install: install,
+  configure: configure,
+  run: run,
 });

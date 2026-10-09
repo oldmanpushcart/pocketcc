@@ -29,7 +29,13 @@ const DEFAULT_W = 620;
 const DEFAULT_H = 480;
 
 /** @type {Array<[string,string]>} 归属筛选模式（[值, 标签]），与 MapView.setOwner 对齐 */
-const OWN_MODES = [['all', '全部'], ['self', '我的'], ['ally', '联盟'], ['enemy', '敌方'], ['none', '无主']];
+const OWN_MODES = [
+  ['all', '全部'],
+  ['self', '我的'],
+  ['ally', '联盟'],
+  ['enemy', '敌方'],
+  ['none', '无主'],
+];
 
 /** @type {string} Shadow DOM 样式（深色毛玻璃，延续 core/ui.js 风格） */
 const CSS = `
@@ -156,7 +162,10 @@ const LIST_ROW_CAP = 250;
  * @returns {string}
  */
 function esc(s) {
-  return String(s == null ? '' : s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+  return String(s == null ? '' : s).replace(
+    /[&<>"]/g,
+    (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c],
+  );
 }
 
 /**
@@ -168,7 +177,8 @@ function clampGeom(g) {
   const w = Math.max(MIN_W, Math.min(g.w, window.innerWidth));
   const h = Math.max(MIN_H, Math.min(g.h, window.innerHeight));
   return {
-    w, h,
+    w,
+    h,
     x: Math.max(0, Math.min(g.x, window.innerWidth - Math.min(w, 60))),
     y: Math.max(0, Math.min(g.y, window.innerHeight - Math.min(h, 40))),
   };
@@ -185,7 +195,12 @@ export class MapOverlay {
   /** @param {object} handlers 回调面（见文件头注释） */
   constructor(handlers) {
     this._h = handlers || {};
-    this._geom = clampGeom({ x: Math.max(0, (window.innerWidth - DEFAULT_W) / 2), y: 40, w: DEFAULT_W, h: DEFAULT_H });
+    this._geom = clampGeom({
+      x: Math.max(0, (window.innerWidth - DEFAULT_W) / 2),
+      y: 40,
+      w: DEFAULT_W,
+      h: DEFAULT_H,
+    });
     /** @type {string[]} 选中的细分类 key（默认全选，业务层会用 setSubs 回填） */
     this._subs = Object.keys(SUB_MAP);
     /** @type {boolean} 是否展示未归类类型（灰色兜底） */
@@ -194,8 +209,13 @@ export class MapOverlay {
     this._owner = 'all';
     /** @type {?string} 当前展开 POP 的大类 key（null=无） */
     this._openCat = null;
-    this._host = null; this._root = null; this._win = null;
-    this._body = null; this._canvas = null; this._wrap = null; this._srvBadge = null;
+    this._host = null;
+    this._root = null;
+    this._win = null;
+    this._body = null;
+    this._canvas = null;
+    this._wrap = null;
+    this._srvBadge = null;
     /** @type {MapView|null} */
     this.view = null;
     this._toastTimer = null;
@@ -237,27 +257,40 @@ export class MapOverlay {
     const inS = (k) => this._subs.indexOf(k) >= 0;
     const catsHtml = FILTER_TREE.map((cat) => {
       const anyOn = cat.subs.some((s) => inS(s.key));
-      return `<div class="pcg-chip" data-cat="${cat.key}">` +
+      return (
+        `<div class="pcg-chip" data-cat="${cat.key}">` +
         `<input type="checkbox" data-catcb="${cat.key}"${anyOn ? ' checked' : ''}>` +
         `<span class="pcg-dot" style="background:${CAT_COLOR[cat.key]}"></span>${cat.label}` +
-        `<span class="caret">▾</span></div>`;
+        `<span class="caret">▾</span></div>`
+      );
     }).join('');
-    const otherChip = `<div class="pcg-chip" data-other="1">` +
+    const otherChip =
+      `<div class="pcg-chip" data-other="1">` +
       `<input type="checkbox" data-g="other"${this._showOther ? ' checked' : ''}>` +
       `<span class="pcg-dot" style="background:#8a93a6"></span>其他</div>`;
     const popsHtml = FILTER_TREE.map((cat) => {
-      const rows = cat.subs.map((s) => `<label class="pcg-pop-row">` +
-        `<input type="checkbox" data-sub="${s.key}"${inS(s.key) ? ' checked' : ''}>` +
-        `<span class="pcg-swatch" style="background:${s.color}"></span>${s.label}</label>`).join('');
+      const rows = cat.subs
+        .map(
+          (s) =>
+            `<label class="pcg-pop-row">` +
+            `<input type="checkbox" data-sub="${s.key}"${inS(s.key) ? ' checked' : ''}>` +
+            `<span class="pcg-swatch" style="background:${s.color}"></span>${s.label}</label>`,
+        )
+        .join('');
       return `<div class="pcg-pop" data-pop="${cat.key}"><div class="pcg-pop-hd">${cat.label}</div>${rows}</div>`;
     }).join('');
-    const legend = `<div class="pcg-cats">${catsHtml}${otherChip}</div>` +
+    const legend =
+      `<div class="pcg-cats">${catsHtml}${otherChip}</div>` +
       `<div class="pcg-own"><span class="pcg-lbl">归属</span>` +
-      OWN_MODES.map((o) => `<button class="seg${this._owner === o[0] ? ' on' : ''}" data-own="${o[0]}">${o[1]}</button>`).join('') +
+      OWN_MODES.map(
+        (o) =>
+          `<button class="seg${this._owner === o[0] ? ' on' : ''}" data-own="${o[0]}">${o[1]}</button>`,
+      ).join('') +
       `</div>` +
       popsHtml;
     // 行3：玩家筛选（仅玩家城池）——护盾组（独立 panel：不限/有盾/无盾 + 时间阈值仅「有盾」显）+ 等级组（≥ N）
-    const shield = `<div class="pcg-shield"><span class="pcg-lbl">玩家</span>` +
+    const shield =
+      `<div class="pcg-shield"><span class="pcg-lbl">玩家</span>` +
       `<span class="pcg-pf-shield"><span class="pcg-lbl">护盾</span>` +
       `<span class="pcg-shield-modes">` +
       `<button class="seg smode on" data-smode="off">不限</button>` +
@@ -300,7 +333,9 @@ export class MapOverlay {
     root.appendChild(win);
     document.body.appendChild(host);
 
-    this._host = host; this._root = root; this._win = win;
+    this._host = host;
+    this._root = root;
+    this._win = win;
     this._body = win.querySelector('.pcg-body');
     this._canvas = win.querySelector('.pcg-canvas');
     this._wrap = win.querySelector('.pcg-cwrap');
@@ -318,7 +353,10 @@ export class MapOverlay {
       rows: (size && size.rows) || undefined,
       onPick: (cx, cy) => this._notify('onPick', cx, cy),
       onCtxPick: (i, j) => {
-        if (!this._ctxHinted) { this._ctxHinted = true; this.toast('左键跳格 · 右键选起扫块（再点同块取消）'); }
+        if (!this._ctxHinted) {
+          this._ctxHinted = true;
+          this.toast('左键跳格 · 右键选起扫块（再点同块取消）');
+        }
         this._notify('onCellContext', i, j);
       },
     });
@@ -335,7 +373,9 @@ export class MapOverlay {
 
     // 容器尺寸变化（resize/首次显示）：ResizeObserver 驱动画布重排
     if (window.ResizeObserver) {
-      this._ro = new ResizeObserver(() => { this._syncCanvas(); });
+      this._ro = new ResizeObserver(() => {
+        this._syncCanvas();
+      });
       this._ro.observe(this._body);
     }
     // 视口变化（窗口缩放/F11 全屏等）：右上锚定——保持与视口右/上两边的距离，
@@ -348,8 +388,8 @@ export class MapOverlay {
         if (!this._win) return;
         const nvw = window.innerWidth;
         const g = this._geom;
-        const dispW = Math.min(g.w, lastVW);          // 旧视口下的显示宽
-        const rightGap = lastVW - (g.x + dispW);      // 面板右缘到旧视口右边距
+        const dispW = Math.min(g.w, lastVW); // 旧视口下的显示宽
+        const rightGap = lastVW - (g.x + dispW); // 面板右缘到旧视口右边距
         this._geom = clampGeom({ x: nvw - rightGap - Math.min(g.w, nvw), y: g.y, w: g.w, h: g.h });
         lastVW = nvw;
         this._applyGeom();
@@ -365,26 +405,39 @@ export class MapOverlay {
    * 若量 canvas 则永远读回旧尺寸→画布锁死在旧大小，容器变化跟不上。 */
   _syncCanvas() {
     if (!this.view || !this._wrap) return;
-    const w = this._wrap.clientWidth, h = this._wrap.clientHeight;
+    const w = this._wrap.clientWidth,
+      h = this._wrap.clientHeight;
     if (w > 0 && h > 0) this.view.resize(w, h);
   }
 
   /** 显示 */
   show() {
     if (!this._win) return;
-    if (this._win.hidden) { this._win.hidden = false; this._syncCanvas(); this._notify('onVisibleChange', true); }
+    if (this._win.hidden) {
+      this._win.hidden = false;
+      this._syncCanvas();
+      this._notify('onVisibleChange', true);
+    }
   }
 
   /** 隐藏（仅停显示，渲染循环/订阅由业务层管） */
   hide() {
-    if (this._win && !this._win.hidden) { this._win.hidden = true; this._notify('onVisibleChange', false); }
+    if (this._win && !this._win.hidden) {
+      this._win.hidden = true;
+      this._notify('onVisibleChange', false);
+    }
   }
 
   /** 切换显隐 */
-  toggle() { if (this._win && this._win.hidden) this.show(); else this.hide(); }
+  toggle() {
+    if (this._win && this._win.hidden) this.show();
+    else this.hide();
+  }
 
   /** @returns {boolean} 是否可见 */
-  isVisible() { return !!(this._win && !this._win.hidden); }
+  isVisible() {
+    return !!(this._win && !this._win.hidden);
+  }
 
   /**
    * 更新进度显示。
@@ -395,8 +448,10 @@ export class MapOverlay {
     if (!this._fill) return;
     const ratio = p.total > 0 ? Math.min(1, p.done / p.total) : 0;
     this._fill.style.width = (ratio * 100).toFixed(1) + '%';
-    if (p.running) this._progText.textContent = `扫描 ${p.done}/${p.total}` + (note ? ' · ' + note : '');
-    else if (p.total > 0 && p.done >= p.total) this._progText.textContent = `完成 ${p.done}/${p.total}` + (note ? ' · ' + note : '');
+    if (p.running)
+      this._progText.textContent = `扫描 ${p.done}/${p.total}` + (note ? ' · ' + note : '');
+    else if (p.total > 0 && p.done >= p.total)
+      this._progText.textContent = `完成 ${p.done}/${p.total}` + (note ? ' · ' + note : '');
     else this._progText.textContent = note || '未扫描';
     // 扫描态驱动雷达动画开合与按钮可见
     if (this.view) this.view.setScanning(p.running);
@@ -405,7 +460,9 @@ export class MapOverlay {
   }
 
   /** 底图就绪后交给 view */
-  setTerrain(cv) { if (this.view) this.view.setTerrain(cv); }
+  setTerrain(cv) {
+    if (this.view) this.view.setTerrain(cv);
+  }
 
   /**
    * 设置选中细分类并同步 chip/POP 勾选（不触发 onFilterChange，供业务层初始化/面板回填用）。
@@ -421,7 +478,9 @@ export class MapOverlay {
   _syncLegendChecks() {
     if (!this._win) return;
     const inS = (k) => this._subs.indexOf(k) >= 0;
-    this._win.querySelectorAll('input[data-sub]').forEach((cb) => { cb.checked = inS(cb.dataset.sub); });
+    this._win.querySelectorAll('input[data-sub]').forEach((cb) => {
+      cb.checked = inS(cb.dataset.sub);
+    });
     this._win.querySelectorAll('input[data-catcb]').forEach((cb) => {
       const cat = FILTER_TREE.find((c) => c.key === cb.dataset.catcb);
       if (!cat) return;
@@ -434,12 +493,20 @@ export class MapOverlay {
   }
 
   /** 状态角标（数据时间/覆盖度等） */
-  setStatus(text) { if (this._statusEl) { this._statusEl.hidden = !text; this._statusEl.textContent = text || ''; } }
+  setStatus(text) {
+    if (this._statusEl) {
+      this._statusEl.hidden = !text;
+      this._statusEl.textContent = text || '';
+    }
+  }
 
   /** 区号徽标（当前视角桶）：k=0/空时隐藏 */
   setServerBadge(k) {
     if (!this._srvBadge) return;
-    if (!k) { this._srvBadge.hidden = true; return; }
+    if (!k) {
+      this._srvBadge.hidden = true;
+      return;
+    }
     this._srvBadge.hidden = false;
     this._srvBadge.textContent = '区 ' + k;
   }
@@ -454,7 +521,9 @@ export class MapOverlay {
   }
 
   /** @returns {boolean} 列表是否展开（坐标列表已常驻，恒 true） */
-  isListOpen() { return this._listOpen; }
+  isListOpen() {
+    return this._listOpen;
+  }
 
   /**
    * 渲染列表数据（业务层推入；搜索变化不重拉数据，纯前端过滤）。
@@ -474,59 +543,109 @@ export class MapOverlay {
     const cnt = this._win.querySelector('.pcg-lcount');
     if (!rows || !cnt) return;
     const inp = this._win.querySelector('.pcg-lsearch');
-    const q = (inp && inp.value || '').trim().toLowerCase();
+    const q = ((inp && inp.value) || '').trim().toLowerCase();
     const all = this._listItems;
-    const list = !q ? all : all.filter((it) => ((it.cx + ',' + it.cy) + ' ' + (it.name || '') + ' ' + (it.sub || '')).toLowerCase().indexOf(q) >= 0);
+    const list = !q
+      ? all
+      : all.filter(
+          (it) =>
+            (it.cx + ',' + it.cy + ' ' + (it.name || '') + ' ' + (it.sub || ''))
+              .toLowerCase()
+              .indexOf(q) >= 0,
+        );
     const shown = list.slice(0, LIST_ROW_CAP);
     this._paintIdx = shown;
-    cnt.textContent = q ? `命中 ${list.length} · 桶内共 ${this._listTotal} 点` : `最新 ${all.length} / 共 ${this._listTotal} 点`;
-    if (!shown.length) { rows.innerHTML = `<div class="pcg-lempty">${q ? '无匹配点位' : '暂无点位'}</div>`; return; }
+    cnt.textContent = q
+      ? `命中 ${list.length} · 桶内共 ${this._listTotal} 点`
+      : `最新 ${all.length} / 共 ${this._listTotal} 点`;
+    if (!shown.length) {
+      rows.innerHTML = `<div class="pcg-lempty">${q ? '无匹配点位' : '暂无点位'}</div>`;
+      return;
+    }
     const now = Date.now();
-    rows.innerHTML = shown.map((it, n) => {
-      const isCity = it.pt === CITY_POINT_TYPE;
-      // 玩家城池四行：① 名称 ② 坐标 ③ 等级-基地战力-兵力（Lv100-58.5M-960cc，战力/兵力走 getLargeNumberShow）④ 有无护盾
-      let metaLine = '';
-      let shieldLine = '';
-      if (isCity) {
-        const parts = [];
-        if (it.lv != null) parts.push('Lv' + it.lv);
-        if (it.power != null) parts.push(fmtLargeNum(it.power));
-        if (it.army != null) parts.push(fmtLargeNum(it.army));
-        if (parts.length) metaLine = `<span class="pcg-lmeta">${esc(parts.join('-'))}</span>`;
-        const sTxt = shieldText(it.shield, now);
-        shieldLine = (sTxt && sTxt !== '无')
-          ? `<span class="pcg-lshield">护盾：${esc(sTxt)}</span>`
-          : `<span class="pcg-lshield none">护盾：无</span>`;
-      }
-      return `<div class="pcg-lrow" data-n="${n}">` +
-        `<span class="pcg-lsw" style="background:${it.color}"></span>` +
-        `<span class="pcg-lmain"><span class="pcg-lname" title="${esc(it.sub || '')} · (${it.cx},${it.cy})">${esc(it.name || it.sub || '未知点')}</span><span class="pcg-lcoord">(${it.cx},${it.cy})</span>${metaLine}${shieldLine}</span>` +
-        (it.cross ? `<span class="pcg-lk" title="跨区点：属区 ${it.k}">区${it.k}</span>` : '') +
-        `</div>`;
-    }).join('') +
-      (list.length > LIST_ROW_CAP ? `<div class="pcg-lempty">仅显示前 ${LIST_ROW_CAP} 条，可用搜索缩小范围</div>` : '');
+    rows.innerHTML =
+      shown
+        .map((it, n) => {
+          const isCity = it.pt === CITY_POINT_TYPE;
+          // 玩家城池四行：① 名称 ② 坐标 ③ 等级-基地战力-兵力（Lv100-58.5M-960cc，战力/兵力走 getLargeNumberShow）④ 有无护盾
+          let metaLine = '';
+          let shieldLine = '';
+          if (isCity) {
+            const parts = [];
+            if (it.lv != null) parts.push('Lv' + it.lv);
+            if (it.power != null) parts.push(fmtLargeNum(it.power));
+            if (it.army != null) parts.push(fmtLargeNum(it.army));
+            if (parts.length) metaLine = `<span class="pcg-lmeta">${esc(parts.join('-'))}</span>`;
+            const sTxt = shieldText(it.shield, now);
+            shieldLine =
+              sTxt && sTxt !== '无'
+                ? `<span class="pcg-lshield">护盾：${esc(sTxt)}</span>`
+                : `<span class="pcg-lshield none">护盾：无</span>`;
+          }
+          return (
+            `<div class="pcg-lrow" data-n="${n}">` +
+            `<span class="pcg-lsw" style="background:${it.color}"></span>` +
+            `<span class="pcg-lmain"><span class="pcg-lname" title="${esc(it.sub || '')} · (${it.cx},${it.cy})">${esc(it.name || it.sub || '未知点')}</span><span class="pcg-lcoord">(${it.cx},${it.cy})</span>${metaLine}${shieldLine}</span>` +
+            (it.cross ? `<span class="pcg-lk" title="跨区点：属区 ${it.k}">区${it.k}</span>` : '') +
+            `</div>`
+          );
+        })
+        .join('') +
+      (list.length > LIST_ROW_CAP
+        ? `<div class="pcg-lempty">仅显示前 ${LIST_ROW_CAP} 条，可用搜索缩小范围</div>`
+        : '');
   }
 
   /** 恢复几何（读档） */
   setGeom(g) {
     if (!g) return;
-    this._geom = clampGeom({ x: g.x != null ? g.x : this._geom.x, y: g.y != null ? g.y : this._geom.y, w: g.w != null ? g.w : this._geom.w, h: g.h != null ? g.h : this._geom.h });
+    this._geom = clampGeom({
+      x: g.x != null ? g.x : this._geom.x,
+      y: g.y != null ? g.y : this._geom.y,
+      w: g.w != null ? g.w : this._geom.w,
+      h: g.h != null ? g.h : this._geom.h,
+    });
     this._applyGeom();
     this._syncCanvas();
   }
 
   /** @returns {{x:number,y:number,w:number,h:number}} 当前几何拷贝 */
-  getGeom() { return Object.assign({}, this._geom); }
+  getGeom() {
+    return Object.assign({}, this._geom);
+  }
 
   /** 卸载浮层 */
   unmount() {
-    if (this._toastTimer) { clearTimeout(this._toastTimer); this._toastTimer = null; }
-    if (this._listTimer) { clearTimeout(this._listTimer); this._listTimer = null; }
-    if (this._resizeTimer) { clearTimeout(this._resizeTimer); this._resizeTimer = null; }
-    if (this._resizeHandler) { window.removeEventListener('resize', this._resizeHandler); this._resizeHandler = null; }
-    if (this.view) { this.view.destroy(); this.view = null; }
-    if (this._ro) { this._ro.disconnect(); this._ro = null; }
-    if (this._host) { this._host.remove(); this._host = null; this._root = null; this._win = null; }
+    if (this._toastTimer) {
+      clearTimeout(this._toastTimer);
+      this._toastTimer = null;
+    }
+    if (this._listTimer) {
+      clearTimeout(this._listTimer);
+      this._listTimer = null;
+    }
+    if (this._resizeTimer) {
+      clearTimeout(this._resizeTimer);
+      this._resizeTimer = null;
+    }
+    if (this._resizeHandler) {
+      window.removeEventListener('resize', this._resizeHandler);
+      this._resizeHandler = null;
+    }
+    if (this.view) {
+      this.view.destroy();
+      this.view = null;
+    }
+    if (this._ro) {
+      this._ro.disconnect();
+      this._ro = null;
+    }
+    if (this._host) {
+      this._host.remove();
+      this._host = null;
+      this._root = null;
+      this._win = null;
+    }
   }
 
   // ─────────────────────── 内部接线 ───────────────────────
@@ -535,13 +654,31 @@ export class MapOverlay {
     if (!this._win) return;
     const g = clampGeom(this._geom);
     const s = this._win.style;
-    s.left = g.x + 'px'; s.top = g.y + 'px'; s.width = g.w + 'px'; s.height = g.h + 'px';
+    s.left = g.x + 'px';
+    s.top = g.y + 'px';
+    s.width = g.w + 'px';
+    s.height = g.h + 'px';
   }
 
   /** 屏蔽游戏输入：浮层内指针/键盘/滚轮冒泡到 win 即止 */
   _wireBlockGameEvents() {
     const stop = (e) => e.stopPropagation();
-    for (const t of ['pointerdown', 'pointerup', 'pointermove', 'mousedown', 'mouseup', 'click', 'dblclick', 'wheel', 'keydown', 'keyup', 'keypress', 'touchstart', 'touchend', 'contextmenu']) {
+    for (const t of [
+      'pointerdown',
+      'pointerup',
+      'pointermove',
+      'mousedown',
+      'mouseup',
+      'click',
+      'dblclick',
+      'wheel',
+      'keydown',
+      'keyup',
+      'keypress',
+      'touchstart',
+      'touchend',
+      'contextmenu',
+    ]) {
       this._win.addEventListener(t, stop);
     }
   }
@@ -558,13 +695,20 @@ export class MapOverlay {
     });
     bar.addEventListener('pointermove', (e) => {
       if (!drag) return;
-      this._geom = clampGeom({ x: drag.ox + e.clientX - drag.sx, y: drag.oy + e.clientY - drag.sy, w: this._geom.w, h: this._geom.h });
+      this._geom = clampGeom({
+        x: drag.ox + e.clientX - drag.sx,
+        y: drag.oy + e.clientY - drag.sy,
+        w: this._geom.w,
+        h: this._geom.h,
+      });
       this._applyGeom();
     });
     const end = (e) => {
       if (!drag) return;
       drag = null;
-      try { bar.releasePointerCapture(e.pointerId); } catch (err) { }
+      try {
+        bar.releasePointerCapture(e.pointerId);
+      } catch (err) {}
       this._notify('onGeomChange', this.getGeom());
     };
     bar.addEventListener('pointerup', end);
@@ -575,20 +719,44 @@ export class MapOverlay {
   _wireToolbar() {
     this._btnScan.addEventListener('click', () => this._notify('onStartScan'));
     this._btnStop.addEventListener('click', () => this._notify('onStopScan'));
-    this._win.querySelector('.act-fit').addEventListener('click', () => { if (this.view) this.view.fit(); });
-    this._win.querySelector('.act-zin').addEventListener('click', () => { if (this.view) this.view.zoomBy(1.3); });
-    this._win.querySelector('.act-zout').addEventListener('click', () => { if (this.view) this.view.zoomBy(1 / 1.3); });
-    this._win.querySelector('.act-grid').addEventListener('click', () => { if (this.view) this.view.toggleGrid(); });
+    this._win.querySelector('.act-fit').addEventListener('click', () => {
+      if (this.view) this.view.fit();
+    });
+    this._win.querySelector('.act-zin').addEventListener('click', () => {
+      if (this.view) this.view.zoomBy(1.3);
+    });
+    this._win.querySelector('.act-zout').addEventListener('click', () => {
+      if (this.view) this.view.zoomBy(1 / 1.3);
+    });
+    this._win.querySelector('.act-grid').addEventListener('click', () => {
+      if (this.view) this.view.toggleGrid();
+    });
     // 坐标列表改为常驻（_listOpen 恒 true），无「列表」开关按钮；业务层始终供数。
     // 高度已固定为「近」(viewLevel=1)，不再提供工具栏下拉（旧 .act-level 已移除）。
     // 清空：两步确认（首次点击变「确认清空?」并高亮，3s 内再点才真正触发），避免误删
     const clr = this._win.querySelector('.act-clear');
     if (clr) {
-      let armed = false, timer = null;
-      const disarm = () => { armed = false; clr.textContent = '清空'; clr.classList.remove('warn'); if (timer) { clearTimeout(timer); timer = null; } };
+      let armed = false,
+        timer = null;
+      const disarm = () => {
+        armed = false;
+        clr.textContent = '清空';
+        clr.classList.remove('warn');
+        if (timer) {
+          clearTimeout(timer);
+          timer = null;
+        }
+      };
       clr.addEventListener('click', () => {
-        if (!armed) { armed = true; clr.textContent = '确认清空?'; clr.classList.add('warn'); timer = setTimeout(disarm, 3000); return; }
-        disarm(); this._notify('onClearPoints');
+        if (!armed) {
+          armed = true;
+          clr.textContent = '确认清空?';
+          clr.classList.add('warn');
+          timer = setTimeout(disarm, 3000);
+          return;
+        }
+        disarm();
+        this._notify('onClearPoints');
       });
     }
   }
@@ -643,7 +811,10 @@ export class MapOverlay {
         const cat = FILTER_TREE.find((c) => c.key === cb.dataset.catcb);
         if (!cat) return;
         const set = new Set(this._subs);
-        for (const s of cat.subs) { if (cb.checked) set.add(s.key); else set.delete(s.key); }
+        for (const s of cat.subs) {
+          if (cb.checked) set.add(s.key);
+          else set.delete(s.key);
+        }
         this._subs = Array.from(set);
         this._syncLegendChecks();
         this._emitFilter();
@@ -652,14 +823,19 @@ export class MapOverlay {
     win.querySelectorAll('input[data-sub]').forEach((cb) => {
       cb.addEventListener('change', () => {
         const set = new Set(this._subs);
-        if (cb.checked) set.add(cb.dataset.sub); else set.delete(cb.dataset.sub);
+        if (cb.checked) set.add(cb.dataset.sub);
+        else set.delete(cb.dataset.sub);
         this._subs = Array.from(set);
         this._syncLegendChecks();
         this._emitFilter();
       });
     });
     const other = win.querySelector('input[data-g="other"]');
-    if (other) other.addEventListener('change', () => { this._showOther = other.checked; this._emitFilter(); });
+    if (other)
+      other.addEventListener('change', () => {
+        this._showOther = other.checked;
+        this._emitFilter();
+      });
     // 归属分段（单选）
     win.querySelectorAll('.pcg-own .seg').forEach((btn) => {
       btn.addEventListener('click', () => {
@@ -685,7 +861,10 @@ export class MapOverlay {
       const raw = num ? String(num.value).trim() : '';
       const v = raw === '' ? NaN : Number(raw);
       // 仅「有盾」参与时间阈值：非法/空→ null（=任何有盾城）；「无盾/不限」不传阈值
-      const ms = (st.mode === 'has' && isFinite(v) && v >= 0) ? v * (unit && unit.value === 'm' ? 60000 : 3600000) : null;
+      const ms =
+        st.mode === 'has' && isFinite(v) && v >= 0
+          ? v * (unit && unit.value === 'm' ? 60000 : 3600000)
+          : null;
       this._notify('onShieldFilter', st.mode, ms);
     };
     const sync = () => {
@@ -694,16 +873,28 @@ export class MapOverlay {
       if (num) num.disabled = st.mode !== 'has';
       if (unit) unit.disabled = st.mode !== 'has';
     };
-    modes.forEach((b) => b.addEventListener('click', () => { st.mode = b.dataset.smode || 'off'; sync(); emit(); }));
-    if (num) { num.addEventListener('change', emit); num.addEventListener('input', emit); }
+    modes.forEach((b) =>
+      b.addEventListener('click', () => {
+        st.mode = b.dataset.smode || 'off';
+        sync();
+        emit();
+      }),
+    );
+    if (num) {
+      num.addEventListener('change', emit);
+      num.addEventListener('input', emit);
+    }
     if (unit) unit.addEventListener('change', emit);
     // 等级组：≥N 整数，空/非法→ null（不限）；与护盾独立回报，不随护盾时间联动
     const emitLevel = () => {
       const raw = lnum ? String(lnum.value).trim() : '';
       const v = raw === '' ? NaN : Number(raw);
-      this._notify('onLevelFilter', (isFinite(v) && v >= 0) ? Math.floor(v) : null);
+      this._notify('onLevelFilter', isFinite(v) && v >= 0 ? Math.floor(v) : null);
     };
-    if (lnum) { lnum.addEventListener('change', emitLevel); lnum.addEventListener('input', emitLevel); }
+    if (lnum) {
+      lnum.addEventListener('change', emitLevel);
+      lnum.addEventListener('input', emitLevel);
+    }
     sync();
   }
 
@@ -732,7 +923,9 @@ export class MapOverlay {
   _emitFilter() {
     if (!this._win) return;
     this._notify('onFilterChange', {
-      subs: this._subs.slice(), showOther: this._showOther, owner: this._owner,
+      subs: this._subs.slice(),
+      showOther: this._showOther,
+      owner: this._owner,
     });
   }
 
@@ -742,18 +935,39 @@ export class MapOverlay {
       const dir = hd.dataset.dir;
       let rs = null;
       hd.addEventListener('pointerdown', (e) => {
-        rs = { sx: e.clientX, sy: e.clientY, ox: this._geom.x, oy: this._geom.y, ow: this._geom.w, oh: this._geom.h };
+        rs = {
+          sx: e.clientX,
+          sy: e.clientY,
+          ox: this._geom.x,
+          oy: this._geom.y,
+          ow: this._geom.w,
+          oh: this._geom.h,
+        };
         hd.setPointerCapture(e.pointerId);
         e.stopPropagation();
       });
       hd.addEventListener('pointermove', (e) => {
         if (!rs) return;
-        const dx = e.clientX - rs.sx, dy = e.clientY - rs.sy;
-        let x = rs.ox, y = rs.oy, w = rs.ow, h = rs.oh;
-        if (dir === 'l' || dir === 'bl') { w = rs.ow - dx; x = rs.ox + dx; }
-        if (dir === 'r' || dir === 'br') { w = rs.ow + dx; }
-        if (dir === 'b' || dir === 'bl' || dir === 'br') { h = rs.oh + dy; }
-        if ((dir === 'l' || dir === 'bl') && w < MIN_W) { w = MIN_W; x = rs.ox + rs.ow - MIN_W; }
+        const dx = e.clientX - rs.sx,
+          dy = e.clientY - rs.sy;
+        let x = rs.ox,
+          y = rs.oy,
+          w = rs.ow,
+          h = rs.oh;
+        if (dir === 'l' || dir === 'bl') {
+          w = rs.ow - dx;
+          x = rs.ox + dx;
+        }
+        if (dir === 'r' || dir === 'br') {
+          w = rs.ow + dx;
+        }
+        if (dir === 'b' || dir === 'bl' || dir === 'br') {
+          h = rs.oh + dy;
+        }
+        if ((dir === 'l' || dir === 'bl') && w < MIN_W) {
+          w = MIN_W;
+          x = rs.ox + rs.ow - MIN_W;
+        }
         if (h < MIN_H) h = MIN_H;
         this._geom = clampGeom({ x, y, w, h });
         this._applyGeom();
@@ -761,7 +975,9 @@ export class MapOverlay {
       const end = (e) => {
         if (!rs) return;
         rs = null;
-        try { hd.releasePointerCapture(e.pointerId); } catch (err) { }
+        try {
+          hd.releasePointerCapture(e.pointerId);
+        } catch (err) {}
         this._notify('onGeomChange', this.getGeom());
         this._syncCanvas();
       };
@@ -777,6 +993,11 @@ export class MapOverlay {
    * @returns {*}
    */
   _notify(name, ...args) {
-    try { return this._h[name] ? this._h[name](...args) : undefined; } catch (e) { log.warn('handler %s threw: %s', name, e && e.message); return undefined; }
+    try {
+      return this._h[name] ? this._h[name](...args) : undefined;
+    } catch (e) {
+      log.warn('handler %s threw: %s', name, e && e.message);
+      return undefined;
+    }
   }
 }

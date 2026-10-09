@@ -48,15 +48,21 @@ var installed = false;
  * @returns {boolean}
  */
 function aliveFn() {
-    return ctxRef ? ctxRef.alive() : false;
+  return ctxRef ? ctxRef.alive() : false;
 }
 
 // ─────────── 注入两引擎的共享底座（惰性 getter，规避引擎反向 import index 的循环依赖） ───────────
 const env = {
-    getNet: function () { return net; },
-    getData: function () { return dataCenter; },
-    getPresets: function () { return presets; },
-    alive: aliveFn,
+  getNet: function () {
+    return net;
+  },
+  getData: function () {
+    return dataCenter;
+  },
+  getPresets: function () {
+    return presets;
+  },
+  alive: aliveFn,
 };
 const attack = new AttackFlow(env);
 const reward = new RewardFlow(env);
@@ -68,29 +74,30 @@ const reward = new RewardFlow(env);
  * @returns {boolean}
  */
 function install(ctx) {
-    ctxRef = ctx;
-    if (installed) return true;
+  ctxRef = ctx;
+  if (installed) return true;
 
-    var missing = [];
+  var missing = [];
 
-    net = ctx.net;
-    if (!net.install()) {
-        missing.push('pocketcc.net');
-        net = null;
-    }
+  net = ctx.net;
+  if (!net.install()) {
+    missing.push('pocketcc.net');
+    net = null;
+  }
 
-    var dc = game.get('DataCenter');
-    dataCenter = (dc && dc.DATA) || (missing.push('DataCenter'), null);
+  var dc = game.get('DataCenter');
+  dataCenter = (dc && dc.DATA) || (missing.push('DataCenter'), null);
 
-    if (missing.length) {
-        net = null; dataCenter = null;
-        log.warn('install failed. missing=%s', missing.join(';'));
-        return false;
-    }
+  if (missing.length) {
+    net = null;
+    dataCenter = null;
+    log.warn('install failed. missing=%s', missing.join(';'));
+    return false;
+  }
 
-    installed = true;
-    log.info('installed.');
-    return true;
+  installed = true;
+  log.info('installed.');
+  return true;
 }
 
 /**
@@ -99,13 +106,13 @@ function install(ctx) {
  * @returns {number[]} 当前 presets
  */
 function configure(partial) {
-    if (partial && Array.isArray(partial.presets)) {
-        for (var i = 0; i < FORM_COUNT; i++) {
-            var v = partial.presets[i] | 0;
-            presets[i] = (v >= 0 && v <= 8) ? v : 0;
-        }
+  if (partial && Array.isArray(partial.presets)) {
+    for (var i = 0; i < FORM_COUNT; i++) {
+      var v = partial.presets[i] | 0;
+      presets[i] = v >= 0 && v <= 8 ? v : 0;
     }
-    return presets;
+  }
+  return presets;
 }
 
 /**
@@ -115,9 +122,9 @@ function configure(partial) {
  * @returns {Promise<void>}
  */
 async function run(ctx) {
-    ctxRef = ctx;
-    reward.start(ctx);           // 订阅 21923/21924 + 试领一轮 + 排全天低频轮询
-    await attack.start(ctx);     // 订阅 10019 + 读回当日额度 + 首个 tick 立即判位/攻打
+  ctxRef = ctx;
+  reward.start(ctx); // 订阅 21923/21924 + 试领一轮 + 排全天低频轮询
+  await attack.start(ctx); // 订阅 10019 + 读回当日额度 + 首个 tick 立即判位/攻打
 }
 
 // ─────────── 注册 ───────────
@@ -128,42 +135,50 @@ async function run(ctx) {
  * 窗口/定额/间隔为各引擎内置常量（attack.js DAILY_LIMIT/WARMUP_DELAY/TICK_INTERVAL、reward.js CLAIM_POLL_INTERVAL）。
  */
 reactor.register({
-    id: 'sourceOfWar',
-    label: '战争之源',
-    storageKey: 'pocketcc.feat.sourceOfWar',
-    symbols: ['dataCenter', 'tableUtils', 'tableManager'],
-    scenes: ['Home', 'NWorldMap'],
-    defaults: {
-        enabled: false,
-        armyPreset: 0,   // 陆军形态（BOSS.type=0）预设队号 0-8
-        oceanPreset: 0,  // 海军形态（BOSS.type=1）预设队号 0-8
-        airPreset: 0,    // 空军形态（BOSS.type=2）预设队号 0-8
-    },
-    fields: (function () {
-        // 0-8 下拉选项：0=不攻打该形态，1-8=预设部队 N。形态名直接做行标签、不分组（pc-row 就是标签靠左+控件靠右的一行）。
-        var options = [{ value: 0, label: '不攻打' }];
-        for (var i = 1; i <= 8; i++) options.push({ value: i, label: '预设部队 ' + i });
-        var mk = function (key, label) {
-            return { key: key, label: label, type: 'select', options: options };
-        };
-        return [
-            mk('armyPreset', '陆军形态'),
-            mk('oceanPreset', '海军形态'),
-            mk('airPreset', '空军形态'),
-            {
-                key: 'todayCount', label: '今日已打', type: 'text',
-                get: function () { return attack.formatToday(); },
-            },
-            {
-                key: 'todayReward', label: '次数奖励', type: 'text',
-                get: function () { return reward.formatRewardToday(); },
-            },
-        ];
-    })(),
-    toModuleCfg: function (c) {
-        return { presets: [c.armyPreset | 0, c.oceanPreset | 0, c.airPreset | 0] };
-    },
-    install: install,
-    configure: configure,
-    run: run,
+  id: 'sourceOfWar',
+  label: '战争之源',
+  storageKey: 'pocketcc.feat.sourceOfWar',
+  symbols: ['dataCenter', 'tableUtils', 'tableManager'],
+  scenes: ['Home', 'NWorldMap'],
+  defaults: {
+    enabled: false,
+    armyPreset: 0, // 陆军形态（BOSS.type=0）预设队号 0-8
+    oceanPreset: 0, // 海军形态（BOSS.type=1）预设队号 0-8
+    airPreset: 0, // 空军形态（BOSS.type=2）预设队号 0-8
+  },
+  fields: (function () {
+    // 0-8 下拉选项：0=不攻打该形态，1-8=预设部队 N。形态名直接做行标签、不分组（pc-row 就是标签靠左+控件靠右的一行）。
+    var options = [{ value: 0, label: '不攻打' }];
+    for (var i = 1; i <= 8; i++) options.push({ value: i, label: '预设部队 ' + i });
+    var mk = function (key, label) {
+      return { key: key, label: label, type: 'select', options: options };
+    };
+    return [
+      mk('armyPreset', '陆军形态'),
+      mk('oceanPreset', '海军形态'),
+      mk('airPreset', '空军形态'),
+      {
+        key: 'todayCount',
+        label: '今日已打',
+        type: 'text',
+        get: function () {
+          return attack.formatToday();
+        },
+      },
+      {
+        key: 'todayReward',
+        label: '次数奖励',
+        type: 'text',
+        get: function () {
+          return reward.formatRewardToday();
+        },
+      },
+    ];
+  })(),
+  toModuleCfg: function (c) {
+    return { presets: [c.armyPreset | 0, c.oceanPreset | 0, c.airPreset | 0] };
+  },
+  install: install,
+  configure: configure,
+  run: run,
 });

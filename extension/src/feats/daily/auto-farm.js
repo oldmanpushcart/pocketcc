@@ -97,7 +97,7 @@ const RES_FAMILY_BY_TOWER = { 51: 7, 52: 1, 53: 5, 71: 16 };
  * 采金=金矿(7) / 炼油=石油(1) / 谷仓=粮食(5) / 提纯=雷神(16)。仅匹配中文（本工具面向国服）。
  * @type {Object<string,number>}
  */
-const FACILITY_FAMILY = { '采金': 7, '炼油': 1, '谷仓': 5, '提纯': 16 };
+const FACILITY_FAMILY = { 采金: 7, 炼油: 1, 谷仓: 5, 提纯: 16 };
 /**
  * 资源家族编码 → 塔 bid 前缀（RES_FAMILY_BY_TOWER 的反向）：金(7)→51 / 油(1)→52 / 粮(5)→53 / 雷神(16)→71，
  * 供由 (family,level) 反推 bid（= 前缀·1000+等级）去 MAP_BUILDING 表查存活时长 duration。
@@ -113,18 +113,18 @@ const LEDGER_NAME = 'autoFarm';
  * @type {object}
  */
 const cfg = {
-    /** 仍有缺位未补上时的兜底扫描间隔（毫秒）：1 分钟 */
-    activeScanInterval: 1000 * 60,
-    /** 全部田位都在途时的兜底间隔（毫秒）：10 分钟（正常靠 10019 唤醒，这里只是断推兜底） */
-    idleScanInterval: 1000 * 60 * 10,
-    /** 逐条 902 之间的休眠（毫秒）：防 marches 入表延迟导致同轮超发，同时拉开间隔规避服务器行军时间限流 */
-    marchInterval: 1000 * 8,
-    /** 推送唤醒补扫的最小间隔（毫秒）：合并突发回城推送 */
-    pushScanMinGap: 1000 * 4,
-    /** 撞 902 全局限流（march_time_control_info001）后的退避基数（毫秒）：按 streak 指数退避重排下轮 */
-    rateLimitBackoffMs: 1000 * 15,
-    /** 限流退避封顶（毫秒）：退避到此值后每轮最多等这么久，既不给服务器加压也不错过恢复 */
-    rateLimitBackoffMaxMs: 1000 * 60,
+  /** 仍有缺位未补上时的兜底扫描间隔（毫秒）：1 分钟 */
+  activeScanInterval: 1000 * 60,
+  /** 全部田位都在途时的兜底间隔（毫秒）：10 分钟（正常靠 10019 唤醒，这里只是断推兜底） */
+  idleScanInterval: 1000 * 60 * 10,
+  /** 逐条 902 之间的休眠（毫秒）：防 marches 入表延迟导致同轮超发，同时拉开间隔规避服务器行军时间限流 */
+  marchInterval: 1000 * 8,
+  /** 推送唤醒补扫的最小间隔（毫秒）：合并突发回城推送 */
+  pushScanMinGap: 1000 * 4,
+  /** 撞 902 全局限流（march_time_control_info001）后的退避基数（毫秒）：按 streak 指数退避重排下轮 */
+  rateLimitBackoffMs: 1000 * 15,
+  /** 限流退避封顶（毫秒）：退避到此值后每轮最多等这么久，既不给服务器加压也不错过恢复 */
+  rateLimitBackoffMaxMs: 1000 * 60,
 };
 
 /** @type {object|null} 网络底座（promise 封装 pocketcc.net） */
@@ -193,7 +193,7 @@ var MCFG = { rules: [] };
  * @returns {boolean}
  */
 function aliveFn() {
-    return ctxRef ? ctxRef.alive() : false;
+  return ctxRef ? ctxRef.alive() : false;
 }
 
 /**
@@ -202,7 +202,9 @@ function aliveFn() {
  * @returns {Promise<void>}
  */
 function sleep(ms) {
-    return new Promise(function (resolve) { setTimeout(resolve, Math.max(0, ms | 0)); });
+  return new Promise(function (resolve) {
+    setTimeout(resolve, Math.max(0, ms | 0));
+  });
 }
 
 /**
@@ -211,12 +213,16 @@ function sleep(ms) {
  * @returns {object|null}
  */
 function parseData(d) {
-    if (d == null) return null;
-    if (typeof d === 'object') return d;
-    if (typeof d === 'string') {
-        try { return JSON.parse(d); } catch (err) { return null; }
+  if (d == null) return null;
+  if (typeof d === 'object') return d;
+  if (typeof d === 'string') {
+    try {
+      return JSON.parse(d);
+    } catch (err) {
+      return null;
     }
-    return null;
+  }
+  return null;
 }
 
 /**
@@ -226,14 +232,14 @@ function parseData(d) {
  * @returns {string|null}
  */
 function rejectErrKey(data) {
-    if (typeof data !== 'string' || !data) return null;
-    var comma = data.indexOf(',');
-    return comma >= 0 ? data.slice(0, comma) : data;
+  if (typeof data !== 'string' || !data) return null;
+  var comma = data.indexOf(',');
+  return comma >= 0 ? data.slice(0, comma) : data;
 }
 
 /** @returns {object} DataCenter.DATA.UserData（读不到回空对象） */
 function userData() {
-    return (dataCenter && dataCenter.UserData) || {};
+  return (dataCenter && dataCenter.UserData) || {};
 }
 
 /**
@@ -244,22 +250,22 @@ function userData() {
  * @returns {Promise<Array<{marchId:string,x:number,y:number,marchType:number,state:number,occupying:boolean}>>}
  */
 async function fetchMyFarmMarches() {
-    var ms = await march.list();
-    var out = [];
-    for (var i = 0; i < ms.length; i++) {
-        var m = ms[i];
-        var mt = m.type | 0;
-        if (mt !== KIND_FARM && mt !== KIND_TOWER) continue;
-        out.push({
-            marchId: m.id,
-            x: m.target.x,
-            y: m.target.y,
-            marchType: mt,
-            state: m.state,
-            occupying: m.isOccupying,
-        });
-    }
-    return out;
+  var ms = await march.list();
+  var out = [];
+  for (var i = 0; i < ms.length; i++) {
+    var m = ms[i];
+    var mt = m.type | 0;
+    if (mt !== KIND_FARM && mt !== KIND_TOWER) continue;
+    out.push({
+      marchId: m.id,
+      x: m.target.x,
+      y: m.target.y,
+      marchType: mt,
+      state: m.state,
+      occupying: m.isOccupying,
+    });
+  }
+  return out;
 }
 
 /**
@@ -270,14 +276,14 @@ async function fetchMyFarmMarches() {
  * @returns {Set<string>} 占用点键集合
  */
 function occupiedPointSet(marches) {
-    var s = new Set();
-    for (var i = 0; i < marches.length; i++) {
-        var mg = marches[i];
-        if (!mg.occupying) continue;
-        if (mg.x == null || mg.y == null) continue;
-        s.add(mg.x + ',' + mg.y);
-    }
-    return s;
+  var s = new Set();
+  for (var i = 0; i < marches.length; i++) {
+    var mg = marches[i];
+    if (!mg.occupying) continue;
+    if (mg.x == null || mg.y == null) continue;
+    s.add(mg.x + ',' + mg.y);
+  }
+  return s;
 }
 
 // ── 规则归一 ────────────────────────────────────────────────────────
@@ -287,20 +293,20 @@ function occupiedPointSet(marches) {
  * @returns {Array<{family:number,level:number,mechOnly:boolean,preset:number}>}
  */
 function normalizeRules(raw) {
-    var out = [];
-    var list = Array.isArray(raw) ? raw : [];
-    for (var i = 0; i < list.length; i++) {
-        var r = list[i] || {};
-        var fam = RES_FAMILIES.indexOf(r.family | 0) >= 0 ? r.family | 0 : 7;
-        var maxLv = fam === 16 ? 3 : 6;   // 雷神矿最高 3 级，其余 1~6
-        out.push({
-            family: fam,
-            level: Math.max(1, Math.min(maxLv, r.level | 0)) || 5,
-            mechOnly: !!r.mechOnly,
-            preset: Math.max(1, Math.min(16, r.preset | 0) || 1),
-        });
-    }
-    return out;
+  var out = [];
+  var list = Array.isArray(raw) ? raw : [];
+  for (var i = 0; i < list.length; i++) {
+    var r = list[i] || {};
+    var fam = RES_FAMILIES.indexOf(r.family | 0) >= 0 ? r.family | 0 : 7;
+    var maxLv = fam === 16 ? 3 : 6; // 雷神矿最高 3 级，其余 1~6
+    out.push({
+      family: fam,
+      level: Math.max(1, Math.min(maxLv, r.level | 0)) || 5,
+      mechOnly: !!r.mechOnly,
+      preset: Math.max(1, Math.min(16, r.preset | 0) || 1),
+    });
+  }
+  return out;
 }
 
 /**
@@ -310,9 +316,9 @@ function normalizeRules(raw) {
  * @returns {{index:number,type:number}}
  */
 function presetArgs(p) {
-    var n = p | 0;
-    if (n >= 9) return { index: n - 8, type: 1 };
-    return { index: Math.max(1, n), type: 0 };
+  var n = p | 0;
+  if (n >= 9) return { index: n - 8, type: 1 };
+  return { index: Math.max(1, n), type: 0 };
 }
 
 // ── 账本持久化 ──────────────────────────────────────────────────────
@@ -321,24 +327,26 @@ function presetArgs(p) {
  * @returns {Promise<void>}
  */
 function loadLedger() {
-    if (ledgerLoaded || ledgerLoading) return Promise.resolve();
-    ledgerLoading = true;
-    return Promise.resolve(storage.data.get(LEDGER_NAME)).then(function (saved) {
-        ledgerLoading = false;
-        if (saved && typeof saved === 'object') ledger = saved;
-        ledgerLoaded = true;
-    }).catch(function (err) {
-        ledgerLoading = false;
-        log.warn('load ledger failed, retry next cycle. %s', err && err.message);
+  if (ledgerLoaded || ledgerLoading) return Promise.resolve();
+  ledgerLoading = true;
+  return Promise.resolve(storage.data.get(LEDGER_NAME))
+    .then(function (saved) {
+      ledgerLoading = false;
+      if (saved && typeof saved === 'object') ledger = saved;
+      ledgerLoaded = true;
+    })
+    .catch(function (err) {
+      ledgerLoading = false;
+      log.warn('load ledger failed, retry next cycle. %s', err && err.message);
     });
 }
 
 /** 账本落盘（fire-and-forget，失败仅 warn，内存账本仍是本轮真相） */
 function persistLedger() {
-    if (!ledgerLoaded) return;
-    Promise.resolve(storage.data.set(LEDGER_NAME, ledger)).catch(function (err) {
-        log.warn('persist ledger failed.', err);
-    });
+  if (!ledgerLoaded) return;
+  Promise.resolve(storage.data.set(LEDGER_NAME, ledger)).catch(function (err) {
+    log.warn('persist ledger failed.', err);
+  });
 }
 
 // ── 在途核对 ────────────────────────────────────────────────────────
@@ -354,56 +362,73 @@ function persistLedger() {
  * @returns {boolean} 账本是否发生变化（需要落盘）
  */
 function reconcileLedger(marches, allRules) {
-    var changed = false;
-    var liveIds = {};
-    var liveCoord = {};
-    for (var i = 0; i < marches.length; i++) {
-        var mg = marches[i];
-        if (!mg.occupying) continue;  // 已让位（返程/到家），不计在途
-        if (mg.marchId) liveIds[mg.marchId] = mg;
-        if (mg.x != null && mg.y != null) liveCoord[mg.x + ',' + mg.y] = mg;
+  var changed = false;
+  var liveIds = {};
+  var liveCoord = {};
+  for (var i = 0; i < marches.length; i++) {
+    var mg = marches[i];
+    if (!mg.occupying) continue; // 已让位（返程/到家），不计在途
+    if (mg.marchId) liveIds[mg.marchId] = mg;
+    if (mg.x != null && mg.y != null) liveCoord[mg.x + ',' + mg.y] = mg;
+  }
+  var isGather = function (mt) {
+    return mt === KIND_FARM || mt === KIND_TOWER;
+  };
+  // 1)+2) 逐行修剪：marchId 命中且仍占用则保留，否则（已回家 / 856 全量缺席）删除
+  for (var key in ledger) {
+    if (!Object.prototype.hasOwnProperty.call(ledger, key)) continue;
+    var idx = +key;
+    if (!(idx >= 0 && idx < allRules.length)) {
+      delete ledger[key];
+      changed = true;
+      continue;
     }
-    var isGather = function (mt) { return mt === KIND_FARM || mt === KIND_TOWER; };
-    // 1)+2) 逐行修剪：marchId 命中且仍占用则保留，否则（已回家 / 856 全量缺席）删除
-    for (var key in ledger) {
-        if (!Object.prototype.hasOwnProperty.call(ledger, key)) continue;
-        var idx = +key;
-        if (!(idx >= 0 && idx < allRules.length)) { delete ledger[key]; changed = true; continue; }
-        var keep = [];
-        var arr = Array.isArray(ledger[key]) ? ledger[key] : [];
-        for (var n = 0; n < arr.length; n++) {
-            var e = arr[n] || {};
-            var mg2 = (e.marchId && liveIds[String(e.marchId)]) || liveCoord[(e.x + ',' + e.y)];
-            if (mg2 && isGather(mg2.marchType | 0)) keep.push(e);
-        }
-        if (keep.length !== arr.length) changed = true;
-        if (keep.length) ledger[key] = keep; else delete ledger[key];
+    var keep = [];
+    var arr = Array.isArray(ledger[key]) ? ledger[key] : [];
+    for (var n = 0; n < arr.length; n++) {
+      var e = arr[n] || {};
+      var mg2 = (e.marchId && liveIds[String(e.marchId)]) || liveCoord[e.x + ',' + e.y];
+      if (mg2 && isGather(mg2.marchType | 0)) keep.push(e);
     }
-    // 3) 认领孤儿采集行军
-    var claimed = {};
-    for (var k2 in ledger) {
-        var a2 = ledger[k2] || [];
-        for (var q = 0; q < a2.length; q++) if (a2[q].marchId) claimed[String(a2[q].marchId)] = 1;
+    if (keep.length !== arr.length) changed = true;
+    if (keep.length) ledger[key] = keep;
+    else delete ledger[key];
+  }
+  // 3) 认领孤儿采集行军
+  var claimed = {};
+  for (var k2 in ledger) {
+    var a2 = ledger[k2] || [];
+    for (var q = 0; q < a2.length; q++) if (a2[q].marchId) claimed[String(a2[q].marchId)] = 1;
+  }
+  for (var s = 0; s < marches.length; s++) {
+    var ms = marches[s];
+    if (!ms.occupying) continue;
+    var mt = ms.marchType | 0;
+    if (!isGather(mt)) continue; // 856 条目按 marchType 3/26 判定采集行军
+    if (ms.x == null || ms.y == null) continue;
+    var mid = String(ms.marchId);
+    if (claimed[mid]) continue;
+    var filled = -1;
+    for (var r2 = 0; r2 < allRules.length; r2++) {
+      if (!(ledger[r2] && ledger[r2].length)) {
+        filled = r2;
+        break;
+      } // 行存在即生效，所有行都可认领孤儿
     }
-    for (var s = 0; s < marches.length; s++) {
-        var ms = marches[s];
-        if (!ms.occupying) continue;
-        var mt = ms.marchType | 0;
-        if (!isGather(mt)) continue;   // 856 条目按 marchType 3/26 判定采集行军
-        if (ms.x == null || ms.y == null) continue;
-        var mid = String(ms.marchId);
-        if (claimed[mid]) continue;
-        var filled = -1;
-        for (var r2 = 0; r2 < allRules.length; r2++) {
-            if (!(ledger[r2] && ledger[r2].length)) { filled = r2; break; }   // 行存在即生效，所有行都可认领孤儿
-        }
-        if (filled < 0) continue;
-        ledger[filled] = [{ marchId: mid, x: ms.x, y: ms.y, marchType: mt }];
-        claimed[mid] = 1;
-        changed = true;
-        log.debug('adopt orphan gather march. row=%d marchId=%s mt=%d x=%d y=%d', filled, mid, mt, ms.x, ms.y);
-    }
-    return changed;
+    if (filled < 0) continue;
+    ledger[filled] = [{ marchId: mid, x: ms.x, y: ms.y, marchType: mt }];
+    claimed[mid] = 1;
+    changed = true;
+    log.debug(
+      'adopt orphan gather march. row=%d marchId=%s mt=%d x=%d y=%d',
+      filled,
+      mid,
+      mt,
+      ms.x,
+      ms.y,
+    );
+  }
+  return changed;
 }
 
 // ── 候选来源 ────────────────────────────────────────────────────────
@@ -415,21 +440,21 @@ function reconcileLedger(marches, allRules) {
  * @returns {number} RESOURCE 行 id，未命中 0
  */
 function findGroupType(family, level) {
-    var ck = family + '_' + level;
-    if (groupTypeCache[ck] != null) return groupTypeCache[ck];
-    var rows = l10n.tableRows('RESOURCE') || [];
-    var gid = 0;
-    for (var i = 0; i < rows.length; i++) {
-        var row = rows[i];
-        if (!row) continue;
-        var id = Number(row.id) || 0;
-        if (!id || Math.floor(id / 100) !== family) continue;
-        if ((Number(row.level) || 0) !== level) continue;
-        gid = id;
-        break;
-    }
-    if (gid) groupTypeCache[ck] = gid;
-    return gid;
+  var ck = family + '_' + level;
+  if (groupTypeCache[ck] != null) return groupTypeCache[ck];
+  var rows = l10n.tableRows('RESOURCE') || [];
+  var gid = 0;
+  for (var i = 0; i < rows.length; i++) {
+    var row = rows[i];
+    if (!row) continue;
+    var id = Number(row.id) || 0;
+    if (!id || Math.floor(id / 100) !== family) continue;
+    if ((Number(row.level) || 0) !== level) continue;
+    gid = id;
+    break;
+  }
+  if (gid) groupTypeCache[ck] = gid;
+  return gid;
 }
 
 // ── 联盟机械田发现（记录解析 + 存在性探针） ──────────────────────────
@@ -441,17 +466,21 @@ function findGroupType(family, level) {
  * @returns {string} 渲染后的记录文本
  */
 function renderRecordMsg(e) {
-    var o = l10n.tableRow('alliance_information', e.specId);
-    if (!o || !o.text) return '';
-    var raw = Array.isArray(e.params) ? e.params : [];
-    var RS = String.fromCharCode(30);
-    var args = [];
-    for (var i = 0; i < raw.length; i++) {
-        var p = String(raw[i] == null ? '' : raw[i]);
-        var d = p.indexOf(RS) >= 0 ? p.split(RS) : null;
-        args.push(d && d.length > 1 ? l10n.text(d[1]) : p);
-    }
-    try { return String(l10n.text.apply(null, [o.text].concat(args)) || ''); } catch (err) { return ''; }
+  var o = l10n.tableRow('alliance_information', e.specId);
+  if (!o || !o.text) return '';
+  var raw = Array.isArray(e.params) ? e.params : [];
+  var RS = String.fromCharCode(30);
+  var args = [];
+  for (var i = 0; i < raw.length; i++) {
+    var p = String(raw[i] == null ? '' : raw[i]);
+    var d = p.indexOf(RS) >= 0 ? p.split(RS) : null;
+    args.push(d && d.length > 1 ? l10n.text(d[1]) : p);
+  }
+  try {
+    return String(l10n.text.apply(null, [o.text].concat(args)) || '');
+  } catch (err) {
+    return '';
+  }
 }
 
 /**
@@ -461,25 +490,26 @@ function renderRecordMsg(e) {
  * @returns {boolean} 是否并入了一条机械田
  */
 function ingestMechRecord(e) {
-    if (!e || e.specId == null) return false;
-    var ts = Number(e.sendTime) || 0;
-    if (ts > 1e11) ts = Math.floor(ts / 1000);   // ms→s 兜底
-    var now = gameData.serverTime();
-    if (!ts || (now && now - ts > MECH_MAX_AGE_SEC)) return false;
-    var msg = renderRecordMsg(e);
-    if (!msg || msg.indexOf('建造') < 0 || msg.indexOf('完毕') < 0) return false;
-    var fm = msg.match(/(\d+)\s*级\s*(采金|炼油|谷仓|提纯)\s*设施/);
-    if (!fm) return false;
-    var family = FACILITY_FAMILY[fm[2]];
-    if (!family) return false;
-    var level = Number(fm[1]) || 0;
-    var cm = msg.match(/\((\d+)\s*[，,]\s*(\d+)\)/g);
-    if (!cm || !cm.length) return false;
-    var last = cm[cm.length - 1].match(/(\d+)\s*[，,]\s*(\d+)/);
-    var x = Number(last[1]) || 0, y = Number(last[2]) || 0;
-    if (!x && !y) return false;
-    mechLive.set(x + ',' + y, { x: x, y: y, family: family, level: level, ts: ts });
-    return true;
+  if (!e || e.specId == null) return false;
+  var ts = Number(e.sendTime) || 0;
+  if (ts > 1e11) ts = Math.floor(ts / 1000); // ms→s 兜底
+  var now = gameData.serverTime();
+  if (!ts || (now && now - ts > MECH_MAX_AGE_SEC)) return false;
+  var msg = renderRecordMsg(e);
+  if (!msg || msg.indexOf('建造') < 0 || msg.indexOf('完毕') < 0) return false;
+  var fm = msg.match(/(\d+)\s*级\s*(采金|炼油|谷仓|提纯)\s*设施/);
+  if (!fm) return false;
+  var family = FACILITY_FAMILY[fm[2]];
+  if (!family) return false;
+  var level = Number(fm[1]) || 0;
+  var cm = msg.match(/\((\d+)\s*[，,]\s*(\d+)\)/g);
+  if (!cm || !cm.length) return false;
+  var last = cm[cm.length - 1].match(/(\d+)\s*[，,]\s*(\d+)/);
+  var x = Number(last[1]) || 0,
+    y = Number(last[2]) || 0;
+  if (!x && !y) return false;
+  mechLive.set(x + ',' + y, { x: x, y: y, family: family, level: level, ts: ts });
+  return true;
 }
 
 /**
@@ -487,25 +517,38 @@ function ingestMechRecord(e) {
  * @returns {Promise<void>}
  */
 function loadMechRecords() {
-    if (mechLoading) return mechLoading;   // 已在飞：返回同一 promise，让 await 的调用方（cyclePass 首轮）真正等到落地，而非空返回
-    mechLoading = net.send(CMD_ALLIANCE_RECORD_DATA, {}).then(function (ret) {
-        mechLoading = null;
-        if (!ret || !ret.ok) return;
-        var d = parseData(ret.data) || {};
-        var arr = Array.isArray(d.ret) ? d.ret : (Array.isArray(d.list) ? d.list : null);
-        if (!arr) return;
-        var added = 0;
-        for (var i = 0; i < arr.length; i++) { try { if (ingestMechRecord(arr[i])) added++; } catch (err) { } }
-        mechLoaded = true;
-        log.info('alliance mech records loaded: %d tower hit, live=%d.', added, mechLive.size);
-    }).catch(function (err) { mechLoading = null; log.debug('1193 load failed, retry next cycle. %s', err && err.message); });
-    return mechLoading;
+  if (mechLoading) return mechLoading; // 已在飞：返回同一 promise，让 await 的调用方（cyclePass 首轮）真正等到落地，而非空返回
+  mechLoading = net
+    .send(CMD_ALLIANCE_RECORD_DATA, {})
+    .then(function (ret) {
+      mechLoading = null;
+      if (!ret || !ret.ok) return;
+      var d = parseData(ret.data) || {};
+      var arr = Array.isArray(d.ret) ? d.ret : Array.isArray(d.list) ? d.list : null;
+      if (!arr) return;
+      var added = 0;
+      for (var i = 0; i < arr.length; i++) {
+        try {
+          if (ingestMechRecord(arr[i])) added++;
+        } catch (err) {}
+      }
+      mechLoaded = true;
+      log.info('alliance mech records loaded: %d tower hit, live=%d.', added, mechLive.size);
+    })
+    .catch(function (err) {
+      mechLoading = null;
+      log.debug('1193 load failed, retry next cycle. %s', err && err.message);
+    });
+  return mechLoading;
 }
 
 /** 老化剔除：活表里 ts 超 MECH_MAX_AGE_SEC 的条目（塔存活 <10h，超期视为已毁）。 */
 function pruneMechLive() {
-    var now = gameData.serverTime(); if (!now) return;
-    mechLive.forEach(function (c, key) { if (now - (c.ts || 0) > MECH_MAX_AGE_SEC) mechLive.delete(key); });
+  var now = gameData.serverTime();
+  if (!now) return;
+  mechLive.forEach(function (c, key) {
+    if (now - (c.ts || 0) > MECH_MAX_AGE_SEC) mechLive.delete(key);
+  });
 }
 
 /**
@@ -515,8 +558,8 @@ function pruneMechLive() {
  * @returns {number}
  */
 function towerBidForLevel(family, level) {
-    var pre = TOWER_PREFIX_BY_FAMILY[family];
-    return pre ? (pre * 1000 + (level | 0)) : 0;
+  var pre = TOWER_PREFIX_BY_FAMILY[family];
+  return pre ? pre * 1000 + (level | 0) : 0;
 }
 
 /**
@@ -527,13 +570,13 @@ function towerBidForLevel(family, level) {
  * @returns {number}
  */
 function towerLifespanSec(family, level) {
-    var bid = towerBidForLevel(family, level);
-    if (!bid) return 0;
-    if (towerLifeCache[bid] != null) return towerLifeCache[bid];
-    var r = l10n.tableRow('MAP_BUILDING', bid);
-    var life = r ? Number(r.duration) || 0 : 0;
-    towerLifeCache[bid] = life;
-    return life;
+  var bid = towerBidForLevel(family, level);
+  if (!bid) return 0;
+  if (towerLifeCache[bid] != null) return towerLifeCache[bid];
+  var r = l10n.tableRow('MAP_BUILDING', bid);
+  var life = r ? Number(r.duration) || 0 : 0;
+  towerLifeCache[bid] = life;
+  return life;
 }
 
 /**
@@ -542,25 +585,43 @@ function towerLifespanSec(family, level) {
  * 永不 reject。@returns {Promise<{status:'ok'|'gone'|'error', id?:string, bid?:number}>} error=请求失败（本行本轮回退普通田）
  */
 function probeMechTower(x, y, wantFamily) {
-    var u = userData();
-    var body = { x: x, y: y, k: u.ServerId | 0, rid: 0, width: 20, height: 20, marchInfo: false, viewLevel: 1 };
-    return net.send(CMD_GET_WORLD_INFO, body).then(function (ret) {
-        if (!ret || !ret.ok) return { status: 'error' };
-        var d = parseData(ret.data) || {};
-        var list = Array.isArray(d.pointList) ? d.pointList : [];
-        var myAid = gameData.myAid();
-        for (var i = 0; i < list.length; i++) {
-            var p = list[i];
-            if (!p || (p.x | 0) !== x || (p.y | 0) !== y) continue;
-            if ((p.pointType | 0) !== POINT_TYPE_TOWER) return { status: 'gone' };
-            var b = p.b || {};
-            if ((Number(b.st) || 0) !== TOWER_STATE_COMPLETE) return { status: 'gone' };
-            if (myAid && Number(b.aid) !== myAid) return { status: 'gone' };
-            if (wantFamily && RES_FAMILY_BY_TOWER[Math.floor((Number(b.bid) || 0) / 1000)] !== wantFamily) return { status: 'gone' };
-            return { status: 'ok', id: b.id != null ? String(b.id) : null, bid: Number(b.bid) || 0 };
-        }
-        return { status: 'gone' };
-    }).catch(function () { return { status: 'error' }; });
+  var u = userData();
+  var body = {
+    x: x,
+    y: y,
+    k: u.ServerId | 0,
+    rid: 0,
+    width: 20,
+    height: 20,
+    marchInfo: false,
+    viewLevel: 1,
+  };
+  return net
+    .send(CMD_GET_WORLD_INFO, body)
+    .then(function (ret) {
+      if (!ret || !ret.ok) return { status: 'error' };
+      var d = parseData(ret.data) || {};
+      var list = Array.isArray(d.pointList) ? d.pointList : [];
+      var myAid = gameData.myAid();
+      for (var i = 0; i < list.length; i++) {
+        var p = list[i];
+        if (!p || (p.x | 0) !== x || (p.y | 0) !== y) continue;
+        if ((p.pointType | 0) !== POINT_TYPE_TOWER) return { status: 'gone' };
+        var b = p.b || {};
+        if ((Number(b.st) || 0) !== TOWER_STATE_COMPLETE) return { status: 'gone' };
+        if (myAid && Number(b.aid) !== myAid) return { status: 'gone' };
+        if (
+          wantFamily &&
+          RES_FAMILY_BY_TOWER[Math.floor((Number(b.bid) || 0) / 1000)] !== wantFamily
+        )
+          return { status: 'gone' };
+        return { status: 'ok', id: b.id != null ? String(b.id) : null, bid: Number(b.bid) || 0 };
+      }
+      return { status: 'gone' };
+    })
+    .catch(function () {
+      return { status: 'error' };
+    });
 }
 
 /**
@@ -570,12 +631,12 @@ function probeMechTower(x, y, wantFamily) {
  * @returns {number}
  */
 function towerForceCapacity(bid) {
-    if (!bid) return 0;
-    if (towerCapCache[bid] != null) return towerCapCache[bid];
-    var r = l10n.tableRow('MAP_BUILDING', bid);
-    var cap = r ? Number(r.force_capacity) || 0 : 0;
-    towerCapCache[bid] = cap;
-    return cap;
+  if (!bid) return 0;
+  if (towerCapCache[bid] != null) return towerCapCache[bid];
+  var r = l10n.tableRow('MAP_BUILDING', bid);
+  var cap = r ? Number(r.force_capacity) || 0 : 0;
+  towerCapCache[bid] = cap;
+  return cap;
 }
 
 /**
@@ -585,13 +646,18 @@ function towerForceCapacity(bid) {
  * @returns {Promise<number>}
  */
 function towerArmySize(id) {
-    if (!id) return Promise.resolve(-1);
-    return net.send(CMD_GET_TOWERINFO, { id: id }).then(function (ret) {
-        if (!ret || !ret.ok) return -1;
-        var d = parseData(ret.data) || {};
-        var n = Number(d.army_size);
-        return isFinite(n) ? n : -1;
-    }).catch(function () { return -1; });
+  if (!id) return Promise.resolve(-1);
+  return net
+    .send(CMD_GET_TOWERINFO, { id: id })
+    .then(function (ret) {
+      if (!ret || !ret.ok) return -1;
+      var d = parseData(ret.data) || {};
+      var n = Number(d.army_size);
+      return isFinite(n) ? n : -1;
+    })
+    .catch(function () {
+      return -1;
+    });
 }
 
 /**
@@ -605,46 +671,63 @@ function towerArmySize(id) {
  * @returns {Promise<{x:number,y:number,marchType:number}|null>}
  */
 async function pickMechTower(row, taken) {
-    var now = gameData.serverTime();
-    var scored = [];
-    mechLive.forEach(function (c) {
-        if (c.family !== row.family) return;
-        var key = c.x + ',' + c.y;
-        if (blacklist.has(key)) return;
-        if (taken.has(key)) { log.debug('point occupied by my march(856), skip. mech x=%d y=%d', c.x, c.y); return; }
-        var life = towerLifespanSec(c.family, c.level);
-        var hasLife = life > 0 && !!now;
-        // 剩余时间（秒）：能查到存活时长则用 ts+life-now；否则退化为 ts 新度（大=新建=剩余多）
-        var remain = hasLife ? (c.ts + life - now) : (c.ts || 0);
-        scored.push({ c: c, remain: remain, hasLife: hasLife });
+  var now = gameData.serverTime();
+  var scored = [];
+  mechLive.forEach(function (c) {
+    if (c.family !== row.family) return;
+    var key = c.x + ',' + c.y;
+    if (blacklist.has(key)) return;
+    if (taken.has(key)) {
+      log.debug('point occupied by my march(856), skip. mech x=%d y=%d', c.x, c.y);
+      return;
+    }
+    var life = towerLifespanSec(c.family, c.level);
+    var hasLife = life > 0 && !!now;
+    // 剩余时间（秒）：能查到存活时长则用 ts+life-now；否则退化为 ts 新度（大=新建=剩余多）
+    var remain = hasLife ? c.ts + life - now : c.ts || 0;
+    scored.push({ c: c, remain: remain, hasLife: hasLife });
+  });
+  // 存活时长全可查时才按绝对剩余剔除快结束的塔；部分不可查时不误杀（仅靠排序优先）
+  if (
+    scored.length &&
+    scored.every(function (s) {
+      return s.hasLife;
+    })
+  ) {
+    scored = scored.filter(function (s) {
+      return s.remain >= MECH_MIN_REMAIN_SEC;
     });
-    // 存活时长全可查时才按绝对剩余剔除快结束的塔；部分不可查时不误杀（仅靠排序优先）
-    if (scored.length && scored.every(function (s) { return s.hasLife; })) {
-        scored = scored.filter(function (s) { return s.remain >= MECH_MIN_REMAIN_SEC; });
+  }
+  scored.sort(function (a, b) {
+    return b.remain - a.remain || b.c.level - a.c.level;
+  });
+  var probed = 0;
+  for (var i = 0; i < scored.length; i++) {
+    var c = scored[i].c;
+    var key = c.x + ',' + c.y;
+    if (probed >= MECH_PROBE_CAP) break;
+    probed++;
+    var pr = await probeMechTower(c.x, c.y, row.family);
+    if (pr.status === 'error') return null;
+    if (pr.status === 'gone') {
+      mechLive.delete(key);
+      blacklist.add(key);
+      continue;
     }
-    scored.sort(function (a, b) { return (b.remain - a.remain) || (b.c.level - a.c.level); });
-    var probed = 0;
-    for (var i = 0; i < scored.length; i++) {
-        var c = scored[i].c; var key = c.x + ',' + c.y;
-        if (probed >= MECH_PROBE_CAP) break;
-        probed++;
-        var pr = await probeMechTower(c.x, c.y, row.family);
-        if (pr.status === 'error') return null;
-        if (pr.status === 'gone') { mechLive.delete(key); blacklist.add(key); continue; }
-        // 容量闸：塔存在且已建成，但可能已被采满（army_size ≥ force_capacity）→ 902 必被拒。
-        // 本地查 force_capacity，可查则发 1034 取 army_size 比对；满则跳过本候选（不拉黑——稍后可能有队返采腾出空间）。
-        var cap = towerForceCapacity(pr.bid);
-        if (cap > 0 && pr.id) {
-            var cur = await towerArmySize(pr.id);
-            if (!aliveFn()) return null;
-            if (cur >= 0 && cur >= cap) {
-                log.debug('mech tower full, skip. x=%d y=%d army=%d cap=%d', c.x, c.y, cur, cap);
-                continue;
-            }
-        }
-        return { x: c.x, y: c.y, marchType: KIND_TOWER };
+    // 容量闸：塔存在且已建成，但可能已被采满（army_size ≥ force_capacity）→ 902 必被拒。
+    // 本地查 force_capacity，可查则发 1034 取 army_size 比对；满则跳过本候选（不拉黑——稍后可能有队返采腾出空间）。
+    var cap = towerForceCapacity(pr.bid);
+    if (cap > 0 && pr.id) {
+      var cur = await towerArmySize(pr.id);
+      if (!aliveFn()) return null;
+      if (cur >= 0 && cur >= cap) {
+        log.debug('mech tower full, skip. x=%d y=%d army=%d cap=%d', c.x, c.y, cur, cap);
+        continue;
+      }
     }
-    return null;
+    return { x: c.x, y: c.y, marchType: KIND_TOWER };
+  }
+  return null;
 }
 
 /**
@@ -654,31 +737,37 @@ async function pickMechTower(row, taken) {
  * @returns {Promise<{x:number,y:number,marchType:number}|null>}
  */
 async function pickNormalFarm(row, taken) {
-    var gid = findGroupType(row.family, row.level);
-    if (!gid) {
-        log.warn('no RESOURCE row for family=%d level=%d, skip normal search.', row.family, row.level);
-        return null;
-    }
-    var ret;
-    try {
-        ret = await net.send(CMD_WORLD_SEARCH_MONSTER, {
-            minLevel: row.level, maxLevel: row.level, groupType: gid, pointType: SEARCH_POINT_TYPE_RESOURCE,
-        });
-    } catch (err) {
-        log.debug('906 search send failed. %s', err && err.message);
-        return null;
-    }
-    if (!ret || !ret.ok) return null;
-    var d = parseData(ret.data) || {};
-    var pt = d.point || (Array.isArray(d.pointList) ? d.pointList[0] : null);
-    if (!pt || pt.x == null || pt.y == null) return null;
-    var key = (pt.x | 0) + ',' + (pt.y | 0);
-    if (blacklist.has(key)) return null;
-    if (taken.has(key)) { log.debug('point occupied by my march(856), skip. normal x=%d y=%d', pt.x | 0, pt.y | 0); return null; }
-    var r = pt.r || {};
-    if (r.ownerId != null && String(r.ownerId) !== '0') return null;
-    if ((Number(r.amount) || 0) <= 0) return null;
-    return { x: pt.x | 0, y: pt.y | 0, marchType: KIND_FARM };
+  var gid = findGroupType(row.family, row.level);
+  if (!gid) {
+    log.warn('no RESOURCE row for family=%d level=%d, skip normal search.', row.family, row.level);
+    return null;
+  }
+  var ret;
+  try {
+    ret = await net.send(CMD_WORLD_SEARCH_MONSTER, {
+      minLevel: row.level,
+      maxLevel: row.level,
+      groupType: gid,
+      pointType: SEARCH_POINT_TYPE_RESOURCE,
+    });
+  } catch (err) {
+    log.debug('906 search send failed. %s', err && err.message);
+    return null;
+  }
+  if (!ret || !ret.ok) return null;
+  var d = parseData(ret.data) || {};
+  var pt = d.point || (Array.isArray(d.pointList) ? d.pointList[0] : null);
+  if (!pt || pt.x == null || pt.y == null) return null;
+  var key = (pt.x | 0) + ',' + (pt.y | 0);
+  if (blacklist.has(key)) return null;
+  if (taken.has(key)) {
+    log.debug('point occupied by my march(856), skip. normal x=%d y=%d', pt.x | 0, pt.y | 0);
+    return null;
+  }
+  var r = pt.r || {};
+  if (r.ownerId != null && String(r.ownerId) !== '0') return null;
+  if ((Number(r.amount) || 0) <= 0) return null;
+  return { x: pt.x | 0, y: pt.y | 0, marchType: KIND_FARM };
 }
 
 // ── 派发 ────────────────────────────────────────────────────────────
@@ -691,7 +780,11 @@ async function pickNormalFarm(row, taken) {
  * @returns {Promise<object>} net.Ret
  */
 async function sendFarm(coord, marchType, plan) {
-    return await march.attack({ marchType: marchType, target: { x: coord.x, y: coord.y }, data: plan });
+  return await march.attack({
+    marchType: marchType,
+    target: { x: coord.x, y: coord.y },
+    data: plan,
+  });
 }
 
 // ── 周期引擎（core/cycle 调和循环：单飞闸门 + 触发合并 + 绝不停摆均由 cycle 承载）──
@@ -701,23 +794,31 @@ async function sendFarm(coord, marchType, plan) {
  * @returns {Promise<number>}
  */
 async function cycleRun() {
-    // 账本未从盘读回前不派：防拿空账本重复下田；读回失败返回 active 档、下拍重试（不留紧密循环）
-    if (!ledgerLoaded) {
-        await loadLedger();
-        if (!ledgerLoaded) return cfg.activeScanInterval;
-    }
-    await cyclePass();
-    // 撞 902 全局限流的指数退避优先：丢弃本轮在飞期间排队的触发（不立刻再 burst），交退避定时统一重试
-    if (rateLimitStreak > 0) {
-        return Math.min(cfg.rateLimitBackoffMs * (1 << Math.min(rateLimitStreak - 1, 5)), cfg.rateLimitBackoffMaxMs);
-    }
-    // 本轮在飞期间来了外部触发（回城 / 配置 / 推送）→ 立即补扫一轮（合并语义，靠 cycle.pending 感知）
-    if (cycle.pending) return 0;
-    return backlogActive ? cfg.activeScanInterval : cfg.idleScanInterval;
+  // 账本未从盘读回前不派：防拿空账本重复下田；读回失败返回 active 档、下拍重试（不留紧密循环）
+  if (!ledgerLoaded) {
+    await loadLedger();
+    if (!ledgerLoaded) return cfg.activeScanInterval;
+  }
+  await cyclePass();
+  // 撞 902 全局限流的指数退避优先：丢弃本轮在飞期间排队的触发（不立刻再 burst），交退避定时统一重试
+  if (rateLimitStreak > 0) {
+    return Math.min(
+      cfg.rateLimitBackoffMs * (1 << Math.min(rateLimitStreak - 1, 5)),
+      cfg.rateLimitBackoffMaxMs,
+    );
+  }
+  // 本轮在飞期间来了外部触发（回城 / 配置 / 推送）→ 立即补扫一轮（合并语义，靠 cycle.pending 感知）
+  if (cycle.pending) return 0;
+  return backlogActive ? cfg.activeScanInterval : cfg.idleScanInterval;
 }
 
 /** @type {{kick: function(), pending: boolean}} 调和循环驱动器（fallback 取 active 档，防异常停摆/空转） */
-const cycle = createCycle({ log: log, alive: aliveFn, run: cycleRun, fallback: cfg.activeScanInterval });
+const cycle = createCycle({
+  log: log,
+  alive: aliveFn,
+  run: cycleRun,
+  fallback: cfg.activeScanInterval,
+});
 
 /**
  * 单轮周期主体：在途核对 → 找缺位行 → 名额闸门 → 逐行取田（☑机械田先本地机械、无则搜普通田）→ 派发。
@@ -725,118 +826,178 @@ const cycle = createCycle({ log: log, alive: aliveFn, run: cycleRun, fallback: c
  * @returns {Promise<void>}
  */
 async function cyclePass() {
-    var all = MCFG.rules || [];
-    var rules = [];
-    var ruleIdx = [];
-    for (var i = 0; i < all.length; i++) { rules.push(all[i]); ruleIdx.push(i); }   // 行存在即生效，无行级 enabled 过滤
-    if (!rules.length) { backlogActive = false; return; }
+  var all = MCFG.rules || [];
+  var rules = [];
+  var ruleIdx = [];
+  for (var i = 0; i < all.length; i++) {
+    rules.push(all[i]);
+    ruleIdx.push(i);
+  } // 行存在即生效，无行级 enabled 过滤
+  if (!rules.length) {
+    backlogActive = false;
+    return;
+  }
 
-    // 权威行军源：core/march.list()（封装 856，视口无关、Home 亦有全量）。march.list() 失败回 []（「未知不拦」）：
-    // 即便瞬时拉空，预设部队已在外者 armyListNew 为空会静默跳过，不会重复下田；回城后自然补齐。
-    var marches = await fetchMyFarmMarches();
+  // 权威行军源：core/march.list()（封装 856，视口无关、Home 亦有全量）。march.list() 失败回 []（「未知不拦」）：
+  // 即便瞬时拉空，预设部队已在外者 armyListNew 为空会静默跳过，不会重复下田；回城后自然补齐。
+  var marches = await fetchMyFarmMarches();
+  if (!aliveFn()) return;
+
+  // 在途核对 + 缺位行（账本键=规则行原始下标，锚定 856 权威行军：marchId 缺席即已回家/消失 → 销位）
+  if (reconcileLedger(marches, all)) persistLedger();
+  var missingPos = []; // 缺位行在 rules（启用行数组）中的下标
+  for (var m = 0; m < rules.length; m++) {
+    if (!(ledger[ruleIdx[m]] && ledger[ruleIdx[m]].length)) missingPos.push(m);
+  }
+  if (!missingPos.length) {
+    backlogActive = false;
+    return;
+  }
+
+  // 名额闸门（core/march.freeSlots，读 UserData 服务端同步、跨场景可靠）：无空位只等下个唤醒周期（不主动撤田——撤田语义保留给占领发射井 feat）
+  var free = march.freeSlots();
+  if (free <= 0) {
+    log.debug('no free march slot, wait for arrival wake. missing=%d', missingPos.length);
+    backlogActive = true;
+    return;
+  }
+
+  // 点占用表（来自 856 权威行军）：把本人全部「非返程/到家」行军的目标点预规为占用（种子进 taken），
+  // Home 场景也能识别自家在田队；pickMechTower/pickNormalFarm 的 taken 过滤自动跳过（本轮派成的点也并入）。
+  var taken = occupiedPointSet(marches);
+  pruneMechLive();
+  var dispatched = 0;
+  for (var t = 0; t < missingPos.length; t++) {
     if (!aliveFn()) return;
-
-    // 在途核对 + 缺位行（账本键=规则行原始下标，锚定 856 权威行军：marchId 缺席即已回家/消失 → 销位）
-    if (reconcileLedger(marches, all)) persistLedger();
-    var missingPos = [];  // 缺位行在 rules（启用行数组）中的下标
-    for (var m = 0; m < rules.length; m++) {
-        if (!(ledger[ruleIdx[m]] && ledger[ruleIdx[m]].length)) missingPos.push(m);
-    }
-    if (!missingPos.length) {
-        backlogActive = false;
-        return;
-    }
-
-    // 名额闸门（core/march.freeSlots，读 UserData 服务端同步、跨场景可靠）：无空位只等下个唤醒周期（不主动撤田——撤田语义保留给占领发射井 feat）
-    var free = march.freeSlots();
     if (free <= 0) {
-        log.debug('no free march slot, wait for arrival wake. missing=%d', missingPos.length);
+      log.debug('slot exhausted mid-cycle, remaining=%d', missingPos.length - t);
+      break;
+    }
+    var row = rules[missingPos[t]];
+    var rawIdx = ruleIdx[missingPos[t]];
+
+    // 先算该行预设部队可用否（纯本地读预设 + 剔除已出征，零发包）：armyListNew 为空多半意味着
+    // 这支部队已在外（正是在下田/采集中）——本行其实已被占用，静默 debug 跳过，既不发 901/906 徒劳搜田、
+    // 也不刷 ⚠️；部队回城后 armyListNew 复出不空，下一轮自然补派。
+    var pa = presetArgs(row.preset);
+    var plan = new Battle().plan().preset(pa.index, pa.type).adjust().build();
+    if (!plan.armyListNew.length) {
+      log.debug(
+        'row %d preset #%d(%s#%d) army already out (farming?), skip without searching.',
+        rawIdx,
+        row.preset,
+        pa.type ? '采集' : '战斗',
+        pa.index,
+      );
+      continue;
+    }
+    // 英雄就绪守卫：预设原本配了英雄、但当前可派英雄列表为空——这是 10019 回城推送后
+    // 兵池（UserData）已刷新、而英雄释放推送（HeroController）尚未到达时的竞争窗口。
+    // 若此时发 902，英雄列表将为空（部队无英雄出征），故本轮跳过，等英雄推送到达后的
+    // 兵池刷新唤醒或兜底定时器重试。
+    if (plan.presetHasHeroes && !plan.heroList.length) {
+      log.debug(
+        'row %d preset #%d(%s#%d) heroes not yet released, skip this cycle.',
+        rawIdx,
+        row.preset,
+        pa.type ? '采集' : '战斗',
+        pa.index,
+      );
+      backlogActive = true;
+      continue;
+    }
+    if (net.isSending(CMD_MARCH_WORLD_POINT)) {
+      backlogActive = true;
+      break;
+    }
+
+    // 取田：6 级田没有机械田（不涉机械，直接搜普通田）；其余等级一律优先机械田——先从联盟机械田活表按家族命中、
+    // 按剩余存活时间降序、定点 901 确认仍在才下；☑只下机械田(row.mechOnly) 则机械田没有即跳过本行、绝不回退普通田，未☑则没有再搜普通田（906）。
+    var cand = null;
+    var mechApplicable = row.level < 6;
+    if (mechApplicable) {
+      if (!mechLoaded) {
+        await loadMechRecords();
+        if (!aliveFn()) return;
+      }
+      cand = await pickMechTower(row, taken);
+      if (!aliveFn()) return;
+    }
+    if (!cand && (!mechApplicable || !row.mechOnly)) {
+      if (net.isSending(CMD_WORLD_SEARCH_MONSTER)) {
         backlogActive = true;
-        return;
+        break;
+      }
+      cand = await pickNormalFarm(row, taken);
+      if (!aliveFn()) return;
+    }
+    if (!cand) {
+      log.debug(
+        'no candidate for row %d (family=%d level=%d mechOnly=%s).',
+        rawIdx,
+        row.family,
+        row.level,
+        !!row.mechOnly,
+      );
+      continue;
     }
 
-    // 点占用表（来自 856 权威行军）：把本人全部「非返程/到家」行军的目标点预规为占用（种子进 taken），
-    // Home 场景也能识别自家在田队；pickMechTower/pickNormalFarm 的 taken 过滤自动跳过（本轮派成的点也并入）。
-    var taken = occupiedPointSet(marches);
-    pruneMechLive();
-    var dispatched = 0;
-    for (var t = 0; t < missingPos.length; t++) {
-        if (!aliveFn()) return;
-        if (free <= 0) { log.debug('slot exhausted mid-cycle, remaining=%d', missingPos.length - t); break; }
-        var row = rules[missingPos[t]];
-        var rawIdx = ruleIdx[missingPos[t]];
-
-        // 先算该行预设部队可用否（纯本地读预设 + 剔除已出征，零发包）：armyListNew 为空多半意味着
-        // 这支部队已在外（正是在下田/采集中）——本行其实已被占用，静默 debug 跳过，既不发 901/906 徒劳搜田、
-        // 也不刷 ⚠️；部队回城后 armyListNew 复出不空，下一轮自然补派。
-        var pa = presetArgs(row.preset);
-        var plan = new Battle().plan().preset(pa.index, pa.type).adjust().build();
-        if (!plan.armyListNew.length) {
-            log.debug('row %d preset #%d(%s#%d) army already out (farming?), skip without searching.',
-                rawIdx, row.preset, pa.type ? '采集' : '战斗', pa.index);
-            continue;
-        }
-        // 英雄就绪守卫：预设原本配了英雄、但当前可派英雄列表为空——这是 10019 回城推送后
-        // 兵池（UserData）已刷新、而英雄释放推送（HeroController）尚未到达时的竞争窗口。
-        // 若此时发 902，英雄列表将为空（部队无英雄出征），故本轮跳过，等英雄推送到达后的
-        // 兵池刷新唤醒或兜底定时器重试。
-        if (plan.presetHasHeroes && !plan.heroList.length) {
-            log.debug('row %d preset #%d(%s#%d) heroes not yet released, skip this cycle.',
-                rawIdx, row.preset, pa.type ? '采集' : '战斗', pa.index);
-            backlogActive = true;
-            continue;
-        }
-        if (net.isSending(CMD_MARCH_WORLD_POINT)) { backlogActive = true; break; }
-
-        // 取田：6 级田没有机械田（不涉机械，直接搜普通田）；其余等级一律优先机械田——先从联盟机械田活表按家族命中、
-        // 按剩余存活时间降序、定点 901 确认仍在才下；☑只下机械田(row.mechOnly) 则机械田没有即跳过本行、绝不回退普通田，未☑则没有再搜普通田（906）。
-        var cand = null;
-        var mechApplicable = row.level < 6;
-        if (mechApplicable) {
-            if (!mechLoaded) { await loadMechRecords(); if (!aliveFn()) return; }
-            cand = await pickMechTower(row, taken);
-            if (!aliveFn()) return;
-        }
-        if (!cand && (!mechApplicable || !row.mechOnly)) {
-            if (net.isSending(CMD_WORLD_SEARCH_MONSTER)) { backlogActive = true; break; }
-            cand = await pickNormalFarm(row, taken);
-            if (!aliveFn()) return;
-        }
-        if (!cand) {
-            log.debug('no candidate for row %d (family=%d level=%d mechOnly=%s).', rawIdx, row.family, row.level, !!row.mechOnly);
-            continue;
-        }
-
-        var ck = cand.x + ',' + cand.y;
-        var ret = await sendFarm(cand, cand.marchType, plan);
-        if (!aliveFn()) return;
-        if (ret.ok) {
-            taken.add(ck);
-            rateLimitStreak = 0;   // 成功受理即解除限流退避压力
-            var d = parseData(ret.data) || {};
-            var mid = d.marchInfo && d.marchInfo.marchId != null ? String(d.marchInfo.marchId)
-                : (d.marchId != null ? String(d.marchId) : '');
-            ledger[rawIdx] = [{ marchId: mid, x: cand.x, y: cand.y, marchType: cand.marchType }];
-            persistLedger();
-            free--;
-            dispatched++;
-            log.info('farm march ok. row=%d kind=%d x=%d y=%d marchId=%s', rawIdx, cand.marchType, cand.x, cand.y, mid || '?');
-        } else {
-            var errKey = rejectErrKey(ret.data);
-            if (errKey === ERR_RATE_LIMIT) {
-                // 服务器 902 全局限流（操作过快）：田点本身有效，绝不拉黑。
-                // 中止本轮剩余行（不再向后续行继续加压），按 streak 指数退避重排下轮补派。
-                rateLimitStreak++;
-                log.info('farm march rate-limited, stop burst and back off. row=%d kind=%d x=%d y=%d streak=%d', rawIdx, cand.marchType, cand.x, cand.y, rateLimitStreak);
-                break;
-            }
-            blacklist.add(ck);   // 其余被拒（点被别人抢/已失效等）零成本：拉黑换下一候选
-            // 下田 902 被服务器拒（非限流类）属采集循环里的预期竞争态，非错误 → info
-            log.info('farm march rejected. row=%d kind=%d x=%d y=%d code=%s why=%s', rawIdx, cand.marchType, cand.x, cand.y, ret.code, errKey || '-');
-        }
-        if (t < missingPos.length - 1) await sleep(cfg.marchInterval);
+    var ck = cand.x + ',' + cand.y;
+    var ret = await sendFarm(cand, cand.marchType, plan);
+    if (!aliveFn()) return;
+    if (ret.ok) {
+      taken.add(ck);
+      rateLimitStreak = 0; // 成功受理即解除限流退避压力
+      var d = parseData(ret.data) || {};
+      var mid =
+        d.marchInfo && d.marchInfo.marchId != null
+          ? String(d.marchInfo.marchId)
+          : d.marchId != null
+            ? String(d.marchId)
+            : '';
+      ledger[rawIdx] = [{ marchId: mid, x: cand.x, y: cand.y, marchType: cand.marchType }];
+      persistLedger();
+      free--;
+      dispatched++;
+      log.info(
+        'farm march ok. row=%d kind=%d x=%d y=%d marchId=%s',
+        rawIdx,
+        cand.marchType,
+        cand.x,
+        cand.y,
+        mid || '?',
+      );
+    } else {
+      var errKey = rejectErrKey(ret.data);
+      if (errKey === ERR_RATE_LIMIT) {
+        // 服务器 902 全局限流（操作过快）：田点本身有效，绝不拉黑。
+        // 中止本轮剩余行（不再向后续行继续加压），按 streak 指数退避重排下轮补派。
+        rateLimitStreak++;
+        log.info(
+          'farm march rate-limited, stop burst and back off. row=%d kind=%d x=%d y=%d streak=%d',
+          rawIdx,
+          cand.marchType,
+          cand.x,
+          cand.y,
+          rateLimitStreak,
+        );
+        break;
+      }
+      blacklist.add(ck); // 其余被拒（点被别人抢/已失效等）零成本：拉黑换下一候选
+      // 下田 902 被服务器拒（非限流类）属采集循环里的预期竞争态，非错误 → info
+      log.info(
+        'farm march rejected. row=%d kind=%d x=%d y=%d code=%s why=%s',
+        rawIdx,
+        cand.marchType,
+        cand.x,
+        cand.y,
+        ret.code,
+        errKey || '-',
+      );
     }
-    backlogActive = missingPos.length > dispatched;
+    if (t < missingPos.length - 1) await sleep(cfg.marchInterval);
+  }
+  backlogActive = missingPos.length > dispatched;
 }
 
 // ── 推送入口 ────────────────────────────────────────────────────────
@@ -844,11 +1005,11 @@ async function cyclePass() {
  * 推送唤醒（去抖）：距上次补扫 < pushScanMinGap 则忽略，靠兜底定时收尾。
  */
 function pushWake() {
-    if (!aliveFn()) return;
-    var wall = Date.now();
-    if (wall - lastPushWakeAt < cfg.pushScanMinGap) return;
-    lastPushWakeAt = wall;
-    cycle.kick();
+  if (!aliveFn()) return;
+  var wall = Date.now();
+  if (wall - lastPushWakeAt < cfg.pushScanMinGap) return;
+  lastPushWakeAt = wall;
+  cycle.kick();
 }
 
 /**
@@ -862,10 +1023,12 @@ function pushWake() {
  * @param {object} m 归一化 March
  */
 function onFarmMarchHome(m) {
-    if (!aliveFn()) return;
-    var mt = m && (m.type | 0);
-    if (mt !== KIND_FARM && mt !== KIND_TOWER) return;   // 只认采集行军回城
-    setTimeout(function () { if (aliveFn()) pushWake(); }, 1500);
+  if (!aliveFn()) return;
+  var mt = m && m.type | 0;
+  if (mt !== KIND_FARM && mt !== KIND_TOWER) return; // 只认采集行军回城
+  setTimeout(function () {
+    if (aliveFn()) pushWake();
+  }, 1500);
 }
 
 /** @type {Function|null} march.onHomeReturn 退订句柄（防 resume 重激活重复注册） */
@@ -877,12 +1040,21 @@ var offHomeReturn = null;
  * @param {object} ev net 推送事件（载荷在 ev.data）
  */
 function onAllianceRecordPush(ev) {
-    if (!aliveFn()) return;
-    var d = ev && ev.data; if (!d) return;
-    var arr = Array.isArray(d) ? d : (Array.isArray(d.ret) ? d.ret : [d.specId != null ? d : (d.data || d)]);
-    var hit = false;
-    for (var i = 0; i < arr.length; i++) { try { if (ingestMechRecord(arr[i])) hit = true; } catch (err) { } }
-    if (hit) pushWake();
+  if (!aliveFn()) return;
+  var d = ev && ev.data;
+  if (!d) return;
+  var arr = Array.isArray(d)
+    ? d
+    : Array.isArray(d.ret)
+      ? d.ret
+      : [d.specId != null ? d : d.data || d];
+  var hit = false;
+  for (var i = 0; i < arr.length; i++) {
+    try {
+      if (ingestMechRecord(arr[i])) hit = true;
+    } catch (err) {}
+  }
+  if (hit) pushWake();
 }
 
 // ── 生命周期 ────────────────────────────────────────────────────────
@@ -893,29 +1065,30 @@ function onAllianceRecordPush(ev) {
  * @returns {boolean}
  */
 function install(ctx) {
-    ctxRef = ctx;
-    if (installed) return true;
+  ctxRef = ctx;
+  if (installed) return true;
 
-    var missing = [];
+  var missing = [];
 
-    net = ctx.net;
-    if (!net.install()) {
-        missing.push('pocketcc.net');
-        net = null;
-    }
+  net = ctx.net;
+  if (!net.install()) {
+    missing.push('pocketcc.net');
+    net = null;
+  }
 
-    var dc = game.get('DataCenter');
-    dataCenter = (dc && dc.DATA) || (missing.push('DataCenter'), null);
+  var dc = game.get('DataCenter');
+  dataCenter = (dc && dc.DATA) || (missing.push('DataCenter'), null);
 
-    if (missing.length) {
-        net = null; dataCenter = null;
-        log.warn('install failed. missing=%s', missing.join(';'));
-        return false;
-    }
+  if (missing.length) {
+    net = null;
+    dataCenter = null;
+    log.warn('install failed. missing=%s', missing.join(';'));
+    return false;
+  }
 
-    installed = true;
-    log.info('installed.');
-    return true;
+  installed = true;
+  log.info('installed.');
+  return true;
 }
 
 /**
@@ -924,20 +1097,23 @@ function install(ctx) {
  * @returns {object} MCFG
  */
 function configure(partial) {
-    if (!partial) return MCFG;
-    if (partial.rules != null) MCFG.rules = normalizeRules(partial.rules);
-    if (ledgerLoaded) {
-        var pruned = false;
-        for (var key in ledger) {
-            if (Object.prototype.hasOwnProperty.call(ledger, key) && !(+key >= 0 && +key < MCFG.rules.length)) {
-                delete ledger[key];
-                pruned = true;
-            }
-        }
-        if (pruned) persistLedger();
+  if (!partial) return MCFG;
+  if (partial.rules != null) MCFG.rules = normalizeRules(partial.rules);
+  if (ledgerLoaded) {
+    var pruned = false;
+    for (var key in ledger) {
+      if (
+        Object.prototype.hasOwnProperty.call(ledger, key) &&
+        !(+key >= 0 && +key < MCFG.rules.length)
+      ) {
+        delete ledger[key];
+        pruned = true;
+      }
     }
-    if (installed && aliveFn()) cycle.kick();
-    return MCFG;
+    if (pruned) persistLedger();
+  }
+  if (installed && aliveFn()) cycle.kick();
+  return MCFG;
 }
 
 /**
@@ -946,23 +1122,23 @@ function configure(partial) {
  * @param {object} ctx reactor 上下文
  */
 function run(ctx) {
-    ctxRef = ctx;
-    backlogActive = false;
-    rateLimitStreak = 0;
-    lastPushWakeAt = 0;
-    ledgerLoaded = false;
-    ledgerLoading = false;
-    ledger = {};
-    blacklist = new Set();
-    mechLive = new Map();
-    mechLoaded = false;
-    mechLoading = null;
-    ctx.on.push(PUSH_ALLIANCE_RECORD, onAllianceRecordPush);
-    if (offHomeReturn) offHomeReturn();   // 先退再挂，防 resume 重激活重复注册
-    offHomeReturn = march.onHomeReturn(onFarmMarchHome);
-    log.info('started (rules=%d rows).', MCFG.rules.length);
-    loadMechRecords();
-    cycle.kick();
+  ctxRef = ctx;
+  backlogActive = false;
+  rateLimitStreak = 0;
+  lastPushWakeAt = 0;
+  ledgerLoaded = false;
+  ledgerLoading = false;
+  ledger = {};
+  blacklist = new Set();
+  mechLive = new Map();
+  mechLoaded = false;
+  mechLoading = null;
+  ctx.on.push(PUSH_ALLIANCE_RECORD, onAllianceRecordPush);
+  if (offHomeReturn) offHomeReturn(); // 先退再挂，防 resume 重激活重复注册
+  offHomeReturn = march.onHomeReturn(onFarmMarchHome);
+  log.info('started (rules=%d rows).', MCFG.rules.length);
+  loadMechRecords();
+  cycle.kick();
 }
 
 /**
@@ -971,45 +1147,58 @@ function run(ctx) {
  * @type {object}
  */
 var RULE_OPTS = {
-    familyOptions: [
-        { value: 7, label: '金矿' },
-        { value: 5, label: '粮食' },
-        { value: 1, label: '石油' },
-        { value: 16, label: '雷神' },
-    ],
-    levelOptions: (function () {
-        var a = [];
-        for (var lv = 1; lv <= 6; lv++) a.push({ value: lv, label: lv + ' 级' });
-        return a;
-    })(),
-    presetOptions: (function () {
-        var a = [];
-        for (var n = 1; n <= 8; n++) a.push({ value: n, label: '战斗' + n });
-        for (var g = 9; g <= 16; g++) a.push({ value: g, label: '采集' + (g - 8) });
-        return a;
-    })(),
+  familyOptions: [
+    { value: 7, label: '金矿' },
+    { value: 5, label: '粮食' },
+    { value: 1, label: '石油' },
+    { value: 16, label: '雷神' },
+  ],
+  levelOptions: (function () {
+    var a = [];
+    for (var lv = 1; lv <= 6; lv++) a.push({ value: lv, label: lv + ' 级' });
+    return a;
+  })(),
+  presetOptions: (function () {
+    var a = [];
+    for (var n = 1; n <= 8; n++) a.push({ value: n, label: '战斗' + n });
+    for (var g = 9; g <= 16; g++) a.push({ value: g, label: '采集' + (g - 8) });
+    return a;
+  })(),
 };
 
 reactor.register({
-    id: 'autoFarm',
-    label: '自动下田',
-    storageKey: 'pocketcc.feat.autoFarm',
-    symbols: ['dataCenter', 'tableManager', 'localManager', 'tableName', 'presetMarch', 'heroController', 'mechaController', 'formationAdv', 'marchStorage'],
-    scenes: ['Home', 'NWorldMap'],
-    offInCombat: true,
-    defaults: { enabled: false, rules: [] },
-    fields: [
-        {
-            key: 'rules', label: '下田规则', type: 'farmrules', section: '规则',
-            familyOptions: RULE_OPTS.familyOptions,
-            levelOptions: RULE_OPTS.levelOptions,
-            presetOptions: RULE_OPTS.presetOptions,
-        },
-    ],
-    toModuleCfg: function (c) {
-        return { rules: normalizeRules(c.rules) };
+  id: 'autoFarm',
+  label: '自动下田',
+  storageKey: 'pocketcc.feat.autoFarm',
+  symbols: [
+    'dataCenter',
+    'tableManager',
+    'localManager',
+    'tableName',
+    'presetMarch',
+    'heroController',
+    'mechaController',
+    'formationAdv',
+    'marchStorage',
+  ],
+  scenes: ['Home', 'NWorldMap'],
+  offInCombat: true,
+  defaults: { enabled: false, rules: [] },
+  fields: [
+    {
+      key: 'rules',
+      label: '下田规则',
+      type: 'farmrules',
+      section: '规则',
+      familyOptions: RULE_OPTS.familyOptions,
+      levelOptions: RULE_OPTS.levelOptions,
+      presetOptions: RULE_OPTS.presetOptions,
     },
-    install: install,
-    configure: configure,
-    run: run,
+  ],
+  toModuleCfg: function (c) {
+    return { rules: normalizeRules(c.rules) };
+  },
+  install: install,
+  configure: configure,
+  run: run,
 });

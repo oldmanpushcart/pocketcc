@@ -18,11 +18,24 @@ import { NS } from './core/constants.js';
     // fire-and-forget：不回发 MAIN（net-collect 不消费回执）；无接收器/后台错误只记一行，绝不阻断收发。
     if (msg.op === 'dashcam-flush') {
       try {
-        chrome.runtime.sendMessage({
-          type: 'dashcam-flush', url: msg.url, session: msg.session, ndjson: msg.ndjson,
-          uid: msg.uid, startTs: msg.startTs, note: msg.note, done: msg.done,
-        }, () => { void chrome.runtime.lastError; });
-      } catch (e) { console.warn('[pocketcc bridge] dashcam-flush send failed', e); }
+        chrome.runtime.sendMessage(
+          {
+            type: 'dashcam-flush',
+            url: msg.url,
+            session: msg.session,
+            ndjson: msg.ndjson,
+            uid: msg.uid,
+            startTs: msg.startTs,
+            note: msg.note,
+            done: msg.done,
+          },
+          () => {
+            void chrome.runtime.lastError;
+          },
+        );
+      } catch (e) {
+        console.warn('[pocketcc bridge] dashcam-flush send failed', e);
+      }
       return;
     }
 
