@@ -26,9 +26,9 @@
  *
  * 被拒当日拉黑（blockedToday，落 storage.data，跨日清空）+ 6474/6476 节流：对齐「自动化撞限额刷屏」既有教训。
  *
- * 只打能赢（threatOn，默认开）：每轮刷列表先用未过滤 raw 预设编成算我方出征战力（999 GET_SINGLE_QUEUE_BATTLEPOWER 的
+ * 只打能赢（threatOn，默认开）：每轮刷列表先用未过滤 raw 满编编成算我方出征战力（999 GET_SINGLE_QUEUE_BATTLEPOWER 的
  *   battlePowerVal）+ heroList 多数投票定我方军种；战力不每轮重查——队列战力变化极少，缓存 POWER_CACHE_EVERY 次卡车列表
- *   刷新才主动更新一次（换预设/面板「刷新我方战力」按钮/冷启动强制重查）；列表侧按 grade（escort_truck.grade，面板「拦截品级」勾选）+ 战力粗筛
+ *   刷新（或超 POWER_MAX_AGE_MS、编成指纹变化）才主动更新一次，面板「刷新我方战力」按钮 force 强制重查；列表侧按 grade（escort_truck.grade，面板「拦截品级」勾选）+ 战力粗筛
  *   （敌 > 我×1.5 直接淘汰，省 927）预筛；对存活候选用 scoutReportId 走 927 拉战报，取 defender.players[0].heroList 的 hero
  *   army_type（101陆/201海/301空，仅 hero 表有此字段，army 表无）多数投票定对方军种；再按克制（陆克空/空克海/海克陆）与
  *   战力比（我克敌≤1.5 / 同军种≤1.2 / 我被克≤0.8）assess：打得起才入队，打不过进本轮 skipRound（内存态、重随机即清，与
@@ -64,6 +64,11 @@ const CMD_REFRESH_PUSH = 21551;
 const CMD_POWER = 999;
 /** @type {number} 我方战力缓存档：刷这么多次卡车列表才重查一次 999（队列战力变化极少，省重复往返） */
 const POWER_CACHE_EVERY = 10;
+/**
+ * @type {number} 战力缓存的时间兜底：powerAge 只由真实列表往返推进，配额耗尽/时刻表长睡会冻结它
+ *   → 退化为“永不自然过期”。加一条绝对时限与列表计数取或（陈旧方向安全：低估我方战力只会多跳过不会误打）。
+ */
+const POWER_MAX_AGE_MS = 6 * 3600000;
 /** @type {number} MAIL_GETREPORT：按 reportId 拉战报（旧 send 链路，reportStr 解析后含 battle.defender） */
 const CMD_REPORT = 927;
 
@@ -190,7 +195,7 @@ var threatOn = true;
 /** @type {Set<string>} 本轮判定为“打不过”而跳过的 truckId（内存态，每轮新列表清空；与服务器拒绝拉黑 blocked 分离） */
 var skipRound = new Set();
 /**
- * 我方出征侧本轮快照（probeSelf 每轮 doScan 算一次）：{power:battlePowerVal, branch:101/201/301, raw:未过滤编成, ready:探到战力, tried:本轮已尝试探测}
+ * 我方出征侧本轮快照（probeSelf 每轮 doScan 算一次）：{power:battlePowerVal（可能来自缓存）, branch:101/201/301, raw:未过滤编成, ready:探到战力, tried:本轮已尝试探测}
  * @type {{power:number, branch:number, raw:object|null, ready:boolean, tried:boolean}}
  */
 var my = { power: 0, branch: 0, raw: null, ready: false, tried: false };
@@ -200,6 +205,12 @@ var prevPreset = -1;
 var powerCache = 0;
 /** 距上次 999 真实查询已刷新的卡车列表次数，达 POWER_CACHE_EVERY 归零并重查 */
 var powerAge = 0;
+/** 缓存所属的编成指纹（presetIdx+英雄+总兵量+阵型）：与本轮 raw 不等即作废，换预设/游戏内改队都能接住 */
+var powerFp = '';
+/** 上次真实 999 查询成功的时刻（本地 ms），供 POWER_MAX_AGE_MS 时间兜底 */
+var powerAt = 0;
+/** 999 探测在途旗：面板按钮与循环探测可能同 cmd 并发（sendLegacy 会吃 isSending 回落），后来者直接复用缓存不再发 */
+var powerProbing = false;
 
 /**
  * 每日配额权威态（由 6486 / 21551 push / 6476 应答共同维护）：
@@ -325,8 +336,7 @@ function configure(partial) {
     }
     rankMap = new Map();
     for (var i = 0; i < order.length; i++) rankMap.set(order[i], i);
-    if (presetIdx !== prevPreset) { powerCache = 0; powerAge = 0; }   // 换攻击预设：缓存战力属于旧编成，作废下轮重查
-    if (threatOn && (presetIdx !== prevPreset || !my.ready)) cycle.kick();   // 换攻击预设/尚未探到：唤醒一轮刷新展示快照（配额耗尽也能探）
+    if (threatOn && (presetIdx !== prevPreset || !my.ready)) cycle.kick();   // 换攻击预设/尚未探到：唤醒一轮刷新展示快照（配额耗尽也能探；缓存作废靠 powerFp 比对，不在此处做）
     prevPreset = presetIdx;
     bus.emit('ui.refresh');   // 阈值/开关变更后即时重算面板“可打上限”展示
 }
@@ -591,33 +601,68 @@ async function enemyBranch(scoutId) {
 }
 
 /**
+ * 编成指纹：标识“999 缓存属于哪一份兵力”。走 preset 号 + 英雄集 + 总兵量 + 阵型，
+ * 游戏内直接改该预设的英雄/兵种也会变（比只用 presetIdx 作判据更准），成本仅本地字符串拼接。
+ * @param {object} raw Battle 未过滤满编构建
+ * @returns {string}
+ */
+function troopFingerprint(raw) {
+    var n = 0;
+    var list = raw.armyListNew || [];
+    for (var i = 0; i < list.length; i++) n += (list[i].armyNum | 0);
+    return presetIdx + '|' + (raw.heroList || []).join(',') + '|' + n + '|' + (raw.formationV2 | 0);
+}
+
+/**
  * 每轮刷列表前算一次我方出征侧：raw 满编编成→ 999 战力（battlePowerVal）+ heroList 多数投票定我方军种。
- * 战力走缓存（powerCache）：powerAge 达 POWER_CACHE_EVERY 或 force 才真实发 999，编成/军种仍每轮本地重算。
- * 失败（无兵/无应答）时 ready=false，上层退回不做战力/克制过滤的降级模式。落 my，永不 reject。
- * @param {boolean} [force] true=无视缓存强制重查 999（面板按钮/换预设后的首次探测）
+ * 战力走缓存（powerCache，按编成指纹 powerFp 认同源）：powerAge 达 POWER_CACHE_EVERY、超 POWER_MAX_AGE_MS、指纹变了或 force
+ * 才真实发 999，编成/军种仍每轮本地重算。查询失败不覆盖旧值（宁用略旧战力也别把“只打能赢”打成 fail-open）。
+ * 失败（无兵/无有效缓存）时 ready=false，上层退回不做战力/克制过滤的降级模式。落 my，永不 reject。
+ * @param {boolean} [force] true=无视缓存强制重查 999（面板「刷新我方战力」按钮）
  * @returns {Promise<void>}
  */
 async function probeSelf(force) {
-    my.ready = false; my.branch = 0; my.raw = null; my.tried = false;
+    my.ready = false; my.power = 0; my.branch = 0; my.raw = null; my.tried = false;
     var raw = new Battle().plan().preset(presetIdx).build();
-    if (!raw || !raw.armyListNew.length) { my.power = 0; my.tried = true; log.debug('preset %d raw empty, threat probe skipped.', presetIdx); bus.emit('ui.refresh'); return; }
+    if (!raw || !raw.armyListNew.length) { my.tried = true; log.debug('preset %d raw empty, threat probe skipped.', presetIdx); bus.emit('ui.refresh'); return; }
     my.raw = raw;
     my.branch = majorityBranch(raw.heroList);
-    if (force || powerCache <= 0 || powerAge >= POWER_CACHE_EVERY) {
-        var atPreset = presetIdx;   // 在飞期间面板换预设则丢弃本次应答，避免旧编成的战力回写缓存
-        powerAge = 0;
-        var r = await sendLegacy(CMD_POWER, { armyListNew: raw.armyListNew, heroList: raw.heroList, formation: 0, formationV2: raw.formationV2 | 0 });
-        var pow = (r && r.ok && r.data && typeof r.data === 'object') ? (Number(r.data.battlePowerVal) || 0) : 0;
-        if (presetIdx === atPreset) {
-            powerCache = pow;
-            if (powerCache > 0) log.debug('999 power refreshed: %d (cache every %d lists).', powerCache, POWER_CACHE_EVERY);
+    var fp = troopFingerprint(raw);
+    var same = fp === powerFp && powerCache > 0;              // 缓存是否属于本轮编成（换预设/游戏内改队会变）
+    var stale = !same || powerAge >= POWER_CACHE_EVERY || (Date.now() - powerAt) > POWER_MAX_AGE_MS;
+    if ((force || stale) && !powerProbing) {
+        var atPreset = presetIdx;
+        powerAge = 0; powerProbing = true;
+        var pow = -1, code = -1;
+        try {
+            var r = await sendLegacy(CMD_POWER, { armyListNew: raw.armyListNew, heroList: raw.heroList, formation: 0, formationV2: raw.formationV2 | 0 });
+            code = r && r.code;
+            pow = (r && r.ok && r.data && typeof r.data === 'object') ? (Number(r.data.battlePowerVal) || 0) : -1;
+        } finally { powerProbing = false; }
+        if (atPreset !== presetIdx) {
+            // 在飞期间面板换了预设：本次应答与刚算的 raw/branch 均属旧编成，整块作废（buildTroop 需回落到按新预设实时重算），
+            // 不把判定留在“旧队出兵 + 无战力过滤”的窗口里；configure 已 kick，cycle pending 会用新预设补探一轮
+            my.raw = null; my.branch = 0; my.tried = true;
+            log.debug('999 answer dropped: preset %d -> %d, re-probe next round.', atPreset, presetIdx);
+            bus.emit('ui.refresh'); return;
         }
+        if (pow >= 0) {
+            powerCache = pow; powerFp = fp; powerAt = Date.now();
+            log.debug('999 power refreshed: %d (cache every %d lists).', powerCache, POWER_CACHE_EVERY);
+        } else {
+            // 没拿到新值（在途碰撞/异常/真拒）：同编成旧战力保留直接用（不把“只打能赢”打成 fail-open），旧编成缓存则下面当作未探到；
+            // 年龄拉到只差一次列表往返：重试挂在“真实列表往返”上，避免持续被拒时999每轮刷屏（同本 feat 的撞限额教训）
+            powerAge = POWER_CACHE_EVERY - 1;
+            if (same) log.debug('999 refresh failed(code=%d), keep cached power=%d.', code, powerCache);
+            else log.debug('999 power unavailable(code=%d), degrade: skip power/counter filter.', code);
+        }
+    } else if (force || stale) {
+        log.debug('999 probe already in flight, reuse power=%d.', powerCache);   // 面板按钮撞上循环在途：不另开一枪，直接用现有缓存刷新展示
     }
-    my.power = powerCache;
+    my.power = (powerFp === fp && powerCache > 0) ? powerCache : 0;   // 只认同源战力：旧编成的缓存对新编成一律当作未探到
     my.ready = my.power > 0;
     my.tried = true;
-    if (!my.ready) log.debug('999 power unavailable, degrade: skip power/counter filter.');
-    else log.debug('self probe: power=%d branch=%d.', my.power, my.branch);
+    if (my.ready) log.debug('self probe: power=%d branch=%d.', my.power, my.branch);
     bus.emit('ui.refresh');   // 刷新面板“我方战力/军种 + 三军种可打上限”展示
 }
 
@@ -1038,7 +1083,7 @@ function install(ctx) {
  */
 function run(ctx) {
     ctxRef = ctx;
-    listOpened = false; lastReloadAt = 0; powerCache = 0; powerAge = 0;   // 冷启动作废战力缓存，首轮必真实探一次
+    listOpened = false; lastReloadAt = 0; powerCache = 0; powerAge = 0; powerFp = ''; powerAt = 0; powerProbing = false;   // 冷启动作废战力缓存，首轮必真实探一次
     ctx.on.push(CMD_REFRESH_PUSH, onRefreshPush);   // 订阅须挂 run：pause 会统一摘 triggers，install 只跑一次不重挂
     log.info('started.');
     Promise.all([loadBlocked(), loadStats()]).then(function () { if (aliveFn()) cycle.kick(); });
