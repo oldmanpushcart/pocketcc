@@ -624,6 +624,13 @@ function mountSortList(box) {
   if (!Array.isArray(c[fd.key])) c[fd.key] = Array.isArray(f.defaults[fd.key]) ? f.defaults[fd.key].slice() : [];
   else if (c[fd.key] === f.defaults[fd.key]) c[fd.key] = c[fd.key].slice();
   const arr = c[fd.key];
+  // 可选全量源 fd.all（数组或 fn(cfg)）：把全量里当前 order 数组缺失的项追加到末尾——
+  //   解决「功能新增了可排序项、但老用户存档的 order 不含它 → 面板这一行不显示」。
+  //   未声明 fd.all 的 sortlist（遗迹奖励/卡车）保持原样，向后兼容。
+  if (fd.all != null) {
+    const full = (typeof fd.all === 'function') ? fd.all(c) : fd.all;
+    if (Array.isArray(full)) { for (let ai = 0; ai < full.length; ai++) { if (arr.indexOf(full[ai]) < 0) arr.push(full[ai]); } }
+  }
   if (fd.checkable && (!Array.isArray(c[fd.offKey]) || c[fd.offKey] === f.defaults[fd.offKey])) {
     c[fd.offKey] = Array.isArray(f.defaults[fd.offKey]) ? f.defaults[fd.offKey].slice() : [];
   }

@@ -1,13 +1,14 @@
 /**
  * 自动防御（reactor 说明书形态，属「战斗设置」）
  *
- * 收到服务器 push 10167 PUSH_ATTACK_ARMIES「你被攻击了」→ 用一份共享「条件快照」驱动三条可独立开关、
+ * 收到服务器 push 10167 PUSH_ATTACK_ARMIES「你被攻击了」→ 用一份共享「条件快照」驱动四条可独立开关、
  *   顺序可调的防御策略，按序尝试、首个「闸门过且执行成功」即停，否则顺延下一条：
  *     · 策略 1 自动开盾（910）：背包取最短时长盾档、恒 isPurchase:0；可选战力闸门（我战力≥敌则跳过开盾但顺延），
  *       敌战力取不到按「无限高·最悲观」照常开盾；拒因 war_fever_003/kingdom_077 以 910 status=3 为最终裁决。
  *     · 策略 2 绕后攻击：迁城到敌主城 8 单位内最近合法可落点（911），迁城落地确认后以预设部队 902 打敌主城。
  *       不做行军加速——贴近即压缩行军；8 单位内无落点则放弃顺延。
  *     · 策略 3 迁城逃避：以我方主城为锚、背向敌取离敌更远的合法落点（911）迁走；迁成后镜头跟随到新落地点。
+ *     · 策略 4 原地反击：不迁城，直接以预设部队 902 从当前主城攻打敌主城（闸门同绕后攻击：需全部部队回城 + 有空闲队列）。
  *
  * 坐标/战力来源（报文实证）：敌主城坐标与战力一次 630 PLAYER_INFO 按 uid 直查（应答顶层 x/y=主城、power/level），
  *   与视口/场景无关——Home 城内也能查。（曾试过 10007 MARCH_INFO push：它是视口绑定推送，视野在 Home 时不下发；
@@ -56,14 +57,14 @@ const MARCH_FALLBACK = { attackPlayer: 13, tm: 150, master: 170, ava: 110, teamL
 const MARCH_TYPE_ATTACK_PLAYER = 13;
 
 /**
- * 三条策略的 id ↔ 中文名（multiopts 的 option.value 为数字，order 亦存数字，两处交叉引用同一套 id）。
- * @type {{shield:number, attack:number, relocate:number}}
+ * 四条策略的 id ↔ 中文名（multiopts 的 option.value 为数字，order 亦存数字，两处交叉引用同一套 id）。
+ * @type {{shield:number, attack:number, relocate:number, counter:number}}
  */
-const SID = { shield: 1, attack: 2, relocate: 3 };
+const SID = { shield: 1, attack: 2, relocate: 3, counter: 4 };
 /** @type {Object<number,string>} 数字 id → 中文标签（面板 sortlist resolve + 决策日志 decision 名） */
-const STRATEGY_LABEL = { 1: '自动开盾', 2: '绕后攻击', 3: '迁城逃避' };
+const STRATEGY_LABEL = { 1: '自动开盾', 2: '绕后攻击', 3: '迁城逃避', 4: '原地反击' };
 /** 全量策略 id（order 规整时的补全基准） */
-const ALL_SIDS = [SID.shield, SID.attack, SID.relocate];
+const ALL_SIDS = [SID.shield, SID.attack, SID.relocate, SID.counter];
 
 /** @type {number} 已触发防御的 marchId 内存上限（FIFO 淘汰，防长会话无界增长） */
 const SEEN_MAX = 200;
@@ -256,7 +257,7 @@ function attackFailText(ret) {
   return rejectText(ret);
 }
 
-// ─────────────────────── 三条策略（各返回 {result, reason, stop}；stop=true 即命中收手） ───────────────────────
+// ─────────────────────── 四条策略（各返回 {result, reason, stop}；stop=true 即命中收手） ───────────────────────
 
 /**
  * 策略 1：自动开盾（910）。闸门：背包有盾 & 未生效 & 非狂热 & 游戏未判不可开；可选战力闸门。
@@ -338,16 +339,38 @@ async function strategyRelocate(snap) {
   return { result: 'fail', reason: '迁城' + mv.why, stop: false };
 }
 
+/**
+ * 策略 4：原地反击（不迁城，直接以预设部队 902 从当前主城攻打敌主城）。
+ * 闸门与绕后攻击一致（全部部队回城 + 有空闲队列 + 敌坐标已知 + 预设非空），差别仅在「不迁城、原位发攻」。
+ * @param {object} snap 共享快照
+ * @returns {Promise<{result:string, reason:string, stop:boolean}>}
+ */
+async function strategyCounter(snap) {
+  if (snap.marchesOut !== 0) return { result: 'skip', reason: '有 ' + snap.marchesOut + ' 支部队在外，需全部回城', stop: false };
+  if (snap.freeSlots < 1) return { result: 'fail', reason: '无空闲行军队列', stop: false };
+  var ex = snap.enemy.x, ey = snap.enemy.y;
+  if (ex == null || ey == null) return { result: 'fail', reason: '敌主城坐标未知(630 未回坐标)', stop: false };
+  var marchData = new Battle().plan().preset(cfg.preset).adjust().build();
+  if (!marchData.armyListNew.length) return { result: 'fail', reason: '预设 #' + cfg.preset + ' 无兵可派', stop: false };
+  var marchType = marchApi.resolve(MARCH_TYPE_ATTACK_PLAYER, MARCH_FALLBACK);
+  if (net.isSending(CMD_MARCH_WORLD_POINT)) return { result: 'fail', reason: '902 在途，稍后重试', stop: false };
+  var ret = await march.attack({ marchType: marchType, target: { x: ex, y: ey }, data: marchData });
+  if (!aliveFn()) return { result: 'fail', reason: '攻击发包后流程已暂停', stop: false };
+  if (ret.ok) return { result: 'hit', reason: '原地反击已发：自(' + snap.me.x + ',' + snap.me.y + ')→敌(' + ex + ',' + ey + ') marchType=' + marchType, stop: true };
+  return { result: 'fail', reason: '攻击被拒 ' + attackFailText(ret), stop: false };
+}
+
 /** 按 sid 分派到具体策略 */
 function runStrategy(sid, snap) {
   if (sid === SID.shield) return strategyShield(snap);
   if (sid === SID.attack) return strategyAttack(snap);
   if (sid === SID.relocate) return strategyRelocate(snap);
+  if (sid === SID.counter) return strategyCounter(snap);
   return Promise.resolve({ result: 'fail', reason: '未知策略 id=' + sid, stop: false });
 }
 
 /**
- * 规整生效顺序：以 cfg.order 为准，补进缺失的策略 id、剔除非法 id（面板未拖拽时也保证 1..3 全覆盖）。
+ * 规整生效顺序：以 cfg.order 为准，补进缺失的策略 id、剔除非法 id（面板未拖拽时也保证 1..4 全覆盖）。
  * @returns {number[]} 去重后的完整顺序
  */
 function normalizeOrder() {
@@ -462,7 +485,7 @@ function run(ctx) {
 
 /** multiopts / sortlist 的策略选项（数值 id ↔ 中文名） */
 const STRATEGY_OPTIONS = ALL_SIDS.map(function (id) { return { value: id, label: STRATEGY_LABEL[id] }; });
-/** 绕后攻击预设部队下拉（1..8） */
+/** 绕后攻击 / 原地反击 预设部队下拉（1..8） */
 const PRESET_OPTIONS = [];
 for (var pi = 1; pi <= PRESET_MAX; pi++) PRESET_OPTIONS.push({ value: pi, label: '预设 ' + pi });
 /** sortlist 行标签解析：id → [{id,name}] */
@@ -489,9 +512,9 @@ reactor.register({
   },
   fields: [
     { key: 'strategies', type: 'multiopts', label: '启用策略', options: STRATEGY_OPTIONS, hint: '勾选被攻击时要自动执行的防御策略（可多选）；与总开关叠加' },
-    { key: 'order', type: 'sortlist', label: '生效顺序', resolve: strategyResolve, hint: '拖动调整策略尝试顺序；执行按此序依次尝试，首个成功即停（仅对已勾选策略生效）' },
+    { key: 'order', type: 'sortlist', label: '生效顺序', resolve: strategyResolve, all: function () { return ALL_SIDS.slice(); }, hint: '拖动调整策略尝试顺序；执行按此序依次尝试，首个成功即停（仅对已勾选策略生效）' },
     { key: 'skipPowerCheck', type: 'checkbox', label: '跳过战力判断', hint: '仅影响开盾：勾选=无论敌我战力一律尝试开盾；不勾选=我战力≥敌战力则跳过开盾（顺延下一条）' },
-    { key: 'preset', type: 'select', label: '绕后攻击部队', options: PRESET_OPTIONS, hint: '绕后攻击使用的预设部队号' },
+    { key: 'preset', type: 'select', label: '攻击部队预设', options: PRESET_OPTIONS, hint: '绕后攻击 / 原地反击 使用的预设部队号' },
   ],
   // 面板值经 toModuleCfg 透传给 configure（漏传则运行时恒空）
   toModuleCfg: function (c) {
