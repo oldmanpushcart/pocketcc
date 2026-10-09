@@ -60,7 +60,7 @@ const indexes = new Map();
 function sanitize(raw, max) {
   const s = String(raw == null ? '' : raw)
     .replace(/\.\./g, '_')
-    .replace(/[^\w.\-]+/g, (m) => (m.includes(' ') || m === '_' ? '_' : ''))
+    .replace(/[^\w.-]+/g, (m) => (m.includes(' ') || m === '_' ? '_' : ''))
     .replace(/_+/g, '_').replace(/^[._]+|[._]+$/g, '');
   return (s || '').slice(0, max || 120);
 }

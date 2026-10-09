@@ -297,20 +297,20 @@ async function claimSite(site) {
     for (var k = 0; k < cand.length && slots > 0; k++) {
         if (!aliveFn()) break;
         var c = cand[k];
-        var r = await sendRaw(CMD_CLAIM, { wonderId: wonderId, index: c.idx });
+        var resp = await sendRaw(CMD_CLAIM, { wonderId: wonderId, index: c.idx });
         if (!aliveFn()) break;
-        if (r.ok) {
+        if (resp.ok) {
             // 应答带更新后的 have（服务端为准），合并进镜像
-            var nh = (r.payload && Array.isArray(r.payload.have)) ? r.payload.have.map(Number) : null;
+            var nh = (resp.payload && Array.isArray(resp.payload.have)) ? resp.payload.have.map(Number) : null;
             if (nh) { have = nh; mirror[wonderId].have = have; }
             else { have.push(c.idx); mirror[wonderId].have = have; }
             slots = chooseNum - have.length;
             log.info('relic claim ok. site=%d(%s);idx=%d;reward=%d;item=%d(%s);have=%d/%d', wonderId, site.name || '', c.idx, c.rewardId, c.itemId, c.name || '?', have.length, chooseNum);
             bus.emit('ui.refresh');
-        } else if (r.code === CODE_NOT_SENT) {
+        } else if (resp.code === CODE_NOT_SENT) {
             break;   // 在途/超时：本轮此遗迹收手，留给下次唤醒/轮询
         } else {
-            log.info('relic claim rejected, blacklist today. site=%d;idx=%d;code=%d;data=%s', wonderId, c.idx, r.code, safeStringify(r.data));
+            log.info('relic claim rejected, blacklist today. site=%d;idx=%d;code=%d;data=%s', wonderId, c.idx, resp.code, safeStringify(resp.data));
             await rejectToday(wonderId);
             return;
         }

@@ -1,0 +1,19 @@
+# EditorConfig: https://editorconfig.org
+# git 侧 core.autocrlf=true（入库 LF / 工作区 CRLF），此处统一声明 LF 与仓库规范化一致
+root = true
+
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+trim_trailing_whitespace = true
+indent_style = space
+indent_size = 2
+
+# 扩展侧源码（core/feats/bridge/background）现存风格为 4 空格缩进
+[extension/**.js]
+indent_size = 4
+
+# 探针脚本与构建脚本维持 2 空格
+[{tools/**.js,esbuild.config.mjs,dashcam/**.js}]
+indent_size = 2

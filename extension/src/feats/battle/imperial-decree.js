@@ -41,7 +41,7 @@ const CMD_MARCH_WORLD_POINT = 902;
 
 /** @type {RegExp} 旨令格式 X:Y #N（方括号无要求，带了也照收）：兼容全角括号/全角冒号；
  *  X/Y 1~4 位、N 1~2 位；靠 "#数字" 作为必选锚点降低误命率 */
-const DECREE_RE = /[\[(\uFF08]?\s*(\d{1,4})\s*[:\uFF1A]\s*(\d{1,4})\s*[\])\uFF09]?\s*#\s*(\d{1,2})/;
+const DECREE_RE = /[[(\uFF08]?\s*(\d{1,4})\s*[:\uFF1A]\s*(\d{1,4})\s*[\])\uFF09]?\s*#\s*(\d{1,2})/;
 
 /** @type {number} 预设部队号上限（与快捷战斗 1..8 对齐） */
 const PRESET_MAX = 8;

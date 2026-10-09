@@ -69,7 +69,6 @@ const PUSH_DEBOUNCE_MS = 3000;
  */
 export class MiningEngine {
     #env;
-    #ctx = null;
 
     // 队列 / 调度
     #queue = [];
@@ -109,7 +108,6 @@ export class MiningEngine {
      * @param {*} ctx reactor 运行上下文
      */
     start(ctx) {
-        this.#ctx = ctx;
         this.#reset();
         ctx.on.push(PUSH_MINE_CAVE_CHANGE, this.#pushHandler);
         log.info('mining started.');
