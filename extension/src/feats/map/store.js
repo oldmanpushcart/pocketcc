@@ -19,8 +19,7 @@
  */
 import { createLog } from '../../core/log.js';
 import { storage } from '../../core/storage.js';
-import { SERVER } from './map-meta.js';
-import { cellToIndex } from './coord.js';
+import { SERVER, cellToIndex } from '../../core/map.js';
 
 /** @type {ReturnType<createLog>} 模块日志器（tag=MAPSTORE） */
 const log = createLog('MAPSTORE');

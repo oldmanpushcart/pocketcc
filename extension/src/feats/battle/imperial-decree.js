@@ -31,7 +31,7 @@ import { getUid } from '../../core/player.js';
 import { reactor } from '../../core/reactor.js';
 import { Battle } from '../../core/battle.js';
 import { march } from '../../core/march.js';
-import { CMD_GET_WORLD_INFO, SERVER } from '../map/map-meta.js';
+import { map, SERVER } from '../../core/map.js';
 
 /** @type {ReturnType<createLog>} 模块日志器（tag=IMPERIAL_DECREE） */
 const log = createLog('IMPERIAL_DECREE');
@@ -384,30 +384,12 @@ async function dispatch(chat, order) {
  */
 async function probeTarget(x, y) {
   var u = (dataCenter && dataCenter.UserData) || {};
-  var body = {
-    x: x,
-    y: y,
-    k: u.ServerId | 0,
-    rid: 0,
-    width: 20,
-    height: 20,
-    marchInfo: false,
-    viewLevel: 1,
-  };
-  var ret;
-  try {
-    ret = await net.send(CMD_GET_WORLD_INFO, body);
-  } catch (err) {
-    log.warn('901 probe send error. x=%d;y=%d', x, y, err);
+  var r = await map.fetchWindow(net, x, y, { k: u.ServerId | 0 });
+  if (!r.ok) {
+    log.warn('901 probe not ok. x=%d;y=%d;code=%s', x, y, r.code);
     return undefined;
   }
-  if (!ret || !ret.ok) {
-    log.warn('901 probe not ok. x=%d;y=%d;code=%s', x, y, ret && ret.code);
-    return undefined;
-  }
-  var data = safeParse(ret.data) || {};
-  var list = Array.isArray(data.pointList) ? data.pointList : [];
-  for (var p of list) {
+  for (var p of r.points) {
     if (p && (p.x | 0) === x && (p.y | 0) === y) return p;
   }
   return null;

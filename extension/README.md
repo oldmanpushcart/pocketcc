@@ -99,8 +99,9 @@ extension/
    │  ├─ mode.js            战斗模式布尔 + mode 门控（不持久化，默认日常）
    │  ├─ hotkeys.js         全局快捷键注册表（单监听统一分派：打字让位 / 修饰键放行 / 场景门控）
    │  ├─ drain.js           通用消费循环（produce→queue→drain 的 drain 段）
-   │  ├─ ui.js              Shadow DOM 浮动图标 + 左 TAB 右卡片面板
-   │  ├─ icon-svg.js        双态图标 SVG（日常冷蓝 / 战斗红热）
+   │  ├─ ui/                表现层（拆自旧 ui.js）：Shadow DOM 浮动图标 + 左 TAB 右卡片面板
+   │  │                     index.js 编排 mountUI；panel/fields/widgets/wire 渲染与事件；
+   │  │                     consts/dom/icon-pos/panel-css/icon-svg 为零依赖叶子原语
    │  ├─ log.js             统一日志 [POCKETCC://MODULE]
    │  └─ constants.js       两 world postMessage 协议命名空间
    └─ feats/                功能模块（目录层级对齐面板类别，均向 reactor 注册说明书）

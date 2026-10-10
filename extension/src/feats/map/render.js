@@ -12,15 +12,8 @@
  */
 import { createLog } from '../../core/log.js';
 import { nav } from '../../core/game-api.js';
-import { cellToGame } from './coord.js';
-import {
-  SERVER,
-  SCAN_GRID,
-  classifyPoint,
-  playerPass,
-  GRID_STYLE,
-  CELL_ASPECT,
-} from './map-meta.js';
+import { SERVER, CELL_ASPECT, cellToGame } from '../../core/map.js';
+import { SCAN_GRID, classifyPoint, playerPass, GRID_STYLE } from './map-meta.js';
 
 /** @type {ReturnType<createLog>} 模块日志器（tag=MAPRENDER） */
 const log = createLog('MAPRENDER');

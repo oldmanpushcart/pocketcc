@@ -16,7 +16,8 @@
  */
 import { createLog } from '../../core/log.js';
 import { MapView } from './render.js';
-import { FILTER_TREE, SUB_MAP, CITY_POINT_TYPE, shieldText, fmtLargeNum } from './map-meta.js';
+import { CITY_POINT_TYPE, shieldText, fmtLargeNum } from '../../core/map.js';
+import { FILTER_TREE, SUB_MAP } from './map-meta.js';
 
 /** @type {ReturnType<createLog>} 模块日志器（tag=MAPOVERLAY） */
 const log = createLog('MAPOVERLAY');

@@ -1,72 +1,12 @@
 /**
- * 全局地图「常量真相」：把散落在反编译源码与报文实录里的硬事实集中到一处，
- * 供 coord / terrain / scanner / render / overlay 复用。本模块是纯常量层——
- * 不触游戏符号、不依赖运行时，唯一导出给上层的「口径单一来源」。
+ * 全局地图 feat 私货层：筛选树/图例配色（FILTER_TREE 家族）、扫描网格调参（SCAN_GRID）、
+ * 渲染样式、面板默认值、归属过滤谓词（classifyPoint/playerPass）——只服务「全局地图」这个 feat。
+ * 跨 feat 复用的地图真相（瓦片/尺寸/pointType 字典/坐标转换/901 查询）已下沉 core/map.js，本处只引用。
  *
- * 数值来源（均有实证，见 references/游戏逆向/地图加载机制实录分析.md、地图模块分析报告.md）：
- *   - 瓦片 224×162、半宽高 112/81、缩放档 [1,2,4,8,16]：core/NWorldMapCommon；
- *   - 本服 cols=408/rows=952、type6/202 含 subMap：allMapInfos；
- *   - 单窗 94×99 被服务器完整受理 59 次：20260930T001240 报文实录；
- *   - pointType 分布与字段骨架：同批 pointList 实录。
+ * SCAN_GRID 数值来源（实证，见 references/游戏逆向/全局地图知识点归档.md）：
+ *   单窗 94×99 被服务器完整受理 59 次：20260930T001240 报文实录；回点窗 x±58.4/y±39.2。
  */
-
-/** @type {{W:number,H:number,HALF_W:number,HALF_H:number}} 等距瓦片像素常量（单块菱形地块） */
-export const TILE = { W: 224, H: 162, HALF_W: 112, HALF_H: 81 };
-
-/**
- * cell 宽高比（正交俯视下还原游戏等距地皮的真实足迹）：
- *   游戏 cellToDisplay 实证——相邻 cellX 水平间距 TILE.W=224，相邻 cellY 垂直间距 TILE.H/2=81，
- *   故一个 cell 的真实占地 = 224×81（宽高比 ≈2.765）。若按正方形画 cell，本服 568×952 会错显成
- *   竖长条；按此比例则全图足迹 = 568·224 : 952·81 ≈ 1.65:1（横 landscape），与游戏一致。
- * @type {number}
- */
-export const CELL_ASPECT = TILE.W / (TILE.H / 2);
-
-/** @type {number[]} 游戏离散缩放档（zoom=1/level），自建渲染沿用语义做聚合分档 */
-export const ZOOM_LEVELS = [1, 2, 4, 8, 16];
-
-/**
- * 视口「高度/层级」档（901 请求体 viewLevel，实证 = NWorldMapComponent.getViewPortZoomLevel()）。
- * 由相机 zoomRatio 的倒数 t=1/zoomRatio 落在 ZOOM_LEVELS=[1,2,4,8,16] 的区间决定，共 0~4 五档：
- *   · 决定「视野 range」：range.w/h 每级额外 +6·2^level 格（源码 r=1<<zoomLevel），越高单请求覆盖格数越多；
- *   · 决定「返回点 LOD」：level 0 最近=全量点(nomalLayer)，level≥1 逐级拉高=服务器按层级聚合/精简(simpleLayer/zoom3)，
- *     故同一块面积在高层级下返回的点数通常更少更稀疏——本器把它做成可调项，便于对比数据量级。
- * @type {Array<{v:number,label:string}>}
- */
-export const VIEW_LEVELS = [
-  { v: 0, label: '0 最近·全量' },
-  { v: 1, label: '1 近' },
-  { v: 2, label: '2 中' },
-  { v: 3, label: '3 远' },
-  { v: 4, label: '4 最远·聚合' },
-];
-
-/**
- * 本服世界尺寸（cell 口径）。mapType=1/201 同尺寸。
- * game 坐标上界：x = cols·2（奇偶行错排，横向双倍编号）、y = rows。
- * @type {{cols:number, rows:number, gameXMax:number, gameYMax:number}}
- */
-export const SERVER = { cols: 408, rows: 952, gameXMax: 408 * 2, gameYMax: 952 };
-
-/**
- * 全图按 NWorldMapType 的尺寸表（v1 仅本服 world 参与扫图，其余标注供后续扩展）。
- * @type {Object<string,{name:string, rows:number, cols:number, subMap?:Array<{id:number, rect:[number,number,number,number]}>}>}
- */
-export const MAP_INFOS = {
-  1: { name: 'world', rows: 952, cols: 408 },
-  201: { name: 'world_NTerrain', rows: 952, cols: 408 },
-  6: {
-    name: 'world_withBorder',
-    rows: 952,
-    cols: 568,
-    // 边境图横向更宽：subMap 0=本服主体 [0,0,408,952]，1=右侧边境带 [408,0,160,952]
-    subMap: [
-      { id: 0, rect: [0, 0, 408, 952] },
-      { id: 1, rect: [408, 0, 160, 952] },
-    ],
-  },
-  202: { name: 'world_NTerrain_border', rows: 952, cols: 568 },
-};
+import { SERVER, CITY_POINT_TYPE } from '../../core/map.js';
 
 /**
  * 扫描网格（定标固定格）：按 901 回点窗实证直接标定，格尺寸≈窗口尺寸，数据严格落在自己格内。
@@ -80,171 +20,6 @@ export const MAP_INFOS = {
  * @type {{nx:number, ny:number, gw:number, gh:number, offY:number}}
  */
 export const SCAN_GRID = { nx: 7, ny: 13, gw: SERVER.gameXMax / 7, gh: 76, offY: 0 };
-
-/** @type {number} GET_WORLD_INFO 命令号（视口拉取，客户端自报 x/y/width/height） */
-export const CMD_GET_WORLD_INFO = 901;
-
-/**
- * pointType 实体类型字典（权威源 = NWorldMapEntityType，定义于 extracted/subpack2/NWorldMapCommon.js，
- * 即 901 pointList[].pointType 的取值枚举；已用实测点反解校对：1 City/2 Monster/4 Resource/53 遗迹/132 荣誉殿 均吻合）。
- * 每项：type=服务器 pointType 值 / label=中文名 / en=枚举名 / color=渲染色 / group=筛选分组键 / field=主子对象名。
- * group 用于面板筛选与浮层图例聚合，见 POINT_GROUPS。
- * @type {Array<{type:number, label:string, en:string, color:string, group:string, field:string}>}
- */
-export const POINT_TYPES = [
-  // 城池
-  { type: 1, label: '玩家城池', en: 'City', color: '#ff5b5b', group: 'city', field: 'p' },
-  // 资源类
-  { type: 4, label: '资源田', en: 'Resource', color: '#4ad07a', group: 'resource', field: 'r' },
-  {
-    type: 24,
-    label: '资源塔',
-    en: 'ResourceTower',
-    color: '#35c07a',
-    group: 'resource',
-    field: 'b',
-  },
-  {
-    type: 38,
-    label: '要塞资源',
-    en: 'FORTRESS_RESOURCE',
-    color: '#5b8bff',
-    group: 'alliance',
-    field: 'r',
-  },
-  {
-    type: 40,
-    label: '联盟矿',
-    en: 'Alliance_Mine',
-    color: '#6ac25b',
-    group: 'alliance',
-    field: 'b',
-  },
-  {
-    type: 82,
-    label: '帝国仓库',
-    en: 'WorldEmpireStorehouse',
-    color: '#4ac0ff',
-    group: 'alliance',
-    field: 't',
-  },
-  // 野怪 / BOSS（含雷达怪）
-  { type: 2, label: '野怪', en: 'Monster', color: '#8a93a6', group: 'monster', field: 'm' },
-  { type: 12, label: '集结BOSS', en: 'RALLY_BOSS', color: '#b06cff', group: 'monster', field: 'm' },
-  {
-    type: 73,
-    label: '雷达怪',
-    en: 'RADAR_MONSTER',
-    color: '#c07bd0',
-    group: 'monster',
-    field: 'm',
-  },
-  {
-    type: 74,
-    label: '雷达集结怪',
-    en: 'RADAR_RALLY_MONSTER',
-    color: '#d08be0',
-    group: 'monster',
-    field: 'm',
-  },
-  {
-    type: 77,
-    label: '雷达增援',
-    en: 'RADAR_ASSITANCE',
-    color: '#a06bb0',
-    group: 'monster',
-    field: 'm',
-  },
-  {
-    type: 86,
-    label: '雷神混合BOSS',
-    en: 'THOR_BUFF_RALLY_MIX_BOSS',
-    color: '#ff7bd0',
-    group: 'monster',
-    field: 'b',
-  },
-  // 联盟建筑 / BOSS
-  { type: 13, label: '联盟领地', en: 'Territory', color: '#5b9bff', group: 'alliance', field: 'b' },
-  {
-    type: 17,
-    label: '联盟BOSS',
-    en: 'ALLIANCE_BOSS',
-    color: '#ff4a4a',
-    group: 'alliance',
-    field: 'm',
-  },
-  {
-    type: 116,
-    label: '巨兽展台',
-    en: 'ALLIANCE_BEHEMOTH_SHOW_STAND',
-    color: '#d0a06a',
-    group: 'alliance',
-    field: 'm',
-  },
-  // 活动 / 特殊
-  { type: 0, label: '空白', en: 'Blank', color: '#6a6a6a', group: 'activity', field: '' },
-  { type: 10, label: '王座', en: 'Throne', color: '#ffd24a', group: 'activity', field: 't' },
-  { type: 15, label: '世界遗迹', en: 'WorldSite', color: '#d0d06a', group: 'activity', field: 't' },
-  {
-    type: 53,
-    label: '次元遗迹',
-    en: 'NWORLD_RAISE_RELIC',
-    color: '#7ad0c0',
-    group: 'activity',
-    field: 'm',
-  },
-  { type: 18, label: '难民营', en: 'RefugeeCamp', color: '#c0a0ff', group: 'activity', field: 'm' },
-  {
-    type: 104,
-    label: '机甲小游戏',
-    en: 'MECHA_MINIGAME',
-    color: '#7ac0d0',
-    group: 'activity',
-    field: 'm',
-  },
-  { type: 132, label: '荣誉殿', en: 'HONOR_HALL', color: '#e0c060', group: 'activity', field: 'm' },
-  {
-    type: 259,
-    label: '芯片祝福空投',
-    en: 'CHIP_BLESSING_ITEMDROP_BUILD',
-    color: '#ff9a6a',
-    group: 'activity',
-    field: 'm',
-  },
-  // 跨服夺宝（夺宝奇兵）——归活动类
-  {
-    type: 133,
-    label: '夺宝奇兵',
-    en: 'CROSS_TREASURE',
-    color: '#ff5bd0',
-    group: 'activity',
-    field: '',
-  },
-  {
-    type: 157,
-    label: '夺宝飞船',
-    en: 'CROSS_TREASURE_SHIP',
-    color: '#ff2fb0',
-    group: 'activity',
-    field: 'm',
-  },
-];
-
-/**
- * 筛选分组：由 FILTER_TREE 派生的单一真相（见下方 CAT_MAP 后的 POINT_GROUPS 定义），
- * 不再手写以免与图例分类漂移；'other' 兑底所有未收录进 POINT_TYPES 的 pointType。
- * @type {Object<string,{label:string, types:number[]}>}
- */
-
-/**
- * pointType → 字典项索引（渲染/存档按类型取色取 label，O(1)）。
- * @type {Object<number, {label:string, color:string, group:string, field:string}>}
- */
-export const POINT_TYPE_MAP = (() => {
-  const m = {};
-  for (const p of POINT_TYPES) m[p.type] = p;
-  return m;
-})();
 
 /**
  * ===== 筛选树（菜单结构与配色的「唯一真相」）=====
@@ -440,9 +215,6 @@ export function classifyPoint(e, ctx) {
   return null;
 }
 
-/** @type {number} 玩家城池 pointType（护盾归属实体，见 POINT_TYPES） */
-export const CITY_POINT_TYPE = 1;
-
 /**
  * 玩家筛选判据（渲染层与业务层共用单一真相）：一组「仅作用于玩家城池(pointType 1)」的条件。
  *   pf = { shieldMode:'off'|'has'|'none', shieldMs:number|null, levelMin:number|null }
@@ -471,56 +243,6 @@ export function playerPass(e, pf, now) {
   }
   if (levelMin != null && !(e.level >= levelMin)) return false;
   return true;
-}
-
-/**
- * 护盾剩余可读串（列表行/悬浮用）：无盾或已过期→「无」；否则「剩余X小时X分钟」（不足 1 小时省小时段）。
- * @param {?number} shieldSec Unix 秒到期时间戳（null/0=无）
- * @param {number} [now] 当前时刻 ms
- * @returns {string}
- */
-export function shieldText(shieldSec, now) {
-  const rem = shieldSec ? shieldSec * 1000 - (now || Date.now()) : -1;
-  if (rem <= 0) return '无';
-  const totalMin = Math.floor(rem / 60000);
-  const h = Math.floor(totalMin / 60),
-    m = totalMin % 60;
-  return (h > 0 ? '剩余' + h + '小时' : '') + (m > 0 || h === 0 ? m + '分钟' : '');
-}
-
-/** @type {string[]} 大数字单位阶梯（与游戏 NumUtils.getLargeNumberShow 完全一致）：K,M,B,T 后接 aa..zz，每档 ×1000，共 30 档 */
-const LARGE_UNITS = (() => {
-  const u = ['K', 'M', 'B', 'T'];
-  for (let c = 97; c <= 122; c++) u.push(String.fromCharCode(c) + String.fromCharCode(c));
-  return u;
-})();
-
-/**
- * 大数字可读串（战力/兵力等）：逐字复刻游戏 NumUtils.getLargeNumberShow，与游戏内显示一字不差。
- *   单位阶梯 K(1e3)/M(1e6)/B(1e9)/T(1e12)/aa(1e15)…zz；约 3 位有效数字；默认向下截断（非四舍五入）。
- *   <1000 原样数字串；≤0 → "0"；null/空 → ""。round=true 才四舍五入（一般不传）。
- * @param {number|string} v 数值
- * @param {boolean} [round] 是否四舍五入（游戏默认 false=截断）
- * @param {boolean} [plain] <1000 时是否取整（游戏默认 false）
- * @returns {string}
- */
-export function fmtLargeNum(v, round, plain) {
-  if (v == null || v === '') return '';
-  v = +v;
-  if (!(v > 0)) return '0';
-  const len = LARGE_UNITS.length;
-  for (let n = 0; n < len; n++) {
-    let r = 1e3;
-    for (let s = n + 1; s < len; s++) r *= 1e3; // r = 1000^(len-n)，从大阈值往下扫，首个 v>=r 即当档
-    if (v >= r) {
-      const l = v > 100 * r ? 0 : v > 10 * r ? 1 : 2;
-      const unit = LARGE_UNITS[len - n - 1];
-      if (round) return (v / r).toFixed(l) + unit;
-      const c = Math.pow(10, l);
-      return Math.floor(v / (r / c)) / c + unit;
-    }
-  }
-  return plain ? v.toFixed() : String(v);
 }
 
 /**

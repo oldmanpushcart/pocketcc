@@ -1,0 +1,197 @@
+// mountUI 编排：浮动图标 + 半透明面板（Shadow DOM 与游戏样式双向隔离）的挂载入口。
+// 从 core/ui.js 迁出。CSS 见 panel-css，坐标原语见 icon-pos，面板骨架见 panel，事件绑定见 wire。
+// 卡片来自 core/menu.js：组卡片（主闸门 + 展开子项 checkbox）/ 功能卡片（启用 checkbox + 可展开详细字段）。
+// 换号（UID 变化）由 player.js 走整页 reload，无需 in-place 刷新；仅登录卡死降级补载时监听 player.configs-reloaded 回写控件。
+import { storage } from '../storage.js';
+import { bus } from '../bus.js';
+import { getUid } from '../player.js';
+import { iconSVG } from './icon-svg.js';
+import { isCombat, setCombatMode } from '../mode.js';
+import { ICON_SIZE, PANEL_W, POS_KEY } from './consts.js';
+import { PANEL_CSS } from './panel-css.js';
+import { clampPos, rescuePos, readIconPos } from './icon-pos.js';
+import { buildPanelHTML, refreshFieldVisibility, refreshTexts, syncControls } from './panel.js';
+import { wirePanel } from './wire.js';
+
+/**
+ * 挂载浮动图标与面板（Shadow DOM 隔离）。幂等：已挂载则直接返回。
+ * @returns {Promise<void>}
+ */
+export async function mountUI() {
+  if (document.getElementById('pocketcc-host')) return;
+
+  const host = document.createElement('div');
+  host.id = 'pocketcc-host';
+  host.style.cssText = 'all:initial;';
+  const root = host.attachShadow({ mode: 'open' });
+
+  const style = document.createElement('style');
+  style.textContent = PANEL_CSS;
+  root.appendChild(style);
+
+  const icon = document.createElement('div');
+  icon.className = 'pc-icon';
+  icon.title = '口袋控制中心';
+
+  /** 图标随战斗态切换：换 SVG（冷/热）+ 切 .combat 类（光晕节奏/配色、外发光跟随）。 */
+  function renderIcon() {
+    icon.classList.toggle('combat', isCombat());
+    icon.innerHTML = '<span class="pc-halo"></span>' + iconSVG(isCombat(), ICON_SIZE);
+  }
+  renderIcon();
+  bus.on('mode.change', renderIcon);
+
+  const panel = document.createElement('div');
+  panel.className = 'pc-panel';
+  panel.hidden = true;
+  panel.innerHTML = buildPanelHTML();
+
+  root.appendChild(icon);
+  root.appendChild(panel);
+  document.body.appendChild(host);
+
+  wirePanel(panel);
+  refreshFieldVisibility(panel); // 条件字段（fd.showIf）初始态：按当前配置把不该出现的行收起
+
+  // 战斗模式复选框随模式广播同步（含下面的 F8 热键切换，避免图标翻了但面板未跟着变）
+  bus.on('mode.change', () => {
+    const cb = panel.querySelector('#pc-combat');
+    if (cb) cb.checked = isCombat();
+  });
+  // F8 热键：战斗 / 日常 切换（setCombatMode 广播 mode.change → 图标/复选框/reactor 门控重算自动跟进）。
+  // 必须用 window 捕获阶段（capture:true）：游戏自己也会处理 keydown 并在冒泡阶段 stopPropagation，
+  // 导致面板收起（焦点在画布）时挂 document 冒泡监听收不到；捕获阶段先于游戏处理且不受焦点/stopPropagation 影响。
+  window.addEventListener(
+    'keydown',
+    (e) => {
+      if (e.key === 'F8') {
+        e.preventDefault();
+        setCombatMode(!isCombat());
+      }
+    },
+    true,
+  );
+
+  // 功能侧主动推面板刷新（如联盟集结今日计数 +1）；emit 同步，open 时才扫 DOM
+  bus.on('ui.refresh', function () {
+    if (!panel.hidden) refreshTexts(panel);
+  });
+
+  let pos = await readIconPos();
+  applyPos(pos);
+
+  // 视口变化（窗口缩放/F11 全屏等）：右上锚定——保持与视口上/右两边的距离，
+  // 宽度变化时按旧右距重算 x（图标跟着右缘走），y 不变；完全出屏时 rescuePos 兜底
+  let resizeTimer = null;
+  let lastVW = window.innerWidth;
+  window.addEventListener('resize', () => {
+    if (resizeTimer) clearTimeout(resizeTimer);
+    resizeTimer = setTimeout(() => {
+      resizeTimer = null;
+      const nvw = window.innerWidth;
+      const rightGap = lastVW - (pos.x + ICON_SIZE); // 图标右缘到旧视口右边距（拖拽 clampPos 保证 ≥0）
+      pos = clampPos({ x: nvw - rightGap - ICON_SIZE, y: pos.y }); // 新视口过窄时贴左/右缘兜底
+      lastVW = nvw;
+      applyPos(rescuePos(pos));
+      if (!panel.hidden) placePanel();
+      storage.set(POS_KEY, pos); // x 语义已随视口平移，同步存档
+    }, 120);
+  });
+
+  // 控件回写只在降级补载后发生（player.configs-reloaded，见 registry）；换号已改为整页 reload，无需 in-place 回写。
+  bus.on('player.configs-reloaded', (e) => {
+    if (e && e.uid && getUid() && e.uid !== getUid()) return; // UID 已变，丢弃过期的补载
+    syncControls(panel);
+  });
+
+  /**
+   * 写图标坐标
+   * @param {{x:number, y:number}} p 位置
+   */
+  function applyPos(p) {
+    icon.style.left = `${p.x}px`;
+    icon.style.top = `${p.y}px`;
+  }
+
+  /**
+   * 把面板摆到图标上方（放不下则往下），先量高再定位
+   */
+  function placePanel() {
+    const rect = icon.getBoundingClientRect();
+    let left = rect.right - PANEL_W;
+    if (left < 8) left = 8;
+    if (left + PANEL_W > window.innerWidth - 8) left = window.innerWidth - PANEL_W - 8;
+    panel.style.left = `${left}px`;
+    panel.style.visibility = 'hidden';
+    panel.hidden = false;
+    const panelH = panel.offsetHeight;
+    panel.hidden = true;
+    panel.style.visibility = '';
+    let top = rect.top - panelH - 12;
+    if (top < 8) top = rect.bottom + 12;
+    // 图标靠下 + 面板较高时上/下两方案都可能探出视口：再钉一次，保证整块可见（CSS 已把面板高限到 100vh-16）
+    top = Math.max(8, Math.min(top, window.innerHeight - panelH - 8));
+    panel.style.top = `${top}px`;
+  }
+
+  /** 展开面板并刷一次只读字段 */
+  function openPanel() {
+    placePanel();
+    panel.hidden = false;
+    refreshTexts(panel);
+  }
+  /** 收起面板 */
+  function closePanel() {
+    panel.hidden = true;
+  }
+
+  let dragging = false;
+  let moved = false;
+  let startX = 0;
+  let startY = 0;
+  let originX = 0;
+  let originY = 0;
+
+  icon.addEventListener('pointerdown', (e) => {
+    dragging = true;
+    moved = false;
+    startX = e.clientX;
+    startY = e.clientY;
+    originX = pos.x;
+    originY = pos.y;
+    icon.setPointerCapture(e.pointerId);
+  });
+
+  icon.addEventListener('pointermove', (e) => {
+    if (!dragging) return;
+    const dx = e.clientX - startX;
+    const dy = e.clientY - startY;
+    if (!moved && Math.hypot(dx, dy) < 5) return;
+    moved = true;
+    pos = clampPos({ x: originX + dx, y: originY + dy });
+    applyPos(pos);
+    if (!panel.hidden) placePanel();
+  });
+
+  icon.addEventListener('pointerup', (e) => {
+    if (!dragging) return;
+    dragging = false;
+    icon.releasePointerCapture(e.pointerId);
+    if (moved) {
+      storage.set(POS_KEY, pos);
+    } else {
+      panel.hidden ? openPanel() : closePanel();
+    }
+  });
+
+  // 点击外部收起：shadow DOM 内事件在 document 上 target 被重定向为 host
+  document.addEventListener(
+    'click',
+    (e) => {
+      if (panel.hidden) return;
+      if (e.target === host || host.contains(e.target)) return;
+      closePanel();
+    },
+    true,
+  );
+}

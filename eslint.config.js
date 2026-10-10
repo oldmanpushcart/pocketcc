@@ -1,6 +1,7 @@
 import js from '@eslint/js';
 import globals from 'globals';
 import prettier from 'eslint-config-prettier/flat';
+import sonarjs from 'eslint-plugin-sonarjs';
 
 export default [
   {
@@ -58,6 +59,18 @@ export default [
       ecmaVersion: 2024,
       sourceType: 'module',
       globals: { ...globals.node },
+    },
+  },
+
+  // ---- sonarjs 精选：只取对单人项目信噪比高的几条，覆盖重复/坏味道（不取整套 recommended：长函数密集易刷屏）----
+  {
+    files: ['extension/**/*.js', 'dashcam/**/*.js'],
+    plugins: { sonarjs },
+    rules: {
+      'sonarjs/no-identical-functions': 'warn', // 函数体相同→该抽公共
+      'sonarjs/no-duplicate-string': ['warn', { threshold: 4 }], // 同字面量≥4次→该提取常量
+      'sonarjs/prefer-immediate-return': 'warn',
+      // no-inverted-boolean-check 不启用：!(a<b)↔a>=b 属纯风格偏好，非质量问题，开启会刷 ~24 条噪声淹没信号
     },
   },
 

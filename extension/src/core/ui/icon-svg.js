@@ -1,7 +1,7 @@
-// 双态浮动图标 SVG（同一轮廓，冷/热两套配色）。返回完整 <svg> 字符串，由 ui.js 塞进 .pc-icon。
+// 双态浮动图标 SVG（同一轮廓，冷/热两套配色）。返回完整 <svg> 字符串，由 ui/index.js 的 mountUI 塞进 .pc-icon。
 //   日常：四条弧 + CC 全蓝，冷色 body。
 //   战斗：body 转热、内圈警戒环、火焰渐变弧、余烬 CC。
-// 光晕呼吸动画不在这里，在 ui.js 的 .pc-halo（SVG 背后的独立层）。
+// 光晕呼吸动画不在这里：元素 <span class="pc-halo"> 见 ui/index.js，其样式见 ui/panel-css.js 的 .pc-halo。
 
 /** @type {string} SVG 文字字体栈（与面板 CSS 一致） */
 const FONT = "system-ui,-apple-system,'Segoe UI',sans-serif";

@@ -11,7 +11,8 @@
  */
 import { createLog } from '../../core/log.js';
 import { worldMap } from '../../core/game-api.js';
-import { TERRAIN_COLORS, SERVER } from './map-meta.js';
+import { SERVER } from '../../core/map.js';
+import { TERRAIN_COLORS } from './map-meta.js';
 
 /** @type {ReturnType<createLog>} 模块日志器（tag=TERRAIN） */
 const log = createLog('TERRAIN');

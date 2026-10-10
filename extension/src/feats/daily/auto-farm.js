@@ -44,7 +44,7 @@ import { storage } from '../../core/storage.js';
 import { Battle } from '../../core/battle.js';
 import { march } from '../../core/march.js';
 import { createCycle } from '../../core/cycle.js';
-import { CMD_GET_WORLD_INFO } from '../map/map-meta.js';
+import { map } from '../../core/map.js';
 
 /** @type {ReturnType<createLog>} 模块日志器（tag=AUTO-FARM） */
 const log = createLog('AUTO-FARM');
@@ -586,22 +586,11 @@ function towerLifespanSec(family, level) {
  */
 function probeMechTower(x, y, wantFamily) {
   var u = userData();
-  var body = {
-    x: x,
-    y: y,
-    k: u.ServerId | 0,
-    rid: 0,
-    width: 20,
-    height: 20,
-    marchInfo: false,
-    viewLevel: 1,
-  };
-  return net
-    .send(CMD_GET_WORLD_INFO, body)
-    .then(function (ret) {
-      if (!ret || !ret.ok) return { status: 'error' };
-      var d = parseData(ret.data) || {};
-      var list = Array.isArray(d.pointList) ? d.pointList : [];
+  return map
+    .fetchWindow(net, x, y, { k: u.ServerId | 0 })
+    .then(function (r) {
+      if (!r.ok) return { status: 'error' };
+      var list = r.points;
       var myAid = gameData.myAid();
       for (var i = 0; i < list.length; i++) {
         var p = list[i];

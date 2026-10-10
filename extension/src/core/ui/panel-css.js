@@ -1,0 +1,274 @@
+// Shadow DOM 内样式：与游戏样式双向隔离，图标/面板/卡片/TAB 全部规则。
+// 从 core/ui.js 原样迁出，唯一依赖是 ICON_SIZE / PANEL_W 两个尺寸常量插值。
+import { ICON_SIZE, PANEL_W } from './consts.js';
+
+/** @type {string} */
+export const PANEL_CSS = `
+    .pc-icon{position:fixed;width:${ICON_SIZE}px;height:${ICON_SIZE}px;border-radius:50%;
+      background:transparent;border:none;padding:0;
+      display:flex;align-items:center;justify-content:center;
+      cursor:pointer;user-select:none;touch-action:none;
+      z-index:2147483647;}
+    .pc-icon svg{position:relative;z-index:1;
+      filter:drop-shadow(0 0 10px rgba(47,155,255,.7)) drop-shadow(0 2px 5px rgba(0,0,0,.55));transition:filter .15s;}
+    .pc-icon:hover svg{filter:drop-shadow(0 0 13px rgba(47,155,255,.9)) drop-shadow(0 2px 5px rgba(0,0,0,.55)) brightness(1.2);}
+    .pc-icon.combat svg{filter:drop-shadow(0 0 12px rgba(255,59,48,.95)) drop-shadow(0 2px 5px rgba(0,0,0,.55));}
+    /* 光晕层必须明显大于图标：亮带半径要落在不透明圆盘（约 21px）之外，否则整圈被圆盘盖住。 */
+    .pc-halo{position:absolute;left:50%;top:50%;width:190%;height:190%;
+      transform:translate(-50%,-50%);border-radius:50%;pointer-events:none;z-index:0;
+      background:radial-gradient(circle closest-side,
+        rgba(110,190,255,0) 0 50%, rgba(110,190,255,.7) 70%,
+        rgba(140,205,255,1) 82%, rgba(110,190,255,0) 100%);
+      filter:blur(6px);
+      animation:pc-breathe-daily 3.4s ease-out infinite;}
+    .pc-icon.combat .pc-halo{
+      background:radial-gradient(circle closest-side,
+        rgba(255,95,65,0) 0 50%, rgba(255,95,65,.75) 70%,
+        rgba(255,130,100,1) 82%, rgba(255,95,65,0) 100%);
+      filter:blur(7px);
+      animation:pc-breathe-combat 1.1s ease-out infinite;}
+    @keyframes pc-breathe-daily{
+      0%{transform:translate(-50%,-50%) scale(.9);opacity:0;}
+      18%{opacity:1;}
+      100%{transform:translate(-50%,-50%) scale(1.3);opacity:0;}}
+    @keyframes pc-breathe-combat{
+      0%{transform:translate(-50%,-50%) scale(.9);opacity:0;}
+      14%{opacity:1;}
+      100%{transform:translate(-50%,-50%) scale(1.38);opacity:0;}}
+    .pc-mode{display:flex;align-items:center;justify-content:space-between;gap:8px;
+      margin:2px 0 10px;padding:8px 10px;border-radius:8px;cursor:pointer;
+      border:1px solid rgba(255,120,90,.35);background:rgba(255,90,60,.10);}
+    .pc-mode span{font-weight:600;font-size:13px;color:#ffd0b8;}
+    .pc-mode input{width:16px;height:16px;cursor:pointer;}
+    .pc-panel{position:fixed;width:${PANEL_W}px;border-radius:12px;
+      background:rgba(18,22,30,.6);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);
+      border:1px solid rgba(255,255,255,.16);color:#e8eef7;
+      font:13px/1.6 system-ui,-apple-system,"Segoe UI","Microsoft YaHei UI","Microsoft YaHei","PingFang SC","Noto Sans SC",sans-serif;
+      -webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility;
+      box-shadow:0 10px 36px rgba(0,0,0,.55);padding:14px;z-index:2147483646;box-sizing:border-box;
+      /* 卡片多/视口矮时面板自身可滞：fixed 元素不会撑出页面滚动条，不封高度则底部内容直接不可达（placePanel 会跟着把 top 钉回可见区） */
+      max-height:calc(100vh - 16px);overflow-y:auto;scrollbar-gutter:stable;}
+    .pc-panel[hidden]{display:none;}
+    .pc-panel h3{margin:0 0 8px;font-size:14px;font-weight:600;letter-spacing:.5px;color:#cfe8ff;}
+    .pc-sub{margin-left:8px;font-size:10px;font-weight:400;opacity:.6;letter-spacing:1.5px;}
+    /* 左右两栏：左 TAB，右内容。 */
+    .pc-tabs{display:flex;gap:12px;align-items:stretch;}
+    .pc-tabbar{flex:0 0 88px;display:flex;flex-direction:column;gap:4px;
+      border-right:1px solid rgba(255,255,255,.12);padding-right:10px;}
+    .pc-tab{appearance:none;text-align:left;border:none;background:transparent;color:#e8eef7;
+      font:inherit;font-size:13px;padding:8px 10px;border-radius:8px;cursor:pointer;
+      transition:background .15s,color .15s;}
+    .pc-tab:hover{background:rgba(255,255,255,.08);}
+    .pc-tab.active{background:rgba(70,140,255,.24);color:#dbeaff;font-weight:600;}
+    .pc-tabpanes{flex:1;min-width:0;}
+    .pc-pane{max-height:56vh;overflow-y:auto;scrollbar-gutter:stable;padding-right:2px;}
+    /* 固定滞动条槽宽度 + 细滑动条：避免内容超高时滞动条出现/消失导致面板横向跳动 */
+    .pc-pane::-webkit-scrollbar{width:8px;}
+    .pc-pane::-webkit-scrollbar-track{background:transparent;}
+    .pc-pane::-webkit-scrollbar-thumb{background:rgba(255,255,255,.18);border-radius:4px;}
+    .pc-pane[hidden]{display:none;}
+    /* 卡片：组 / 功能共用外壳。 */
+    .pc-sec{border:1px solid rgba(255,255,255,.12);border-radius:8px;margin:0 0 8px;overflow:hidden;}
+    .pc-sec:last-child{margin-bottom:0;}
+    .pc-sec-head{display:flex;align-items:center;gap:8px;padding:8px 10px;cursor:pointer;
+      background:rgba(255,255,255,.04);transition:background .15s;}
+    .pc-sec-head:hover{background:rgba(255,255,255,.09);}
+    .pc-chev{font-size:10px;opacity:.65;transition:transform .15s;}
+    .pc-chev.invisible{visibility:hidden;}
+    .pc-sec.open > .pc-sec-head .pc-chev{transform:rotate(90deg);}
+    .pc-sec-title{flex:1;font-weight:600;font-size:13px;}
+    .pc-en,.pc-gen{width:16px;height:16px;cursor:pointer;flex:0 0 auto;}
+    .pc-sec-body{padding:4px 12px 10px;}
+    .pc-sec-body[hidden]{display:none;}
+    /* 组内子项声明了 showFields 时展开的详细字段：左缩进一级、与子项开关行视觉从属，去掉重复上边框 */
+    .pc-subfields{margin:0 0 6px 18px;padding:0 0 2px;border:0;}
+    .pc-subfields .pc-fsec{margin-top:2px;padding-top:2px;border-top:0;}
+    /* 字段行 / 子项行 */
+    .pc-row{display:flex;align-items:center;justify-content:space-between;gap:12px;margin:7px 0;}
+    .pc-row > span{flex:1;min-width:0;}
+    .pc-row input[type=number]{width:96px;flex:0 0 auto;padding:3px 6px;border-radius:6px;box-sizing:border-box;
+      border:1px solid rgba(255,255,255,.14);background:rgba(255,255,255,.06);color:#e8eef7;font:inherit;
+      font-variant-numeric:tabular-nums;}
+    .pc-row input[type=number]:focus{outline:none;border-color:rgba(120,180,255,.55);background:rgba(120,180,255,.10);}
+    .pc-row input[type=text].pc-fstr{width:140px;flex:0 0 auto;padding:3px 6px;border-radius:6px;box-sizing:border-box;
+      border:1px solid rgba(255,255,255,.14);background:rgba(255,255,255,.06);color:#e8eef7;font:inherit;
+      font-variant-numeric:tabular-nums;}
+    .pc-row input[type=text].pc-fstr:focus{outline:none;border-color:rgba(120,180,255,.55);background:rgba(120,180,255,.10);}
+    /* UID 控件（城市技能）：显示态「✎ 玩家名」可点→输入态；失焦反查名字，失败留框+红字 */
+    .pc-uidwrap{width:100%;}
+    .pc-uidwrap .pc-row>span:first-of-type{flex:0 0 auto;}
+    /* 显示态做成与输入态同宽同框的「字段」外观（150px 定宽 + 边框 + 内边距），切换不跳版 */
+    .pc-udisp{flex:0 0 150px;width:150px;box-sizing:border-box;display:flex;align-items:center;justify-content:flex-start;gap:4px;
+      padding:3px 6px;border-radius:6px;border:1px solid rgba(255,255,255,.14);background:rgba(255,255,255,.06);cursor:pointer;
+      color:#9ecbff;white-space:nowrap;overflow:hidden;transition:border-color .15s,background .15s;}
+    /* display:flex 会盖过 UA 的 [hidden]{display:none}，enterEdit 里 disp.hidden=true 失效导致 ✎ Label 与输入框并存、行宽溢出：显式补一条 */
+    .pc-udisp[hidden]{display:none;}
+    .pc-udisp:hover{border-color:rgba(120,180,255,.55);background:rgba(120,180,255,.10);}
+    .pc-udisp .pc-uedit{opacity:.55;font-size:11px;flex:0 0 auto;}
+    .pc-udisp .pc-uname{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;text-align:left;}
+    .pc-udisp .pc-uname.pc-uempty{opacity:.5;}
+    .pc-row input[type=text].pc-uinput{width:150px;flex:0 0 auto;padding:3px 6px;border-radius:6px;box-sizing:border-box;
+      border:1px solid rgba(255,255,255,.14);background:rgba(255,255,255,.06);color:#e8eef7;font:inherit;
+      font-variant-numeric:tabular-nums;}
+    .pc-row input[type=text].pc-uinput:focus{outline:none;border-color:rgba(120,180,255,.55);background:rgba(120,180,255,.10);}
+    .pc-row input[type=text].pc-uinput.pc-uerr{border-color:rgba(255,95,95,.85);}
+    .pc-uhint{font-size:11px;color:#ff8a8a;text-align:right;margin:1px 0 2px;}
+    /* 好友清单字段（type:'uidlist'，玩家点赞）：动态增删的 UID 行列表，行本身复用上面的 .pc-uidwrap 视觉。
+       行可增删故结构性改动走整块重刷 + 重绑（见 mountUidList），非区间规则那种纯委托。 */
+    .pc-ulist{display:flex;flex-direction:column;gap:4px;width:100%;margin:2px 0 6px;}
+    .pc-ulisttop{display:flex;align-items:center;justify-content:space-between;gap:8px;}
+    .pc-ulistadd{flex:0 0 auto;width:22px;height:20px;padding:0;border-radius:6px;cursor:pointer;
+      border:1px dashed rgba(255,255,255,.28);background:transparent;color:#cfe8ff;font:inherit;font-size:14px;line-height:18px;}
+    .pc-ulistadd:hover{background:rgba(255,255,255,.1);}
+    .pc-ulistadd:disabled{opacity:.4;cursor:default;}
+    .pc-uli .pc-udel{flex:0 0 18px;width:18px;height:22px;padding:0;border:none;background:transparent;
+      color:#ff9c9c;font:inherit;font-size:14px;line-height:22px;cursor:pointer;}
+    .pc-uli .pc-udel:hover{color:#ff6b6b;}
+    .pc-uli .pc-udisp{flex:1 1 auto;width:auto;min-width:0;}
+    /* 领取优先级清单字段（type:'sortlist'，遗迹奖励）：整池奖励摆出、行不可增删只能整行拖拽调序。
+       无删除按钮（全员参与），松手才按 DOM 顺序回写（见 mountSortList）。 */
+    .pc-slist{display:flex;flex-direction:column;gap:4px;width:100%;margin:2px 0 6px;}
+    .pc-slisttop{display:flex;align-items:center;justify-content:space-between;gap:8px;}
+    .pc-srows{display:flex;flex-direction:column;gap:4px;width:100%;}
+    .pc-srow{display:flex;align-items:center;gap:6px;width:100%;cursor:grab;touch-action:none;-webkit-user-select:none;user-select:none;}
+    .pc-shandle{flex:0 0 auto;width:12px;text-align:center;opacity:.4;font-size:14px;line-height:1;letter-spacing:-2px;cursor:grab;}
+    .pc-srow.pc-sdragging{opacity:.35;}
+    .pc-srows.pc-sgrabbing,.pc-srows.pc-sgrabbing .pc-sname{cursor:grabbing;}
+    .pc-srank{flex:0 0 auto;width:18px;text-align:right;opacity:.6;font-variant-numeric:tabular-nums;}
+    .pc-sname{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:left;
+      padding:3px 6px;border-radius:6px;border:1px solid rgba(255,255,255,.12);background:rgba(255,255,255,.05);color:#e8eef7;}
+    /* checkable sortlist（卡车争夺）：每行行首一枚 checkbox 控制该物品是否参与匹配，取消勾选整行置灰但仍可拖拽排序 */
+    .pc-scheck{flex:0 0 auto;width:15px;height:15px;margin:0;cursor:pointer;accent-color:#4aa3ff;}
+    .pc-srow.pc-srowoff .pc-sname{opacity:.42;}
+    .pc-srow.pc-srowoff .pc-srank{opacity:.3;}
+    .pc-smove{flex:0 0 auto;width:22px;height:22px;padding:0;border-radius:6px;cursor:pointer;
+      border:1px solid rgba(255,255,255,.22);background:transparent;color:#cfe8ff;font:inherit;font-size:14px;line-height:20px;}
+    .pc-smove:hover{background:rgba(255,255,255,.1);}
+    .pc-smove:disabled{opacity:.3;cursor:default;}
+    .pc-row input[type=checkbox]{width:16px;height:16px;cursor:pointer;flex:0 0 auto;}
+    .pc-row select.pc-fsel{max-width:150px;flex:0 0 auto;padding:3px 6px;border-radius:6px;
+      border:1px solid rgba(255,255,255,.25);background:rgba(20,26,38,.9);color:#e8eef7;font:inherit;}
+    .pc-fval{font-variant-numeric:tabular-nums;color:#9ecbff;opacity:.9;flex:0 0 auto;
+      text-align:right;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+    /* 只读 text 字段的多行变体（fd.multiline，如次元矿洞今日进度）：标签在上、值整行，pre-line 保留换行不截断 */
+    .pc-rowcol{flex-direction:column;align-items:flex-start;gap:2px;}
+    .pc-fvalml{white-space:pre-line;overflow:visible;text-overflow:clip;text-align:left;flex:0 0 auto;width:100%;line-height:1.6;}
+    /* 只读 text 的「同行多行」变体（fd.multiline + fd.inline）：标签与值同行，值靠右 pre-line 换行，顶对齐使首行与标签齐平 */
+    .pc-rowtop{align-items:flex-start;}
+    .pc-fvalhl{white-space:pre-line;text-align:right;overflow:visible;text-overflow:clip;line-height:1.6;}
+    /* 区间规则字段（type:'ranges'，如联盟机甲按召唤所需碎片数分段配代捐枚数）：
+       行可动态增删，因此交互走事件委托（见 wirePanel），不能逐个绑控件。
+       行的视觉语法就是区间记法「[ 0 ~ 300 ) → 3」；列头与数据行共用同一套格子模板，所以括号类占位符在列头里只是隐藏而非删掉 */
+    .pc-rng{display:flex;flex-direction:column;gap:4px;width:100%;margin:2px 0 6px;}
+    .pc-rngtop{display:flex;align-items:center;justify-content:space-between;gap:8px;}
+    .pc-rngtitle{font-size:12px;opacity:.9;font-weight:600;}
+    /* 中文小字下限 11px：再小就没有 hinting，在深色底上会发灰发虚；弱化靠颜色而不是缩字号 */
+    .pc-rnghint{font-size:11px;opacity:.62;line-height:1.5;}
+    .pc-rngrow{display:flex;align-items:center;gap:4px;}
+    /* 列宽用 flex 均分而非固定 px：卡片内容区只有两百多 px，固定宽会把行撑到面板外 */
+    .pc-rngrow input[type=number]{flex:1 1 0;min-width:0;width:auto;padding:3px 5px;border-radius:6px;box-sizing:border-box;
+      border:1px solid rgba(255,255,255,.14);background:rgba(255,255,255,.06);color:#e8eef7;font:inherit;
+      font-variant-numeric:tabular-nums;text-align:right;appearance:textfield;-moz-appearance:textfield;}
+    .pc-rngrow input[type=number]:focus{outline:none;border-color:rgba(120,180,255,.55);background:rgba(120,180,255,.10);}
+    .pc-rngrow input[type=number]::-webkit-inner-spin-button,
+    .pc-rngrow input[type=number]::-webkit-outer-spin-button{-webkit-appearance:none;margin:0;}
+    /* 括号 / 波浪号 / 箭头：不参与伸缩，也不给数字框抢宽 */
+    .pc-rngop{flex:0 0 auto;min-width:7px;text-align:center;font-size:12px;opacity:.5;}
+    .pc-rnghead .pc-rngop{visibility:hidden;}
+    .pc-rnglbl{flex:1 1 0;min-width:0;font-size:11px;opacity:.72;text-align:center;letter-spacing:.2px;}
+    .pc-rngdelcol{flex:0 0 18px;}
+    .pc-rngdel{flex:0 0 18px;width:18px;height:22px;padding:0;border:none;background:transparent;
+      color:#ff9c9c;font:inherit;font-size:14px;line-height:22px;cursor:pointer;}
+    .pc-rngdel:hover{color:#ff6b6b;}
+    /* 多选开关组字段（type:'multiopts'，次元矿洞矿种）：标题行（左标题 + 右全选/清空）+ 下方紧凑网格。
+       网格用 auto-fill 小盒，窄卡片下一行排几个自适应；选项由配置表运行时枚举，数量不定。 */
+    .pc-mopts{display:flex;flex-direction:column;gap:4px;width:100%;margin:2px 0 6px;}
+    .pc-mopstop{display:flex;align-items:center;justify-content:space-between;gap:8px;}
+    .pc-mopttitle{font-size:12px;opacity:.9;font-weight:600;}
+    .pc-moptacts{display:flex;gap:6px;flex:0 0 auto;}
+    .pc-moptall,.pc-moptnone{padding:1px 8px;border-radius:6px;cursor:pointer;font:inherit;font-size:11px;
+      border:1px solid rgba(255,255,255,.24);background:transparent;color:#cfe8ff;}
+    .pc-moptall:hover,.pc-moptnone:hover{background:rgba(255,255,255,.1);}
+    .pc-moptgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(72px,1fr));gap:4px 8px;width:100%;}
+    .pc-mopt{display:flex;align-items:center;gap:4px;font-size:12px;min-width:0;cursor:pointer;}
+    .pc-mopt input[type=checkbox]{width:14px;height:14px;cursor:pointer;flex:0 0 auto;}
+    .pc-mopt span,.pc-mopt{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+    .pc-rngadd{flex:0 0 auto;width:22px;height:20px;padding:0;border-radius:6px;cursor:pointer;
+      border:1px dashed rgba(255,255,255,.28);background:transparent;color:#cfe8ff;font:inherit;font-size:14px;line-height:18px;}
+    .pc-rngadd:hover{background:rgba(255,255,255,.1);}
+    /* 字段分组小标题（如联盟集结按目标分段） */
+    .pc-fsec{margin:10px 0 2px;padding-top:8px;border-top:1px dashed rgba(255,255,255,.14);
+      font-size:12px;font-weight:600;color:#cfe8ff;letter-spacing:.5px;}
+    .pc-fsec:first-child{margin-top:2px;padding-top:0;border-top:none;}
+    /* 可折叠子分组（如卡车拦截「拦截判定」默认收起）：标题行带箭头可点展开/收起，箭头随开合旋转 */
+    .pc-fsectoggle{display:flex;align-items:center;gap:6px;cursor:pointer;user-select:none;}
+    .pc-fsectoggle:hover{color:#eaf4ff;}
+    .pc-fsecchev{font-size:9px;opacity:.6;transition:transform .15s;}
+    .pc-fsectoggle.open .pc-fsecchev{transform:rotate(90deg);}
+    .pc-fsec-body{margin:0;}
+    /* 字段条件显隐（fd.showIf(cfg)）：行根打 data-dep 标记，由 refreshFieldVisibility 就地切 hidden、不重建 DOM。
+       双属性选择器特异度高于 .pc-row/.pc-mopts 等作者类规则，故 hidden 能真生效（同 .pc-sec-body[hidden] 的写法原因）；
+       分组小标题同理：其下字段全隐时一起收起，不留「光杆标题」 */
+    [data-dep][hidden]{display:none;}
+    .pc-fsec[data-sec][hidden]{display:none;}
+    .pc-empty{opacity:.5;font-size:12px;padding:4px 0;}
+    /* 快捷键一览卡（方案 C：分组 + 键帽精修）：不复用 .pc-row（其 >span{flex:1} 会抢宽导致换行/错位）。
+       行内负外边距 + padding 让 hover 高亮能铺到卡片内边沿；键帽立体（渐变+底边阴影）、键名列右对齐贴齐功能名、场景做小胶囊 */
+    .pc-hkrow{display:flex;align-items:center;gap:10px;margin:0 -6px;padding:5px 6px;border-radius:6px;transition:background .12s;}
+    .pc-hkrow:hover{background:rgba(255,255,255,.06);}
+    .pc-hkrow .pc-hkk{flex:0 0 62px;text-align:right;}
+    .pc-hkrow .pc-hkk kbd{display:inline-block;padding:2px 7px;border-radius:6px;font:inherit;font-size:12px;white-space:nowrap;color:#dcefff;
+      background:linear-gradient(180deg,rgba(255,255,255,.18),rgba(255,255,255,.05));
+      border:1px solid rgba(255,255,255,.24);border-bottom-width:2px;box-shadow:0 1px 0 rgba(0,0,0,.35);}
+    .pc-hkrow .pc-hkl{flex:1 1 auto;min-width:0;}
+    .pc-hkrow .pc-hkw{flex:0 0 auto;font-size:10px;opacity:.5;text-align:right;background:rgba(255,255,255,.06);border-radius:10px;padding:1px 8px;}
+    .pc-hkgrp{font-size:11px;opacity:.55;letter-spacing:.5px;margin:8px 0 2px;padding:0 6px;}
+    .pc-hkgrp:first-child{margin-top:2px;}
+    .pc-btn{margin-top:10px;width:100%;padding:7px 0;border-radius:8px;cursor:pointer;
+      border:1px solid rgba(255,255,255,.2);background:rgba(255,255,255,.08);color:#e8eef7;
+      font:inherit;transition:background .15s;}
+    .pc-btn:hover{background:rgba(255,255,255,.16);}
+    /* 采集规则字段（type:'minerules'，次元矿洞：每条=矿种下拉 + 等级下拉 + 星级★点选，可动态增删）。
+       每条规则单行：盒子 flex:1 撑满整行（矿种/等级左侧簇集、星级靠右），× 删除按钮留在最右与标题行的＋对齐，盒与×靠 row gap 拉开固定间隔。行可增删，交互走面板级事件委托（见 wirePanel）。 */
+    .pc-mrule{display:flex;flex-direction:column;gap:6px;width:100%;margin:2px 0 6px;}
+    .pc-mruletop{display:flex;align-items:center;justify-content:space-between;gap:8px;}
+    .pc-mradd{flex:0 0 auto;width:22px;height:20px;padding:0;border-radius:6px;cursor:pointer;
+      border:1px dashed rgba(255,255,255,.28);background:transparent;color:#cfe8ff;font:inherit;font-size:14px;line-height:18px;}
+    .pc-mradd:hover{background:rgba(255,255,255,.1);}
+    .pc-mrrow{display:flex;align-items:center;justify-content:space-between;gap:10px;}
+    .pc-mrbox{display:flex;flex:1 1 auto;align-items:center;gap:9px;min-width:0;padding:6px 9px;
+      border:1px solid rgba(255,255,255,.12);border-radius:8px;background:rgba(255,255,255,.03);}
+    .pc-mrsel{padding:3px 5px;border-radius:6px;border:1px solid rgba(255,255,255,.25);
+      background:rgba(20,26,38,.9);color:#e8eef7;font:inherit;min-width:0;}
+    .pc-mrtype{flex:0 1 auto;}
+    .pc-mrlv{flex:0 0 auto;}
+    .pc-mrdel{flex:0 0 auto;width:22px;height:24px;padding:0;border:none;background:transparent;
+      color:#ff9c9c;font:inherit;font-size:16px;line-height:24px;cursor:pointer;text-align:center;}
+    .pc-mrdel:hover{color:#ff6b6b;}
+    .pc-mrcap{flex:0 0 auto;margin-left:auto;font-size:10px;line-height:1;color:#8fa6c4;letter-spacing:.5px;}
+    .pc-mrstars{display:inline-flex;gap:3px;flex:0 0 auto;}
+    .pc-mrstar{font-size:15px;line-height:1;cursor:pointer;color:rgba(255,255,255,.3);transition:transform .1s,color .1s;}
+    .pc-mrstar.on{color:#ffcf4d;text-shadow:0 0 6px rgba(255,207,77,.5);}
+    .pc-mrstar:hover{transform:scale(1.18);}
+    /* 下田规则字段（type:'farmrules'，自动下田：每行=一个田位；田类型/种类/等级/预设下拉 + 删除，行存在即生效）。
+       行盒可换行（窄卡尽量单行），× 与标题行＋右对齐；骨架同 minerules，交互走面板级事件委托（见 wirePanel）。 */
+    .pc-frule{display:flex;flex-direction:column;gap:6px;width:100%;margin:2px 0 6px;}
+    .pc-fruletop{display:flex;align-items:center;justify-content:space-between;gap:8px;}
+    .pc-fradd{flex:0 0 auto;width:22px;height:20px;padding:0;border-radius:6px;cursor:pointer;
+      border:1px dashed rgba(255,255,255,.28);background:transparent;color:#cfe8ff;font:inherit;font-size:14px;line-height:18px;}
+    .pc-fradd:hover{background:rgba(255,255,255,.1);}
+    .pc-frmain{display:flex;align-items:center;justify-content:space-between;gap:10px;}
+    .pc-frbox{display:flex;flex:1 1 auto;flex-wrap:wrap;align-items:center;gap:4px;min-width:0;padding:6px 7px;
+      border:1px solid rgba(255,255,255,.12);border-radius:8px;background:rgba(255,255,255,.03);}
+    /* 目标/部队 分组小标签 + 中间竖分隔线：把“采集什么田”与“派哪支部队”在视觉上分成两段 */
+    .pc-frcap{flex:0 0 auto;font-size:10px;line-height:1;color:#8fa6c4;letter-spacing:.5px;}
+    .pc-frdiv{flex:0 0 auto;width:1px;align-self:stretch;margin:1px 2px;background:rgba(255,255,255,.22);}
+    .pc-frsel{padding:3px 5px;border-radius:6px;border:1px solid rgba(255,255,255,.25);
+      background:rgba(20,26,38,.9);color:#e8eef7;font:inherit;min-width:0;}
+    .pc-frmech{display:inline-flex;align-items:center;gap:3px;cursor:pointer;font-size:12px;color:#cfe3ff;}
+    .pc-frmechdis{opacity:.4;cursor:not-allowed;}
+    .pc-frmechin{width:14px;height:14px;margin:0;cursor:pointer;accent-color:#4a9eff;}
+    .pc-frdel{flex:0 0 auto;width:22px;height:24px;padding:0;border:none;background:transparent;
+      color:#ff9c9c;font:inherit;font-size:16px;line-height:24px;cursor:pointer;text-align:center;}
+    .pc-frdel:hover{color:#ff6b6b;}
+  `;

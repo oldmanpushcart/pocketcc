@@ -1505,12 +1505,10 @@ export const gameData = {
    *   hero_color:string,hero_star:string,hero_level:string}>} 表未就绪返回 []
    */
   mineSpecs() {
-    var cached =
-      probe('mine_cave.specs', () => {
+    return probe('mine_cave.specs', () => {
         var rows = l10n.tableRows('mineCave');
         return rows && rows.length ? rows : null;
       }) || [];
-    return cached;
   },
   /**
    * 单个矿种规格行（按 specId 查，走 mineSpecs 缓存）；查不到返回 null。
@@ -2007,6 +2005,27 @@ export const worldMap = {
       }
     } catch (e) {}
     return this.serverId();
+  },
+  /**
+   * 本图「自己所在服号」（NWorldMapData.instance.serverData.selfServerId，initMap 时按登录回包 currk 建立，
+   * 跨区拖镜头/看别区都**不**随视口变化）。游戏原生「定位自己主城」（NWorldMapComponent.onKeyDown / Backspace）
+   * 用的就是它，配 UserData.WorldCoord（区内局部格号）—— 两者同源同帧，才是唯一正确搭配。
+   * 与 viewServerId() 的区别：后者是「此刻镜头在看哪个区」，拿来当跳转服号会把本服坐标塞进别区偏移。
+   * 子包未载/字段缺失返回 0（调用方应回退 UserData.ServerId，即 nav.flyTo 不传 z 让游戏自己兜底）。
+   * @returns {number}
+   */
+  selfServerId() {
+    // 只缓存单例对象（probe 是页面级缓存，缓存标量会把首次读到的区号钉死）；字段每次现读
+    var W = probe(SYM.modules.nWorldMapData + '.inst', () => {
+      try {
+        var m = game.get(SYM.modules.nWorldMapData);
+        var C = m && (m.NWorldMapData || m.default || m);
+        return (C && (C.instance || C)) || null;
+      } catch (e) {
+        return null;
+      }
+    });
+    return Number(W && W.serverData && W.serverData.selfServerId) || 0;
   },
   /**
    * 当前可活动地图的 game 坐标边界（迁城落点收口用）：绑游戏自身

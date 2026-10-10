@@ -10,7 +10,8 @@
 import { createLog } from '../../core/log.js';
 import { createDrain } from '../../core/drain.js';
 import { worldMap } from '../../core/game-api.js';
-import { CMD_GET_WORLD_INFO, SERVER, SCAN_GRID } from './map-meta.js';
+import { CMD_GET_WORLD_INFO, SERVER } from '../../core/map.js';
+import { SCAN_GRID } from './map-meta.js';
 import { mapStore } from './store.js';
 
 /** @type {ReturnType<createLog>} 模块日志器（tag=SCANNER） */

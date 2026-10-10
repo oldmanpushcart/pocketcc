@@ -6,7 +6,7 @@
 //   core/registry.js   特征注册表（面板 UI + 存储 + 运行时编排单一真相）
 //   core/auto-login.js 免扫码登录（token 缓存重放）
 //   core/session.js    自动重连 + 活性监视 + 会话健康事件
-//   core/ui.js         浮动图标 + 手风琴面板
+//   core/ui/           浮动图标 + 手风琴面板（index.js 编排 mountUI）
 //   core/scene-watcher 场景信号 → reactor 门控
 // 功能模块（net.js + feats/<层级>/*.js）由 content.entry.js 先于本文件加载并各自向 reactor 注册说明书，
 // 面板层级由 core/menu.js 声明；本文件在主城就绪（HomeMapLoadFinish 或首次进入 Home/NWorldMap 场景，先到先触发）
@@ -18,7 +18,7 @@ import { loadAllConfigs, startFeatures, migrateLegacyKeys } from './core/registr
 import { startPlayerWatch, waitUid } from './core/player.js';
 import { installAutoLogin } from './core/auto-login.js';
 import { installReconnectHooks, watchLoginSuccess } from './core/session.js';
-import { mountUI } from './core/ui.js';
+import { mountUI } from './core/ui/index.js';
 import { startSceneWatcher, getCurrentScene } from './core/scene-watcher.js';
 import { installModeGate } from './core/mode.js';
 

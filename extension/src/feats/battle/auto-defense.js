@@ -375,7 +375,7 @@ async function strategyAttack(snap) {
   if (!mv.ok)
     return {
       result: 'fail',
-      reason: '迁城到(' + spot.x + ',' + spot.y + ')' + mv.why,
+      reason: '迁城到(' + spot.x + ',' + spot.y + ')失败 ' + mv.why,
       stop: false,
     };
   if (!(await waitLanded(spot.x, spot.y)))
@@ -440,7 +440,7 @@ async function strategyRelocate(snap) {
     } catch (e) {} // 迁成后镜头跟随到新落地点
     return { result: 'hit', reason: '迁城逃避至(' + spot.x + ',' + spot.y + ')', stop: true };
   }
-  return { result: 'fail', reason: '迁城' + mv.why, stop: false };
+  return { result: 'fail', reason: '迁城到(' + spot.x + ',' + spot.y + ')失败 ' + mv.why, stop: false };
 }
 
 /**

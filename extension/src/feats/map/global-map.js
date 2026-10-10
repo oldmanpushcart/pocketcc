@@ -18,11 +18,12 @@ import { createLog } from '../../core/log.js';
 import { reactor } from '../../core/reactor.js';
 import { storage } from '../../core/storage.js';
 import { worldMap, gameData } from '../../core/game-api.js';
+import { SERVER } from '../../core/map.js';
 import { MapOverlay } from './map-overlay.js';
 import { mapStore } from './store.js';
 import { getTerrainBase } from './terrain.js';
 import * as scanner from './scanner.js';
-import { DEFAULTS, FILTER_TREE, SERVER, SCAN_GRID, classifyPoint, playerPass } from './map-meta.js';
+import { DEFAULTS, FILTER_TREE, SCAN_GRID, classifyPoint, playerPass } from './map-meta.js';
 
 /** @type {ReturnType<createLog>} 模块日志器（tag=GLOBALMAP） */
 const log = createLog('GLOBALMAP');

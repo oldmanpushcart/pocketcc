@@ -6,7 +6,7 @@
  *   - 护盾/迁城卡的 itemId 是稳定服务器内容常量（发协议就近定义，同 march.js 的 520001/520002），不归 core/item.js；
  *   - 迁城落点合法性走「四闸联合、逐 footprint 格」（对齐服务端 911，真机 + extracted 源码双重实证）：
  *     ① 地形/王座/已加载实体：游戏权威 gameData.canMoveCity(x,y)===true（false 必拦、null 无从判定）；其内部 checkIsPlainTileBySize 已逐 footprint 格判障碍+他人城皮，但 ignoreSelf=true 会放行「压自己城」的格；
- *     ② 障碍+他人城皮占用：主动一发 901 取 pointList，把非己方的城/BOSS/塔等按 footprint 扩格入占用集——不信易失的本地 entities（实证：邻城未入库时 canMoveCity 会对真城假阳性放行）；
+ *     ② 实体占用（对齐 extracted checkIsPlainTile）：主动一发 901 取 pointList，除自己主城外「任何实体」footprint 格入占用集——含野怪/资源田/难民/宝藏/他人城塔，不信易失的本地 entities（实证：邻城/野怪未入库时 canMoveCity 对真空地假阳性放行，落点被服务器拒「位置被占用」）。仅 KVK 战场图豁免 judgeTileIfCanCover 可覆盖类（怪/雷达宝藏/国度/援助/难民营/世界宝藏），标准本服图这些点同样占位；
  *     ③ self-overlap 硬闸：候选 footprint 命中我方现主城 footprint 扩格集即拦（补① ignoreSelf 漏，实证 (337,476) 压现城被服务器拒「位置被占用」）；
  *     ④ 联盟堡垒禁迁区（仅 `!isKVK() && ServerState!=Fight` 时启用，对齐游戏 moveCity 权威条件）：主动发 1001 取 infos（陈旧模型不可信）推旋转系「实心菱形区间」（奇偶无关，避开 AlliancePointPool 采样盲区），逐 footprint 格判越界外扩 margin=1（实证：越界 1 格仍被服务器 csb_tips_005 拒），排除己方 aid；KVK 图或作战态（ServerState==Fight）整图放开别盟领地→跳过 1001 且不建区间（实证 extracted WorldMapController.moveCity：禁迁仅在 (!isKVK||!八国色) && ServerState!=Fight && owner>0 && owner!=我的Aid 时拒绝）。
  *     判定前先 flyTo 锚点 + 订阅 net.901 + 主动 901 触发加载，经 settle 就绪门（新 901 & canMoveCity 为 boolean & 静默 800ms & 邻域 placeFlags 命中>0）后才采信；未进世界图 / 符号不可得 / 领地模型未就绪（canMoveCity 恒 null 或 901 报了领土点但 AllianceTerritory 空）即判「无从判定」返回 null 交上层顺延，绝不猜测。
@@ -18,6 +18,7 @@ import { createLog } from './log.js';
 import { item } from './item.js';
 import { gameData, nav, worldMap } from './game-api.js';
 import { bus } from './bus.js';
+import { SERVER, pickSub, fetchWindow } from './map.js';
 
 /** @type {ReturnType<createLog>} 模块日志器（tag=DEFENSE） */
 const log = createLog('DEFENSE');
@@ -43,17 +44,20 @@ const NEAR_RADIUS = 8;
 /** @type {number} 「迁城逃避」在我方主城周围搜索的切比雪夫上限带（在此带内取背向敌、离敌更远的可落点） */
 const AWAY_RADIUS = 20;
 
-/** @type {{xMax:number, yMax:number}} 世界坐标上界「兜底」常量（core 不回引 feats/map/map-meta；实证标准本服图 gameXMax=408*2、gameYMax=952）。仅在 worldMap.gameBounds() 探测失败时退回此常量。 */
-const WORLD_BOUNDS = { xMax: 816, yMax: 952 };
+/** @type {{xMax:number, yMax:number}} 世界坐标上界「兜底」常量（派生自 core/map.js SERVER 真相，实证标准本服图 gameXMax=408*2、gameYMax=952）。仅在 worldMap.gameBounds() 探测失败时退回此常量。 */
+const WORLD_BOUNDS = { xMax: SERVER.gameXMax, yMax: SERVER.gameYMax };
 
 /** @type {number} 堡垒禁迁区实心菱形外扩格数（实证：(413,410) 越界 1 格仍被服务器 csb_tips_005 拒 → margin 保命，不可降 0） */
 const RELOC_TERR_MARGIN = 1;
 
 /**
- * @type {Set<number>} 901 pointType 中「结构性占用」即不可落者（城/占领/王座/BOSS/集结BOSS/世界遗址/联盟BOSS/资源塔/Buff塔/国度BOSS）。
- * 可覆盖类（怪/资源田/难民/空投/宝藏…）不计入阻塞，与游戏 judgeTileIfCanCover 语义对齐。
+ * @type {Set<number>} 「KVK 战场图」上游戏允许压覆的可覆盖类 pointType（extracted judgeTileIfCanCover 权威集：
+ *   难民营18 / 世界宝藏26 / 野怪73 / 集结怪74 / 雷达宝藏75 / 国度76 / 援助77）。
+ * 仅当 isKVK() 时这些点不计入占用；标准本服图（非 KVK）它们与一切实体同样阻塞迁城落点——
+ *   因为 extracted checkIsPlainTile 的「可覆盖」豁免写成 `isKVK() && judgeTileIfCanCover(p)`，非 KVK 时任何实体在位即 return !1。
+ *   （旧实现误把怪/资源/难民当成恒可覆盖排除，导致选了压野怪的落点被服务器拒「位置被占用」。）
  */
-const RELOC_OCC_BLOCK = new Set([1, 3, 10, 11, 12, 15, 17, 24, 25, 31]);
+const RELOC_KVK_COVERABLE = new Set([18, 26, 73, 74, 75, 76, 77]);
 
 /** @type {{width:number, height:number, viewLevel:number}} 单发 901 视口窗口（实证覆盖 x±58/y±39，足以罩住 near(8)/away(20) 搜索带） */
 const RELOC_VIEW = { width: 116, height: 76, viewLevel: 1 };
@@ -99,26 +103,10 @@ function terrViol(b, gx, gy) {
   return Math.max(b.Slo - S, S - b.Shi, b.Dlo - D, D - b.Dhi, 0);
 }
 
-/** 从 901 点位多子对象（p/b/r/t/m）里兜底取首个非空字段（城点信息常嵌在子对象里，字段名跨版本略有漂移） */
-function pickSub(p, subs, keys) {
-  for (var i = 0; i < subs.length; i++) {
-    var s = p[subs[i]];
-    if (s && typeof s === 'object') {
-      for (var j = 0; j < keys.length; j++) {
-        if (s[keys[j]] != null) return s[keys[j]];
-      }
-    }
-  }
-  for (var k = 0; k < keys.length; k++) {
-    if (p[keys[k]] != null) return p[keys[k]];
-  }
-  return null;
-}
-
 /**
  * 构造逐候选合法性判定器 (x,y)=>boolean：对齐服务端 911 的「逐 footprint 格」口径（真机 + extracted 源码双重实证，任一闸不过即不可落）。
  *   ① 地形/王座/已加载实体：游戏权威 gameData.canMoveCity===true（false 必拦、null 无从判定）；内部 checkIsPlainTileBySize 已逐格判障碍+他人城皮，但 ignoreSelf 会放行「压自己城」。
- *   ② 障碍+他人城皮占用：主动一发 901 取 pointList，非己方 RELOC_OCC_BLOCK 类按 footprint 扩格入占用集（不信易失 entities），候选 footprint 命中即拦。
+ *   ② 实体占用：主动一发 901 取 pointList，除自己主城外任何实体按 footprint 扩格入占用集（标准图含野怪/资源/难民/宝藏，仅 KVK 豁免可覆盖类），候选 footprint 命中即拦。
  *   ③ self-overlap 硬闸：候选 footprint 命中我方现主城 footprint 扩格集 → 拦（补① ignoreSelf 漏，防「压现城」落点，实证 (337,476) 服务器拒）。
  *   ④ 敌盟堡垒禁迁区：仅 `!isKVK() && ServerState!=Fight` 时启用（对齐游戏 moveCity）——主动一发 1001 取锚点视口 infos 推敌盟实心菱形区间（不读游戏模型，防远程切视口陈旧数据；排除己方 aid），逐候选 footprint 格判越界 ≤ RELOC_TERR_MARGIN；KVK 图或作战态（ServerState==Fight）整图不拦别盟领地（跳过 1001）。
  * 流程：flyTo 锚点 + 订阅 net.901 计回包 → 主动一发 901（兼触发 push）→ settle 就绪门（canMoveCity 为 boolean & mapLoadedNear±7>0；901 push 静默降为可选增强）→ 主动一发 1001 取领地 → 建判定器。
@@ -160,32 +148,16 @@ async function makeJudge(anchor, opts) {
       myAid = gameData.myAid(),
       myPid = gameData.myPid();
     if (net && typeof net.send === 'function') {
-      var body = {
-        x: ax,
-        y: ay,
+      var win = await fetchWindow(net, ax, ay, {
         k: opts.serverId | 0 || 0,
-        rid: 0,
         width: RELOC_VIEW.width,
         height: RELOC_VIEW.height,
-        marchInfo: true,
         viewLevel: RELOC_VIEW.viewLevel,
-      };
-      var ret = null;
-      try {
-        ret = await net.send(901, body);
-      } catch (e) {
-        log.debug('makeJudge 901 send error: %s', e && e.message);
-      }
-      var d = ret && ret.ok ? ret.data : null;
-      if (typeof d === 'string') {
-        try {
-          d = JSON.parse(d);
-        } catch (e2) {
-          d = null;
-        }
-      }
-      var list = d && Array.isArray(d.pointList) ? d.pointList : null;
-      if (list) {
+        marchInfo: true,
+      });
+      if (win.ok) {
+        var list = win.points;
+        var isK = gameData.isKVK(); // 可覆盖豁免仅 KVK 战场图成立（见 RELOC_KVK_COVERABLE）
         for (var i = 0; i < list.length; i++) {
           var p = list[i],
             pt = p.pointType | 0;
@@ -193,10 +165,10 @@ async function makeJudge(anchor, opts) {
             terr901++;
             continue;
           } // 领土交④闸判，不属占地
-          if (!RELOC_OCC_BLOCK.has(pt)) continue; // 可覆盖类不阻塞
-          var aid = Number(pickSub(p, ['p', 'r', 'm', 't', 'b'], ['aid', 'allianceId'])) || 0;
           var pid = Number(pickSub(p, ['p', 'b', 'r', 't', 'm'], ['pid', 'ownerId'])) || 0;
-          if ((aid && aid === myAid) || (pid && pid === myPid)) continue; // 己方占地不算阻塞
+          if (pid && pid === myPid) continue; // 自己主城 footprint 由 self-overlap 硬闸处理
+          if (isK && RELOC_KVK_COVERABLE.has(pt)) continue; // 仅 KVK：野怪/难民/宝藏等可压覆 → 不占位
+          // 其余实体（标准图上的野怪/资源田/难民/宝藏 + 一切他人城/塔/BOSS…）一律占位（对齐 extracted checkIsPlainTile）
           var L = 1;
           if (pt === 1) {
             var sk = pickSub(p, ['p', 'b', 'r', 't', 'm'], ['skinId']);
@@ -329,6 +301,20 @@ async function makeJudge(anchor, opts) {
   }
 }
 
+/**
+ * game 坐标是否为「真实存在的 tile」：本服图奇偶行错排（map.js cellToGame：x=2·cellX+(y&1?1:0)），
+ * 合法格恒满足 `x&1 === y&1`（偶行偶 x / 奇行奇 x）。半格（如 (623,386)：奇 x 偶 y）游戏内不存在，
+ * 但 gameToCell 向下取整会把它与相邻合法格并到同一 cell，canMoveCity 按整格判 → 半格也放真；
+ * 服务器 911 按真实 cell 落子 → 若该 cell 有野怪/他人占地即「位置被占用」（实证：失败点全是错行半格）。
+ * 搜索候选必须先剔半格；footprintCells 从合法锚点(x&1===y&1)展开天然保持奇偶，故占用集/候选可对齐。
+ * @param {number} x game x
+ * @param {number} y game y
+ * @returns {boolean} true=合法 tile
+ */
+function isRealTile(x, y) {
+  return (x & 1) === (y & 1);
+}
+
 /** 由锚点向外按切比雪夫环逐格搜「距锚点最近的可落点」；exclude 非空则跳过该格（落点不得等于现有位置，命中即顺延取次近），radius 内全无 → null（不退让取更远点） */
 function searchNear(anchor, judge, inBounds, radius, exclude) {
   var ax = anchor.x | 0,
@@ -341,6 +327,7 @@ function searchNear(anchor, judge, inBounds, radius, exclude) {
         if (Math.max(Math.abs(dx), Math.abs(dy)) !== r) continue; // 只走本环边框
         var x = ax + dx,
           y = ay + dy;
+        if (!isRealTile(x, y)) continue; // 跳过奇偶错行的半格（游戏不存此类 tile，落子必被服务器拒）
         if (!inBounds(x, y)) continue;
         if (ex != null && ey != null && x === ex && y === ey) continue; // 落点不得等于现有位置：命中则跳过，取同环下一格/次环最近格
         if (judge(x, y)) return { x: x, y: y };
@@ -365,6 +352,7 @@ function searchAway(home, threat, judge, inBounds, radius) {
         if (Math.max(Math.abs(dx), Math.abs(dy)) !== r) continue;
         var x = hx + dx,
           y = hy + dy;
+        if (!isRealTile(x, y)) continue; // 跳过奇偶错行的半格（同 searchNear：半格被服务器判占位）
         if (!inBounds(x, y)) continue;
         if (!judge(x, y)) continue;
         var d = dist2(thx, thy, x, y);
