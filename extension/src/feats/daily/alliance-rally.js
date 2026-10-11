@@ -510,7 +510,14 @@ reactor.register({
   fields: [
     { key: 'warHammerEnabled', label: '自动加入', type: 'checkbox', section: '战锤' },
     { key: 'warHammerDelaySec', label: '延迟入队(秒)', min: 0, step: 1, section: '战锤' },
-    { key: 'warHammerDailyLimit', label: '每日上限(0=无限)', min: 0, step: 1, section: '战锤' },
+    {
+      key: 'warHammerDailyLimit',
+      label: '每日上限',
+      min: 0,
+      step: 1,
+      zeroUnlimited: true,
+      section: '战锤',
+    },
     {
       key: 'warHammerTodayCount',
       label: '今日已参与',
@@ -522,7 +529,14 @@ reactor.register({
     },
     { key: 'fearStarEnabled', label: '自动加入', type: 'checkbox', section: '惧星' },
     { key: 'fearStarDelaySec', label: '延迟入队(秒)', min: 0, step: 1, section: '惧星' },
-    { key: 'fearStarDailyLimit', label: '每日上限(0=无限)', min: 0, step: 1, section: '惧星' },
+    {
+      key: 'fearStarDailyLimit',
+      label: '每日上限',
+      min: 0,
+      step: 1,
+      zeroUnlimited: true,
+      section: '惧星',
+    },
     {
       key: 'fearStarTodayCount',
       label: '今日已参与',
@@ -534,7 +548,14 @@ reactor.register({
     },
     { key: 'refugeeCampEnabled', label: '自动加入', type: 'checkbox', section: '难民营' },
     { key: 'refugeeCampDelaySec', label: '延迟入队(秒)', min: 0, step: 1, section: '难民营' },
-    { key: 'refugeeCampDailyLimit', label: '每日上限(0=无限)', min: 0, step: 1, section: '难民营' },
+    {
+      key: 'refugeeCampDailyLimit',
+      label: '每日上限',
+      min: 0,
+      step: 1,
+      zeroUnlimited: true,
+      section: '难民营',
+    },
     {
       key: 'refugeeCampTodayCount',
       label: '今日已参与',

@@ -11,6 +11,13 @@
  * 名额经 core/march.freeSlots() 读取，已扣除其它高优 feat（发射井撤田腾坑）的预约：
  *   故发射井活动期内撤田腾出的坑会被它留住驻井，本 feat 不会抢着回填（避免撤田↔补田震荡）。
  *
+ * 下田时段（可选，面板「启用下田时段」勾选 + 多行「起始~结束」时段）：仅当启用且配了至少一行时段时生效。
+ *   时段内→照常按规则行维持下田；时段外→立即逐条 904 撤回全部在途田（recallAllFarms），本轮不下田，
+ *   睡到下个时段起点再自动恢复下田。任一时段命中即在窗口内；start>end 视为跨午夜、start===end 视为全天。
+ *   判定用本地墙钟（国服=用户本地钟）。未勾选/无时段时视为全天可下田（与旧版行为一致，向后兼容）。
+ *   边界主动唤醒：无论时段内/外，下一拍都按「下个边界（任一时段的起或止）」夹时，到点即醒做一次检测（窗口止→立即撤田、新窗口起→立即下田），不因 idle/退避长睡错过边界。
+ *   时段外的主动撤田是本 feat 自有的例外（区别于「名额不足不主动撤田」——后者仍保留给发射井）。
+ *
  * 候选来源（两份 dashcam 录制 + extracted 逆向源码交叉实证）：
  *   普通田 —— 服务端搜索 WORLD_SEARCH_MONSTER(906)：请求 {minLevel, maxLevel, groupType, pointType:2}，
  *        应答 {point:{r:{itemId,amount,expireTime,ownerId('0'=无主),aid}, x, y, pointType:4}}，服务端直接返回一个可采点。
@@ -125,6 +132,12 @@ const cfg = {
   rateLimitBackoffMs: 1000 * 15,
   /** 限流退避封顶（毫秒）：退避到此值后每轮最多等这么久，既不给服务器加压也不错过恢复 */
   rateLimitBackoffMaxMs: 1000 * 60,
+  /** 逐条撤田 904 之间的休眠（毫秒）：时段外批量撤田时拉开间隔、规避行军时间限流（同占领发射井口径）。注意是「秒」量级，勿再写成 1000*500（那=500秒会把后续田串在几分钟后才撤） */
+  recallInterval: 1000 * 2,
+  /** 时段外「睡向下个下田时段起点」的单拍上限（毫秒）：兜住时钟漂移/超大定时器，醒一次即重判（6 小时） */
+  windowSleepMaxMs: 1000 * 60 * 60 * 6,
+  /** 时段外「睡向下个下田时段起点」的单拍下限（毫秒）：临近起点时的地板，防紧贴空转（10 秒） */
+  windowSleepMinMs: 1000 * 10,
 };
 
 /** @type {object|null} 网络底座（promise 封装 pocketcc.net） */
@@ -144,6 +157,10 @@ var lastPushWakeAt = 0;
 var backlogActive = false;
 /** @type {number} 连续撞 902 限流的次数（用于指数退避）；任一条 902 成功受理即归零 */
 var rateLimitStreak = 0;
+/** @type {boolean} 上轮 cyclePass 是否因「启用时段且当前在时段外」走了撤田分支（供 cycleRun 择时睡向下个时段起点） */
+var outsideWindow = false;
+/** @type {number} 上轮时段外撤田时仍「占用中」的采集行军数：>0 说明有返程未落地/撤回失败，短间隔复查再撤 */
+var outsideRemaining = 0;
 
 /**
  * 本地被拒/不合格点黑名单（"x,y" 键，run 时清空）：902 被拒零成本，拉黑后换下一候选，
@@ -185,8 +202,8 @@ var towerCapCache = {};
 /** @type {boolean} install 幂等守卫 */
 var installed = false;
 
-/** @type {object} 模块配置（configure 灌入）：rules 为归一化后的行数组 */
-var MCFG = { rules: [] };
+/** @type {object} 模块配置（configure 灌入）：rules 为归一化后的行数组；timeWindowEnabled/timeRanges 为时段闸（timeRanges 已归一化为 {s,e} 分钟数） */
+var MCFG = { rules: [], timeWindowEnabled: false, timeRanges: [] };
 
 /**
  * 功能是否仍在运行（定时器与在飞流程的存活判定）
@@ -319,6 +336,117 @@ function presetArgs(p) {
   var n = p | 0;
   if (n >= 9) return { index: n - 8, type: 1 };
   return { index: Math.max(1, n), type: 0 };
+}
+
+// ── 下田时段（timeRanges）归一与判定 ────────────────────────────────
+/**
+ * "HH:MM" → 当日分钟数（0~1439）；非法/空回 null。start>end 由调用方按「跨午夜」处理。
+ * @param {string} str 面板 time 控件值
+ * @returns {number|null}
+ */
+function normMinutes(str) {
+  if (typeof str !== 'string') return null;
+  var m = str.match(/^(\d{1,2}):(\d{2})$/);
+  if (!m) return null;
+  var h = +m[1];
+  var mm = +m[2];
+  if (h < 0 || h > 23 || mm < 0 || mm > 59) return null;
+  return h * 60 + mm;
+}
+
+/**
+ * 面板原始 timeRanges → 归一化为 [{s,e}]（当日分钟数）；任一端非法的行丢弃（面板可留空/半填）。
+ * toModuleCfg 专用；configure 直接整体接收本函数产物，绝不二次归一（防两处口径漂移）。
+ * @param {Array<{start:string,end:string}>} raw
+ * @returns {Array<{s:number,e:number}>}
+ */
+function normalizeTimeRanges(raw) {
+  var out = [];
+  var list = Array.isArray(raw) ? raw : [];
+  for (var i = 0; i < list.length; i++) {
+    var r = list[i] || {};
+    var s = normMinutes(r.start);
+    var e = normMinutes(r.end);
+    if (s == null || e == null) continue;
+    out.push({ s: s, e: e });
+  }
+  return out;
+}
+
+/**
+ * 时段闸是否生效：仅当勾选启用且至少配了一行有效时段才生效；否则视为「全天可下田」（向后兼容旧档）。
+ * @returns {boolean}
+ */
+function windowActive() {
+  return !!(MCFG.timeWindowEnabled && MCFG.timeRanges && MCFG.timeRanges.length);
+}
+
+/** @returns {number} 当前本地墙钟的当日分钟数（含秒的小数，边界判定更准） */
+function curMin() {
+  var d = new Date();
+  return d.getHours() * 60 + d.getMinutes() + d.getSeconds() / 60;
+}
+
+/**
+ * 当前是否落在任一下田时段内（本地墙钟，国服=用户本地钟）。任一行命中即在窗口内。
+ * 约定：s===e 视为「全天」；s<e 为当日区间 [s,e)；s>e 为跨午夜（t>=s 或 t<e）。
+ * 未启用时段闸恒回 true（全天可下田）。
+ * @returns {boolean}
+ */
+function inFarmWindow() {
+  if (!windowActive()) return true;
+  var t = curMin();
+  var rs = MCFG.timeRanges;
+  for (var i = 0; i < rs.length; i++) {
+    var s = rs[i].s;
+    var e = rs[i].e;
+    if (s === e) return true;
+    if (s < e) {
+      if (t >= s && t < e) return true;
+    } else if (t >= s || t < e) return true;
+  }
+  return false;
+}
+
+/**
+ * 距下个下田时段起点还有多少毫秒（仅在「时段外」调用）：逐行取「从现在到该 s 的下一次发生」的最小值。
+ * 用含秒的当日分钟差换算，秒级精度；s===e（全天）行跳过（不会处于其外部）。无可算行回 0（调用方兜底短间隔）。
+ * @returns {number} 毫秒
+ */
+function msToNextWindowStart() {
+  var t = curMin();
+  var rs = MCFG.timeRanges;
+  var best = Infinity;
+  for (var i = 0; i < rs.length; i++) {
+    var s = rs[i].s;
+    if (rs[i].s === rs[i].e) continue;
+    var delta = s > t ? s - t : 1440 - t + s; // 分钟（含小数）到下个起点
+    if (delta < best) best = delta;
+  }
+  if (!isFinite(best)) return 0;
+  return best * 60000;
+}
+
+/**
+ * 距下个「时段边界」（任一时段的起点或终点）还有多少毫秒（时段内调用）：逐行取 s、e 各自「从现在起的下一次发生」的最小值。
+ * inFarmWindow 的布尔翻转只可能发生在某行的起点或终点，故睡到最近的边界即可「到点主动醒做一次检测」——
+ *   窗口止→立即撤田（不等 idle 长睡的下个兜底周期），新窗口起→立即恢复下田。s===e（全天）行无边界、跳过；
+ *   含秒小数换算、秒级精度；无可算边界（均全天或未启用）回 0（调用方维持原兜底节奏）。
+ * @returns {number} 毫秒
+ */
+function msToNextWindowEdge() {
+  var t = curMin();
+  var rs = MCFG.timeRanges;
+  var best = Infinity;
+  for (var i = 0; i < rs.length; i++) {
+    if (rs[i].s === rs[i].e) continue;
+    var ds = rs[i].s > t ? rs[i].s - t : 1440 - t + rs[i].s;
+    var de = rs[i].e > t ? rs[i].e - t : 1440 - t + rs[i].e;
+    if (ds < best) best = ds;
+    if (de < best) best = de;
+  }
+  if (!isFinite(best)) return 0;
+  return best * 60000;
 }
 
 // ── 账本持久化 ──────────────────────────────────────────────────────
@@ -776,6 +904,34 @@ async function sendFarm(coord, marchType, plan) {
   });
 }
 
+/**
+ * 时段外立即撤田：逐条 904 撤回当前「占用中」的采集行军（marchType 3/26，取自 856 权威源），
+ * 条间 sleep(recallInterval) 拉开间隔规避行军时间限流；每轮前判 alive（暂停则就地收手）。
+ * 幂等：返程(RETURNING)/到家不计占用，故下一拍只重新拦尚未落地的；撤回失败仍占用的下拍再试。
+ * @param {object[]} marches fetchMyFarmMarches() 结果
+ * @returns {Promise<number>} 本轮所见仍占用的采集行军数（>0 交 cycleRun 短间隔复查）
+ */
+async function recallAllFarms(marches) {
+  var n = 0;
+  for (var i = 0; i < marches.length; i++) {
+    var m = marches[i];
+    if (!m.occupying) continue;
+    if (m.marchType !== KIND_FARM && m.marchType !== KIND_TOWER) continue;
+    if (!aliveFn()) return n;
+    n++;
+    await march.recall(m.marchId);
+    log.info(
+      'out-of-window recall farm march. marchId=%s kind=%d x=%d y=%d',
+      m.marchId,
+      m.marchType,
+      m.x,
+      m.y,
+    );
+    if (i < marches.length - 1) await sleep(cfg.recallInterval);
+  }
+  return n;
+}
+
 // ── 周期引擎（core/cycle 调和循环：单飞闸门 + 触发合并 + 绝不停摆均由 cycle 承载）──
 /**
  * 单轮调和主体：账本读回 → cyclePass → 返回下拍间隔（毫秒；<=0=立即补扫）。
@@ -789,16 +945,37 @@ async function cycleRun() {
     if (!ledgerLoaded) return cfg.activeScanInterval;
   }
   await cyclePass();
+  // 时段外：已全部撤净（outsideRemaining=0）则睡到下个下田时段起点（封顶防超大定时器/时钟漂移）；
+  //   仍有在途田（返程未落地/撤回失败）则短间隔复查再撤。两路都按「下个起点」夹一刀：起点临近时到点即醒恢复下田，不因复查跨过边界。
+  if (outsideWindow) {
+    var resume = msToNextWindowStart();
+    if (outsideRemaining > 0) {
+      if (resume <= 0) return cfg.activeScanInterval;
+      return Math.max(cfg.windowSleepMinMs, Math.min(cfg.activeScanInterval, resume));
+    }
+    if (resume <= 0) return cfg.activeScanInterval;
+    return Math.max(cfg.windowSleepMinMs, Math.min(resume, cfg.windowSleepMaxMs));
+  }
   // 撞 902 全局限流的指数退避优先：丢弃本轮在飞期间排队的触发（不立刻再 burst），交退避定时统一重试
+  var delay;
   if (rateLimitStreak > 0) {
-    return Math.min(
+    delay = Math.min(
       cfg.rateLimitBackoffMs * (1 << Math.min(rateLimitStreak - 1, 5)),
       cfg.rateLimitBackoffMaxMs,
     );
+  } else if (cycle.pending) {
+    // 本轮在飞期间来了外部触发（回城 / 配置 / 推送）→ 立即补扫一轮（合并语义，靠 cycle.pending 感知）
+    return 0;
+  } else {
+    delay = backlogActive ? cfg.activeScanInterval : cfg.idleScanInterval;
   }
-  // 本轮在飞期间来了外部触发（回城 / 配置 / 推送）→ 立即补扫一轮（合并语义，靠 cycle.pending 感知）
-  if (cycle.pending) return 0;
-  return backlogActive ? cfg.activeScanInterval : cfg.idleScanInterval;
+  // 时段内也按「下个边界（任一时段的起或止）」主动择时：到点即醒做一次检测——窗口止→立即撤田（不等 idle 长睡）、新窗口起→立即恢复下田。
+  //   未启用时段闸时 edge=0，维持原 active/idle 兜底节奏；delay=0（pending）已在上面 return，此处只处理 >0 的常规档。
+  if (windowActive()) {
+    var edge = msToNextWindowEdge();
+    if (edge > 0) delay = Math.max(cfg.windowSleepMinMs, Math.min(delay, edge));
+  }
+  return delay;
 }
 
 /** @type {{kick: function(), pending: boolean}} 调和循环驱动器（fallback 取 active 档，防异常停摆/空转） */
@@ -815,6 +992,19 @@ const cycle = createCycle({
  * @returns {Promise<void>}
  */
 async function cyclePass() {
+  // 时段闸（置于最前，撤田不依赖规则行是否还在）：启用「下田时段」且当前不在任一时段内
+  //   → 立即逐条 904 撤回全部在途田（本轮不下田），睡向下个时段起点的决策交 cycleRun。
+  if (windowActive() && !inFarmWindow()) {
+    var cur = await fetchMyFarmMarches();
+    if (!aliveFn()) return;
+    outsideRemaining = await recallAllFarms(cur);
+    outsideWindow = true;
+    backlogActive = false;
+    return;
+  }
+  outsideWindow = false;
+  outsideRemaining = 0;
+
   var all = MCFG.rules || [];
   var rules = [];
   var ruleIdx = [];
@@ -1088,6 +1278,9 @@ function install(ctx) {
 function configure(partial) {
   if (!partial) return MCFG;
   if (partial.rules != null) MCFG.rules = normalizeRules(partial.rules);
+  // 时段闸：toModuleCfg 已把 timeRanges 归一为 {s,e} 分钟数，这里只整体接收、绝不二次归一（防读不到扁平结构而静默失效）。
+  MCFG.timeWindowEnabled = !!partial.timeWindowEnabled;
+  MCFG.timeRanges = Array.isArray(partial.timeRanges) ? partial.timeRanges : [];
   if (ledgerLoaded) {
     var pruned = false;
     for (var key in ledger) {
@@ -1114,6 +1307,8 @@ function run(ctx) {
   ctxRef = ctx;
   backlogActive = false;
   rateLimitStreak = 0;
+  outsideWindow = false;
+  outsideRemaining = 0;
   lastPushWakeAt = 0;
   ledgerLoaded = false;
   ledgerLoading = false;
@@ -1125,7 +1320,11 @@ function run(ctx) {
   ctx.on.push(PUSH_ALLIANCE_RECORD, onAllianceRecordPush);
   if (offHomeReturn) offHomeReturn(); // 先退再挂，防 resume 重激活重复注册
   offHomeReturn = march.onHomeReturn(onFarmMarchHome);
-  log.info('started (rules=%d rows).', MCFG.rules.length);
+  log.info(
+    'started (rules=%d rows, window=%s).',
+    MCFG.rules.length,
+    MCFG.timeWindowEnabled ? 'on' : 'off',
+  );
   loadMechRecords();
   cycle.kick();
 }
@@ -1173,20 +1372,37 @@ reactor.register({
   places: ['base', 'world'],
   kinds: ['homeland'],
   offInCombat: true,
-  defaults: { enabled: false, rules: [] },
+  defaults: { enabled: false, rules: [], timeWindowEnabled: false, timeRanges: [] },
   fields: [
     {
       key: 'rules',
       label: '下田规则',
       type: 'farmrules',
-      section: '规则',
       familyOptions: RULE_OPTS.familyOptions,
       levelOptions: RULE_OPTS.levelOptions,
       presetOptions: RULE_OPTS.presetOptions,
     },
+    {
+      key: 'timeWindowEnabled',
+      label: '启用下田时段',
+      type: 'checkbox',
+    },
+    {
+      key: 'timeRanges',
+      label: '下田时段',
+      type: 'timeranges',
+      showIf: function (cfg) {
+        return !!cfg.timeWindowEnabled;
+      },
+      hint: '仅在所列时段内下田；时段外立即撤田，直到下个时段到来。开始>结束视为跨午夜',
+    },
   ],
   toModuleCfg: function (c) {
-    return { rules: normalizeRules(c.rules) };
+    return {
+      rules: normalizeRules(c.rules),
+      timeWindowEnabled: !!c.timeWindowEnabled,
+      timeRanges: normalizeTimeRanges(c.timeRanges),
+    };
   },
   install: install,
   configure: configure,

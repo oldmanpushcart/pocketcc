@@ -6,6 +6,8 @@
  * 报文实证：dashcam 20261004T202430-异能秘境-我是队长-发车.ndjson（战场包仅 resp、无 req，
  *   证实秘境 req 走未 hook 的 watch 独立 socket、resp 回主 NetReciver）；req 载荷形态取自源码 verbatim
  *   （PabRewardBoxNode / PabResLibraryNode / RealPabController / PabPetCaptureNodeNew / NRequestIdV2）。
+ *   **次通道 outbound 已打通后的实战样本**：dashcam 20261011T195811（8546/8527/8526/8538 均出现
+ *   `dir:"req:sendPBV2"`，心跳 0 条），本轮的节拍与拒绝码语义全部以该会话为准。
  */
 
 // ─────────── 秘境协议号（NRequestIdV2.ENIGMA_SECRET_ROOM_*，均走 watch 通道 85xx）───────────
@@ -21,6 +23,36 @@ export const CMD_RESOURCE_GET = 8527;
 export const CMD_RESOURCE_GET_BUFF = 8538;
 /** @type {number} ENIGMASECRET_ROOM_BEAST_OPERATE：拍宠物投喂一拍（req {specId}；本 feat 走原生 petCaptureOperation，不直发此号，仅留档） */
 export const CMD_BEAST_OPERATE = 8546;
+
+// ─────────── 秘境推送号（走 watch 通道下行，主 NetReciver 汇聚后由 core/net.js 派 `net.<cmd>`）───────────
+/**
+ * ENIGMA_SECRET_ROOM_BEAST_EVENT：捕获事件（心动时刻/投喂弹窗）下发。
+ * 载荷 verbatim `{type, specId[], endTime(Int64 毫秒), points[]}`。
+ * **推送不会被游戏写进 capturingInfo**：8546 应答回写的 feedInfo 实测键仅
+ *   `allFavor/selfenergy/endTime/stateEndTime/nowFavor/selfFavor/eventSpecId/eventRatio`——
+ *   **没有 eventType、也没有 eventEndTime**（旧注释误记，实证 dashcam 20261011T203911 全 8546 应答逐键）；
+ *   而 `eventSpecId` 会在 feedInfo 上连续挂十几秒（实证 ev=[3] 从 t+113.96 挂到 t+133+），**不能当事件身份**
+ *   → 只能作轮询兜底的候选来源（见 capture.js #pollEvent）。
+ * @type {number}
+ */
+export const PUSH_BEAST_EVENT = 21527;
+/**
+ * ENIGMA_SECRET_ROOM_FEED_BEAST：**「正在拍哪只宠物」的唯一真相**下发。
+ * 载荷 verbatim `{x,y[,boss:1]}`，结束推 `{x:-1,y:-1}`；游戏 Handler 就一句
+ *   `PabController.getInstance().capturingPetPos = o.data` + emit PabPetCaptureStateUpdate。
+ * 实证 dashcam 20261011T203911：本会话 44 条，切出 7 个在拍窗口，**83/83 条 type=2 心动时刻推送全部落在这些窗口内**
+ *   （旧 `marchState===PAB_FEED` 判据下这些推送 0 条能被响应）；6 个已收窗每个都有明确的 {x:-1,y:-1} 结束推送
+ *   → 收尾不靠「已喂满」估计。**但窗口起点不保证带 feedInfo**（7 个窗口里只有 5 个的起点有一条带 feedInfo 的
+ *   21524，两个 BOSS 窗口 108.03/115.57 没有）→ capturingInfo 可能是上一只残留，不能拿它做在拍闸门。
+ *   **BOSS 走同一条推送与同一个闸门**（实证 boss:1 那两窗，其中 (203,203) 长 41.4s 内人手发了
+ *   100 次免费手拍 + 拖拽答案 + 能量拍，specId 集与普通宠完全一致）→ 自动拍不需为 BOSS 分叉。
+ *   游戏 UI 侧每 10s 用它自愈（PabWorldUINew.updateCapturingData：瓦片 extData.state 不是
+ *   PabFightStageState.FEED(5)/BOSS_FEED(23) 时把 capturingPetPos 打回 {x:-1,y:-1}）。
+ * 本 feat 订阅它，但不拿它做闸门（闸门是直接读游戏现场的 `pab.capturingPetPos`，开局前已在拍也能立刻识别）：
+ *   只用它识别换宠/收尾（清上一只残留的静默窗 + 打一条 info 供实录对账）。
+ * @type {number}
+ */
+export const PUSH_FEED_BEAST = 21530;
 
 // ─────────── PAB 地图实体类型（NWorldMapCommon，瓦片 type；仅作点位类型留档）───────────
 /** @type {number} PAB_DROP：掉落箱点位 */
@@ -59,6 +91,11 @@ export const TABLE_BEAST_BEHAVE = 'enigma_beast_behave';
 // 投喂道具 specId 5/6（enigma_beast_behave 行 5/6 的 .item → 秘境背包道具，实证 PabPetCaptureNodeNew 取行 (t+5) → `petCaptureOperation(o+5)`）：
 //   报文实证同一会话普通拍 changeScore 恒落在 6~11 区间（1451/1517 条），投喂道具与免费手拍同量级却要消耗秘境背包道具
 //   → 本 feat 基础拍走免费手拍（SPEC_TAP），不主动投喂，故不导出可投喂集合。
+// 8546 specId 全谱（报文实证 dashcam 20261011T203911，跨 3 份录音的完整请求序列）：
+//   1 免费手拍（chg 5~9）；2/3 拖拽事件答案（chg=0 但 selfenergy +1，即 behave 表行号本身就是拖拽答案）；
+//   4 能量满释放（chg 300/390、能量归 0）；7/8/9/10 投喂弹窗选项（chg 50/100/200/500）。
+//   **BOSS 与普通异能兽同协议同 specId 集**（BOSS 窗 41.4s 内请求直方图 {1:100, 2:1, 3:2, 4:1}），
+//   差别只在 allFavor（BOSS 1000000 / 普通宠 7000~5000）与 21530 载荷多一个 boss:1。
 /**
  * 免费手拍 specId（PetCaptureTouchNodeNew.petCaptureTouch → `petCaptureOperation(1)`，无消耗）。
  * 唯一受客户端每秒限额约束的 specId（实证 RealPabController.checkCaptureOperationCd 首行 `!(1!=e||…)`，
@@ -77,9 +114,13 @@ export const SPEC_ENERGY_USE = 4;
 /** @type {number} 能量格数上限（实证 PetCaptureDragNodeNew `progress=selfenergy/3`、PetCaptureTouchNodeNew `btnEnergyMax.active = 3==selfenergy`） */
 export const ENERGY_MAX = 3;
 /**
- * 捕获事件类型（capturingInfo.eventType，来源 push 21527 ENIGMA_SECRET_ROOM_BEAST_EVENT + 8546 应答回写）：
- *   2 = 拖拽事件（PetCaptureDragNodeNew 2 秒窗口，成功 → `petCaptureOperation(eventSpecId[0])`，**能量 +1 且 changeScore=0**）；
- *   5 = 投喂弹窗（PabPetFeedEventPopup，节奏条停在哪个扇区 → `petCaptureOperation(7+index)`，报文实证 changeScore 260/650 两档）。
+ * 捕获事件类型（唯一来源是 push 21527 的 `type`——capturingInfo 里没有 eventType，见 PUSH_BEAST_EVENT 注）：
+ *   2 = 心动时刻/拖拽事件（PetCaptureDragNodeNew，**窗口实测 3.2~3.4s**：20261011T203911 里推送 header.ts
+ *     与载荷 endTime 之差；此前记的「0.8~1.3s」是拿旧会话 header.ts 与 endTime 的错口径读出来的，已被推翻。
+ *     客户端拖拽节点自己给的是 `ClientTime+2e3`；成功 → `petCaptureOperation(specId[0])`，能量 +1 且 changeScore=0）；
+ *   5 = 投喂弹窗（PabPetFeedEventPopup，选项 = specId 数组即 enigma_beast_behave 行 7..10，窗口实测 26s；
+ *     报文实证 changeScore 200~650 档，择优即多拿分）；
+ *   3 = 能量爆发演出（specId=[4] + points 数组、endTime=INT_MAX），本 feat 不直接响应它，由 selfenergy 闸覆盖。
  * @type {number}
  */
 export const EVT_TYPE_DRAG = 2;
@@ -154,16 +195,42 @@ export const TABLE_BEAST_TYPE = 'enigma_beast_type';
  */
 export const TABLE_EFFECT_BUFF = 'EFFECTBUFF';
 
+// ─────────── 服务器拒绝原因键（pbAckV2.header.d，经 game-api sendSecret 的 Ret.reason 透传；实证 dashcam 20261011T195811 的 8527 应答）───────────
+/**
+ * 同一资源点内相同道具只能获取 1 次（字典表 loc 键）。
+ * 游戏自己在面板侧也有同判据（实证 PabResLibraryNode.pabBagItemOperate：`checkItemIdGeted(specId)` 命中即 ShowTips(enigma_realm119)），
+ *   但它要求 bagInfo 条目 `uid==me`，而 **8526 INFO 载荷的条目不带 uid** → 对 INFO 数据恒为假，只能由本 feat 自己记账。
+ * @type {string}
+ */
+export const REJ_SAME_ITEM_ONCE = 'enigma_realm119';
+/**
+ * 小队尚未抵达目标点（**服务器独占**判据：客户端 pabBagItemOperate 只看限额/已领/背包上限，不查在位）。
+ * 撞到即说明「点位明细已陈旧、队伍已开走」→ 该点位本轮不再发。
+ * @type {string}
+ */
+export const REJ_NOT_ARRIVED = 'enigma_realm158';
+/** @type {string} 已被其他指挥官拿走（队友抢先，实证 8527 应答 57 条里 17 条） */
+export const REJ_TAKEN_BY_OTHER = 'enigma_realm161';
+
 // ─────────── 节奏 / 去抖调参（内置，不暴露面板）───────────
 /**
  * 引擎内置调优常量。
  * @type {object}
  */
 export const tuning = {
-  /** 拍宠物：非 FEED 态（未开拍/已捕获/无 capturingInfo）时的长睡（毫秒） */
+  /** 拍宠物：不在拍（capturingPetPos 未置位 / 已收尾）时的长睡（毫秒） */
   feedIdleMs: 5000,
-  /** 拾取：同一点位两批 GET 之间的去抖（毫秒），合并突发刷新事件、防逐拍重发 */
-  pickupDebounceMs: 800,
+  /**
+   * 拍宠物：推送通道**存活判定窗**（毫秒）。窗内收到过任何一条 21527 就认为通道活着，事件全靠推送直达；
+   *   连续静默超过本窗才启用 capturingInfo.eventSpecId 轮询兜底（防两条路对同一事件双发——
+   *   两边的身份口径不同：推送是 `type:endTime`，轮询只有 eventSpecId，去重集互不认识）。
+   */
+  pushAliveMs: 30000,
+  /**
+   * 拾取：同一点位两批 GET 之间的去抖（毫秒），合并突发刷新事件、防逐拍重发。
+   * 从 800 降到 250：异能井是一群人抢的，去抖窗直接叠加到首次发包延迟上（实测一帧 8526 应答 44~75ms 就回）。
+   */
+  pickupDebounceMs: 250,
   /** 拍宠物：免费手拍两拍之间的最小间隔（毫秒），报文实证人手连点中位 222ms，此处保守取 250（≈4 拍/秒） */
   tapIntervalMs: 250,
   /** 拍宠物：dataConfig(630027) 取不到时的每秒手拍兜底上限（与游戏 checkCaptureOperationCd 同语义） */
@@ -172,6 +239,32 @@ export const tuning = {
   energyBurstFallbackMs: 7000,
   /** 拾取：被拒 dropId 的当日拉黑存活（毫秒），过期后允许再试（防永久误拉黑） */
   rejectBlacklistMs: 6 * 3600 * 1000,
+  /**
+   * 拾取：相邻两条 GET 的最小间隔（毫秒）——流水线发送的节拍初值。
+   * 必要性实证（dashcam 20261011T195811）：次通道 NetMgrSimple.send 有**按 cmd 的 MsgIdSettings.cdTime 频控**，
+   *   命中即 `return !1` 不上线也不报错；门面 TMWatchNetMgr.sendPBV2 **无 return**（verbatim）→ 我们拿不到那个 false，
+   *   只能靠超时感知。实测同一轮里 44~75ms 的连发全部没应答（8527：9 req / 5 resp），串行 await 把它们空等满
+   *   15s → 一个点位吃 62s。取 250ms 既避开已知拦截区（>75ms）又不白等。
+   */
+  getGapMs: 250,
+  /** 拾取：被拦（未上线）时自适应翻倍的上限（毫秒），避免把频控窗越撞越密 */
+  getGapMaxMs: 2000,
+  /**
+   * 拾取：连续成功时节拍回落的步长（毫秒），每中一条向 getGapMs 靠近一档（撞拦→退避→再试探的循环）。
+   */
+  getGapStepMs: 100,
+  /**
+   * 拾取：点位载荷的**最长可用年龄**（毫秒）。超出即作废整批，不再拿陈旧明细发 GET。
+   * 必要性：旧实现一个点位吃 62s，队伍早开走了还在发 → 撞 8527 `s=3 d=enigma_realm158`「小队尚未抵达目标点」；
+   *   而客户端有坐标级在位判据（roomBaseInfo 带 `startPoint`/`targetPoint`，实证 21521 载荷 +
+   *   NWorldPabCommonPopup.marchClick 就用 `startPoint.x!==tileX` 判「已在该点」）→ 时效只作兜底，主判据见 #tileGate。
+   */
+  staleMaxMs: 6000,
+  /**
+   * 拾取：撞 158（小队尚未抵达目标点）后该点位的**静默时长**（毫秒）。
+   * 不拉黑 rId（回队重试还能拿）但短时间不再发；取 60s：同一轮里不会马上又到达同一点。
+   */
+  tileDeadMs: 60000,
   /**
    * 拾取：掉落箱 DROP_INFO 配对队列的**兜底档**存活窗口（毫秒）——只在应答拿不到 reqTime 时才用它。
    * 主路径是按 reqTime 精确配对（core/net.js Event.reqTime = 该应答那条请求的发出时刻），不需 TTL；
@@ -183,6 +276,12 @@ export const tuning = {
    *   留着半队坐标去猜只会把错点写进 DROP_GET，被拒后还会误拉黑本来能拾的 dropId）。
    */
   dropPairQueueMax: 8,
+  /**
+   * 拾取：「本会话在该点位已拿到/已发过」账的点位条数上限（Map 保持插入序，溢出丢最早一点位）。
+   * 必要性：8526 RESOURCE_INFO 的 bagInfo 条目**不带 uid**（实测 keys 仅 dropId/specId/likeUids）→
+   *   游戏侧「我已领」判据对 INFO 载荷完全失效，只能由本 feat 自己按点位记账（否则撞 8527 s=3 d=enigma_realm119）。
+   */
+  tileAccMax: 32,
 };
 
 /** @type {number} 未真正发出的哨兵码（sendSecret 超时/异常回此值；与 game-api SECRET_NOT_SENT 同义） */

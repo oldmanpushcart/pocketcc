@@ -298,90 +298,64 @@ function setupUidListRow(wrap, f, arr) {
   renderDisplay();
 }
 
+/** @type {string} 拖拽中被拖走的行上的视觉类（panel-css：半透明，提示「这行正跟着指针走」） */
+const DRAG_ROW_CLS = 'pc-sdragging';
+/** @type {string} 拖拽中行容器上的视觉类（panel-css：整块变 grabbing 光标） */
+const DRAG_WRAP_CLS = 'pc-sgrabbing';
+/** @type {number} 起拖位移阈值（像素）：小于它算点选，不触发起拖 */
+const DRAG_START_PX = 4;
+
 /**
- * 装配领取优先级清单容器（.pc-slist）：整行 pointer 拖拽交换 order 位（已去掉 ↑/↓ 按钮）。
- * 拖拽中就地移动真实行节点、只刷序号；move/up 监听挂 window（指针移出面板也不丢），并对 box.__pcSDragging
- * 置位以让 refreshTexts 期间的整块重刷跳过（防 ui.refresh 打断拖拽）；松手才按 DOM 顺序回写 arr → 重刷 + 重绑 + 持久化热更。
- * configs[fid][key] 若仍是 descriptor defaults 本体先浅拷，避免就地交换污染 defaults。
- * @param {HTMLElement} box .pc-slist 容器
+ * 整行 pointer 拖拽换位的共用装配（sortlist 与 itemlist 两条面板清单同源，逻辑一字不差）。
+ * 拖拽中就地移动真实行节点、只刷序号（不整块重刷，保住被拖行的节点）；move/up 监听挂 window
+ *   （指针移出面板/落到游戏画布仍持续送达）；期间置 `box.__pcRowDrag` 让面板重刷跳过（防 ui.refresh 摧毁被拖行）；
+ *   松手且真移动过才把 DOM 顺序交给 commit，由调用方回写状态 → 重刷 + 重绑 → 持久化热更。
+ * `opt.handleSel` 非空时只有落点命中该选择器才起拖——itemlist 行内有数字输入框，整行起拖会抢输入与选字。
+ * @param {object} opt 配置
+ * @param {HTMLElement} opt.box 清单容器（拖拽标志宿主）
+ * @param {string} opt.rowSel 行选择器（相对 box，如 '.pc-srows .pc-srow'）
+ * @param {string} opt.wrapSel 行包装选择器（相对 box，如 '.pc-srows'）
+ * @param {string} opt.rankSel 行内序号节点选择器（如 '.pc-srank' / '.pc-irank'）
+ * @param {function(HTMLElement[]):void} opt.commit 松手后按 DOM 顺序回写（只在真移动过时调用，入参为当前行节点数组）
+ * @param {string[]} [opt.skipCls] 落点带这些 class 即不起拖（勾选框等）
+ * @param {string} [opt.handleSel] 拖拽手柄选择器（缺省 = 整行可拖）
+ * @returns {function():void} 给当前行节点挂 pointerdown（每次整块重刷后需再调一次）
  */
-export function mountSortList(box) {
-  const fid = box.dataset.id;
-  const f = findFeature(fid);
-  if (!f) return;
-  const fd = f.fields.find((x) => x.key === box.dataset.skey);
-  if (!fd) return;
-  if (box.__pcSDragging) return; // 拖拽进行中：跳过重刷，避免 ui.refresh 摧毁被拖行
-  const c = configs[fid];
-  if (!Array.isArray(c[fd.key]))
-    c[fd.key] = Array.isArray(f.defaults[fd.key]) ? f.defaults[fd.key].slice() : [];
-  else if (c[fd.key] === f.defaults[fd.key]) c[fd.key] = c[fd.key].slice();
-  const arr = c[fd.key];
-  // 可选全量源 fd.all（数组或 fn(cfg)）：把全量里当前 order 数组缺失的项追加到末尾——
-  //   解决「功能新增了可排序项、但老用户存档的 order 不含它 → 面板这一行不显示」。
-  //   未声明 fd.all 的 sortlist（遗迹奖励/卡车）保持原样，向后兼容。
-  if (fd.all != null) {
-    const full = typeof fd.all === 'function' ? fd.all(c) : fd.all;
-    if (Array.isArray(full)) {
-      for (let ai = 0; ai < full.length; ai++) {
-        if (arr.indexOf(full[ai]) < 0) arr.push(full[ai]);
-      }
-    }
-  }
-  if (fd.checkable && (!Array.isArray(c[fd.offKey]) || c[fd.offKey] === f.defaults[fd.offKey])) {
-    c[fd.offKey] = Array.isArray(f.defaults[fd.offKey]) ? f.defaults[fd.offKey].slice() : [];
-  }
-  const offArr = () => (fd.checkable ? c[fd.offKey] : undefined);
-  const valByStr = new Map();
-  arr.forEach((v) => valByStr.set(String(v), v));
-
-  const rowsWrap = () => box.querySelector('.pc-srows');
-  const rowEls = () => Array.prototype.slice.call(box.querySelectorAll('.pc-srows .pc-srow'));
-
+function attachRowDrag(opt) {
+  const box = opt.box;
+  const rowEls = () => Array.prototype.slice.call(box.querySelectorAll(opt.rowSel));
   // 拖拽中就地更新序号（不整块重刷，保住被拖的行节点）
   const refreshRanks = () => {
     rowEls().forEach((r, i) => {
-      const rk = r.querySelector('.pc-srank');
-      if (rk) rk.textContent = i + 1;
+      const rk = r.querySelector(opt.rankSel);
+      if (rk) rk.textContent = String(i + 1);
     });
   };
-  // 松手收尾：按当前 DOM 顺序回写 arr → 清拖拽标志 → 重刷 + 重绑 → 持久化热更（configure 即重建优先级 Map，下一轮生效）
-  const commitFromDom = () => {
-    const order = rowEls().map((r) => {
-      const k = r.dataset.skey;
-      return valByStr.has(k) ? valByStr.get(k) : isFinite(+k) ? +k : k;
-    });
-    arr.length = 0;
-    order.forEach((v) => arr.push(v));
-    box.__pcSDragging = false;
-    box.innerHTML = sortListInnerHTML(arr, fd, offArr());
-    bind();
-    saveFeature(f);
-    applyFeature(f);
-  };
-
   const onRowDown = (e) => {
-    if (e.target && e.target.classList && e.target.classList.contains('pc-scheck')) return; // 勾选框点击不触发起拖拽
-    if (e.pointerType === 'mouse' && e.button !== 0) return;
     const row = e.currentTarget;
-    const wrap = rowsWrap();
+    const tgt = e.target;
+    if (opt.handleSel && !(tgt && tgt.closest && tgt.closest(opt.handleSel))) return;
+    const cls = (tgt && tgt.classList) || null;
+    if (cls && opt.skipCls && opt.skipCls.some((c) => cls.contains(c))) return;
+    if (e.pointerType === 'mouse' && e.button !== 0) return;
+    const wrap = box.querySelector(opt.wrapSel);
     if (!wrap) return;
     e.preventDefault();
-    box.__pcSDragging = true;
+    box.__pcRowDrag = true;
     const pid = e.pointerId,
       startY = e.clientY;
     let moved = false;
     try {
       row.setPointerCapture(pid);
     } catch (err) {
-      /* 不支持则靠 window 冒泡兑底 */
+      /* 不支持则靠 window 冒泡兜底 */
     }
     const onMove = (ev) => {
       if (!moved) {
-        if (Math.abs(ev.clientY - startY) < 4) return;
+        if (Math.abs(ev.clientY - startY) < DRAG_START_PX) return;
         moved = true;
-        row.classList.add('pc-sdragging');
-        wrap.classList.add('pc-sgrabbing');
+        row.classList.add(DRAG_ROW_CLS);
+        wrap.classList.add(DRAG_WRAP_CLS);
       }
       ev.preventDefault();
       const others = rowEls().filter((r) => r !== row);
@@ -406,21 +380,83 @@ export function mountSortList(box) {
       window.removeEventListener('pointermove', onMove);
       window.removeEventListener('pointerup', onUp);
       window.removeEventListener('pointercancel', onUp);
-      row.classList.remove('pc-sdragging');
-      wrap.classList.remove('pc-sgrabbing');
-      if (moved) commitFromDom();
-      else box.__pcSDragging = false;
+      row.classList.remove(DRAG_ROW_CLS);
+      wrap.classList.remove(DRAG_WRAP_CLS);
+      box.__pcRowDrag = false; // 先放标志：commit 里的整块重刷要能正常走完
+      if (moved) opt.commit(rowEls());
     };
     // 监听挂 window：即使指针移出面板/落到游戏画布，move/up 仍持续送达（比只挂 row 稳）
     window.addEventListener('pointermove', onMove);
     window.addEventListener('pointerup', onUp);
     window.addEventListener('pointercancel', onUp);
   };
+  return function bindDrag() {
+    box
+      .querySelectorAll(opt.rowSel)
+      .forEach((row) => row.addEventListener('pointerdown', onRowDown));
+  };
+}
+
+/**
+ * 装配领取优先级清单容器（.pc-slist）：整行 pointer 拖拽交换 order 位（已去掉 ↑/↓ 按钮）。
+ * 拖拽与松手收尾的机制见 attachRowDrag；松手按 DOM 顺序回写 arr（数字 id 回写原类型，不统一转字符串）。
+ * configs[fid][key] 若仍是 descriptor defaults 本体先浅拷，避免就地交换污染 defaults。
+ * @param {HTMLElement} box .pc-slist 容器
+ */
+export function mountSortList(box) {
+  const fid = box.dataset.id;
+  const f = findFeature(fid);
+  if (!f) return;
+  const fd = f.fields.find((x) => x.key === box.dataset.skey);
+  if (!fd) return;
+  if (box.__pcRowDrag) return; // 拖拽进行中：跳过重刷，避免 ui.refresh 摧毁被拖行
+  const c = configs[fid];
+  if (!Array.isArray(c[fd.key]))
+    c[fd.key] = Array.isArray(f.defaults[fd.key]) ? f.defaults[fd.key].slice() : [];
+  else if (c[fd.key] === f.defaults[fd.key]) c[fd.key] = c[fd.key].slice();
+  const arr = c[fd.key];
+  // 可选全量源 fd.all（数组或 fn(cfg)）：把全量里当前 order 数组缺失的项追加到末尾——
+  //   解决「功能新增了可排序项、但老用户存档的 order 不含它 → 面板这一行不显示」。
+  //   未声明 fd.all 的 sortlist（遗迹奖励/卡车）保持原样，向后兼容。
+  if (fd.all != null) {
+    const full = typeof fd.all === 'function' ? fd.all(c) : fd.all;
+    if (Array.isArray(full)) {
+      for (let ai = 0; ai < full.length; ai++) {
+        if (arr.indexOf(full[ai]) < 0) arr.push(full[ai]);
+      }
+    }
+  }
+  if (fd.checkable && (!Array.isArray(c[fd.offKey]) || c[fd.offKey] === f.defaults[fd.offKey])) {
+    c[fd.offKey] = Array.isArray(f.defaults[fd.offKey]) ? f.defaults[fd.offKey].slice() : [];
+  }
+  const offArr = () => (fd.checkable ? c[fd.offKey] : undefined);
+  const valByStr = new Map();
+  arr.forEach((v) => valByStr.set(String(v), v));
+
+  // 松手收尾：按当前 DOM 顺序回写 arr → 重刷 + 重绑 → 持久化热更（configure 即重建优先级 Map，下一轮生效）
+  const commitFromDom = (els) => {
+    const order = els.map((r) => {
+      const k = r.dataset.skey;
+      return valByStr.has(k) ? valByStr.get(k) : isFinite(+k) ? +k : k;
+    });
+    arr.length = 0;
+    order.forEach((v) => arr.push(v));
+    box.innerHTML = sortListInnerHTML(arr, fd, offArr());
+    bind();
+    saveFeature(f);
+    applyFeature(f);
+  };
+  const bindDrag = attachRowDrag({
+    box: box,
+    rowSel: '.pc-srows .pc-srow',
+    wrapSel: '.pc-srows',
+    rankSel: '.pc-srank',
+    skipCls: ['pc-scheck'], // 勾选框点击不触发起拖
+    commit: commitFromDom,
+  });
 
   const bind = () => {
-    box
-      .querySelectorAll('.pc-srows .pc-srow')
-      .forEach((row) => row.addEventListener('pointerdown', onRowDown));
+    bindDrag();
     // checkable 行首勾选框：切换该物品是否参与匹配（off 集按 itemId 存，与拖拽 order 解耦），改动即重刷 + 存档 + 热更
     if (fd.checkable) {
       box.querySelectorAll('.pc-srows .pc-scheck').forEach((chk) => {
@@ -448,8 +484,10 @@ export function mountSortList(box) {
 }
 
 /**
- * 装配物品清单容器（.pc-ilist）：行不可增删，每行一枚 checkbox + 一个数字输入。
+ * 装配物品清单容器（.pc-ilist）：行不可增删，每行一枚 checkbox + 一个数字输入；`fd.sortable` 时行首多一个拖拽手柄。
  * 状态形状：`cfg[fd.key] = { [idStr]: { on: 0|1, max: number } }`，未登记的项默认 on=1/max=0（不限）。
+ * 拖拽序：`cfg[fd.orderKey] = string[]`（池 key 的优先级序，下标即优先级），只由拖拽写入（写全量 DOM 序）；
+ *   旧存档无此数组 = 未排过序，面板按池原序展示，引擎也不按序优先（见 feats/activity/secret-realm/pickup.js）。
  * 池项带 `cap`（游戏自身硬上限）时，输入超出 cap 会被自动修正为 cap 并回写框内值。
  * 首次写入前浅拷一层，避免就地 push 污染 descriptor defaults。checkbox 改动重刷整块（行高量可取）；
  * number 改动不重刷，避免抢用户正在输入的框。两者都走 saveFeature + applyFeature 热更。
@@ -461,6 +499,7 @@ export function mountItemList(box) {
   if (!f) return;
   const fd = f.fields.find((x) => x.key === box.dataset.ikey);
   if (!fd) return;
+  if (box.__pcRowDrag) return; // 拖拽进行中：跳过重刷，避免 ui.refresh 摧毁被拖行
   const c = configs[fid];
   if (!c[fd.key] || typeof c[fd.key] !== 'object' || Array.isArray(c[fd.key])) {
     c[fd.key] = Object.assign({}, (f.defaults && f.defaults[fd.key]) || {});
@@ -472,6 +511,13 @@ export function mountItemList(box) {
   }
   const state = c[fd.key];
   const items = typeof fd.items === 'function' ? fd.items(c) : fd.items || [];
+  const okey = fd.orderKey;
+  if (okey && !Array.isArray(c[okey])) {
+    c[okey] = Array.isArray(f.defaults && f.defaults[okey]) ? f.defaults[okey].slice() : [];
+  } else if (okey && c[okey] === f.defaults[okey]) {
+    c[okey] = c[okey].slice(); // 不让就地交换污染 defaults 本体
+  }
+  const order = okey ? c[okey] : null;
 
   const ensureEntry = (key) => {
     if (!state[key]) state[key] = { on: 1, max: 0 };
@@ -479,11 +525,33 @@ export function mountItemList(box) {
   };
 
   const rerender = () => {
-    box.innerHTML = itemListInnerHTML(items, state, fd);
+    box.innerHTML = itemListInnerHTML(items, state, fd, order);
     bind();
   };
 
+  // 拖拽收尾：按当前 DOM 序回写 order（全量池 key，顺带把已从池中消失的残留项清掉）→ 重刷 + 存档 + 热更
+  const commitFromDom = (els) => {
+    const next = els.map((r) => r.dataset.ikey);
+    order.length = 0;
+    next.forEach((k) => order.push(k));
+    rerender();
+    saveFeature(f);
+    applyFeature(f);
+  };
+  const bindDrag = okey
+    ? attachRowDrag({
+        box: box,
+        rowSel: '.pc-irows .pc-irow',
+        wrapSel: '.pc-irows',
+        rankSel: '.pc-irank',
+        handleSel: '.pc-shandle', // 行内有输入框：只从拖拽手柄起拖，不抢输入框焦点/选字
+        skipCls: ['pc-ichk', 'pc-imax'],
+        commit: commitFromDom,
+      })
+    : function () {};
+
   const bind = () => {
+    bindDrag();
     box.querySelectorAll('.pc-ichk').forEach((chk) => {
       chk.addEventListener('change', () => {
         const k = chk.dataset.ik;

@@ -1,19 +1,21 @@
 /**
  * 异能秘境 feat（reactor id:'secretRealm'，活动设置分组）装配层。
  *
- * 定位：本期只做 3 个「队伍停靠态、无战斗语义」的自动化，且**只在异能秘境地图内生效**：
- *   1. 物品自动拾取（大开关 autoPickup）：掉落箱物品 / 掉落箱宠物 / 资源点 bag 三类合并，
+ * 定位：本期只做 3 个「队伍停靠态、无战斗语义」的自动化，且**只在异能秘境地图内生效**。
+ *   三大能力均**默认生效、无独立开关**（面板不留存其开关配置，feat 本身 enabled 为总闸）：
+ *   1. 物品自动拾取：掉落箱物品 / 掉落箱宠物 / 资源点 bag 三类合并，
  *      面板用 itemlist 逐行勾选 + 秘境背包持有上限（0=跟随游戏 para1_v1，>0 额外限）；
  *      **清单按道具 ID 聚合**（实证 dump：rss_station 按点位分行，item=41001 有 44 个 specId、item=41009 有 5 个，
  *      逐点位列行会出大片同名项；而 max 本就按 getItemNumById(itemId) 计）；
  *      行名来源：`item:` 取 ITEM 表 `.name`（rss_station 行无名字，只 `.item` 指向产出道具），
  *      `pet:` 取 `enigma_beast_type[cfg.type].name1`（enigma_beast 行亦无 name 字段）；
- *   2. 增益井 buff（开关 autoBuff + 选项 buffEffects）：仅队长可装；三个槽位按 effect_buff 分类不重复
+ *      行首可拖拽排序（pickOrder）：**下标即拾取优先级**，同点位配额不够时先给靠前的项（一群人就抢的场景）；
+ *   2. 增益井 buff（选项 buffEffects）：仅队长可装；三个槽位按 effect_buff 分类不重复
  *      （实证表内共 6 类，默认只拿三类：全部单位攻击加成 9200001 / 伤害加深 9200004 / 野外行军速度提高 9200006），
  *      同类只在更强时等价替换；面板选项默认已勾这三类，全不勾=不限；
- *   3. 自动拍宠物（开关 autoCapture）：已在异能兽点开拍（FEED 态）后接管整个节奏——
- *      免费手拍打底、拖拽事件照接（能量 +1）、能量攒满 3 格放高分持续拍（报文实证 390 分/拍）、
- *      投喂弹窗择优；不负责找怪、不派兵、不自费消耗投喂道具。
+ *   3. 自动拍宠物：已在拍异能兽/**BOSS**（push 21530 置位 capturingPetPos，BOSS 带 boss:1）
+ *      后接管整个拍节奏——免费手拍打底、心动时刻（push 21527 type=2，窗口实测 3.2s）到达即拍、
+ *      能量攒满 3 格放高分持续拍（报文实证 390 分/拍）、投喂弹窗择优；不负责找怪、不派兵、不自费消耗投喂道具。
  *
  * 秘境是「独立活动/独立地图/独立战斗体系/独立背包」的隔离世界：
  *   - 场景名沿用 NWorldMap，但 watchingType===PAB（isPabBattleMap）才是真正的进入标志；
@@ -59,18 +61,17 @@ var ctxRef = null;
  */
 var engines = { pickup: null, capture: null };
 /**
- * 面板模块配置（configure 推入，引擎惰性读）：
- *   autoPickup=物品拾取大开关（掉落箱物品/宠物、资源点 bag 三类合并）；
+ * 面板模块配置（configure 推入，引擎惰性读）：物品拾取/增益井/拍宠物三大能力均默认生效、无开关，这里只剩可配置的子项——
  *   pickItems=itemlist 状态对象 `{ [idStr]: {on:0|1, max:number} }`，idStr 前缀 `item:`（道具维度，含资源点产出）/`pet:`；
- *   autoBuff=增益井；buffEffects=要拿的增益类（effect_buff 数组，默认三类；空=不限即六类全要）；autoCapture=拍宠物。
- * @type {{autoPickup:boolean, pickItems:Object<string,{on:number,max:number}>, autoBuff:boolean, buffEffects:number[], autoCapture:boolean}}
+ *   pickOrder=拖拽得到的池 key 序（下标即优先级，未排过序为空数组）；pickRank=它的反查表 `{key: idx}`（引擎用）；
+ *   buffEffects=要拿的增益类（effect_buff 数组，默认三类；空=不限即六类全要）。
+ * @type {{pickItems:Object<string,{on:number,max:number}>, pickOrder:string[], pickRank:Object<string,number>, buffEffects:number[]}}
  */
 var modCfg = {
-  autoPickup: true,
   pickItems: {},
-  autoBuff: true,
+  pickOrder: [],
+  pickRank: {},
   buffEffects: DEFAULT_BUFF_EFFECTS.slice(),
-  autoCapture: true,
 };
 
 /**
@@ -218,7 +219,7 @@ function buildBuffOptions() {
  *     实证 dump：rss_station 按点位分行，同一道具对应几十行（item=41001 有 44 个 specId、item=41009 有 5 个），
  *     逐 specId 列行会出大量同名项；而数量上限本就按 `getItemNumById(itemId)` 计→ 只有道具维度语义正确。
  *   - `pet:{cfgId}`   = enigma_beast 全表（掉落箱宠物，本期不合并）。
- * buff 类不在此清单（走独立 autoBuff 开关，pos 语义不同）。
+ * buff 类不在此清单（走增益井 buffEffects 拾取链路，pos 语义不同）。
  * `cap` = 该道具的游戏自身上限（见 capOfItemRow）：面板行内标 `≤N`，超出 N 的填写值会被自动修正。
  * 表未就绪/符号缺失时 try/catch 兜住，回空数组——面板显示「池为空」但不致命。
  * @returns {Array<{id:string,label:string,cap:number}>}
@@ -244,7 +245,7 @@ function buildPickPool() {
     for (let i = 0; i < rssRows.length; i++) {
       const r = rssRows[i];
       if (!r || r.id == null) continue;
-      if (Number(r.effect_buff) !== 0) continue; // buff 类走独立开关
+      if (Number(r.effect_buff) !== 0) continue; // buff 类走增益井 buffEffects 链路，不入拾取清单
       // rss_station 行无名字字段（实证 PabBagItem.updateResourceItem 只读 .item/.item_num）→ 名字取它产出的道具，并按该道具合并成一行
       const itemId = Number(r.item) || 0;
       if (!itemId || seen[KEY_ITEM + itemId]) continue;
@@ -347,17 +348,59 @@ function sanitizeBuffEffects(raw, max) {
 }
 
 /**
- * 接收面板配置（registry 经 toModuleCfg 推入）：三大开关 + itemlist 状态对象 + 增益类勾选。早于 run。
- * @param {object} c { autoPickup, pickItems, autoBuff, buffEffects, autoCapture }
+ * pickOrder 归一化：只留非空字符串项、去重（以首次出现为准），再剔除**当前池里已不存在**的残留 id。
+ * 池为空时不动原值：表未就绪/符号缺失只是这一次读不到池，把用户拖出来的排序账清掉是事故不是归一化。
+ * @param {*} raw registry 传入的原值
+ * @returns {string[]} 池 key 数组（下标即拾取优先级）
+ */
+function sanitizePickOrder(raw) {
+  if (!Array.isArray(raw)) return [];
+  const out = [];
+  const seen = new Set();
+  for (let i = 0; i < raw.length; i++) {
+    const k = raw[i];
+    if (typeof k !== 'string' || !k || seen.has(k)) continue;
+    seen.add(k);
+    out.push(k);
+  }
+  if (!out.length) return out;
+  const pool = buildPickPool();
+  if (!pool.length) return out; // 表未就绪 → 原样保留
+  const live = new Set(
+    pool.map(function (p) {
+      return String(p && p.id);
+    }),
+  );
+  return out.filter(function (k) {
+    return live.has(k);
+  });
+}
+
+/**
+ * 面板配置 → 模块配置（toModuleCfg 与 configure 共用同一份归一化，防两处口径漂移）。
+ * 物品拾取/增益井/拍宠物无开关（恒生效），故只归一可配置子项 pickItems / pickOrder / buffEffects。
+ * `pickRank` 由 pickOrder 预先摊平成 `{池 key: 下标}`：拾取排序每批候选都要查序，不在热路径上做 indexOf。
+ * @param {object} c 面板原配置
+ * @returns {{pickItems:object, pickOrder:string[], pickRank:Object<string,number>, buffEffects:number[]}}
+ */
+function buildModuleCfg(c) {
+  const order = sanitizePickOrder(c && c.pickOrder);
+  const rank = {};
+  for (let i = 0; i < order.length; i++) if (rank[order[i]] == null) rank[order[i]] = i;
+  return {
+    pickItems: sanitizePickItems(c && c.pickItems),
+    pickOrder: order,
+    pickRank: rank,
+    buffEffects: sanitizeBuffEffects(c && c.buffEffects, BUFF_SLOT_MAX),
+  };
+}
+
+/**
+ * 接收面板配置（registry 经 toModuleCfg 推入）：itemlist 状态对象 + 拖拽优先级序 + 增益类勾选（三大能力恒生效，无开关）。早于 run。
+ * @param {object} c { pickItems, pickOrder, buffEffects }
  */
 function configure(c) {
-  modCfg = {
-    autoPickup: !!(c && c.autoPickup),
-    pickItems: sanitizePickItems(c && c.pickItems),
-    autoBuff: !!(c && c.autoBuff),
-    buffEffects: sanitizeBuffEffects(c && c.buffEffects, BUFF_SLOT_MAX),
-    autoCapture: !!(c && c.autoCapture),
-  };
+  modCfg = buildModuleCfg(c);
 }
 
 /**
@@ -397,13 +440,12 @@ function run(ctx) {
   engines.pickup = new PickupEngine(env);
   engines.pickup.start(ctx);
   engines.capture = new CaptureEngine(env);
-  engines.capture.start();
+  // 传 ctx：拍宠物要订阅 push 21527（心动时刻窗口实测 3.2s，等不起下一拍的 capturingInfo 回写）
+  engines.capture.start(ctx);
   log.info(
-    'started (pickup=%s items=%d buff=%s capture=%s).',
-    modCfg.autoPickup ? 'on' : 'off',
+    'started (item overrides=%d, buff classes=%d).',
     Object.keys(modCfg.pickItems).length,
-    modCfg.autoBuff ? 'on' : 'off',
-    modCfg.autoCapture ? 'on' : 'off',
+    modCfg.buffEffects.length,
   );
 }
 
@@ -419,65 +461,34 @@ reactor.register({
   // 不声明 offInCombat：本 feat 是停靠态拾取/拍宠物，无战斗语义；秘境地图内其它 feat 由 world 门的 kind===pab 隔离统一规避
   defaults: {
     enabled: false,
-    autoPickup: true,
     pickItems: {},
-    autoBuff: true,
+    pickOrder: [],
     buffEffects: DEFAULT_BUFF_EFFECTS.slice(),
-    autoCapture: true,
   },
   fields: [
-    {
-      key: 'autoPickup',
-      type: 'checkbox',
-      label: '物品拾取',
-      hint: '当前刷新点位内掉落箱物品/宠物、资源点 bag 逐项 GET（受游戏 para1_v1、dataConfig 3021/3013/3061 总量上限；细项勾选见下方清单）',
-    },
     {
       key: 'pickItems',
       type: 'itemlist',
       label: '拾取清单',
-      topHint:
-        '取消勾选=不拾；数字=秘境背包持有上限（按道具计），0=跟随游戏 para1_v1；行内 ≤N = 游戏硬上限，超出自动修正',
-      hint: '池按**道具**一行：ITEM type=171（掉落箱物品）+ 资源点产出道具（rss_station 多点位产出同一道具已合并）；宠物另列（只 on/off）',
+      section: '物品拾取',
+      sortable: true,
+      orderKey: 'pickOrder',
+      topHint: '可拖拽排序，越靠前越先拾；勾选行=是否拾取，数字=秘境背包上限（0=跟随游戏上限）',
       items: buildPickPool,
-      showIf: function (cfg) {
-        return !!cfg.autoPickup;
-      },
-    },
-    {
-      key: 'autoBuff',
-      type: 'checkbox',
-      label: '增益井 buff',
-      hint: '仅队长可装；三个槽位不重复同类（同 effect_buff 只在更强时等价替换，否则不占新槽），每轮最多装一枚（等 push 刷新）',
+      hint: '默认生效：当前刷新点位内掉落箱物品/宠物、资源点 bag 逐项 GET（受游戏 para1_v1、dataConfig 3021/3013/3061 总量上限）',
     },
     {
       key: 'buffEffects',
       type: 'multiopts',
       label: '增益选项',
+      section: '增益井 buff',
       stack: true,
       maxSelect: BUFF_SLOT_MAX,
       options: buildBuffOptions,
-      hint: '最多勾 3 类（槽位只 3 个）；全不勾 = 不限（表内共 6 类）。等级（buff_para 4 档）由点位刷出的那枚定死、请求里无等级字段，故不可选：同类只在更强时自动换档',
-      showIf: function (cfg) {
-        return !!cfg.autoBuff;
-      },
-    },
-    {
-      key: 'autoCapture',
-      type: 'checkbox',
-      label: '自动拍宠物',
-      hint: '已在异能兽点开拍（FEED 态）后自动接管整个节奏：免费手拍→拖拽事件→能量满 3 格放高分持续拍→弹窗择优（不找怪不派兵、不自费投喂道具）',
+      hint: '默认生效（空=不限即六类全要）；仅队长可装，三个槽位不重复同类（同 effect_buff 只在更强时等价替换），每轮最多装一枚',
     },
   ],
-  toModuleCfg: function (c) {
-    return {
-      autoPickup: !!(c && c.autoPickup),
-      pickItems: sanitizePickItems(c && c.pickItems),
-      autoBuff: !!(c && c.autoBuff),
-      buffEffects: sanitizeBuffEffects(c && c.buffEffects, BUFF_SLOT_MAX),
-      autoCapture: !!(c && c.autoCapture),
-    };
-  },
+  toModuleCfg: buildModuleCfg,
   configure: configure,
   install: install,
   run: run,

@@ -11,6 +11,7 @@ import {
   multiOptsInnerHTML,
   mineRulesInnerHTML,
   farmRulesInnerHTML,
+  timeRangesInnerHTML,
 } from './fields.js';
 import { mountUidList, mountSortList, mountItemList } from './widgets.js';
 
@@ -231,7 +232,8 @@ export function buildPanelHTML() {
 
 /**
  * 刷新面板内所有 type:'text' 只读字段：按 descriptor.get() 重算当前值。
- * 面板打开 / 卡片展开 / 切 TAB 时调用，无需定时器（避免常驻轮询）。
+ * 另特处理怪物清单（huntlist）的「已打」只读格（.pc-hlstat[data-hlstat]）：按行 key 调 fd.todayText(key)。
+ * 面板打开 / 卡片展开 / 切 TAB / 功能侧 ui.refresh 时调用，无需定时器（避免常驻轮询）。
  * @param {Element} root 扫描范围（面板或单个 pane/body）
  */
 export function refreshTexts(root) {
@@ -239,8 +241,16 @@ export function refreshTexts(root) {
     const f = findFeature(span.dataset.fid);
     if (!f) return;
     const fd = f.fields.find((x) => x.key === span.dataset.fkey);
-    if (!fd || !fd.get) return;
-    const next = String(fd.get(configs[f.id]) || '');
+    if (!fd) return;
+    let next;
+    if (span.dataset.hlstat != null) {
+      // 怪物清单「已打」格：值按行 key 从 fd.todayText 取（无则不刷）
+      if (typeof fd.todayText !== 'function') return;
+      next = String(fd.todayText(span.dataset.hlstat) || '');
+    } else {
+      if (!fd.get) return;
+      next = String(fd.get(configs[f.id]) || '');
+    }
     if (span.textContent !== next) span.textContent = next;
   });
 }
@@ -316,6 +326,14 @@ export function syncControls(panel) {
     const fd = f.fields.find((x) => x.key === box.dataset.frkey);
     if (!fd) return;
     box.innerHTML = farmRulesInnerHTML(configs[f.id][fd.key], fd);
+  });
+  // 下田时段：整块重刷内层（行可增删，同 ranges/farmrules）
+  panel.querySelectorAll('.pc-trule').forEach((box) => {
+    const f = findFeature(box.dataset.id);
+    if (!f) return;
+    const fd = f.fields.find((x) => x.key === box.dataset.trkey);
+    if (!fd) return;
+    box.innerHTML = timeRangesInnerHTML(configs[f.id][fd.key], fd);
   });
   refreshTexts(panel);
 }

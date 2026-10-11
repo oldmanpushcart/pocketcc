@@ -110,6 +110,7 @@ import { bus } from './bus.js';
     sendPBV2: sendPBV2,
     isSending: isSending,
     onReq: onReq,
+    onPreInbound: onPreInbound,
     secondaryStatus: secondaryStatus,
     reprobeSecondary: reprobeSecondary,
     setLog: setLog,
@@ -221,6 +222,56 @@ import { bus } from './bus.js';
       if (--reqSubs < 0) reqSubs = 0;
       if (installed) syncSendHooks();
     };
+  }
+
+  // ── 「抢在游戏原生处理器之前」的入站观察 ──────────────────────────────
+  /** @type {Map<number, Set<function(object):void>>} cmd → 观察器集合 */
+  var preInbound = new Map();
+  /** @type {number} preInbound 订阅总数：热路径门，0 时 recvMine 完全跳过、零开销 */
+  var preSubs = 0;
+
+  /**
+   * 订阅「入站报文在游戏原生 onMessage 处理之前」的观察事件，载荷与 dispatch 同为 Event（同拍只读）。
+   * 用途：游戏客户端常在收到某推送的**同步处理里**就把镜头甩到目标点（如难民营 10802 找到营地），
+   *   常规 ctx.on.push 在 recvOrig 之后派发、来不及抢跑；本接口让订阅方在 orig 之前拿到坐标等先去抑制。
+   * 计数把关：无人订阅时 recvMine 根本不进这里，热路径零开销。
+   * @param {number} cmd 命令号
+   * @param {function(object):void} handler 观察器（收到 Event）
+   * @returns {function():void} 退订函数（幂等，重复调用不会把计数扣成负数）
+   */
+  function onPreInbound(cmd, handler) {
+    if (typeof handler !== 'function') return function () {};
+    var set = preInbound.get(cmd);
+    if (!set) {
+      set = new Set();
+      preInbound.set(cmd, set);
+    }
+    set.add(handler);
+    preSubs++;
+    return function () {
+      if (!set.has(handler)) return;
+      set.delete(handler);
+      if (--preSubs < 0) preSubs = 0;
+      if (set.size === 0) preInbound.delete(cmd);
+    };
+  }
+
+  /**
+   * 在 recvOrig 之前派发 pre-inbound 观察。仅在 preSubs>0 时被调用。
+   * @param {object} e 原始报文
+   * @param {number|undefined} reqTime 应答的发包时刻（推送为 undefined）
+   */
+  function runPreInbound(e, reqTime) {
+    var set = preInbound.get(e.c);
+    if (!set) return;
+    var ev = new Event(e, reqTime);
+    set.forEach(function (h) {
+      try {
+        h(ev);
+      } catch (err) {
+        log.warn('preInbound cmd[%d] handler error. %s', e.c, err);
+      }
+    });
   }
 
   // ── cmd → 名字 ──────────────────────────────────────────────────────
@@ -813,6 +864,15 @@ import { bus } from './bus.js';
     recvOrig = inst.onMessage;
     recvMine = function (e, t) {
       // t 由 NetMgr.js:578 传入：推送 = void 0，应答 = _.reqTime（数字，见 :247/:327/:419）
+      // 「抢在原生处理器之前」的观察点：仅当有 pre-inbound 订阅（如需赶在游戏飞镜头前登记坐标）才付出
+      //   构造 Event 的代价；热路径靠 preSubs 计数把关，无人订阅则完全跳过。
+      if (preSubs > 0) {
+        try {
+          runPreInbound(e, t);
+        } catch (err) {
+          log.warn('preInbound cmd[%d] occur error!', e && e.c, err);
+        }
+      }
       // 先调 orig 让游戏自己的推送处理器跑完（NetReciver.js:34-44），再派发给我们的 listener
       var ret = recvOrig.apply(this, arguments);
       if (installed && e) {

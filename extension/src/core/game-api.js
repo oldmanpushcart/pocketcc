@@ -35,6 +35,7 @@ const SYM = {
     mapNewCtrl: 'NWorldMapTodoController',
     mapOldCommon: 'WorldMapCommon',
     mapOldCtrl: 'WorldMapTodoController',
+    worldMapMsgs: 'WorldMapMsgs', // 世界地图内部消息总线（Names.WorldMapJumpToTile = 「镜头跳到地块」，聊天/坐标分享跳转同源）
     worldUtils: 'WorldUtils', // 行军类型换算（世界地图业务工具，静态类）
     crossUtils: 'CrossUtils', // 跨服战场类型判定（tmServerType 驱动）
     newCabCtrl: 'NewCABController', // 无双峡谷·AVA 代（NewCAB）控制器与活动数据
@@ -59,11 +60,14 @@ const SYM = {
     pabController: 'PabController', // 异能秘境（Pab）控制器门面：default=类，静态 getInstance() 由 subpack2 RealPabController 接管后返回实例（含 petCaptureOperation/getItemNumById/checkItemNumMax/roomBaseInfo/capturingInfo）
     watchNet: 'TMWatchNetMgr', // 跨服观战/秘境独立发送通道：default=类，静态 Instance 懒建单例；isPabBattleMap 时 sendPBV2 转 NetMgrSimple 独立 WebSocket（主 pocketcc.net 发不出去）
     marchCommon: 'NWorldMapMarchCommon', // 世界地图行军常量（subpack2）：模块级导出 NMarchState 枚举（MARCHING=1/ARRIVED=2/FIGHTING=12/PAB_FEED=21）
+    mechaTowerCtrl: 'MechaTowerController', // 重装母舰（Mecha 塔）控制器门面：具名导出 MechaTowerController 类，静态 getInstance() 由 subpack2 Real 接管后实例才有 isOpenFunc（一键领取子玩法闸只读查询）
   },
   /** 新图单例属性链：module[cls][inst]，枚举对象 module[goType] */
   newMap: { cls: 'NWorldMapTodoController', inst: 'instance', goType: 'NWorldMapGoType' },
   /** 旧图枚举对象属性名 */
   oldMap: { todoType: 'WorldMapToDoType' },
+  /** 世界地图消息总线的消息名（成员名，数值运行时向游戏 Names 取） */
+  mapMsgs: { jumpToTile: 'WorldMapJumpToTile' },
   /** 导航动作枚举名（按名字取值，不依赖静态数值——NWorldMapGoType 数值未落盘） */
   mapActions: {
     moveTo: 'MOVE_TO',
@@ -285,6 +289,11 @@ export const CAPS = {
   },
   heroController: () => !!game.get('HeroController'),
   mechaController: () => !!game.get('MechaController'),
+  // 一键领取（TaskRelax）重装母舰子玩法闸依赖；软依赖（'?'）——subpack2 未接管时 isOpenFunc 不可用，该子玩法按未开降级
+  mechaTower: () => {
+    var m = game.get(SYM.modules.mechaTowerCtrl);
+    return !!(m && (m.MechaTowerController || (m.default && m.default.MechaTowerController)));
+  },
   formationAdv: () => !!game.get('FightFormationAdvController'),
   marchStorage: () => {
     var m = game.get(SYM.modules.marchStorage);
@@ -599,6 +608,123 @@ export const nav = {
   },
 };
 
+// ─────────────────── 难民营自动开营「镜头乱飞」抑制 ───────────────────
+
+/**
+ * 坐标命中式镜头抑制器（无时间窗口、不改写游戏数据，仅拦一处游戏 UI 相机副作用）。
+ * 背景：游戏客户端在收到 10802「找到营地」推送的同步处理里，会自行把镜头 pan 到新营地
+ *   （手动用求救信亦然）。auto-hunt 全程不含相机调用，连开多营时镜头反复甩动。
+ * 原理：难民营玩法运行期间，把游戏两条已知「地图跳转」入口各包一层——跳转协调器
+ *   gotoWorldAndDo(type,opts{x,y}) 与消息总线 WorldMapMsgs.send(Names.WorldMapJumpToTile,{x,y})；
+ *   仅当一次跳转的目标坐标命中「本轮由我方自动开营刚拿到的落点」时才吞掉那一次。落点坐标
+ *   由 net 的「抢在原生处理器之前」观察点（见 core/net.js onPreInbound）在 orig 前登记，确保赶在
+ *   游戏发起镜头跳转之前入表——故判定与时刻无关、无竞态；玩家手动点营地/聊天坐标跳转不在表内、照常飞。
+ * @type {object}
+ */
+const camGuard = {
+  /** @type {boolean} 是否已成功装载（幂等标志） */
+  installed: false,
+  /** @type {Array<string>} 待吞跳转坐标键 'x,y'（自动开营落点，FIFO 有界，命中即删） */
+  pending: [],
+  /** @type {Array<{obj:object, key:string, orig:Function}>} 已包装入口的还原信息 */
+  hooks: [],
+};
+/** @type {number} pending 容量上限：防某营地跳转始终未发生时无界增长（超出丢最旧） */
+const CAM_GUARD_PENDING_MAX = 32;
+
+/** 包一个对象方法：命中 pending 坐标即吞掉该次调用（返回 undefined）；已包过则跳过。 */
+function camGuardWrap(obj, key, readXY) {
+  if (!obj || typeof obj[key] !== 'function' || obj[key].__pcCamGuard) return false;
+  var orig = obj[key];
+  var wrapped = function () {
+    var xy = readXY(arguments);
+    if (xy) {
+      var k = (xy.x | 0) + ',' + (xy.y | 0);
+      var i = camGuard.pending.indexOf(k);
+      if (i >= 0) {
+        camGuard.pending.splice(i, 1);
+        return undefined; // 命中本轮自动开营落点：静默吞掉这一次镜头跳转
+      }
+    }
+    return orig.apply(this, arguments);
+  };
+  wrapped.__pcCamGuard = true;
+  obj[key] = wrapped;
+  camGuard.hooks.push({ obj: obj, key: key, orig: orig });
+  return true;
+}
+
+/**
+ * 装载抑制器（幂等）：包住两条跳转入口。控制器实例尚未就绪（不在世界图）时不置 installed，下次可重试。
+ * @returns {boolean} 是否已就绪
+ */
+function camGuardInstall() {
+  if (camGuard.installed) return true;
+  var mounted = 0;
+  var t = mapTodo();
+  if (t && t.inst) {
+    if (
+      camGuardWrap(t.inst, 'gotoWorldAndDo', function (args) {
+        var o = args[1];
+        return o && o.x != null && o.y != null ? { x: o.x, y: o.y } : null;
+      })
+    )
+      mounted++;
+  }
+  try {
+    var WMM = ns(game.get(SYM.modules.worldMapMsgs));
+    var jumpVal = WMM && WMM.Names && WMM.Names[SYM.mapMsgs.jumpToTile];
+    if (WMM && typeof WMM.send === 'function' && jumpVal != null) {
+      if (
+        camGuardWrap(WMM, 'send', function (args) {
+          if (args[0] !== jumpVal) return null; // 只拦「镜头跳到地块」，别的消息一律放行
+          var p = args[1];
+          return p && p.x != null && p.y != null ? { x: p.x | 0, y: p.y | 0 } : null;
+        })
+      )
+        mounted++;
+    }
+  } catch (e) {}
+  if (mounted > 0) camGuard.installed = true;
+  return camGuard.installed;
+}
+
+/** 卸载抑制器：还原所有被包方法并清空待吞坐标。 */
+function camGuardUninstall() {
+  for (var i = 0; i < camGuard.hooks.length; i++) {
+    var h = camGuard.hooks[i];
+    try {
+      h.obj[h.key] = h.orig;
+    } catch (e) {}
+  }
+  camGuard.hooks = [];
+  camGuard.pending = [];
+  camGuard.installed = false;
+}
+
+/** 登记一个「本轮自动开营落点」坐标，令下一次飞向它的镜头跳转被吞掉。 */
+function camGuardArm(x, y) {
+  if (x == null || y == null) return;
+  var k = (x | 0) + ',' + (y | 0);
+  var i = camGuard.pending.indexOf(k);
+  if (i >= 0) camGuard.pending.splice(i, 1);
+  camGuard.pending.push(k);
+  if (camGuard.pending.length > CAM_GUARD_PENDING_MAX) camGuard.pending.shift();
+}
+
+/**
+ * 难民营镜头抑制对外能力（挂在 nav 上，供 auto-hunt 随玩法开关装/摘）。
+ * @type {object}
+ */
+nav.camGuard = {
+  /** 装载抑制器（幂等）。@returns {boolean} 是否已就绪 */
+  install: camGuardInstall,
+  /** 卸载抑制器，还原游戏方法。 */
+  uninstall: camGuardUninstall,
+  /** 登记一个待吞的自动开营落点坐标。@param {number} x @param {number} y */
+  arm: camGuardArm,
+};
+
 // ─────────────────────── 行军类型（跨服漂移） ───────────────────────
 
 /** 游戏 MarchType 枚举对象（WorldMapCommon 为裸 CommonJS 导出，枚举在顶层，无 .default） */
@@ -733,6 +859,110 @@ export const march = {
 
 // ─────────────────────── 玩家/游戏数据（只读） ───────────────────────
 
+// ─────────────────────── 一键领取（TaskRelax 集中领取）开启闸只读枚举 ───────────────────────
+
+/** @type {number} DataConfig 79089：一键领取放量的 serverTransferRange 白名单（逗号分隔） */
+const TASK_RELAX_RANGE_CFG = 79089;
+/** @type {number} DataConfig 79092：远征行动解锁所需的最后通关任务线门槛 */
+const TASK_RELAX_ADVENTURE_CFG = 79092;
+/** @type {number} 远征行动建筑组 id（checkBuildingGroupExists 用，实证 TaskRelaxTool 硬编码 3800） */
+const TASK_RELAX_ADVENTURE_GROUP = 3800;
+/** @type {number} 金币收割机建筑 type（getBuildingByType(6)） */
+const TASK_RELAX_HARVESTER_TYPE = 6;
+/** @type {Object<string,number>} TaskRelaxType 枚举值（源码实证：11/21/22/31/41/42），仅记成员名→数值，游戏漂移时改此处 */
+const TASK_RELAX_TYPE = {
+  ISLE: 11,
+  ADVENTURE_INCOME: 21,
+  ADVENTURE_QUICK_BATTLE: 22,
+  MECHA_TOWER: 31,
+  COIN_HARVESTER_INCOME: 41,
+  COIN_HARVESTER_FREE_RECEIVE: 42,
+};
+
+/**
+ * 安全调用 UserData 上的一个方法（缺失/异常返回 undefined，不抛）。
+ * @param {object} obj 目标对象（多为 UserData）
+ * @param {string} name 方法名
+ * @param {number} arg 单参数
+ * @returns {*}
+ */
+function callNumFn(obj, name, arg) {
+  if (!obj || typeof obj[name] !== 'function') return undefined;
+  try {
+    return obj[name](arg);
+  } catch (e) {
+    return undefined;
+  }
+}
+
+/** BuildingGroup.Isle 枚举值（岛屿作战建筑组，运行时按成员名向 GameDefine 取；符号缺失兜底实证值 3100） */
+function buildingGroupIsle() {
+  var gd = probe(SYM.modules.gameDefine, () => ns(game.get(SYM.modules.gameDefine)));
+  var bg = gd && gd.BuildingGroup;
+  return bg && bg.Isle != null ? bg.Isle : 3100;
+}
+
+/** 重装母舰（Mecha 塔）功能是否开启：MechaTowerController.getInstance().isOpenFunc(false)（传 false 抑制 UI 弹提示，纯只读查询） */
+function mechaTowerOpen() {
+  try {
+    var m = game.get(SYM.modules.mechaTowerCtrl);
+    var cls = m && (m.MechaTowerController || (m.default && m.default.MechaTowerController));
+    if (!cls || typeof cls.getInstance !== 'function') return false;
+    var inst = cls.getInstance();
+    return !!(inst && typeof inst.isOpenFunc === 'function' && inst.isOpenFunc(false));
+  } catch (e) {
+    return false;
+  }
+}
+
+/**
+ * 一键领取子玩法解锁只读判定（复刻 TaskRelaxTool.getIsShowQuickSweepByType 的 switch）。
+ * @param {number|string} type task_relax 行的 type（TaskRelaxType 数值）
+ * @returns {boolean}
+ */
+function taskRelaxTypeOpen(type) {
+  var u = userData();
+  if (!u) return false;
+  var t = Number(type);
+  switch (t) {
+    case TASK_RELAX_TYPE.ISLE:
+      return !!callNumFn(u, 'checkBuildingGroupExists', buildingGroupIsle());
+    case TASK_RELAX_TYPE.ADVENTURE_INCOME:
+    case TASK_RELAX_TYPE.ADVENTURE_QUICK_BATTLE: {
+      if (!callNumFn(u, 'checkBuildingGroupExists', TASK_RELAX_ADVENTURE_GROUP)) return false;
+      var adv = u.AdventureData;
+      var last = adv ? Number(adv.LastWinMissionId) : NaN;
+      // 与游戏 `Number(getDataConfigData(79092))` 的 fail-closed 对齐：门槛缺配（dataConfig 归一为 ''，
+      // 游戏侧 undefined→NaN 使 last>=NaN 恒 false）时按「未达门槛」关闭，不可当 0 放行未解锁玩家。
+      var thrRaw = String(gameConf.dataConfig(TASK_RELAX_ADVENTURE_CFG));
+      return thrRaw !== '' && isFinite(Number(thrRaw)) && last >= Number(thrRaw);
+    }
+    case TASK_RELAX_TYPE.MECHA_TOWER:
+      return mechaTowerOpen();
+    case TASK_RELAX_TYPE.COIN_HARVESTER_INCOME:
+    case TASK_RELAX_TYPE.COIN_HARVESTER_FREE_RECEIVE: {
+      var b = callNumFn(u, 'getBuildingByType', TASK_RELAX_HARVESTER_TYPE);
+      return !!(
+        u.Harvester &&
+        Number(u.Harvester.Broken) === 0 &&
+        Array.isArray(b) &&
+        b.length > 0 &&
+        gameData.functionOn('gold_coin_harvester_ui_v1')
+      );
+    }
+    default:
+      return false;
+  }
+}
+
+/**
+ * 游戏日界偏移（秒）：每日 0 点刷新对应的 UTC 秒内偏移。真相来自 extracted DateUtils.getOffsetDaysByTime
+ * 的归日式 `(t-57600)%86400`，57600=16h → 日界线落在 UTC 16:00 = 服务器本地 0:00（UTC+8）。
+ * 符号/常量知识收口 ACL（只读口径）；实证 dashcam 服务器秒与本地文件名 UTC+8 对齐。
+ * @type {number}
+ */
+const GAME_DAY_RESET_OFFSET = 57600;
+
 export const gameData = {
   /** 当前服务器时间（秒），实时取值不缓存；取不到返回 0 */
   serverTime() {
@@ -741,6 +971,18 @@ export const gameData = {
     } catch (e) {
       return 0;
     }
+  },
+  /**
+   * 下一个「游戏日 0 点」的绝对服务器秒（日界口径见 GAME_DAY_RESET_OFFSET，源自 DateUtils）。
+   * 供「按日刷新」类玩法把下次动作锤定到服务器本地 0 点之后（只读换算，不碰游戏数据）。
+   * @param {number} [fromTs] 参考服务器秒（缺省取当前 ServerTime）
+   * @returns {number} 下一个日界线的绝对秒；参考时间不可用（0）时返回 0
+   */
+  nextDailyResetTs(fromTs) {
+    var t = fromTs == null ? gameData.serverTime() : Number(fromTs) || 0;
+    if (!t) return 0;
+    var dayStart = t - ((t - GAME_DAY_RESET_OFFSET) % 86400);
+    return dayStart + 86400;
   },
   /** 本人 StrUid（快速登录模式下与数字 UID 不同）；取不到返回 '' */
   strUid() {
@@ -1576,6 +1818,39 @@ export const gameData = {
     }
   },
   /**
+   * 「一键领取 / 集中领取」(TaskRelax) 可用行只读枚举 —— 复刻游戏 TaskRelaxTool.getOpenQuickSweepList 的三级开启闸，
+   *   返回空数组即代表该玩家不具备此功能（游戏主城里 bot 入口不会显示），调用方据此整功能挂起。
+   *   源码锚点 extracted/subpack/TaskRelaxTool__TaskRelaxTool.js；报文实证 dashcam 20261011T172802-一键领取.ndjson（5684 INFO / 5685 REWARD）。
+   *   开启闸（全部只读，不发包、不改写本地数据）：
+   *     ① 账号总闸 FunctionOn(task_relax_claim_all)；
+   *     ② 服务器灰度闸 serverTransferRange 命中 DataConfig 79089 白名单（缺配=未放量）；
+   *     ③ 逐 task_relax 行：Level>=row.level 且该行玩法已解锁（taskRelaxTypeOpen 同口径）。
+   * @returns {Array<{id:number,type:number,level:number,order:number}>} 可用行（按 order 升序）；空=功能未开启
+   */
+  taskRelaxOpenRows() {
+    var u = userData();
+    if (!u) return [];
+    if (!gameData.functionOn('task_relax_claim_all')) return [];
+    // 服务器灰度闸：serverTransferRange 必须在 DataConfig 79089 白名单内（缺配 → 空串 split 不含 range → 功能未放量）
+    var wl = String(gameConf.dataConfig(TASK_RELAX_RANGE_CFG) || '');
+    if (
+      wl.split(',').indexOf(String(u.serverTransferRange == null ? '' : u.serverTransferRange)) < 0
+    ) {
+      return [];
+    }
+    var rows = l10n.tableRows('task_relax');
+    var lv = gameData.level();
+    var out = [];
+    for (var i = 0; i < rows.length; i++) {
+      var r = rows[i];
+      if (lv >= Number(r.level) && taskRelaxTypeOpen(r.type)) out.push(r);
+    }
+    out.sort(function (a, b) {
+      return (Number(a.order) || 0) - (Number(b.order) || 0);
+    });
+    return out;
+  },
+  /**
    * 能量池快照（UserData.getEnergy(EnergyType数值)，EnergyData 的 Point getter 实时折算自然恢复）。
    * 联盟捐赠次数池实证（抓包 20260930）：type=4，pointMax=10，restoreSec=1800（每 30 分钟回 1 点）。
    * @param {number} type EnergyType 数值（如 4=ALLIANCE_DONATE_NUM）
@@ -1908,8 +2183,15 @@ export const bits = {
 
 /** @type {number} 未真正发出的伪码（与 net.CODE_NOT_SENT 同义；watch 通道无返回句柄，超时/异常均回此值） */
 const SECRET_NOT_SENT = -1;
-/** @type {number} 秘境发包应答超时（毫秒）：与 net.js SEND_TIMEOUT_MS 同量纲，到点未 settle 即回 SECRET_NOT_SENT */
-const SECRET_TIMEOUT_MS = 15000;
+/**
+ * @type {number} 秘境发包应答超时（毫秒）：与 net.js SEND_TIMEOUT_MS 同量纲，到点未 settle 即回 SECRET_NOT_SENT。
+ * 取 4s 而不是旧 15s：实测次通道 RTT 44~52ms（dashcam 20261011T195811 里 8527/8538/8546 的应答全在此量级）；
+ *   而 NetMgrSimple 的 MsgIdSettings.cdTime 频控命中时 `return !1`、**包根本不上线也不报错**，
+ *   门面 TMWatchNetMgr.sendPBV2 又是把三元表达式当语句用、没有 return（verbatim）→ 我们拿不到那个 false，
+ *   只能靠超时感知。15s 就把这种「一秒内注定知道结果」的包空等 15 秒（实测拖慢整个拾取批次 62s/点位）。
+ *   调用方语义不变：超时仍回 SECRET_NOT_SENT（未发出），不拉黑、可重试。
+ */
+const SECRET_TIMEOUT_MS = 4000;
 /**
  * 次通道未就绪是否已经告过警（首发 warn、后续降 debug，防拾取逐拍刷屏；任一发包成功即复位）。
  * @type {boolean}
@@ -1968,7 +2250,10 @@ export const secretRealm = {
   },
   /**
    * 异能秘境控制器实例（PabController.getInstance()）；subpack2 未接管/符号缺失返回 null。
-   * 上层据它读 roomBaseInfo.marchState/capturingInfo 并调原生 petCaptureOperation/getItemNumById/checkItemNumMax。
+   * 实证 getInstance 内部 `realPabController?(...):null` → 拿到的是 RealPabController 实例，
+   *   roomBaseInfo / capturingInfo / capturingPetPos / petCaptureOperation 均直接可达。
+   * 上层据它读 capturingPetPos（**「正在拍哪只」的唯一真相**，push 21530 写）、roomBaseInfo.marchState（行军态）、
+   *   capturingInfo（8546 应答 feedInfo，仅作料源）并调原生 petCaptureOperation/getItemNumById/checkItemNumMax。
    * @returns {object|null}
    */
   getPabController() {
@@ -1985,6 +2270,8 @@ export const secretRealm = {
   },
   /**
    * NMarchState 枚举对象（运行时取成员值，不硬编码数值）；subpack2 未载/符号缺失返回 null。
+   *   注：**PAB_FEED(21) 不能当「在拍」判据**——21521 BASE_INFO 下推很稀（实测 970s 会话 58 条），
+   *   整个拍宠物过程里 marchState 只给 1(MARCHING)/2(ARRIVED)，在拍真相请用 capturingPetPos。
    * @returns {object|null} {MARCHING,ARRIVED,FIGHTING,PAB_FEED,…}
    */
   getNMarchState() {

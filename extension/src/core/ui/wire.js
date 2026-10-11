@@ -13,6 +13,8 @@ import {
   multiOptsInnerHTML,
   mineRulesInnerHTML,
   farmRulesInnerHTML,
+  timeRangesInnerHTML,
+  presetPoolInnerHTML,
 } from './fields.js';
 
 /** @type {ReturnType<createLog>} 模块日志器（tag=CORE，与原 ui.js 一致） */
@@ -132,9 +134,11 @@ export function wirePanel(panel) {
       if (!f) return;
       const fd = f.fields.find((x) => x.key === input.dataset.key);
       let v = fd.float ? parseFloat(input.value) : parseInt(input.value, 10);
-      if (isNaN(v)) v = f.defaults[fd.key];
+      if (fd.zeroUnlimited && (isNaN(v) || input.value === ''))
+        v = 0; // 留空 = 不限（0），与渲染对称
+      else if (isNaN(v)) v = f.defaults[fd.key];
       v = Math.max(fd.min, v);
-      input.value = v;
+      input.value = fd.zeroUnlimited && v === 0 ? '' : v; // 0 → 留空，placeholder「不限」
       configs[f.id][fd.key] = v;
       saveFeature(f);
       applyFeature(f);
@@ -496,6 +500,188 @@ export function wirePanel(panel) {
       }
     }
     t.box.innerHTML = farmRulesInnerHTML(t.list, t.fd);
+    saveFeature(t.f);
+    applyFeature(t.f);
+  });
+
+  // 下田时段字段（type:'timeranges'，自动下田）：每行两个原生 <input type=time>（起始~结束），行可增删。
+  // 同 ranges/farmrules 走面板级事件委托；time 控件无 data-id，靠专属类 .pc-tinp 命中（通用 number/select/fstr 处理器会自动跳过）。
+  const trTarget = (el) => {
+    const box = el && el.closest ? el.closest('.pc-trule') : null;
+    if (!box) return null;
+    const f = findFeature(box.dataset.id);
+    if (!f) return null;
+    const fd = f.fields.find((x) => x.key === box.dataset.trkey);
+    if (!fd) return null;
+    const c = configs[f.id];
+    if (!Array.isArray(c[fd.key])) c[fd.key] = [];
+    // 首次改动先浅拷一份，避免就地 push/splice 污染 descriptor defaults（同 minerules/farmrules）
+    if (c[fd.key] === f.defaults[fd.key]) c[fd.key] = c[fd.key].map((r) => ({ ...r }));
+    return { f, fd, box, list: c[fd.key] };
+  };
+  const trIdx = (el) => {
+    const row = el && el.closest ? el.closest('.pc-trow[data-tidx]') : null;
+    return row ? +row.dataset.tidx : -1;
+  };
+  // 敲字实时同步进内存（不落盘不重刷）：防止未 blur 的编辑被增删行的整块重绘吞掉（同 ranges 踩过的坑）。
+  panel.addEventListener('input', (e) => {
+    const el = e.target;
+    if (!el.classList || !el.classList.contains('pc-tinp')) return;
+    const t = trTarget(el);
+    if (!t) return;
+    const idx = trIdx(el);
+    if (idx < 0 || idx >= t.list.length) return;
+    t.list[idx][el.dataset.part === 'end' ? 'end' : 'start'] = el.value;
+  });
+  // 选定完整时刻（change）：写回 + 落盘 + 热更（时段增删会即时影响下田/撤田判定）。
+  panel.addEventListener('change', (e) => {
+    const el = e.target;
+    if (!el.classList || !el.classList.contains('pc-tinp')) return;
+    const t = trTarget(el);
+    if (!t) return;
+    const idx = trIdx(el);
+    if (idx < 0 || idx >= t.list.length) return;
+    t.list[idx][el.dataset.part === 'end' ? 'end' : 'start'] = el.value;
+    saveFeature(t.f);
+    applyFeature(t.f);
+  });
+  // 增删行：行存在即生效。新行默认 09:00~18:00（合法时段，不必暂停总开关）。
+  panel.addEventListener('click', (e) => {
+    const del = e.target.closest ? e.target.closest('.pc-tdel') : null;
+    const add = e.target.closest ? e.target.closest('.pc-tradd') : null;
+    if (!del && !add) return;
+    const t = trTarget(del || add);
+    if (!t) return;
+    if (del) {
+      const idx = trIdx(del);
+      if (idx >= 0 && idx < t.list.length) t.list.splice(idx, 1);
+    } else {
+      t.list.push({ start: '09:00', end: '18:00' });
+    }
+    t.box.innerHTML = timeRangesInnerHTML(t.list, t.fd);
+    saveFeature(t.f);
+    applyFeature(t.f);
+  });
+
+  // 怪物清单字段（type:'huntlist'，自动打野）：固定行不可增删，逐行改值（数量、攻打方式、参与；等级不入清单，固定搜最高档）。
+  // 行序恒等于 fd.catalog 下标；数字/勾选/下拉均就地写回 list[hidx]，无结构性变化不重刷（攻打方式选项随该行 catalog 固定）。
+  const hlTarget = (el) => {
+    const box = el && el.closest ? el.closest('.pc-hl') : null;
+    if (!box) return null;
+    const f = findFeature(box.dataset.id);
+    if (!f) return null;
+    const fd = f.fields.find((x) => x.key === box.dataset.hlkey);
+    if (!fd) return null;
+    const c = configs[f.id];
+    // 面板按 catalog 渲染（行序=catalog 下标、每行带 key），写回却按 data-hidx 落到存档数组的下标行上。
+    // 存档可能早于目录新增行（如后来加的难民营）或顺序错位：直接按下标写会勾到别的怪行、新 key 行永不落盘，
+    // 而 feat 用 normalizeHunt 按 key 归一，读不到该行 → 该玩法勾了也静默不激活（曾卡死难民营）。
+    // 故每次取目标先按 catalog 全量对齐 huntlist：逐 key 保留已存值、补齐缺失行、剔除目录已删行，令「下标==catalog 下标==该行 key」；顺带浅拷避免污染 defaults。
+    const cat = Array.isArray(fd.catalog) ? fd.catalog : [];
+    const prev = Array.isArray(c[fd.key]) ? c[fd.key] : [];
+    const stored = {};
+    for (const r of prev) if (r && r.key) stored[r.key] = r;
+    c[fd.key] = cat.map((mo) => {
+      const old = stored[mo.key];
+      return old
+        ? { ...old }
+        : { key: mo.key, count: mo.defaultCount | 0, mode: mo.defaultMode, on: !!mo.defaultOn };
+    });
+    return { f, fd, box, list: c[fd.key] };
+  };
+  const hlIdx = (el) => {
+    const row = el && el.closest ? el.closest('.pc-hlrow[data-hidx]') : null;
+    return row ? +row.dataset.hidx : -1;
+  };
+  panel.addEventListener('change', (e) => {
+    const el = e.target;
+    if (!el.classList) return;
+    const isNum = el.classList.contains('pc-hln');
+    const isSel = el.classList.contains('pc-hlsel');
+    const isChk = el.classList.contains('pc-hlchk');
+    if (!isNum && !isSel && !isChk) return;
+    const t = hlTarget(el);
+    if (!t) return;
+    const idx = hlIdx(el);
+    if (idx < 0 || idx >= t.list.length) return;
+    const part = el.dataset.part;
+    if (isChk) t.list[idx][part] = !!el.checked;
+    else if (isSel)
+      t.list[idx][part] = el.value; // 攻打方式=字符串键
+    else {
+      let v = parseInt(el.value, 10);
+      if (isNaN(v) || v < 0) v = 0;
+      if (part === 'count') {
+        // 该行有硬上限（如惧星 10）则钳位；0 仍表不限，不受钳位影响
+        const cat = t.fd.catalog && t.fd.catalog[idx];
+        const cap = cat && Number.isFinite(cat.maxCount) && cat.maxCount > 0 ? cat.maxCount | 0 : 0;
+        if (cap > 0 && v > cap) v = cap;
+      }
+      el.value = part === 'count' && v === 0 ? '' : v; // count 0 → 留空（placeholder「不限」）
+      t.list[idx][part] = v;
+    }
+    saveFeature(t.f);
+    applyFeature(t.f);
+  });
+
+  // 打野预设池字段（type:'presetpool'，自动打野）：动态增删单选行，每个预设只能进一次（跨行去重）。
+  // 改选/增删都要整块重刷以重算其它行可选项；值落 configs[fid][fd.key]=number[]（有序、去重）。
+  const ppTarget = (el) => {
+    const box = el && el.closest ? el.closest('.pc-pp') : null;
+    if (!box) return null;
+    const f = findFeature(box.dataset.id);
+    if (!f) return null;
+    const fd = f.fields.find((x) => x.key === box.dataset.ppkey);
+    if (!fd) return null;
+    const c = configs[f.id];
+    if (!Array.isArray(c[fd.key])) c[fd.key] = [];
+    else if (c[fd.key] === f.defaults[fd.key]) c[fd.key] = c[fd.key].slice(); // defaults 是数字数组，slice 即可
+    return { f, fd, box, list: c[fd.key] };
+  };
+  const ppIdx = (el) => {
+    const row = el && el.closest ? el.closest('.pc-pprow[data-pidx]') : null;
+    return row ? +row.dataset.pidx : -1;
+  };
+  panel.addEventListener('change', (e) => {
+    const el = e.target;
+    if (!el.classList || !el.classList.contains('pc-ppsel')) return;
+    const t = ppTarget(el);
+    if (!t) return;
+    const idx = ppIdx(el);
+    if (idx < 0 || idx >= t.list.length) return;
+    const v = parseInt(el.value, 10) || 0;
+    // 兜底：若该值已被别的行占用（理论上选项已剔除，防陈旧 DOM），忽略并不入库，重刷回正
+    if (t.list.indexOf(v) >= 0 && t.list[idx] !== v) {
+      t.box.innerHTML = presetPoolInnerHTML(t.list, t.fd);
+      return;
+    }
+    t.list[idx] = v;
+    t.box.innerHTML = presetPoolInnerHTML(t.list, t.fd);
+    saveFeature(t.f);
+    applyFeature(t.f);
+  });
+  panel.addEventListener('click', (e) => {
+    const del = e.target.closest ? e.target.closest('.pc-ppdel') : null;
+    const add = e.target.closest ? e.target.closest('.pc-ppadd') : null;
+    if (!del && !add) return;
+    const t = ppTarget(del || add);
+    if (!t) return;
+    const max = Math.max(1, Math.floor(Number(t.fd.max) || 8));
+    if (del) {
+      const idx = ppIdx(del);
+      if (idx >= 0 && idx < t.list.length) t.list.splice(idx, 1);
+    } else {
+      if (t.list.length >= max) return; // ＋已 disabled，兜底
+      let free = 0;
+      for (let n = 1; n <= max; n++) {
+        if (t.list.indexOf(n) < 0) {
+          free = n;
+          break;
+        }
+      }
+      if (free) t.list.push(free);
+    }
+    t.box.innerHTML = presetPoolInnerHTML(t.list, t.fd);
     saveFeature(t.f);
     applyFeature(t.f);
   });

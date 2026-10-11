@@ -20,8 +20,12 @@ import { gameData, l10n } from './game-api.js';
  * @type {Object<number,string>}
  */
 const ITEM_NAMES = {
+  // 体力药剂（自动打野补充体力用；恢复量属各玩法业务，留 feat，本模块只登记标识）
+  600001: '小体力药剂',
   // 遗迹 2 级道具池（relic-reward）
   600002: '大体力药剂',
+  700003: '纯情花',
+  700004: '浪漫心',
   3300001: '金币砰砰宝箱',
   500001: '训练加速1小时',
   2300002: '紫色万能碎片',
@@ -91,6 +95,25 @@ function sortResolve(itemId) {
   return nm ? [{ id: id, name: nm }] : null;
 }
 
+/**
+ * 候选道具里挑「背包持有量最多」的那一个（纯查询，无副作用、不消耗）：
+ * 供「体力不足自动补药」这类「从一组等效道具里挑存量最大者」的场景复用（挑哪个/恢复多少属 feat 业务）。
+ * 只在 amount()>0 的候选间比较；并列取候选数组中靠前者（稳定，便于调用方按优先级排布）。
+ * @param {number[]} itemIds 候选 itemId 列表
+ * @returns {{itemId:number, amount:number}|null} 无一件持有回 null
+ */
+function pickMostHeld(itemIds) {
+  var ids = Array.isArray(itemIds) ? itemIds : [];
+  var best = null;
+  for (var i = 0; i < ids.length; i++) {
+    var id = Number(ids[i]) || 0;
+    if (!id) continue;
+    var amt = amount(id);
+    if (amt > 0 && (!best || amt > best.amount)) best = { itemId: id, amount: amt };
+  }
+  return best;
+}
+
 /** 物品查询/标识工具单例 */
 export const item = {
   ITEM_NAMES,
@@ -98,4 +121,5 @@ export const item = {
   label,
   fromReward,
   sortResolve,
+  pickMostHeld,
 };

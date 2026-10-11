@@ -98,6 +98,9 @@ export const PANEL_CSS = `
       border:1px solid rgba(255,255,255,.14);background:rgba(255,255,255,.06);color:#e8eef7;font:inherit;
       font-variant-numeric:tabular-nums;}
     .pc-row input[type=number]:focus{outline:none;border-color:rgba(120,180,255,.55);background:rgba(120,180,255,.10);}
+    /* placeholder（如 0=不限 的「不限」提示）：与打野 .pc-hln 同款亮色，避免浏览器默认浅灰看不清；聚焦时隐去 */
+    .pc-row input[type=number]::placeholder{color:#cfe3ff;opacity:1;}
+    .pc-row input[type=number]:focus::placeholder{color:transparent;}
     .pc-row input[type=text].pc-fstr{width:140px;flex:0 0 auto;padding:3px 6px;border-radius:6px;box-sizing:border-box;
       border:1px solid rgba(255,255,255,.14);background:rgba(255,255,255,.06);color:#e8eef7;font:inherit;
       font-variant-numeric:tabular-nums;}
@@ -158,6 +161,13 @@ export const PANEL_CSS = `
     .pc-irows{display:flex;flex-direction:column;gap:2px;width:100%;max-height:280px;overflow-y:auto;
       padding-right:2px;}
     .pc-irow{display:flex;align-items:center;gap:6px;padding:2px 4px;border-radius:4px;background:rgba(255,255,255,.03);}
+    /* 可拖拽排序的 itemlist（fd.sortable）：只手柄可起拖（行内有输入框，整行起拖会抢焦点/选字），
+       touch-action:none 保证触摸设备上 pointermove 不被滚动抢走（同 .pc-srow） */
+    .pc-irow .pc-shandle{touch-action:none;}
+    .pc-irow.pc-sdragging{opacity:.35;}
+    .pc-irows.pc-sgrabbing,.pc-irows.pc-sgrabbing .pc-shandle{cursor:grabbing;}
+    .pc-irank{flex:0 0 auto;width:18px;text-align:right;opacity:.6;font-variant-numeric:tabular-nums;}
+    .pc-irow.pc-irowoff .pc-irank{opacity:.3;}
     .pc-irow.pc-irowoff{opacity:.5;}
     .pc-ichk{flex:0 0 auto;width:14px;height:14px;margin:0;cursor:pointer;accent-color:#4aa3ff;}
     .pc-iname{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px;}
@@ -166,6 +176,8 @@ export const PANEL_CSS = `
       background:rgba(74,163,255,.12);border:1px solid rgba(74,163,255,.22);}
     .pc-imax{flex:0 0 auto;width:64px;padding:2px 4px;border-radius:4px;
       border:1px solid rgba(255,255,255,.15);background:rgba(0,0,0,.25);color:#e8eef7;font:inherit;font-size:12px;}
+    /* 背包上限 placeholder（cap=0 时的「不限」）：与打野 .pc-hln 同款亮色，不被浏览器默认浅灰吞掉 */
+    .pc-imax::placeholder{color:#cfe3ff;opacity:1;}
     .pc-smove:hover{background:rgba(255,255,255,.1);}
     .pc-smove:disabled{opacity:.3;cursor:default;}
     .pc-row input[type=checkbox]{width:16px;height:16px;cursor:pointer;flex:0 0 auto;}
@@ -299,4 +311,60 @@ export const PANEL_CSS = `
     .pc-frdel{flex:0 0 auto;width:22px;height:24px;padding:0;border:none;background:transparent;
       color:#ff9c9c;font:inherit;font-size:16px;line-height:24px;cursor:pointer;text-align:center;}
     .pc-frdel:hover{color:#ff6b6b;}
+    /* 下田时段字段（type:'timeranges'，自动下田：每行=一个时段，原生 time 选时:分，× 删除，行存在即生效）。
+       骨架同 minerules/ranges，行盒单行：[起始 ~ 结束 ×]；交互走面板级事件委托（见 wirePanel）。 */
+    .pc-trule{display:flex;flex-direction:column;gap:6px;width:100%;margin:2px 0 6px;}
+    .pc-trtop{display:flex;align-items:center;justify-content:space-between;gap:8px;}
+    .pc-tradd{flex:0 0 auto;width:22px;height:20px;padding:0;border-radius:6px;cursor:pointer;
+      border:1px dashed rgba(255,255,255,.28);background:transparent;color:#cfe8ff;font:inherit;font-size:14px;line-height:18px;}
+    .pc-tradd:hover{background:rgba(255,255,255,.1);}
+    .pc-trow{display:flex;align-items:center;gap:8px;}
+    .pc-tinp{flex:0 1 auto;min-width:0;padding:3px 6px;border-radius:6px;border:1px solid rgba(255,255,255,.25);
+      background:rgba(20,26,38,.9);color:#e8eef7;font:inherit;font-variant-numeric:tabular-nums;}
+    .pc-tinp:focus{outline:none;border-color:rgba(120,180,255,.55);}
+    .pc-tdash{flex:0 0 auto;opacity:.55;font-size:12px;}
+    .pc-tdel{flex:0 0 auto;width:22px;height:24px;padding:0;border:none;background:transparent;
+      color:#ff9c9c;font:inherit;font-size:16px;line-height:24px;cursor:pointer;text-align:center;}
+    .pc-tdel:hover{color:#ff6b6b;}
+    /* 怪物清单字段（type:'huntlist'，自动打野）：固定行（每种怪一行）的表格，列头与数据行共用同一 grid 模板逐列对齐。
+       列：类型 | 方式 | 数量 | 已打 | 参与☑（等级不入清单，固定搜最高档）。行不可增删，交互走面板级事件委托（见 wirePanel）。 */
+    .pc-hl{display:flex;flex-direction:column;width:100%;margin:2px 0 6px;}
+    .pc-hltop{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:2px;}
+    .pc-hlrow{display:grid;grid-template-columns:minmax(0,1fr) 84px 64px 52px 26px;align-items:center;gap:8px;
+      padding:6px 2px;border-bottom:1px solid rgba(255,255,255,.07);}
+    .pc-hlrow:last-child{border-bottom:none;}
+    .pc-hlhead{padding:2px 2px 4px;border-bottom:1px solid rgba(255,255,255,.16);font-size:11px;opacity:.62;}
+    .pc-hlhead .pc-hlmode,.pc-hlhead .pc-hlcnt,.pc-hlhead .pc-hldone,.pc-hlhead .pc-hlon{text-align:center;}
+    .pc-hlname{display:flex;align-items:center;gap:5px;min-width:0;font-size:12px;text-align:left;}
+    .pc-hllabel{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+    .pc-hln{width:100%;min-width:0;box-sizing:border-box;padding:3px 2px;border-radius:5px;
+      border:1px solid rgba(255,255,255,.14);background:rgba(255,255,255,.06);color:#e8eef7;font:inherit;
+      font-size:12px;font-variant-numeric:tabular-nums;text-align:center;appearance:textfield;-moz-appearance:textfield;}
+    .pc-hln:focus{outline:none;border-color:rgba(120,180,255,.55);background:rgba(120,180,255,.10);}
+    .pc-hln::-webkit-inner-spin-button,.pc-hln::-webkit-outer-spin-button{-webkit-appearance:none;margin:0;}
+    .pc-hln::placeholder{color:#cfe3ff;opacity:1;font-size:11px;}
+    .pc-hln:focus::placeholder{color:transparent;}
+    .pc-hldone{font-size:11px;text-align:center;color:#9ecbff;font-variant-numeric:tabular-nums;white-space:nowrap;overflow:hidden;}
+    /* 「已打」只读数据格：做成居中胶囊，与相邻的 方式/数量 输入框同高同列宽，避免无样式裸值把行拽得左挤右空 */
+    .pc-hlstat{box-sizing:border-box;width:100%;min-width:0;padding:3px 2px;border-radius:5px;
+      border:1px solid rgba(255,255,255,.09);background:rgba(158,203,255,.07);color:#9ecbff;opacity:1;
+      font-size:12px;font-variant-numeric:tabular-nums;text-align:center;white-space:nowrap;overflow:hidden;}
+    .pc-hlon{width:15px;height:15px;margin:0;cursor:pointer;accent-color:#4aa3ff;justify-self:center;}
+    /* 打野预设池字段（type:'presetpool'，自动打野）：动态增删的单选行，每行一枚下拉选战斗预设（1~8）+ × 移除，跨行去重。
+       增删/改选整块重刷以重算其它行可选项，交互走面板级事件委托（见 wirePanel）。 */
+    .pc-pp{display:flex;flex-direction:column;gap:4px;width:100%;margin:2px 0 6px;}
+    .pc-pptop{display:flex;align-items:center;justify-content:space-between;gap:8px;}
+    .pc-ppadd{flex:0 0 auto;width:22px;height:20px;padding:0;border-radius:6px;cursor:pointer;
+      border:1px dashed rgba(255,255,255,.28);background:transparent;color:#cfe8ff;font:inherit;font-size:14px;line-height:18px;}
+    .pc-ppadd:hover{background:rgba(255,255,255,.1);}
+    .pc-ppadd:disabled{opacity:.4;cursor:default;}
+    .pc-pprow{display:flex;align-items:center;gap:6px;}
+    .pc-ppslot{flex:0 0 auto;font-size:11px;opacity:.6;font-variant-numeric:tabular-nums;}
+    .pc-ppdel{flex:0 0 auto;width:22px;height:22px;padding:0;border:none;background:transparent;
+      color:#ff9c9c;font:inherit;font-size:16px;line-height:22px;cursor:pointer;text-align:center;}
+    .pc-ppdel:hover{color:#ff6b6b;}
+    /* 下田清单/预设池下拉共用外观 */
+    .pc-hlmode,.pc-ppsel{padding:2px 4px;border-radius:6px;border:1px solid rgba(255,255,255,.25);
+      background:rgba(20,26,38,.9);color:#e8eef7;font:inherit;font-size:12px;min-width:0;width:100%;box-sizing:border-box;}
+    .pc-ppsel{flex:1 1 auto;}
   `;
