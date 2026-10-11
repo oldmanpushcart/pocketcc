@@ -7,7 +7,7 @@ import { configs, findFeature, saveFeature, saveGroup, applyFeature } from '../r
 import { collectFeatureIds } from '../menu.js';
 import { isCombat, setCombatMode } from '../mode.js';
 import { findMenuNode, syncFeatureChecks, refreshTexts, refreshFieldVisibility } from './panel.js';
-import { setupUidField, mountUidList, mountSortList } from './widgets.js';
+import { setupUidField, mountUidList, mountSortList, mountItemList } from './widgets.js';
 import {
   rangesInnerHTML,
   multiOptsInnerHTML,
@@ -213,6 +213,9 @@ export function wirePanel(panel) {
   // 领取优先级清单字段（type:'sortlist'，遗迹奖励）：逐容器装配（↑/↓ 交换相邻位，见 mountSortList）。
   panel.querySelectorAll('.pc-slist').forEach(mountSortList);
 
+  // 物品清单字段（type:'itemlist'，秘境拾取）：逐容器装配，行不可增删（见 mountItemList）。
+  panel.querySelectorAll('.pc-ilist').forEach(mountItemList);
+
   panel.querySelector('#pc-logout').addEventListener('click', () => {
     session.logout(); // 游戏登出（PlatformCore 符号收口于 core/game-api.js 防腐层）
   });
@@ -285,6 +288,7 @@ export function wirePanel(panel) {
 
   // 多选开关组字段（type:'multiopts'，次元矿洞矿种）：勾选/取消与全选/清空均整批重存 number[]。
   // 与区间规则一样用面板级事件委托（选项由配置表运行时枚举，不逐个绑控件）。
+  // fd.maxSelect>0 时限最多勾选数：已满再点→回弹不入库；满额后整块重刷以把其余项置 disabled。
   const moptsTarget = (el) => {
     const box = el && el.closest ? el.closest('.pc-mopts') : null;
     if (!box) return null;
@@ -305,8 +309,16 @@ export function wirePanel(panel) {
     if (!t) return;
     const val = parseInt(inp.value, 10);
     const i = t.list.indexOf(val);
-    if (inp.checked && i < 0) t.list.push(val);
-    else if (!inp.checked && i >= 0) t.list.splice(i, 1);
+    const cap = Math.max(0, Math.floor(Number(t.fd.maxSelect) || 0));
+    if (inp.checked && i < 0) {
+      if (cap > 0 && t.list.length >= cap) {
+        // 已达上限：回弹该框并重刷（恢复 disabled 口径），不静默改配置
+        t.box.innerHTML = multiOptsInnerHTML(t.list, t.fd, t.cfg);
+        return;
+      }
+      t.list.push(val);
+    } else if (!inp.checked && i >= 0) t.list.splice(i, 1);
+    if (cap > 0) t.box.innerHTML = multiOptsInnerHTML(t.list, t.fd, t.cfg);
     saveFeature(t.f);
     applyFeature(t.f);
   });
@@ -318,8 +330,10 @@ export function wirePanel(panel) {
     if (!t) return;
     if (all) {
       const opts = (typeof t.fd.options === 'function' ? t.fd.options(t.cfg) : t.fd.options) || [];
+      const cap = Math.max(0, Math.floor(Number(t.fd.maxSelect) || 0));
+      const pick = cap > 0 ? opts.slice(0, cap) : opts; // 有上限时“全选”退化为“取前 N 项”
       t.list.length = 0;
-      opts.forEach((o) => t.list.push(o.value));
+      pick.forEach((o) => t.list.push(o.value));
     } else {
       t.list.length = 0;
     }

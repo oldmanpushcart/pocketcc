@@ -20,7 +20,8 @@
  * 联盟/群聊由 chat.js defaultCustom 自动补 mentionType/mentionUidList；禁 RS 编码。
  *
  * 依赖游戏运行时只「读 + 发包」，不调任何 Update/Delete 改写本地数据（feat 合规约束）。
- * 场景 ['Home','NWorldMap']（901/902 纯网络请求，口径同海上夺宝）；不声明 offInCombat——
+ * 地图 places:['base','world']（901/902 纯网络请求，口径同海上夺宝）+ kinds:['homeland','wushuang','kvk']（B 档，跨服战场图照打，
+ * march.resolve 已做战场 marchType 换算）；不声明 offInCombat——
  * 旨令即战时指挥，战斗模式（F8）下必须照常生效（与快捷战斗同侧）。
  * 属「战斗设置」：单飞执行（busy 期新旨令直接回「稍候」），队列不足只拒当前令不排队。
  */
@@ -505,7 +506,7 @@ function run(ctx) {
 }
 
 /**
- * 向 reactor 注册本功能说明书：场景 Home/NWorldMap；战斗设置类，不声明 offInCombat
+ * 向 reactor 注册本功能说明书：places:['base','world'] + kinds:['homeland','wushuang','kvk']（B 档）；战斗设置类，不声明 offInCombat
  * （旨令即战时指挥，战斗模式下照常奉旨）。
  */
 reactor.register({
@@ -513,7 +514,10 @@ reactor.register({
   label: '奉旨出征',
   storageKey: 'pocketcc.feat.imperialDecree',
   symbols: ['dataCenter', 'marchType', 'worldUtils', 'tableManager', 'localManager'],
-  scenes: ['Home', 'NWorldMap'],
+  // B 档（可行性报告 §7.2）：奉旨出征靠 chat @我 触发、发 902 打世界图目标，march.resolve 已做跨服战场
+  // marchType 换算；故 kinds 放行本服/无双峡谷/天梯（盟决/征服者球体不在场，秘境由 world 门 kind===pab 隔离）。
+  kinds: ['homeland', 'wushuang', 'kvk'],
+  places: ['base', 'world'],
   defaults: {
     enabled: false,
     consuls: [],

@@ -1,7 +1,8 @@
 import { createLog } from './log.js';
 
 // 全局唯一事件总线（不建第二个游戏消息总线——net 仍是游戏报文的唯一出入口，bus 只承载内部事件）。
-// 事件类：net.<cmd>（游戏推送）、session.*、scene.*、mode.*、tick.*（后四者由后续步骤接入）。
+// 事件类：net.<cmd>（游戏推送）、net.resp.<cmd>（应答）、net.req.<cmd>（本端发包，见 net.onReq）、
+//   session.*、scene.*、mode.*、tick.*（后四者由后续步骤接入）。
 // emit 恒同步：net 事件的 raw 是池化复用对象，延迟派发会读到脏数据；
 //   需要延迟的只有 reactor 合成的 tick 载荷 {}，那由 scheduler 负责，不进 bus。
 /** @type {ReturnType<createLog>} 模块日志器（tag=BUS） */

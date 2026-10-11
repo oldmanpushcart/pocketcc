@@ -2702,4 +2702,12 @@ reactor.register({
   },
   configure: configure,
   run: run,
+  // C 档（可行性报告 §7.2）：聊天与「在哪一种场景」基本无关（跨服图里消息照样要收发），所以不声明 kinds，
+  // 只按 Place 放行：基地/别人基地/大地图/征服者球体/转场。本 feat 原本无 scenes 声明（全域放行），
+  // 这里是收窄：战斗演出（place=battle）期间不再喂推送，浮层停在演出前画面，回常态图由 reactor
+  // resume 重新挂上订阅（订阅全在 run 里、由 ctx.on 登记，重挂幂等无泄漏）。已知代价：演出期间的
+  // 新消息不会补进浮层（游戏侧聊天数据中心不受影响）。
+  // 秘境例外：world 门的 kind===pab 隔离是「默认全拦」，不声明 kinds 在此档等价于被拦——
+  //   秘境图内聊天窗口整 feat pause（独立世界体系的已知取舍，要在秘境聊天需显式加 kinds:['pab']）。
+  places: ['base', 'world', 'base_other', 'sphere', 'transition'],
 });

@@ -40,6 +40,14 @@ export const PANEL_CSS = `
       border:1px solid rgba(255,120,90,.35);background:rgba(255,90,60,.10);}
     .pc-mode span{font-weight:600;font-size:13px;color:#ffd0b8;}
     .pc-mode input{width:16px;height:16px;cursor:pointer;}
+    /* 世界态胶囊：展示当前 Kind(场景)·Place(地图)，随 world.change 刷新；unknown/off 转警色 */
+    .pc-world{display:inline-flex;align-items:center;gap:6px;margin:0 0 8px;padding:3px 10px;
+      border-radius:999px;font-size:12px;line-height:1.5;color:#bfe3ff;cursor:default;
+      border:1px solid rgba(120,190,255,.28);background:rgba(70,140,220,.12);}
+    .pc-world .pc-wk{font-weight:600;}
+    .pc-world .pc-wp{opacity:.9;}
+    .pc-world .pc-wdot{opacity:.45;}
+    .pc-world.warn{color:#ffd0b8;border-color:rgba(255,150,90,.42);background:rgba(255,120,60,.14);}
     .pc-panel{position:fixed;width:${PANEL_W}px;border-radius:12px;
       background:rgba(18,22,30,.6);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);
       border:1px solid rgba(255,255,255,.16);color:#e8eef7;
@@ -143,6 +151,21 @@ export const PANEL_CSS = `
     .pc-srow.pc-srowoff .pc-srank{opacity:.3;}
     .pc-smove{flex:0 0 auto;width:22px;height:22px;padding:0;border-radius:6px;cursor:pointer;
       border:1px solid rgba(255,255,255,.22);background:transparent;color:#cfe8ff;font:inherit;font-size:14px;line-height:20px;}
+    /* 物品清单字段（type:'itemlist'，秘境拾取）：行不可增删，每行一枚 checkbox + 一个数字输入（背包上限，0=不限）。
+       容器高限 280px 内部滚动，避免百行池撝爆面板（见 mountItemList）。 */
+    .pc-ilist{display:flex;flex-direction:column;gap:4px;width:100%;margin:2px 0 6px;}
+    .pc-ilisttop{display:flex;align-items:center;justify-content:space-between;gap:8px;}
+    .pc-irows{display:flex;flex-direction:column;gap:2px;width:100%;max-height:280px;overflow-y:auto;
+      padding-right:2px;}
+    .pc-irow{display:flex;align-items:center;gap:6px;padding:2px 4px;border-radius:4px;background:rgba(255,255,255,.03);}
+    .pc-irow.pc-irowoff{opacity:.5;}
+    .pc-ichk{flex:0 0 auto;width:14px;height:14px;margin:0;cursor:pointer;accent-color:#4aa3ff;}
+    .pc-iname{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px;}
+    /* 行内角标：池项带 cap（游戏自身硬上限，如秘境 ITEM.para1_v1）时标 ≤N，提醒超出会被自动修正 */
+    .pc-icap{flex:0 0 auto;padding:0 4px;border-radius:4px;font-size:11px;color:#9ecbff;
+      background:rgba(74,163,255,.12);border:1px solid rgba(74,163,255,.22);}
+    .pc-imax{flex:0 0 auto;width:64px;padding:2px 4px;border-radius:4px;
+      border:1px solid rgba(255,255,255,.15);background:rgba(0,0,0,.25);color:#e8eef7;font:inherit;font-size:12px;}
     .pc-smove:hover{background:rgba(255,255,255,.1);}
     .pc-smove:disabled{opacity:.3;cursor:default;}
     .pc-row input[type=checkbox]{width:16px;height:16px;cursor:pointer;flex:0 0 auto;}
@@ -185,13 +208,18 @@ export const PANEL_CSS = `
     .pc-mopts{display:flex;flex-direction:column;gap:4px;width:100%;margin:2px 0 6px;}
     .pc-mopstop{display:flex;align-items:center;justify-content:space-between;gap:8px;}
     .pc-mopttitle{font-size:12px;opacity:.9;font-weight:600;}
-    .pc-moptacts{display:flex;gap:6px;flex:0 0 auto;}
+    .pc-moptacts{display:flex;align-items:center;gap:6px;flex:0 0 auto;}
+    /* 已选/上限计数（fd.maxSelect）：与全选/清空同组靠右 */
+    .pc-moptcount{font-size:11px;opacity:.7;font-variant-numeric:tabular-nums;}
     .pc-moptall,.pc-moptnone{padding:1px 8px;border-radius:6px;cursor:pointer;font:inherit;font-size:11px;
       border:1px solid rgba(255,255,255,.24);background:transparent;color:#cfe8ff;}
     .pc-moptall:hover,.pc-moptnone:hover{background:rgba(255,255,255,.1);}
     .pc-moptgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(72px,1fr));gap:4px 8px;width:100%;}
     .pc-mopt{display:flex;align-items:center;gap:4px;font-size:12px;min-width:0;cursor:pointer;}
     .pc-mopt input[type=checkbox]{width:14px;height:14px;cursor:pointer;flex:0 0 auto;}
+    /* 达勾选上限后的未选项（fd.maxSelect）：置灰不可点，与已选项拉开对比 */
+    .pc-mopt.pc-moptdis{opacity:.42;cursor:default;}
+    .pc-mopt input[type=checkbox]:disabled{cursor:default;}
     .pc-mopt span,.pc-mopt{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
     .pc-rngadd{flex:0 0 auto;width:22px;height:20px;padding:0;border-radius:6px;cursor:pointer;
       border:1px dashed rgba(255,255,255,.28);background:transparent;color:#cfe8ff;font:inherit;font-size:14px;line-height:18px;}

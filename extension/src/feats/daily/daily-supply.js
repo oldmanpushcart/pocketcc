@@ -218,7 +218,7 @@ function run(ctx) {
 }
 
 /**
- * 向 reactor 注册本功能说明书：场景限定 Home/NWorldMap；不行军不参战故不设战斗门控；
+ * 向 reactor 注册本功能说明书：地图限定 base/world（Home/NWorldMap）；不行军不参战故不设战斗门控；
  * 日常任务形态——面板只出启用开关，无字段无配置（封顶/未到点均为内置钟算口径）。
  */
 reactor.register({
@@ -226,7 +226,8 @@ reactor.register({
   label: '每日补给',
   storageKey: 'pocketcc.feat.dailySupply',
   symbols: ['dataCenter', 'tableManager'],
-  scenes: ['Home', 'NWorldMap'],
+  places: ['base', 'world'],
+  kinds: ['homeland'],
   offInCombat: false,
   defaults: { enabled: false },
   fields: [],

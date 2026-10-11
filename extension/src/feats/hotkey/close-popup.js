@@ -7,6 +7,9 @@
  *   无弹窗在场时 closeTop 返回 nothing，本功能仅记 debug 日志（与改造前一致：Q 命中即消费）。
  *
  * 打字让位 / 修饰键放行 / 场景门控 / preventDefault 由 core/hotkeys.js 注册表统一处理，本文件只声明绑定+动作。
+ *
+ * 门控分档（可行性报告 §7.2：C 档）：关弹窗与「在哪一种场景」无关（跨服图里照样有弹窗要关），
+ * 只按 Place 收口——基地/别人基地/大地图可用；战斗演出、转场、征服者球体里弹窗体系不在场，不生效也不抢键。
  */
 import { createLog } from '../../core/log.js';
 import { bind } from '../../core/hotkeys.js';
@@ -22,6 +25,9 @@ bind({
   label: '关闭当前弹窗',
   where: '基地/大世界',
   scenes: ['Home', 'NWorldMap'],
+  // 与 scenes 逐字等价折算（Home→base、NWorldMap→world）；scenes 仍是 hotkeys.bindingAllow 的必要条件，
+  //   若给 places 多给 base_other（HomeOther 不在 scenes 里）会变成永不生效的死声明。
+  places: ['base', 'world'],
   handler: function () {
     var r = ui.closeTop();
     if (r.ok) log.info('popup closed. name=%s', r.name);

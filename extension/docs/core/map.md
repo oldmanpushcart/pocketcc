@@ -38,43 +38,52 @@
 
 **常量**（值均有实证，见 `references/游戏逆向/全局地图知识点归档.md`）：
 
-| 符号 | 形态 | 语义 |
-|---|---|---|
-| `TILE` | `{W:224,H:162,HALF_W:112,HALF_H:81}` | 等距瓦片像素 |
-| `SERVER` | `{cols:408,rows:952,gameXMax:816,gameYMax:952}` | 本服世界尺寸（game 上界 = cols·2 / rows） |
-| `CMD_GET_WORLD_INFO` | `901` | 视口拉取命令号 |
-| `POINT_TYPE_MAP` | `Object<type, {label,en,color,group,field}>` | pointType → 字典项（由 `POINT_TYPES` 建索引） |
-| `VIEW_LEVELS` / `ZOOM_LEVELS` | 档表 | 901 viewLevel 0~4 / 离散缩放档 |
+| 符号                          | 形态                                            | 语义                                          |
+| ----------------------------- | ----------------------------------------------- | --------------------------------------------- |
+| `TILE`                        | `{W:224,H:162,HALF_W:112,HALF_H:81}`            | 等距瓦片像素                                  |
+| `SERVER`                      | `{cols:408,rows:952,gameXMax:816,gameYMax:952}` | 本服世界尺寸（game 上界 = cols·2 / rows）     |
+| `CMD_GET_WORLD_INFO`          | `901`                                           | 视口拉取命令号                                |
+| `POINT_TYPE_MAP`              | `Object<type, {label,en,color,group,field}>`    | pointType → 字典项（由 `POINT_TYPES` 建索引） |
+| `VIEW_LEVELS` / `ZOOM_LEVELS` | 档表                                            | 901 viewLevel 0~4 / 离散缩放档                |
 
 **函数**：
 
-| 方法 | 签名 | 返回 | 语义 |
-|---|---|---|---|
-| `fetchWindow` | `(net, x, y, {k, width=20, height=20, viewLevel=1, marchInfo=false}) → Promise<{ok, code, points, err?}>` | 点数组 | 发单窗 901，归一 `data.pointList`；失败 `ok:false, points:[]`，**永不 reject** |
-| `pickSub` | `(p, subs[], keys[]) → *` | 首个非空值 | 按 subs 优先级进子对象找 keys，全落空回点顶层；无则 null |
-| `gameToCell`/`cellToGame` | `(x,y)→{cellX,cellY}` / `(cellX,cellY)→{x,y}` | 坐标 | 奇偶行错排折半/回加 |
-| `cellToDisplay`/`displayToCell` | `(cellX,cellY)→{dx,dy}` / 反算 | 像素 | 等距投影（display 近似反算，精确四象限修正交游戏） |
-| `shieldText`/`fmtLargeNum` | 可读串 | string | 护盾剩余 / 大数字（复刻游戏） |
+| 方法                            | 签名                                                                                                      | 返回       | 语义                                                                           |
+| ------------------------------- | --------------------------------------------------------------------------------------------------------- | ---------- | ------------------------------------------------------------------------------ |
+| `fetchWindow`                   | `(net, x, y, {k, width=20, height=20, viewLevel=1, marchInfo=false}) → Promise<{ok, code, points, err?}>` | 点数组     | 发单窗 901，归一 `data.pointList`；失败 `ok:false, points:[]`，**永不 reject** |
+| `pickSub`                       | `(p, subs[], keys[]) → *`                                                                                 | 首个非空值 | 按 subs 优先级进子对象找 keys，全落空回点顶层；无则 null                       |
+| `gameToCell`/`cellToGame`       | `(x,y)→{cellX,cellY}` / `(cellX,cellY)→{x,y}`                                                             | 坐标       | 奇偶行错排折半/回加                                                            |
+| `cellToDisplay`/`displayToCell` | `(cellX,cellY)→{dx,dy}` / 反算                                                                            | 像素       | 等距投影（display 近似反算，精确四象限修正交游戏）                             |
+| `shieldText`/`fmtLargeNum`      | 可读串                                                                                                    | string     | 护盾剩余 / 大数字（复刻游戏）                                                  |
 
 ## 4. 场景用法
 
 **auto-farm 机械塔存活探针**（默认 20×20 窗）：
+
 ```js
 var r = await map.fetchWindow(net, x, y, { k: userData().ServerId | 0 });
 if (!r.ok) return { status: 'error' };
-for (var p of r.points) { /* 命中 (x,y) 且 pointType=24 且本盟已建成 → 带 id/bid 返回 */ }
+for (var p of r.points) {
+  /* 命中 (x,y) 且 pointType=24 且本盟已建成 → 带 id/bid 返回 */
+}
 ```
 
 **imperial-decree 目标点探测**（同默认窗）：`fetchWindow` 后按 `(p.x|0)===x && (p.y|0)===y` 找实体点，命中返点对象、查无返 null、请求失败返 undefined。
 
 **defense 迁城占用大窗**（显式 116×76 / marchInfo:true，并数 pointType=13 领土点作就绪交叉校验）：
+
 ```js
 var win = await fetchWindow(net, ax, ay, {
   k: opts.serverId | 0 || 0,
-  width: RELOC_VIEW.width, height: RELOC_VIEW.height,
-  viewLevel: RELOC_VIEW.viewLevel, marchInfo: true,
+  width: RELOC_VIEW.width,
+  height: RELOC_VIEW.height,
+  viewLevel: RELOC_VIEW.viewLevel,
+  marchInfo: true,
 });
-if (win.ok) for (var p of win.points) { /* 除自己主城外任何实体按 footprint 扩格入占用集（仅 isKVK 时豁免 RELOC_KVK_COVERABLE 可覆盖类） */ }
+if (win.ok)
+  for (var p of win.points) {
+    /* 除自己主城外任何实体按 footprint 扩格入占用集（仅 isKVK 时豁免 RELOC_KVK_COVERABLE 可覆盖类） */
+  }
 ```
 
 ## 5. 数据流与降级
@@ -93,7 +102,7 @@ fetchWindow: body{x,y,k,width,height,marchInfo,viewLevel}
 - **k（服号）必须是 `UserData.ServerId|0`**：`viewServerId()` 在 Home 场景返回 -1，`Number(-1)||0` 仍是 -1，发出 k=-1 → 服务端判非法、应答无 pointList（实证 status=3 / `world_130512`）。非正数应跳过发包。
 - **901 请求 `(x,y)` 是回点区「中心」非左上角**：全图逐块扫描须按**块中心**发请求，否则漏扫最右列/最下行（该逻辑在 `feats/map/scanner.js`，本模块只提供单窗骨架）。
 - **Int64 精度**：塔 id 等大整数从 901 取回须 `String()` 承载，防 `number` 截断。
-- **迁城占用集留 defense**：那是「迁城哪些点算阻塞」的业务判据，非地图真相，不下沉。口径为「除自己主城外一切实体 footprint 均占位」，仅 `isKVK()` 时豁免权威可覆盖集 `RELOC_KVK_COVERABLE`（难民营18/世界宝藏26/野怪73/集结怪74/雷达宝藏75/国度76/援助77）——对齐 extracted `checkIsPlainTile` 的 `isKVK() && judgeTileIfCanCover(p)`，标准本服图这些点同样阻塞落点。
+- **迁城占用集留 defense**：那是「迁城哪些点算阻塞」的业务判据，非地图真相，不下沉。口径为「除自己主城外一切实体 footprint 均占位」，仅 `isKVK()` 时豁免权威可覆盖集 `RELOC_KVK_COVERABLE`（难民营18/世界宝藏26/野怪73/集结怪74/雷达宝藏75/国度76/援助77）——对齐 extracted `checkIsPlainTile` 的 `isKVK() && judgeTileIfCanCover(p)`，标准本服图这些点同样阻塞落点。（插件侧调用的不是游戏符号而是 `worldState.matchesKind(['kvk'])`——两者同走 `eightServerType` 形态位（整季为真），语义一致。）
 - **窗口默认 20×20/viewLevel1/marchInfo=false**：仅够单点探针；覆盖搜索带须显式传大窗 opts。
 
 ## 7. 调试面

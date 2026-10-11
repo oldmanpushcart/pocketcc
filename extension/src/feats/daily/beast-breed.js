@@ -48,7 +48,7 @@
  *   发必须经 bits.int64(strId) 装箱回 Int64——直传数字串会丢精度、直传 JS number 会被服务器拒。
  *   玩家 uid 反之：应答/请求两侧都是十进制字符串，原样透传。
  *
- * 生命周期由 reactor 托管：install/configure/run 三钩子，scenes 限 Home/NWorldMap，战斗模式暂停；
+ * 生命周期由 reactor 托管：install/configure/run 三钩子，places 限 base/world（Home/NWorldMap），战斗模式暂停；
  *   pause 后 alive()=false 让 cycle 自然停摆，resume 时 run 复位状态并重新点火。
  */
 import { createLog } from '../../core/log.js';
@@ -1253,7 +1253,8 @@ reactor.register({
   label: '异能兽培育',
   storageKey: 'pocketcc.feat.beastBreed',
   symbols: ['dataCenter', 'tableManager', 'tableUtils', 'long64Bit', 'enigmaBeast?'],
-  scenes: ['Home', 'NWorldMap'],
+  places: ['base', 'world'],
+  kinds: ['homeland'],
   offInCombat: true,
   defaults: {
     enabled: false,

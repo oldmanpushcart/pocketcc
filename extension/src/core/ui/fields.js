@@ -22,27 +22,44 @@ export function cardHead(label, chkHTML, expandable) {
  * 多选开关组字段（type:'multiopts'，如次元矿洞按矿种多选）内层 HTML。
  * 选项集由 fd.options 提供：数组直接用，函数则每次求值时传当前 cfg（配置表运行时动态枚举）。
  * 选中态 configs[fid][fd.key] 为 number[]（命中的 option.value 集合）。勾选/取消由 wirePanel 事件委托接。
+ * fd.stack=true 时选项竖排（一行一项，长中文名不被截断）；否则按 fd.gridMin 列宽横排（缺省 72px）。
+ * fd.maxSelect>0 限定最多勾选数：标题行右侧显示「已选 n/上限」，满额后未勾选项置 disabled（wire 侧另有回弹兜底）。
  * @param {number[]} selected 当前选中值数组
- * @param {object} fd 字段描述符（label / options / hint / 可选 gridMin：列最小宽 px，缺省 72）
+ * @param {object} fd 字段描述符（label / options / hint / 可选 gridMin：列最小宽 px，缺省 72 / 可选 stack / 可选 maxSelect）
  * @param {object} cfg 该功能当前配置（透传给 fd.options 函数）
  * @returns {string}
  */
 export function multiOptsInnerHTML(selected, fd, cfg) {
   const opts = (typeof fd.options === 'function' ? fd.options(cfg) : fd.options) || [];
   const sel = Array.isArray(selected) ? selected : [];
+  const cap = Math.max(0, Math.floor(Number(fd.maxSelect) || 0));
+  // 旧存档可能已超额：满额判定用 >=，超额时已勾项仍可取消（只锁未勾的）
+  const full = cap > 0 && sel.length >= cap;
   const cells = opts
     .map((o) => {
-      const checked = sel.indexOf(o.value) >= 0 ? ' checked' : '';
-      return `<label class="pc-mopt"><input type="checkbox" class="pc-moptchk" value="${o.value}"${checked}>${escAttr(String(o.label))}</label>`;
+      const on = sel.indexOf(o.value) >= 0;
+      const dis = full && !on ? ' disabled' : '';
+      return (
+        `<label class="pc-mopt${full && !on ? ' pc-moptdis' : ''}">` +
+        `<input type="checkbox" class="pc-moptchk" value="${o.value}"${on ? ' checked' : ''}${dis}>` +
+        `${escAttr(String(o.label))}</label>`
+      );
     })
     .join('');
+  const gridStyle = fd.stack
+    ? 'grid-template-columns:1fr'
+    : fd.gridMin
+      ? `grid-template-columns:repeat(auto-fill,minmax(${+fd.gridMin || 72}px,1fr))`
+      : '';
   return (
     `<div class="pc-mopstop">` +
     `<span class="pc-mopttitle">${escAttr(fd.label || '多选')}</span>` +
-    `<span class="pc-moptacts"><button class="pc-moptall" type="button">全选</button>` +
+    `<span class="pc-moptacts">` +
+    (cap > 0 ? `<span class="pc-moptcount">${sel.length}/${cap}</span>` : '') +
+    `<button class="pc-moptall" type="button">全选</button>` +
     `<button class="pc-moptnone" type="button">清空</button></span>` +
     `</div>` +
-    `<div class="pc-moptgrid"${fd.gridMin ? ` style="grid-template-columns:repeat(auto-fill,minmax(${+fd.gridMin || 72}px,1fr))"` : ''}>${cells || '<div class="pc-rnghint">暂无可选项</div>'}</div>` +
+    `<div class="pc-moptgrid"${gridStyle ? ` style="${gridStyle}"` : ''}>${cells || '<div class="pc-rnghint">暂无可选项</div>'}</div>` +
     (fd.hint ? `<div class="pc-rnghint">${escAttr(fd.hint)}</div>` : '')
   );
 }
@@ -304,6 +321,55 @@ export function sortListInnerHTML(list, fd, offArr) {
 }
 
 /**
+ * 物品清单项字段（type:'itemlist'）内层 HTML：标题行 + 若干 `[☑ 名称 [≤cap] [max]__]` 行 + hint。
+ * 行不可增删（整池全员参与）；每行一枚 checkbox 控制该项是否参与 + 一个数字输入控制「背包持有上限」（0=不限）。
+ * 状态 cfg[fd.key] 形如 `{ [idStr]: { on: 0|1, max: number } }`，未登记的项视为默认（on=1、max=0=不限）。
+ * 池由 fd.items（数组或 fn(cfg)）提供，每项 `{id, label, cap?}`；id 可为字符串（如 'item:41009'）避免跨池数字碰撞。
+ * `cap>0` 表示游戏**自身已有一道硬上限**（如秘境道具的 ITEM.para1_v1）：行内标 `≤cap`、输入框带 max/data-cap，
+ *   超过 cap 的值在渲染时就回落为 cap（与 mountItemList 的 change 修正同口径）。
+ * @param {Array<{id:string|number,label:string,cap?:number}>|function(object):Array} items 池源
+ * @param {object} state 当前配置对象（cfg[fd.key]）
+ * @param {object} fd 字段描述符（label / hint / topHint / items）
+ * @returns {string}
+ */
+export function itemListInnerHTML(items, state, fd) {
+  const arr = typeof items === 'function' ? items() : Array.isArray(items) ? items : [];
+  const map = state && typeof state === 'object' ? state : {};
+  const rows = arr
+    .map((it) => {
+      const key = String(it.id);
+      const s = map[key];
+      const on = s ? s.on !== 0 : true;
+      const cap = Math.max(0, Math.floor(Number(it.cap) || 0));
+      let max = s && Number.isFinite(s.max) ? s.max : 0;
+      if (cap > 0 && max > cap) max = cap; // 游戏自身上限抢先：超 cap 的旧存档值直接回落展示
+      const label = it.label || key;
+      return (
+        `<div class="pc-irow${on ? '' : ' pc-irowoff'}" data-ikey="${escAttr(key)}">` +
+        `<input type="checkbox" class="pc-ichk" data-ik="${escAttr(key)}"${on ? ' checked' : ''}>` +
+        `<span class="pc-iname" title="${escAttr(label)}">${escAttr(label)}</span>` +
+        (cap > 0
+          ? `<span class="pc-icap" title="游戏自身持有上限 ${cap}，填写超出会被自动修正">≤${cap}</span>`
+          : '') +
+        `<input type="number" class="pc-imax" data-ik="${escAttr(key)}" min="0" step="1"` +
+        (cap > 0 ? ` max="${cap}" data-cap="${cap}"` : '') +
+        ` value="${max}" placeholder="${cap > 0 ? cap : '不限'}"` +
+        ` title="${cap > 0 ? '背包上限，最大 ' + cap + '（0=跟随游戏上限）' : '背包上限，0=不限'}">` +
+        `</div>`
+      );
+    })
+    .join('');
+  return (
+    `<div class="pc-ilisttop">` +
+    `<span class="pc-rngtitle">${escAttr(fd.label || '物品清单')}</span>` +
+    `<span class="pc-rnghint">${escAttr(fd.topHint || '取消勾选=不拾；数字=背包上限，0=不限；行内 ≤N = 游戏自身上限')}</span>` +
+    `</div>` +
+    `<div class="pc-irows">${rows || '<div class="pc-rnghint">池为空</div>'}</div>` +
+    (fd.hint ? `<div class="pc-rnghint">${escAttr(fd.hint)}</div>` : '')
+  );
+}
+
+/**
  * descriptor fields -> 行 HTML（checkbox / text 只读惰性求值 / 数字输入 / 下拉 / 区间规则）。
  * fd.section 变化时插入分组小标题（如联盟集结按战锤/惧星/难民营分段），容器带 data-id=功能 id。
  * fd.showIf(cfg) 为假时该行不占位（只在行根打 data-dep，真实显隐由 refreshFieldVisibility 切 hidden）。
@@ -405,6 +471,14 @@ export function buildFieldsHTML(fid, f) {
       return (
         `<div class="pc-mopts" data-id="${fid}" data-mkey="${fd.key}">` +
         multiOptsInnerHTML(c[fd.key], fd, c) +
+        `</div>`
+      );
+    }
+    if (fd.type === 'itemlist') {
+      // 物品清单项（秘境拾取等）：整池行不可增删，每行 `[☑] 名称 [max]`，容器带 fid/key 供 mountItemList 重刷+重绑
+      return (
+        `<div class="pc-ilist" data-id="${fid}" data-ikey="${fd.key}">` +
+        itemListInnerHTML(fd.items, c[fd.key], fd) +
         `</div>`
       );
     }

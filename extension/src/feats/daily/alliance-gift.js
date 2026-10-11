@@ -32,7 +32,8 @@
  *   pause 后 alive()=false，挂着的定时器到点空转一次不再自重排，resume 时 run 复位并重新点火。
  *
  * 生命周期由 reactor 托管：install/configure/run 三个钩子。纯协议领取（不派行军、不抢行军队列），
- *   故不声明 scenes、不声明 offInCombat（与联盟帮助同口径：全场景 + 战斗态下都继续跑）。
+ *   故不声明 places、不声明 offInCombat（战斗态下继续跑）；但声明了 kinds:['homeland']（A 档）：
+ *   进峡谷/天梯/秘境/征服者图即 pause，回本服图自动 resume（可行性报告 §7.2 保守选择，要升 B 可改）。
  */
 import { createLog } from '../../core/log.js';
 import { game } from '../../core/game.js';
@@ -394,6 +395,7 @@ function run(ctx) {
  */
 reactor.register({
   id: 'allianceGift',
+  kinds: ['homeland'],
   label: '联盟礼物',
   storageKey: 'pocketcc.feat.allianceGift',
   symbols: ['dataCenter'],

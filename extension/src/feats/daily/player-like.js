@@ -27,7 +27,7 @@
  * 调度由 core/cycle.js 提供：单飞闸门、configure 推触合并、异常 fallback 重排均内置；
  *   pause 后 alive()=false，cycle 自然停摆，resume 时 run 重新 kick。当日计数的读盘/落盘单飞闸门与本块无关，保留在 feat 侧。
  *
- * 生命周期由 reactor 托管：install/configure/run 三个钩子，scenes 门控限定 Home/NWorldMap，战斗态暂停。
+ * 生命周期由 reactor 托管：install/configure/run 三个钩子，places 门控限定 base/world（Home/NWorldMap），战斗态暂停。
  *   合规：只读 + 发包，绝不改写游戏本地数据（点赞回执由游戏自身经 push 落地）。
  */
 import { createLog } from '../../core/log.js';
@@ -569,14 +569,15 @@ function run(ctx) {
 }
 
 /**
- * 向 reactor 注册本功能说明书：scenes 限定 Home/NWorldMap，战斗态暂停（offInCombat）。
+ * 向 reactor 注册本功能说明书：places 限定 base/world（Home/NWorldMap），战斗态暂停（offInCombat）。
  */
 reactor.register({
   id: 'playerLike',
   label: '玩家点赞',
   storageKey: 'pocketcc.feat.playerLike',
   symbols: ['dataCenter'],
-  scenes: ['Home', 'NWorldMap'],
+  places: ['base', 'world'],
+  kinds: ['homeland'],
   offInCombat: true,
   defaults: {
     enabled: false,

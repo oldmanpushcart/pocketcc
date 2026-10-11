@@ -12,7 +12,55 @@ import {
   mineRulesInnerHTML,
   farmRulesInnerHTML,
 } from './fields.js';
-import { mountUidList, mountSortList } from './widgets.js';
+import { mountUidList, mountSortList, mountItemList } from './widgets.js';
+
+/**
+ * 世界态展示中文名（Kind 场景档 / Place 地图）：仅供面板头部状态胶囊展示，口径对齐
+ * core/world-state.js 枚举注释与逆向报告 §2.2 定谳表。展示文案归 UI 层（world-state 只输出事实维度）。
+ * 未知枚举回退原值（宁可显英文符号也不要空白，便于版本漂移肉眼可察）。
+ */
+const KIND_ZH = {
+  homeland: '本服常态',
+  pab: '异能秘境',
+  wushuang: '无双峡谷',
+  kvk_c4: '天梯·四国',
+  kvk_c8: '天梯·八国',
+  kvk_c8s2: '天梯·八国S2',
+  cnc: '征服者·异能',
+  cnc25: '征服者2025',
+  adp_war: '联盟对决',
+  unknown: '未知场景',
+};
+const PLACE_ZH = {
+  base: '自己城内',
+  base_other: '别人城内',
+  world: '大地图',
+  world_old: '旧大地图',
+  battle: '战斗演出',
+  sphere: '征服者球体',
+  transition: '转场',
+  boot: '登录中',
+  other: '其它场景',
+  off: '未就绪',
+};
+
+/**
+ * 由世界态快照算头部状态胶囊的展示数据（纯函数，不碰 DOM、不采新态）。
+ * @param {{kind:string, place:string, reason?:string, raw?:{scene?:string}}} st worldState.current() 快照
+ * @returns {{inner:string, warn:boolean, title:string}} inner=胶囊内 HTML（Kind·Place），warn=落 unknown/off 时置真报警，title=悬停原始口径
+ */
+export function buildWorldStatus(st) {
+  const kind = KIND_ZH[st.kind] || st.kind || '—';
+  const place = PLACE_ZH[st.place] || st.place || '—';
+  const warn = st.kind === 'unknown' || st.place === 'off';
+  const inner =
+    `<span class="pc-wk">${escAttr(kind)}</span>` +
+    '<span class="pc-wdot">·</span>' +
+    `<span class="pc-wp">${escAttr(place)}</span>`;
+  const scene = (st.raw && st.raw.scene) || '-';
+  const title = `Kind=${st.kind || '-'} Place=${st.place || '-'} scene=${scene} reason=${st.reason || '-'}`;
+  return { inner, warn, title };
+}
 
 /**
  * 重算条件字段（fd.showIf）的显隐：只切 hidden 属性，不重建 DOM（结构不变 → 控件已绑的事件与草稿态全存活）。
@@ -173,6 +221,7 @@ export function buildPanelHTML() {
   const panes = MENU.map((c, i) => renderCategoryPane(c, i === 0)).join('');
   return `
       <h3>口袋控制中心<span class="pc-sub">POCKETCC</span></h3>
+      <div class="pc-world" id="pc-world"></div>
       <label class="pc-mode"><span>战斗模式</span><input type="checkbox" id="pc-combat"></label>
       <div class="pc-tabs">
         <div class="pc-tabbar">${tabs}</div>
@@ -242,6 +291,8 @@ export function syncControls(panel) {
   panel.querySelectorAll('.pc-ulist').forEach(mountUidList);
   // 领取优先级清单：整块重刷 + 重绑（行不可增删但 ↑/↓ 交换后序号/disabled 态会变）
   panel.querySelectorAll('.pc-slist').forEach(mountSortList);
+  // 物品清单（type:'itemlist'）：整块重刷 + 重绑（行不可增删，池由 fd.items 动态枚举）
+  panel.querySelectorAll('.pc-ilist').forEach(mountItemList);
   // 多选开关组：整块重刷内层（选项动态枚举、选中态为 number[]，不能只回写单个值）
   panel.querySelectorAll('.pc-mopts').forEach((box) => {
     const f = findFeature(box.dataset.id);

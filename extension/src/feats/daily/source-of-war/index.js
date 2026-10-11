@@ -129,7 +129,7 @@ async function run(ctx) {
 
 // ─────────── 注册 ───────────
 /**
- * 向 reactor 注册本功能说明书：场景限定 Home/NWorldMap；不设 offInCombat（那会连领奖一起暂停），
+ * 向 reactor 注册本功能说明书：地图限定 base/world（Home/NWorldMap）；不设 offInCombat（那会连领奖一起暂停），
  * 攻打改由 attackOnce 内部判战斗态、领奖链全天独立。
  * 面板带三形态预设选择器（各 0-8，0=不攻打该形态）+ 今日已攻打计数（攻打链）+ 次数奖励（领奖链）；
  * 窗口/定额/间隔为各引擎内置常量（attack.js DAILY_LIMIT/WARMUP_DELAY/TICK_INTERVAL、reward.js CLAIM_POLL_INTERVAL）。
@@ -139,7 +139,8 @@ reactor.register({
   label: '战争之源',
   storageKey: 'pocketcc.feat.sourceOfWar',
   symbols: ['dataCenter', 'tableUtils', 'tableManager'],
-  scenes: ['Home', 'NWorldMap'],
+  places: ['base', 'world'],
+  kinds: ['homeland'],
   defaults: {
     enabled: false,
     armyPreset: 0, // 陆军形态（BOSS.type=0）预设队号 0-8

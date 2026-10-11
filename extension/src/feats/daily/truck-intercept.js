@@ -1384,7 +1384,8 @@ reactor.register({
   label: '卡车争夺',
   storageKey: 'pocketcc.feat.truckIntercept',
   symbols: ['dataCenter', 'tableManager'],
-  scenes: ['Home', 'NWorldMap'],
+  places: ['base', 'world'],
+  kinds: ['homeland'],
   offInCombat: true,
   defaults: {
     enabled: false,

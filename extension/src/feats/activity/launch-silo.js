@@ -29,7 +29,7 @@
  *   若抢输（名额被 auto-farm 抢先 / 902 被拒），该井留待驻队列、下轮再撤 1 条田重试，直至驻满。
  *   "田"＝资源采集行军：判据以 marchType 3/26 为准（普通田 3 / 机械田 26），显式排除驻井 35 与领域寻宝挖矿 180。
  *
- * 生命周期由 reactor 托管：install/run 两个钩子，scenes 门控限定 Home/NWorldMap，战斗模式暂停（offInCombat）。
+ * 生命周期由 reactor 托管：install/run 两个钩子，places 门控限定 base/world（Home/NWorldMap），战斗模式暂停（offInCombat）。
  *   驻军/领积分为内置默认行为；撤田腾队列为面板可选项（recallFarm，默认勾选）。
  *   驻军/撤田读本人行军走 core/march.list()（封装 856 GET_ALL_MY_MARCH_INFO，视口无关、Home 亦有全量；不再依赖 mapData.marches）。
  */
@@ -822,7 +822,7 @@ function configure(c) {
 }
 
 /**
- * 向 reactor 注册本功能说明书：场景限定 Home/NWorldMap，战斗模式暂停（offInCombat）。
+ * 向 reactor 注册本功能说明书：地图限定 base/world（Home/NWorldMap），战斗模式暂停（offInCombat）。
  * 驻军 / 领积分为内置默认行为；「队列不足撤田腾位」为面板可选项（默认勾选）。
  */
 reactor.register({
@@ -830,7 +830,11 @@ reactor.register({
   label: '占领发射井',
   storageKey: 'pocketcc.feat.launchSilo',
   symbols: ['dataCenter', 'tableManager', 'tableName', 'tableUtils'],
-  scenes: ['Home', 'NWorldMap'],
+  places: ['base', 'world'],
+  // A 档保守收（可行性报告 §7.2/§7.4 第 4 刀）：发射井疑属天梯战场（cross_server_* 词条），但本 feat 自动化的是
+  // 「每周二 21:00 / 4 井 4001-4004 / tableThrone THRONE」那条联盟活动，静态无法确证其图属 kind。
+  // 真机复核口径：下次开活动进发射井图跑一次 worldState.dump()，若 kind 落 kvk_* 则把本行升为 ['homeland','kvk']（A→B）。
+  kinds: ['homeland'],
   offInCombat: true,
   defaults: { enabled: false, recallFarm: true },
   fields: [

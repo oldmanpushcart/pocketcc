@@ -22,6 +22,10 @@
  *
  * 合规：只读游戏数据 + 发包（910/911/902/630），不调任何游戏 Update/Delete 改写本地数据。
  *   场景 ['Home','NWorldMap']；不声明 offInCombat——战斗模式下照常防御（与快捷战斗/奉旨出征同侧）。
+ *   世界态门（B 档，见可行性报告 §7.3）：kinds ['homeland','wushuang','kvk','adp_war']——战场里城照样被打破，
+ *   所以整档不停；只有秘境/征服者（副本世界体系与球体场景，不是「你的世界城被攻打」）让本 feat 整体 pause。
+ *   ① 开盾这一条策略另按 kind/crossMap 降级（峡谷内护盾根本不生效、跨服战场区域内无法开盾且会清剩余时间），
+ *   ②③④（迁城/攻击）在跨服图照常跑。详见 strategyShield 头部注释。
  *   高影响（自动耗盾/迁城卡、自动迁走主城）：面板默认关闭 + 逐条策略开关。
  */
 import { createLog } from '../../core/log.js';
@@ -31,6 +35,7 @@ import { reactor } from '../../core/reactor.js';
 import { Battle } from '../../core/battle.js';
 import { march } from '../../core/march.js';
 import { defense } from '../../core/defense.js';
+import { worldState } from '../../core/world-state.js';
 
 /** @type {ReturnType<createLog>} 模块日志器（tag=AUTO_DEFENSE） */
 const log = createLog('AUTO_DEFENSE');
@@ -292,11 +297,31 @@ function attackFailText(ret) {
 // ─────────────────────── 四条策略（各返回 {result, reason, stop}；stop=true 即命中收手） ───────────────────────
 
 /**
- * 策略 1：自动开盾（910）。闸门：背包有盾 & 未生效 & 非狂热 & 游戏未判不可开；可选战力闸门。
+ * 策略 1：自动开盾（910）。闸门：世界态降级（峡谷恒跳 / 跨服图按 crossMap）→ 背包有盾 & 未生效 & 非狂热 & 游戏未判不可开；可选战力闸门。
  * @param {object} snap 共享快照
  * @returns {Promise<{result:string, reason:string, stop:boolean}>}
  */
 async function strategyShield(snap) {
+  // 分策略降级（可行性报告 §7.3）：只有开盾这一条要按世界态收，②③④ 在跨服图照跑。
+  //   · 无双峡谷（含 AVA/TM/大师/传奇四代，同族同规则）恒不开盾：ava_tips_064=在无双峡谷中保护罩无法生效…、
+  //     cab_help_info_048=因磁场混乱，所以城市护盾无法生效 —— 是「盾根本不生效」，不是「城不在场」，照发纯浪费道具。
+  //   · 其余跨服图（跨战区天梯 kvk_* / 盟决 adp_war）只判「此刻真在战场图上」：cross_server_info_042=在战场区域时，
+  //     无法开启护盾保护、csb_tips_001=战区内无法开启护盾、shield_012=进入跨战区天梯赛战场（作为护盾消失原因）。
+  //     这里必须读 crossMap 而不是 kind：kind=kvk_* 是整季形态位，你随时可能回了原战区老家（mapType 折回本服图），
+  //     那时护盾照常可用，按 kind 一刀切会把赛季里的常态防御一起废掉。
+  var st = worldState.current();
+  if (st.kind === worldState.KIND.wushuang)
+    return {
+      result: 'skip',
+      reason: '无双峡谷内护盾不生效，跳过开盾(gen=' + st.gen + ')',
+      stop: false,
+    };
+  if (st.crossMap)
+    return {
+      result: 'skip',
+      reason: '此刻在跨服战场图上(kind=' + st.kind + ')，战场区域无法开盾',
+      stop: false,
+    };
   if (snap.shieldItem == null) return { result: 'fail', reason: '背包无可用护盾道具', stop: false };
   if (snap.warFever) return { result: 'fail', reason: '战争狂热禁止开盾', stop: false };
   if (snap.canShieldByGame === false)
@@ -440,7 +465,11 @@ async function strategyRelocate(snap) {
     } catch (e) {} // 迁成后镜头跟随到新落地点
     return { result: 'hit', reason: '迁城逃避至(' + spot.x + ',' + spot.y + ')', stop: true };
   }
-  return { result: 'fail', reason: '迁城到(' + spot.x + ',' + spot.y + ')失败 ' + mv.why, stop: false };
+  return {
+    result: 'fail',
+    reason: '迁城到(' + spot.x + ',' + spot.y + ')失败 ' + mv.why,
+    stop: false,
+  };
 }
 
 /**
@@ -680,7 +709,9 @@ function strategyResolve(id) {
 }
 
 /**
- * 向 reactor 注册本功能说明书：场景 Home/NWorldMap；战斗设置类，不声明 offInCombat（战斗模式下照常防御）。
+ * 向 reactor 注册本功能说明书：场景 Home/NWorldMap + 世界态 B 档；战斗设置类，不声明 offInCombat（战斗模式下照常防御）。
+ * 停摆档刻意排除 pab/cnc/cnc25（秘境是副本接管世界图、征服者是球体场景，都不是「你的世界城被攻打」）；
+ * adp_war 保守放行——盟决战场无静态信号确认城在场，但停防御的代价（被打不反应）大于空跑代价（最多废一张迁城卡）。
  */
 reactor.register({
   id: 'autoDefense',
@@ -700,7 +731,9 @@ reactor.register({
     'buff?',
     'commonTools',
   ],
-  scenes: ['Home', 'NWorldMap'],
+  places: ['base', 'world'],
+  // B 档：跨服战场图内仍需防御（城照样被打破），开盾这一条在 strategyShield 内按 kind/crossMap 降级
+  kinds: ['homeland', 'wushuang', 'kvk', 'adp_war'],
   defaults: {
     enabled: false,
     strategies: ALL_SIDS.slice(),

@@ -41,7 +41,7 @@
  *   不做研究发起（1145 需 UpScience 权限）与秒完成（1146/1068 花钻石）。
  *   日常任务形态：面板只出启用开关，无字段无配置（fields=[]，toModuleCfg 返回空）。
  *
- * 生命周期由 reactor 托管：install/run 两钩子（日常任务无配置可推），scenes 限 Home/NWorldMap，战斗模式暂停；
+ * 生命周期由 reactor 托管：install/run 两钩子（日常任务无配置可推），places 限 base/world（Home/NWorldMap），战斗模式暂停；
  *   调度交给 core/cycle.js：单飞闸门、推触合并、异常 fallback 重排均内置；pause 后 alive()=false 让 cycle 自然停摆。
  */
 import { createLog } from '../../core/log.js';
@@ -569,7 +569,7 @@ function run(ctx) {
 }
 
 /**
- * 向 reactor 注册本功能说明书：场景限定 Home/NWorldMap，战斗模式暂停；
+ * 向 reactor 注册本功能说明书：地图限定 base/world（Home/NWorldMap），战斗模式暂停；
  * 日常任务形态——面板只出启用开关，无字段无配置（荣誉到顶必停、只做金币捐、目标两级
  * 均为内置口径）；能量池 id / 恢复周期 / 单捐间距等均为本文件内置常量。
  */
@@ -578,7 +578,8 @@ reactor.register({
   label: '联盟科技',
   storageKey: 'pocketcc.feat.allianceScience',
   symbols: ['dataCenter', 'worldSite', 'gameDefine', 'tableManager'],
-  scenes: ['Home', 'NWorldMap'],
+  places: ['base', 'world'],
+  kinds: ['homeland'],
   offInCombat: true,
   defaults: { enabled: false },
   fields: [],

@@ -22,7 +22,7 @@
  *   面板未开时本 feat 自发协议的应答不会驱动该镜像更新。故 feat 自持一份 shadow（{st,wait}），
  *   镜像在场时以它为初值、其余一律用本 feat 收到的应答覆盖，跨周期持久，靠 createCycle 自愈纠偏。
  *
- * 生命周期由 reactor 托管：install/run 两钩子，scenes 限定 Home/NWorldMap，战斗模式暂停（offInCombat）。
+ * 生命周期由 reactor 托管：install/run 两钩子，places 限定 base/world（Home/NWorldMap），战斗模式暂停（offInCombat）。
  */
 import { createLog } from '../../core/log.js';
 import { game } from '../../core/game.js';
@@ -542,7 +542,7 @@ function run(ctx) {
 }
 
 /**
- * 向 reactor 注册本功能说明书：scenes 限定 Home/NWorldMap，战斗模式暂停（offInCombat）。
+ * 向 reactor 注册本功能说明书：places 限定 base/world（Home/NWorldMap），战斗模式暂停（offInCombat）。
  * 面板仅出启用开关；轮询/队列上限/融合折算均为上方内置常量，不作为可持久化配置项（与 domainTreasure 同口径）。
  */
 reactor.register({
@@ -550,7 +550,8 @@ reactor.register({
   label: '军火库生产材料',
   storageKey: 'pocketcc.feat.armoryMaterial',
   symbols: ['tableManager', 'tableName', 'dataCenter', 'gameTools'],
-  scenes: ['Home', 'NWorldMap'],
+  places: ['base', 'world'],
+  kinds: ['homeland'],
   offInCombat: true,
   defaults: { enabled: false },
   fields: [],

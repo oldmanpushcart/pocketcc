@@ -1,5 +1,5 @@
 // 功能调度中枢：spec（说明书）驱动的安装/激活/暂停。一个功能的全部声明都交给 register()，
-//   运行期只由两个变量决定启停：面板 enabled（registry 推 setConfig）与门控 gates（scene/mode）。
+//   运行期只由两个变量决定启停：面板 enabled（registry 推 setConfig）与门控 gates（world/mode）。
 //   install 只做一次（可重复的挂钩），configure 每次推配置，run 只挂触发器；暂停不卸载，
 //   统一摘除 ctx.on.* 登记的触发器，在飞流程靠 ctx.alive() 自行退出。
 import { createLog } from './log.js';
@@ -79,6 +79,37 @@ function makeCtx(entry) {
         return unsub;
       },
       /**
+       * 订阅一条服务端**应答**（net.resp.<cmd>），退订自动登记
+       * 用于消费“本端（含游戏 UI 自己）刚发出去请求的回复”——这类应答不 emit 游戏全局事件。
+       * raw 池化复用，Event 只包引用：要跨拍持有需自行快照字段。
+       * @param {number} cmd 命令号
+       * @param {function(object):void} handler 处理器
+       * @returns {function():void} 退订函数
+       */
+      resp: function (cmd, handler) {
+        const unsub = bus.on('net.resp.' + cmd, handler);
+        entry.triggers.add(unsub);
+        return unsub;
+      },
+      /**
+       * 订阅一条**本端发包**（net.req.<cmd>，载荷 {cmd,key,data,ts}），退订自动登记。
+       * 用途：「请求带而应答不带」的字段只能从发包侧拿（实证：秘境 8532 DROP_INFO 请求带 {x,y}，应答不带）。
+       * 必须经 pocketcc.net.onReq 走——它会按需拉起发送 hook；直接 bus.on 会订到一条永不派发的空事件。
+       * @param {number} cmd 命令号
+       * @param {function(object):void} handler 处理器
+       * @returns {function():void} 退订函数
+       */
+      req: function (cmd, handler) {
+        const api = window.pocketcc && window.pocketcc.net;
+        if (!api || !api.onReq) {
+          log.warn('net base unavailable, req subscribe for cmd %s is a no-op', cmd);
+          return function () {};
+        }
+        const unsub = api.onReq(cmd, handler);
+        entry.triggers.add(unsub);
+        return unsub;
+      },
+      /**
        * 订阅一个游戏事件（EventCenter），底座不可用时空订阅并告警
        * @param {string} name 事件名
        * @param {function(...*):void} handler 处理器
@@ -145,6 +176,13 @@ function pause(entry) {
     unsub();
   });
   entry.triggers.clear();
+  // per-feat pause 钩子：触发器摘除管不到 feat 自建的定时器/在飞循环/引擎实例，给它一次自我收尾的机会。
+  //   跑在 running 置否之后、且异常不阻断其余条目停用（同 activate 对 run 的兜底口径）。
+  try {
+    if (entry.spec.pause) entry.spec.pause(entry.ctx);
+  } catch (err) {
+    log.warn('pause hook threw: %s', entry.spec.id, err);
+  }
   log.info('pause: %s', entry.spec.id);
 }
 
@@ -164,19 +202,20 @@ function recomputeAll() {
   for (const entry of entries.values()) recompute(entry);
 }
 
-// 场景变化 → 重算所有功能门控（scene 门控读最新场景名）
-bus.on('scene.change', recomputeAll);
 // 战斗模式切换 → 重算所有功能门控（mode 门控读最新 combat 态）
 bus.on('mode.change', recomputeAll);
+// 世界态翻转（Kind/Place/Phase/gen/crossMap 任一）→ 重算所有功能门控（world 门控读 world-state 快照，含秘境 kind===pab 隔离）。
+// P3 第 4 刀起 scene/pab 两条旧门控退役：场景切换会翻 place、秘境进出会翻 kind，两者都由 world.change 统一驱动 recompute。
+bus.on('world.change', recomputeAll);
 
 /**
  * 注册一个功能说明书。模块加载时调用（import 副作用），早于任何 setConfig。
- * spec 是一个功能的全部声明：运行时（install/configure/run/scenes）+ 面板 descriptor
+ * spec 是一个功能的全部声明：运行时（install/configure/run/kinds/places）+ 面板 descriptor
  * （label/storageKey/defaults/fields/toModuleCfg）。面板与存储据此渲染、持久化、推配置，
  * 故 label/storageKey/defaults 为必填——缺则拒绝注册（fail fast，开发期 F5 即见 warn）。
  * symbols：本功能依赖的游戏 bundle 符号（能力语义名，解析表见 core/game-api.js CAPS；'?' 后缀=软依赖），
  * setConfig 首次 install 前由框架统一校验，缺则不跑 install 直接记安装失败。
- * @param {object} spec { id, label, storageKey, defaults, fields?, toModuleCfg?, scenes?, symbols?, install?(ctx), configure?(cfg), run?(ctx) }
+ * @param {object} spec { id, label, storageKey, defaults, fields?, toModuleCfg?, kinds?, places?, symbols?, install?(ctx), configure?(cfg), run?(ctx), pause?(ctx) }
  */
 function register(spec) {
   if (!spec || typeof spec.id !== 'string') {

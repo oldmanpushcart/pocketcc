@@ -21,7 +21,7 @@
  *     目标坐标已被一条 marchType=178 行军占用时，即便 myLeftAttackTimes 仍有数值也本轮先放过，等这条行军结束再由下轮补打。
  *   零部队行军不占用全局行军队列上限，故无名额闸门（不引入 canMarch）；仅逐条间限流防 902 被服务器限流。
  *
- * 生命周期由 reactor 托管：install/configure/run 三个钩子，scenes 门控限定 Home/NWorldMap。
+ * 生命周期由 reactor 托管：install/configure/run 三个钩子，places 门控限定 base/world（Home/NWorldMap）。
  *   consume 逐条派遣的限流逻辑（每条间 sleep marchInterval）不套 createDrain，作为 cycleRun 一轮的后半段原样保留在本文件。
  *   兜底定时器（active/idle 两档）由 cycle 承载，pause 后 alive()=false 自然停摆，resume 时 run 复位状态并重新点火。
  */
@@ -428,7 +428,7 @@ function run(ctx) {
 }
 
 /**
- * 向 reactor 注册本功能说明书：场景限定 Home/NWorldMap，战斗模式强制下线；
+ * 向 reactor 注册本功能说明书：地图限定 base/world（Home/NWorldMap），战斗模式强制下线；
  * 面板仅出启用开关，三个间隔均为 cfg 内置常量
  */
 reactor.register({
@@ -436,7 +436,8 @@ reactor.register({
   label: '海上夺宝',
   storageKey: 'pocketcc.feat.seaTreasure',
   symbols: ['activityController'],
-  scenes: ['Home', 'NWorldMap'],
+  places: ['base', 'world'],
+  kinds: ['homeland'],
   offInCombat: true,
   // 面板仅出启用开关；三个扫描/攻打间隔均为 cfg 内置常量，不作为可持久化配置项。
   defaults: { enabled: false },

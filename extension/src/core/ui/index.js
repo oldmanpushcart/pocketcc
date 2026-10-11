@@ -10,8 +10,15 @@ import { isCombat, setCombatMode } from '../mode.js';
 import { ICON_SIZE, PANEL_W, POS_KEY } from './consts.js';
 import { PANEL_CSS } from './panel-css.js';
 import { clampPos, rescuePos, readIconPos } from './icon-pos.js';
-import { buildPanelHTML, refreshFieldVisibility, refreshTexts, syncControls } from './panel.js';
+import {
+  buildPanelHTML,
+  refreshFieldVisibility,
+  refreshTexts,
+  syncControls,
+  buildWorldStatus,
+} from './panel.js';
 import { wirePanel } from './wire.js';
+import { worldState } from '../world-state.js';
 
 /**
  * 挂载浮动图标与面板（Shadow DOM 隔离）。幂等：已挂载则直接返回。
@@ -58,6 +65,19 @@ export async function mountUI() {
     const cb = panel.querySelector('#pc-combat');
     if (cb) cb.checked = isCombat();
   });
+
+  // 世界态胶囊：展示当前 Kind(场景)·Place(地图)。world.change 只在四维翻转才广播（常驻 2s 兜底轮询本就在跑，
+  // 不新增轮询），故订阅它刷新即可；面板未展开时元素仍在 DOM，更新照常生效。
+  function renderWorldStatus() {
+    const el = panel.querySelector('#pc-world');
+    if (!el) return;
+    const s = buildWorldStatus(worldState.current());
+    el.innerHTML = s.inner;
+    el.classList.toggle('warn', s.warn);
+    el.title = s.title;
+  }
+  renderWorldStatus();
+  bus.on('world.change', renderWorldStatus);
   // F8 热键：战斗 / 日常 切换（setCombatMode 广播 mode.change → 图标/复选框/reactor 门控重算自动跟进）。
   // 必须用 window 捕获阶段（capture:true）：游戏自己也会处理 keydown 并在冒泡阶段 stopPropagation，
   // 导致面板收起（焦点在画布）时挂 document 冒泡监听收不到；捕获阶段先于游戏处理且不受焦点/stopPropagation 影响。
@@ -139,6 +159,7 @@ export async function mountUI() {
     placePanel();
     panel.hidden = false;
     refreshTexts(panel);
+    renderWorldStatus(); // 展开时再核一次世界态（订阅已常驻，此处兜住极早期 world.change 先于挂订阅的窗口）
   }
   /** 收起面板 */
   function closePanel() {

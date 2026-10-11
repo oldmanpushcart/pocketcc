@@ -12,7 +12,7 @@
  *   生产 doScan：找活动 → 名额够 → 拉 8623 → 过滤 gatherStatus===0 → 整批替换 queue → 交消费。
  *   消费 consume（并入 cycleRun 的一轮）：逐条 shift → digFlow 派 902 → 每条间 sleep(digInterval)；排空/名额满即结束本轮，由 cycle 按 nextScanInterval 重排。
  *
- * 生命周期由 reactor 托管：install/configure/run 三个钩子，scenes 门控限定 Home/NWorldMap。
+ * 生命周期由 reactor 托管：install/configure/run 三个钩子，places 门控限定 base/world（Home/NWorldMap）。
  *   consume 有"名额满即停"的独有逻辑，不套 createDrain，作为 cycleRun 一轮的后半段原样保留在本文件。
  *   兜底定时器是功能内部生产逻辑，pause 后 alive()=false 自然停摆，resume 时 run 复位状态并重新点火。
  */
@@ -502,14 +502,15 @@ function run(ctx) {
 }
 
 /**
- * 向 reactor 注册本功能说明书：scenes 限定 Home/NWorldMap，战斗模式暂停（offInCombat）。
+ * 向 reactor 注册本功能说明书：places 限定 base/world（Home/NWorldMap），战斗模式暂停（offInCombat）。
  */
 reactor.register({
   id: 'domainTreasure',
   label: '领域寻宝',
   storageKey: 'pocketcc.feat.domainTreasure',
   symbols: ['activityController'],
-  scenes: ['Home', 'NWorldMap'],
+  places: ['base', 'world'],
+  kinds: ['homeland'],
   offInCombat: true,
   // 面板仅出启用开关；三个扫描/挖矿间隔均为上方 cfg 的内置常量，不作为可持久化配置项。
   defaults: { enabled: false },

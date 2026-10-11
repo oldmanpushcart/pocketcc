@@ -21,12 +21,35 @@ import { bus } from './bus.js';
   var installed = false;
 
   // ── 网络日志（log 开关）────────────────────────────────────────────
-  // 设计：入站复用已有的单一 hook（NetReciver.onMessage）加一行打印；发送侧的三个入口（NET.send/sendPB/sendPBV2）
+  // 设计：入站复用已有的单一 hook（NetReciver.onMessage）加一行打印；发送侧的入口
   // 仅在 log 开启期间挂载 wrapper、关闭即摘除（hot path 不留常驻包装）。不引入 netsniff 的在途配对表/投递令牌/环形缓冲。
+  //
+  // 发送侧有**两条通道**（实证：只 hook 主通道会让秘境的 req 整族消失）：
+  //   ① 主通道 `NetMgr.NET` 单例的 send/sendPB/sendPBV2（本模块 hook 为实例属性遮蔽）。
+  //   ② 次通道 `NetMgrSimple.prototype` 的 send/sendPB/sendPBV2 —— TMWatchNetMgr.sendPBV2 的门禁分叉
+  //      （verbatim：`h.default.isPabBattleMap ? this._socket&&…&&this._socket.sendPBV2(…) : o.NET.sendPBV2(…)`），
+  //      而 `_socket = new NetMgrSimple("test")` 是**另一条 websocket**。异能秘境 85xx 在战斗地图内全走它，
+  //      既不经过 NET 实例，也就完全落在 ① 的 hook 视野外（本端 sendSecret 与游戏 UI 的 requestData 都是）。
+  //   入站不受此影响：NetMgrSimple.onMessage 末尾同样转调 `NetReciver.getInstance().onMessage(e, reqTime)`
+  //   （verbatim：`r.getInstance().onMessage(e,null==d?void 0:d.reqTime)`），单点 hook 天然覆盖两条通道。
+  //   次通道只包**原型**（不包 TMWatchNetMgr 门面）：门面在地图外会转调 NET，包门面会让同一条包记两次；
+  //   原型则与 `_socket` 的销毁重建无关（连接时 `new`、断开时置 null），一次挂钩长期有效。
+  // 三个 bus 命名空间：`net.<cmd>`（推送）、`net.resp.<cmd>`（应答）、`net.req.<cmd>`（本端发包，见 onReq）。
   /** @type {boolean} log 总开关；开=挂发送 hook+入站打印，关=摘发送 hook+入站直通 */
   var logEnabled = false;
-  /** @type {number} install 时读 net._heartbeatCode（=RequestId.NO_QUEUE_HEART=0，NetMgr.js:153），日志滤心跳防刷屏 */
+  /** @type {number} install 时读 net._heartbeatCode（=RequestId.NO_QUEUE_HEART=0，NetMgr.js:153）；只取不到时留 -1，取到值一律入 hbCodes */
   var heartbeatCode = -1;
+  /**
+   * 已知心跳号集合（两条通道各一个）：主通道 install 时放入，次通道由发送 wrapper 读
+   *   `this._heartbeatCode` 时自学习放入（verbatim：NetMgr 构造 =0/NO_QUEUE_HEART，NetMgrSimple 构造 =6385/TM_WATCH_HEART）。
+   * 为什么必须是集合而不是单值：入站只在 NetReciver 单点挂钩，两条通道汇聚同一入口、报文里认不出通道归属，
+   *   拿主通道号去滤入站会让次通道的心跳应答整族漏进日志/采集/dashcam。
+   *   报文实证 dashcam 20261010T211527-异能秘境-队长：1177 行里 68 行是 cmd 6385 的心跳应答（10s 一条，占 5.8%）。
+   * @type {Set<number>}
+   */
+  var hbCodes = new Set();
+  /** @type {boolean} 次通道心跳号「读出来不是 number」是否已告警过（字段改名才会走到，只报一次防刷屏） */
+  var hbWarned = false;
   /** @type {boolean} 重入标志：sendPB 降级会同步转调 this.send（NetMgr.js sendPB 末尾），置位让嵌套 send 跳过打印以消重 */
   var inPB = false;
   /** @type {Object<number,string>|null} cmd -> 常量名 反查表（懒建） */
@@ -37,8 +60,20 @@ import { bus } from './bus.js';
   var pbTried = {};
   /** @type {object|null|undefined} ProtoBufBiz.instance（undefined=未探测，null=探测失败） */
   var pb = undefined;
-  /** @type {Array<{key:string, orig:Function, mine:Function}>} 发送 hook 还原表；有 log/collect 需求时非空 */
+  /** @type {Array<{host:object, key:string, orig:Function, mine:Function}>} 发送 hook 还原表；有 log/collect 需求时非空 */
   var sendHooks = [];
+  /** @type {object|null|undefined} 次通道挂点（NetMgrSimple.prototype）；undefined=未探测，null=探测失败 */
+  var simpleProto = undefined;
+  /**
+   * 次通道挂点探测状态，供 install 日志与调试面读：
+   *   pending=还没探过（发送 hook 从未挂上）/ ok=原型已解析 / missing=探测失败即本局降级为「次通道不可观测」。
+   * missing 不会自愈（NetMgrSimple 与 NetMgr 同在 Script bundle，探不到只可能是符号改版，重试无意义），
+   *   改版当天用 pocketcc.net.reprobeSecondary() 手动重探。
+   * @type {string}
+   */
+  var secondaryState = 'pending';
+  /** @type {number} 存活的「本端发包」订阅数（onReq 计）：>0 就必须保持发送 hook 挂载，否则 net.req.<cmd> 无处产生 */
+  var reqSubs = 0;
 
   // ── 采集（collecting）────────────────────────────────────────────
   /** @type {Array<{buf:Array, w:number, n:number, filters:Array<Function>, tap:Function|null, done:boolean, warned:boolean, stop:Function}>|null} 活动采集器；buf 为预分配环形槽；null=未启用 */
@@ -74,6 +109,9 @@ import { bus } from './bus.js';
     sendPB: sendPB,
     sendPBV2: sendPBV2,
     isSending: isSending,
+    onReq: onReq,
+    secondaryStatus: secondaryStatus,
+    reprobeSecondary: reprobeSecondary,
     setLog: setLog,
     isLogging: isLogging,
     collecting: collecting,
@@ -83,19 +121,24 @@ import { bus } from './bus.js';
 
   /**
    * 推送事件，载荷口径与 NetReciver.js:38 一致。
-   * 字段：cmd 命令号 / status 状态码 / data 业务数据 / ord 序号 / ts 接收时刻 / raw 原始报文（只读，池化复用）。
+   * 字段：cmd 命令号 / status 状态码 / data 业务数据 / ord 序号 / ts 接收时刻 / reqTime 该应答对应请求的发出时刻 / raw 原始报文（只读，池化复用）。
    */
   class Event {
     /**
      * 从原始报文归一化出一条推送事件
      * @param {object} e 游戏原始报文（池化复用对象，只读）
+     * @param {number} [reqTime] 应答携带的**发包时刻**（epoch ms）；推送/取不到为 null。
+     *   来源 verbatim：`onMessage(e,null==d?void 0:d.reqTime)`——NetMgr 与 NetMgrSimple 两条通道同形，
+     *   即游戏按应答的 e.o 在 _requestPacks 里反查出当初那条请求的 reqTime 一并递进来。
+     *   有它就能把「本端发包 ↔ 应答」按发送时刻精确配对（配合 onReq，见 feats 侧用法）。
      */
-    constructor(e) {
+    constructor(e, reqTime) {
       this.cmd = e.c;
       this.status = e.s ?? e.pbAck?.header?.s ?? e.pbAckV2?.header?.s ?? null;
       this.data = Event.#dataOf(e);
       this.ord = e.o !== undefined && e.o !== null ? String(e.o) : null;
       this.ts = Date.now();
+      this.reqTime = typeof reqTime === 'number' ? reqTime : null;
       this.raw = e; // 只读：报文对象会被池化复用，别在它上面挂属性
     }
 
@@ -130,13 +173,54 @@ import { bus } from './bus.js';
   }
 
   /**
-   * 游戏推送 → bus 事件 net.<cmd>。懒构造：没人订阅该 cmd 就不 new Event（省一次 JSON.parse）。
+   * 游戏入站报文 → bus 事件。推送 = `net.<cmd>`，应答 = `net.resp.<cmd>`（分别对应 ctx.on.push / ctx.on.resp）。
+   * 懒构造：没人订阅该 type 就不 new Event（省一次 JSON.parse）。
+   * 应答也派发的缘由：游戏自己的 INFO 应答（如秘境 8526）**只回调刷新组件、不 emit 任何全局事件**，
+   *   玩法侧要拿“本端刚取到的明细”只能从应答入手；raw 是池化复用对象，Event 只包引用，
+   *   所以订阅者必须同拍读完（bus 恒同步派发）或自行快照字段。
    * @param {object} e 原始报文
+   * @param {number|undefined} reqTime 应答的发包时刻（NetMgr 递入的 t；推送为 undefined 即非应答）
    */
-  function dispatch(e) {
-    var type = 'net.' + e.c;
+  function dispatch(e, reqTime) {
+    var type = (typeof reqTime === 'number' ? 'net.resp.' : 'net.') + e.c;
     if (!bus.has(type)) return;
-    bus.emit(type, new Event(e));
+    bus.emit(type, new Event(e, reqTime));
+  }
+
+  /**
+   * 订阅**本端刚发出的一条请求**（bus 事件 `net.req.<cmd>`，载荷 `{cmd,key,data,ts}`）。
+   * 与 push/resp 的分工：那两条看到的是**入站报文**，这一条看到的是**发送 hook 入口的 cmd/data**——
+   *   即「请求带而应答不带」的那类字段只能从发包侧取（实证：秘境 8532 DROP_INFO 的请求是 `{x,y}`，
+   *   而应答 inner 只有 `{info,dropBeastInfo,bagGetNum,beastGetNum,endTime}`，无坐标）。
+   * 订阅计数即发送 hook 的挂载需求之一（见 wantSendHooks）：无人订阅就不包发送入口，热路径零开销。
+   * 配对与口径（订阅方据此决定怎么把 req 和 resp 对上）：
+   *   - **只在包真上线之后派发**：两条通道的 send/sendPB/sendPBV2 都在 needDisable / MsgIDSettings 限制 /
+   *     cdTime「请求太过频繁，请求被拦」/ encode 失败 这几道门禁处 `return!1`（verbatim 已核）。此时一个字节
+   *     都没出去、也永不会有应答，照派就是在配对队列里埋一条幽灵项，故按返回值 !== false 把关；
+   *   - ts 取在 orig.apply **之前**，与游戏内部打点的 reqTime 同源可比（reqTime 恒 >= ts），所以
+   *     「ts <= Event.reqTime 中最大的那条」就是精确配对，不依赖先后顺序；
+   *   - 载荷 data 是调用方传进来的对象本体（游戏面板多为就地字面量），不深拷、只读，要跨拍持有请自行快照；
+   *   - 事件名用的是**逻辑 cmd**（hook 入参），而 resp 侧是**线上 cmd**（报文 e.c）：主通道存在
+   *     `msgIdReplaceMap` 换号、sendPB 还有降级 `getOldCmd`（verbatim：`var C=ProtoBufBiz.instance.getOldCmd(e);this.send(C,T,…)`），
+   *     这类包换号时 req/resp 会落进不同 cmd，订阅方需自行按同族号段兜底；次通道 NetMgrSimple 无换号表，不属该情形；
+   *   - sendPB 降级嵌套的那层 send 不重复派发（与 logReq 同口径的 inPB 消重）；sendPBV2 无降级转调，它自建 pack 后直接 doSend。
+   * @param {number} cmd 命令号
+   * @param {function(object):void} handler 处理器（bus 同步派发，同拍读完）
+   * @returns {function():void} 退订函数（幂等，重复调用不会把订阅计数扣成负数）
+   */
+  function onReq(cmd, handler) {
+    if (typeof handler !== 'function') return function () {};
+    var unsub = bus.on('net.req.' + cmd, handler);
+    reqSubs++;
+    if (installed) syncSendHooks();
+    var done = false;
+    return function () {
+      if (done) return;
+      done = true;
+      unsub();
+      if (--reqSubs < 0) reqSubs = 0;
+      if (installed) syncSendHooks();
+    };
   }
 
   // ── cmd → 名字 ──────────────────────────────────────────────────────
@@ -272,7 +356,7 @@ import { bus } from './bus.js';
    * @param {number|undefined} t 应答时刻；推送为 undefined
    */
   function logInbound(e, t) {
-    if (e.c === heartbeatCode) return;
+    if (hbCodes.has(e.c)) return;
     var ev = new Event(e);
     var name = nameOf(ev.cmd) || '<unknown>';
     if (t === undefined) {
@@ -364,7 +448,7 @@ import { bus } from './bus.js';
    * @param {object} data 发送载荷
    */
   function recordSend(key, cmd, data) {
-    if (cmd === heartbeatCode) return;
+    if (hbCodes.has(cmd)) return;
     var dir = 'req:' + key;
     var matched = matchAny(collectors, 'req', cmd);
     var smatched = matchAny(streams, 'req', cmd);
@@ -379,12 +463,12 @@ import { bus } from './bus.js';
   }
 
   /**
-   * 采集一条入站（recvMine 内调用）；口径与日志一致：t===undefined 推送，t 为数字（reqTime）应答；滤心跳
+   * 采集一条入站（recvMine 内调用）；口径与日志一致：t===undefined 推送，t 为数字（reqTime）应答；滤心跳（两条通道都滤，见 hbCodes）
    * @param {object} e 原始报文
    * @param {number|undefined} t 应答时刻；推送为 undefined
    */
   function recordInbound(e, t) {
-    if (e.c === heartbeatCode) return;
+    if (hbCodes.has(e.c)) return;
     var dir = t === undefined ? 'push' : 'resp';
     var matched = matchAny(collectors, dir, e.c);
     var smatched = matchAny(streams, dir, e.c);
@@ -739,12 +823,11 @@ import { bus } from './bus.js';
             log.warn('log inbound cmd[%d] occur error!', e.c, err);
           }
         }
-        if (t === undefined) {
-          try {
-            dispatch(e);
-          } catch (err) {
-            log.warn('dispatch cmd[%d] occur error!', e.c, err);
-          }
+        // 推送走 net.<cmd>，应答走 net.resp.<cmd>（t 由 NetMgr.js:578 传入：推送=void 0，应答=_.reqTime）
+        try {
+          dispatch(e, t);
+        } catch (err) {
+          log.warn('dispatch cmd[%d] occur error!', e.c, err);
         }
         // 采集闸门须与发送侧 wrapSend 对称：collectors（一次性环采）或 streams（常开黑匣子）任一非空都要落入站
         if ((collectors && collectors.length) || (streams && streams.length)) {
@@ -760,62 +843,157 @@ import { bus } from './bus.js';
   }
 
   /**
-   * 包装一个发送入口（NET.send/sendPB/sendPBV2）：实例属性遮蔽原型方法，同 netsniff 口径，可对称还原。
+   * 次通道挂点探测（懒建、一次定终身）：`NetMgrSimple` 模块导出的类的 prototype。
+   * 拿不到只告警一次并降级为「次通道不可观测」，不影响主通道收发与采集。
+   * @returns {object|null} NetMgrSimple.prototype；缺失返回 null
+   */
+  function secondaryProto() {
+    if (simpleProto !== undefined) return simpleProto;
+    var m = game.get('NetMgrSimple');
+    var C = m && m.NetMgrSimple;
+    simpleProto =
+      C && C.prototype && typeof C.prototype.sendPBV2 === 'function' ? C.prototype : null;
+    secondaryState = simpleProto ? 'ok' : 'missing';
+    if (!simpleProto)
+      log.warn(
+        'NetMgrSimple is missing, secondary send channel is not observable; reprobe via pocketcc.net.reprobeSecondary().',
+      );
+    else log.debug('secondary send channel resolved: NetMgrSimple.prototype.');
+    return simpleProto;
+  }
+
+  /**
+   * 次通道挂点当前状态（只读，不触发探测）
+   * @returns {string} pending|ok|missing
+   */
+  function secondaryStatus() {
+    return secondaryState;
+  }
+
+  /**
+   * 重探次通道挂点：清掉负缓存并重挂发送 hook，游戏改版当天不必刷新页面即可恢复「次通道发包可观测」。
+   * hook 还挂着才走 unhook→rehook（hookSend 对已挂是幂等短路）；没挂就只清缓存，下次 syncSendHooks 自然重探。
+   * 使用前提：本入口只在异常场景手动敲一次。若我们的包装已被别的脚本盖在头上，`unhookSend` 会放弃还原，
+   *   重探就变成二次包裹（同一条包派两次 log/req）；拿不准时先刷页。
+   * @returns {string} 重探后的状态 pending|ok|missing
+   */
+  function reprobeSecondary() {
+    simpleProto = undefined;
+    secondaryState = 'pending';
+    if (installed && sendHooks.length) {
+      unhookSend();
+      hookSend();
+    }
+    log.info('secondary channel reprobe: %s', secondaryState);
+    return secondaryState;
+  }
+
+  /**
+   * 包装一个发送入口：实例属性遮蔽原型方法（主通道 NET）或直接包原型方法（次通道 NetMgrSimple），同 netsniff 口径，可对称还原。
    * wrapper 只读 cmd/data 做日志打印与采集记录（各自判开关），原样透传 arguments 与返回值——不碰 success 回调（应答日志/采集走 recvMine）。
    * 任何日志异常都吞掉，绝不影响真实发送。
+   * @param {object} host 挂点对象（NET 单例 / NetMgrSimple.prototype）
    * @param {string} key send|sendPB|sendPBV2
-   * @returns {object|null} 还原条目 {key,orig,mine}；入口缺失返回 null
+   * @param {boolean} perInstanceHb 心跳号是否取调用实例的 `_heartbeatCode`（次通道每条 socket 自带心跳号，如 TM_WATCH_HEART）
+   * @returns {object|null} 还原条目 {host,key,orig,mine}；入口缺失返回 null
    */
-  function wrapSend(key) {
-    var orig = net[key];
+  function wrapSend(host, key, perInstanceHb) {
+    var orig = host[key];
     if (typeof orig !== 'function') {
-      log.warn('NET.%s is missing, skip send log hook.', key);
+      log.warn(
+        '%s.%s is missing, skip send log hook.',
+        perInstanceHb ? 'NetMgrSimple' : 'NET',
+        key,
+      );
       return null;
     }
     var mine = function (cmd, data) {
-      if ((collectors && collectors.length) || (streams && streams.length))
-        recordSend(key, cmd, data);
-      if (logEnabled) {
+      // 两条通道的心跳号不同（NET=_heartbeatCode/NO_QUEUE_HEART，TMWatch socket=TM_WATCH_HEART），
+      // 此处先按**本通道**号剪掉：logReq 无过滤，recordSend/入站那三处只有集合口径（它们分不出这条包来自哪条通道）。
+      // 次通道那个号顺手登记进 hbCodes：入站在 NetReciver 单点、认不出通道归属，缺它就滤不掉心跳应答。
+      var hb = -1;
+      if (perInstanceHb) {
+        if (this && typeof this._heartbeatCode === 'number') {
+          hb = this._heartbeatCode;
+          hbCodes.add(hb);
+        } else if (!hbWarned) {
+          hbWarned = true;
+          log.warn('secondary _heartbeatCode is not a number, heartbeat filtering degraded.');
+        }
+      } else {
+        hb = heartbeatCode;
+      }
+      // net.req 的派发条件与时刻先在这里定完：ts 必须落在 orig.apply **之前**（与游戏内部 reqTime 同源可比），
+      //   而派发动作要等 apply 回来按返回值决定（门禁拦下的包永无应答，见 onReq 注释）
+      var wantReq =
+        cmd !== hb && reqSubs > 0 && !(key === 'send' && inPB) && bus.has('net.req.' + cmd);
+      var reqTs = wantReq ? Date.now() : 0;
+      if (cmd !== hb) {
+        if ((collectors && collectors.length) || (streams && streams.length))
+          recordSend(key, cmd, data);
+        if (logEnabled) {
+          try {
+            // 滤心跳；sendPB 降级会同步转调 this.send，inPB 置位时跳过嵌套 send 的重复打印
+            //   （sendPBV2 无降级转调：自建 pack 后直接 doSend，门禁不过 return!1）。
+            // 传活对象给 console（展开即见），不做深拷贝——stringify+parse 每条发包一次太贵（真机反馈卡）
+            if (!(key === 'send' && inPB)) {
+              logReq(key, cmd, data);
+            }
+          } catch (e) {}
+        }
+      }
+      var r;
+      if (key === 'send') r = orig.apply(this, arguments);
+      else {
+        inPB = true;
         try {
-          // 滤心跳；sendPB/V2 降级会同步转调 this.send，inPB 置位时跳过嵌套 send 的重复打印。
-          // 传活对象给 console（展开即见），不做深拷贝——stringify+parse 每条发包一次太贵（真机反馈卡）
-          if (cmd !== heartbeatCode && !(key === 'send' && inPB)) {
-            logReq(key, cmd, data);
-          }
+          r = orig.apply(this, arguments);
+        } finally {
+          inPB = false;
+        }
+      }
+      // 本端发包订阅：包真上线才派（消重口径同 logReq，降级嵌套的那层 send 已由 wantReq 判掉）
+      if (wantReq && r !== false) {
+        try {
+          bus.emit('net.req.' + cmd, { cmd: cmd, key: key, data: data, ts: reqTs });
         } catch (e) {}
       }
-      if (key === 'send') return orig.apply(this, arguments);
-      inPB = true;
-      try {
-        return orig.apply(this, arguments);
-      } finally {
-        inPB = false;
-      }
+      return r;
     };
-    net[key] = mine;
-    return { key: key, orig: orig, mine: mine };
+    host[key] = mine;
+    return { host: host, key: key, orig: orig, mine: mine };
   }
 
   /**
-   * 发送 hook 挂载闸门：log 开启、或有活动采集器、或有流式订阅者时保持挂载，三者都没有即摘除。
+   * 发送 hook 挂载闸门：log 开启、或有活动采集器、或有流式订阅者、或有本端发包订阅（reqSubs）时保持挂载，
+   * 四者都没有即摘除。
    * 空数组也算需求（collecting().collect() 已承诺挂载、还没 stop 的采集器在 collectors 数组里），
-   * 所以只在「从未 collect/stream 且 log 关」时返回 false，避免采集空档期被误摘。
+   * 所以只在「从未 collect/stream 且 log 关且无人订 req」时返回 false，避免采集空档期被误摘。
    * @returns {boolean} 当前是否应有 hook 挂载需求
    */
   function wantSendHooks() {
-    return logEnabled || !!collectors || !!streams;
+    return logEnabled || !!collectors || !!streams || reqSubs > 0;
   }
 
   /**
-   * 按需挂载全部发送入口 hook（幂等：已挂则不重复包）
+   * 按需挂载全部发送入口 hook：主通道（NET 实例）+ 次通道（NetMgrSimple 原型）（幂等：已挂则不重复包）
    * @returns {number} 当前已挂 hook 数
    */
   function hookSend() {
     if (sendHooks.length) return sendHooks.length; // 幂等：已挂不重复包
     var keys = ['send', 'sendPB', 'sendPBV2'];
     for (var i = 0; i < keys.length; i++) {
-      var h = wrapSend(keys[i]);
+      var h = wrapSend(net, keys[i], false);
       if (h) sendHooks.push(h);
+    }
+    // 秘境/跨服观战走独立 socket（TMWatchNetMgr._socket），不包这一层就录不到本族发包（含 sendSecret）
+    var sp = secondaryProto();
+    if (sp) {
+      for (var j = 0; j < keys.length; j++) {
+        if (typeof sp[keys[j]] !== 'function') continue; // 原型上缺哪个入口就跳过哪个
+        var h2 = wrapSend(sp, keys[j], true);
+        if (h2) sendHooks.push(h2);
+      }
     }
     return sendHooks.length;
   }
@@ -826,7 +1004,7 @@ import { bus } from './bus.js';
   function unhookSend() {
     for (var i = sendHooks.length - 1; i >= 0; i--) {
       var h = sendHooks[i];
-      if (net && net[h.key] === h.mine) net[h.key] = h.orig;
+      if (h.host && h.host[h.key] === h.mine) h.host[h.key] = h.orig;
     }
     sendHooks = [];
   }
@@ -863,10 +1041,16 @@ import { bus } from './bus.js';
     }
     if (!hook()) return false;
     heartbeatCode = typeof net._heartbeatCode === 'number' ? net._heartbeatCode : -1;
+    if (heartbeatCode !== -1) hbCodes.add(heartbeatCode); // 主通道心跳号入过滤集（次通道号由 wrapSend 自学习）
     installed = true;
     // 发送 hook 由 log/collect 共同驱动（syncSendHooks 管理）；此处只兜底"先开 log/collect 后 install"的顺序
     if (wantSendHooks()) hookSend();
-    log.info('installed. heartbeatCode=%d;log=%s', heartbeatCode, logEnabled);
+    log.info(
+      'installed. heartbeatCode=%d;log=%s;secondary=%s',
+      heartbeatCode,
+      logEnabled,
+      secondaryState,
+    );
     return true;
   }
 

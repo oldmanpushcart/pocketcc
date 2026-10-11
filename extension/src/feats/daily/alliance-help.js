@@ -782,10 +782,12 @@ function run(ctx) {
 }
 
 /**
- * 向 reactor 注册本功能说明书：纯发包（不派行军、不抢队列），不声明 scenes / offInCombat。
+ * 向 reactor 注册本功能说明书：纯发包（不派行军、不抢队列），不声明 places / offInCombat；
+ * kinds:['homeland']（A 档）——进峡谷/天梯/秘境/征服者即 pause、回本服图 resume，口径同联盟礼物。
  */
 reactor.register({
   id: 'allianceHelp',
+  kinds: ['homeland'],
   label: '联盟帮助',
   storageKey: 'pocketcc.feat.allianceHelp',
   symbols: ['tableManager', 'dataCenter', 'tableUtils'],

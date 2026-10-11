@@ -471,7 +471,8 @@ reactor.register({
   label: '秘密武器空投',
   storageKey: 'pocketcc.feat.secretWeaponDrop',
   symbols: ['dataCenter', 'homeMapUtils', 'homeMapCommon', 'gameDefine', 'tableManager'],
-  scenes: ['Home', 'NWorldMap'],
+  places: ['base', 'world'],
+  kinds: ['homeland'],
   offInCombat: false,
   defaults: { enabled: false },
   toModuleCfg: function () {

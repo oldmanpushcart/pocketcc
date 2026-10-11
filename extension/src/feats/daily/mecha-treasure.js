@@ -36,7 +36,7 @@
  *   去重双保险：服务端权威 extra.attackMonsterIds + 本地影子集 dispatched（发出即计入）/rejected（被拒即拉黑，防逐拍重发刷屏）。
  *   零部队行军不占用全局行军队列上限（与 178 同口径），故无名额闸门（不引入 canMarch）；仅逐条间限流防 902 被服务器限流。
  *
- * 生命周期由 reactor 托管：install/run 两个钩子，scenes 门控限定 Home/NWorldMap，战斗模式强制下线。
+ * 生命周期由 reactor 托管：install/run 两个钩子，places 门控限定 base/world（Home/NWorldMap），战斗模式强制下线。
  *   消费逐条派遣的限流逻辑不套 createDrain，作为 cycleRun 一轮的后半段原样保留在本文件。
  *   兜底定时器（active/idle 两档）由 cycle 承载，pause 后 alive()=false 自然停摆，resume 时 run 复位状态并重新点火
  *   （dispatched/rejected 不随 run 清空，防 resume 后重复攻打同一使徒）。
@@ -550,7 +550,7 @@ function run(ctx) {
 }
 
 /**
- * 向 reactor 注册本功能说明书：场景限定 Home/NWorldMap，战斗模式强制下线；
+ * 向 reactor 注册本功能说明书：地图限定 base/world（Home/NWorldMap），战斗模式强制下线；
  * 面板仅出启用开关，扫描/攻打间隔均为 cfg 内置常量
  */
 reactor.register({
@@ -558,7 +558,8 @@ reactor.register({
   label: '重装母舰',
   storageKey: 'pocketcc.feat.mechaTreasure',
   symbols: ['activityController', 'dataCenter?'],
-  scenes: ['Home', 'NWorldMap'],
+  places: ['base', 'world'],
+  kinds: ['homeland'],
   offInCombat: true,
   // 面板仅出启用开关；扫描/攻打间隔均为 cfg 内置常量，不作为可持久化配置项。
   defaults: { enabled: false },

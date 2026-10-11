@@ -3,7 +3,7 @@
 // 由 panel.syncControls 与 wire.wirePanel 复用；纯 HTML 构建部分留在 fields.js。
 import { configs, findFeature, saveFeature, applyFeature } from '../registry.js';
 import { parseMaybe, nickFrom630 } from './dom.js';
-import { uidListInnerHTML, sortListInnerHTML } from './fields.js';
+import { uidListInnerHTML, sortListInnerHTML, itemListInnerHTML } from './fields.js';
 
 /** @type {number} RequestId.PLAYER_INFO（同 chat-window 口径），按 uid 查玩家基础信息，应答 d.playerInfo 为内层 JSON 串 */
 const CMD_PLAYER_INFO = 630;
@@ -445,4 +445,70 @@ export function mountSortList(box) {
 
   box.innerHTML = sortListInnerHTML(arr, fd, offArr());
   bind();
+}
+
+/**
+ * 装配物品清单容器（.pc-ilist）：行不可增删，每行一枚 checkbox + 一个数字输入。
+ * 状态形状：`cfg[fd.key] = { [idStr]: { on: 0|1, max: number } }`，未登记的项默认 on=1/max=0（不限）。
+ * 池项带 `cap`（游戏自身硬上限）时，输入超出 cap 会被自动修正为 cap 并回写框内值。
+ * 首次写入前浅拷一层，避免就地 push 污染 descriptor defaults。checkbox 改动重刷整块（行高量可取）；
+ * number 改动不重刷，避免抢用户正在输入的框。两者都走 saveFeature + applyFeature 热更。
+ * @param {HTMLElement} box .pc-ilist 容器
+ */
+export function mountItemList(box) {
+  const fid = box.dataset.id;
+  const f = findFeature(fid);
+  if (!f) return;
+  const fd = f.fields.find((x) => x.key === box.dataset.ikey);
+  if (!fd) return;
+  const c = configs[fid];
+  if (!c[fd.key] || typeof c[fd.key] !== 'object' || Array.isArray(c[fd.key])) {
+    c[fd.key] = Object.assign({}, (f.defaults && f.defaults[fd.key]) || {});
+  } else if (c[fd.key] === f.defaults[fd.key]) {
+    // 首次改动先一层浅拷（内层条目也拷），避免就地写污染 defaults
+    const copy = {};
+    for (const k of Object.keys(c[fd.key])) copy[k] = Object.assign({}, c[fd.key][k]);
+    c[fd.key] = copy;
+  }
+  const state = c[fd.key];
+  const items = typeof fd.items === 'function' ? fd.items(c) : fd.items || [];
+
+  const ensureEntry = (key) => {
+    if (!state[key]) state[key] = { on: 1, max: 0 };
+    return state[key];
+  };
+
+  const rerender = () => {
+    box.innerHTML = itemListInnerHTML(items, state, fd);
+    bind();
+  };
+
+  const bind = () => {
+    box.querySelectorAll('.pc-ichk').forEach((chk) => {
+      chk.addEventListener('change', () => {
+        const k = chk.dataset.ik;
+        const e = ensureEntry(k);
+        e.on = chk.checked ? 1 : 0;
+        rerender();
+        saveFeature(f);
+        applyFeature(f);
+      });
+    });
+    box.querySelectorAll('.pc-imax').forEach((num) => {
+      num.addEventListener('change', () => {
+        const k = num.dataset.ik;
+        const e = ensureEntry(k);
+        let v = Math.max(0, Math.floor(Number(num.value) || 0));
+        const cap = Math.max(0, Math.floor(Number(num.dataset.cap) || 0));
+        if (cap > 0 && v > cap) v = cap; // 游戏自身上限抢先：超出直接修正为上限
+        num.value = v;
+        e.max = v;
+        // 不重刷，避免抢用户当前输入框；需高亮 off 行时可手动失焦后看下一刷新周期
+        saveFeature(f);
+        applyFeature(f);
+      });
+    });
+  };
+
+  rerender();
 }

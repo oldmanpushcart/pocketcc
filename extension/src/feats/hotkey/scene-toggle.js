@@ -7,6 +7,9 @@
  * 与主界面「世界 / 回城」按钮同一条路径），只触发场景切换、不改写游戏数据。
  *
  * 打字让位 / 修饰键放行 / 场景门控 / preventDefault 由 core/hotkeys.js 注册表统一处理，本文件只声明绑定+动作。
+ *
+ * 门控分档（可行性报告 §7.2：C 档）：基地↔大地图这对导航与「在哪一种场景」无关（人在跨服图也要能回城），
+ * 只按 Place 收口；战斗演出/转场/征服者球体里这两张图都不在，不生效也不抢键。
  */
 import { createLog } from '../../core/log.js';
 import { bind } from '../../core/hotkeys.js';
@@ -22,6 +25,8 @@ bind({
   label: '基地 ↔ 大世界',
   where: '基地/大世界',
   scenes: ['Home', 'NWorldMap'],
+  // 与 scenes 逐字等价折算（Home→base、NWorldMap→world），口径同 close-popup。
+  places: ['base', 'world'],
   handler: function () {
     var r = scene.toggleHomeWorld();
     if (r.ok) log.info('toggled. now scene=%s', scene.name());

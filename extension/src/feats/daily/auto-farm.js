@@ -33,7 +33,7 @@
  * 在途消失即销；重开页面后认领 856 GET_ALL_MY_MARCH_INFO 的现存采集行军（坐标取 marchInfo.target.tx/ty、状态取 state）回填账本，避免重复下田。
  * 在途核对 / 占用判定均以 856 全量本人行军为权威源（视口无关，Home 场景亦有；mapData.marches 在 Home 为空、进出世界地图被清空重建，故不作真相）。
  *
- * 生命周期由 reactor 托管：scenes 限定 Home/NWorldMap，战斗模式暂停（offInCombat）；
+ * 生命周期由 reactor 托管：places 限定 base/world（Home/NWorldMap），战斗模式暂停（offInCombat）；
  * 触发源（run 点火 / 10019 回城 / 配置变更 / 兜底定时）全部汇入 cycle.kick，在飞合并为一次补扫。
  */
 import { createLog } from '../../core/log.js';
@@ -1170,7 +1170,8 @@ reactor.register({
     'formationAdv',
     'marchStorage',
   ],
-  scenes: ['Home', 'NWorldMap'],
+  places: ['base', 'world'],
+  kinds: ['homeland'],
   offInCombat: true,
   defaults: { enabled: false, rules: [] },
   fields: [

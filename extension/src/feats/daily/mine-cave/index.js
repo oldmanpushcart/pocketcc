@@ -135,7 +135,8 @@ reactor.register({
   label: '次元矿洞',
   storageKey: 'pocketcc.feat.mineCave',
   symbols: ['dataCenter', 'tableManager', 'tableUtils'],
-  scenes: ['Home', 'NWorldMap'],
+  places: ['base', 'world'],
+  kinds: ['homeland'],
   offInCombat: true,
   defaults: { enabled: false, rules: [] },
   fields: [

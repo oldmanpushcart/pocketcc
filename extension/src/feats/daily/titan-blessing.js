@@ -33,7 +33,7 @@
  *   主链/兜底链/消费三处一并停派并清空残留队列（否则领满后盟友每发一只箱都会被派出去又被服务器拒 → 死循环刷屏）；
  *   触顶日志只在 false→true 转变时打一行（一簇 3 条 10904 不再刷 3 行），下一轮 left 回升自动复位续领。
  * 队列 + 消费间隔：902 过快会被服务器限流（code=3, data="march_time_control_info001"），逐条之间休眠规避。
- * 生命周期由 reactor 托管：install/configure/run 三个钩子，scenes 门控限定 Home/NWorldMap。
+ * 生命周期由 reactor 托管：install/configure/run 三个钩子，places 门控限定 base/world（Home/NWorldMap）。
  *   run 挂 10904/13226/13227/13228 监听；reactor pause 时摘监听、置 alive=false，队列保留，恢复后续跑。
  */
 import { createLog } from '../../core/log.js';
@@ -554,14 +554,15 @@ function run(ctx) {
 }
 
 /**
- * 向 reactor 注册本功能说明书：scenes 限定 Home/NWorldMap，战斗模式暂停（offInCombat）。
+ * 向 reactor 注册本功能说明书：places 限定 base/world（Home/NWorldMap），战斗模式暂停（offInCombat）。
  */
 reactor.register({
   id: 'titanBlessing',
   label: '泰坦祝福',
   storageKey: 'pocketcc.feat.titanBlessing',
   symbols: ['dataCenter'],
-  scenes: ['Home', 'NWorldMap'],
+  places: ['base', 'world'],
+  kinds: ['homeland'],
   offInCombat: true,
   defaults: { enabled: false },
   fields: [],

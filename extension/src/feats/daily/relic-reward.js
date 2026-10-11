@@ -479,7 +479,7 @@ function run(ctx) {
 }
 
 /**
- * 向 reactor 注册本功能说明书：场景限定 Home/NWorldMap，无 offInCombat（纯发包不派兵）；
+ * 向 reactor 注册本功能说明书：地图限定 base/world（Home/NWorldMap），无 offInCombat（纯发包不派兵）；
  *   面板单字段——领取优先级 sortlist（整池拖拽调序；遗迹状态不再在面板展示）。
  *   轮询/间距/池为内置常量；优先级顺序（order）为唯一持久配置。
  */
@@ -488,7 +488,8 @@ reactor.register({
   label: '遗迹奖励',
   storageKey: 'pocketcc.feat.relicReward',
   symbols: ['dataCenter', 'worldSite', 'rewardCtrl', 'tableManager'],
-  scenes: ['Home', 'NWorldMap'],
+  places: ['base', 'world'],
+  kinds: ['homeland'],
   defaults: { enabled: false, order: L2_ITEM_POOL.slice() },
   fields: [
     {

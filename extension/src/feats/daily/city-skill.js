@@ -29,7 +29,7 @@
  * 调度由 core/cycle.js 提供单飞闸门与异常 fallback（tick 内部 1752/1753 均已自内堆异常，cycle 仅作为防御兼停摆护栏）；
  *   pause 后 alive()=false，cycle 自然停摆，resume 时 run 重新 kick。
  *
- * 生命周期由 reactor 托管：install/configure/run 三个钩子，scenes 门控限定 Home/NWorldMap，战斗态暂停。
+ * 生命周期由 reactor 托管：install/configure/run 三个钩子，places 门控限定 base/world（Home/NWorldMap），战斗态暂停。
  */
 import { createLog } from '../../core/log.js';
 import { game } from '../../core/game.js';
@@ -390,14 +390,15 @@ function run(ctx) {
 }
 
 /**
- * 向 reactor 注册本功能说明书：scenes 限定 Home/NWorldMap，战斗态暂停（offInCombat）。
+ * 向 reactor 注册本功能说明书：places 限定 base/world（Home/NWorldMap），战斗态暂停（offInCombat）。
  */
 reactor.register({
   id: 'citySkill',
   label: '城市技能',
   storageKey: 'pocketcc.feat.citySkill',
   symbols: ['dataCenter'],
-  scenes: ['Home', 'NWorldMap'],
+  places: ['base', 'world'],
+  kinds: ['homeland'],
   offInCombat: true,
   defaults: {
     enabled: false,

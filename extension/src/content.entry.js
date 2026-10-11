@@ -12,6 +12,7 @@ import './feats/daily/alliance-help.js';
 import './feats/daily/domain-treasure.js';
 import './feats/daily/mine-cave/index.js';
 import './feats/activity/launch-silo.js';
+import './feats/activity/secret-realm/index.js';
 import './feats/daily/auto-farm.js';
 import './feats/daily/sea-treasure.js';
 import './feats/daily/mecha-treasure.js';
@@ -46,16 +47,20 @@ import './boot.js';
 
 import { bus } from './core/bus.js';
 import { game } from './core/game.js';
-import { debug as gameApi, nav, worldMap } from './core/game-api.js';
+import { debug as gameApi, nav, worldMap, worldSignals } from './core/game-api.js';
 import { storage } from './core/storage.js';
 import { reactor } from './core/reactor.js';
 import { defense } from './core/defense.js';
+import { worldState } from './core/world-state.js';
 
 // 调试面：逆向时在控制台直接戳——pocketcc.game.get('DataCenter')、pocketcc.bus.emit('net.10912', fakeEv) 模拟推送、
 // pocketcc.reactor.isRunning('floatCar') 看功能起停、pocketcc.gameApi.march.flags() 看跨服战场判定器；
 // net 句柄由 net.js 自挂到 window.pocketcc.net；
 // reactor 功能改为自注册说明书，不挂 window.pocketcc.<feat>。这里只并入 core 工具，不覆盖已有键。
 // 聊天通道同理：pocketcc.chat.status() 看连接与房间、pocketcc.chat.on('push', fn) 收频道消息。
+// 调试专用（不绑 feat、不入生产调用链）：世界态一览——`pocketcc.worldState.dump()` 看当前归一结果
+// 与四路原始信号（kind/place/phase/gen/raw），`pocketcc.worldSignals.mapTypeName()` 等单点取原值，
+// 用来验证「你现在究竟在哪一种场景里」，不必等活动复现。
 window.pocketcc = Object.assign(window.pocketcc || {}, {
   bus,
   game,
@@ -63,6 +68,8 @@ window.pocketcc = Object.assign(window.pocketcc || {}, {
   storage,
   reactor,
   defense,
+  worldState,
+  worldSignals,
 });
 
 // 调试专用（不绑 feat、不入生产调用链）：给定目标基地坐标，复用生产同款 defense.findRelocatableSpot 在其附近找可落点，

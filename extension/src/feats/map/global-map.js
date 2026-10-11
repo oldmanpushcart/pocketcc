@@ -10,7 +10,7 @@
  * 内存纪律：store 同一时刻只驻留**一个**视角桶。视角切区时先把旧桶落盘、再从内存丢弃，
  *   然后只读入新区的桶——切区/开图都不会让全图数据累积在内存里。
  *
- * 门控：scenes:['NWorldMap']——扫图（发 901）严格 gate 在世界地图态（非地图态发 901 是否受理未实证，见方案「待验证」）；
+ * 门控：places:['world'] + kinds:['homeland']——扫图（发 901）严格 gate 在本服世界地图态（非地图态发 901 是否受理未实证，见方案「待验证」）；
  *   浮层本身是辅助 UI，install 不受门控、可在任意场景展示已存数据；扫描动作另用 ctx.alive() 兜一道。
  * 红线：只发 901 拉数据 + 只调游戏原生导航（nav.flyTo），不改写游戏本地数据。
  */
@@ -571,6 +571,7 @@ function run(ctx) {
 
 reactor.register({
   id: 'globalMap',
+  kinds: ['homeland'],
   label: '全局地图',
   storageKey: 'pocketcc.globalMap.config',
   symbols: ['dataCenter', 'terrainModel?', 'eventIds?'],
@@ -619,7 +620,7 @@ reactor.register({
       showOther: c.showOther,
     };
   },
-  scenes: ['NWorldMap'],
+  places: ['world'],
   install: install,
   configure: configure,
   run: run,

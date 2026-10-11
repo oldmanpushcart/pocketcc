@@ -11,11 +11,13 @@
  *
  * 消费约定：handler 返回 false = 本次不消费（不拦截默认、不阻断冒泡，按键透传给游戏与后续绑定，
  * 如战斗面板快捷键「面板不在场」时让位于快捷战斗的 1-8）；其余（含无返回）= 已消费，注册表统一
- * preventDefault + stopPropagation 并停止遍历。场景门控用 scene-watcher 的 getCurrentScene()，
- * 与 reactor 的 scene 门控同一真相源（离开白名单场景即不触发，等价旧 feat 的 ctx.alive() 早退）。
+ * preventDefault + stopPropagation 并停止遍历。场景门控走双层口径：scenes（scene-watcher 的 cc 场景名，
+ * 旧口径，保留为兼容必要条件）× kinds/places（core/world-state.js，新口径），与 reactor 的 scene/world
+ * 两道门同一套判据（离开白名单场景即不触发，等价旧 feat 的 ctx.alive() 早退）。
  */
 import { createLog } from './log.js';
 import { getCurrentScene } from './scene-watcher.js';
+import { worldState } from './world-state.js';
 
 /** @type {ReturnType<createLog>} 模块日志器（tag=HOTKEY） */
 const log = createLog('HOTKEY');
@@ -67,6 +69,10 @@ export function isTypingTarget(e) {
  * @property {string[]} [keys] 匹配的 event.code 列表（如 ['KeyB']、['Tab']、['Digit1'..]）；缺 match 时按其默认匹配
  * @property {function(KeyboardEvent):boolean} [match] 自定义匹配（如战斗面板 1-8/G 需正则判定），缺省用 keys
  * @property {string[]} [scenes] 场景白名单（对齐 scene-watcher 场景名）；缺省=所有场景放行
+ * @property {string[]} [kinds] 世界态档/组白名单（worldState KIND 值或 'kvk'/'sphere'/'cross' 组名），
+ *   与 scenes 取交集；缺省=不看档。用于「某些场景档里这个键根本没意义」（如秘境副本图内的飞回基地）
+ * @property {string[]} [places] 地图白名单（worldState PLACE 值）；缺省=不看图。与 Kind 无关的 UI/输入类
+ *   功能只声明本项即可（C 档口径）
  * @property {string} [label] 面板「快捷键一览」显示的功能名
  * @property {string} [display] 面板显示键名（缺省用 keys 拼接）
  * @property {string} [where] 面板显示的生效场景（人话，如「基地/大世界」）
@@ -109,14 +115,23 @@ function matchKey(binding, e) {
 }
 
 /**
- * 场景门控：未声明 scenes（或空）= 所有场景放行；否则当前场景须命中白名单（与 reactor scene 门控同源）。
+ * 场景门控：scenes 与 kinds/places 都是必要条件（未声明的那项放行）。与 reactor 的 scene/world 双门同判据，
+ * 差别在兜底方向：本层是**按键级**判定，世界态拿不到（kind=unknown / place=off）时对新口径直接放行、
+ * 退回旧 scenes 口径——热键没有 pause/resume 补偿，误判一刀就是功能凭空消失且不会自愈；
+ * reactor 侧同样判据可以放心拦（回到白名单档会自动 resume）。
  * @param {HotkeyBinding} binding 绑定
  * @returns {boolean}
  */
-function sceneAllow(binding) {
+function bindingAllow(binding) {
   var sc = binding.scenes;
-  if (!sc || !sc.length) return true;
-  return sc.indexOf(getCurrentScene()) !== -1;
+  if (sc && sc.length && sc.indexOf(getCurrentScene()) === -1) return false;
+  if (!binding.kinds && !binding.places) return true;
+  var st = worldState.current();
+  if (st.kind === worldState.KIND.unknown || st.place === worldState.PLACE.off) return true;
+  return (
+    worldState.matchesKind(binding.kinds, st.kind) &&
+    worldState.matchesPlace(binding.places, st.place)
+  );
 }
 
 /**
@@ -130,7 +145,7 @@ function dispatch(e) {
   var iter = bindings.values();
   for (var step = iter.next(); !step.done; step = iter.next()) {
     var b = step.value;
-    if (!matchKey(b, e) || !sceneAllow(b)) continue;
+    if (!matchKey(b, e) || !bindingAllow(b)) continue;
     var consumed;
     try {
       consumed = b.handler(e);

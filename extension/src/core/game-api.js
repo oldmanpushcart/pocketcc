@@ -37,7 +37,7 @@ const SYM = {
     mapOldCtrl: 'WorldMapTodoController',
     worldUtils: 'WorldUtils', // 行军类型换算（世界地图业务工具，静态类）
     crossUtils: 'CrossUtils', // 跨服战场类型判定（tmServerType 驱动）
-    newCabCtrl: 'NewCABController', // 新跨服战场（AVA）控制器
+    newCabCtrl: 'NewCABController', // 无双峡谷·AVA 代（NewCAB）控制器与活动数据
     pathUtils: 'PathUtils', // 资源路径换算（游戏自带头像图集名 → headpic CDN URL）
     gameDefine: 'GameDefine', // 全局枚举汇出（FunctionKey/EnergyType 等，CommonJS 直挂 exports）
     worldSiteCtrl: 'AllianceWorldSiteController', // 联盟遗迹（要塞）控制器门面，具名导出，实例在 _instance/instance
@@ -55,7 +55,10 @@ const SYM = {
     nWorldMapUtils: 'NWorldMapUtils', // 新图迁城工具（subpack2、模块级）：checkCanMove(x,y) 落点合法性权威判定（当前游戏默认走新图；符号缺失软失败）
     nWorldMapTerritoryModel: 'NWorldMapTerritoryModel', // 新图联盟领地单例（subpack2）：AllianceTerritory 存视口内堡垒领地条目 {x,y,w,bw,owner,buildId}，供迁城落点推「禁迁实心区」（符号缺失软失败）
     nWorldMapData: 'NWorldMapData', // 新图世界数据单例（subpack2）：instance.placeFlags 为 cell 级占用 Map，settle 就绪门按邻域命中计数（符号缺失软失败）
-    gameTools: 'GameTools', // 游戏工具：isKVK() 判 KVK 跨服战场图（=isC4||isC8||isC8S2），迁城落点「仅本服图拦别盟领地」分区闸门（符号缺失保守当本服）
+    gameTools: 'GameTools', // 游戏工具：isKVK() 读 eightServerType 形态位（整季为真，不是「此刻在哪张图」），迁城落点「仅本服图拦别盟领地」分区闸门（符号缺失保守当本服）
+    pabController: 'PabController', // 异能秘境（Pab）控制器门面：default=类，静态 getInstance() 由 subpack2 RealPabController 接管后返回实例（含 petCaptureOperation/getItemNumById/checkItemNumMax/roomBaseInfo/capturingInfo）
+    watchNet: 'TMWatchNetMgr', // 跨服观战/秘境独立发送通道：default=类，静态 Instance 懒建单例；isPabBattleMap 时 sendPBV2 转 NetMgrSimple 独立 WebSocket（主 pocketcc.net 发不出去）
+    marchCommon: 'NWorldMapMarchCommon', // 世界地图行军常量（subpack2）：模块级导出 NMarchState 枚举（MARCHING=1/ARRIVED=2/FIGHTING=12/PAB_FEED=21）
   },
   /** 新图单例属性链：module[cls][inst]，枚举对象 module[goType] */
   newMap: { cls: 'NWorldMapTodoController', inst: 'instance', goType: 'NWorldMapGoType' },
@@ -91,10 +94,15 @@ const SYM = {
   marchEnum: {
     obj: 'MarchType', // WorldMapCommon 导出：新旧图同一张 MarchType 表
     attackPlayer: 'ATTACK_PLAYER', // 13 本服攻玩家城
-    tmAttackPlayer: 'TM_ATTACK_PLAYER', // 150 双子星（无双）战场
-    masterAttackPlayer: 'MASTER_ATTACK_PLAYER', // 170 王者对战
-    avaAttackPlayer: 'AVA_ATTACK_PLAYER', // 110 新跨服战场
-    teamLegendAttackPlayer: 'TEAM_LEGEND_ATTACK_PLAYER', // 181 军团传奇
+    // 「无双峡谷」是玩法族名而非单个 marchType（字典铁证：ava_ui_001=无双峡谷；TeamMatchBeginMatch 弹的
+    // 文案 legen_team_match_052=「即将前往无双峡谷，将会重新登录」），AVA/TM/大师/传奇四代实现都进它；
+    // 旧「雷神峡谷」（cab_ui_info_078）已死（CrossUtils.isCAB() 恒 false）。「双子星」是城市皮肤名
+    // （skin_name_1901000=柏拉图双子星），与战场无关。命名定谳见
+    // references/游戏逆向/场景识别与门控改造可行性报告.md §2。
+    tmAttackPlayer: 'TM_ATTACK_PLAYER', // 150 无双峡谷·TeamMatch 代（组队赛，字典无独立词条）
+    masterAttackPlayer: 'MASTER_ATTACK_PLAYER', // 170 环球大师赛（master_match_21）/无双峡谷-王者赛
+    avaAttackPlayer: 'AVA_ATTACK_PLAYER', // 110 无双峡谷·AVA 代（mapType=new_cab）
+    teamLegendAttackPlayer: 'TEAM_LEGEND_ATTACK_PLAYER', // 181 无双峡谷-小队赛/传奇赛（legend_team_match_101）
     attackWorldBoss: 'ATTACK_WORLDBOSS', // 14 普通世界 boss（quick-attack/imperial-decree 经 typeOf 取名值）
     attackWorldBossV2: 'ATTACK_WORLD_BOSS_V2', // 298 bossV2 世界 boss（同上；source-of-war 本地写死 298 未走此）
   },
@@ -102,9 +110,75 @@ const SYM = {
   /** ProcedureManager.PROCE 单例上的场景程序成员名（各 Procedure 自带 sceneName，Run 时按 sceneName 判断是否切换） */
   procedures: { home: 'Home', newWorld: 'NewWorld' },
   /** 场景节点名（cc.director.getScene().name 口径，SceneName 枚举实证：HOME="Home"、NEWWORLD="NWorldMap"、WORLD="WorldMap"） */
-  sceneNames: { home: 'Home', newWorld: 'NWorldMap' },
+  sceneNames: {
+    home: 'Home',
+    newWorld: 'NWorldMap',
+    worldOld: 'WorldMap',
+    homeOther: 'HomeOther',
+    login: 'Login',
+    launch: 'Launch',
+    mechaBattle: 'MechaBattle',
+    rtsGame: 'RTSGame',
+    rtsGame3D: 'RTSGame3D',
+    sphere: 'NewSphereScene',
+    eniSphere: 'EniConquererSphere',
+    cq25Sphere: 'CQ25Sphere',
+    transition: 'TransitionScene',
+    cq25Transition: 'CQ25Transition',
+    visitTransition: 'VisitTransition',
+  },
+  /**
+   * NWorldMapCoreBiz.NWorldMapType 成员名（数值运行时向枚举对象取，不写死——数字随版本漂移，
+   * 且 setter 会把 world 折算成 world_withBoder/world_NTerrain* 等地形变体）
+   */
+  mapTypes: {
+    world: 'world',
+    kvk: 'kvk',
+    cab: 'cab',
+    c4: 'c4',
+    kvkS2: 'kvk_s2',
+    worldBorder: 'world_withBoder',
+    newCab: 'new_cab',
+    master: 'master',
+    pab: 'pab',
+    cnc: 'cnc',
+    cncHigh: 'cnc_high',
+    adpWar: 'adp_war',
+    cnc25: 'cnc_25',
+    cncHigh25: 'cnc_high_25',
+    worldNTerrain: 'world_NTerrain',
+    worldNTerrainBorder: 'world_NTerrain_border',
+  },
+  /** NWorldMapCoreBiz.WatchingBattleType 成员名（观战/秘境态，mapType 被它强制折算） */
+  watchingTypes: {
+    none: 'NONE',
+    tm: 'TM_WATCHING',
+    master: 'MASTER_WATCHING',
+    pab: 'PAB',
+    cnc: 'CNC',
+    adpwar: 'ADPWAR',
+  },
+  /** GameDefine.ServerState 成员名（跨战区天梯赛的阶段位，非场景：捐献/准备/战斗/领奖） */
+  serverStates: {
+    normal: 'Normal',
+    donate: 'Donate',
+    ready: 'Ready',
+    fight: 'Fight',
+    reward: 'Reward',
+    matching: 'Matching',
+  },
   /** 语义面板名 → UIDataInfo 注册表成员名（运行时符号，面板随版本漂移时单点维护） */
   uiPanels: { bag: 'BagPanel' },
+  /**
+   * 世界态可订阅事件名（值就是 EventId 常量值本身，实证 extracted EventId.js：
+   * e.CHANGE_SCENE="CHANGE_SCENE"、e.MapTypeChange="MapTypeChange"、
+   * e.CrossServerStateUpdate="CrossServerStateUpdate"，pocketcc.event.on 直接拿值订阅）
+   */
+  events: {
+    changeScene: 'CHANGE_SCENE',
+    mapTypeChange: 'MapTypeChange',
+    crossServerStateUpdate: 'CrossServerStateUpdate',
+  },
 };
 
 /** @type {Map<string, *>} 惰性探测的成功缓存（页面生命周期与游戏版本一致，缓存后无需重探） */
@@ -239,6 +313,20 @@ export const CAPS = {
   marchTools: () => !!game.get('MarchTools'),
   terrainModel: () => !!game.get(SYM.modules.terrainModel),
   navFly: () => !!mapTodo(),
+  // 异能秘境（Pab）三依赖：控制器类在场（实例由 subpack2 接管后才可取，故只校验类/静态方法）；观战通道单例 sendPBV2 在场；秘境地图门控 getter 在场
+  pabController: () => {
+    var C = ns(game.get(SYM.modules.pabController));
+    return !!(C && typeof C.getInstance === 'function');
+  },
+  watchNet: () => {
+    var C = ns(game.get(SYM.modules.watchNet));
+    var inst = C && C.Instance; // 静态 getter 懒建单例（与游戏自身同路径）
+    return !!(inst && typeof inst.sendPBV2 === 'function');
+  },
+  mapNewBiz: () => {
+    var b = ns(game.get(SYM.modules.mapNewBiz)); // NWorldMapCoreBiz.default = 业务单例（isPabBattleMap 为其 getter）
+    return !!(b && 'isPabBattleMap' in b);
+  },
 };
 
 /**
@@ -674,6 +762,19 @@ export const gameData = {
       return Number(userData() && userData().UID) || 0;
     } catch (e) {
       return 0;
+    }
+  },
+  /**
+   * 本人 UID 原始字符串（=UserData.UID.toString()，异能秘境掉落/资源「已领」判据按 uid==UID 字符串比对，与游戏侧同口径）。
+   * 相比 myPid() 的 Number 化，字符串避免 64 位 UID 超安全整数时的精度陷阱；取不到返回 ''。
+   * @returns {string}
+   */
+  myUidStr() {
+    try {
+      var uid = userData() && userData().UID;
+      return uid != null ? String(uid) : '';
+    } catch (e) {
+      return '';
     }
   },
   /**
@@ -1113,8 +1214,11 @@ export const gameData = {
     }
   },
   /**
-   * 当前是否 KVK 跨服战场图（GameTools.isKVK = isC4||isC8||isC8S2）。用于迁城落点分区规则：
-   * false=本服普通图（须拦别盟领地），true=跨服战场图（别盟领地随便进）。
+   * 本服是否属于 KVK（跨战区天梯）形态（GameTools.isKVK = isC4||isC8||isC8S2）。
+   * **它是形态位、不是图位**（取证 extracted/GameTools__GameTools.js@34412）：三支全部走
+   * `judgeKVK(e) = (1|UserData.eightServerType)-1 === e`（四国 8 / 八国 4 / 八国 S2 6），
+   * 即「你这台整个赛季都算 KVK 阵营」，人回了原战区仍为真（与 CrossUtils 同名谓词同源，@1651/@1898）。
+   * 需要「此刻真在跨服战场图上」的口径请读 worldState.crossMap()，不要拿本函数凑数。
    * 符号不可得保守返回 false（当本服处理，宁可多拦也不误迁被服务器拒）。
    * @returns {boolean}
    */
@@ -1139,6 +1243,7 @@ export const gameData = {
    * 仅在 `(!isKVK() || !八国色号) && ServerState != Fight && owner>0 && owner!=我的Aid` 时拒绝迁入——
    * 即 ServerState==Fight（作战态）时整图放开别盟领地，与本服/KVK 图无关。符号不可得保守返回 false
    * （维持禁落，宁可不迁也不误迁）。
+   * 消费方已改读 worldState.phase()（与本源同一字段、同一语义）；本函数保留作低层原语与 devtools 对照。
    * @returns {boolean} true=作战态（禁迁豁免）
    */
   serverStateIsFight() {
@@ -1505,10 +1610,12 @@ export const gameData = {
    *   hero_color:string,hero_star:string,hero_level:string}>} 表未就绪返回 []
    */
   mineSpecs() {
-    return probe('mine_cave.specs', () => {
+    return (
+      probe('mine_cave.specs', () => {
         var rows = l10n.tableRows('mineCave');
         return rows && rows.length ? rows : null;
-      }) || [];
+      }) || []
+    );
   },
   /**
    * 单个矿种规格行（按 specId 查，走 mineSpecs 缓存）；查不到返回 null。
@@ -1797,6 +1904,174 @@ export const bits = {
   },
 };
 
+// ─────────────────────── 异能秘境（Pab）跨服通道与场景门控 ───────────────────────
+
+/** @type {number} 未真正发出的伪码（与 net.CODE_NOT_SENT 同义；watch 通道无返回句柄，超时/异常均回此值） */
+const SECRET_NOT_SENT = -1;
+/** @type {number} 秘境发包应答超时（毫秒）：与 net.js SEND_TIMEOUT_MS 同量纲，到点未 settle 即回 SECRET_NOT_SENT */
+const SECRET_TIMEOUT_MS = 15000;
+/**
+ * 次通道未就绪是否已经告过警（首发 warn、后续降 debug，防拾取逐拍刷屏；任一发包成功即复位）。
+ * @type {boolean}
+ */
+var socketNotReadyWarned = false;
+
+/**
+ * NWorldMapCoreBiz 业务单例（isPabBattleMap 为其 getter）；符号缺失返回 null。
+ * 只缓存单例对象，isPabBattleMap 每次现读（watchingType 随进出秘境实时变化）。
+ */
+function pabBiz() {
+  return probe(SYM.modules.mapNewBiz, () => {
+    var b = ns(game.get(SYM.modules.mapNewBiz));
+    return b && 'isPabBattleMap' in b ? b : null;
+  });
+}
+
+/** TMWatchNetMgr 单例（秘境/跨服观战独立发送通道）；符号缺失返回 null */
+function watchNetMgr() {
+  return probe(SYM.modules.watchNet + '.Instance', () => {
+    var C = ns(game.get(SYM.modules.watchNet));
+    var inst = C && C.Instance; // 静态 getter 懒建单例（引用稳定，可缓存）
+    return inst && typeof inst.sendPBV2 === 'function' ? inst : null;
+  });
+}
+
+/**
+ * 构造与 net.Ret 同形的结果对象（code/data/reason/ok）；window.pocketcc.net 未就绪时降级为等价的普通对象。
+ * @param {number} code 状态码（0=成功；SECRET_NOT_SENT=未发出/超时）
+ * @param {*} data 业务数据（pbAckV2.data）
+ * @param {string|null} reason 拒绝多语言键（pbAckV2.header.d，仅 code≠0 时有意义）
+ * @returns {object} Ret 形结果
+ */
+function secretRet(code, data, reason) {
+  var Net = window.pocketcc && window.pocketcc.net;
+  var r = Net && Net.Ret ? Net.Ret.from(code, data) : { code: code, data: data, reason: null };
+  if (reason != null) r.reason = reason;
+  return r;
+}
+
+/**
+ * 异能秘境能力组（均只读/发包，不改写游戏数据）：
+ *   - 秘境协议发送走 TMWatchNetMgr 独立通道（主 pocketcc.net 在 isPabBattleMap 下发不出去），此处 promise 化并归一 Ret；
+ *   - isPabBattleMap 为「是否在秘境地图」唯一真相（场景名仍是 NWorldMap，不可靠），仅作场景门控用；
+ *   - getPabController 回控制器实例供上层调游戏原生动作（petCaptureOperation 等），不代跑业务。
+ */
+export const secretRealm = {
+  /**
+   * 当前是否在异能秘境地图（NWorldMapCoreBiz.isPabBattleMap getter：watchingType===PAB）。
+   * 符号缺失/未就绪返回 false（宁可不进 active 档也不误判场景）。
+   * @returns {boolean}
+   */
+  isPabBattleMap() {
+    var b = pabBiz();
+    return !!(b && b.isPabBattleMap);
+  },
+  /**
+   * 异能秘境控制器实例（PabController.getInstance()）；subpack2 未接管/符号缺失返回 null。
+   * 上层据它读 roomBaseInfo.marchState/capturingInfo 并调原生 petCaptureOperation/getItemNumById/checkItemNumMax。
+   * @returns {object|null}
+   */
+  getPabController() {
+    var C = probe(SYM.modules.pabController, () => {
+      var c = ns(game.get(SYM.modules.pabController));
+      return c && typeof c.getInstance === 'function' ? c : null;
+    });
+    if (!C) return null;
+    try {
+      return C.getInstance() || null; // 实例每次现取（接管前为 null）
+    } catch (e) {
+      return null;
+    }
+  },
+  /**
+   * NMarchState 枚举对象（运行时取成员值，不硬编码数值）；subpack2 未载/符号缺失返回 null。
+   * @returns {object|null} {MARCHING,ARRIVED,FIGHTING,PAB_FEED,…}
+   */
+  getNMarchState() {
+    return probe(SYM.modules.marchCommon + '.NMarchState', () => {
+      var m = game.get(SYM.modules.marchCommon);
+      var E = m && (m.NMarchState || (m.default && m.default.NMarchState));
+      return E && E.PAB_FEED != null ? E : null;
+    });
+  },
+  /**
+   * 该 cmd 是否有「已发出、未收到应答」的在途请求（走 watch 通道自带的 checkRequestIdNoRes，非主 NET）。
+   * 符号缺失返回 false（不拦，宁可重发一次也不因探测不可用而永久闭开）。
+   * @param {number} cmd 命令号
+   * @returns {boolean}
+   */
+  isSecretSending(cmd) {
+    var mgr = watchNetMgr();
+    if (!mgr || typeof mgr.checkRequestIdNoRes !== 'function') return false;
+    try {
+      return !!mgr.checkRequestIdNoRes(cmd);
+    } catch (e) {
+      return false;
+    }
+  },
+  /**
+   * 秘境 promise 发包：包 TMWatchNetMgr.Instance.sendPBV2(cmd, data, target, cb)，cb 读 pbAckV2.header.s（0=成功）
+   * 归一成 Ret{code,data,reason,ok}。与 net.sendPBV2 同形（NetMgrSimple 回调收到的是原始报文 e，形状与主 NET 一致）。
+   * 永不 reject：未就绪/发送异常/超时无应答均回 Ret(code=SECRET_NOT_SENT)。
+   * @param {number} cmd 命令号（秘境 85xx）
+   * @param {object|null} data 载荷（逐键对齐录制/源码；Int64 按字符串透传）
+   * @returns {Promise<object>} Ret 形结果
+   */
+  sendSecret(cmd, data) {
+    var mgr = watchNetMgr();
+    if (!mgr) return Promise.resolve(secretRet(SECRET_NOT_SENT, null, null));
+    // 就绪预检：门面 verbatim 是 `isPabBattleMap ? (this._socket&&this._isConnect&&this._isLogin&&this._socket.sendPBV2(…)) : NET.sendPBV2(…)`。
+    //   两点约束：① 预检必须和路由同判据——非秘境态这条包其实走**主通道**、本来发得出去，无条件要求次通道就绪
+    //     就会把成功的包拒成未发出（预检引入过的回归，此处收口）；
+    //   ② 秘境态下三个 && 任一为假即既不发包也不报错（静默短路），不预检就只能白等 15s 超时才回落哨兵。
+    //   isConnectStatus 是门面自带的只读判据（verbatim：`return this._socket&&this._isConnect&&this._isLogin`）。
+    if (
+      secretRealm.isPabBattleMap() &&
+      typeof mgr.isConnectStatus === 'function' &&
+      !mgr.isConnectStatus()
+    ) {
+      if (socketNotReadyWarned)
+        log.debug('secondary socket still not ready, skip secret cmd %d.', cmd);
+      else {
+        socketNotReadyWarned = true;
+        log.warn('secondary socket not ready (connect/login), skip secret cmd %d.', cmd);
+      }
+      return Promise.resolve(secretRet(SECRET_NOT_SENT, null, null));
+    }
+    // 走到这里说明当前路由态已确认可发包（秘境=次通道就绪已验、非秘境=主通道不受该门禁约束），即复位告警闸门：
+    //   不等应答 code——否则「断线→warn→恢复→一串超时/业务拒→再次断线」会把第二次真断线默默降级成 debug
+    socketNotReadyWarned = false;
+    return new Promise(function (resolve) {
+      var settled = false;
+      var timer = setTimeout(function () {
+        if (settled) return;
+        settled = true;
+        resolve(secretRet(SECRET_NOT_SENT, null, null));
+      }, SECRET_TIMEOUT_MS);
+      var done = function (code, d, reason) {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        resolve(secretRet(code, d, reason));
+      };
+      try {
+        mgr.sendPBV2(cmd, data || null, null, function (resp) {
+          try {
+            var header = (resp && resp.pbAckV2 && resp.pbAckV2.header) || {};
+            var s = header.s;
+            var d = resp && resp.pbAckV2 && resp.pbAckV2.data;
+            done(s == null ? SECRET_NOT_SENT : s, d, s !== 0 ? header.d : null);
+          } catch (e) {
+            done(SECRET_NOT_SENT, null, null);
+          }
+        });
+      } catch (e) {
+        done(SECRET_NOT_SENT, null, null);
+      }
+    });
+  },
+};
+
 export const session = {
   /** 触发游戏登出（PlatformCore.instance.userLogout）；符号缺失记 warn 静默 */
   logout() {
@@ -2056,6 +2331,229 @@ export const worldMap = {
   },
 };
 
+// ─────────────────────── 世界态原始信号（core/world-state.js 的唯一判据源） ───────────────────────
+
+/**
+ * NWorldMapCoreBiz 业务单例（mapType / watchingType 的权威宿主）。
+ * 与 worldMap.mapType() 的口径区别：后者读离线地形模型的 currentMapType（只在世界图场景内有值），
+ * 这里读游戏真正的状态位 `_currentMapType`（setter 按跨服形态折算，且只在变化时 emit MapTypeChange）。
+ * 就绪判据用 `'mapType' in b`（in 不触发 getter），避免未登录时 getter 抛错把一次早探测钉死整页。
+ * @returns {object|null}
+ */
+function mapBiz() {
+  return probe(SYM.modules.mapNewBiz + '.biz', () => {
+    var b = ns(game.get(SYM.modules.mapNewBiz));
+    return b && 'mapType' in b && 'watchingType' in b ? b : null;
+  });
+}
+
+/**
+ * NWorldMapCoreBiz 模块上的枚举对象（NWorldMapType / WatchingBattleType）。
+ * 这两个枚举挂在原始 namespace 上，ns() 会把它解包成业务单例从而取不到，故这里故意不走 ns()。
+ * @param {string} name 枚举成员名（'NWorldMapType' | 'WatchingBattleType'）
+ * @returns {object|null}
+ */
+function mapBizEnum(name) {
+  return probe(SYM.modules.mapNewBiz + '.' + name, () => {
+    var mod = game.get(SYM.modules.mapNewBiz);
+    return (mod && mod[name]) || null;
+  });
+}
+
+/**
+ * GameDefine.ServerState 枚举对象（裸 CommonJS 直挂 exports 与 ES default 两种导出风格都兜住）。
+ * @returns {object|null}
+ */
+function serverStateEnum() {
+  return probe(SYM.modules.gameDefine + '.ServerState', () => {
+    var mod = game.get(SYM.modules.gameDefine);
+    var a = mod && mod.ServerState;
+    var b = mod && ns(mod) && ns(mod).ServerState;
+    return a || b || null;
+  });
+}
+
+/**
+ * 数字枚举反向取名（TS 数字枚举双写：e[1]='world'）。取不到回 ''（调用方据此降级）。
+ * @param {object|null} enumObj 枚举对象
+ * @param {number} value 枚举数值
+ * @returns {string} 成员名；未知返回 ''
+ */
+function enumNameOf(enumObj, value) {
+  if (!enumObj) return '';
+  var n = enumObj[value];
+  return typeof n === 'string' ? n : '';
+}
+
+/**
+ * 安全调 CrossUtils 静态谓词：符号缺失、或子包门面未接管导致内部抛错（实证：isPabFighting 读
+ * PabController.getInstance() 的字段、isC4Open 读 NEightCountryController.instance.nowOpenType，
+ * 两者在接管前都会抛）一律回 undefined，由上层决定保守档位——绝不让一次判据异常把归一层带崩。
+ * @param {string} name CrossUtils 静态方法名
+ * @returns {boolean|undefined} undefined=无从判定（区别于 false 的「判定为否」）
+ */
+function crossFlag(name) {
+  var C = crossUtils();
+  if (!C || typeof C[name] !== 'function') return undefined;
+  try {
+    return !!C[name]();
+  } catch (e) {
+    return undefined;
+  }
+}
+
+/**
+ * 世界态原始信号只读组：把「你在哪一种战场/哪张图/哪个阶段」的四层判据原值摊给
+ * core/world-state.js 做归一，符号名知识全收在本文件（ACL）。全部为只读 getter，
+ * 不写游戏任何字段（只读+发包红线）。不做归一判断——那是 world-state 的职责。
+ */
+export const worldSignals = {
+  /** 业务单例在场即视为信号就绪（false=引擎/登录未就绪，上层走「未就绪」分支） */
+  ready() {
+    return !!mapBiz();
+  },
+  /** NWorldMapCoreBiz 单例（仅供只读，禁止经它写游戏数据） */
+  biz: mapBiz,
+  /** 当前 mapType 原值（NWorldMapType）；取不到返回 0 */
+  mapType() {
+    var b = mapBiz();
+    try {
+      return b ? Number(b.mapType) || 0 : 0;
+    } catch (e) {
+      return 0;
+    }
+  },
+  /** 当前 mapType 的语义名（'new_cab'/'kvk_s2'…）；未知或取不到返回 '' */
+  mapTypeName() {
+    return enumNameOf(mapBizEnum('NWorldMapType'), this.mapType());
+  },
+  /** 指定 mapType 数值 → 语义名（供一致性诊断与 adp_war 之类未落地分支取名） */
+  mapTypeNameOf(value) {
+    return enumNameOf(mapBizEnum('NWorldMapType'), value);
+  },
+  /** 当前观战/秘境态原值（WatchingBattleType，0=NONE 即实战态） */
+  watchingType() {
+    var b = mapBiz();
+    try {
+      return b ? Number(b.watchingType) || 0 : 0;
+    } catch (e) {
+      return 0;
+    }
+  },
+  /** 当前观战/秘境态语义名（'NONE'/'TM_WATCHING'/'PAB'…）；取不到返回 '' */
+  watchingTypeName() {
+    return enumNameOf(mapBizEnum('WatchingBattleType'), this.watchingType());
+  },
+  /** 是否在异能秘境地图（watchingType===PAB，与 secretRealm 共用同一真相，不分两套口径） */
+  pabBattleMap() {
+    return secretRealm.isPabBattleMap();
+  },
+  /** 本服阶段位原值（UserData.ServerState）；取不到返回 0（=Normal） */
+  serverState() {
+    try {
+      var u = userData();
+      return u && u.ServerState != null ? Number(u.ServerState) || 0 : 0;
+    } catch (e) {
+      return 0;
+    }
+  },
+  /** 本服阶段位语义名（Normal/Donate/Ready/Fight/Reward/Matching）；符号缺失返回 '' */
+  serverStateName() {
+    return enumNameOf(serverStateEnum(), this.serverState());
+  },
+  /** 战区形态位域原值（UserData.eightServerType，CrossUtils.judgeKVK 按 (1|n)-1 匹配赛事） */
+  eightServerType() {
+    try {
+      return Number(userData().eightServerType) || 0;
+    } catch (e) {
+      return 0;
+    }
+  },
+  /** 跨服形态号原值（CrossUtils._tmServerType：0=非跨服、5=TM、6=大师、8=传奇、9=征服者/CQ25） */
+  tmServerType() {
+    try {
+      return Number(crossUtils()._tmServerType) || 0;
+    } catch (e) {
+      return 0;
+    }
+  },
+  /** 当前 cc 场景节点名（与 scene.name() 同源，归一层的第二层「地图」判据） */
+  sceneName() {
+    return scene.name();
+  },
+  /** 世界态事件名表（core/scene-watcher.js 据此订阅，事件符号名不泄漏到上层） */
+  events: SYM.events,
+  /**
+   * cc 场景名 → 语义键（场景名符号收在 SYM.sceneNames，上层只消费语义键）。
+   * @returns {string} 'off'|'home'|'homeOther'|'newWorld'|'worldOld'|'battle'|'sphere'|'transition'|'boot'|'other'
+   */
+  sceneSemantic() {
+    var n = scene.name();
+    var S = SYM.sceneNames;
+    if (!n) return 'off';
+    if (n === S.home) return 'home';
+    if (n === S.homeOther) return 'homeOther';
+    if (n === S.newWorld) return 'newWorld';
+    if (n === S.worldOld) return 'worldOld';
+    if (n === S.mechaBattle || n === S.rtsGame || n === S.rtsGame3D) return 'battle';
+    if (n === S.sphere || n === S.eniSphere || n === S.cq25Sphere) return 'sphere';
+    if (n === S.transition || n === S.visitTransition || n === S.cq25Transition)
+      return 'transition';
+    if (n === S.login || n === S.launch) return 'boot';
+    return 'other';
+  },
+  /**
+   * CrossUtils 谓词族（值域 true/false/undefined，undefined=无从判定）。
+   * 名后括号为源码方法名，判据优先级与游戏自身 CrossUtils.setMapTmxData 的分支顺序对齐。
+   */
+  cross: {
+    /** isInAnyServer()：非本服常态总闸（内部含 isPabFighting，接管前会抛 → 常为 undefined） */
+    anyServer() {
+      return crossFlag('isInAnyServer');
+    },
+    /** getIsCabMap()：峡谷族战场（AVA/TM/大师/传奇）——游戏自建的「是否峡谷图」权威谓词 */
+    cabMap() {
+      return crossFlag('getIsCabMap');
+    },
+    /** isTMServer()：无双峡谷·TM 代（含 TM_WATCHING 观战态） */
+    tm() {
+      return crossFlag('isTMServer');
+    },
+    /** isMasterMatch()：大师赛（含 MASTER_WATCHING 观战态） */
+    master() {
+      return crossFlag('isMasterMatch');
+    },
+    /** isTeamLegendServer()：传奇小队/小队赛 */
+    teamLegend() {
+      return crossFlag('isTeamLegendServer');
+    },
+    /** isNewCAB()：无双峡谷·AVA 代（NewCABController.Instance.isNewCABServer()） */
+    newCab() {
+      return crossFlag('isNewCAB');
+    },
+    /** isEniNeutralMatch()：异能征服者（cnc/cnc_high） */
+    eni() {
+      return crossFlag('isEniNeutralMatch');
+    },
+    /** isCQ25NeutralMatch()：CQ25 征服者（cnc_25/cnc_high_25） */
+    cq25() {
+      return crossFlag('isCQ25NeutralMatch');
+    },
+    /** isC4()：四国（judgeKVK(8)） */
+    c4() {
+      return crossFlag('isC4');
+    },
+    /** isC8()：八国（judgeKVK(4)） */
+    c8() {
+      return crossFlag('isC8');
+    },
+    /** isC8S2()：八国 S2（judgeKVK(6)） */
+    c8s2() {
+      return crossFlag('isC8S2');
+    },
+  },
+};
+
 /**
  * 调试面（仅供控制台，不入业务路径）：与 core 工具同挂 window.pocketcc（见 content.entry.js），
  * 逆向时 `pocketcc.gameApi.march.flags()` 看战场判定器是否解析成功、
@@ -2077,7 +2575,9 @@ export const debug = {
   session,
   avatar,
   worldMap,
+  worldSignals,
   battlePreset,
   scene,
   ui,
+  secretRealm,
 };

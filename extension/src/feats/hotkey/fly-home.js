@@ -32,6 +32,10 @@ bind({
   label: '飞回基地',
   where: '大世界',
   scenes: ['NWorldMap'],
+  // B 档（可行性报告 §7.2）：跨服战场图里正是需要「飞回自己基地」的时候（只读相机导航、无协议风险），
+  // 故不能按 homeland 一刀切；只排掉 pab——异能秘境把世界图整体换成副本，本服主城不在场，
+  // 飞过去只是把镜头丢进副本坐标里（游戏原生的「定位主城」同样无意义）。
+  kinds: ['homeland', 'wushuang', 'kvk', 'sphere', 'adp_war'],
   handler: function () {
     var pos = gameData.myWorldPos();
     if (!pos || pos.x < 0 || pos.y < 0) {

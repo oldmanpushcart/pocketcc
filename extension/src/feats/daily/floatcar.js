@@ -28,7 +28,7 @@
  * 902 应答：受理时回整份 marchInfo（字符串 marchId + marchStartTime/marchArrive；返程两字段此刻必为 0，
  *   要到回城 push 合并进游戏行军对象后才有值——这正是释放打点只能"迭代精化"、不能一次算死的原因）。
  *
- * 生命周期由 reactor 托管：install/run 两个钩子（无可调面板项，故不写 configure），scenes 门控限定 Home/NWorldMap。
+ * 生命周期由 reactor 托管：install/run 两个钩子（无可调面板项，故不写 configure），places 门控限定 base/world（Home/NWorldMap）。
  *   run 挂 newChatPush 监听；pause 摘监听、alive()=false 让堆事件与在飞流程自然收手，flows/pending 表保留，resume 续跑。
  * 类型级当日熔断：某类花车的 902 回 `mysterioustriangle_10`（今日剩余次数不足）即记该类"今日已满"，
  *   当场收掉同类型全部流程 + 滤掉同类型待派项，后续该类型的发车卡不再建流程（跨类型互不影响，跨日自动失效）。
@@ -1603,7 +1603,7 @@ function run(ctx) {
 }
 
 /**
- * 向 reactor 注册本功能说明书：场景限定 Home/NWorldMap，战斗模式暂停（offInCombat）。
+ * 向 reactor 注册本功能说明书：地图限定 base/world（Home/NWorldMap），战斗模式暂停（offInCombat）。
  * 面板只出启用开关，探测节奏全部为 cfg 内置常量。
  */
 reactor.register({
@@ -1611,7 +1611,8 @@ reactor.register({
   label: '花车空投',
   storageKey: 'pocketcc.feat.floatCar',
   symbols: ['dataCenter', 'marchTools?'],
-  scenes: ['Home', 'NWorldMap'],
+  places: ['base', 'world'],
+  kinds: ['homeland'],
   offInCombat: true,
   defaults: { enabled: false, accelEnabled: false, accelTargetSec: 0 },
   fields: [

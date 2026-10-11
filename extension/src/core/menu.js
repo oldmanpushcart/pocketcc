@@ -86,6 +86,7 @@ export const MENU = [
     children: [
       // 活动类功能：定时开窗的活动玩法挂这里（与日常任务的周期型玩法区分）
       { id: 'launchSilo', kind: 'feature', label: '占领发射井', showFields: true },
+      { id: 'secretRealm', kind: 'feature', label: '异能秘境', showFields: true },
     ],
   },
   {

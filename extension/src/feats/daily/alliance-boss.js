@@ -48,7 +48,7 @@
  *   且该型号当日未捐满区间档位配的枚数；
  *   攻打还需行军槽 >= 1、902/1161 不在途（NetMgr 按 cmd 频控，连发同 cmd 会被吞）。
  *
- * 生命周期由 reactor 托管：install/configure/run 三钩子，scenes 限 Home/NWorldMap，战斗模式暂停。
+ * 生命周期由 reactor 托管：install/configure/run 三钩子，places 限 base/world（Home/NWorldMap），战斗模式暂停。
  *   单飞闸门 / 触发合并 / 择时重排收口到 core/cycle；pause 后 alive()=false 让 cycle 自然停摆，resume 重新 kick。
  *   合规：全程只读游戏数据 + 直发协议，不调用游戏的 Update* 改写本地态。
  */
@@ -848,7 +848,7 @@ async function run(ctx) {
 }
 
 /**
- * 向 reactor 注册本功能说明书：场景限定 Home/NWorldMap，战斗模式暂停；
+ * 向 reactor 注册本功能说明书：地图限定 base/world（Home/NWorldMap），战斗模式暂停；
  * 面板带「召唤所需碎片数 → 代捐枚数」的可增删区间规则 + 攻击预设选择器（0-8）+ 只读态展示；
  * 间隔/上限/道具 id 等均为本文件内置常量（CFG_KEY_* / ITEM_SHARD / *_TICK_MS）。
  */
@@ -857,7 +857,8 @@ reactor.register({
   label: '联盟机甲',
   storageKey: 'pocketcc.feat.allianceBoss',
   symbols: ['dataCenter', 'tableManager', 'tableUtils'],
-  scenes: ['Home', 'NWorldMap'],
+  places: ['base', 'world'],
+  kinds: ['homeland'],
   offInCombat: true,
   defaults: {
     enabled: false,

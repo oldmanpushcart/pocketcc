@@ -13,7 +13,9 @@
  *   activePanel 单引用即可；onKeyDown 再复查 comp.isValid && node.activeInHierarchy 兜底防漏触发误发。
  *
  * 依赖游戏运行时只「读 + 发包」，不调任何 Update/Delete 改写类方法（遵守 feat 只读+发包约束）。
- * 场景门控限 NWorldMap。属「战斗设置」：快捷战斗只在目标面板开着时按快捷键才发一波，是战斗时的手动辅助，
+ * 门控（B 档，可行性报告 §7.2）：places:['world']（NWorldMap 场景）+ kinds:['homeland','wushuang','kvk']——跨服战场图里
+ * 照样要打（marchApi.resolve 已按战场换算 marchType），秘境由 world 门的 kind===pab 隔离自动拦、征服者球体/盟决不在场。
+ * 属「战斗设置」：快捷战斗只在目标面板开着时按快捷键才发一波，是战斗时的手动辅助，
  * 故不声明 offInCombat（与日常行军自动化相反：战斗模式下仍照常生效）。挂钩对称可还原，功能停用即摘净。
  *
  * marchType 跨服漂移（无双峡谷等跨服战场实测）：注册表里存的是「本服基础值」，发包前经
@@ -542,7 +544,7 @@ function run(ctx) {
 }
 
 /**
- * 向 reactor 注册本功能说明书：场景限定 NWorldMap，不声明 offInCombat（战斗设置本就是战斗时的手动辅助）。
+ * 向 reactor 注册本功能说明书：places:['world'] + kinds:['homeland','wushuang','kvk']（B 档），不声明 offInCombat（战斗设置本就是战斗时的手动辅助）。
  */
 reactor.register({
   id: 'quickAttack',
@@ -558,7 +560,10 @@ reactor.register({
     'formationAdv',
     'marchStorage',
   ],
-  scenes: ['NWorldMap'],
+  // B 档（可行性报告 §7.2）：本服/无双峡谷/天梯战场图都要能快捷攻击；秘境由 world 门 kind===pab 隔离、
+  // 征服者球体（place=sphere）与盟决（adp_war）不在本表放行范围。
+  kinds: ['homeland', 'wushuang', 'kvk'],
+  places: ['world'],
   // 战斗设置类：不声明 offInCombat，战斗模式下依然生效（快捷战斗本就是战斗时的手动辅）
   defaults: { enabled: false },
   fields: [],

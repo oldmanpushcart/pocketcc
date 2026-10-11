@@ -485,14 +485,15 @@ function run(ctx) {
 }
 
 /**
- * 向 reactor 注册本功能说明书：scenes 限定 Home/NWorldMap，战斗模式暂停；面板按目标分段带今日计数。
+ * 向 reactor 注册本功能说明书：places 限定 base/world（Home/NWorldMap），战斗模式暂停；面板按目标分段带今日计数。
  */
 reactor.register({
   id: 'allianceRally',
   label: '联盟集结',
   storageKey: 'pocketcc.feat.allianceRally',
   symbols: ['dataCenter'],
-  scenes: ['Home', 'NWorldMap'],
+  places: ['base', 'world'],
+  kinds: ['homeland'],
   offInCombat: true,
   defaults: {
     enabled: false,

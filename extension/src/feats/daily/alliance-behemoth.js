@@ -33,7 +33,7 @@
  *   日常任务形态：面板只出启用开关，无字段无配置（fields=[]，toModuleCfg 返回空）。
  *   仅消耗道具与能量、不行军不参战，故 offInCombat:false。
  *
- * 生命周期由 reactor 托管：install/run 两钩子（日常任务无配置可推），scenes 限 Home/NWorldMap；
+ * 生命周期由 reactor 托管：install/run 两钩子（日常任务无配置可推），places 限 base/world（Home/NWorldMap）；
  *   调度交给 core/cycle.js：单飞闸门、推触合并、异常 fallback 重排均内置；pause 后 alive()=false 让 cycle 自然停摆。
  */
 import { createLog } from '../../core/log.js';
@@ -338,7 +338,7 @@ function run(ctx) {
 }
 
 /**
- * 向 reactor 注册本功能说明书：场景限定 Home/NWorldMap，不行军不参战故不设战斗门控；
+ * 向 reactor 注册本功能说明书：地图限定 base/world（Home/NWorldMap），不行军不参战故不设战斗门控；
  * 日常任务形态——面板只出启用开关，无字段无配置（守卫未开/满级/道具不足/能量空均为内置口径）；
  * 能量池 id / 恢复周期 / 单捐间距等均为本文件内置常量。
  */
@@ -347,7 +347,8 @@ reactor.register({
   label: '联盟守卫',
   storageKey: 'pocketcc.feat.allianceBehemoth',
   symbols: ['dataCenter', 'gameDefine', 'tableManager'],
-  scenes: ['Home', 'NWorldMap'],
+  places: ['base', 'world'],
+  kinds: ['homeland'],
   offInCombat: false,
   defaults: { enabled: false },
   fields: [],

@@ -17,6 +17,7 @@
 import { createLog } from './log.js';
 import { item } from './item.js';
 import { gameData, nav, worldMap } from './game-api.js';
+import { worldState } from './world-state.js';
 import { bus } from './bus.js';
 import { SERVER, pickSub, fetchWindow } from './map.js';
 
@@ -157,7 +158,7 @@ async function makeJudge(anchor, opts) {
       });
       if (win.ok) {
         var list = win.points;
-        var isK = gameData.isKVK(); // 可覆盖豁免仅 KVK 战场图成立（见 RELOC_KVK_COVERABLE）
+        var isK = worldState.matchesKind(['kvk']); // 可覆盖豁免仅天梯(KVK)族战场图成立（见 RELOC_KVK_COVERABLE）；worldState 口径与 GameTools.isKVK 同源
         for (var i = 0; i < list.length; i++) {
           var p = list[i],
             pt = p.pointType | 0;
@@ -215,7 +216,10 @@ async function makeJudge(anchor, opts) {
     //    禁迁闸门控对齐游戏 moveCity 权威条件（extracted WorldMapController）：别盟堡垒领地禁迁仅在
     //    (!isKVK() || !八国色号) && ServerState != Fight 时生效——KVK 图或作战态(ServerState==Fight)整图放开别盟领地，
     //    此时跳过 1001 取领地（省一次发包）并不建 enemyBounds。八国色号那条只在「KVK 且无色号」罕见边缘收紧，此处保守沿用 KVK 即放行。
-    var terrApplies = !gameData.isKVK() && !gameData.serverStateIsFight();
+    //    口径迁 worldState（P3 附带清理，语义不变）：matchesKind(['kvk']) 与 GameTools.isKVK 同走 eightServerType 形态位，
+    //    phase()==='fight' 与 ServerState===Fight 同义（GameDefine.ServerState 阶段机）。
+    var terrApplies =
+      !worldState.matchesKind(['kvk']) && worldState.phase() !== worldState.PHASE.fight;
     var terrInfos = [];
     if (terrApplies) {
       if (net && typeof net.send === 'function') {

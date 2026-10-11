@@ -16,6 +16,7 @@
 | [core/item.md](core/item.md) | `src/core/item.js` | 物品查询/标识薄工具层（持有量/中文名/奖励解析），收口 4 个 feat |
 | [core/map.md](core/map.md) | `src/core/map.js` | 世界地图常量真相+三系坐标转换+单窗 901 只读查询底座，收口 map-meta/coord 与 3 处 901 探针 |
 | [core/cycle.md](core/cycle.md) | `src/core/cycle.js` | A 原语：电平调和循环驱动器（单飞/合并/绝不停摆），已收口 P0 四 feat |
+| [core/world-state.md](core/world-state.md) | `src/core/world-state.js` | 世界态归一层（Kind/Place/Phase/Gen），为 `world` 门控与跨服图降级提供单一真相 |
 
 （规划中：core/player.md——后续同类 API 改动时补。）
 
