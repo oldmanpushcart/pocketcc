@@ -2,8 +2,8 @@
 // 与 registry 的分工：descriptor（reactor.list() + INTERNAL_FEATURES）仍是字段/存储/默认值的真相，
 // 本文件只决定层级归属、显示标签覆写与是否渲染详细字段。
 // 节点：
-//   kind:'category' 类别 = 面板左侧一个 TAB（日常设置/活动设置/战斗设置/系统设置），本身不可开关；children=右栏卡片数组。
-//   kind:'group'    组卡片：标题行带主闸门 checkbox，展开=子项 checkbox 列表（如日常任务）。
+//   kind:'category' 类别 = 面板左侧一个 TAB（玩家设置/联盟设置/活动设置/战斗设置/系统设置），本身不可开关；children=右栏卡片数组。
+//   kind:'group'    组卡片：标题行带主闸门 checkbox，展开=子项 checkbox 列表（如玩家/联盟基础设置）。
 //   kind:'feature'  功能卡片：标题行带启用 checkbox；showFields=true 时展开 descriptor 的详细字段。
 // 组开关语义（工程决策，勿改回门控方案）：组是 UI 层主闸门，不进 reactor 门控——
 //   组关 → 子项功能 enabled=false 逐个 pause；组开 → 恢复各子项 intentEnabled（用户意图，组关不丢失）。
@@ -27,10 +27,10 @@
  * @type {Object<string,string>}
  */
 export const CATEGORIES = {
-  daily: '日常设置',
+  player: '玩家设置',
+  alliance: '联盟设置',
   activity: '活动设置',
   battle: '战斗设置',
-  map: '地图设置',
   system: '系统设置',
 };
 
@@ -40,43 +40,54 @@ export const CATEGORIES = {
  */
 export const MENU = [
   {
-    id: 'daily',
+    id: 'player',
     kind: 'category',
-    label: CATEGORIES.daily,
+    label: CATEGORIES.player,
     children: [
+      // 玩家个人日常：只出 checkbox 的周期型玩法归基础设置组；需要可调参数与独立开关的抽为与本组平级的 feature 卡片
       {
-        id: 'dailyTasks',
+        id: 'playerBasics',
         kind: 'group',
-        label: '日常任务',
+        label: '基础设置',
         defaultEnabled: true,
-        storageKey: 'pocketcc.group.dailyTasks',
-        // 日常任务各子项一般只出 checkbox，详细参数用默认值/存量值；需要可调参数与独立开关的功能（如花车空投）抽为与本组平级的 feature 卡片
+        storageKey: 'pocketcc.group.playerBasics',
         children: [
-          { id: 'titanBlessing', kind: 'feature', label: '泰坦祝福' },
-          { id: 'allianceHelp', kind: 'feature', label: '联盟帮助' },
-          { id: 'domainTreasure', kind: 'feature', label: '领域寻宝' },
-          { id: 'seaTreasure', kind: 'feature', label: '海上夺宝' },
-          { id: 'allianceGift', kind: 'feature', label: '联盟礼物' },
-          { id: 'allianceScience', kind: 'feature', label: '联盟科技' },
-          { id: 'allianceBehemoth', kind: 'feature', label: '联盟守卫' },
           { id: 'dailySupply', kind: 'feature', label: '每日补给' },
           { id: 'armoryMaterial', kind: 'feature', label: '军火库生产材料' },
           { id: 'secretWeaponDrop', kind: 'feature', label: '秘密武器空投' },
-          { id: 'mechaTreasure', kind: 'feature', label: '重装母舰' },
         ],
       },
-      // 花车空投：从日常任务组抽出，与本组平级的独立 feature 卡片（卡片主体默认收起，点标题行展开行军加速字段）
-      { id: 'floatCar', kind: 'feature', label: '花车空投', showFields: true },
-      { id: 'allianceRally', kind: 'feature', label: '联盟集结', showFields: true },
-      { id: 'sourceOfWar', kind: 'feature', label: '战争之源', showFields: true },
-      { id: 'allianceBoss', kind: 'feature', label: '联盟机甲', showFields: true },
-      { id: 'citySkill', kind: 'feature', label: '城市技能', showFields: true },
       { id: 'playerLike', kind: 'feature', label: '玩家点赞', showFields: true },
-      { id: 'mineCave', kind: 'feature', label: '次元矿洞', showFields: true },
-      { id: 'autoFarm', kind: 'feature', label: '自动下田', showFields: true },
-      { id: 'relicReward', kind: 'feature', label: '遗迹奖励', showFields: true },
+      { id: 'sourceOfWar', kind: 'feature', label: '战争之源', showFields: true },
       { id: 'truckIntercept', kind: 'feature', label: '卡车争夺', showFields: true },
+      { id: 'autoFarm', kind: 'feature', label: '自动下田', showFields: true },
+      { id: 'mineCave', kind: 'feature', label: '次元矿洞', showFields: true },
       { id: 'beastBreed', kind: 'feature', label: '异能兽培育', showFields: true },
+      { id: 'citySkill', kind: 'feature', label: '城市技能', showFields: true },
+    ],
+  },
+  {
+    id: 'alliance',
+    kind: 'category',
+    label: CATEGORIES.alliance,
+    children: [
+      // 联盟协作日常：只出 checkbox 的捐献/助力类归基础设置组；带独立参数的抽为平级 feature 卡片
+      {
+        id: 'allianceBasics',
+        kind: 'group',
+        label: '基础设置',
+        defaultEnabled: true,
+        storageKey: 'pocketcc.group.allianceBasics',
+        children: [
+          { id: 'allianceHelp', kind: 'feature', label: '联盟帮助' },
+          { id: 'allianceGift', kind: 'feature', label: '联盟礼物' },
+          { id: 'allianceScience', kind: 'feature', label: '联盟科技' },
+          { id: 'allianceBehemoth', kind: 'feature', label: '联盟守卫' },
+        ],
+      },
+      { id: 'allianceRally', kind: 'feature', label: '联盟集结', showFields: true },
+      { id: 'allianceBoss', kind: 'feature', label: '联盟机甲', showFields: true },
+      { id: 'relicReward', kind: 'feature', label: '遗迹奖励', showFields: true },
     ],
   },
   {
@@ -84,7 +95,21 @@ export const MENU = [
     kind: 'category',
     label: CATEGORIES.activity,
     children: [
-      // 活动类功能：定时开窗的活动玩法挂这里（与日常任务的周期型玩法区分）
+      // 活动玩法：定时开窗与拾取/夺宝类玩法归此；只出 checkbox 的收进基础设置组，带独立参数的抽为平级 feature 卡片
+      {
+        id: 'activityBasics',
+        kind: 'group',
+        label: '基础设置',
+        defaultEnabled: true,
+        storageKey: 'pocketcc.group.activityBasics',
+        children: [
+          { id: 'seaTreasure', kind: 'feature', label: '海上夺宝' },
+          { id: 'mechaTreasure', kind: 'feature', label: '重装母舰' },
+          { id: 'domainTreasure', kind: 'feature', label: '领域寻宝' },
+        ],
+      },
+      { id: 'titanBlessing', kind: 'feature', label: '泰坦祝福', showFields: true },
+      { id: 'floatCar', kind: 'feature', label: '花车空投', showFields: true },
       { id: 'launchSilo', kind: 'feature', label: '占领发射井', showFields: true },
       { id: 'secretRealm', kind: 'feature', label: '异能秘境', showFields: true },
     ],
@@ -100,17 +125,12 @@ export const MENU = [
     ],
   },
   {
-    id: 'map',
-    kind: 'category',
-    label: CATEGORIES.map,
-    children: [{ id: 'globalMap', kind: 'feature', label: '全局地图', showFields: true }],
-  },
-  {
     id: 'system',
     kind: 'category',
     label: CATEGORIES.system,
     children: [
       { id: 'chatWindow', kind: 'feature', label: '聊天窗口', showFields: true },
+      { id: 'globalMap', kind: 'feature', label: '全局地图', showFields: true },
       { id: 'reconnect', kind: 'feature', label: '自动重连', showFields: true },
       { id: 'netLog', kind: 'feature', label: '网络日志' },
       { id: 'eventLog', kind: 'feature', label: '事件日志' },

@@ -40,7 +40,10 @@ import { createLog } from '../../core/log.js';
 import { createDrain } from '../../core/drain.js';
 import { reactor } from '../../core/reactor.js';
 import { getUid } from '../../core/player.js';
+import { game } from '../../core/game.js';
+import { payloadOf } from '../../core/net-payload.js';
 import { march } from '../../core/march.js';
+import { item } from '../../core/item.js';
 
 /** @type {ReturnType<createLog>} 模块日志器（tag=TITAN_BLESSING） */
 const log = createLog('TITAN_BLESSING');
@@ -79,10 +82,19 @@ const LEDGER_FALLBACK_TTL_MS = 6 * 60 * 60 * 1000;
 const FALLBACK_SCAN_COOLDOWN_MS = 5000;
 
 /**
- * 模块内部配置：{ consumeInterval:number(ms) }。面板仅出启用开关，此值为内置常量。
+ * 模块内部配置：{ consumeInterval:number(ms) }。消费间隔为内置常量，不在面板暴露。
  * @type {object}
  */
 var cfg = { consumeInterval: CONSUME_INTERVAL_MS };
+
+/** @type {boolean} 是否启用行军加速（面板 accelEnabled）：对泰坦祝福拾取行军套用加速道具，缺省关 */
+var accelEnabled = false;
+
+/** @type {number} 加速目标剩余秒数（面板 accelTargetSec，0=不加速） */
+var accelTargetSec = 0;
+
+/** @type {object|null} DataCenter.DATA（读 ServerTime 算行军剩余秒，服务器秒域；仅加速用） */
+var dataCenter = null;
 
 /** @type {object|null} 网络底座（promise 封装 pocketcc.net） */
 var net;
@@ -376,6 +388,9 @@ function configure(partial) {
   if (partial && typeof partial.consumeInterval === 'number' && partial.consumeInterval >= 0) {
     cfg.consumeInterval = partial.consumeInterval;
   }
+  accelEnabled = !!(partial && partial.accelEnabled);
+  var v = partial && +partial.accelTargetSec;
+  accelTargetSec = v > 0 ? v | 0 : 0;
   return cfg;
 }
 
@@ -427,8 +442,31 @@ async function pickUpFlow(ev) {
   if (!aliveFn()) return;
 
   if (ret.ok) {
-    log.info('pick up march started. key=%s;src=%s;code=%d', key, ev.src, ret.code);
     delete rejectStreak[key];
+    // 902 走旧 JSON 链路（net.send），受理时应答是整包 JSON 文本；payloadOf 归一化后再取 marchInfo（marchId + 到达时刻）
+    var raw = payloadOf(ret);
+    var mi = (raw && (raw.marchInfo || (raw.data && raw.data.marchInfo) || raw)) || {};
+    if (mi.marchId == null) {
+      log.info('pick up march started. key=%s;src=%s;code=%d;marchId64=-', key, ev.src, ret.code);
+      return;
+    }
+    log.info(
+      'pick up march started. key=%s;src=%s;code=%d;marchId64=%s;marchArrive=%s',
+      key,
+      ev.src,
+      ret.code,
+      String(mi.marchId),
+      mi.marchArrive != null ? mi.marchArrive : '-',
+    );
+    // 行军加速（勾选「启用行军加速」且配了目标剩余秒数才做）：对刚受理的拾取行军循环加速，fire-and-forget 不阻领取主流程
+    if (accelEnabled && accelTargetSec > 0) {
+      var arriveSec = +mi.marchArrive;
+      if (arriveSec > 0) {
+        maybeAccelerate(String(mi.marchId), arriveSec).catch(function (err) {
+          log.warn('speed up threw. marchId=%s', mi.marchId, err);
+        });
+      }
+    }
     return;
   }
   log.info(
@@ -492,6 +530,115 @@ async function marchPickUp(x, y) {
 }
 
 /**
+ * 当前服务器秒时刻（与拾取行军到达时刻同域，同源 DataCenter.DATA.ServerTime）；探不到回落本地秒。
+ * @returns {number}
+ */
+function serverTimeSec() {
+  var st = dataCenter && dataCenter.ServerTime;
+  if (st != null && +st) return +st;
+  return Date.now() / 1000;
+}
+
+/**
+ * 读某拾取行军当前到达时刻（epoch 秒）：走 march.list({cache:true}) 快照（920 加速后的新到达由常驻 10019 边沿并进快照）。
+ * 快照里已无该行军（到家/移除）回 0。
+ * @param {string} marchIdStr 拾取行军 id（string）
+ * @returns {Promise<number>} 到达 epoch 秒，或 0
+ */
+async function pickupArriveSec(marchIdStr) {
+  var ms = await march.list({ cache: true });
+  for (var i = 0; i < ms.length; i++) {
+    if (ms[i].id === marchIdStr) return ms[i].marchArrive > 0 ? +ms[i].marchArrive : 0;
+  }
+  return 0;
+}
+
+/**
+ * 920 受理后轮询重读该行军到达时刻，直到比 prevArrive 更早（服务器结算加速、经 10019 并进快照）；
+ * 每 ~0.6s 读一次快照，最多等 ~6s。行军消失回 0；窗口内无确认进展回 prevArrive（交调用方停止，防空耗道具）。
+ * @param {string} marchIdStr 拾取行军 id
+ * @param {number} prevArrive 加速前的到达时刻（epoch 秒）
+ * @returns {Promise<number>}
+ */
+async function waitArriveDrop(marchIdStr, prevArrive) {
+  var POLL_MS = 600,
+    DEADLINE_MS = 6000;
+  var end = Date.now() + DEADLINE_MS;
+  while (Date.now() < end) {
+    await new Promise(function (r) {
+      setTimeout(r, POLL_MS);
+    });
+    if (!aliveFn()) return prevArrive;
+    var a = await pickupArriveSec(marchIdStr);
+    if (!(a > 0)) return a; // 行军已从快照消失
+    if (a < prevArrive) return a; // 加速已反映（到达更早）
+  }
+  return prevArrive; // 超时未确认
+}
+
+/**
+ * 对刚派出的泰坦祝福拾取行军**循环**使用加速道具，直到剩余行军时间 ≤ 面板目标秒数（早拿箱/省队列位），或道具耗尽/被拒/到达结算超时即停。
+ * 语义（同花车空投，真机报文 dashcam 20261005T204748 实证）：普通 520001 剩余缩短 25%、高级 520002 缩短 50%；削减对当时剩余逐次生效。
+ * 每拍先核背包：普通一发可达标(remain×0.75≤目标)就用普通（更省），否则用高级逼近；首选缺货回退另一支，两支皆缺即停。
+ * 发一支后等 10019 把新到达并进快照再据剩余判下一支，绝不盲连发。收敛护栏：单次拾取最多连发 MAX_SHOTS 支。
+ * fire-and-forget：内部异常由调用侧 catch，绝不影响领取主流程。
+ * @param {string} marchIdStr 拾取行军 id（902 应答 marchInfo.marchId，string 防 Int64）
+ * @param {number} arriveSec 该行军当前段到达时刻（服务器 epoch 秒）
+ */
+async function maybeAccelerate(marchIdStr, arriveSec) {
+  if (!accelEnabled) return; // 面板未勾选「启用行军加速」：不消耗任何道具
+  var target = accelTargetSec | 0;
+  if (target <= 0) return;
+  var normal = march.ITEM_SPEED_UP_NORMAL,
+    advanced = march.ITEM_SPEED_UP_ADVANCED;
+  var arrive = arriveSec;
+  var applied = 0;
+  var MAX_SHOTS = 15;
+  for (var shot = 0; shot < MAX_SHOTS; shot++) {
+    if (!aliveFn()) break;
+    if (!(arrive > 0)) break;
+    var remain = arrive - serverTimeSec();
+    if (!(remain > target)) break; // 已达标 / 时刻无效（NaN/非正）：停
+    var prefer = remain * 0.75 <= target ? normal : advanced; // 普通一发可达标就用普通（更省），否则高级逼近
+    var other = prefer === normal ? advanced : normal;
+    var itemId = item.amount(prefer) > 0 ? prefer : item.amount(other) > 0 ? other : 0;
+    if (!itemId) {
+      log.debug(
+        'no speed-up item left, stop accel. marchId=%s;remain=%ds;target=%ds',
+        marchIdStr,
+        Math.round(remain),
+        target,
+      );
+      break;
+    }
+    var ret = await march.speedUp(marchIdStr, { itemId: itemId });
+    if (!ret || !ret.ok) {
+      log.info(
+        'speed up rejected, stop. marchId=%s;itemId=%d;code=%d',
+        marchIdStr,
+        itemId,
+        ret && ret.code,
+      );
+      break;
+    }
+    applied++;
+    log.info(
+      'speed up pickup march. marchId=%s;itemId=%d;remain=%ds;after~=%ds;target=%ds;shot=%d',
+      marchIdStr,
+      itemId,
+      Math.round(remain),
+      Math.round(remain * (itemId === advanced ? 0.5 : 0.75)),
+      target,
+      applied,
+    );
+    var newArrive = await waitArriveDrop(marchIdStr, arrive);
+    if (!(newArrive > 0)) break; // 行军消失
+    if (newArrive >= arrive) break; // 未确认到新到达提前：停，防空耗
+    arrive = newArrive;
+  }
+}
+
+/**
  * 安装：只依赖 promise 封装 pocketcc.net（send/sendPBV2/Ret 缺一即不合格）
  * @param {object} ctx reactor 上下文
  * @returns {boolean}
@@ -509,6 +656,10 @@ function install(ctx) {
     missing.push('pocketcc.net');
     net = null;
   }
+
+  // 行军加速读服务器秒时刻需要 DataCenter.DATA（symbols 已声明；取不到仅让 serverTimeSec 回落本地秒，不阻断激活）
+  var mods = game.requireAll(['DataCenter']);
+  dataCenter = (mods.DataCenter && mods.DataCenter.DATA) || null;
 
   if (missing.length) {
     net = null;
@@ -564,11 +715,33 @@ reactor.register({
   places: ['base', 'world'],
   kinds: ['homeland'],
   offInCombat: true,
-  defaults: { enabled: false },
-  fields: [],
-  // 消费间隔不在面板配置，固定回内置常量
-  toModuleCfg: function () {
-    return { consumeInterval: CONSUME_INTERVAL_MS };
+  defaults: { enabled: false, accelEnabled: false, accelTargetSec: 0 },
+  fields: [
+    {
+      // 泰坦祝福已提为独立 feature 卡片：卡片主体默认收起（点标题行展开），“行军加速”段不再自带折叠，避免双层折叠
+      key: 'accelEnabled',
+      type: 'checkbox',
+      label: '启用行军加速',
+      section: '行军加速',
+    },
+    {
+      key: 'accelTargetSec',
+      type: 'number',
+      label: '加速至剩余(秒)',
+      min: 0,
+      step: 1,
+      section: '行军加速',
+      // 行内轻提示：循环对拾取行军用加速道具直到剩余 ≤ N 秒（每支前先核背包、普通可达就优先普通）；0=不加速。
+      placeholder: '0=不加速；>0 循环加速至剩余≤此秒',
+    },
+  ],
+  // 消费间隔固定回内置常量；行军加速开关与目标秒数透传给模块
+  toModuleCfg: function (c) {
+    return {
+      consumeInterval: CONSUME_INTERVAL_MS,
+      accelEnabled: !!(c && c.accelEnabled),
+      accelTargetSec: (c && +c.accelTargetSec) > 0 ? +c.accelTargetSec | 0 : 0,
+    };
   },
   install: install,
   configure: configure,
