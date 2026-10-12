@@ -355,7 +355,10 @@ async function donateScience(sc) {
       );
       // 服务端回 addPoint==0：今日荣誉已封顶（正常捐一枚 addPoint=50），再捐只烧金币不出荣誉。
       // 记当日封顶使两链停捐并跳出循环，从根上消除“大池逐枚连捐 + 荣誉门失效”的刷屏。
-      if (addPt === 0) {
+      // **例外**：sid 10900（联盟建筑捐赠）只加建筑经验、不计个人每日荣誉，服务端恒回 addPoint=0
+      // （实证：同刻 11300 仍 addPoint=50、荣誉 650/3000 远未封顶），它不是封顶信号；
+      // 若据此置 honorCappedDay，会只要当轮目标恰为 10900 就把科技+遗迹两链误停整天。
+      if (addPt === 0 && target.id !== SID_BUILDING_DONATE) {
         honorCappedDay = dayKey();
         log.info('science: honor capped by server (addPoint=0). stop donating for today.');
         break;

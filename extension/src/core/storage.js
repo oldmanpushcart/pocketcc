@@ -16,6 +16,24 @@ const seq = { n: 0 };
 const pending = new Map();
 /** @type {string|null} 键前缀（'pocketcc.u{uid}.'）；未设时写不碰存储层、读直接报错 */
 let ns = null;
+/**
+ * 扩展上下文是否已失效（用户在 chrome://extensions 重载/更新/停用扩展后置真，MV3 下单向不可逆）。
+ * 一旦置位，本实例的每笔 chrome.* 调用都会抛 'Extension context invalidated'：
+ *   - 首笔撞上时在回执里识别并降级为一条 info，此后完全静默；
+ *   - call() 直接短路——写丢弃、读回 undefined，且**不 reject**。
+ * 不 reject 是关键：warn 刷屏来自各 feat 自己的 .catch(log.warn)，只有让它不触发才能全局收口。
+ * 空快照固化在本实例无害：上下文失效后不可能再落盘，页面刷新即整份重建。
+ */
+let contextInvalidated = false;
+
+/** 置位上下文失效标志并只打一条 info（幂等，重复调用不再告警） */
+function markContextInvalidated() {
+  if (contextInvalidated) return;
+  contextInvalidated = true;
+  log.info(
+    'extension context invalidated: 本实例所属扩展已被重载，后续存储写入一律丢弃、读取回空，不再逐条报错；请刷新页面（Ctrl+F5）重新挂载。',
+  );
+}
 
 window.addEventListener('message', (event) => {
   if (event.source !== window) return;
@@ -24,8 +42,15 @@ window.addEventListener('message', (event) => {
   const entry = pending.get(msg.id);
   if (!entry) return;
   pending.delete(msg.id);
-  if (msg.error) entry.reject(new Error(msg.error));
-  else entry.resolve(msg.result);
+  if (msg.error) {
+    // MV3 扩展重载后本实例上下文永久失效：降级为一条 info、resolve 空值，绝不 reject 免得各 feat 各自刷 warn
+    if (String(msg.error).indexOf('Extension context invalidated') !== -1) {
+      markContextInvalidated();
+      entry.resolve(undefined);
+    } else {
+      entry.reject(new Error(msg.error));
+    }
+  } else entry.resolve(msg.result);
 });
 
 /**
@@ -64,6 +89,8 @@ export function getNamespace() {
  * @returns {Promise<*>} 操作结果（前缀未设时写丢弃、读 reject）
  */
 function call(op, key, value, raw) {
+  // 上下文已失效：不再打扰 bridge（发了也必抛错），直接短路——写丢弃、读回空，且返回 resolved 以免下游 catch 刷屏
+  if (contextInvalidated) return op === 'get' ? Promise.resolve(undefined) : Promise.resolve();
   let fullKey;
   if (raw) {
     fullKey = key;

@@ -3,6 +3,12 @@
 import { NS } from './core/constants.js';
 
 (() => {
+  // 幂等守卫：同一 world 内 bridge 的 message 监听只允许绑定一次。
+  // 陈旧实例与新注入并存时（场景③），两份监听会对同一条 main->bridge 各回一份同 id 的 bridge->main，
+  // 造成 storage.js 侧 resolve/reject 竞态（往往是失效上下文那份先到 → 误报）；命中守卫即直接返回，不再叠加监听。
+  if (window.__pocketccBridgeInited) return;
+  window.__pocketccBridgeInited = true;
+
   /**
    * 存储代理：只认本命名空间且 dir='main->bridge' 的消息，按 op 分发到 chrome.storage.local，
    * 结果带同 id 以 dir='bridge->main' 回发（get 回值，set/remove 回 true；异常回 error 字符串）
