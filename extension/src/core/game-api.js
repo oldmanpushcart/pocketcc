@@ -4,7 +4,7 @@
  * 只改这一个文件；上层业务（feats/*、core/ui.js）只依赖能力 API，不感知符号名。
  *
  * 耦合分层立场（解耦重构的依据）：
- *   - 线路格式知识（llm 字段、ChatShareLinkType、消息模板规则）→ feats/chat/classify.js
+ *   - 线路格式知识（llm 字段、ChatShareLinkType、消息模板规则）→ feats/system/chat/classify.js
  *     纯函数层。属服务器↔客户端契约，变化极少，带源码锚点，不算病态耦合；
  *   - 运行时符号知识（本文件）→ 游戏 bundle 实现细节，随版本漂移。收敛于此，
  *     惰性探测 + 缓存 + 失败一次性 warn，使漂移可观测、修复单点化。
@@ -1947,7 +1947,7 @@ export const gameData = {
     return out;
   },
 
-  // ─────────────────────── 遗迹奖励领取（只读，供 feats/daily/relic-reward.js） ───────────────────────
+  // ─────────────────────── 遗迹奖励领取（只读，供 feats/alliance/relic-reward.js） ───────────────────────
   /**
    * 奖励配置 id → 道具清单（只读，经 RewardController.Instance.getRewardsArrById 实时解析，与游戏面板同源）。
    * RewardController 是 ES 命名空间具名导出（exports.RewardController=类，无 .default），故不能 ns() 解包；

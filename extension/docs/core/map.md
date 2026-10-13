@@ -11,13 +11,13 @@
 - **三系坐标互转**（原 `feats/map/coord.js` 整体迁入）：`gameToCell`/`cellToGame`/`cellToDisplay`/`displayToCell`/`cellToIndex`/`indexToCell`/`inGameBounds`/`inCellBounds`。game=服务器 tileX/tileY（奇偶行错排），cell=紧凑网格索引，display=等距像素（Cocos）。
 - **只读查询（唯一发入口）**：`fetchWindow(net, x, y, opts)` —— 单窗 901「构造请求体→发送→归一应答→回吐 pointList」公共骨架，永不 reject；`pickSub(p, subs, keys)` —— 901 点位跨 p/b/r/t/m 子对象兜底取字段。
 
-**明确不管**（都是「全局地图」这个 feat 的私货，不是底座真相，留 `feats/map/map-meta.js`）：
+**明确不管**（都是「全局地图」这个 feat 的私货，不是底座真相，留 `feats/system/map/map-meta.js`）：
 
 - **扫描块网格调参** `SCAN_GRID`（7×13 定标，绑 viewLevel=1）；
 - **筛选树/图例配色** `FILTER_TREE` 家族（`SUB_MAP`/`ALL_SUB_KEYS`/`CAT_MAP`/`POINT_GROUPS`）；
 - **渲染样式** `GRID_STYLE`/`TERRAIN_COLORS`、**面板默认值** `DEFAULTS`；
 - **归属过滤谓词** `classifyPoint`/`playerPass`（依赖 feat 上下文 selfAid/selfServer）。
-- **视图/玩法引擎**全部留 `feats/map`：`scanner`（全图逐块 drain 扫描，自带发包节律，**不迁** `fetchWindow`）、`store`/`render`/`terrain`/`map-overlay`/`global-map`。
+- **视图/玩法引擎**全部留 `feats/system/map`：`scanner`（全图逐块 drain 扫描，自带发包节律，**不迁** `fetchWindow`）、`store`/`render`/`terrain`/`map-overlay`/`global-map`。
 
 **对外契约**：常量与坐标转换均为纯函数、无副作用、同步；`fetchWindow` 是唯一异步发入口，只读 901、不改写游戏任何状态，永不 reject。
 
@@ -25,7 +25,7 @@
 
 **核心动机——解「core 不回引 feats」死结**：下沉前 `map-meta.js` 混装了两类真相——约 60% 是跨 feat 复用的协议事实（瓦片/尺寸/pointType 字典/901 命令号），约 40% 是 global-map 面板私货（筛选树/配色/默认值）。由此派生两处坏味道：
 
-1. **defense.js 手抄副本**：`core/defense.js` 因「core 不得反向依赖 feats」铁律，无法引 `feats/map/map-meta.js`，只好手抄 `WORLD_BOUNDS {816,952}`（注释自证）、`RELOC_VIEW`、`pickSub`。下沉后 `WORLD_BOUNDS` 直接派生自 `SERVER.gameXMax/gameYMax`，`pickSub` 改引本模块，副本消除。
+1. **defense.js 手抄副本**：`core/defense.js` 因「core 不得反向依赖 feats」铁律，无法引 `feats/system/map/map-meta.js`，只好手抄 `WORLD_BOUNDS {816,952}`（注释自证）、`RELOC_VIEW`、`pickSub`。下沉后 `WORLD_BOUNDS` 直接派生自 `SERVER.gameXMax/gameYMax`，`pickSub` 改引本模块，副本消除。
 2. **跨 feat 违规 import**：`auto-farm` / `imperial-decree` 直接 `import { CMD_GET_WORLD_INFO } from '../map/map-meta.js'`，触发 `feat-not-depend-on-other-feat` 架构规则的豁免基线。下沉后二者改引 `core/map.js`，`.dependency-cruiser.cjs` 的 map-meta 豁免删除，规则回到无豁免 error。
 
 **取舍：为什么不把 SCAN_GRID/FILTER_TREE 也下沉**——那些是「全局地图 feat 想怎么展示」的私货，换一种 UI 就会变，不是服务器契约。底座只沉淀「地图本身是什么样」的真相。
@@ -100,7 +100,7 @@ fetchWindow: body{x,y,k,width,height,marchInfo,viewLevel}
 ## 6. 坑与边界
 
 - **k（服号）必须是 `UserData.ServerId|0`**：`viewServerId()` 在 Home 场景返回 -1，`Number(-1)||0` 仍是 -1，发出 k=-1 → 服务端判非法、应答无 pointList（实证 status=3 / `world_130512`）。非正数应跳过发包。
-- **901 请求 `(x,y)` 是回点区「中心」非左上角**：全图逐块扫描须按**块中心**发请求，否则漏扫最右列/最下行（该逻辑在 `feats/map/scanner.js`，本模块只提供单窗骨架）。
+- **901 请求 `(x,y)` 是回点区「中心」非左上角**：全图逐块扫描须按**块中心**发请求，否则漏扫最右列/最下行（该逻辑在 `feats/system/map/scanner.js`，本模块只提供单窗骨架）。
 - **Int64 精度**：塔 id 等大整数从 901 取回须 `String()` 承载，防 `number` 截断。
 - **迁城占用集留 defense**：那是「迁城哪些点算阻塞」的业务判据，非地图真相，不下沉。口径为「除自己主城外一切实体 footprint 均占位」，仅 `isKVK()` 时豁免权威可覆盖集 `RELOC_KVK_COVERABLE`（难民营18/世界宝藏26/野怪73/集结怪74/雷达宝藏75/国度76/援助77）——对齐 extracted `checkIsPlainTile` 的 `isKVK() && judgeTileIfCanCover(p)`，标准本服图这些点同样阻塞落点。（插件侧调用的不是游戏符号而是 `worldState.matchesKind(['kvk'])`——两者同走 `eightServerType` 形态位（整季为真），语义一致。）
 - **窗口默认 20×20/viewLevel1/marchInfo=false**：仅够单点探针；覆盖搜索带须显式传大窗 opts。

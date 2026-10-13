@@ -9,9 +9,9 @@
  * 分批防卡帧：cols×rows 逐格算噪声，用 requestAnimationFrame 每帧铺若干行；生成结果整体缓存，
  * mapType/尺寸不变不重建。
  */
-import { createLog } from '../../core/log.js';
-import { worldMap } from '../../core/game-api.js';
-import { SERVER } from '../../core/map.js';
+import { createLog } from '../../../core/log.js';
+import { worldMap } from '../../../core/game-api.js';
+import { SERVER } from '../../../core/map.js';
 import { TERRAIN_COLORS } from './map-meta.js';
 
 /** @type {ReturnType<createLog>} 模块日志器（tag=TERRAIN） */

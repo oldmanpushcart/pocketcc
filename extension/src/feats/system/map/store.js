@@ -17,9 +17,9 @@
  * 铁律沿用 core/storage.js 的教训：**读回未完成 ≠ 盘上没数据**——索引未 indexLoaded 前一律拒绝落盘，
  * 否则拿空内存写回会把盘上已有桶覆掉。
  */
-import { createLog } from '../../core/log.js';
-import { storage } from '../../core/storage.js';
-import { SERVER, cellToIndex } from '../../core/map.js';
+import { createLog } from '../../../core/log.js';
+import { storage } from '../../../core/storage.js';
+import { SERVER, cellToIndex } from '../../../core/map.js';
 
 /** @type {ReturnType<createLog>} 模块日志器（tag=MAPSTORE） */
 const log = createLog('MAPSTORE');

@@ -104,15 +104,20 @@ extension/
    │  │                     consts/dom/icon-pos/panel-css/icon-svg 为零依赖叶子原语
    │  ├─ log.js             统一日志 [POCKETCC://MODULE]
    │  └─ constants.js       两 world postMessage 协议命名空间
-   └─ feats/                功能模块（目录层级对齐面板类别，均向 reactor 注册说明书）
-      ├─ daily/             日常设置：floatcar / titan-blessing / alliance-help / domain-treasure /
-      │                     launch-silo / sea-treasure / alliance-gift / alliance-science / auto-farm /
-      │                     city-skill / player-like / relic-reward / alliance-rally / alliance-boss /
-      │                     mine-cave/ / source-of-war/
-      ├─ battle/            战斗设置：quick-attack（快捷战斗）/ imperial-decree（奉旨出征）
-      ├─ map/               地图设置：global-map（+ coord / render / scanner / store / terrain / map-overlay / map-meta）
-      ├─ chat/              聊天窗口：chat-window / chat-overlay / classify
-      └─ hotkey/            游戏内快捷键行为：fly-home / scene-toggle / open-bag / close-popup / battle-panel / aux-docs
+   └─ feats/                功能模块（目录层级对齐面板菜单树五类别，均向 reactor 注册说明书）
+      ├─ player/            玩家设置：daily-supply / armory-material / secret-weapon-drop / one-click-claim /
+      │                     player-like / source-of-war/ / truck-intercept / auto-farm / auto-hunt /
+      │                     fear-star-rally / mine-cave/ / beast-breed / city-skill
+      ├─ alliance/          联盟设置：alliance-help / alliance-gift / alliance-science / alliance-behemoth /
+      │                     alliance-rally / alliance-boss / relic-reward
+      ├─ activity/          活动设置：sea-treasure / mecha-treasure / domain-treasure / titan-blessing /
+      │                     floatcar / launch-silo / secret-realm/
+      ├─ battle/            战斗设置：quick-attack（快捷战斗）/ imperial-decree（奉旨出征）/ auto-defense（自动防御）
+      └─ system/            系统设置
+         ├─ chat/           聊天窗口：chat-window / chat-overlay / classify
+         ├─ map/            全局地图与镜头跳转：global-map（+ render / scanner / store / terrain / map-overlay / map-meta）/
+         │                  quick-jump（+ jump-overlay）
+         └─ hotkey/         游戏内快捷键行为：fly-home / scene-toggle / open-bag / close-popup / battle-panel / aux-docs
 ```
 
 ## 构建与安装
@@ -133,11 +138,12 @@ npm run build     # 或 npm run watch（三入口并行监听）
 
 ## 使用
 
-- 游戏页右下角浮动图标（可拖拽，位置记忆）；点开为左 TAB + 右卡片面板，四个类别：
-  - **日常设置** — 「日常任务」组（花车空投 / 泰坦祝福 / 联盟帮助 / 领域寻宝 / 占领发射井 / 海上夺宝 / 联盟礼物 / 联盟科技，只出勾选）；联盟集结、战争之源、联盟机甲、城市技能、玩家点赞、次元矿洞、自动下田、遗迹奖励各自为独立卡片（可展开详细参数）。
-  - **战斗设置** — 快捷战斗、奉旨出征。
-  - **地图设置** — 全局地图。
-  - **系统设置** — 聊天窗口、自动重连、网络日志、事件日志、报文录制，以及只读的「快捷键一览」。
+- 游戏页右下角浮动图标（可拖拽，位置记忆）；点开为左 TAB + 右卡片面板，五个类别（与 feats/ 目录层级 1:1）：
+  - **玩家设置** — 「基础设置」组（每日补给 / 军火库生产材料 / 秘密武器空投 / 一键领取，只出勾选）；玩家点赞、战争之源、卡车争夺、自动下田、自动打野、惧星集结、次元矿洞、异能兽培育、城市技能各自为独立卡片（可展开详细参数）。
+  - **联盟设置** — 「基础设置」组（联盟帮助 / 联盟礼物 / 联盟科技 / 联盟守卫）；联盟集结、联盟机甲、遗迹奖励为独立卡片。
+  - **活动设置** — 「基础设置」组（海上夺宝 / 重装母舰 / 领域寻宝）；泰坦祝福、花车空投、占领发射井、异能秘境为独立卡片。
+  - **战斗设置** — 快捷战斗、奉旨出征、自动防御。
+  - **系统设置** — 聊天窗口、全局地图、镜头跳转、自动重连、网络日志、事件日志、报文录制，以及只读的「快捷键一览」。
 - 组开关是主闸门：关掉整组即停用全部子项，重新打开恢复各子项之前的勾选（意图存 `intentEnabled`，不丢失）；子项仍可单独勾选。改动即存即生效。新功能默认关闭（不未经同意发游戏包），自动重连默认开启。
 - 只出 checkbox 的功能（日常任务各项、快捷战斗）不展示详细参数，也就不把这些参数写入 local，一律用 descriptor 默认值（只持久化启用/意图两个开关态）；展示字段的功能（联盟集结、次元矿洞、自动重连等）才全量持久化。
 - 面板顶部「战斗模式」为全局开关（或热键 `F8` 直接切换日常/战斗）：开启后派行军类功能挂起、图标转红热态；关闭即恢复并补扫一轮。

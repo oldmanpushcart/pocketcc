@@ -11,9 +11,9 @@
  * 门控分档（可行性报告 §7.2：C 档）：基地↔大地图这对导航与「在哪一种场景」无关（人在跨服图也要能回城），
  * 只按 Place 收口；战斗演出/转场/征服者球体里这两张图都不在，不生效也不抢键。
  */
-import { createLog } from '../../core/log.js';
-import { bind } from '../../core/hotkeys.js';
-import { scene } from '../../core/game-api.js';
+import { createLog } from '../../../core/log.js';
+import { bind } from '../../../core/hotkeys.js';
+import { scene } from '../../../core/game-api.js';
 
 /** @type {ReturnType<createLog>} 模块日志器（tag=SCENE_TOGGLE） */
 const log = createLog('SCENE_TOGGLE');

@@ -14,6 +14,8 @@
  *      惧星只能「搜到才能打」，且 906 每搜一次即 +1 thorSearchNum（服务端计数），故本 feat 严格「先判可派再搜」，不为打不掉的点白烧配额。
  *   ② 同一时间只允许一个「我发起的」惧星在集结+行军（直到打完当前这只，游戏才派下一只）：按发起应答的 marchId 认领在途锁 fearStarOut，
  *      打完/从 856 行军列表消失即解锁；加入别人的惧星集结（成员行军）不计入、不受此限（行军队列不限制），故不认领、不阻塞。
+ *      「见到过」(confirmed) 只靠 10019 边沿复播 + 行军快照补认，不靠 856 轮询采样：本 feat 派完即转 idle 长睡，
+ *      下一次 856 采样通常落在到家之后（856 只回在途行军，返程/到家条目不再下发），存活期根本没有采样点。
  *
  * 打法与协议（报文实证 dashcam 20261011T183821-发起攻打野怪 / 20261011T183114-发起攻打黑暗军团据点集结 / 20261003T023731）：
  *   搜惧星 906 WORLD_SEARCH_MONSTER —— req {minLevel,maxLevel,groupType:9100,pointType:9}；resp {point:{x,y,...}}，服务端直接回一个可打点（视口无关，Home 可跑）。
@@ -74,7 +76,11 @@ const STAMINA_TYPE = 1;
  */
 const ERR_RATE_LIMIT = 'march_time_control_info001';
 
-/** @type {number} 发起后迟迟没在行军列表见到该 marchId 的兑底解锁超时（毫秒）：防应答丢 id / 列表同步异常导致永久占锁 */
+/**
+ * @type {number} 发起后迟迟没「确认见过该 marchId」的兑底解锁超时（毫秒）：防应答丢 id / 列表同步异常导致永久占锁。
+ * 确认通道是 10019 边沿复播 + 行军快照（见 onFearStarMarchEdge / probeConfirmed），不依赖 856 轮询采样点，
+ * 故正常「派出去→打完回家」不会走到这条兑底；真走到即「发出去了却全程没见过这条行军」，属异常，保留 warn。
+ */
 const FEAR_STAR_SYNC_TIMEOUT = 30000;
 
 /** @type {number} 面板预填的等级下界（区间由用户自填，本 feat 不猜具体档位） */
@@ -244,9 +250,10 @@ async function refreshFearStarCount() {
 }
 
 /**
- * 刷新「我发起的在途惧星」单飞锁 fearStarOut（隐性规则：自发起的惧星同一时间只允许一只在集结+行军）。
- * 按发起应答的 marchId 在 856 本人行军列表里认领：见到且仍占用 → 保持锁；见到且已返程/到家（打完）或确认后从列表消失 → 解锁；
- * 尚未在列表出现（刚发未同步）→ 保持锁直到 FEAR_STAR_SYNC_TIMEOUT 兑底解锁（防应答丢 id / 同步异常导致永久占位）。
+ * 刷新「我发起的在途惧星」单飞锁 fearStarOut（隐性规则：我发起的惧星同一时间只允许一只在集结+行军）。
+ * 按发起应答的 marchId 在 856 本人行军列表里认领：见到且仍占用 → 保持锁；见到且已返程/到家（打完）或确认见过后从列表消失 → 解锁；
+ * 从未见过 → 保持锁直到 FEAR_STAR_SYNC_TIMEOUT 兑底解锁（防应答丢 id / 同步异常导致永久占位）。
+ * 「见过」由 10019 边沿（onFearStarMarchEdge）与发起即快照补认（probeConfirmed）维护，本函数只做兜底复核。
  * 加入别人的惧星集结产生的成员行军不在此锁范围内（不认领、不计数），故不会挡住本 feat 自发起下一只。
  * @param {object[]} marches march.list() 结果
  */
@@ -272,6 +279,25 @@ function syncSelfFearStar(marches) {
     );
     fearStarOut = null;
   }
+}
+
+/**
+ * 置锁后拿一次行军快照补认「这条行军确实存在」：march.js 对每条 10019 都 upsert 快照（不只边沿才复播），
+ * 而首条推送往往早于发起应答落地（报文实证 20261011T183821：push 行 286 先于 resp 行 288），
+ * 所以光靠边沿复播会漏认。命中即 confirmed=true；未命中不作判（行军可能尚未入快照）。
+ * 稳态走内存快照，零额外网络；快照过期时由 march.js 自行打一次 856 重播种。永不抛错。
+ * @param {string} id 发起应答里的 marchId
+ */
+function probeConfirmed(id) {
+  march.list({ cache: true }).then(function (ms) {
+    if (!fearStarOut || fearStarOut.id !== id) return; // 锁已释放/已换下一只 → 结果作废
+    for (var i = 0; i < ms.length; i++) {
+      if (ms[i].id === id) {
+        fearStarOut.confirmed = true;
+        break;
+      }
+    }
+  });
 }
 
 /** @type {boolean} 上轮 cyclePass 是否因「今日攻打次数已达上限」而收手（游戏每日 0 点刷新次数 → 供 cycleRun 睡向下个 0 点） */
@@ -442,6 +468,7 @@ async function cyclePass() {
     var d = parseData(ret.data) || {};
     var mid = d.marchInfo && d.marchInfo.marchId != null ? String(d.marchInfo.marchId) : '';
     fearStarOut = { id: mid, confirmed: false, since: Date.now() };
+    if (mid) probeConfirmed(mid); // 首条 10019 可能已早于本应答落地 → 快照补认，免误走 30s 兑底告警
     backlogActive = false; // 已锁定在途，等打完唤醒
     log.info('fear-star %s ok. x=%d y=%d marchId=%s', seg.label, cand.x, cand.y, mid || '(no-id)');
   } else {
@@ -506,18 +533,23 @@ function pushWake() {
   cycle.kick();
 }
 
-/** @type {Function|null} march.onHomeReturn 退订句柄（防 resume 重激活重复注册） */
-var offHomeReturn = null;
+/** @type {Function|null} march.onStateChange 退订句柄（防 resume 重激活重复注册） */
+var offMarchEdge = null;
 
 /**
- * 行军到家（10019 复播）→ 名额释放 + 单飞解锁 → 唤醒补派。
- * 只认惧星类行军（marchType 5 单打 / 8 集结主）回城；延迟 1.5s 给英雄释放推送落地（同 auto-hunt）。
+ * 10019 状态边沿（march.js 全局单点复播）：一峰二用。
+ * ① 单飞锁确认：只要见到「我发起的那条」（id 完全匹配）就置 confirmed，令后续从列表消失走「静默定稿」而非 30s 兑底告警；
+ *   不做提前解锁（释放仍由 syncSelfFearStar 统一判，保持单一释放口径）。
+ * ② 到家唤醒：只认惧星类行军（marchType 5 单打 / 8 集结主）回城 → 名额释放 → 延迟 1.5s 给英雄释放推送落地后唤醒补派（同 auto-hunt）。
  * @param {object} m 归一化 March
  */
-function onFearStarMarchHome(m) {
+function onFearStarMarchEdge(m) {
   if (!aliveFn()) return;
+  if (m && fearStarOut && !fearStarOut.confirmed && m.id === fearStarOut.id)
+    fearStarOut.confirmed = true;
   var mt = m && m.type | 0;
   if (mt !== MT_ATTACK && mt !== MT_RALLY) return;
+  if (m.state !== march.State.ARRIVED_HOME) return; // onStateChange 未带 to 过滤，回家判据在此自过滤
   setTimeout(function () {
     if (aliveFn()) pushWake();
   }, 1500);
@@ -576,19 +608,19 @@ function run(ctx) {
   fearStar = { searchNum: 0, cap: 0, loaded: false };
   fearStarOut = null;
   ctx.on.push(PUSH_ENERGY, onEnergyPush);
-  if (offHomeReturn) offHomeReturn(); // 先退再挂，防 resume 重激活重复注册
-  offHomeReturn = march.onHomeReturn(onFearStarMarchHome);
+  if (offMarchEdge) offMarchEdge(); // 先退再挂，防 resume 重激活重复注册
+  offMarchEdge = march.onStateChange(onFearStarMarchEdge);
   log.info('started. mode=%s presets=%d', MCFG.mode, MCFG.presets.length);
   cycle.kick();
 }
 
 /**
- * 停用：收 march.onHomeReturn 常驻复播句柄（非 ctx 级、框架不代退）；cycle 靠 alive() 自然停摆，无需显式收定时器。
+ * 停用：收 march.onStateChange 常驻复播句柄（非 ctx 级、框架不代退）；cycle 靠 alive() 自然停摆，无需显式收定时器。
  */
 function pause() {
-  if (offHomeReturn) {
-    offHomeReturn();
-    offHomeReturn = null;
+  if (offMarchEdge) {
+    offMarchEdge();
+    offMarchEdge = null;
   }
 }
 

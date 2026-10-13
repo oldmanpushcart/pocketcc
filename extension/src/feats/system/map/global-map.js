@@ -14,11 +14,11 @@
  *   浮层本身是辅助 UI，install 不受门控、可在任意场景展示已存数据；扫描动作另用 ctx.alive() 兜一道。
  * 红线：只发 901 拉数据 + 只调游戏原生导航（nav.flyTo），不改写游戏本地数据。
  */
-import { createLog } from '../../core/log.js';
-import { reactor } from '../../core/reactor.js';
-import { storage } from '../../core/storage.js';
-import { worldMap, gameData } from '../../core/game-api.js';
-import { SERVER } from '../../core/map.js';
+import { createLog } from '../../../core/log.js';
+import { reactor } from '../../../core/reactor.js';
+import { storage } from '../../../core/storage.js';
+import { worldMap, gameData } from '../../../core/game-api.js';
+import { SERVER } from '../../../core/map.js';
 import { MapOverlay } from './map-overlay.js';
 import { mapStore } from './store.js';
 import { getTerrainBase } from './terrain.js';

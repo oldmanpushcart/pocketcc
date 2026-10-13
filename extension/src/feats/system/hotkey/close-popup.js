@@ -11,9 +11,9 @@
  * 门控分档（可行性报告 §7.2：C 档）：关弹窗与「在哪一种场景」无关（跨服图里照样有弹窗要关），
  * 只按 Place 收口——基地/别人基地/大地图可用；战斗演出、转场、征服者球体里弹窗体系不在场，不生效也不抢键。
  */
-import { createLog } from '../../core/log.js';
-import { bind } from '../../core/hotkeys.js';
-import { ui } from '../../core/game-api.js';
+import { createLog } from '../../../core/log.js';
+import { bind } from '../../../core/hotkeys.js';
+import { ui } from '../../../core/game-api.js';
 
 /** @type {ReturnType<createLog>} 模块日志器（tag=CLOSE_POPUP） */
 const log = createLog('CLOSE_POPUP');

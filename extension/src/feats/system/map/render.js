@@ -10,9 +10,9 @@
  * 布局口径：正交 cell 网格（每 cell 一方格），非等距菱形——色块抽象图够用且点击命中零歧义；
  * 跳转所需 game 坐标由 coord.cellToGame 精确给出，与本布局是否等距无关。
  */
-import { createLog } from '../../core/log.js';
-import { nav } from '../../core/game-api.js';
-import { SERVER, CELL_ASPECT, cellToGame } from '../../core/map.js';
+import { createLog } from '../../../core/log.js';
+import { nav } from '../../../core/game-api.js';
+import { SERVER, CELL_ASPECT, cellToGame } from '../../../core/map.js';
 import { SCAN_GRID, classifyPoint, playerPass, GRID_STYLE } from './map-meta.js';
 
 /** @type {ReturnType<createLog>} 模块日志器（tag=MAPRENDER） */

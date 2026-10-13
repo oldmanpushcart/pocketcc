@@ -16,8 +16,8 @@
  * core/hotkeys.js 注册表统一处理；本文件只声明「绑定（含自定义 match 解 1-8/G）+ 动作」。
  * 属「战斗辅助」，战斗模式下照常生效（热键层不受 mode 门控）。
  */
-import { createLog } from '../../core/log.js';
-import { bind } from '../../core/hotkeys.js';
+import { createLog } from '../../../core/log.js';
+import { bind } from '../../../core/hotkeys.js';
 
 /** @type {ReturnType<createLog>} 模块日志器（tag=BATTLE_HOTKEY） */
 const log = createLog('BATTLE_HOTKEY');

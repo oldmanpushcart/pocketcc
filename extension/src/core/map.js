@@ -6,7 +6,7 @@
  *     大数字/护盾可读串、单窗 901（GET_WORLD_INFO）拉取与子对象兜底取字段。
  *   - 不做「玩法专属」的东西：扫描块网格调参（SCAN_GRID）、筛选树/图例配色（FILTER_TREE 等）、
  *     面板默认值（DEFAULTS）、渲染样式（GRID_STYLE/TERRAIN_COLORS）、归属过滤谓词（classifyPoint/playerPass）
- *     都留在 feats/map/map-meta.js —— 那些是「全局地图」这个 feat 的私货，不是底座真相。
+ *     都留在 feats/system/map/map-meta.js —— 那些是「全局地图」这个 feat 的私货，不是底座真相。
  *   - 只发 901 拉数据（只读查询），不改写游戏任何状态；k（服号）由调用方按 `UserData.ServerId|0` 传入
  *     （实证陷阱：viewServerId() 在 Home 返回 -1，绝不可作 k，见 fetchWindow JSDoc）。
  *

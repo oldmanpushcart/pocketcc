@@ -6,7 +6,7 @@
  * SCAN_GRID 数值来源（实证，见 references/游戏逆向/全局地图知识点归档.md）：
  *   单窗 94×99 被服务器完整受理 59 次：20260930T001240 报文实录；回点窗 x±58.4/y±39.2。
  */
-import { SERVER, CITY_POINT_TYPE } from '../../core/map.js';
+import { SERVER, CITY_POINT_TYPE } from '../../../core/map.js';
 
 /**
  * 扫描网格（定标固定格）：按 901 回点窗实证直接标定，格尺寸≈窗口尺寸，数据严格落在自己格内。

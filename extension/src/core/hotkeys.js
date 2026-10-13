@@ -189,7 +189,7 @@ function sceneOverlap(a, b) {
 }
 
 /**
- * 注册一条热键绑定（各 feats/hotkey/* 模块 import 时调用，早于任何按键）。幂等：同 id 拒绝重复。
+ * 注册一条热键绑定（各 feats/system/hotkey/* 模块 import 时调用，早于任何按键）。幂等：同 id 拒绝重复。
  * 首次注册时挂全局 window 捕获监听。key+场景撞键会 warn（不阻断，方便开发期发现）。
  * @param {HotkeyBinding} binding 绑定声明
  */

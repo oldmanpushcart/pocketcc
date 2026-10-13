@@ -26,7 +26,7 @@
  *   onVisibleChange(visible)                                show/hide 之后
  *   onGeomChange(geom)                                      拖拽/resize 松手后落盘
  */
-import { createLog } from '../../core/log.js';
+import { createLog } from '../../../core/log.js';
 
 /** @type {ReturnType<createLog>} 模块日志器（tag=CHATWIN） */
 const log = createLog('CHATWIN');

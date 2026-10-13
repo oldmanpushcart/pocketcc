@@ -391,10 +391,17 @@ import { getUid } from './player.js';
 
   /**
    * 发坐标分享链接（真机 2026-09-26 实证：同 PostChatMsg，m="link"，llm={t:0, st, p:{x,y,z}, ...} JSON 串）。
+   * 默认按「纯坐标」形态（t=0 + st=6）：位置渲染器 NNewShareLinkPosItem 的两个 switch 都未特化 st=6，
+   *   卡片只留无条件的坐标行「S:服号 X:.. Y:..」、不画任何实体图标；跳转只读 p（+ sMap）。
+   * ⚠ 收侧 parseLink（newChatInfoData.js）对位置卡 t=0（不在特殊类型白名单）硬要求 st/p/s/icon **四者均非空**，
+   *   任一为空即 break、不当链接卡→退化成纯文本 "link"。所以 icon/s 仍需非空（st=6 下不渲染，仅用于过守卫）。
+   *   若要带具体实体卡（基地/资源等），由调用方显式传 st=4 + pid + 头像 icon（或 st=0/3 + 对应 icon）。
    * @param {number} x 世界坐标 x
    * @param {number} y 世界坐标 y
    * @param {object} [opts] 选项：{channel（缺省 world）, uid 私聊目标, z 服号（缺省当前服，可显式指定）,
-   *     st 目标物类型（实测 3=野怪点、4=玩家基地，缺省 4）, s 展示文案, icon, sk 怪名语言键, sMap, llm 整体覆盖载荷对象}
+   *     st 目标物子类型（枚举 0=RES、3=MONSTER、4=PLAYER、6=BATTLE；缺省 6=纯坐标不渲染图标）, s 展示文案（缺省 x,y）,
+   *     icon 展示图标（缺省中性占位，仅过守卫）, sk 怪名语言键, sMap 子图号（缺省 0）,
+   *     pid 目标玩家 UID（仅 st=4 基地卡需要）, llm 整体覆盖载荷对象}
    * @returns {Promise<net.Ret>} 主协议应答
    */
   function sharePos(x, y, opts) {
@@ -404,14 +411,18 @@ import { getUid } from './player.js';
         ? opts.llm
         : {
             t: 0, // 链接子类型：0=位置类
-            st: opts.st != null ? opts.st | 0 : 4, // 目标物类型：3=野怪/资源点，4=玩家基地
+            // st 目标物子类型：默认 6=BATTLE —— 位置渲染器两个 switch 都未特化它，卡片只显坐标行、不画图标（纯坐标分享）；
+            //   若要带实体卡（如基地）由调用方传 st=4 + pid + 头像 icon。
+            st: opts.st != null ? opts.st | 0 : 6,
             p: { x: x | 0, y: y | 0, z: opts.z != null ? opts.z | 0 : getServerId() | 0 },
-            s: opts.s != null ? String(opts.s) : (x | 0) + ',' + (y | 0),
+            sMap: opts.sMap != null ? opts.sMap | 0 : 0, // 子图/语义位：跳转读它作 subMap
+            s: opts.s != null ? String(opts.s) : (x | 0) + ',' + (y | 0), // 仅用于过 parseLink 的 s 非空守卫；st=6 下不渲染
+            // icon 仅用于过 parseLink「st/p/s/icon 四者非空」守卫（t=0 不在特殊白名单）；st=6 不渲染，取值不影响显示
+            icon: opts.icon != null ? String(opts.icon) : 'image/mainui/player_default',
             uts: 1,
           };
-    if (opts.icon != null && payload.icon == null) payload.icon = opts.icon;
     if (opts.sk != null && payload.sk == null) payload.sk = opts.sk;
-    if (opts.sMap != null && payload.sMap == null) payload.sMap = opts.sMap | 0;
+    if (opts.pid != null && payload.pid == null) payload.pid = String(opts.pid);
     var rest = {};
     for (var k in opts)
       if (
@@ -421,7 +432,8 @@ import { getUid } from './player.js';
         k !== 'z' &&
         k !== 'icon' &&
         k !== 'sk' &&
-        k !== 'sMap'
+        k !== 'sMap' &&
+        k !== 'pid'
       )
         rest[k] = opts[k];
     return send('link', Object.assign({ llm: JSON.stringify(payload) }, rest));

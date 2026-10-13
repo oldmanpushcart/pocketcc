@@ -7,10 +7,10 @@
  * 蛇形推进 = 行内向东、隔行反向，逐行向南（与实录走位一致，天然减少相邻窗重叠）。
  * 服号 k：优先用调用方注入值，缺（0）则以首块应答回显的 k 兜底复用（serverId() 取不到时的自愈）。
  */
-import { createLog } from '../../core/log.js';
-import { createDrain } from '../../core/drain.js';
-import { worldMap } from '../../core/game-api.js';
-import { CMD_GET_WORLD_INFO, SERVER } from '../../core/map.js';
+import { createLog } from '../../../core/log.js';
+import { createDrain } from '../../../core/drain.js';
+import { worldMap } from '../../../core/game-api.js';
+import { CMD_GET_WORLD_INFO, SERVER } from '../../../core/map.js';
 import { SCAN_GRID } from './map-meta.js';
 import { mapStore } from './store.js';
 

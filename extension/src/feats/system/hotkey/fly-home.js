@@ -18,9 +18,9 @@
  * 本文件只声明「绑定 + 动作」。TAB 默认会移动 DOM 焦点：坐标取不到时 handler 返回 false（不消费，
  * 让 TAB 走默认焦点移动）；取到则飞行并返回 true（消费，注册表拦截默认行为）。
  */
-import { createLog } from '../../core/log.js';
-import { bind } from '../../core/hotkeys.js';
-import { nav, worldMap, gameData } from '../../core/game-api.js';
+import { createLog } from '../../../core/log.js';
+import { bind } from '../../../core/hotkeys.js';
+import { nav, worldMap, gameData } from '../../../core/game-api.js';
 
 /** @type {ReturnType<createLog>} 模块日志器（tag=FLY_HOME） */
 const log = createLog('FLY_HOME');

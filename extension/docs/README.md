@@ -23,7 +23,7 @@
 > 另见：[`feat-控制模式归类.md`](feat-控制模式归类.md) —— 非单篇 API，而是全 feat「控制结构选型」的单一真相（A/B/C/E 四族归类 + 30 秒决策树 + 逐条重构顺序）。
 >
 > feat 侧协议台账（号段语义 / 闸门常量 / 状态枚举 + 每条判据的实录与反编译出处）也收在本目录，按 feat 一篇：
-> [`异能兽培育.md`](异能兽培育.md)（`src/feats/daily/beast-breed.js`）。
+> [`异能兽培育.md`](异能兽培育.md)（`src/feats/player/beast-breed.js`）。
 
 ## 统一模板（八节）
 

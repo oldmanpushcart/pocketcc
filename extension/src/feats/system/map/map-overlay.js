@@ -1,5 +1,5 @@
 /**
- * 全局地图浮层外壳（Shadow DOM，样式与游戏双向隔离）。照搬 feats/chat/chat-overlay.js 的范式：
+ * 全局地图浮层外壳（Shadow DOM，样式与游戏双向隔离）。照搬 feats/system/chat/chat-overlay.js 的范式：
  * .pcg- 前缀 CSS、毛玻璃 backdrop-filter、position:fixed、标题栏拖拽 + 边/角 resize + 几何落盘回调、
  * 冒泡阶段 stopPropagation 屏蔽游戏输入、z-index 2147483640。本层只负责视图与交互，
  * 扫图/存储/渲染都在业务层（global-map.js）与本模块持有的 MapView 里，通过 handlers 回调面上报用户动作。
@@ -14,9 +14,9 @@
  *   onVisibleChange(visible)    show/hide 之后
  *   onGeomChange(geom)          拖拽/resize 松手后落盘
  */
-import { createLog } from '../../core/log.js';
+import { createLog } from '../../../core/log.js';
 import { MapView } from './render.js';
-import { CITY_POINT_TYPE, shieldText, fmtLargeNum } from '../../core/map.js';
+import { CITY_POINT_TYPE, shieldText, fmtLargeNum } from '../../../core/map.js';
 import { FILTER_TREE, SUB_MAP } from './map-meta.js';
 
 /** @type {ReturnType<createLog>} 模块日志器（tag=MAPOVERLAY） */

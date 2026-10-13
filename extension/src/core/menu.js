@@ -134,6 +134,7 @@ export const MENU = [
     children: [
       { id: 'chatWindow', kind: 'feature', label: '聊天窗口', showFields: true },
       { id: 'globalMap', kind: 'feature', label: '全局地图', showFields: true },
+      { id: 'quickJump', kind: 'feature', label: '镜头跳转', showFields: true },
       { id: 'reconnect', kind: 'feature', label: '自动重连', showFields: true },
       { id: 'netLog', kind: 'feature', label: '网络日志' },
       { id: 'eventLog', kind: 'feature', label: '事件日志' },

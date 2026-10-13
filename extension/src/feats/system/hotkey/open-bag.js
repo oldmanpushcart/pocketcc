@@ -10,9 +10,9 @@
  * 门控分档（可行性报告 §7.2：C 档）：背包与「在哪一种场景」无关（跨服图里照样要开背包），
  * 只按 Place 收口；战斗演出/转场/征服者球体里主界面不在场，不生效也不抢键。
  */
-import { createLog } from '../../core/log.js';
-import { bind } from '../../core/hotkeys.js';
-import { ui } from '../../core/game-api.js';
+import { createLog } from '../../../core/log.js';
+import { bind } from '../../../core/hotkeys.js';
+import { ui } from '../../../core/game-api.js';
 
 /** @type {ReturnType<createLog>} 模块日志器（tag=OPEN_BAG） */
 const log = createLog('OPEN_BAG');

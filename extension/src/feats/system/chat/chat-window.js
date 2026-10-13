@@ -17,11 +17,11 @@
  *   document 冒泡监听在焦点于画布时收不到）。
  * 生命周期：无场景/模式门控（浮层是辅助 UI，全场景可用）；面板 enabled 驱动 install/run。
  */
-import { createLog } from '../../core/log.js';
-import { l10n, nav, gameData, gameConf, bits, avatar } from '../../core/game-api.js';
-import { getUid } from '../../core/player.js';
-import { storage } from '../../core/storage.js';
-import { reactor } from '../../core/reactor.js';
+import { createLog } from '../../../core/log.js';
+import { l10n, nav, gameData, gameConf, bits, avatar } from '../../../core/game-api.js';
+import { getUid } from '../../../core/player.js';
+import { storage } from '../../../core/storage.js';
+import { reactor } from '../../../core/reactor.js';
 import { ChatOverlay, AT_ALL_LABEL } from './chat-overlay.js';
 import { classify, CST_LABEL } from './classify.js';
 
