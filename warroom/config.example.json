@@ -1,0 +1,71 @@
+{
+  "llm": {
+    "baseUrl": "https://api.openai.com/v1",
+    "model": "gpt-4o",
+    "apiKey": "${WARROOM_LLM_AK}"
+  },
+  "oss": {
+    "baseUrl": "https://fight-report.oss-accelerate.aliyuncs.com",
+    "pathTemplate": "/prod/{prefix4}/{reportId}.json"
+  },
+  "storage": {
+    "dataDir": "./data",
+    "dbPath": "./data/warroom.db",
+    "rawDir": "./data/raw",
+    "dictDir": "./data/dicts"
+  },
+  "fetch": {
+    "timeoutMs": 15000,
+    "retries": 2
+  },
+  "dict": {
+    "comment": "CDN 配置表包 + 语言文案包链接（随游戏版本轮换，过期后从游戏 DevTools Network 复制新 URL 重跑 node cli.js dict）。tableUrl 用 DynResVer、localeUrl 用 LangVer，两者独立。",
+    "tableUrl": "https://warcdn.rivergame.net/DynRes/newcfg2/1.5.12631/table/config_optim2_1.5.12631.txt",
+    "localeUrl": "https://warcdn.rivergame.net/DynRes/newcfg2/1.6.4526/locale/zh_cn2_1.6.4526.txt",
+    "xorStep": 6,
+    "tables": [
+      "army",
+      "hero",
+      "hero_skill",
+      "effect_buff",
+      "selection_v2",
+      "item",
+      "data_config",
+      "monster_group",
+      "pve_monster",
+      "building",
+      "science",
+      "skin",
+      "endowment",
+      "formationV2",
+      "hero_equip",
+      "talent",
+      "Mecha_part",
+      "Mecha_chip",
+      "enigma_beast",
+      "enigma_beast_type",
+      "army_equip",
+      "army_equip_suit",
+      "army_equip_buff",
+      "hero_equip_buff_rd",
+      "hero_equip_skill_rd_library",
+      "hero_awakening_skill",
+      "formationV2_level",
+      "formationV2_quality",
+      "formationV2_science",
+      "formationV2_mastery",
+      "formationV2_mastery_buff",
+      "castle_effect",
+      "march_skin",
+      "castle_halo",
+      "dress_headframe",
+      "skin_exhibition",
+      "magic_skin",
+      "enhance_mastery",
+      "cross_treasure_collection",
+      "cross_treasure_collection_level",
+      "decoration_contents",
+      "Mecha_skill"
+    ]
+  }
+}

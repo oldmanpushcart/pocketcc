@@ -9,6 +9,7 @@ export default [
       'node_modules/**',
       'extension/dist/**',
       'dashcam/store/**',
+      'warroom/data/**',
       'references/**',
       '.qoder/**',
     ],
@@ -52,9 +53,9 @@ export default [
     },
   },
 
-  // ---- Node 侧：dashcam 服务（ESM）与构建脚本 ----
+  // ---- Node 侧：dashcam / warroom 服务（ESM）与构建脚本 ----
   {
-    files: ['dashcam/**/*.js', 'esbuild.config.mjs'],
+    files: ['dashcam/**/*.js', 'warroom/**/*.js', 'esbuild.config.mjs'],
     languageOptions: {
       ecmaVersion: 2024,
       sourceType: 'module',
@@ -64,7 +65,7 @@ export default [
 
   // ---- sonarjs 精选：只取对单人项目信噪比高的几条，覆盖重复/坏味道（不取整套 recommended：长函数密集易刷屏）----
   {
-    files: ['extension/**/*.js', 'dashcam/**/*.js'],
+    files: ['extension/**/*.js', 'dashcam/**/*.js', 'warroom/**/*.js'],
     plugins: { sonarjs },
     rules: {
       'sonarjs/no-identical-functions': 'warn', // 函数体相同→该抽公共

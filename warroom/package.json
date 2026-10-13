@@ -1,0 +1,18 @@
+{
+  "name": "warroom",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "pocketcc battle-report (战报) download / parse / analysis workspace",
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "fetch": "node cli.js fetch",
+    "import": "node cli.js import",
+    "info": "node cli.js info"
+  },
+  "dependencies": {
+    "better-sqlite3": "^12.4.1"
+  }
+}
