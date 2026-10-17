@@ -282,10 +282,11 @@ export const SKILL_TRANSFER = 24;
 /** @type {number} 安全锁定（type=9=PRECTED_REWARD，group 2 个人技；保护已获奖励，需选奖励子面板，引擎暂未自动使用） */
 export const SKILL_PROTECT_REWARD = 17;
 /**
- * @type {number} 火线急救（type=4=RISE_PLAYER，group 1 队伍技=队长专属；治指定成员伤兵，req 带 tarUid）。
- *   **战损字段未实证**（dashcam 全趟核对：`team.member[].power` 受击后恒定不降、`fightInfo` 仅
- *   `{beginTime,endTime,fightWin,skillPendingEffectInfoList}` 无逐员伤兵数、7578 来袭方 `armyPower` 为 undefined），
- *   故降级为「恒治队长自身」并标注待校准；施治门控取 status=FIGHT（敌已到我点位开打=确有人受伤），非战斗态永不施治（用户口径 2026-10-17：无人受伤不治疗）。
+ * @type {number} 火线急救（type=4=RISE_PLAYER，group 1 队伍技=队长专属；治成员伤兵）。
+ *   **逐员战损字段不可得**（dashcam 全趟核对：`team.member[].power` 受击后恒定不降、`fightInfo` 仅
+ *   `{beginTime,endTime,fightWin,skillPendingEffectInfoList}` 无逐员伤兵数、7578 来袭方 `armyPower` 为 undefined），无法择“战损最重成员”；
+ *   且原生 7551{27} 实发**不带 tarUid**（应答回显 tarUid=0=服务器自决治谁，实证 dashcam 20261017T185937），故引擎也不带 tarUid、跟齐原生。
+ *   施治门控：status=FIGHT 且本回合真被掠袭过（#raidRounds）——因为 FIGHT 是每回合必经结算相位（未挨打也进），单靠 status 会每回合白烧（用户口径 2026-10-17：无人受伤不治疗）。
  */
 export const SKILL_AID = 27;
 /**

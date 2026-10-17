@@ -21,11 +21,15 @@ export async function handle(ctx) {
   if (ctx.done(key)) return;
   var rdi = ctx.ei.eventRollDiceInfo;
   if (!rdi) return;
-  // 掷骰不可逆：中奖奖励命中幸运池但背包尚未成功落地时，先拉一次背包确认；仍拉不到则本拍不掷、不 markDone，
-  //   留待下一拍（EVENT 态 4s 重扫）背包就绪——避免 #ensureBackpack 失败态把「幸运×2」静默跳过、白掷一次（实证 bug 2026-10-17）
+  // 掷骰不可逆：中奖奖励命中幸运池但背包尚未成功落地时，先拉一次背包确认；仍拉不到则**只多等一拍**（首次置 dice-wait 并 return，
+  //   4s 后背包就绪再翻幸运），第二拍无论背包是否落地都掷——风险不对称：7551 用幸运失败只是少翻倍、7535 不发是丢整回合奖励（宁可少翻倍不可不掷）
   if (!ctx.backpackReady() && ctx.luckyHit(rdi.winRewardResult)) {
     await ctx.ensureBackpack();
-    if (!ctx.backpackReady()) return;
+    var waitKey = ctx.round + ':dice-wait';
+    if (!ctx.backpackReady() && !ctx.done(waitKey)) {
+      ctx.markDone(waitKey);
+      return;
+    }
   }
   ctx.markDone(key);
   await ctx.tryLucky('rollDice', rdi.winRewardResult, '掷骰奖励');

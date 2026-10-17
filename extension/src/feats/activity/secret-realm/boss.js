@@ -27,6 +27,10 @@
  *      → 配对闸三级：① 拿到 BOSS 本体 esrId → 与当前平台 esrId 精确比对（强闸）；
  *        ② 该 bossId 已学过区域 → 按学到的 esrId 比对（强闸）；
  *        ③ 区域未知 → **同一 (平台 esrId, bossId) 只给一次试探**（无证据时只能靠撞拒绝来学）。
+ *        两条例外不得烧掉试探额度：这一对**真打进过**（#areaOk）就长期放行；包**没上线**不记账。
+ *        必要性：“平台 esrId 靠 push 10018 增量填、而引擎启动前玩家往往已停在 176 上”是默认使用形态
+ *          → `#platformEsr()` 长期回 null；若把「成功但平台区域未知」也当成用掉了试探，就会变成
+ *          **越成功越打不了**（大BOSS 177 恰恰是唯一有本体 esrId 证据、最容易落进这条分支的）。
  *      客户端攻打入口**不查 esrId、也不查 isTeamLeader**（verbatim `roomBaseInfo?.pointType === PAB_BOSS_PLANE
  *      ? super.marchClick() : ShowTips("enigma_realm141")`）→ 区域是**服务器独占判据**，本地无法预知；
  *      故被 `enigma_realm142` 拒时**只降级「(平台 esrId, bossId)」这一对**，绝不把 bossId 整体拉黑
@@ -46,13 +50,15 @@
  *   业务态一律重读 ACL 落地快照）；**10018 是平的** `ev.data = {pointInfos:[{v,x,y,k,id,pointType,m}]}`。
  *
  * ── 拒绝码处置（攻打；录音 8521 共 73 req / 73 resp **全部 s=0、零拒绝**，故 142/141/157/163 全属防御性实现）──
+ *   退避是这一档的第一条：任一 `s≠0` 都先进 `tuning.rejectBackoffMs`（5s）静默，141 更给
+ *     `tuning.planeRefreshMs`（15s，等 push 21521 把 roomBaseInfo 刷正）——否则被拒路径会以 ≈5 条/秒重发同一条 8521。
  *   `enigma_realm142` → 该 (平台 esrId, bossId) 记 wrongArea（区域闸降级，**不拉黑 bossId**）；
- *   `enigma_realm141` → 已不在 176（被顶掉/被召回）→ 回 IDLE，等现场刷新；
+ *   `enigma_realm141` → 已不在 176（被顶掉/被召回）→ 回 IDLE，等 21521 刷正；
  *   `enigma_realm157` → 目标点==当前点，正常语义 → 静默（debug），不拉黑；
  *   `enigma_realm163` → 目标点不能行军 → 该坐标拉黑 `tuning.rejectBlacklistMs`（6h）；
  *   `enigma_realm162` → 服务器抖动形态 → 该 bossId 给**一次**重试；
- *   `CODE_NOT_SENT`  → 未真正上线（次通道频控/静默短路）→ 不记账，下一拍重试；
- *   其它 `s≠0`       → info 一条（同一 (平台 esrId, bossId) 只提示首见，之后降 debug，防逐拍刷屏）。
+ *   `CODE_NOT_SENT`  → 未真正上线（次通道频控/静默短路）→ **不动配对账**（尤其不置 #probed），下一拍重试；
+ *   其它 `s≠0`       → info 一条（同一目标只提示首见，之后降 debug，防逐拍刷屏）。
  *
  * ── 石头档（8548 BOSS_GUARD_REWARD_GET `{x,y}`，**不带 bossId**）──────────────────
  * 报文实证同一会话：bossId 由服务器按坐标反推，且**不要求队伍站在石头点上**（在平台 (237,229) 领到了石头点 (230,228)）；
@@ -169,11 +175,13 @@ export class BossEngine {
   #areaLearn = {};
   /** @type {Object<string,1>} 已确认**不同区域**的 `平台esr, bossId` 对（区域闸降级，不拉黑 bossId） */
   #wrongArea = {};
-  /** @type {Object<string,1>} 已给过试探机会的 `平台esr, bossId` 对（无本地证据时同键只试一次） */
+  /** @type {Object<string,1>} 已给过试探机会的 `平台esr, bossId` 对（无本地证据时同键只试一次；**只有真拿到服务器判定才算用掉**） */
   #probed = {};
+  /** @type {Object<string,1>} 已证实**可行**的 `平台esr, bossId` 对（该对真打进过 → 区域闸直接放行，不再占用试探） */
+  #areaOk = {};
   /** @type {Object<string,number>} 目标坐标拉黑到期时刻（Date.now）：仅 enigma_realm163 写入 */
   #targetBlack = {};
-  /** @type {Object<string,1>} 已提示过首见拒绝的 `x,y|bossId`（同键之后降 debug，防刷屏） */
+  /** @type {Object<string,1>} 已提示过首见拒绝的键（攻打 `x,y|bossId`、141 `plane141|…`、挪台 `reloc|x,y`；同键之后降 debug，防刷屏） */
   #toldReject = {};
   /** @type {Object<string,1>} 已用过一次重试的 bossId（攻打档 162 只给一次机会） */
   #marchRetried = {};
@@ -195,7 +203,7 @@ export class BossEngine {
   #didSend = false;
   /** @type {Object<string,number>} bossId → 首次见到 state===21 的时刻（排序 tie-break：先进入战斗的在先） */
   #seen21 = {};
-  /** @type {number} 两枪之间的最小间隔到期时刻（Date.now）；一拍只发一条由 #marchInFlight 保证，这里只防应答秒回后同拍再补一枪 */
+  /** @type {number} 两枪之间的最小间隔 / 被拒退避到期时刻（Date.now）：成功写 ATTACK_COOLDOWN_MS，任一 `s≠0` 写 tuning.rejectBackoffMs（141 写 planeRefreshMs） */
   #cooldownUntil = 0;
   /** @type {number} 攻打一枪发出后的最小冷却（毫秒，内置不调面板） */
   static ATTACK_COOLDOWN_MS = 1000;
@@ -243,6 +251,7 @@ export class BossEngine {
   #attackTick(b) {
     const env = this.#env;
     const now = Date.now();
+    // 这一条既拦两枪最小间隔、也拦被拒退避（#handleMarchReject 写长档），且必须定 #sleep 而不能回 0
     if (now < this.#cooldownUntil) {
       this.#sleep = this.#cooldownUntil - now;
       return;
@@ -427,6 +436,9 @@ export class BossEngine {
     const expect = bossEsr != null ? bossEsr : learned;
     const pair = platEsr + '|' + t.bossId;
     if (this.#wrongArea[pair]) return false;
+    // 这一对已经真打进过（服务器区域判据过了）→ 直接放行。平台区域取不到（快照未覆盖当前点）是常态，
+    //   不能让「第一枪成功」反而把这只 BOSS 永久锁在闸外
+    if (this.#areaOk[pair]) return true;
     if (expect != null) {
       if (platEsr == null) return !this.#probed[pair]; // 平台区域未知：只能靠撞 142 来确认
       if (platEsr !== expect) return false; // 强闸：明显不同区域，不发（省一枪）
@@ -436,14 +448,22 @@ export class BossEngine {
   }
 
   /**
-   * 记录一次「发出」的配对事实：区域未知时先记为已试探；成功后把平台 esrId 学给该 bossId。
+   * 记录一次「真上线」的配对事实。`#probed` 的语义是「这一对已用掉唯一的试探机会 = 已拿到服务器判定」：
+   *   被拒 → 置 #probed（探过了，别再反复探）；
+   *   成功 → 只记 #areaOk（可行证据），平台 esrId 可得时顺手学给该 bossId，**不消耗试探额度**。
+   * ⚠ 未上线（sendMarch 回 false / CODE_NOT_SENT）一律不进这里：没有服务器判定却记账，
+   *   会把这只 BOSS 在本会话永久锁死（次通道频控 / 静默短路在秘境侧是常态）。
    * @param {{bossId:number,platEsr:number|null}} t 目标（含当前平台 esrId）
    * @param {boolean} ok 该 8521 是否被服务器接受
    */
   #noteArea(t, ok) {
     const pair = t.platEsr + '|' + t.bossId;
-    this.#probed[pair] = 1;
-    if (ok && t.platEsr != null) this.#areaLearn[t.bossId] = t.platEsr;
+    if (!ok) {
+      this.#probed[pair] = 1;
+      return;
+    }
+    this.#areaOk[pair] = 1;
+    if (t.platEsr != null) this.#areaLearn[t.bossId] = t.platEsr;
   }
 
   /**
@@ -515,6 +535,8 @@ export class BossEngine {
       self.#marchInFlight = false;
       if (!env.alive()) return;
       if (isOk(r) || (r && r.code === CODE_NOT_SENT)) return; // 未上线不记账，下一拍重评
+      // 被拒同样先进退避：否则「发出→应答几十毫秒回→下一拍又挪一次」会打成 ≈5 条/秒的 8521 风暴
+      self.#cooldownUntil = Date.now() + tuning.rejectBackoffMs;
       const rej = (r && r.reason) || '';
       if (rej === REJ_BOSS_AREA && curEsr != null) {
         // 当前平台与所有候选都不同区域且未知目标区域 → 把这一组对子记下来防反复探
@@ -680,8 +702,11 @@ export class BossEngine {
         return;
       }
       if (r && r.code === CODE_NOT_SENT) {
-        self.#noteArea(t, false);
-        env.log.debug('boss attack: %s not sent (secondary socket/CD).', self.#marchTag);
+        // 没上线 = 没有服务器判定 → **不动配对账**（尤其不置 #probed，也不进退避），#marchInFlight 已在上方清掉→下一拍重试
+        env.log.debug(
+          'boss attack: %s not sent (secondary socket/CD), no bookkeeping.',
+          self.#marchTag,
+        );
         return;
       }
       self.#handleMarchReject(t, r, b);
@@ -690,6 +715,9 @@ export class BossEngine {
 
   /**
    * 攻打拒绝码处置（详见文件头）。核心差异：**142 只降级区域闸、不拉黑 bossId；163 才拉黑坐标**。
+   * 进入即写 `#cooldownUntil`（`tuning.rejectBackoffMs`，141 专用 `tuning.planeRefreshMs`）：
+   *   被拒那一刻本地闸已不可信，不进退避就会以 ≈5 条/秒重发同一条 8521（162 的一次递归重试不走 #attackTick，
+   *   因此不受该冷却影响）。
    * @param {{bossId:number,x:number,y:number,platEsr:number|null}} t 目标
    * @param {object} r Ret
    * @param {object} b 面板 boss 配置
@@ -698,6 +726,7 @@ export class BossEngine {
     const env = this.#env;
     const rej = (r && r.reason) || '';
     const tag = 'boss' + t.bossId + '@(' + t.x + ',' + t.y + ')';
+    this.#cooldownUntil = Date.now() + tuning.rejectBackoffMs;
     if (rej === REJ_BOSS_AREA) {
       this.#markWrongArea(t);
       env.log.info(
@@ -709,15 +738,25 @@ export class BossEngine {
       return;
     }
     if (rej === REJ_NEED_PLANE) {
-      env.log.info(
-        'boss attack: %s rejected %s (not on 176 plane) → wait for scene refresh.',
-        tag,
-        rej,
-      );
+      // 141 = 服务端认为我不在 176 平台上，而本地 roomBaseInfo 只能靠 push 21521 刷正（实测一场 ≈17s 一条）
+      //   → 退一个推送周期再评，期间绝不重发；首见 info 说明在等什么，之后降 debug（循环态）
+      this.#cooldownUntil = Date.now() + tuning.planeRefreshMs;
+      const pkey = 'plane141|' + tag;
+      if (!this.#toldReject[pkey]) {
+        this.#toldReject[pkey] = 1;
+        env.log.info(
+          'boss attack: %s rejected %s (server says not on 176 plane) → idle %dms waiting for push 21521 to refresh roomBaseInfo, NOT resending.',
+          tag,
+          rej,
+          tuning.planeRefreshMs,
+        );
+      } else {
+        env.log.debug('boss attack: %s still rejected %s (waiting 21521).', tag, rej);
+      }
       return;
     }
     if (rej === REJ_ALREADY_THERE) {
-      // 目标点==当前点：正常语义（例如已在 BOSS 上），静默处理
+      // 目标点==当前点：正常语义（例如已在 BOSS 上），静默处理；不拉黑也不烧试探额度
       this.#noteArea(t, true);
       env.log.debug('boss attack: %s rejected %s (already there).', tag, rej);
       return;
@@ -932,6 +971,7 @@ export class BossEngine {
     this.#areaLearn = {};
     this.#wrongArea = {};
     this.#probed = {};
+    this.#areaOk = {};
     this.#targetBlack = {};
     this.#toldReject = {};
     this.#marchRetried = {};

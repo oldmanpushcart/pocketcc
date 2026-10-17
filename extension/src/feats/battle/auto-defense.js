@@ -142,15 +142,18 @@ function serverId() {
 }
 
 /**
- * 绕后攻击「敌锚定」操作用区号：迁城落脚点在敌主城周围，其所在区应以 630 查得的**敌基地服号**为准
- * （`enemy.serverId`——查他人时 630 回的是其基地真实所在服，跨区战场里敌我不同服才判对；
- * 区别于查自己会回注册服，本快照只把 enemy.serverId 用于敌锚定，不混用）。630 未回或为 0 时回退本人当前服号。
- * 注意：「迁城逃避」落点在我方周围、仍直接用本服 `serverId()`，不经此助手。
+ * 同区攻击前提校验（游戏铁律：攻击只能在同一个区内发生——敌我双方基地都须在当前战场区，才互相打得到）。
+ * 能被打到的敌，其基地必在本人当前区。若 630 查得的 `enemy.serverId` 存在且 ≠ 本人当前服号
+ * （`serverId()`），说明该敌并不在本区（要么尚在老家区打不到、要么 630 回的是其注册/老家服号），
+ * 此时绕后迁城/flyTo 飞向那个区既违反同区规则又会被服务器拒 → 返回该区号供调用方跳过顺延；
+ * 敌在我区(号相等)或 630 未回服号/为 0 时返回 null(放行)。
  * @param {object} snap 共享快照
- * @returns {number} 敌锚定区号
+ * @returns {number|null} 不在本区时返回敌服号，可在本区攻击时返回 null
  */
-function enemyZone(snap) {
-  return (snap && snap.enemy && snap.enemy.serverId) || serverId();
+function enemyOffZone(snap) {
+  var z = snap && snap.enemy && snap.enemy.serverId;
+  var mine = serverId();
+  return z && mine && z !== mine ? z : null;
 }
 
 /**
@@ -394,6 +397,13 @@ async function strategyAttack(snap) {
     ey = snap.enemy.y;
   if (ex == null || ey == null)
     return { result: 'fail', reason: '敌主城坐标未知(630 未回坐标)', stop: false };
+  var offz = enemyOffZone(snap);
+  if (offz)
+    return {
+      result: 'skip',
+      reason: '敌基地在 ' + offz + ' 区、非本区，跨区打不到，绕后顺延',
+      stop: false,
+    };
   var marchData = new Battle().plan().preset(cfg.preset).adjust().build();
   if (!marchData.armyListNew.length)
     return { result: 'fail', reason: '预设 #' + cfg.preset + ' 无兵可派', stop: false };
@@ -403,7 +413,7 @@ async function strategyAttack(snap) {
       mode: 'near',
       radius: defense.NEAR_RADIUS,
       exclude: { x: snap.me.x, y: snap.me.y },
-      ctx: { net: net, serverId: enemyZone(snap) }, // 落点在敌城周围→按敌基地服号取占用/找点，跨区才对（勿用本服号查错区）
+      ctx: { net: net, serverId: serverId() }, // 迁城落脚点必在我当前区(同区攻击铁律)：敌既被我打到就在本区；勿用 enemy.serverId 飞向他区
     },
   );
   if (!aliveFn())
@@ -415,7 +425,7 @@ async function strategyAttack(snap) {
       stop: false,
     };
   try {
-    nav.flyTo({ x: spot.x, y: spot.y, z: enemyZone(snap) || null, subMap: null, click: false });
+    nav.flyTo({ x: spot.x, y: spot.y, z: serverId() || null, subMap: null, click: false });
   } catch (e) {}
   var mv = await moveCity(spot.x, spot.y);
   if (!aliveFn()) return { result: 'fail', reason: '迁城后流程已暂停', stop: false };
@@ -445,9 +455,7 @@ async function strategyAttack(snap) {
         ',' +
         spot.y +
         ') marchType=' +
-        marchType +
-        ';落点区=' +
-        enemyZone(snap),
+        marchType,
       stop: true,
     };
   return { result: 'fail', reason: '攻击被拒 ' + attackFailText(ret), stop: false };
@@ -512,6 +520,13 @@ async function strategyCounter(snap) {
     ey = snap.enemy.y;
   if (ex == null || ey == null)
     return { result: 'fail', reason: '敌主城坐标未知(630 未回坐标)', stop: false };
+  var offz = enemyOffZone(snap);
+  if (offz)
+    return {
+      result: 'skip',
+      reason: '敌基地在 ' + offz + ' 区、非本区，跨区打不到，反击顺延',
+      stop: false,
+    };
   var marchData = new Battle().plan().preset(cfg.preset).adjust().build();
   if (!marchData.armyListNew.length)
     return { result: 'fail', reason: '预设 #' + cfg.preset + ' 无兵可派', stop: false };

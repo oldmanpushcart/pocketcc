@@ -13,8 +13,10 @@
  *   - 结束：无动作（交 TeamEngine/游戏）。
  *
  * 横切自动项（默认开、无 UI）：
- *   - `#raidGuard`：21383 marchSize>0 且时效窗内 → 队长按 DEFENSE_PRIORITY（战斗盾26>回合盾2>隐形10>闪现11，皆 group=1）用一；
- *   - `#lastRoundFlush`：round===ROUND_MAX(10) → 逐拍清空背包可主动技能（排除先知9/刷新23，陪跑仅 personal）。
+ *   - 来袭保命：21383 marchSize>0 且时效窗内 → 队长按 DEFENSE_PRIORITY（隐形10>毫发盾26>回合盾2>闪现11，皆 group=1）用一；
+ *   - 盾维持：WAIT 转场串联后主动消耗一盾（毫发优先、铜墙仅 round<10），不等来袭白压到末回合；
+ *   - 战中策略（FIGHT 相位且**本回合真被掠袭过**才动手）：火线急救(27·不带 tarUid 服务器自决治谁) → 增益族逐个（FIGHT 是每回合必经结算相位，未挨打也进，无掠袭证据即不动）；
+ *   - 末回合清空：round===ROUND_MAX(10) → 逐拍清空背包可主动技能（排除先知9/刷新23/回合盾2——第 10 回合用它已无「下个回合」可抵御，陪跑仅 personal）。
  *
  * 选场景（indexDecide=1-based）——先知感知（**emit 前置：`uidDecide === 我方 uid` 轮值闸**）：
  *   - revealed = play 态 eventSpecIdList 非 0 位（先知揭示集）、hidden = 仍为 0 位；
@@ -95,6 +97,8 @@ const DEFENSE_PRIORITY = [SKILL_STEALTH, SKILL_SHIELD_BATTLE, SKILL_SHIELD_ROUND
 const FLUSH_EXCLUDE = [SKILL_PROPHET, SKILL_REFRESH, SKILL_SHIELD_ROUND];
 /** @type {number} 21383 marchSize>0 后视为「正在被攻」的时效窗（毫秒），窗内才保命 */
 const RAID_ACTIVE_MS = 30000;
+/** @type {number} FIGHT 态推送唤醒的最小间隔（毫秒）：21376 每回合在 FIGHT 窗推 4~10 条，限流防把 4s 节奏加密成逐推送一拍 */
+const WAKE_MIN_MS = 3000;
 
 /**
  * eventSpecId 六族 → scene 模块分派表（`Math.floor(eventSpecId/100)` 命中）。
@@ -145,6 +149,10 @@ export class FlowEngine {
   #raidSize = 0;
   /** @type {number} 最近一次收到来袭推送的时刻（毫秒，RAID_ACTIVE_MS 时效） */
   #raidAt = 0;
+  /** @type {Set<number>} 被真人掠袭过的回合号（21383 marchSize>0 记账）——战中急救/增益的动手证据；不复用会被保命处置清零的 #raidSize */
+  #raidRounds = new Set();
+  /** @type {number} 最近一次 FIGHT 态唤醒时刻（毫秒，WAKE_MIN_MS 节流：实测 FIGHT 窗内 21376 每回合推 4~10 条，逐条唤醒会把 4s 节奏加密成逐推拍） */
+  #lastFightWake = 0;
   /** @type {number} 已完成末回合清空的回合（防同回合重复批量发） */
   #flushedRound = 0;
   /** @type {Object<string,number>} 每回合进 DECIDE 的时刻（毫秒，10s 下限用） */
@@ -175,8 +183,15 @@ export class FlowEngine {
     var h = hostTeamKey(this.#host);
     if (h && h !== this.#huntKey) this.#resetFor(h);
     var status = Number(payload.status) || 0;
-    if (status === HUNT_STATUS.EVENT || status === HUNT_STATUS.WAIT || status === HUNT_STATUS.FIGHT)
+    if (status === HUNT_STATUS.FIGHT) {
+      // FIGHT 窗仅 ~13s 但 21376 每回合推 4~10 条：逐条唤醒会把 tick 节奏加密到逐推送一拍（每拍还带 7550+7531 只读包），限流 ≥3s 一次，其余交给 4s 兜底重扫
+      var now = Date.now();
+      if (now - this.#lastFightWake < WAKE_MIN_MS) return;
+      this.#lastFightWake = now;
       this.#wake();
+      return;
+    }
+    if (status === HUNT_STATUS.EVENT || status === HUNT_STATUS.WAIT) this.#wake();
   }
 
   /**
@@ -188,6 +203,9 @@ export class FlowEngine {
     this.#raidSize = size;
     if (size > 0) {
       this.#raidAt = Date.now();
+      // 回合级掠袭记账（战中急救/增益的动手证据；FIGHT 本身是每回合必经相位，不能当「有人受伤」依据）
+      var r = Number(this.#hunt && this.#hunt.round) || 0;
+      if (r > 0) this.#raidRounds.add(r);
       this.#wake();
     }
   }
@@ -237,11 +255,12 @@ export class FlowEngine {
         decideDelay = await this.#handleDecide(treasureId, ei);
       else if (ei.status === EVENT_PHASE_STATE.EVENT) await this.#handleEvent(treasureId, ei, cfg);
     } else if (status === HUNT_STATUS.WAIT) {
-      // 探索回合（每场 round 起始 status=1/WAIT）：数据转换→重拉背包→再判并执行完美镜像复制先知；随后主动维持盾（毫发/铜墙）
-      await this.#explorationSkills(treasureId, round);
-      await this.#shieldMaintain(treasureId, round);
+      // 探索回合（每场 round 起始 status=1/WAIT）：数据转换→重拉背包→再判并执行完美镜像复制先知；转场未发写包时再主动维持盾（毫发/铜墙）
+      var wrote = await this.#explorationSkills(treasureId, round);
+      if (!wrote) await this.#shieldMaintain(treasureId, round);
     } else if (status === HUNT_STATUS.FIGHT) {
-      // 战斗态（status=3，敌人已到我点位开打）：增益族即用 + 火线急救（无人受伤不治→非战斗态永不施治）
+      // 战斗结算相位（status=3，**每回合必经、未挨打也进**，实证 20261016T191700 全程无 21383 掠袭仍每回合成对推 fightWin 0→3）：
+      //   增益/急救仅本回合真被掠袭过（#raidRounds）才动手，否则每回合白烧急救与增益；非掠袭回合直接闲置
       await this.#fightStrategies(treasureId, round);
     }
     // 横切自动项：来袭保命 / 末回合清空（与事件阶段无关，各自门控）
@@ -326,15 +345,18 @@ export class FlowEngine {
    *   每 (round,kind) 一次性去重；treasureId 变更由 #resetFor 清 #done。
    * @param {string|number} treasureId 本跑 id
    * @param {number} round 回合
+   * @returns {Promise<boolean>} 本拍是否已发过一次 7551 写包（true=转场已占木拍写额，调用方据此跳过盾维持，避免同拍连发多条 7551）
    */
   async #explorationSkills(treasureId, round) {
     await this.#ensureBackpack();
+    var wrote = false;
     // ① 数据转换（纯随机转另一科技，报文无 param）——先转，把「可能转出先知」的机会交给下一步重判
     var tk = round + ':seq:transfer';
     if (!this.#done.has(tk) && this.#usable(SKILL_TRANSFER)) {
       this.#done.add(tk);
       await this.#useSkill(treasureId, SKILL_TRANSFER, '数据转换');
       await this.#reloadBackpack();
+      wrote = true;
     }
     // ② 完美镜像复制（转换后重拉背包再判）：背包有先知则复制先知，param 键名 copySkillSpecId 得证于手动成功报文（陪跑 22{copySkillSpecId:26}）
     var ck = round + ':seq:copy';
@@ -346,8 +368,10 @@ export class FlowEngine {
           param: JSON.stringify({ copySkillSpecId: target }),
         });
         await this.#reloadBackpack();
+        wrote = true;
       }
     }
+    return wrote;
   }
 
   /**
@@ -551,31 +575,31 @@ export class FlowEngine {
         : 0;
     if (!pick) return;
     this.#done.add(mk);
-    await this.#useSkill(treasureId, pick, '盾维持');
+    var ok = await this.#useSkill(treasureId, pick, '盾维持');
+    if (!ok) this.#done.delete(mk); // 写被拒（在途去重/限额）→ 回退幂等键，下拍重试，不失一回合维持位
     await this.#reloadBackpack();
   }
 
   /**
-   * 战斗态（status=FIGHT，敌人已到我点位开打）自动项（每拍至多一个写动作）：
-   *   ① 火线急救(27)（D，group=1 队长技）——**战损字段未实证**（power 受击不降/fightInfo 无逐员伤兵/7578 来袭方 armyPower undefined），
-   *     降级恒治队长自身（tarUid=我 uid）并标注待校准；只在 FIGHT 态施治=天然的「无人受伤不治」门控（非战斗态永不进本函数）；
+   * 战中自动项（status=FIGHT 相位，每拍至多一个写动作）：
+   *   **前提闸：本回合须真被真人掠袭过（#raidRounds.has(round)）**——实证 FIGHT 是每回合必经的结算相位（无任何 21383 掠袭也逐回合推 fightWin 0→3），
+   *     若只判 status=FIGHT 会每回合白烧一发急救 + 提前耗光增益，违背用户口径「无人受伤不治疗」。
+   *   ① 火线急救(27)（group=1 队长技）——**逐员战损字段不可得**（power 受击不降/fightInfo 无伤兵/7578 armyPower undefined），
+   *     且原生 7551{27} 实发**不带 tarUid**（应答回显 tarUid=0=服务器自决治谁，实证 dashcam 20261017T185937），故跟齐原生形态不带 tarUid、由服务器裁决目标；
    *   ② 战中增益族即用（C）——百战不倒/固定增强/战场变换/诱敌来袭按 FIGHT_BUFF_SKILLS 优先级逐个用，每 (round,specId) 一次性。
    * @param {string|number} treasureId 本跑 id
    * @param {number} round 当前回合
    */
   async #fightStrategies(treasureId, round) {
+    // 未被掠袭的回合不进（FIGHT 是常态相位，不等于有人受伤）
+    if (!this.#raidRounds.has(round)) return;
     await this.#ensureBackpack();
-    // ① 火线急救：每回合一次，持且未生效即治队长（待真机校准逐员战损择治）
+    // ① 火线急救：每回合一次，持且未生效即施治（不带 tarUid，与原生一致，服务器自决目标）
     var aidk = round + ':aid';
     if (!this.#done.has(aidk) && this.#usable(SKILL_AID)) {
       this.#done.add(aidk);
-      var me = gameData.myUidStr();
-      await this.#useSkill(
-        treasureId,
-        SKILL_AID,
-        '火线急救(治队长·待校准)',
-        me ? { tarUid: me } : undefined,
-      );
+      var aidOk = await this.#useSkill(treasureId, SKILL_AID, '火线急救');
+      if (!aidOk) this.#done.delete(aidk);
       await this.#reloadBackpack();
       return;
     }
@@ -585,7 +609,8 @@ export class FlowEngine {
       var bk = round + ':buff:' + id;
       if (!this.#usable(id) || this.#done.has(bk)) continue;
       this.#done.add(bk);
-      await this.#useSkill(treasureId, id, '战中增益');
+      var buffOk = await this.#useSkill(treasureId, id, '战中增益');
+      if (!buffOk) this.#done.delete(bk); // 写被拒 → 回退幂等键，下拍重试
       await this.#reloadBackpack();
       return;
     }
@@ -660,7 +685,11 @@ export class FlowEngine {
       if (opt.param != null) inner.param = opt.param;
     }
     var ret = await this.#host.sendPB(REQ_SKILL_USE, inner, label);
-    if (ret.ok) this.#backpackLoaded = false; // 消耗后背包态变（close_after / ×1）
+    if (ret.ok) {
+      this.#backpackLoaded = false; // 消耗后背包态变（close_after / ×1）
+      // 乐观记入生效中：使紧随的 #reloadBackpack 若拉取失败（早返回不清 #pending）也不会拿「消耗前陈旧持有态」驱动幽灵重发
+      this.#pending.add(id);
+    }
     return ret.ok;
   }
 
@@ -783,6 +812,8 @@ export class FlowEngine {
     this.#backpackLoaded = false;
     this.#raidSize = 0;
     this.#raidAt = 0;
+    this.#raidRounds.clear();
+    this.#lastFightWake = 0;
     this.#flushedRound = 0;
     this.#enterAt = {};
     this.#refreshCount = {};
