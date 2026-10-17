@@ -561,6 +561,10 @@ export function buildFieldsHTML(fid, f) {
         `<input type="checkbox" class="pc-fchk" data-id="${fid}" data-key="${fd.key}" ${c[fd.key] ? 'checked' : ''}></label>`
       );
     }
+    if (fd.type === 'note') {
+      // 纯说明横幅（无控件、不写配置、可无 key）：靠 fd.section 出分组标题作分隔，正文渲染一行 muted 说明，用于切分相邻字段块
+      return `<div class="pc-fnote">${fd.text ? escAttr(fd.text) : ''}</div>`;
+    }
     if (fd.type === 'text') {
       const v = fd.get ? String(fd.get(c)) : '';
       if (fd.multiline && fd.inline) {

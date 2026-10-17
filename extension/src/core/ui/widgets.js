@@ -415,6 +415,21 @@ export function mountSortList(box) {
     c[fd.key] = Array.isArray(f.defaults[fd.key]) ? f.defaults[fd.key].slice() : [];
   else if (c[fd.key] === f.defaults[fd.key]) c[fd.key] = c[fd.key].slice();
   const arr = c[fd.key];
+  // 可选迁移 fd.migrate(arr, cfg) → number[]：把历史 order 收敛到当前口径（如科技同类归并 specId→族代表 id）。
+  //   放在 all 追加之前：先收敛旧项、再补新增项。就地改 arr（=c[fd.key] 同一引用），发生变化才落盘热更；
+  //   幂等（迁移后的值再迁移不变），故只在真正需要收敛的那一次写盘。未声明则保持原样（向后兼容）。
+  if (typeof fd.migrate === 'function') {
+    const before = arr.join(',');
+    const migrated = fd.migrate(arr, c);
+    if (Array.isArray(migrated)) {
+      arr.length = 0;
+      for (let mi = 0; mi < migrated.length; mi++) arr.push(migrated[mi]);
+    }
+    if (arr.join(',') !== before) {
+      saveFeature(f);
+      applyFeature(f);
+    }
+  }
   // 可选全量源 fd.all（数组或 fn(cfg)）：把全量里当前 order 数组缺失的项追加到末尾——
   //   解决「功能新增了可排序项、但老用户存档的 order 不含它 → 面板这一行不显示」。
   //   未声明 fd.all 的 sortlist（遗迹奖励/卡车）保持原样，向后兼容。

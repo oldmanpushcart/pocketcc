@@ -14,7 +14,7 @@
  *      （实证表内共 6 类，默认只拿三类：全部单位攻击加成 9200001 / 伤害加深 9200004 / 野外行军速度提高 9200006），
  *      同类只在更强时等价替换；面板选项默认已勾这三类，全不勾=不限；
  *   3. 自动拍宠物：已在拍异能兽/**BOSS**（push 21530 置位 capturingPetPos，BOSS 带 boss:1）
- *      后接管整个拍节奏——免费手拍打底、心动时刻（push 21527 type=2，窗口实测 3.2s）到达即拍、
+ *      后接管整个拍节奏——免费手拍打底、心动时刻（push 21527 type=2，窗口只有 2.0s）到达即拍、
  *      能量攒满 3 格放高分持续拍（报文实证 390 分/拍）、投喂弹窗择优；不负责找怪、不派兵、不自费消耗投喂道具。
  *
  * 秘境是「独立活动/独立地图/独立战斗体系/独立背包」的隔离世界：
@@ -440,7 +440,7 @@ function run(ctx) {
   engines.pickup = new PickupEngine(env);
   engines.pickup.start(ctx);
   engines.capture = new CaptureEngine(env);
-  // 传 ctx：拍宠物要订阅 push 21527（心动时刻窗口实测 3.2s，等不起下一拍的 capturingInfo 回写）
+  // 传 ctx：拍宠物要订阅 push 21527（心动时刻窗口只有 2.0s，等不起下一拍的 capturingInfo 回写）
   engines.capture.start(ctx);
   log.info(
     'started (item overrides=%d, buff classes=%d).',

@@ -27,6 +27,7 @@
       "army",
       "hero",
       "hero_skill",
+      "hero_skill_key_id",
       "effect_buff",
       "selection_v2",
       "item",

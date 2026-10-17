@@ -50,6 +50,8 @@
  *
  * 生命周期由 reactor 托管：install/configure/run 三钩子，places 限 base/world（Home/NWorldMap），战斗模式暂停；
  *   pause 后 alive()=false 让 cycle 自然停摆，resume 时 run 复位状态并重新点火。
+ *   轮首另有一道玩法开启闸（gameData.beastBreedOpen，镜像游戏 isOpenFunc(BREED)）：培育玩法未开放/未开始时
+ *   服务器对 15xx 干脆不回包（每条白等 15s 超时，随后连刷读失败 warn），闸关则整轮闭嘴只按 IDLE 档重检。
  */
 import { createLog } from '../../core/log.js';
 import { storage } from '../../core/storage.js';
@@ -1006,6 +1008,12 @@ async function readAll(cmd, label) {
  * @returns {Promise<number>} 下拍 delay（毫秒）；0 = 立即再跑
  */
 async function cycleRun() {
+  // 玩法开启闸（镜像游戏 isOpenFunc(BeastOpenType.BREED)）：未开放/未开始时服务器对 15xx 干脆不回包，
+  //   四条读通道每条白等 15s 超时再刷 warn——闸关直接按 IDLE 档睡过去，等 21876 开启状态推送/下拍复查再动。
+  if (!gameData.beastBreedOpen()) {
+    log.debug('breed func not open (activity not started?), idle until next check.');
+    return IDLE_INTERVAL_MS;
+  }
   var nowMs = Date.now();
   var nowSec = gameData.serverTime() || Math.floor(nowMs / 1000);
   var myUid = gameData.strUid();
@@ -1252,7 +1260,14 @@ reactor.register({
   id: 'beastBreed',
   label: '异能兽培育',
   storageKey: 'pocketcc.feat.beastBreed',
-  symbols: ['dataCenter', 'tableManager', 'tableUtils', 'long64Bit', 'enigmaBeast?'],
+  symbols: [
+    'dataCenter',
+    'tableManager',
+    'tableUtils',
+    'long64Bit',
+    'enigmaBeast?',
+    'beastBreedGate?',
+  ],
   places: ['base', 'world'],
   kinds: ['homeland'],
   offInCombat: true,

@@ -17,7 +17,7 @@ import { bus } from './core/bus.js';
 import { loadAllConfigs, startFeatures, migrateLegacyKeys } from './core/registry.js';
 import { startPlayerWatch, waitUid } from './core/player.js';
 import { installAutoLogin } from './core/auto-login.js';
-import { installReconnectHooks, watchLoginSuccess } from './core/session.js';
+import { installReconnectHooks, installLaunchWatchdog, watchLoginSuccess } from './core/session.js';
 import { mountUI } from './core/ui/index.js';
 import { startSceneWatcher, getCurrentScene } from './core/scene-watcher.js';
 import { installModeGate } from './core/mode.js';
@@ -91,7 +91,10 @@ import { installModeGate } from './core/mode.js';
     configsReady = waitUid()
       .then((uid) => (uid ? migrateLegacyKeys(uid) : undefined))
       .then(() => loadAllConfigs())
-      .then(() => installReconnectHooks());
+      .then(() => {
+        installReconnectHooks();
+        installLaunchWatchdog();
+      });
     watchLoginSuccess();
     watchHomeMapReady(() => {
       configsReady.then(() => {

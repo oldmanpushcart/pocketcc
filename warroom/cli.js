@@ -11,6 +11,7 @@ import { loadConfig } from './src/config.js';
 import { openDb, upsertReportFetched } from './src/db.js';
 import { fetchReport, readEnvelope } from './src/fetch.js';
 import { parseReport } from './src/parse.js';
+import { renderReportHtml } from './src/html.js';
 import { loadDict, currentDictVersion } from './src/dict.js';
 import { rawRelPath } from './src/link.js';
 import { createLog } from './src/log.js';
@@ -97,6 +98,20 @@ async function main() {
           .map((r) => r.report_id);
     if (!targets.length) throw new Error('no reports to parse (fetch or import first)');
     for (const id of targets) parseReport(db, cfg, id);
+  } else if (cmd === 'html') {
+    const ids = cmds.slice(1);
+    const targets = ids.length
+      ? ids
+      : db
+          .prepare('SELECT report_id FROM reports WHERE parsed_at IS NOT NULL ORDER BY report_id')
+          .all()
+          .map((r) => r.report_id);
+    if (!targets.length)
+      throw new Error('no parsed reports (run: node cli.js parse [reportId...])');
+    for (const id of targets) {
+      const out = renderReportHtml(id);
+      log.info('html %s -> %s', id, out);
+    }
   } else if (cmd === 'dict') {
     const r = await loadDict(db, cfg, { force: flags.has('force') });
     console.log(
@@ -109,6 +124,9 @@ async function main() {
     console.log('  node cli.js fetch <reportId...> [--force]   download + persist + index');
     console.log('  node cli.js import <file.json> <reportId>    ingest a locally-saved raw file');
     console.log('  node cli.js parse [reportId...]              decode raw -> structured tables');
+    console.log(
+      '  node cli.js html [reportId...]               render five-act HTML -> analysis/<id>.html',
+    );
     console.log(
       '  node cli.js dict [--force]                   download+decode CDN dict -> dict_entries',
     );

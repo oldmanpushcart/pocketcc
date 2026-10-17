@@ -23,9 +23,9 @@
  *     push 21527 ENIGMA_SECRET_ROOM_BEAST_EVENT 载荷 `{type, specId[], endTime, points[]}` —— 游戏**不把它写进
  *       capturingInfo**（实证 RealPabController：capturingInfo 只在 21524 updateRoomPointFightingPVEInfo 与 8546
  *       应答回调两处被赋 feedInfo，而 feedInfo 里根本没有 eventType/eventEndTime）→ 只读 capturingInfo 必然
- *       晚一拍且无事件身份可用，而心动时刻窗口实测 3.2~3.4s → 直接订阅 21527，到达即发。
+ *       晚一拍且无事件身份可用，而心动时刻窗口只有 2.0s → 直接订阅 21527，到达即发。
  *   每拍按优先级只做一个动作：
- *     ① 限时事件（轮询兜底路）**排在静默窗之前**。实证：能量爆发演出要 6.4~10.2s，而心动时刻只有 3.2s，
+ *     ① 限时事件（轮询兜底路）**排在静默窗之前**。实证：能量爆发演出要 6.4~10.2s，而心动时刻只有 2.0s，
  *        旧实现「静默窗内一律放弃」会把整窗事件全吞掉（且限时事件只受 UI 层屏蔽，checkCaptureOperationCd
  *        仅管 specId==1，直达服务器的拖拽应答实测被接受）。
  *     ② 静默窗口内（能量爆发演出中）→ 睡到窗口结束。实证：specId=4 之后 6.4~10.2s 无下一拍
@@ -143,7 +143,7 @@ export class CaptureEngine {
     if (!st) return tuning.feedIdleMs; // 不在拍（未开拍/在行军/已结束）→ 长睡
     const cap = st.cap;
 
-    // ① 限时事件的轮询兜底：排在静默窗之前，且只在推送通道失联时启用（能量演出 7s 窗 > 心动时刻 3.2s 窗）
+    // ① 限时事件的轮询兜底：排在静默窗之前，且只在推送通道失联时启用（能量演出 7s 窗 > 心动时刻 2.0s 窗）
     if (!this.#pushAlive()) {
       const es = Array.isArray(cap.eventSpecId) ? cap.eventSpecId : [];
       if (!es.length) this.#pollSig = '';
@@ -215,8 +215,9 @@ export class CaptureEngine {
   }
 
   /**
-   * 捕获事件推送入口（push 21527，载荷 `{type, specId[], endTime, points[]}`）：心动时刻窗口实测 3.2s，
-   * 等不起下一拍的 capturingInfo 回写，所以到达即发。退订由 reactor 托管（ctx.on.push）。
+   * 捕获事件推送入口（push 21527，载荷 `{type, specId[], endTime, points[]}`）：心动时刻窗口只有 2.0s
+   * （源码 `ClientTime+2e3`，报文 349/349 实证，见 EVT_TYPE_DRAG 注），等不起下一拍的 capturingInfo 回写，
+   * 所以到达即发。退订由 reactor 托管（ctx.on.push）。
    * @param {object} ev bus `net.21527` 事件（Event 实例：data 里再包一层业务载荷）
    */
   onBeastEvent(ev) {
@@ -261,7 +262,7 @@ export class CaptureEngine {
 
   /**
    * 捕获事件动作的推送出口（以 `type:endTime` 去重）。
-   * **不受静默窗约束**：能量爆发演出 6.4~10.2s，而心动时刻只有 3.2s，在静默窗内放弃等于必丢。
+   * **不受静默窗约束**：能量爆发演出 6.4~10.2s，而心动时刻只有 2.0s，在静默窗内放弃等于必丢。
    * @param {number} et 事件类型（2 心动时刻 / 5 投喂弹窗）
    * @param {Array<number|string>} es 事件候选 specId
    * @param {number} endMs 窗口结束时刻（毫秒，兼作身份一部分）

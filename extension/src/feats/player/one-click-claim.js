@@ -9,8 +9,11 @@
  * 游戏规则（用户提供，指导调度节奏）：
  *   1. 每次领取后有 30 秒领取间隔（服务器以 limitTimeSec 下发，是反连点冷却、非收益就绪时刻）；
  *   2. 领取后不必急着再领——收益恢复很慢，按 30s 空转会大部分领到 code≠0 的空行；
- *   3. 每日 0 点必定刷新，建议 0 点之后领一次即可抓满当日累积。
- *   据此本 feat 采用「日锚」调度：领取后睡到下一个服务器 0 点（见下「调度」），而非 30s 轮询。
+ *   3. 每日 0 点必定刷新。
+ *   据此原采用「纯日锚」调度（领一次即睡到下一个 0 点）。**该前提被报文推翻**：收益是 0 点之后仍全天
+ *   线性累积的（dashcam 20261011T172802 那轮 17:28 仍领到 expedition_coin=364），纯日锚会把 0 点后整天的
+ *   新增漏到第二天，用户侧表现为「游戏里明明还能领，脚本一整天不动」。现调度定为
+ *   **「日锚 + 日内 CLAIM_GAP_MS 兜底」取先到者**：0 点那次必领，日内每 2h 复领一批（全天约 12 拍）。
  *
  * 协议（报文实证 dashcam 20261011T172802-一键领取.ndjson；源码锚点 extracted/subpack 的
  *   TaskRelaxTool / OpenBuildingBotNode / OpenBuildingBotDetailPop）：
@@ -21,6 +24,9 @@
  *   5685 TASK_RELAX_ONE_CLICK_GET_REWARD，sendPBV2，载荷 {id:[可用行 id 列表]}：
  *     应答 data = {detail:[{id,code,param,rewardResult}…]}。逐行 code=0 为领到（带 rewardResult），
  *     非 0 为该行此刻无累积收益（可预期业务态，非异常）。游戏「开始领取」即整表一次性发全部可用行 id。
+ *     INFO 的 param **不是** ready 位（同一份报文实证反例：param 为空的 id=2 反倒领到 364 远征币，
+ *     param 为 ["0"] 的 id=1/id=3 均返回 code=4），故不可据它猜单行就绪；探「有没有收益」的唯一手段就是
+ *     发 5685 本身——无收益行只返回 code≠0，不消耗任何额度，这也是日内可以放心加复领档的成本依据。
  *
  * 领取判据（游戏 OpenBuildingBotNode 同口径）：detail 不含 ready 位，是否可领只看
  *   `!limitTimeSec || ServerTime >= limitTimeSec`（不在冷却即允许点）。所以本功能不猜单行 ready，
@@ -30,11 +36,12 @@
  *   不经其回调——但「可否再领」始终以服务器 INFO 的 limitTimeSec 为权威（每轮重读），不依赖任何本地镜像，
  *   故无需自维护 shadow；领后服务器设冷却，下轮 INFO 读到即精确休眠，天然收敛不重发。
  *
- * 调度（A 族 createCycle，日锚为主 + 冷却兜底，全本地可重放读）：
+ * 调度（A 族 createCycle，日锚 + 日内兜底，全本地可重放读）：
  *   - 开启闸关：IDLE 巡检（rarely 翻 true，玩家升级/放量后自愈）；
  *   - 冷却中（规则 1，仅当玩家刚手动领过 <30s 才会命中）：睡到 limitTimeSec + 缓冲（封顶 WAIT_CAP，零发包）；
- *   - 到点可领：整批 5685 领取 →（规则 2 恢复慢 + 规则 3 每日 0 点刷新）睡到下一个服务器 0 点 + 缓冲，
- *     不再按 30s 冷却空转；有无收益都走日锚（收益按日累积，未到 0 点重领无意义）；
+ *   - 到点可领：整批 5685 领取 → 睡到「下一个服务器 0 点 + 缓冲」与 CLAIM_GAP_MS 的**较早者**
+ *     （2h 整除 24h，故兜底档自然滚到日锚；临近 0 点时 dailyDelay 更短，0 点那次仍必领），不再纯日锚空转；
+ *   - 有无收益都走同一择时（收益按小时累积，未到点重领只是返回 code≠0，无副作用）；
  *   - INFO/REWARD 瞬态未发出（CODE_NOT_SENT：在途频控/发送超时）：短重试（TRANSIENT_RETRY_MS），不拖长退避；
  *     仅服务器真拒绝（s≠0）才计入 streak，连续 3 次降巡检档 ×2。
  *
@@ -67,6 +74,10 @@ const WAIT_CAP_MS = IDLE_TICK_MS * 8;
 
 /** @type {number} 睡过服务器 0 点日界后的抖动余量（毫秒）：让当日收益完成刷新结算再领（规则 3） */
 const DAILY_ANCHOR_BUFFER_MS = 1000 * 60;
+
+/** @type {number} 日内兜底复领间隔（毫秒）：收益 0 点后仍按小时累积，纯日锚会把当天新增漏掉，
+ *   而 5685 无收益行只返回 code≠0、不消耗额度，故取「日锚」与这个间隔的先到者（全天约 12 拍） */
+const CLAIM_GAP_MS = 1000 * 60 * 120;
 
 /** @type {number} 瞬态未发出（CODE_NOT_SENT：在途频控/发送超时）的短重试（毫秒）：与服务器真拒绝区分，不把已到点的领取拖进 15min 退避 */
 const TRANSIENT_RETRY_MS = 1000 * 20;
@@ -155,8 +166,8 @@ function cooldownDelay(limitTs) {
 }
 
 /**
- * 日锚休眠（规则 2+3）：睡到下一个「游戏日 0 点」+ 缓冲。服务器不暴露单行收益就绪时刻（limitTimeSec 只是 30s
- * 领取间隔），故按日界本地择时；跨天单次 sleep 由 cycle.js 的 24h 硬顶夹住，每轮重读 INFO 自然收敛。
+ * 日锚休眠候选（规则 3）：睡到下一个「游戏日 0 点」+ 缓冲。服务器不暴露单行收益就绪时刻（limitTimeSec 只是 30s
+ * 领取间隔），故日界只能本地择时；跨天单次 sleep 由 cycle.js 的 24h 硬顶夹住，每轮重读 INFO 自然收敛。
  * @returns {number} 毫秒（日界不可得时退 IDLE_TICK_MS）
  */
 function dailyDelay() {
@@ -164,6 +175,15 @@ function dailyDelay() {
   if (!nextReset) return IDLE_TICK_MS;
   var leftMs = (nextReset - gameData.serverTime()) * 1000 + DAILY_ANCHOR_BUFFER_MS;
   return Math.max(leftMs, READY_BUFFER_MS);
+}
+
+/**
+ * 领取后的下次唤醒：日锚与日内兜底档取先到者。0 点那次仍必领（临近日界时 dailyDelay 更短），
+ *   日间则每 CLAIM_GAP_MS 复领一批，不再把 0 点后的累积整天空转掉。
+ * @returns {number} 毫秒
+ */
+function nextClaimDelay() {
+  return Math.min(dailyDelay(), CLAIM_GAP_MS);
 }
 
 // ── 主流程 ────────────────────────────────────────────────────────────
@@ -215,13 +235,23 @@ async function cycleRun() {
     return rejectStreak >= 3 ? IDLE_TICK_MS * 2 : IDLE_TICK_MS;
   }
   rejectStreak = 0;
-  // 规则 2+3：恢复很慢、且每日 0 点必刷 → 领取后一律睡到下一个服务器 0 点，不再按 30s 冷却空转
+  // 规则 2+3 修正：收益 0 点后仍按小时累积 → 领后睡到「下一个 0 点」与 CLAIM_GAP_MS 的较早者，不再纯日锚空转
+  var wakeMs = nextClaimDelay();
   if (res.success > 0) {
-    log.info('一键领取完成：%d/%d 行有奖励，睡到下一个 0 点刷新后再领。', res.success, res.total);
+    log.info(
+      '一键领取完成：%d/%d 行有奖励，%d min 后复领（0 点那次必领）。',
+      res.success,
+      res.total,
+      Math.round(wakeMs / 60000),
+    );
   } else {
-    log.debug('一键领取触发：%d 行均无可领收益，睡到下一个 0 点刷新。', res.total);
+    log.debug(
+      '一键领取触发：%d 行均无可领收益，%d min 后再领。',
+      res.total,
+      Math.round(wakeMs / 60000),
+    );
   }
-  return dailyDelay();
+  return wakeMs;
 }
 
 const cycle = createCycle({ log: log, alive: aliveFn, run: cycleRun, fallback: IDLE_TICK_MS });

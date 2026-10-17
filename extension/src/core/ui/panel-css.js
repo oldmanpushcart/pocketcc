@@ -246,6 +246,8 @@ export const PANEL_CSS = `
     .pc-fsecchev{font-size:9px;opacity:.6;transition:transform .15s;}
     .pc-fsectoggle.open .pc-fsecchev{transform:rotate(90deg);}
     .pc-fsec-body{margin:0;}
+    /* 纯说明横幅字段（type:'note'）：整行 muted 小字，配合其 section 标题切分相邻字段块 */
+    .pc-fnote{font-size:11px;line-height:1.5;color:#9fb4cc;opacity:.9;margin:0 0 2px;padding:0 2px;}
     /* 字段条件显隐（fd.showIf(cfg)）：行根打 data-dep 标记，由 refreshFieldVisibility 就地切 hidden、不重建 DOM。
        双属性选择器特异度高于 .pc-row/.pc-mopts 等作者类规则，故 hidden 能真生效（同 .pc-sec-body[hidden] 的写法原因）；
        分组小标题同理：其下字段全隐时一起收起，不留「光杆标题」 */

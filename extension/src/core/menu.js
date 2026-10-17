@@ -115,6 +115,7 @@ export const MENU = [
       { id: 'floatCar', kind: 'feature', label: '花车空投', showFields: true },
       { id: 'launchSilo', kind: 'feature', label: '占领发射井', showFields: true },
       { id: 'secretRealm', kind: 'feature', label: '异能秘境', showFields: true },
+      { id: 'csHunt', kind: 'feature', label: '夺宝奇兵', showFields: true },
     ],
   },
   {

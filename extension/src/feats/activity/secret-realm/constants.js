@@ -115,12 +115,16 @@ export const SPEC_ENERGY_USE = 4;
 export const ENERGY_MAX = 3;
 /**
  * 捕获事件类型（唯一来源是 push 21527 的 `type`——capturingInfo 里没有 eventType，见 PUSH_BEAST_EVENT 注）：
- *   2 = 心动时刻/拖拽事件（PetCaptureDragNodeNew，**窗口实测 3.2~3.4s**：20261011T203911 里推送 header.ts
- *     与载荷 endTime 之差；此前记的「0.8~1.3s」是拿旧会话 header.ts 与 endTime 的错口径读出来的，已被推翻。
- *     客户端拖拽节点自己给的是 `ClientTime+2e3`；成功 → `petCaptureOperation(specId[0])`，能量 +1 且 changeScore=0）；
- *   5 = 投喂弹窗（PabPetFeedEventPopup，选项 = specId 数组即 enigma_beast_behave 行 7..10，窗口实测 26s；
- *     报文实证 changeScore 200~650 档，择优即多拿分）；
- *   3 = 能量爆发演出（specId=[4] + points 数组、endTime=INT_MAX），本 feat 不直接响应它，由 selfenergy 闸覆盖。
+ *   2 = 心动时刻/拖拽事件（PetCaptureDragNodeNew，**窗口 2.0s**：源码 `_eventEndTime = ClientTime + 2e3`，
+ *     报文实证全库 349/349 条 `endTime(Int64 ms) − header.ts×1000 ≡ 2000ms`（跨 4 个会话）；此前记的
+ *     「3.2~3.4s」与「0.8~1.3s」都是 endTime 的 Int64 口径读错所致，均已推翻。
+ *     成功 → `petCaptureOperation(specId[0])`，能量 +1 且 changeScore=0）；
+ *   5 = 投喂弹窗（PabPetFeedEventPopup，选项 = specId 数组即 enigma_beast_behave 行 7..10，
+ *     **窗口实测 25.0s**（25/25）；报文实证 changeScore 200~650 档，择优即多拿分。
+ *     **发号口径差异**：游戏发的是 `7 + 选项下标`（位置映射），本 feat 发的是候选值本身 ——
+ *     实证 25/25 条 specId 恒为满四元 [7,8,9,10]，两者等价；若服务器改为下发子集则会错位）；
+ *   3 = 能量爆发演出（specId=[4] + points 数组、endTime 为哨兵值 ≈ Long.MAX/1000，43/43 实证），
+ *     客户端无任何消费者，本 feat 也不直接响应它，由 selfenergy 闸覆盖。
  * @type {number}
  */
 export const EVT_TYPE_DRAG = 2;

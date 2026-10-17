@@ -8,6 +8,7 @@ import { createLog } from './log.js';
 import { game } from './game.js';
 import { bus } from './bus.js';
 import { configs } from './registry.js';
+import { worldSignals } from './game-api.js';
 
 /** @type {ReturnType<createLog>} 模块日志器（tag=NET，与网络层共用一个面） */
 const logNet = createLog('NET');
@@ -218,6 +219,69 @@ function startLivenessWatch() {
   }, 2000);
 }
 
+// ─────────────────────────── 启动/登录看门狗：覆盖「登录前维护卡死」 ───────────────────────────
+//   服务器更新维护时客户端停在 Launch/Login 场景弹「版本公告 / 服务器维护」面板，登录流程走不到头：
+//   既不调 NetMgr.showPanel（那是连接建立后的断线弹窗），又因收不到 LOGIN_SUCCESS 而永不启动活性监视，
+//   上面两套自愈全部失效。这里补一条独立通道：订阅 scene.change，若长时间停在 boot 语义场景
+//   （Launch/Login）且始终没等到 LOGIN_SUCCESS，就直接刷新页面重试，直到真正确认登录成功。
+//   与断线重连不同：本通道刻意绕开 5 分钟 3 次的限流窗口（维护常达 10-15 分钟，走限流会中途彻底闸死），
+//   每次刷新后页面重启、宽限期重新计时，天然形成「每 LAUNCH_GRACE_MS 重试一次」的节奏。
+/** @type {number} boot 场景宽限期：进入 Launch/Login 后超过此时长仍未登录，判为维护卡死并刷新（毫秒） */
+const LAUNCH_GRACE_MS = 90 * 1000;
+/** @type {number} 看门狗轮询节奏（毫秒）：仅用于到点判定，实际刷新节奏由宽限期决定 */
+const WATCHDOG_POLL_MS = 5 * 1000;
+
+/** @type {boolean} 是否已收到 LOGIN_SUCCESS（收到即永久解除看门狗） */
+let loginConfirmed = false;
+/** @type {number} 进入 boot 场景（未登录）的起始时刻；0=当前不在 boot 卡死态 */
+let bootSince = 0;
+/** @type {number|null} 看门狗轮询定时器 */
+let watchdogTimer = null;
+
+/** 解除并停用启动看门狗（登录确认后调用） */
+function disarmLaunchWatchdog() {
+  if (watchdogTimer) {
+    clearInterval(watchdogTimer);
+    watchdogTimer = null;
+  }
+  bootSince = 0;
+}
+
+/**
+ * 安装启动/登录看门狗：boot.js 在配置就绪后随 installReconnectHooks 一起调用一次。
+ * 幂等：已装或登录已确认则直接返回。
+ */
+export function installLaunchWatchdog() {
+  if (watchdogTimer || loginConfirmed) return;
+  // 订阅场景切换：进入 boot（Launch/Login）起表，离开 boot 归零（scene-watcher 只在真改名时才广播，不会自我重置宽限期）
+  bus.on('scene.change', ({ name }) => {
+    if (loginConfirmed) return;
+    const inBoot = worldSignals.sceneSemantic() === 'boot';
+    bootSince = inBoot ? Date.now() : 0;
+    if (inBoot) logNet.debug('launch watchdog: entered boot scene %s', name);
+  });
+  // 兜底自检：安装时可能已身处 boot 且错过初次 scene.change（scene-watcher 早于本 hook 广播过）
+  if (worldSignals.sceneSemantic() === 'boot') bootSince = bootSince || Date.now();
+  watchdogTimer = setInterval(() => {
+    const rc = configs.reconnect;
+    if (!rc || !rc.enabled) return; // 自动重连总开关关着 → 看门狗也不动作
+    if (loginConfirmed) {
+      disarmLaunchWatchdog();
+      return;
+    }
+    if (!bootSince) return;
+    // 仍停在 boot 场景才算数（scene.change 漏推时以现场语义复核，离开则归零）
+    if (worldSignals.sceneSemantic() !== 'boot') {
+      bootSince = 0;
+      return;
+    }
+    if (Date.now() - bootSince < LAUNCH_GRACE_MS) return;
+    logNet.info('launch watchdog: pre-login maintenance stall in boot scene, reloading to retry');
+    bootSince = Date.now(); // 复位计时（刷新后本上下文即销毁，此行仅防御同页重复刷新）
+    window.location.reload();
+  }, WATCHDOG_POLL_MS);
+}
+
 // ─────────────────────────── 登录成功信号 ───────────────────────────
 //   仅用于「会话健康」——清零重连计数 + 广播 healthy + 启动活性监视。
 //   功能启动不挂这里（见 boot.js watchHomeMapReady）：LOGIN_SUCCESS 只代表 net 登录态就绪，主城场景可能仍在加载。
@@ -232,6 +296,9 @@ export function watchLoginSuccess() {
     logNet.info('LOGIN_SUCCESS captured');
     resetReloadLog(); // 会话恢复健康，清零重连计数
     setHealthy('login-success');
+    // 登录真正确认：永久解除启动/登录看门狗（维护卡死自愈到此为止，之后交断线重连/活性监视接管）
+    loginConfirmed = true;
+    disarmLaunchWatchdog();
     if (!livenessStarted) {
       livenessStarted = true;
       startLivenessWatch();

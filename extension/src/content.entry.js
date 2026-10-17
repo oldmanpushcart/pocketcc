@@ -13,6 +13,7 @@ import './feats/activity/domain-treasure.js';
 import './feats/player/mine-cave/index.js';
 import './feats/activity/launch-silo.js';
 import './feats/activity/secret-realm/index.js';
+import './feats/activity/cs-hunt/index.js';
 import './feats/player/auto-farm.js';
 import './feats/player/auto-hunt.js';
 import './feats/player/fear-star-rally.js';

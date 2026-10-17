@@ -10,6 +10,8 @@
   "scripts": {
     "fetch": "node cli.js fetch",
     "import": "node cli.js import",
+    "parse": "node cli.js parse",
+    "html": "node cli.js html",
     "info": "node cli.js info"
   },
   "dependencies": {
