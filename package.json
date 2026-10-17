@@ -1,11 +1,13 @@
 {
   "name": "pocketcc",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "private": true,
   "description": "口袋控制中心 (pocketcc) — 口袋奇兵 H5 页游辅助",
   "type": "module",
   "scripts": {
     "build": "node esbuild.config.mjs",
+    "build:release": "node esbuild.config.mjs --release && node scripts/obfuscate-release.mjs",
+    "pack:friend": "node scripts/package-friend.mjs",
     "watch": "node esbuild.config.mjs --watch",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
@@ -22,6 +24,7 @@
     "eslint-config-prettier": "^10.1.8",
     "eslint-plugin-sonarjs": "^4.2.2",
     "globals": "^17.13.0",
+    "javascript-obfuscator": "^5.9.0",
     "jscpd": "^5.4.1",
     "prettier": "^3.9.9"
   }

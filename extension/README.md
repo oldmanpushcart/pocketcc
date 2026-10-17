@@ -11,6 +11,7 @@
 - [架构](#架构)
 - [目录结构](#目录结构)
 - [构建与安装](#构建与安装)
+- [打包与授权分发（发给朋友）](#打包与授权分发发给朋友)
 - [使用](#使用)
 - [控制台调试面](#控制台调试面)
 - [开发约定](#开发约定)
@@ -135,6 +136,53 @@ npm run build     # 或 npm run watch（三入口并行监听）
 1. 打开 `edge://extensions`（或 `chrome://extensions`），开启「开发人员模式」。
 2. 「加载解压缩的扩展」选择 **`extension/` 这一层**（直接含 `manifest.json` 的目录；选仓库根或 `dist/` 会报清单缺失）。
 3. 打开游戏页登录即可。**改完源码必须 `npm run build` 并 F5 刷新游戏页面**（不是只重载扩展）——MAIN world 的 monkey-patch 只有干净页面才清得掉。
+
+## 打包与授权分发（发给朋友）
+
+想把扩展单独授权给某个朋友（BY UID），用一条命令出「授权包」。**在仓库根执行**：
+
+```bash
+npm run pack:friend -- --uid=<朋友的游戏UID> --friend=<昵称> [--salt=<盐值>]
+# 例：npm run pack:friend -- --uid=14172836401183 --friend=泷宝 --salt=longbao-2026-01
+```
+
+### 参数契约
+
+| 参数 | 说明 |
+|---|---|
+| `--uid` / `--friend` | **必须成对出现**，缺一即 fail-fast 报错退出。单人单包，一个包只授权一个 UID。 |
+| 都不给 | = **无限制包**（等同 `npm run build` 的开发自用包）：运行时闸门全部放行、不弹欢迎界面。 |
+| `--salt` | 可选，缺省用内置 `pcc-2026-a1`。**强烈建议每人换一个**——盐不同则哈希口径不同，一人被破解/外泄不波及其他人，也便于事后追踪。 |
+
+### 产物与防护
+
+命令会串起三步：`esbuild --release`（编译期注入授权常量）→ `obfuscate-release`（二次混淆）→ 组装分发目录，输出到：
+
+```
+release/pocketcc-extension-for-<UID>/
+├─ dist/        content.js / bridge.js / background.js（仅 *.js，无 .map、无授权标记）
+├─ manifest.json  version 同步为根版本号；name 追加水印「 - <昵称>」
+└─ assets/      图标
+```
+
+release 构建相对开发包的差异：`minify: true` + **关闭 sourcemap** + 去 legal 注释；javascript-obfuscator 只做字符串编码（`stringArray`+base64+unicode），**不开** `selfDefending`/`debugProtection`/`controlFlowFlattening`（会与游戏符号耦合误伤）。
+
+**包内不落 UID 明文**：只内联 `sha256(salt+uid)` 哈希，运行时对登录 UID 求同样哈希比对。核验点分布式埋四处（boot 主闸 + bridge ISOLATED 复验 + background ingest 复验 + 个别 feat 副闸），补单点不全解锁。防护目标是拦「顺手 grep 改 UID / 补单点短路」这类初级破解，**不追内存断点级破解**（客户端无解，明示边界）。
+
+### 交付给朋友
+
+把整个 `release/pocketcc-extension-for-<UID>/` 文件夹压缩发过去，对方走 `chrome://extensions`（或 `edge://extensions`）→ 开「开发人员模式」→「加载解压缩的扩展」选这一层目录即可（是已解压扩展，不是 .crx）。提前告知：
+
+- Chrome 会定期弹「请停用开发者扩展」，属正常现象。
+- 发布包是本地文件夹、**无远程升级通道**，只能靠你重新打包 + 对方重新加载来更新。
+- 登录匹配的 UID → 绿色「核验通过」+「进入使用」；登录别的 UID → 红色「核验失败」，功能全停（不读配置、不起 feat、不挂 UI），界面不可关闭。
+
+### 版本管理
+
+- **唯一真相源 = 仓库根 `package.json` 的 `version`**，只维护这一处。
+- 任一构建（`build`/`build:release`/`pack:friend`/`watch`）都会把它自动同步进 `extension/manifest.json`（消除 dev 加载时的版本漂移）；出授权包时再由 `package-friend.mjs` 覆写分发目录内那份 manifest 并加昵称水印。
+- semver 约定：`patch`=修复、`minor`=新功能、`major`=存储结构变更（须向后兼容或欢迎界面提示需重新配置）。
+- 每发一个包打 git tag `v<version>`；同一版本给朋友重发用 `v<version>-<后缀>`（如 `v1.0.1-longbao`），便于回溯各人手上的版本。
 
 ## 使用
 

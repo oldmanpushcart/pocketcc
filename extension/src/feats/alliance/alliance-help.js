@@ -28,6 +28,8 @@ import { game } from '../../core/game.js';
 import { createDrain } from '../../core/drain.js';
 import { reactor } from '../../core/reactor.js';
 import { item } from '../../core/item.js';
+import { screen } from '../../core/net-guard.js';
+import { getUid } from '../../core/player.js';
 
 /** @type {ReturnType<createLog>} 模块日志器（tag=ALLIANCE_HELP） */
 const log = createLog('ALLIANCE_HELP');
@@ -195,6 +197,9 @@ function scheduling(delay, fn) {
  * 生产轮询：无状态条件扫描 → 按 kind 去重入队 → 触发消费 → 重排下一轮
  */
 function runTick() {
+  // 准入存活校验（O(1) 读缓存判定，不设限包恒真）：不过则本轮不生产不消费，
+  // 不重排定时器、不报错不刷屏；不设限包永不命中此分支。
+  if (!screen(getUid())) return;
   produce();
   if (!aliveFn()) return;
   drain.consume().catch(function (err) {

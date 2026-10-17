@@ -1,6 +1,9 @@
 node_modules/
 extension/dist/
 
+# 授权分发产物（含朋友昵称水印，不入公开仓库）
+release/
+
 # 临时/工具产物（逆向探测、IDE 快照、Windows 保留名误生成）
 ref_probe.mjs
 .qoder_*
@@ -11,3 +14,6 @@ nul
 # 逆向第三方产物：可由游戏包再生、体积大，不入库（保留同目录下的 authored 分析 md）
 references/游戏逆向/raw/
 references/游戏逆向/extracted/
+
+# 竞对逆向：第三方脚本反混淆产物，仅供本地分析，不入公开仓库
+references/竞对逆向/

@@ -4,7 +4,9 @@
  * 放这里而非 content/MAIN 发：service worker 用扩展自有源 + manifest host_permissions，
  * 不受游戏页 connect-src 与 https→http 混合内容限制，是绕开页面 CSP 落盘 localhost 的最干净通道。
  * 不引存储、不建定时器；报文只过路，写盘由 dashcam 工程负责。
+ * 准入副闸（分布式闸门之三）：本 bundle 自带同源哨（net-guard），报文内账号摘要对不上直接静默丢弃。
  */
+import { screen } from './core/net-guard.js';
 
 /**
  * 把一批 NDJSON 报文 POST 到转发地址，携会话元数据头供 dashcam 命名与建索引。
@@ -30,6 +32,8 @@ async function ingest(msg) {
 
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   if (msg && msg.type === 'dashcam-flush') {
+    // 准入副闸：不设限包 screen 恒真；授权包报文内账号不符则静默丢弃（不回错、不命中任何文案路标）
+    if (!screen(msg.uid)) return false;
     // 异步回执：return true 保持端口；失败/无接收器回 err 仅供诊断，bridge 侧已忽略、不阻断录制。
     ingest(msg)
       .then((status) => sendResponse({ ok: status }))

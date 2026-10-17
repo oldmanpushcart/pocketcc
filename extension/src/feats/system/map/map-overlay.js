@@ -170,6 +170,18 @@ function esc(s) {
 }
 
 /**
+ * 列表行展示坐标：优先用业务层换算好的 game 号（gx/gy，与游戏内显示及跳转落点同源），
+ * 缺省时回退折叠 cell 号（cx/cy），保证旧数据或外部推入不炸。
+ * @param {{gx?:number,gy?:number,cx:number,cy:number}} it
+ * @returns {string}
+ */
+function coordText(it) {
+  const x = it.gx != null ? it.gx : it.cx;
+  const y = it.gy != null ? it.gy : it.cy;
+  return x + ',' + y;
+}
+
+/**
  * 视口宽松钳制（同聊天浮层）：宽高钳到 [min, 视口]，坐标只保证露出 60×40px。
  * @param {{x:number,y:number,w:number,h:number}} g
  * @returns {{x:number,y:number,w:number,h:number}}
@@ -528,7 +540,7 @@ export class MapOverlay {
 
   /**
    * 渲染列表数据（业务层推入；搜索变化不重拉数据，纯前端过滤）。
-   * @param {Array<{cx:number,cy:number,k:number,color:string,name:string,sub:string,cross:boolean}>} items 新→旧，≤500 条
+   * @param {Array<{cx:number,cy:number,gx?:number,gy?:number,k:number,color:string,name:string,sub:string,cross:boolean}>} items 新→旧，≤500 条（cx/cy=cell 供跳转，gx/gy=game 供展示）
    * @param {number} total 桶内符合图例的总点数
    */
   renderList(items, total) {
@@ -550,7 +562,7 @@ export class MapOverlay {
       ? all
       : all.filter(
           (it) =>
-            (it.cx + ',' + it.cy + ' ' + (it.name || '') + ' ' + (it.sub || ''))
+            (coordText(it) + ' ' + (it.name || '') + ' ' + (it.sub || ''))
               .toLowerCase()
               .indexOf(q) >= 0,
         );
@@ -568,6 +580,7 @@ export class MapOverlay {
       shown
         .map((it, n) => {
           const isCity = it.pt === CITY_POINT_TYPE;
+          const coord = coordText(it); // 展示用 game 坐标（与游戏内/跳转落点一致），无则回退 cell
           // 玩家城池四行：① 名称 ② 坐标 ③ 等级-基地战力-兵力（Lv100-58.5M-960cc，战力/兵力走 getLargeNumberShow）④ 有无护盾
           let metaLine = '';
           let shieldLine = '';
@@ -586,7 +599,7 @@ export class MapOverlay {
           return (
             `<div class="pcg-lrow" data-n="${n}">` +
             `<span class="pcg-lsw" style="background:${it.color}"></span>` +
-            `<span class="pcg-lmain"><span class="pcg-lname" title="${esc(it.sub || '')} · (${it.cx},${it.cy})">${esc(it.name || it.sub || '未知点')}</span><span class="pcg-lcoord">(${it.cx},${it.cy})</span>${metaLine}${shieldLine}</span>` +
+            `<span class="pcg-lmain"><span class="pcg-lname" title="${esc(it.sub || '')} · (${coord})">${esc(it.name || it.sub || '未知点')}</span><span class="pcg-lcoord">(${coord})</span>${metaLine}${shieldLine}</span>` +
             (it.cross ? `<span class="pcg-lk" title="跨区点：属区 ${it.k}">区${it.k}</span>` : '') +
             `</div>`
           );

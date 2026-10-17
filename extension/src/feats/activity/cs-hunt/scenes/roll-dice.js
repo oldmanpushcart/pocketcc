@@ -21,6 +21,12 @@ export async function handle(ctx) {
   if (ctx.done(key)) return;
   var rdi = ctx.ei.eventRollDiceInfo;
   if (!rdi) return;
+  // 掷骰不可逆：中奖奖励命中幸运池但背包尚未成功落地时，先拉一次背包确认；仍拉不到则本拍不掷、不 markDone，
+  //   留待下一拍（EVENT 态 4s 重扫）背包就绪——避免 #ensureBackpack 失败态把「幸运×2」静默跳过、白掷一次（实证 bug 2026-10-17）
+  if (!ctx.backpackReady() && ctx.luckyHit(rdi.winRewardResult)) {
+    await ctx.ensureBackpack();
+    if (!ctx.backpackReady()) return;
+  }
   ctx.markDone(key);
   await ctx.tryLucky('rollDice', rdi.winRewardResult, '掷骰奖励');
   await ctx.sendPB(

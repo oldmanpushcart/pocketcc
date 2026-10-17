@@ -18,7 +18,11 @@
  * 幂等与去重：
  *   - 7519 同内容连发两条间隔 23s 均 s=0（重复发包无害，报文实证），但仍按 teamId 记一次、失败才重试；
  *   - 每个写请求经 net.isSending(cmd) 在途去重；
- *   - 队伍快照一律由应答/推送落地（不镜像游戏数据、不调游戏 updateXxx，遵守 feat 只读+发包红线）。
+ *   - 队伍快照一律由应答/推送落地（不镜像游戏数据、不调游戏 updateXxx，遵守 feat 只读+发包红线）；
+ *   - **终局后散队闸门**：状态机 END/RETURN 时服务器队伍并未即散——夺宝飞船还在返程，到家才散队
+ *     （报文实证 dashcam 20261017T120320：END@+986s → 21371 散队@+1063s）。窗口内建队 7521/申请 7522
+ *     会被拒 ava_team_tips_011=已加入其他队伍（游戏 UI 随之反复提示）→ #finishHunt 置 #waitHome 闸门，
+ *     解除走三通道：10019 飞船(marchType=137)到家边沿推送 / 21371 队伍清空推送 / 快照轮询+超时兑底。
  *
  * 已知缺口（不阻塞本闭环）：
  *   - huntCount 只由推送 21375 喂（游戏侧同款口径：RealCSHuntController.updateUserCrossTreasureChange），
@@ -32,6 +36,7 @@
  *   - 次数不足且勾了 useBeaconWhenShort → 走通用使用物品 815 消耗定位信标(47001001) 补次数（§7-6 已报文关闭）。
  */
 import { Battle } from '../../../core/battle.js';
+import { march } from '../../../core/march.js';
 import { bits, csHunt, gameData } from '../../../core/game-api.js';
 import { createLog } from '../../../core/log.js';
 import { FlowEngine } from './engine-flow.js';
@@ -82,12 +87,22 @@ const ACTIVE_TICK_MS = 15000;
 const IDLE_TICK_MS = 60000;
 /** @type {number} 7501 只读拉态的兜底周期（毫秒）：控制器未接管（子包没进过）时队伍/开关态的唯一补齐通道 */
 const INFO_REFRESH_MS = 90000;
+/**
+ * @type {number} 未开跑等待期主动轮询 7501 的间隔（毫秒）：游戏界面在夺宝页外时服务器不推队伍态
+ *   （实证 dashcam 20261017T1938：审批后 21371/21372 均漏达，整队电平冻结 3 分钟，点开队伍页才补到）；
+ *   队长 full/allMarched 召集判定不能依赖推送可达，靠应答带整队（实证 20261016T191700 seq88）喂电平。纯读包。
+ */
+const TEAM_POLL_MS = 20000;
 /** @type {number} 630 PLAYER_INFO：按 uid 查玩家昵称（陪跑按名搜队用；业务强相关报文，收口本 feat，不入通用 net.js） */
 const CMD_PLAYER_INFO = 630;
 /** @type {number} 无队找队时逐个按名搜队（630→7530→7522）的最小拉取间隔（毫秒）：一趟遍历多打网络，不逐拍刷 */
 const JOIN_POLL_MS = 25000;
 /** @type {number} 同一目标定位信标消耗的最小间隔（毫秒）：防 21375 未到时逐拍重复消耗（每次都是真道具） */
 const BEACON_COOLDOWN_MS = 20000;
+/** @type {number} 终局后等飞船回城散队的兑底超时（毫秒）：主解除靠 10019 到家/21371 散队推送，此仅防漏推死等（实证散队约在 END 后 1-2 分钟，5 分钟富余） */
+const WAIT_HOME_MAX_MS = 300000;
+/** @type {number} 回城等待期快照轮询重查间隔（毫秒）：行军不在队列表即判已到家 */
+const HOME_POLL_MS = 10000;
 /**
  * @type {Set<string>} 7531 拉本跑详情命中即「本次出征已结束」的服务器权威终局拒因（多语言键）：
  *   cs_treasure294=夺宝奇兵小队不存在（字典表.txt L42336，实证日志 `code=3 reason=cs_treasure294`）。
@@ -190,6 +205,14 @@ export class TeamEngine {
   /** @type {string} 已被服务器判「小队不存在」而收口的 treasureId（防陈旧控制器把同一死队回填后再次空拉 7531；stop 清） */
   #endedTreasureId = '';
   /**
+   * 终局后「等飞船回城散队」闸门：{marchId:string(空串=未知，按 type=137 匹配), deadline:number}，
+   *   置位后无队分支不建队/不入队；10019 到家边沿、21371 清空推或轮询确认行军消失/超时即解除（stop 清）。
+   * @type {{marchId:string, deadline:number}|null}
+   */
+  #waitHome = null;
+  /** @type {(() => void)|null} march.onHomeReturn 订阅退订句柄（散队闸门主解除通道；stop 摘除） */
+  #homeUnsub = null;
+  /**
    * 场景流程引擎（P3/P4）：本队开跑后由 tick 委托驱动，共享同一 env/net/队伍快照与 sendPB 幂等闸。
    * @type {FlowEngine}
    */
@@ -249,6 +272,16 @@ export class TeamEngine {
     ctx.on.push(21376, (ev) => this.#onHuntInfo(this.#ack(ev, FIELD_HUNT_INFO_CHANGE)));
     // 21383 来袭规模（真人掠夺）：转发给事件引擎驱动 P4 保命（本引擎不在此直发写包）
     ctx.on.push(21383, (ev) => this.#flow.onRaid(this.#ack(ev, FIELD_HURT_MARCH_SIZE)));
+    // 终局后散队闸门主解除通道：飞船行军(marchType=137)到家边沿（march.js 全局单点 10019 复播，已滤到 state=ARRIVED_HOME）
+    this.#homeUnsub = march.onHomeReturn((m) => {
+      if (!this.#env.alive() || !this.#waitHome) return;
+      if (Number(m.type) !== MARCH_TYPE_CS_TEAM_HUNT) return; // 按玩法行军型过滤，其它行军到家不唤醒
+      var gid = this.#waitHome.marchId;
+      if (gid && String(m.id) !== gid) return; // 已知本队飞船 marchId 时精确匹配
+      this.#waitHome = null;
+      log.info('夺宝飞船已到家散队，开始下一轮建队/入队');
+      this.#wake();
+    });
     // 7501 应答也可能带整队（报文实证 dashcam 20261016T191700 seq88）：统一在此落地，装配层只管点火发包
     ctx.on.resp(REQ_INFO, (ev) => {
       var ack = this.#ack(ev, ACK_INFO);
@@ -297,6 +330,15 @@ export class TeamEngine {
     this.#uidName.clear();
     this.#lastBeaconAt = 0;
     this.#endedTreasureId = '';
+    this.#waitHome = null;
+    if (this.#homeUnsub) {
+      try {
+        this.#homeUnsub();
+      } catch (e) {
+        /* 退订异常吞掉：摘除失败不阻断编排停摆 */
+      }
+      this.#homeUnsub = null;
+    }
     if (this.#chatUnsub) {
       try {
         this.#chatUnsub();
@@ -349,6 +391,11 @@ export class TeamEngine {
   #onTeamChange(payload) {
     var raw = payload && payload.team;
     if (!raw || raw.id == null) {
+      // 队伍清空推（服务器权威「已散队」）：回城等待闸门随之解除，下一拍即可建队/入队
+      if (this.#waitHome) {
+        this.#waitHome = null;
+        log.debug('队伍解散推送到达，解除回城等待闸门');
+      }
       this.#clearTeam();
       return;
     }
@@ -405,9 +452,16 @@ export class TeamEngine {
     var t = this.#team;
     var deadId = String((t && (t.treasureId || t.id)) || '');
     if (deadId) this.#endedTreasureId = deadId;
+    // 终局≠散队：飞船还在返程，到家才散（实证 END@+986s → 散队@+1063s）；窗口内 7521/7522 会被拒
+    //   ava_team_tips_011=已加入其他队伍 → 置回城等待闸门，由 10019 到家推/21371 清空推/轮询+超时解除
+    var waitMarchId = t && t.selfMarchId && t.selfMarchId !== '0' ? String(t.selfMarchId) : '';
     log.info('本次夺宝出征已结束（%s），停止拉本跑详情，转下一轮', source);
     this.#flow.reset();
     this.#clearTeam();
+    if (!this.#waitHome) {
+      this.#waitHome = { marchId: waitMarchId, deadline: Date.now() + WAIT_HOME_MAX_MS };
+      log.info('等待夺宝飞船回城散队后才建队/入队%s', waitMarchId ? '（行军 ' + waitMarchId + '）' : '');
+    }
   }
 
   /**
@@ -559,6 +613,9 @@ export class TeamEngine {
     }
 
     if (!this.#team) {
+      // 终局后回城散队闸门：飞船未到家前不建队/不入队（否则游戏 UI 持续提示「已加入其他队伍」）
+      var waitSleep = await this.#homeWait();
+      if (waitSleep > 0) return waitSleep;
       var gate = await this.#gateActivity(st);
       if (!gate.proceed) return gate.sleep;
       return this.#noTeam(cfg, st);
@@ -576,6 +633,11 @@ export class TeamEngine {
       var gate2 = await this.#gateActivity(st);
       if (!gate2.proceed) return gate2.sleep;
     }
+
+    // 界面在夺宝页外时服务器队伍态推送不可达（实证 20261017T1938：审批后整队冻结 3 分钟，点开队伍页才收到 21372）
+    //   → 主动轮询 7501 补整队电平（应答经 ctx.on.resp(REQ_INFO) 落地 #team），不再只看 !present()：
+    //   控制器在场但人在页外时镜像同样陈旧，readState 回填不可靠；召集判定改靠应答电平驱动
+    if (Date.now() - this.#lastInfoAt >= TEAM_POLL_MS) await this.refreshInfo(true);
 
     var dirty = this.#applyDirty;
     if (dirty) this.#applyDirty = false;
@@ -626,6 +688,33 @@ export class TeamEngine {
     }
 
     return ACTIVE_TICK_MS;
+  }
+
+  /**
+   * 回城散队闸门的 tick 电平检查（仅无队分支调）：主解除靠 10019 到家推/21371 散队推，本方法是漏推兑底——
+   *   读 march.js 快照（856 播种 + 10019 边沿维护，cache 零发包）：本队飞船行军仍在（含 RETURNING 返程）
+   *   → 服务器尚未散队，继续等；已从列表消失/到家 → 解除闸门放行下一轮；超时兑底防死等。
+   * @returns {Promise<number>} >0 = 仍在等待（下一拍毫秒数）；0 = 闸门已解除/未置，放行建队/入队
+   */
+  async #homeWait() {
+    var wait = this.#waitHome;
+    if (!wait) return 0;
+    if (Date.now() >= wait.deadline) {
+      this.#waitHome = null;
+      log.info('回城散队等待超时（漏推兑底），放行建队/入队重试');
+      return 0;
+    }
+    var ms = await march.list({ cache: true });
+    for (var i = 0; i < ms.length; i++) {
+      var m = ms[i];
+      var hit = wait.marchId
+        ? m.id === wait.marchId
+        : Number(m.type) === MARCH_TYPE_CS_TEAM_HUNT;
+      if (hit && m.state !== march.State.ARRIVED_HOME) return HOME_POLL_MS; // 飞船仍在途（返程也算）：服务器未散队
+    }
+    this.#waitHome = null;
+    log.info('夺宝飞船已回城散队（快照轮询确认），开始下一轮建队/入队');
+    return 0;
   }
 
   /**
@@ -703,6 +792,12 @@ export class TeamEngine {
     var ret = await this.#sendPB(REQ_TEAM_CREATE, { cfg: TEAM_CFG }, '建队');
     var ack = ret && ret.payload ? ret.payload[ACK_TEAM_CREATE] : null;
     if (ack && ack.team) this.#onTeamChange(ack);
+    // 服务器判旧队未散（飞船在返途中，终局刚收口而推送漏接时会走到这里）：回闸并停止逐拍连打 7521
+    var rsn = ret && !ret.ok && ret.payload && ret.payload.header ? String(ret.payload.header.d || '') : '';
+    if (rsn === 'ava_team_tips_011' && !this.#waitHome) {
+      this.#waitHome = { marchId: '', deadline: Date.now() + WAIT_HOME_MAX_MS };
+      log.info('建队被拒 ava_team_tips_011=已加入其他队伍（旧队散队未落地），改等飞船回城后再试');
+    }
     return ACTIVE_TICK_MS;
   }
 

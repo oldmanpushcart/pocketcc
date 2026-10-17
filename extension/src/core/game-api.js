@@ -173,8 +173,12 @@ const SYM = {
     reward: 'Reward',
     matching: 'Matching',
   },
-  /** 语义面板名 → UIDataInfo 注册表成员名（运行时符号，面板随版本漂移时单点维护） */
-  uiPanels: { bag: 'BagPanel' },
+  /**
+   * 语义面板名 → UIDataInfo 注册表成员名（运行时符号，面板随版本漂移时单点维护）。
+   * pabFeedPopup 实证 UIDataInfoOther：`new UIDataInfoClass("PabPetFeedEventPopup", UIType.TYPE_POP, "__subpack/Pab/WorldUI", …)`，
+   *   由 PabPetCaptureNodeNew.pabPetCaptureEvent 在 push 21527 type=5 时 OpenUI。
+   */
+  uiPanels: { bag: 'BagPanel', pabFeedPopup: 'PabPetFeedEventPopup' },
   /**
    * 世界态可订阅事件名（值就是 EventId 常量值本身，实证 extracted EventId.js：
    * e.CHANGE_SCENE="CHANGE_SCENE"、e.MapTypeChange="MapTypeChange"、
@@ -411,12 +415,17 @@ function tableNameEnum() {
   });
 }
 
-/** UserData 对象引用缓存（Friends/Alliance/StrUid 为其上属性，读值仍实时） */
+/**
+ * UserData 实时读取：只缓存 DataCenter 模块（__require 的模块缓存，跨图稳定），`.DATA.UserData` 每次现读。
+ * Friends/Alliance/StrUid 等仍从当次现读的 UserData 上取属性，口径不变。
+ * ⚠ 别把 UserData 对象本身交给 probe 缓存：进入跨服/跨区战场图（如天梯/夺宝奇兵把城迁到别的区）时，
+ *   游戏会整体替换 `.DATA.UserData`，probe 的页面级缓存会把登录/老家态的旧对象钉死整场页面生命周期，
+ *   导致 serverId()/myWorldPos() 等读到老家 (346,488)@4336 而实时已是 (729,857)@4337（真机实证）。
+ *   口径对齐 serverTime()（同为 game.get('DataCenter').DATA.<field> 实时读）。
+ */
 function userData() {
-  return probe('DataCenter.UserData', () => {
-    var m = game.get(SYM.modules.dataCenter);
-    return (m && m.DATA && m.DATA.UserData) || null;
-  });
+  var m = probe('DataCenter', () => game.get(SYM.modules.dataCenter) || null);
+  return (m && m.DATA && m.DATA.UserData) || null;
 }
 
 /** 场景程序管理器单例（ProcedureManager.PROCE）；PROCE.Home/NewWorld 由 ProcedureManagerInit 惰性挂上，成员每次实时读 */
@@ -1319,13 +1328,12 @@ export const gameData = {
    * @returns {number} 结束时刻（epoch 秒）；0=不在该状态或探测不可用
    */
   buffStateEndTime(stateId) {
-    // Buff 门面是 UserData 上的 BuffPool 实例（userData().Buff），非可 require 的模块——直接 game.get('Buff') 会抛「Cannot find module」
-    var B = probe('UserData.Buff.getStateDataById', () => {
-      var u = userData();
-      var inst = u && u[SYM.dataProps.buffPool];
-      return inst && typeof inst.getStateDataById === 'function' ? inst : null;
-    });
-    if (!B) return 0;
+    // Buff 门面是 UserData 上的 BuffPool 实例（userData().Buff），非可 require 的模块——直接 game.get('Buff') 会抛「Cannot find module」。
+    // userData() 已改为实时读：切图/进战场时 UserData 被整体替换、其 .Buff 子对象一并换新，故此处绝不能再 probe 缓存该实例
+    // （缓存会把首张图的 BuffPool 钉死，warFever/护盾判定读到过期 EndTime——与 selfServerId 同源的真机坑）：现读，仅校验方法在场。
+    var u = userData();
+    var B = u && u[SYM.dataProps.buffPool];
+    if (!B || typeof B.getStateDataById !== 'function') return 0;
     try {
       var st = B.getStateDataById(+stateId);
       if (!st) return 0;
@@ -1437,15 +1445,17 @@ export const gameData = {
    * @returns {Array<{x:number,y:number,w:number,bw:number,owner:number,buildId:number}>|null}
    */
   allianceTerritories() {
-    var inst = probe('NWorldMapTerritoryModel.inst', function () {
+    // 缓存类、现读 instance：联盟领地模型与 NWorldMapData.instance 同族（subpack2 世界图单例），
+    // 随视口加载/出视口 purge，切图/进战场时 instance 被重建——缓存 instance 会读到老家领地占用（真机坑）。
+    var C = probe(SYM.modules.nWorldMapTerritoryModel + '.cls', function () {
       try {
         var m = game.get(SYM.modules.nWorldMapTerritoryModel);
-        var C = m && (m.NWorldMapTerritoryModel || m.default || m);
-        return (C && (C.instance || C)) || null;
+        return (m && (m.NWorldMapTerritoryModel || m.default || m)) || null;
       } catch (e) {
         return null;
       }
     });
+    var inst = C && (C.instance || C);
     var AT = inst && inst.AllianceTerritory;
     if (!AT) return null;
     var out = [];
@@ -1552,15 +1562,17 @@ export const gameData = {
    * @returns {number|null}
    */
   mapLoadedNear(x, y, r) {
-    var W = probe(SYM.modules.nWorldMapData + '.inst', () => {
+    // 缓存类、现读 instance（与 selfServerId 同一 '.cls' 缓存）：切跨服战场时 instance（含 placeFlags）会被重建，
+    // 缓存 instance 会读到老家占用（与 selfServerId 同源的真机坑）。
+    var C = probe(SYM.modules.nWorldMapData + '.cls', () => {
       try {
         var m = game.get(SYM.modules.nWorldMapData);
-        var C = m && (m.NWorldMapData || m.default || m);
-        return (C && (C.instance || C)) || null;
+        return (m && (m.NWorldMapData || m.default || m)) || null;
       } catch (e) {
         return null;
       }
     });
+    var W = C && (C.instance || C);
     var pf = W && W.placeFlags;
     if (!pf || typeof pf.has !== 'function') return null;
     r = r | 0;
@@ -1594,12 +1606,11 @@ export const gameData = {
    * @returns {object|null} {state,bossId,x,y,exp,hp,endTime,summonTime,pointSid,help}；对象不可用返回 null
    */
   allianceBoss() {
-    var src = probe('Alliance.AllianceBossData', () => {
-      var a = userData() && userData().Alliance;
-      var d = a && a[SYM.dataProps.allianceBoss];
-      return d && typeof d.State === 'number' ? d : null;
-    });
-    if (!src) return null;
+    // 现读、不缓存：Alliance.AllianceBossData 是游戏由 push 10435/1160/1161 刷新的数据容器，
+    // userData() 已实时化，切图/进战场时其 .Alliance 子链随之换新——probe 钉住首块会在刷新后读到过期机甲态。
+    var a = userData() && userData().Alliance;
+    var src = a && a[SYM.dataProps.allianceBoss];
+    if (!src || typeof src.State !== 'number') return null;
     try {
       return {
         state: src.State | 0,
@@ -1633,14 +1644,11 @@ export const gameData = {
    * @returns {object|null} {recommendId,recommendName,dailyHonor,honorCap,costCoin,firstDonateable,donateTarget,donateRecommended}；不在盟/数据未填充返回 null
    */
   allianceScience() {
-    var src = probe('Alliance.scienceData', () => {
-      var a = userData() && userData().Alliance;
-      var d = a && a[SYM.dataProps.allianceScience];
-      return d && Array.isArray(d.scienceDevDataList) && typeof d.getCostCoin === 'function'
-        ? d
-        : null;
-    });
-    if (!src) return null;
+    // 现读、不缓存（同 allianceBoss：游戏由 1143 应答 / push 10430/10432 刷新该容器，缓存会在刷新后读到过期科技态）
+    var a = userData() && userData().Alliance;
+    var src = a && a[SYM.dataProps.allianceScience];
+    if (!src || !Array.isArray(src.scienceDevDataList) || typeof src.getCostCoin !== 'function')
+      return null;
     try {
       // 可捐口径（弹窗 showBtn 的捐赠按钮分支）：已解锁且未满级且非研究中
       var canDon = function (it) {
@@ -1790,11 +1798,9 @@ export const gameData = {
     if (!inAlliance || !gameData.functionOn('alliance_behemoth') || !u.behemothIsOpen) {
       return { open: false, items: [] };
     }
-    var src = probe('Alliance.allianceBehemothData', () => {
-      var d = a[SYM.dataProps.allianceBehemoth];
-      return d && typeof d.getAllianceBehemothData === 'function' ? d : null;
-    });
-    if (!src) return { open: true, items: [] };
+    // 现读、不缓存（同上：a=userData().Alliance 本调用内已实时取，其 behemoth 容器随 push 刷新）
+    var src = a && a[SYM.dataProps.allianceBehemoth];
+    if (!src || typeof src.getAllianceBehemothData !== 'function') return { open: true, items: [] };
     try {
       var map = src.getAllianceBehemothData(); // Map<behemothId, AllianceBehemothItemData>
       var items = [];
@@ -2293,7 +2299,9 @@ function secretRet(code, data, reason) {
  * 异能秘境能力组（均只读/发包，不改写游戏数据）：
  *   - 秘境协议发送走 TMWatchNetMgr 独立通道（主 pocketcc.net 在 isPabBattleMap 下发不出去），此处 promise 化并归一 Ret；
  *   - isPabBattleMap 为「是否在秘境地图」唯一真相（场景名仍是 NWorldMap，不可靠），仅作场景门控用；
- *   - getPabController 回控制器实例供上层调游戏原生动作（petCaptureOperation 等），不代跑业务。
+ *   - getPabController 回控制器实例供上层调游戏原生动作（petCaptureOperation 等），不代跑业务；
+ *   - 另有 BOSS/治疗一族**只读快照**（getRoomBaseInfo/getBossBaseInfo/getBossGuardRewardInfo/getItemNumById/isTeamLeader/teamIsMooring）：
+ *     这些态全由游戏的推送与应答 Handler 写入（21521/21535/21539/21525），本层只读不镜像，不代跑业务判定。
  */
 export const secretRealm = {
   /**
@@ -2337,6 +2345,47 @@ export const secretRealm = {
       var E = m && (m.NMarchState || (m.default && m.default.NMarchState));
       return E && E.PAB_FEED != null ? E : null;
     });
+  },
+  /**
+   * 房间现场态 roomBaseInfo（push 21521 BASE_INFO 由游戏 Handler 写入）的**只读引用**；不在秘境/未下发回 null。
+   * 实证 24 键：teamId/leaderUid/marchState/startPoint/pointType/targetPoint/fightEndTime/buffMap…
+   *   Int64 字段（fightEndTime/teamId/leaderUid 等）原样返回，由调用方按口径读（不在此转 Number，防 64 位精度陷阱）。
+   * @returns {object|null}
+   */
+  getRoomBaseInfo() {
+    var p = secretRealm.getPabController();
+    return (p && p.roomBaseInfo) || null;
+  },
+  /**
+   * 三个 BOSS 的状态机快照（游戏 Handler 收到 push 21535 后 verbatim `bossBaseInfo = a.stateInfo`）。
+   * @returns {Array<{bossId:number,pos:{x:number,y:number},state:number,stateEndTime:*}>|null} 未下发回 null
+   */
+  getBossBaseInfo() {
+    var p = secretRealm.getPabController();
+    return (p && p.bossBaseInfo) || null;
+  },
+  /**
+   * 小BOSS 石头点位账本快照（push 21539；**游戏侧字段名拼写就是 Gurard**，不做纠正以免与运行时符号漂移）。
+   * @returns {Array<{bossId:number,rewardInfo:Array<{pos:{x:number,y:number},rewardNum:number,rewardMaxNum:number,isFight:number}>}>|null}
+   */
+  getBossGuardRewardInfo() {
+    var p = secretRealm.getPabController();
+    return (p && p.bossGurardRewardInfo) || null;
+  },
+  /**
+   * 队伍是否停泊在位（游戏 verbatim `teamIsMooring`：`!roomBaseInfo || marchState ∈ {ARRIVED,FIGHTING,PAB_FEED}`）。
+   * 注：**不在秘境（roomBaseInfo 缺失）时游戏侧回 true**，本层保留原语义；调用方要「确实在场」得自己配合
+   *   getRoomBaseInfo() 非空一起判（realmActive 已是 feat 侧前置）。
+   * @returns {boolean} 符号缺失回 false（闭开：不确认停泊就不发写请求）
+   */
+  teamIsMooring() {
+    var p = secretRealm.getPabController();
+    if (!p || typeof p.teamIsMooring !== 'function') return false;
+    try {
+      return !!p.teamIsMooring();
+    } catch (e) {
+      return false;
+    }
   },
   /**
    * 该 cmd 是否有「已发出、未收到应答」的在途请求（走 watch 通道自带的 checkRequestIdNoRes，非主 NET）。
@@ -2413,6 +2462,51 @@ export const secretRealm = {
         done(SECRET_NOT_SENT, null, null);
       }
     });
+  },
+  /**
+   * 秘境房间背包余量（游戏 verbatim getItemNumById：`roomBagInfo.bagInfo`（或 `bagShareInfo`）里按 itemId 求 itemCount）。
+   * @param {number|string} itemId 道具 id
+   * @param {boolean} [share=false] true=读共享背包
+   * @returns {number} 余量（背包未初始化/未持有回 0）
+   */
+  getItemNumById(itemId, share) {
+    var p = secretRealm.getPabController();
+    if (!p || typeof p.getItemNumById !== 'function') return 0;
+    try {
+      return Number(p.getItemNumById(Number(itemId), !!share)) || 0;
+    } catch (e) {
+      return 0;
+    }
+  },
+  /**
+   * 本人是否队长（游戏 verbatim `isTeamLeader(uid=true 口径)`：`String(UserData.UID) === roomBaseInfo.leaderUid`）。
+   * 上临时停泊平台（176）仅队长可派（实证 NWorldPabBossPlanePopup.refreshUI），治疗不要求此闸。
+   * @returns {boolean} roomBaseInfo 缺失/符号缺失回 false
+   */
+  isTeamLeader() {
+    var p = secretRealm.getPabController();
+    if (!p || typeof p.isTeamLeader !== 'function') return false;
+    try {
+      return !!p.isTeamLeader();
+    } catch (e) {
+      return false;
+    }
+  },
+  /**
+   * 行军到某瓦片（秘境 8521 MARCH_MOVE，req `{x,y}`）——「上平台」与「攻打 BOSS」同一个入口。
+   * 与游戏 verbatim `sendToBuildingMarch` 同口径：先查在途（`checkRequestIdNoRes`，游戏侧同一道闸）再发，
+   *   故本方法**不直调游戏方法**（游戏侧那个方法除了这两个动作不写本地态，但我们走 ACL 统一通道以便超时与
+   *   Ret 归一），零本地改写。注：游戏侧是 `||` 短路——在途时直接不发。
+   * @param {number} x 目标瓦片横号
+   * @param {number} y 目标瓦片纵号
+   * @returns {Promise<object>|false} 在途被闸门拦下回 false（未发出）；否则回 sendSecret 的 Ret promise
+   */
+  sendMarch(x, y) {
+    var nx = Number(x);
+    var ny = Number(y);
+    if (!Number.isFinite(nx) || !Number.isFinite(ny)) return false;
+    if (secretRealm.isSecretSending(8521)) return false;
+    return secretRealm.sendSecret(8521, { x: nx, y: ny });
   },
 };
 
@@ -2773,8 +2867,8 @@ export const scene = {
 };
 
 /**
- * 原生 UI 面板打开能力：调用游戏 UIManager.Instance().OpenUI(描述符)，与主界面各功能按钮同源。
- * 仅触发原生开窗，不改写游戏数据。
+ * 原生 UI 面板开关能力：调游戏 UIManager.Instance().OpenUI/CloseUI(描述符)，与主界面各功能按钮、面板自身
+ *   close() 同源。只触原生开窗/关窗，不改写游戏数据（close 仅收窗口实例，不动业务态）。
  */
 export const ui = {
   /**
@@ -2803,6 +2897,43 @@ export const ui = {
   /** 打开道具背包（B 键用） */
   openBag() {
     return this.open('bag');
+  },
+  /**
+   * 按语义面板名关闭指定面板（与面板自身关闭链路同源：BaseUI.close → UIManager.Instance().CloseUI(描述符)）。
+   * **先验在场再调 CloseUI**：实证 UIManagerImpl.CloseUI 对不在场面板仍会 `EVENT.emit(CLOSEUI)` 并走 LastCloseUI
+   *   （无条件 `delete LoadingPanel[name]`、改写 CurrentUIDataInfo）——空手调用有副作用，所以在场外直接返回。
+   * 在场判据含「正在异步加载」：dealOpenUI 同步置 `LoadingPanel[name]=!0` 后才 load 预制体，加载回调只在
+   *   `LoadingPanel[name]` 仍为真时才 ShowUI → 此时 CloseUI（LastCloseUI 删标记）等于把还没露脸的窗口收掉。
+   * @param {string} semantic 语义名（SYM.uiPanels 键，如 'bag' / 'pabFeedPopup'）
+   * @returns {{ok:boolean, err?:string, name?:string}} err: unavailable=符号漂移/缺方法，not_open=不在场，failed=游戏侧抛错
+   */
+  close(semantic) {
+    var reg = uiRegistry();
+    var member = reg && SYM.uiPanels[semantic];
+    var info = member && reg[member];
+    if (!info || !info.name) return { ok: false, err: 'unavailable' };
+    var C = uiMgrClass();
+    var mgr = C && typeof C.Instance === 'function' ? C.Instance() : null;
+    if (!mgr || (typeof mgr.CloseUI !== 'function' && typeof mgr.Close !== 'function'))
+      return { ok: false, err: 'unavailable' };
+    var pool = mgr.DataPool;
+    var loading = mgr.LoadingPanel;
+    if ((!pool || pool[info.name] == null) && (!loading || !loading[info.name]))
+      return { ok: false, err: 'not_open', name: info.name };
+    try {
+      if (typeof mgr.CloseUI === 'function') mgr.CloseUI(info);
+      else mgr.Close(info.name);
+      return { ok: true, name: info.name };
+    } catch (e) {
+      try {
+        if (typeof mgr.Close === 'function') {
+          mgr.Close(info.name);
+          return { ok: true, name: info.name };
+        }
+      } catch (e2) {}
+      log.warn('ui.close(%s) failed: %s', semantic, e && e.message);
+      return { ok: false, err: 'failed' };
+    }
   },
   /**
    * 关闭当前顶层弹窗（Q 键用）：读游戏原生 UIManager.Instance().CurrentUIDataInfo（最近打开、即栈顶的面板描述符），
@@ -2844,12 +2975,15 @@ export const worldMap = {
    * @returns {object|null} 单例；符号漂移/子包未载入返回 null
    */
   terrainModel() {
-    return probe('NWorldMapTerrainModel.instance', () => {
+    // 缓存类、现读 instance：cols/rows/currentMapType/getTerrain/isBlock 是「当前这张图」的数据，
+    // 切图/进独立战场图时单例被重建（与 selfServerId/mapLoadedNear 的 NWorldMapData.instance 同族，真机已证）——
+    // 缓存 instance 会让迁城落点合法性/isBlock 按老家地形判定。
+    var C = probe(SYM.modules.terrainModel + '.cls', () => {
       var m = ns(game.get(SYM.modules.terrainModel));
-      var C = m && (m.NWorldMapTerrainModel || m.default || m);
-      var inst = C && C.instance;
-      return inst && typeof inst.getTerrain === 'function' ? inst : inst || null;
+      return (m && (m.NWorldMapTerrainModel || m.default || m)) || null;
     });
+    var inst = C && C.instance;
+    return inst || null;
   },
   /**
    * 当前地图类型（决定用哪张 mapFiles 与 allMapInfos 尺寸档）；取不到返回 0。
@@ -2925,16 +3059,18 @@ export const worldMap = {
    * @returns {number}
    */
   selfServerId() {
-    // 只缓存单例对象（probe 是页面级缓存，缓存标量会把首次读到的区号钉死）；字段每次现读
-    var W = probe(SYM.modules.nWorldMapData + '.inst', () => {
+    // 缓存 NWorldMapData 类（__require 模块缓存，跨图稳定），`.instance` 静态字段每次现读。
+    // ⚠ 别缓存 instance：进图/切跨服战场时游戏会重建 instance（连带其 serverData），把 instance 交给
+    //   probe 缓存会把首张图（登录/老家）的 selfServerId 钉死整场页面（真机实证：已在 4337，缓存 instance 仍返回 4336）。
+    var C = probe(SYM.modules.nWorldMapData + '.cls', () => {
       try {
         var m = game.get(SYM.modules.nWorldMapData);
-        var C = m && (m.NWorldMapData || m.default || m);
-        return (C && (C.instance || C)) || null;
+        return (m && (m.NWorldMapData || m.default || m)) || null;
       } catch (e) {
         return null;
       }
     });
+    var W = C && (C.instance || C);
     return Number(W && W.serverData && W.serverData.selfServerId) || 0;
   },
   /**

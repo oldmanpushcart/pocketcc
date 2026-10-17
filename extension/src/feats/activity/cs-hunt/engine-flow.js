@@ -18,8 +18,8 @@
  *
  * 选场景（indexDecide=1-based）——先知感知（**emit 前置：`uidDecide === 我方 uid` 轮值闸**）：
  *   - revealed = play 态 eventSpecIdList 非 0 位（先知揭示集）、hidden = 仍为 0 位；
- *   - revealed 非空 → 在 revealed 里按 [1002 rollDice,1004 pickSkill] 优先取；两者都不在 → 从 hidden 随机取一（revealed 的 1006 永不选）；
- *   - revealed 空且轮值到我 → 满 DECIDE_MIN_MS 即按 `fallbackIndex` 默认位序立选（不再硬撞 20s 上限，避开服务器抢先自决 → s:3 cs_treasure371 迟交被拒）；SHOW 到点仍未发则用 `chooseFromFull`；
+ *   - revealed 非空 → 在 revealed 里按 [1002 rollDice,1004 pickSkill] 优先取（同族多位命中随机择位）；两者都不在 → 从 hidden 随机取一（revealed 的 1006 永不选）；
+ *   - revealed 空且轮值到我 → 满 DECIDE_MIN_MS 即按 `fallbackIndex` 在非 nothing 位里随机立选（不再硬撞 20s 上限，避开服务器抢先自决 → s:3 cs_treasure371 迟交被拒）；SHOW 到点仍未发则用 `chooseFromFull`；
  *   - 非我轮值 → 整段跳过（服务器只对 `uidDecide` 那个 uid 放行 7532，其他人发一律 s:3 拒）；
  *   - 硬约束：以 21376 eventDecideInfo.timePhaseEnd 为权威倒计时，剩余 ≤ DECIDE_ACT_MS(10s) 即自主决（较旧「观测起 10s」提前落地、避开服务器 auto-decide 抢窗）；无 timePhaseEnd 异常形态才退回「进 DECIDE 起 elapsed≥DECIDE_MIN_MS」观测兜底。
  *
@@ -39,6 +39,7 @@ import {
   EVENT_PHASE_STATE,
   EVENT_SHOW_PHASE,
   EVENT_TYPE,
+  FIGHT_BUFF_SKILLS,
   HELPER_EXCLUDE_SKILLS,
   HUNT_STATUS,
   REQ_EVENT_DECIDE,
@@ -46,6 +47,7 @@ import {
   REQ_SKILL_BACKPACK_OPEN,
   REQ_SKILL_USE,
   ROUND_MAX,
+  SKILL_AID,
   SKILL_COPY,
   SKILL_FLASH,
   SKILL_LUCKY,
@@ -87,10 +89,10 @@ const DECIDE_ACT_MS = 15000;
 const DECIDE_MIN_MS = 5000;
 /** @type {string} 7550 应答 pbAck 业务槽名（= REQ_FIELD[7550]） */
 const REQ_OPEN_FIELD = 'crossTreasureSkillBackpackOpen';
-/** @type {number[]} 来袭保命优先级（皆 group=1 队伍技能=队长专属）：战斗盾>回合盾>隐形>闪现 */
-const DEFENSE_PRIORITY = [SKILL_SHIELD_BATTLE, SKILL_SHIELD_ROUND, SKILL_STEALTH, SKILL_FLASH];
-/** @type {number[]} 末回合清空排除项（先知 9 有 DECIDE 事件门、全量刷新 23 仅 pickSkill 场景有意义） */
-const FLUSH_EXCLUDE = [SKILL_PROPHET, SKILL_REFRESH];
+/** @type {number[]} 来袭保命优先级（皆 group=1 队伍技能=队长专属）：隐形>毫发(战斗盾)>铜墙(回合盾)>闪现（用户口径 2026-10-17：闪现「下回合开始才移动」救不了当轮→降到盾后） */
+const DEFENSE_PRIORITY = [SKILL_STEALTH, SKILL_SHIELD_BATTLE, SKILL_SHIELD_ROUND, SKILL_FLASH];
+/** @type {number[]} 末回合清空排除项（先知 9 有 DECIDE 事件门、全量刷新 23 仅 pickSkill 场景有意义、铜墙铁壁 2 第 10 回合用「抵御下个回合」已无下回合=浪费） */
+const FLUSH_EXCLUDE = [SKILL_PROPHET, SKILL_REFRESH, SKILL_SHIELD_ROUND];
 /** @type {number} 21383 marchSize>0 后视为「正在被攻」的时效窗（毫秒），窗内才保命 */
 const RAID_ACTIVE_MS = 30000;
 
@@ -173,7 +175,8 @@ export class FlowEngine {
     var h = hostTeamKey(this.#host);
     if (h && h !== this.#huntKey) this.#resetFor(h);
     var status = Number(payload.status) || 0;
-    if (status === HUNT_STATUS.EVENT || status === HUNT_STATUS.WAIT) this.#wake();
+    if (status === HUNT_STATUS.EVENT || status === HUNT_STATUS.WAIT || status === HUNT_STATUS.FIGHT)
+      this.#wake();
   }
 
   /**
@@ -234,8 +237,12 @@ export class FlowEngine {
         decideDelay = await this.#handleDecide(treasureId, ei);
       else if (ei.status === EVENT_PHASE_STATE.EVENT) await this.#handleEvent(treasureId, ei, cfg);
     } else if (status === HUNT_STATUS.WAIT) {
-      // 探索回合（每场 round 起始 status=1/WAIT）：数据转换→重拉背包→再判并执行完美镜像复制先知
+      // 探索回合（每场 round 起始 status=1/WAIT）：数据转换→重拉背包→再判并执行完美镜像复制先知；随后主动维持盾（毫发/铜墙）
       await this.#explorationSkills(treasureId, round);
+      await this.#shieldMaintain(treasureId, round);
+    } else if (status === HUNT_STATUS.FIGHT) {
+      // 战斗态（status=3，敌人已到我点位开打）：增益族即用 + 火线急救（无人受伤不治→非战斗态永不施治）
+      await this.#fightStrategies(treasureId, round);
     }
     // 横切自动项：来袭保命 / 末回合清空（与事件阶段无关，各自门控）
     await this.#autoStrategies(treasureId, status, round);
@@ -243,10 +250,10 @@ export class FlowEngine {
     if (status !== HUNT_STATUS.EVENT) {
       await host.sendPB(REQ_HUNT_INFO, { treasureId: bits.int64(treasureId) }, '拉本跑详情');
     }
-    // EVENT 期默认 4s 重扫；若本轮 handleDecide 给出精确倒计时（轮值到我且未到触发阈）则贴近触发点轮询，
+    // EVENT/FIGHT 期默认 4s 重扫（FIGHT 窗仅 ~13-25s，需与事件态同密）；若本轮 handleDecide 给出精确倒计时（轮值到我且未到触发阈）则贴近触发点轮询，
     //   避免 4s 粒度把「倒数15s 决断」推迟到实际倒数 11~12s 才发
-    return status === HUNT_STATUS.EVENT
-      ? decideDelay > 0
+    return status === HUNT_STATUS.EVENT || status === HUNT_STATUS.FIGHT
+      ? status === HUNT_STATUS.EVENT && decideDelay > 0
         ? decideDelay
         : EVENT_TICK_MS
       : status === HUNT_STATUS.WAIT
@@ -413,6 +420,14 @@ export class FlowEngine {
       tryLucky: function (sceneKey, rewardResult, label) {
         return self.#tryLucky(treasureId, sceneKey, rewardResult, label);
       },
+      backpackReady: function () {
+        return self.#backpackLoaded;
+      },
+      luckyHit: function (rewardResult) {
+        var pools = self.#host.cfg().luckyRewards;
+        var wl = (pools && pools[EVENT_TYPE.ROLL_DICE]) || [];
+        return wl.length > 0 && !!rewardResult && hitWhitelist(rewardResult, wl);
+      },
       canPhase: function (id) {
         return canPhase(id, HUNT_STATUS.EVENT, EVENT_PHASE_STATE.EVENT);
       },
@@ -518,10 +533,70 @@ export class FlowEngine {
     }
   }
 
+  /**
+   * 盾主动维持（B，用户口径 2026-10-17）：WAIT 探索回合转场串联之后主动消耗盾，不再被动压到末回合浪费。
+   *   毫发难伤（战斗盾，「下次战斗抵御」→早用零损失）优先；其次铜墙铁壁（回合盾，「抵御下回合」→仅 round<10 用，
+   *   第 10 回合用了也无下回合=浪费，与末回合清空剔除项同调）。每回合至多一盾；group=1 天然仅队长可用。
+   * @param {string|number} treasureId 本跑 id
+   * @param {number} round 当前回合
+   */
+  async #shieldMaintain(treasureId, round) {
+    await this.#ensureBackpack();
+    var mk = round + ':maint';
+    if (this.#done.has(mk)) return;
+    var pick = this.#usable(SKILL_SHIELD_BATTLE)
+      ? SKILL_SHIELD_BATTLE
+      : round < ROUND_MAX && this.#usable(SKILL_SHIELD_ROUND)
+        ? SKILL_SHIELD_ROUND
+        : 0;
+    if (!pick) return;
+    this.#done.add(mk);
+    await this.#useSkill(treasureId, pick, '盾维持');
+    await this.#reloadBackpack();
+  }
+
+  /**
+   * 战斗态（status=FIGHT，敌人已到我点位开打）自动项（每拍至多一个写动作）：
+   *   ① 火线急救(27)（D，group=1 队长技）——**战损字段未实证**（power 受击不降/fightInfo 无逐员伤兵/7578 来袭方 armyPower undefined），
+   *     降级恒治队长自身（tarUid=我 uid）并标注待校准；只在 FIGHT 态施治=天然的「无人受伤不治」门控（非战斗态永不进本函数）；
+   *   ② 战中增益族即用（C）——百战不倒/固定增强/战场变换/诱敌来袭按 FIGHT_BUFF_SKILLS 优先级逐个用，每 (round,specId) 一次性。
+   * @param {string|number} treasureId 本跑 id
+   * @param {number} round 当前回合
+   */
+  async #fightStrategies(treasureId, round) {
+    await this.#ensureBackpack();
+    // ① 火线急救：每回合一次，持且未生效即治队长（待真机校准逐员战损择治）
+    var aidk = round + ':aid';
+    if (!this.#done.has(aidk) && this.#usable(SKILL_AID)) {
+      this.#done.add(aidk);
+      var me = gameData.myUidStr();
+      await this.#useSkill(
+        treasureId,
+        SKILL_AID,
+        '火线急救(治队长·待校准)',
+        me ? { tarUid: me } : undefined,
+      );
+      await this.#reloadBackpack();
+      return;
+    }
+    // ② 增益即用：本拍无急救可用/已施治 → 增益族逐个（每拍一个）
+    for (var i = 0; i < FIGHT_BUFF_SKILLS.length; i++) {
+      var id = FIGHT_BUFF_SKILLS[i];
+      var bk = round + ':buff:' + id;
+      if (!this.#usable(id) || this.#done.has(bk)) continue;
+      this.#done.add(bk);
+      await this.#useSkill(treasureId, id, '战中增益');
+      await this.#reloadBackpack();
+      return;
+    }
+  }
+
   // ── 技能底座（7550/7551） ───────────────────────────────────────────
 
   /**
-   * 拉一次技能背包（7550）缓存 personal/team 两个 specId 集合。每跑首次需要时拉，失败静默（下拍重试）。
+   * 拉一次技能背包（7550）缓存 personal/team 两个 specId 集合。每跑首次需要时拉。
+   *   **只在拿到有效 skillBackpack 应答时才置 #backpackLoaded=true**：发送失败/在途去重时 ack 空，
+   *   若照样置 loaded 会把空背包固化进缓存，后续 #usable(幸运等) 全程误判 false（实证幸运在背包却漏用）。
    */
   async #ensureBackpack() {
     if (this.#backpackLoaded) return;
@@ -535,9 +610,10 @@ export class FlowEngine {
     );
     var ack = ret && ret.payload ? ret.payload[REQ_OPEN_FIELD] : null;
     var sb = ack && ack.skillBackpack;
-    this.#personal = specIdCount(sb && sb.personalSkillInfoList);
-    this.#teamSkills = specIdCount(sb && sb.teamSkillInfoList);
-    this.#pending = specIdSet(sb && sb.skillPendingEffectInfoList);
+    if (!sb) return; // 拉取失败（ack 空/无 skillBackpack）→ 不落地、不清旧缓存，下一拍自然重试
+    this.#personal = specIdCount(sb.personalSkillInfoList);
+    this.#teamSkills = specIdCount(sb.teamSkillInfoList);
+    this.#pending = specIdSet(sb.skillPendingEffectInfoList);
     this.#backpackLoaded = true;
   }
 
@@ -605,7 +681,21 @@ export class FlowEngine {
     if (!wl.length) return false; // 该场景未勾任何物品 → 不参与幸运判定
     if (!rewardResult || !hitWhitelist(rewardResult, wl)) return false;
     await this.#ensureBackpack();
-    if (!this.#usable(SKILL_LUCKY)) return false;
+    if (!this.#usable(SKILL_LUCKY)) {
+      // 命中已勾幸运池但幸运不可用 → 留痕（下次奖励前只翻一次的正常态 vs 背包未落地/真不持有，便于实机排查漏用）
+      var held = this.#personal.get(SKILL_LUCKY) || 0;
+      log.info(
+        '幸运×2跳过(' +
+          label +
+          ')：背包已落地=' +
+          (this.#backpackLoaded ? 'Y' : 'N') +
+          ' 持有=' +
+          held +
+          ' 生效中=' +
+          (this.#pending.has(SKILL_LUCKY) ? 'Y' : 'N'),
+      );
+      return false;
+    }
     return this.#useSkill(treasureId, SKILL_LUCKY, '幸运×2(' + label + ')');
   }
 
@@ -731,7 +821,17 @@ function revealedIndices(list) {
 }
 
 /**
- * 先知感知择法：revealed 里按 [1002 rollDice,1004 pickSkill] 优先；都不在 → hidden 随机（1006 永不选）；
+ * 同族多位命中时随机择位（用户口径 2026-10-17：固定取第一个命中位会让同一位置总被选中，要「稍微随机一些」）：
+ *   在 hits（0-based 下标集）里等概率取一个，回 1-based indexDecide。
+ * @param {number[]} hits 0-based 命中下标（非空）
+ * @returns {number} 1-based
+ */
+function pickRandomHit(hits) {
+  return hits[Math.floor(Math.random() * hits.length)] + 1;
+}
+
+/**
+ * 先知感知择法：revealed 里按 [1002 rollDice,1004 pickSkill] 优先（同族多位随机择一）；都不在 → hidden 随机（1006 永不选）；
  *   无 hidden → revealed 里随机取一个非 nothing。
  * @param {Array<number>} list 候选 eventSpecId
  * @param {number[]} rev revealed 0-based 下标
@@ -743,7 +843,10 @@ function chooseProphet(list, rev) {
   });
   var prefer = [1002, 1004];
   for (var p = 0; p < prefer.length; p++) {
-    for (var i = 0; i < rev.length; i++) if (fams[rev[i]] === prefer[p]) return rev[i] + 1;
+    var hits = rev.filter(function (ix) {
+      return fams[ix] === prefer[p];
+    });
+    if (hits.length) return pickRandomHit(hits);
   }
   var hidden = [];
   for (var h = 0; h < list.length; h++) if (Number(list[h]) === 0) hidden.push(h);
@@ -756,9 +859,9 @@ function chooseProphet(list, rev) {
 }
 
 /**
- * show 态（全 6 位明文）择法：按 [1002,1004,1001,1003,1005] 优先取第一个命中族、跳过 1006。
+ * show 态（全 6 位明文）择法：按 [1002,1004,1001,1003,1005] 取命中的优先族、跳过 1006，同族多位命中随机择一。
  * @param {Array<number>} list 候选 eventSpecId
- * @returns {number} 1-based indexDecide（无命中退第一个非 nothing，再退 1）
+ * @returns {number} 1-based indexDecide（无命中退兜底随机）
  */
 function chooseFromFull(list) {
   var fams = list.map(function (id) {
@@ -766,14 +869,16 @@ function chooseFromFull(list) {
   });
   var prefer = [1002, 1004, 1001, 1003, 1005];
   for (var p = 0; p < prefer.length; p++) {
-    var at = fams.indexOf(prefer[p]);
-    if (at >= 0) return at + 1;
+    var hits = [];
+    for (var i = 0; i < fams.length; i++) if (fams[i] === prefer[p]) hits.push(i);
+    if (hits.length) return pickRandomHit(hits);
   }
   return fallbackIndex(list) || 1;
 }
 
 /**
- * 兜底择位：第一个非 0 非 nothing 的族；全 0/全 nothing 退第一个非 nothing；再无退 1。
+ * 兜底择位：在所有非 0 非 nothing 的位里随机取一（用户口径：固定取首位会让同一位置总被选中）；
+ *   无揭示非 nothing 位退第一个非 nothing（此时 nothing 是唯一明牌，不盲选它）；再无退 1。
  * @param {Array<number>} list 候选 eventSpecId
  * @returns {number} 1-based indexDecide
  */
@@ -781,10 +886,13 @@ function fallbackIndex(list) {
   var fams = list.map(function (id) {
     return Math.floor(Number(id) / 100);
   });
-  var revealedNotNothing = fams.findIndex(function (f) {
-    return f && f !== 1006;
+  var hits = [];
+  for (var i = 0; i < fams.length; i++) if (fams[i] && fams[i] !== 1006) hits.push(i);
+  if (hits.length) return pickRandomHit(hits);
+  var firstNotNothing = fams.findIndex(function (f) {
+    return f !== 1006;
   });
-  return revealedNotNothing >= 0 ? revealedNotNothing + 1 : 1;
+  return firstNotNothing >= 0 ? firstNotNothing + 1 : 1;
 }
 
 /**

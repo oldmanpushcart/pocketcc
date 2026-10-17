@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "口袋控制中心",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "description": "口袋控制中心 (pocketcc) — 口袋奇兵 H5 页游辅助：免扫码自动登录、自动重连、芯片祝福、泰坦祝福、联盟帮助、领域寻宝",
   "icons": {
     "16": "assets/icon16.png",

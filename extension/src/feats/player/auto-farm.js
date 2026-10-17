@@ -52,6 +52,8 @@ import { Battle } from '../../core/battle.js';
 import { march } from '../../core/march.js';
 import { createCycle } from '../../core/cycle.js';
 import { map } from '../../core/map.js';
+import { screen } from '../../core/net-guard.js';
+import { getUid } from '../../core/player.js';
 
 /** @type {ReturnType<createLog>} 模块日志器（tag=AUTO-FARM） */
 const log = createLog('AUTO-FARM');
@@ -992,6 +994,9 @@ const cycle = createCycle({
  * @returns {Promise<void>}
  */
 async function cyclePass() {
+  // 准入存活校验（每拍 O(1) 读缓存判定，不设限包恒真）：与 alive 同位阶的运行前提，
+  // 判定不过则不派兵不读写，下一拍由 cycle 照常重排，链路不停摆。
+  if (!screen(getUid())) return;
   // 时段闸（置于最前，撤田不依赖规则行是否还在）：启用「下田时段」且当前不在任一时段内
   //   → 立即逐条 904 撤回全部在途田（本轮不下田），睡向下个时段起点的决策交 cycleRun。
   if (windowActive() && !inFarmWindow()) {

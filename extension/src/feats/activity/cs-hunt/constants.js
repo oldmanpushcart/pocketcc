@@ -282,6 +282,19 @@ export const SKILL_TRANSFER = 24;
 /** @type {number} 安全锁定（type=9=PRECTED_REWARD，group 2 个人技；保护已获奖励，需选奖励子面板，引擎暂未自动使用） */
 export const SKILL_PROTECT_REWARD = 17;
 /**
+ * @type {number} 火线急救（type=4=RISE_PLAYER，group 1 队伍技=队长专属；治指定成员伤兵，req 带 tarUid）。
+ *   **战损字段未实证**（dashcam 全趟核对：`team.member[].power` 受击后恒定不降、`fightInfo` 仅
+ *   `{beginTime,endTime,fightWin,skillPendingEffectInfoList}` 无逐员伤兵数、7578 来袭方 `armyPower` 为 undefined），
+ *   故降级为「恒治队长自身」并标注待校准；施治门控取 status=FIGHT（敌已到我点位开打=确有人受伤），非战斗态永不施治（用户口径 2026-10-17：无人受伤不治疗）。
+ */
+export const SKILL_AID = 27;
+/**
+ * @type {number[]} 战中增益族即用优先级（status=FIGHT 敌人已到我点位时逐个用，每回合各一次性）：
+ *   百战不倒(1/25 死伤兵恢复) > 固定增强(19/20/21 属性提升) > 战场变换(3-8 环境改变) > 诱敌来袭(12-16 被攻击属性增加、须战中挂)。
+ *   **不含天外守护(28)**（文案未捕到，本期不碰）；group=1 项由 #canUse 天然只放行队长，group=2 固定增强全员可用。
+ */
+export const FIGHT_BUFF_SKILLS = [1, 25, 19, 20, 21, 3, 4, 5, 6, 7, 8, 12, 13, 14, 15, 16];
+/**
  * 陪跑（helper，拿不到奖励）模式下引擎自动排除的科技 specId：这些只对「自己领奖」有意义，
  *   陪跑拾取/使用纯属浪费槽位。pickSkill 选技与末回合清空双双跳过；主跑不受影响。
  *   幸运降临(18) 翻倍下一次奖励、安全锁定(17) 保护已获奖励——陪跑全程无奖励可翻/可保。

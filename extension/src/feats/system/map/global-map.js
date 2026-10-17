@@ -18,7 +18,7 @@ import { createLog } from '../../../core/log.js';
 import { reactor } from '../../../core/reactor.js';
 import { storage } from '../../../core/storage.js';
 import { worldMap, gameData } from '../../../core/game-api.js';
-import { SERVER } from '../../../core/map.js';
+import { SERVER, cellToGame } from '../../../core/map.js';
 import { MapOverlay } from './map-overlay.js';
 import { mapStore } from './store.js';
 import { getTerrainBase } from './terrain.js';
@@ -211,9 +211,14 @@ function refreshList() {
       if (cls !== ownerMode) continue;
     }
     total++;
+    // 侧边栏坐标须与游戏内显示/跳转落点一致：store 存的是折叠 cell 号（cellX=gameX/2），
+    // 展示与检索换算回 game 号（nav.flyTo 口径），跳转仍按 cell 走 jumpToCell（内部再 cellToGame）。
+    const g = cellToGame(e.cellX, e.cellY);
     out.push({
       cx: e.cellX,
       cy: e.cellY,
+      gx: g.x,
+      gy: g.y,
       k: e.k != null ? e.k : vk,
       color,
       name: e.oname || label,

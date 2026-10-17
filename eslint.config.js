@@ -8,6 +8,7 @@ export default [
     ignores: [
       'node_modules/**',
       'extension/dist/**',
+      'release/**',
       'dashcam/store/**',
       'warroom/data/**',
       'references/**',
@@ -45,6 +46,11 @@ export default [
         __require: 'readonly',
         cc: 'readonly',
         CryptoJS: 'readonly',
+        // 构建期 define 注入的授权常量（core/net-guard.js 统一收口，其余模块不直接引用）
+        __LICENSE_HASH__: 'readonly',
+        __LICENSE_SALT__: 'readonly',
+        __LICENSE_FRIEND__: 'readonly',
+        __PCC_VERSION__: 'readonly',
       },
     },
     rules: {
@@ -55,7 +61,7 @@ export default [
 
   // ---- Node 侧：dashcam / warroom 服务（ESM）与构建脚本 ----
   {
-    files: ['dashcam/**/*.js', 'warroom/**/*.js', 'esbuild.config.mjs'],
+    files: ['dashcam/**/*.js', 'warroom/**/*.js', 'esbuild.config.mjs', 'scripts/**/*.mjs'],
     languageOptions: {
       ecmaVersion: 2024,
       sourceType: 'module',

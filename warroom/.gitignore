@@ -2,3 +2,6 @@ node_modules/
 data/
 config.json
 *.part
+
+# 战报 HTML 渲染产物（可由 CLI 再生），不入库
+analysis/

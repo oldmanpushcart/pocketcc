@@ -11,5 +11,5 @@
     "baseUrl": "."
   },
   "include": ["extension/src/**/*", "dashcam/*.js", "tools/*.js", "esbuild.config.mjs"],
-  "exclude": ["node_modules", "extension/dist", "dashcam/store", "references"]
+  "exclude": ["node_modules", "extension/dist", "release", "dashcam/store", "references"]
 }

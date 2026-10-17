@@ -10,9 +10,9 @@
  * 「在拍」判据（实战 dashcam 20261011T203911 后的修正）：`pab.capturingPetPos.x > 0`（见 constants
  *   PUSH_FEED_BEAST 实证）。**旧判据 `roomBaseInfo.marchState === NMarchState.PAB_FEED(21)` 恒假**：
  *   21521 BASE_INFO 全会话只 58 条（约 17s 一条），且实测整个拍宠物过程里 marchState 只有 1(MARCHING)/
- *   2(ARRIVED)、21 仅在 t+0.00 出现过一次 → 闸门把两条路一起卡死：心动时刻 0 响应、拍拍拍 0 发包
+ *   2(ARRIVED)、21 仅在 t+0.00 出现过一次 → 闸门把两条路一起卡死：拖拽/心动时刻 0 响应、拍拍拍 0 发包
  *   （实证 (59,163) 在拍窗 484.58s→784.60s 共 300s、约 30 条 type=2 推送，只发了人手那 1 个包）。
- *   反向校验：该会话 83/83 条 type=2 心动时刻推送全部落在 21530 划出的 7 个在拍窗口内，零误报。
+ *   反向校验：该会话 83/83 条 type=2 拖拽推送全部落在 21530 划出的 7 个在拍窗口内，零误报。
  *   `capturingInfo` **只作料源不作闸门**（7 个窗口里两个 BOSS 窗的起点没有带 feedInfo 的 21524，
  *   且残留的上一只 feedInfo 会满足 nowFavor>=allFavor）→ 缺时回 EMPTY_CAP，事件照旧走推送直达。
  *   另订 21530 只做记账（onFeedBeast：换宠时清掉上一只残留的静默窗 + 打 info 对账），闸门仍每拍现读现场值。
@@ -23,21 +23,24 @@
  *     push 21527 ENIGMA_SECRET_ROOM_BEAST_EVENT 载荷 `{type, specId[], endTime, points[]}` —— 游戏**不把它写进
  *       capturingInfo**（实证 RealPabController：capturingInfo 只在 21524 updateRoomPointFightingPVEInfo 与 8546
  *       应答回调两处被赋 feedInfo，而 feedInfo 里根本没有 eventType/eventEndTime）→ 只读 capturingInfo 必然
- *       晚一拍且无事件身份可用，而心动时刻窗口只有 2.0s → 直接订阅 21527，到达即发。
+ *       晚一拍且无事件身份可用，而拖拽窗口只有 2.0s → 直接订阅 21527，到达即发。
  *   每拍按优先级只做一个动作：
- *     ① 限时事件（轮询兜底路）**排在静默窗之前**。实证：能量爆发演出要 6.4~10.2s，而心动时刻只有 2.0s，
+ *     ① 限时事件（轮询兜底路）**排在静默窗之前**。实证：能量爆发演出要 6.4~10.2s，而拖拽只有 2.0s，
  *        旧实现「静默窗内一律放弃」会把整窗事件全吞掉（且限时事件只受 UI 层屏蔽，checkCaptureOperationCd
  *        仅管 specId==1，直达服务器的拖拽应答实测被接受）。
  *     ② 静默窗口内（能量爆发演出中）→ 睡到窗口结束。实证：specId=4 之后 6.4~10.2s 无下一拍
  *        （游戏侧 behave[4].time 持续演出 + PetCaptureTouchNodeNew 6s energyMaxProtectNode 保护）。
  *     ③ `selfenergy >= 3` → `petCaptureOperation(4)`：**高分值持续拍**。报文 14/14 次能量周期完全复现
  *        changeScore=390（普通拍仅 6~11），且能量归 0 —— 即「凑够 3 次小节奏触发一段时间高分值持续的拍」。
- *     ④ 推送直达（不占本拍优先级）：onBeastEvent 收到 21527 type=2/5 即发，心动时刻等不起下一拍。
+ *     ④ 推送直达（不占本拍优先级）：onBeastEvent 收到 21527 type=2/5 即发，拖拽 2.0s 窗等不起下一拍；
+ *        心动时刻（type=5 投喂弹窗）投完还要**立刻关掉游戏弹窗**——不关则它会按自己的倒数归零再替玩家
+ *        随机投一票（报文实证 4/4 次都补发、3 次被接受，见 #closeFeedPop 注）。
  *     ⑤ 兜底：免费手拍 `petCaptureOperation(1)`（无消耗，报文主流量 6~11 分/拍，人手连点中位 222ms）。
  *        仅 specId=1 受客户端每秒限额约束（实证 checkCaptureOperationCd 首行 `!(1!=e||…)`，
  *        限额 = Number(dataConfig(630027))/秒，超限游戏静默丢弃不发包）→ 本引擎自计同一份秒账，超配额即等下一秒。
  *
- * 事件去重：④ 以 `type + ':' + endTime(毫秒)` 为身份存入 #handled 集，处理过一次即不再重发。
+ * 事件去重：④ 以 `type + ':' + endTime(毫秒)` 为身份存入 #handled 集，处理过一次即不再重发（心动时刻命中去重时
+ *   仍会再收一次窗，防重复下发把弹窗又开了一遍）。
  *   **不在事件字段归 0 时清身份**：身份含 endTime，服务器给新事件必然给新 endTime（实证该会话每条 type=2 的
  *   endTime 均不同），清了反而会把刚处理过的那条同 endTime 事件再发一次；集半满那么按插入序丢弃最旧一条。
  *   ① 的轮询兜底只在**推送通道失联**（tuning.pushAliveMs 内一条 21527 都没来过）时启用，并用自持的 #pollSig
@@ -45,8 +48,9 @@
  *
  * 不做的事：不主动投喂 enigma_beast_behave 行 5/6 的道具（报文实证其分值与免费手拍同量级，却要消耗秘境背包道具）。
  *
- * 只读+发包红线：只调游戏原生 petCaptureOperation，不碰 Update/Delete，不镜像本地态（capturingInfo /
- *   capturingPetPos 均由游戏自己的推送与应答刷新，本引擎逐拍现读）。
+ * 只读+发包红线：只调游戏原生 petCaptureOperation，另多一个原生收窗动作（UIManager.CloseUI，与面板自己
+ *   close() 同源、只销毁窗口实例，不碰 Update/Delete、不镜像本地态——capturingInfo / capturingPetPos
+ *   均由游戏自己的推送与应答刷新，本引擎逐拍现读）。
  */
 import { createCycle } from '../../../core/cycle.js';
 import {
@@ -122,7 +126,7 @@ export class CaptureEngine {
   /** @type {string} 上一次 21530 报的在拍目标（`x,y[ boss]`，''=不在拍），仅用于识别换宠/收尾 */
   #petKey = '';
 
-  /** @param {object} env 注入底座 {alive, realmActive, cfg, secret, gameData, gameConf, l10n, log} */
+  /** @param {object} env 注入底座 {alive, realmActive, cfg, secret, gameData, gameConf, l10n, ui, log} */
   constructor(env) {
     this.#env = env;
   }
@@ -143,7 +147,7 @@ export class CaptureEngine {
     if (!st) return tuning.feedIdleMs; // 不在拍（未开拍/在行军/已结束）→ 长睡
     const cap = st.cap;
 
-    // ① 限时事件的轮询兜底：排在静默窗之前，且只在推送通道失联时启用（能量演出 7s 窗 > 心动时刻 2.0s 窗）
+    // ① 限时事件的轮询兜底：排在静默窗之前，且只在推送通道失联时启用（能量演出 7s 窗 > 拖拽 2.0s 窗）
     if (!this.#pushAlive()) {
       const es = Array.isArray(cap.eventSpecId) ? cap.eventSpecId : [];
       if (!es.length) this.#pollSig = '';
@@ -165,7 +169,7 @@ export class CaptureEngine {
 
   /**
    * 在拍取样：游戏现场的 `capturingPetPos` 已置位（push 21530，结束推 {x:-1,y:-1}）时回 {cap}，否则 null。
-   * 推送入口（心动时刻）与轮询入口共用这份闸门，保证两条路对「能不能拍」的判断一字不差。
+   * 推送入口（拖拽/心动时刻）与轮询入口共用这份闸门，保证两条路对「能不能拍」的判断一字不差。
    * **不拿 capturingInfo 做闸门**：窗口起点不保证有 feedInfo 下发（实证 7 个窗口里两个 BOSS 窗口的起点没有），
    *   而 capturingInfo 可能还是上一只的残留（nowFavor>=allFavor）→ 拿它当在位/未喂满判据会把新宠锁死。
    *   收尾另有权威：21530 的 {x:-1,y:-1}（实证 6 个已收窗全有）。
@@ -215,7 +219,7 @@ export class CaptureEngine {
   }
 
   /**
-   * 捕获事件推送入口（push 21527，载荷 `{type, specId[], endTime, points[]}`）：心动时刻窗口只有 2.0s
+   * 捕获事件推送入口（push 21527，载荷 `{type, specId[], endTime, points[]}`）：拖拽窗口只有 2.0s
    * （源码 `ClientTime+2e3`，报文 349/349 实证，见 EVT_TYPE_DRAG 注），等不起下一拍的 capturingInfo 回写，
    * 所以到达即发。退订由 reactor 托管（ctx.on.push）。
    * @param {object} ev bus `net.21527` 事件（Event 实例：data 里再包一层业务载荷）
@@ -245,7 +249,7 @@ export class CaptureEngine {
 
   /**
    * 轮询兜底（仅推送通道失联时走）：capturingInfo 里唯一可用的事件字段是 `eventSpecId`（无 type/endTime），
-   * 单项即拖拽事件（specId 本身就是答案），多项按投喂弹窗择优；同一候选串只补发一次。
+   * 单项即拖拽事件（specId 本身就是答案），多项按心动时刻弹窗择优；同一候选串只补发一次。
    * @param {Array<number|string>} es cap.eventSpecId 候选
    * @param {object} pab PabController 实例
    * @returns {boolean} true=这次发出了事件动作
@@ -254,16 +258,18 @@ export class CaptureEngine {
     const sig = es.join(',');
     if (this.#pollSig === sig) return false; // eventSpecId 会挂十几秒，同一候选不逐拍重发
     this.#pollSig = sig;
-    const spec = es.length === 1 ? Number(es[0]) || 0 : this.#bestPopSpec(es);
+    const pop = es.length > 1; // 多项 = 心动时刻投喂弹窗（单项 = 拖拽答案）
+    const spec = pop ? this.#bestPopSpec(es) : Number(es[0]) || 0;
     if (!spec) return false;
     this.#op(pab, spec, 'poll fallback eventSpecId=[' + sig + '] (beast push silent)');
+    if (pop) this.#closeFeedPop('poll fallback');
     return true;
   }
 
   /**
    * 捕获事件动作的推送出口（以 `type:endTime` 去重）。
-   * **不受静默窗约束**：能量爆发演出 6.4~10.2s，而心动时刻只有 2.0s，在静默窗内放弃等于必丢。
-   * @param {number} et 事件类型（2 心动时刻 / 5 投喂弹窗）
+   * **不受静默窗约束**：能量爆发演出 6.4~10.2s，而拖拽只有 2.0s，在静默窗内放弃等于必丢。
+   * @param {number} et 事件类型（2 拖拽 / 5 心动时刻投喂弹窗）
    * @param {Array<number|string>} es 事件候选 specId
    * @param {number} endMs 窗口结束时刻（毫秒，兼作身份一部分）
    * @param {string} from 来源标注（debug 用）
@@ -272,7 +278,11 @@ export class CaptureEngine {
    */
   #tryEvent(et, es, endMs, from, pab) {
     const key = et + ':' + endMs;
-    if (this.#handled.has(key)) return false;
+    if (this.#handled.has(key)) {
+      // 同一事件重复下发：票已投过不再重发，但心动时刻的弹窗可能又被开了一次 → 照旧收窗，别留它倒数补投
+      if (et === EVT_TYPE_FEED_POP) this.#closeFeedPop(from + ' dup');
+      return false;
+    }
     const spec = et === EVT_TYPE_DRAG ? Number(es[0]) || 0 : this.#bestPopSpec(es);
     if (!spec) return false;
     if (this.#handled.size >= HANDLED_MAX)
@@ -283,7 +293,28 @@ export class CaptureEngine {
       spec,
       from + ' type=' + et + (et === EVT_TYPE_DRAG ? ' (energy +1)' : ' (pick best favor)'),
     );
+    // 心动时刻：投完就把游戏弹窗收掉，否则它倒数到自己的终点会再替玩家随机投一票（见 #closeFeedPop 注）
+    if (et === EVT_TYPE_FEED_POP) this.#closeFeedPop(from);
     return true;
+  }
+
+  /**
+   * 心动时刻（投喂弹窗 PabPetFeedEventPopup）收尾：我方已替游戏把这一票投出去，但弹窗并不知情——
+   *   源码 `onShow` 里 `_endTime = ServerFloatTime + _moveTime`（`_moveTime = behave[specId[0]].time`），
+   *   `cpnUpdate` 每帧刷 `labTime`，归零即自动 `onFeedClick()` → 再发一发 `petCaptureOperation(7 + 落点下标)`
+   *   并 close()。报文实证 dashcam 20261017T210400：4 次 type=5 弹窗我方均在 0ms 发出 spec=10（s=0、
+   *   changeScore=500），弹窗其后 +5.24/+10.31/+10.61/+18.60s 各补发一发 7..10，其中 3 次仍被接受（s=0）
+   *   → 白耗投喂道具，玩家侧观感就是「拖到十几秒超时才做出选择」。发完立刻走原生 CloseUI 收窗即切断补发。
+   * 只关窗口、不改业务态（等价于玩家自己点投喂后的原生关闭链路），失败静默降级——不影响已发出的这一票。
+   * @param {string} from 触发来源标注（debug 用）
+   */
+  #closeFeedPop(from) {
+    const env = this.#env;
+    const u = env.ui;
+    if (!u || typeof u.close !== 'function') return;
+    const r = u.close('pabFeedPopup');
+    if (r && r.ok) env.log.debug('capture: feed popup closed (%s).', from);
+    else env.log.debug('capture: feed popup not closed: %s (%s).', (r && r.err) || 'unknown', from);
   }
 
   /**

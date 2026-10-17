@@ -14,11 +14,14 @@
 import { createLog } from './core/log.js';
 import { game } from './core/game.js';
 import { bus } from './core/bus.js';
+import { NS } from './core/constants.js';
 import { loadAllConfigs, startFeatures, migrateLegacyKeys } from './core/registry.js';
 import { startPlayerWatch, waitUid } from './core/player.js';
 import { installAutoLogin } from './core/auto-login.js';
 import { installReconnectHooks, installLaunchWatchdog, watchLoginSuccess } from './core/session.js';
 import { mountUI } from './core/ui/index.js';
+import { showWelcome } from './core/ui/welcome.js';
+import { screen, slotFree, revision } from './core/net-guard.js';
 import { startSceneWatcher, getCurrentScene } from './core/scene-watcher.js';
 import { installModeGate } from './core/mode.js';
 
@@ -82,27 +85,73 @@ import { installModeGate } from './core/mode.js';
    * 启动：等 cocos 引擎与场景就绪后再安装 hook、监听、挂载 UI。
    * 配置按 UID 隔离：先等 UID 就绪（超时降级用默认配置，不阻断自动重连），
    * 首个 UID 确定时把旧全局键迁入命名空间，再读盘填充 configs。
+   * 准入闸门（仅授权包生效）：UID 到手先过 screen 比对——不设限包恒真，dev 零变化；
+   * 不符则只弹告知页，后续配置/功能/重连全不拉起；通屏则等主城就绪弹问候页，
+   * 用户点「进入使用」后才继续（时序位置与现链路一致，满足「游戏正式加载后展示」）。
    */
   function start() {
     startSceneWatcher();
     installModeGate();
     installAutoLogin();
     startPlayerWatch();
-    configsReady = waitUid()
-      .then((uid) => (uid ? migrateLegacyKeys(uid) : undefined))
-      .then(() => loadAllConfigs())
+    /** @type {string|null} 本轮启动定屏的登录 UID（问候页展示用） */
+    let bootUid = null;
+    configsReady = Promise.resolve()
+      .then(() => waitUid())
+      .then((uid) => {
+        bootUid = uid;
+        if (uid && !screen(uid)) {
+          logCore.info('greet: withheld (rev %s)', revision());
+          showWelcome('fail', uid);
+          // 阻断：返回永不 settle 的链——不迁移/不读盘/不装重连钩子，主城放行侧同样挂在此链上，功能全停
+          return new Promise(() => {});
+        }
+        if (!uid && !slotFree()) {
+          // 授权包降级态（登录卡死取不到 UID）：无从比对，同样挂起链不拉功能（与旧降级仍跑自动重连不同，授权优先）
+          logCore.info('greet: silent (no uid to match, rev %s)', revision());
+          return new Promise(() => {});
+        }
+        handOffBridge(uid); // 先放行 bridge 存储代理，再升配置读写
+        return (uid ? migrateLegacyKeys(uid) : undefined).then(() => loadAllConfigs());
+      })
       .then(() => {
         installReconnectHooks();
         installLaunchWatchdog();
       });
     watchLoginSuccess();
     watchHomeMapReady(() => {
-      configsReady.then(() => {
-        startFeatures();
-        mountUI();
-      });
+      configsReady
+        .then(() => greet(bootUid))
+        .then(() => {
+          startFeatures();
+          mountUI();
+        });
     });
-    logCore.info('initialized');
+    logCore.info('initialized, rev %s', revision());
+  }
+
+  /**
+   * 主城就绪后的问候页：仅授权包且 UID 已定屏时弹；
+   * 不设限包/登录卡死降级态（UID 未取到）直接放行，不打扰流程。
+   * @param {string|null} uid 登录 UID
+   * @returns {Promise<void>}
+   */
+  function greet(uid) {
+    if (slotFree() || !uid) return Promise.resolve();
+    return showWelcome('ok', uid);
+  }
+
+  /**
+   * 把准入态同步给隔离世界的存储代理（bridge）：授权包读盘完成后夹带一次 uid，
+   * bridge 用自己 bundle 里的同源哨独立复验（不信任本侧断言），此后才代读写存储。
+   * 不设限包不发（bridge 侧构建期已标记不设限，零消息）。
+   * @param {string|null} uid 登录 UID
+   */
+  function handOffBridge(uid) {
+    if (slotFree() || !uid) return;
+    try {
+      window.postMessage({ __ns: NS, dir: 'main->bridge', op: 'hello', uid: String(uid) }, '*');
+    } catch (e) {} // bridge 未就位（上下文失效等）：静默，存储侧自会因未放行而拒绝服务
   }
 
   /**

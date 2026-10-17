@@ -32,7 +32,7 @@
  */
 import { createLog } from '../../core/log.js';
 import { game } from '../../core/game.js';
-import { gameData, l10n, march as marchApi, nav } from '../../core/game-api.js';
+import { gameData, l10n, march as marchApi, nav, worldMap } from '../../core/game-api.js';
 import { reactor } from '../../core/reactor.js';
 import { Battle } from '../../core/battle.js';
 import { march } from '../../core/march.js';
@@ -82,8 +82,6 @@ const LAND_TIMEOUT_MS = 2000;
 
 /** @type {object|null} 网络底座（install 时取） */
 var net;
-/** @type {object|null} DataCenter.DATA */
-var dataCenter;
 /** @type {object|null} reactor 上下文；alive() 反映运行态 */
 var ctxRef = null;
 /** @type {boolean} install 幂等守卫 */
@@ -132,14 +130,27 @@ function numOrNull(v) {
   return isFinite(n) ? n : null;
 }
 
-/** 本人服号（911/901 body 用；取不到回 0，游戏侧自认本服） */
+/**
+ * 本人当前服号（911/901 body、findRelocatableSpot、flyTo z 用）：走 game-api 实时 ACL
+ * （`worldMap.serverId()` → `userData().ServerId`），跨区迁城进别区战场图后随实时 UserData 更新。
+ * 不在本模块缓存 `DataCenter.DATA` 引用——那是与刚修的 probe 缓存同源的、可被整体替换的对象，
+ * 会把登录/老家态的 ServerId 钉死整场，导致 findRelocatableSpot/flyTo 查错区而乱跳。取不到回 0，游戏侧自认本服。
+ * @returns {number}
+ */
 function serverId() {
-  try {
-    var u = (dataCenter && dataCenter.UserData) || null;
-    return (u && u.ServerId) | 0;
-  } catch (e) {
-    return 0;
-  }
+  return worldMap.serverId() | 0;
+}
+
+/**
+ * 绕后攻击「敌锚定」操作用区号：迁城落脚点在敌主城周围，其所在区应以 630 查得的**敌基地服号**为准
+ * （`enemy.serverId`——查他人时 630 回的是其基地真实所在服，跨区战场里敌我不同服才判对；
+ * 区别于查自己会回注册服，本快照只把 enemy.serverId 用于敌锚定，不混用）。630 未回或为 0 时回退本人当前服号。
+ * 注意：「迁城逃避」落点在我方周围、仍直接用本服 `serverId()`，不经此助手。
+ * @param {object} snap 共享快照
+ * @returns {number} 敌锚定区号
+ */
+function enemyZone(snap) {
+  return (snap && snap.enemy && snap.enemy.serverId) || serverId();
 }
 
 /**
@@ -172,11 +183,11 @@ function decision(marchId, name, result, reason, level) {
 }
 
 /**
- * 630 PLAYER_INFO 按 uid 查玩家基础信息：解析主城坐标 x/y + 战力 + 等级（字段缺失记 null，永不抛）。
+ * 630 PLAYER_INFO 按 uid 查玩家基础信息：解析主城坐标 x/y + 战力 + 等级 + 基地服号 serverId（字段缺失记 null，永不抛）。
  * 应答顶层即含 x/y/power/level/allianceName/serverId（真机实证，同 chat-window 630 飞图口径）；
  * 与视口/场景无关，Home 城内也能查——绕后攻击据此取敌主城坐标，不依赖 10007 行军推送。
  * @param {string|number} uid 目标玩家 uid（push.uid 是 JS number，须转字符串上线，防 Int64 反序列化拒绝）
- * @returns {Promise<{x:(number|null), y:(number|null), power:(number|null), level:number}|null>} 请求失败/无载荷返回 null
+ * @returns {Promise<{x:(number|null), y:(number|null), power:(number|null), level:number, serverId:(number|null)}|null>} 请求失败/无载荷返回 null
  */
 async function getPlayerInfoByUid(uid) {
   if (uid == null || uid === '') return null;
@@ -196,8 +207,10 @@ async function getPlayerInfoByUid(uid) {
     y = numOrNull(d.y);
   var power = numOrNull(d.power);
   var level = Number(d.level) || 0;
+  // 敌基地服号：查「他人」=其基地真实所在服（chat-window 飞图口径已实证）；跨区绕后据此定落点区，勿与「查自己回注册服」混用。
+  var serverId = numOrNull(d.serverId);
   if (x == null && y == null && power == null) return null; // 啥都没解析出来 → 视为查无
-  return { x: x, y: y, power: power, level: level };
+  return { x: x, y: y, power: power, level: level, serverId: serverId };
 }
 
 /**
@@ -215,8 +228,15 @@ async function buildSnapshot(pushData) {
   var info = await getPlayerInfoByUid(uid);
   if (!aliveFn()) return null;
   var enemy = info
-    ? { x: info.x, y: info.y, power: info.power, level: info.level, src: '630' }
-    : { x: null, y: null, power: null, level: 0, src: 'none' };
+    ? {
+        x: info.x,
+        y: info.y,
+        power: info.power,
+        level: info.level,
+        serverId: info.serverId,
+        src: '630',
+      }
+    : { x: null, y: null, power: null, level: 0, serverId: null, src: 'none' };
   // 3) 在外部队数
   var marchesOut = 0;
   var ms = await march.list();
@@ -383,7 +403,7 @@ async function strategyAttack(snap) {
       mode: 'near',
       radius: defense.NEAR_RADIUS,
       exclude: { x: snap.me.x, y: snap.me.y },
-      ctx: { net: net, serverId: serverId() },
+      ctx: { net: net, serverId: enemyZone(snap) }, // 落点在敌城周围→按敌基地服号取占用/找点，跨区才对（勿用本服号查错区）
     },
   );
   if (!aliveFn())
@@ -395,7 +415,7 @@ async function strategyAttack(snap) {
       stop: false,
     };
   try {
-    nav.flyTo({ x: spot.x, y: spot.y, z: serverId() || null, subMap: null, click: false });
+    nav.flyTo({ x: spot.x, y: spot.y, z: enemyZone(snap) || null, subMap: null, click: false });
   } catch (e) {}
   var mv = await moveCity(spot.x, spot.y);
   if (!aliveFn()) return { result: 'fail', reason: '迁城后流程已暂停', stop: false };
@@ -425,7 +445,9 @@ async function strategyAttack(snap) {
         ',' +
         spot.y +
         ') marchType=' +
-        marchType,
+        marchType +
+        ';落点区=' +
+        enemyZone(snap),
       stop: true,
     };
   return { result: 'fail', reason: '攻击被拒 ' + attackFailText(ret), stop: false };
@@ -476,17 +498,15 @@ async function strategyRelocate(snap) {
 
 /**
  * 策略 4：原地反击（不迁城，直接以预设部队 902 从当前主城攻打敌主城）。
- * 闸门与绕后攻击一致（全部部队回城 + 有空闲队列 + 敌坐标已知 + 预设非空），差别仅在「不迁城、原位发攻」。
+ * 闸门：有空闲队列 + 敌坐标已知 + 预设非空——**不要求全部部队回城**。
+ * 与绕后/迁城逃避的区别：那两条发 911 迁城，在外部队会随城迁移丢回旧址或被服务器拒，故必须清场；
+ * 原地反击只发 902 不动城，无此约束。且它是被动挨打(10167)时的应急反打，若死等在外部队全部回城，
+ * 那波攻击早已落到头上——反击及时性被摧毁。预设里正在外出的兵由 Battle().adjust() 自动剔除，
+ * 凑不凑得出兵由下面 freeSlots 与 armyListNew.length 两道闸兜住，无需 marchesOut===0 这道过严硬闸。
  * @param {object} snap 共享快照
  * @returns {Promise<{result:string, reason:string, stop:boolean}>}
  */
 async function strategyCounter(snap) {
-  if (snap.marchesOut !== 0)
-    return {
-      result: 'skip',
-      reason: '有 ' + snap.marchesOut + ' 支部队在外，需全部回城',
-      stop: false,
-    };
   if (snap.freeSlots < 1) return { result: 'fail', reason: '无空闲行军队列', stop: false };
   var ex = snap.enemy.x,
     ey = snap.enemy.y;
@@ -676,11 +696,9 @@ function install(ctx) {
     net = null;
   }
   var dc = game.get('DataCenter');
-  dataCenter = (dc && dc.DATA) || null;
-  if (!dataCenter) missing.push('DataCenter');
+  if (!dc) missing.push('DataCenter');
   if (missing.length) {
     net = null;
-    dataCenter = null;
     log.warn('install failed. missing=%s', missing.join(';'));
     return false;
   }
