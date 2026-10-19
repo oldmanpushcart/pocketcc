@@ -14,6 +14,12 @@
   "content_scripts": [
     {
       "matches": ["https://warh5.rivergame.net/*"],
+      "js": ["dist/anti-throttle.js"],
+      "run_at": "document_start",
+      "world": "MAIN"
+    },
+    {
+      "matches": ["https://warh5.rivergame.net/*"],
       "js": ["dist/content.js"],
       "run_at": "document_idle",
       "world": "MAIN"

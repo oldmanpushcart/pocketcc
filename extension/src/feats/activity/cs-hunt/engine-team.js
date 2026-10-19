@@ -39,6 +39,7 @@ import { Battle } from '../../../core/battle.js';
 import { march } from '../../../core/march.js';
 import { bits, csHunt, gameData } from '../../../core/game-api.js';
 import { createLog } from '../../../core/log.js';
+import { storage } from '../../../core/storage.js';
 import { FlowEngine } from './engine-flow.js';
 import {
   ACK_APPLY_LIST,
@@ -85,6 +86,10 @@ const TEAM_CFG = 1;
 const ACTIVE_TICK_MS = 15000;
 /** @type {number} 无队且暂不可开车时的长睡间隔（毫秒） */
 const IDLE_TICK_MS = 60000;
+/** @type {number} 未到点等待期远窗（距下一场 >1h）的排程封顶（毫秒）：7501 应答 open 旗标变更即 #wake，长睡不漏开赛 */
+const WINDOW_WAIT_CAP_FAR_MS = 3600000;
+/** @type {number} 未到点等待期近窗（距下一场 ≤1h）的排程封顶（毫秒）：给「时段表被服务器改早」留自愈节拍 */
+const WINDOW_WAIT_CAP_NEAR_MS = 1800000;
 /** @type {number} 7501 只读拉态的兜底周期（毫秒）：控制器未接管（子包没进过）时队伍/开关态的唯一补齐通道 */
 const INFO_REFRESH_MS = 90000;
 /**
@@ -93,6 +98,8 @@ const INFO_REFRESH_MS = 90000;
  *   队长 full/allMarched 召集判定不能依赖推送可达，靠应答带整队（实证 20261016T191700 seq88）喂电平。纯读包。
  */
 const TEAM_POLL_MS = 20000;
+/** @type {number} 队长兜底拉申请池（7528）的最小间隔（毫秒）：审批主路是 21374 推送，此仅节流补漏，杜绝逐拍刷屏（实证 20261018T190716 曾 3 秒内 95 次 7528） */
+const APPLY_LIST_POLL_MS = 20000;
 /** @type {number} 630 PLAYER_INFO：按 uid 查玩家昵称（陪跑按名搜队用；业务强相关报文，收口本 feat，不入通用 net.js） */
 const CMD_PLAYER_INFO = 630;
 /** @type {number} 无队找队时逐个按名搜队（630→7530→7522）的最小拉取间隔（毫秒）：一趟遍历多打网络，不逐拍刷 */
@@ -109,6 +116,117 @@ const HOME_POLL_MS = 10000;
  *   命中即停止对已消亡 treasureId 的空拉（否则游戏会一直弹「小队不存在」），清队转下一轮。
  */
 const HUNT_OVER_REASONS = new Set(['cs_treasure294']);
+
+// ── ⑤ 每日夺宝局数上限（借鉴竞对 state.counter + setting.team.count + dayInit）──────────
+//   竞对口径：每次真开跑（非陪跑）计数 +1、跳日归零、到上限当日停跑（createTeam/joinTeam 同闸）。
+//   我方口径：一局严格串行（终局→等回城散队→才建下一队），故在 #finishHunt 统一收口处 +1（每完成一局计一次），
+//   与竞对「开局 +1」在串行语义下等价；陪跑不耗次数、不计数、不触上限。计数持久跨页（storage.data、与配置分离）。
+/** @type {string} storage.data 逻辑键：当日已跑局数、日期戳与最近计数局 id */
+const DAILY_RUNS_NAME = 'csHunt.daily';
+/**
+ * @type {{loaded:boolean, loading:boolean, date:string, runs:number, lastId:string}} 当日局数持久态内存镜像。
+ *   模块级（跨引擎重建/pause→resume/换页保留）：lastId 为**跨实例去重键**，随快照落盘，防同一局多路收敛或
+ *   战斗演出导致的 pause→resume→重建引擎后对同一 treasureId 重复 +1。
+ */
+const dailyRuns = { loaded: false, loading: false, date: '', runs: 0, lastId: '' };
+
+/** 今日日期字符串 YYYY-MM-DD（当地时区，与面板展示一致）。
+ * @returns {string} */
+function todayStr() {
+  var d = new Date();
+  var m = d.getMonth() + 1;
+  var day = d.getDate();
+  return d.getFullYear() + '-' + (m < 10 ? '0' + m : m) + '-' + (day < 10 ? '0' + day : day);
+}
+
+/** 跳日归零：已读回且日期非今日则重置 runs/lastId 并落盘（未读回不动，避免把内存 0 覆盘上真值）。
+ */
+function rollDailyDate() {
+  if (!dailyRuns.loaded) return;
+  var today = todayStr();
+  if (dailyRuns.date !== today) {
+    dailyRuns.date = today;
+    dailyRuns.runs = 0;
+    dailyRuns.lastId = ''; // 换日：上一局的 id 不再参与去重
+    persistDailyRuns();
+  }
+}
+
+/** 异步读回当日局数（首调完成前按 0 处理；读失败不置 loaded——读不到 ≠ 盘上没数据，留待下次重试）。
+ *   ⑤#3 在途读单飞：未 loaded 期间多路调用只踢一笔 get，避免多个 then 反复覆写；读回时刻以**当前内存 runs**
+ *   为「已发生但尚未落盘的 bump」补算（loaded 前置闸门使读回前永不写盘，故内存增量必不在盘上，相加不重复），
+ *   防读回前若已完成的 bump 被盘值覆盖而少计。
+ */
+function ensureDailyLoaded() {
+  if (dailyRuns.loaded) {
+    rollDailyDate();
+    return;
+  }
+  if (dailyRuns.loading) return;
+  dailyRuns.loading = true;
+  Promise.resolve(storage.data.get(DAILY_RUNS_NAME))
+    .then(function (saved) {
+      dailyRuns.loaded = true;
+      dailyRuns.loading = false;
+      var preBumps = dailyRuns.runs; // 读回前已 bump、未落盘的增量（正常恒 0）
+      dailyRuns.runs = 0;
+      if (saved && typeof saved === 'object' && typeof saved.date === 'string') {
+        dailyRuns.date = saved.date;
+        dailyRuns.runs = Number(saved.runs) || 0;
+        if (!dailyRuns.lastId) dailyRuns.lastId = saved.lastId ? String(saved.lastId) : '';
+      }
+      rollDailyDate(); // 非今日则归零（含 date/lastId 更新）
+      if (preBumps > 0) dailyRuns.runs += preBumps; // ⑤#3 补回读回前已发生的一局
+      persistDailyRuns();
+    })
+    .catch(function (err) {
+      dailyRuns.loading = false; // 读失败复位在途闸门，loaded 仍 false 留待下次重试
+      log.debug('daily runs load failed, retry next. %s', err && err.message);
+    });
+}
+
+/** 落盘当日局数：未 loaded 绝不写盘（否则把内存 0 覆掉盘上真值）。
+ *   ⑤#8 不再自建单飞闸门/看门狗——storage.data.set 已按 blob 串行队列落盘（core/storage.js enqueue），
+ *   每次都以**当前最新态**入队，队列尾那笔即最终值，在途写不会丢最新快照。
+ */
+function persistDailyRuns() {
+  if (!dailyRuns.loaded) return;
+  Promise.resolve(
+    storage.data.set(DAILY_RUNS_NAME, {
+      date: dailyRuns.date,
+      runs: dailyRuns.runs,
+      lastId: dailyRuns.lastId,
+    }),
+  ).catch(function () {});
+}
+
+/** 跑完一局 +1 并落盘（仅主跑调用；陪跑不计数、也不触发上限）。
+ * @param {string} runId 本局 treasureId（⑤#2 去重键：与 dailyRuns.lastId 相同则不重复计）
+ */
+function bumpDailyRun(runId) {
+  ensureDailyLoaded();
+  rollDailyDate();
+  if (runId && runId === dailyRuns.lastId) return; // ⑤#2 跨实例/跨页去重（模块级 + 持久化）
+  if (runId) dailyRuns.lastId = runId;
+  dailyRuns.runs = (dailyRuns.runs | 0) + 1;
+  persistDailyRuns();
+}
+
+/** 今日是否已达夺宝局数上限（limit=0/未读回视为不限、放行）。
+ * @param {number} limit 面板配置的每日上限（0=不限）
+ * @returns {boolean} */
+function isDailyLimitReached(limit) {
+  if (!(limit > 0)) return false;
+  ensureDailyLoaded();
+  rollDailyDate();
+  return dailyRuns.runs >= limit;
+}
+
+/** 面板展示用：今日已跑局数（读回前回 -1 占位）。
+ * @returns {number} */
+export function getDailyRuns() {
+  return dailyRuns.loaded ? dailyRuns.runs : -1;
+}
 
 /**
  * @typedef {object} TeamEnv 引擎的外部依赖（由 index.js 注入，避免引擎直接摸 reactor/core 单例造成环）
@@ -184,10 +302,17 @@ export class TeamEngine {
   #marchStartTeamId = '';
   /** @type {boolean} 收到过本队 21372 召集（召集已发出，队员只需表态同意） */
   #called = false;
-  /** @type {Set<string>} 已处理过的入队申请 uid（防同一申请重复审批） */
+  /** @type {Set<string>} 已成功发出 7523 决策的 uid（防同一申请重复审批；跨 7528 兜底复核去重） */
   #approved = new Set();
-  /** @type {boolean} 申请池脏（收到 21374 或刚建队）：下一拍拉 7528 复核 */
-  #applyDirty = false;
+  /**
+   * 待发送的入队申请决策队列 `uid → op`（1=同意/2=拒绝）。21374 推送为主路直接入队，7528 兜底拉取补入队；
+   *   由 tick 的 #drainApplyPending 串行 await 逐条发 7523（#sendPB 同 cmd 在途去重，await 到应答即放行下一条），
+   *   发送成功才移出并记入 #approved——修复旧版「同步循环连发多 7523、除首条外全被在途去重吞掉却已标已处理」致卡人。
+   * @type {Map<string, number>}
+   */
+  #applyPending = new Map();
+  /** @type {number} 上次 7528 兜底拉申请池的墙上时刻（毫秒）：推送为主路，此仅节流补漏 */
+  #lastApplyListAt = 0;
   /** @type {string} 已就「无兵可派」留痕过的队伍 id（每队只 info 一次，避免逐拍刷屏） */
   #noArmyLoggedTeamId = '';
   /** @type {string} 已就「不可开车」留痕的原因（同类原因只 info 一次） */
@@ -263,7 +388,8 @@ export class TeamEngine {
    * @param {object} ctx reactor 上下文
    */
   start(ctx) {
-    this.#applyDirty = true;
+    this.#lastApplyListAt = 0; // 冷启动：首个 tick 即拉一次 7528 兜底补漏（此后按 APPLY_LIST_POLL_MS 节流）
+    ensureDailyLoaded(); // ⑤ 预热当日局数计数（异步读回，读回前按 0 放行；跳日由 rollDailyDate 归零）
     ctx.on.push(21371, (ev) => this.#onTeamChange(this.#ack(ev, FIELD_TEAM_CHANGE)));
     ctx.on.push(21372, (ev) => this.#onReadyChange(this.#ack(ev, FIELD_READY_CHANGE)));
     ctx.on.push(21373, (ev) => this.#onMemberChange(this.#ack(ev, FIELD_MEMBER_CHANGE)));
@@ -321,7 +447,8 @@ export class TeamEngine {
     this.#marchStartTeamId = '';
     this.#called = false;
     this.#approved.clear();
-    this.#applyDirty = true;
+    this.#applyPending.clear();
+    this.#lastApplyListAt = 0;
     this.#noArmyLoggedTeamId = '';
     this.#blockedLoggedReason = '';
     this.#lastInfoAt = 0;
@@ -415,12 +542,13 @@ export class TeamEngine {
       this.#marchStartTeamId = '';
       this.#called = false;
       this.#approved.clear();
+      this.#applyPending.clear();
+      this.#lastApplyListAt = 0; // 新队就位：尽快拉一次 7528 兜底（补订阅前可能已到的申请）
       this.#noArmyLoggedTeamId = '';
       this.#appliedTeamId = ''; // 已入队，清找队申请记账
       log.info('team %s 就位（cfg=%d，成员 %d）', team.id, team.cfg, team.memberCount);
     }
     this.#team = team;
-    this.#applyDirty = true;
     this.#wake();
   }
 
@@ -435,9 +563,9 @@ export class TeamEngine {
     this.#marchStartTeamId = '';
     this.#called = false;
     this.#approved.clear();
+    this.#applyPending.clear();
     this.#noArmyLoggedTeamId = '';
     this.#appliedTeamId = ''; // 队已清空，允许重新找队申请
-    this.#applyDirty = false;
     this.#wake();
   }
 
@@ -452,6 +580,10 @@ export class TeamEngine {
     var t = this.#team;
     var deadId = String((t && (t.treasureId || t.id)) || '');
     if (deadId) this.#endedTreasureId = deadId;
+    // ⑤ 主跑每完成一局计一次（陪跑不耗次数、不计数）：去重闸下沉到模块级 dailyRuns.lastId（⑤#2），
+    //   既挡同实例内状态机 END / 21371 到家 / 7531 拒因多路收敛重计，也挡战斗演出 pause→resume→重建引擎后
+    //   对同一 treasureId 的跨实例重计（lastId 随快照持久化，跨页亦生效）。
+    if (deadId && this.#env.cfg().mode !== 'helper') bumpDailyRun(deadId);
     // 终局≠散队：飞船还在返程，到家才散（实证 END@+986s → 散队@+1063s）；窗口内 7521/7522 会被拒
     //   ava_team_tips_011=已加入其他队伍 → 置回城等待闸门，由 10019 到家推/21371 清空推/轮询+超时解除
     var waitMarchId = t && t.selfMarchId && t.selfMarchId !== '0' ? String(t.selfMarchId) : '';
@@ -460,7 +592,10 @@ export class TeamEngine {
     this.#clearTeam();
     if (!this.#waitHome) {
       this.#waitHome = { marchId: waitMarchId, deadline: Date.now() + WAIT_HOME_MAX_MS };
-      log.info('等待夺宝飞船回城散队后才建队/入队%s', waitMarchId ? '（行军 ' + waitMarchId + '）' : '');
+      log.info(
+        '等待夺宝飞船回城散队后才建队/入队%s',
+        waitMarchId ? '（行军 ' + waitMarchId + '）' : '',
+      );
     }
   }
 
@@ -497,13 +632,15 @@ export class TeamEngine {
     if (!payload) return;
     var teamId = bits.int64Str(payload.teamId);
     if (this.#team && teamId && this.#team.id !== teamId) return;
-    this.#applyDirty = true;
+    // 成员增减不再触发拉申请池（申请由 21374 推送主路处理 + 7528 节流兜底）；仅唤醒重算凑人/召集电平
     this.#wake();
   }
 
   /**
-   * 21374：入队申请变更（`{teamId, uid, op, apply}`）。只置脏，真正的审批在 tick 里按 7528 复核结果做
-   *   （设计 §3.1 步骤 2：申请池以 7528 应答为权威，避免按推送单帧误批）。
+   * 21374：入队申请变更（`{teamId, uid, op, apply:{uid,teamId,playerInfo,power}}`）——**审批主路**（用户口径 2026-10-18：
+   *   申请本就由推送携带完整信息到达，应直接处理，7528 定期拉取仅作兜底）。op=1 新申请：按 uid 结合 rolePool 决策略
+   *   入 #applyPending（同意/拒绝），交 tick 串行发 7523；op=2 撤回：从 pending 与 #approved 一并摘除（该玩家已自行离队，
+   *   清账以便其再次申请时重新决策）。推送帧可能乱序/重复，#applyPending+#approved 双集合天然幂等。
    * @param {object|null} payload 申请变更体
    */
   #onApplyChange(payload) {
@@ -511,7 +648,16 @@ export class TeamEngine {
     var teamId = bits.int64Str(payload.teamId);
     if (!this.#team || (teamId && this.#team.id !== teamId)) return;
     if (!this.#isLeader()) return;
-    this.#applyDirty = true;
+    var op = Number(payload.op) || 0;
+    var uid = bits.int64Str(payload.uid || (payload.apply && payload.apply.uid));
+    if (!uid) return;
+    if (op === 2) {
+      this.#applyPending.delete(uid); // 撤回：撤销未发出的决策
+      this.#approved.delete(uid); // 清已处理账，允许其再次申请时重新审批
+      this.#wake();
+      return;
+    }
+    if (op === 1) this.#queueApplyDecision(uid);
     this.#wake();
   }
 
@@ -560,24 +706,55 @@ export class TeamEngine {
   }
 
   /**
-   * 7528 应答：申请池 `{apply:[{uid,teamId,playerInfo,power}]}` → 池内逐个 7523 通过。
+   * 7528 应答（**兜底补漏**，主路是 21374 推送）：申请池 `{apply:[{uid,teamId,playerInfo,power}]}` → 池内每个未决策
+   *   uid 复用 #queueApplyDecision 入队（与推送同一决策/幂等口径），发送仍交 tick 串行 drain。已开跑（status≥MARCHING）
+   *   的迟到应答忽略（不再审批）。修复旧版「同步循环连发多 7523 被在途去重吞掉却已标已处理」的卡人缺陷。
    * @param {object|null} payload 申请池体
    */
   #onApplyList(payload) {
     if (!payload || !this.#isLeader() || !this.#team) return;
+    if (this.#team.status >= TEAM_STATUS.MARCHING) return; // 已开跑：迟到申请池不再审批
     var apply = Array.isArray(payload.apply) ? payload.apply : [];
-    if (!apply.length) return;
-    var cfg = this.#env.cfg();
-    var pool = poolSet(cfg.rolePool);
     for (var i = 0; i < apply.length; i++) {
       var uid = bits.int64Str(apply[i] && apply[i].uid);
-      if (!uid || this.#approved.has(uid)) continue;
-      this.#approved.add(uid);
-      if (!pool.size || pool.has(uid)) {
-        this.#sendPB(REQ_TEAM_APPLY_OP, { uid: bits.int64(uid), op: 1 }, '审批通过');
-      } else if (cfg.rejectOutsidePool) {
-        this.#sendPB(REQ_TEAM_APPLY_OP, { uid: bits.int64(uid), op: 2 }, '拒绝池外申请');
-      }
+      if (uid) this.#queueApplyDecision(uid);
+    }
+    this.#wake(); // 有未决策项 → 唤醒尽快 drain（不等下一拍 15s）
+  }
+
+  /**
+   * 依 rolePool 对某申请 uid 做决策并入待发送队列（推送主路与 7528 兜底共用；幂等：已处理/已排队即跳过）。
+   *   池为空=不限角色一律同意；命中池=同意；池外且勾了拒绝=拒绝；池外未勾拒绝=忽略（留在列表，不代答）。
+   * @param {string} uid 申请者 uid（字符串形态）
+   */
+  #queueApplyDecision(uid) {
+    if (this.#approved.has(uid) || this.#applyPending.has(uid)) return;
+    var cfg = this.#env.cfg();
+    var pool = poolSet(cfg.rolePool);
+    var op = 0;
+    if (!pool.size || pool.has(uid)) op = 1;
+    else if (cfg.rejectOutsidePool) op = 2;
+    if (op) this.#applyPending.set(uid, op);
+  }
+
+  /**
+   * 串行发送待审批决策（tick 唯一消费者）：逐条 await 7523，获服务器应答（无论成败）即移出 pending 并记 #approved；
+   *   仅当未真正发出（在途去重 CODE_NOT_SENT/异常）时中断本轮、保留 pending 待下拍重试——杜绝旧版「连发被吞仍标已处理」致卡人。
+   */
+  async #drainApplyPending() {
+    if (!this.#applyPending.size) return;
+    var entries = Array.from(this.#applyPending.entries());
+    for (var i = 0; i < entries.length; i++) {
+      var uid = entries[i][0];
+      var op = entries[i][1];
+      var ret = await this.#sendPB(
+        REQ_TEAM_APPLY_OP,
+        { uid: bits.int64(uid), op: op },
+        op === 1 ? '审批通过' : '拒绝池外申请',
+      );
+      if (ret.code === CODE_NOT_SENT) return; // 未真正发出（在途/异常）：保留 pending 下拍重试
+      this.#applyPending.delete(uid);
+      this.#approved.add(uid); // 已获应答（含服务器拒因）即记账，避免对同一 uid 空转重发
     }
   }
 
@@ -639,12 +816,13 @@ export class TeamEngine {
     //   控制器在场但人在页外时镜像同样陈旧，readState 回填不可靠；召集判定改靠应答电平驱动
     if (Date.now() - this.#lastInfoAt >= TEAM_POLL_MS) await this.refreshInfo(true);
 
-    var dirty = this.#applyDirty;
-    if (dirty) this.#applyDirty = false;
-
-    // 1) 队长复核申请池（7528 只读，应答侧审批）
-    if (dirty && this.#isLeader()) {
-      await this.#sendPB(REQ_TEAM_APPLY_LIST, { teamId: bits.int64(t.id) }, '拉申请池');
+    // 1) 入队申请：先串行发送已决策项（推送/兜底入队），再按节流兜底拉 7528 补漏（主路是 21374 推送，此处仅防漏推）
+    if (this.#isLeader()) {
+      await this.#drainApplyPending();
+      if (t.memberCount < 5 && Date.now() - this.#lastApplyListAt >= APPLY_LIST_POLL_MS) {
+        this.#lastApplyListAt = Date.now();
+        await this.#sendPB(REQ_TEAM_APPLY_LIST, { teamId: bits.int64(t.id) }, '拉申请池');
+      }
     }
 
     // 2) 本人表态要奖励/陪跑（队长不发包：建队已含队长次数消耗）；mode 决定要奖励(op:1)还是陪跑(op:2)
@@ -707,9 +885,7 @@ export class TeamEngine {
     var ms = await march.list({ cache: true });
     for (var i = 0; i < ms.length; i++) {
       var m = ms[i];
-      var hit = wait.marchId
-        ? m.id === wait.marchId
-        : Number(m.type) === MARCH_TYPE_CS_TEAM_HUNT;
+      var hit = wait.marchId ? m.id === wait.marchId : Number(m.type) === MARCH_TYPE_CS_TEAM_HUNT;
       if (hit && m.state !== march.State.ARRIVED_HOME) return HOME_POLL_MS; // 飞船仍在途（返程也算）：服务器未散队
     }
     this.#waitHome = null;
@@ -722,7 +898,8 @@ export class TeamEngine {
    *   ① 玩法进行中（open===1；休赛=3/其余未开）——控制器在场用 st.active 实时判，缺席用 7501 应答落地的 #openFlag；
    *   ② 当前落在每日 3 个夺宝时段之一（#slots 由 7501 openTime[] 解析；open===1 是赛季旗标整天为真，不等于「到点」）。
    *   任一未知则不贸然建队/加入，强拉一次 7501 后短睡等应答落地（resp 里 #openFlag/#slots 变更即 #wake 重评）；
-   *   未到点则 info 一次（带下一场分钟数）并睡到下个时段（封顶 IDLE，保持对开关态变化的响应）。
+   *   未到点则 info 一次（带下一场分钟数）并睡到下个时段（封顶阶梯：远窗 1h/近窗 30min，且绝不跨过 nextBegin；
+   *   开关态变化另有 7501 应答 #wake 即时通道，封顶只兜「时段表被改早」这类无推送的漂移）。
    *   已开跑的一局（status>=MARCHING）由 tick 调用方豁免（服务端权威、一跑仅数分钟，让其跑完）。
    * @param {object|null} st csHunt 只读快照（控制器不在场为 null）
    * @returns {Promise<{proceed:boolean, sleep:number}>} proceed=true 才放行建队/找队/表态等写包
@@ -751,7 +928,8 @@ export class TeamEngine {
         '夺宝奇兵当前不在每日夺宝时段内（每天 3 场），暂不建队/加入' +
           (win.nextBegin ? '，下一场约 ' + Math.max(0, Math.round(wait / 60000)) + ' 分钟后' : ''),
       );
-      return { proceed: false, sleep: Math.min(Math.max(wait, ACTIVE_TICK_MS), IDLE_TICK_MS) };
+      var cap = wait > WINDOW_WAIT_CAP_FAR_MS ? WINDOW_WAIT_CAP_FAR_MS : WINDOW_WAIT_CAP_NEAR_MS;
+      return { proceed: false, sleep: Math.min(Math.max(wait, ACTIVE_TICK_MS), cap) };
     }
     this.#blockedLoggedReason = '';
     return { proceed: true, sleep: 0 };
@@ -766,6 +944,16 @@ export class TeamEngine {
    * @returns {Promise<number>} 下一拍间隔
    */
   async #noTeam(cfg, st) {
+    // ⑤ 每日局数上限（借鉴竞对 setting.team.count）：仅主跑受闸——到上限当日停跑，跳日自动归零；0/未配=不限。
+    //   #1 不能放在 mode 分叉前共用：dailyRuns.runs 为模块级+持久化、跨实例共享，而字段 showIf:isMain（切陪跑只隐藏不清值），
+    //   若主跑跑满额度后切陪跑会整日被误挡（面板看不到该项、statusText 也不显示），与「陪跑不计数不受此限」契约相悖。
+    if (cfg.mode !== 'helper' && isDailyLimitReached(cfg.dailyRuns)) {
+      this.#blockOnce(
+        'daily',
+        '今日夺宝局数已达上限（' + cfg.dailyRuns + ' 局），暂不建队/加入（明日自动恢复）',
+      );
+      return IDLE_TICK_MS;
+    }
     if (cfg.mode === 'main') return this.#tryCreate(cfg, st);
     return this.#joinTeam(cfg);
   }
@@ -793,7 +981,8 @@ export class TeamEngine {
     var ack = ret && ret.payload ? ret.payload[ACK_TEAM_CREATE] : null;
     if (ack && ack.team) this.#onTeamChange(ack);
     // 服务器判旧队未散（飞船在返途中，终局刚收口而推送漏接时会走到这里）：回闸并停止逐拍连打 7521
-    var rsn = ret && !ret.ok && ret.payload && ret.payload.header ? String(ret.payload.header.d || '') : '';
+    var rsn =
+      ret && !ret.ok && ret.payload && ret.payload.header ? String(ret.payload.header.d || '') : '';
     if (rsn === 'ava_team_tips_011' && !this.#waitHome) {
       this.#waitHome = { marchId: '', deadline: Date.now() + WAIT_HOME_MAX_MS };
       log.info('建队被拒 ava_team_tips_011=已加入其他队伍（旧队散队未落地），改等飞船回城后再试');

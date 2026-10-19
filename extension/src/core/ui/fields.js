@@ -255,8 +255,10 @@ export function rangesInnerHTML(list, fd) {
  * 每行是一个 .pc-uidwrap.pc-uli[data-uidx=i]（复用城市技能 UID 控件的视觉与显示↔输入态），行尾带 × 删除；
  * 与标量 UID 行的区别：值落在 configs[fid].friends[i].{uid,name}，故行不带 data-ukey/nkey，靠 data-uidx 定位。
  * 行的称呼名词由 fd.itemLabel 定制（玩家点赞缺省「好友」，奉旨出征为「执政官」）。
- * @param {Array<{uid:string, name:string}>} list 当前好友清单
- * @param {object} fd 字段描述符（label / max / placeholder / hint / itemLabel 可选；itemLabel 行的称呼名词，缺省「好友」）
+ * fd.itemCheck=true 时每行前置勾选框（.pc-ulichk，写回行对象 .on）：未勾行由 feat 侧自行排除，
+ *   存量行无 on 视为已勾（向后兼容，缺省不改变既有行为）。
+ * @param {Array<{uid:string, name:string, on?:boolean}>} list 当前好友清单
+ * @param {object} fd 字段描述符（label / max / placeholder / hint / itemLabel / itemCheck 可选；itemLabel 行的称呼名词，缺省「好友」）
  * @returns {string}
  */
 export function uidListInnerHTML(list, fd) {
@@ -268,9 +270,12 @@ export function uidListInnerHTML(list, fd) {
     .map((it, i) => {
       const uidV = String((it && it.uid) || '');
       const nmV = String((it && it.name) || '');
+      const chk = fd.itemCheck
+        ? `<input type="checkbox" class="pc-ulichk" data-uidx="${i}" title="勾选才入池"${it && it.on === false ? '' : ' checked'}>`
+        : '';
       return (
         `<div class="pc-uidwrap pc-uli" data-uidx="${i}">` +
-        `<div class="pc-row"><span>${item} ${i + 1}</span>` +
+        `<div class="pc-row">${chk}<span>${item} ${i + 1}</span>` +
         `<span class="pc-udisp" title="点击编辑 UID"><span class="pc-uedit">✎</span><span class="pc-uname">${escAttr(nmV || uidV)}</span></span>` +
         `<input type="text" class="pc-uinput" inputmode="numeric" hidden placeholder="${ph}">` +
         `<button class="pc-udel" type="button" title="删除此${item}">×</button>` +
@@ -374,16 +379,21 @@ function orderPoolItems(arr, order) {
 }
 
 /**
- * 物品清单项字段（type:'itemlist'）内层 HTML：标题行 + 若干 `[☑ 名称 [≤cap] [max]__]` 行 + hint。
- * 行不可增删（整池全员参与）；每行一枚 checkbox 控制该项是否参与 + 一个数字输入控制「背包持有上限」（0=不限）。
- * 状态 cfg[fd.key] 形如 `{ [idStr]: { on: 0|1, max: number } }`，未登记的项视为默认（on=1、max=0=不限）。
- * 池由 fd.items（数组或 fn(cfg)）提供，每项 `{id, label, cap?}`；id 可为字符串（如 'item:41009'）避免跨池数字碰撞。
+ * 物品清单项字段（type:'itemlist'）内层 HTML：标题行 + 若干 `[拖拽 序号] 名称 [数字(0=占位显示上限/无上限)][≤cap] [拾] [店]` 行 + hint。
+ * 行不可增删（整池全员参与）；每行一枚主勾选 + 一个目标数量输入（全仓统一约定：0=无上限）。
+ * 状态 cfg[fd.key] 形如 `{ [idStr]: { on: 0|1, max: number } }`，未登记的项视为默认（on=1、max=0=无上限）。
+ * 池由 fd.items（数组或 fn(cfg)）提供，每项 `{id, label, cap?, pickDisabled?, channel2Disabled?}`；id 可为字符串（如 'item:41009'）避免跨池数字碰撞。
+ * `fd.channel2`（`{key,label,aLabel?,title?,disabledOf?(item)}`）存在时行尾多一枚**第二渠道勾选**（class `.pc-ichk2`，回写 `state[key][ch2.key]`），
+ *   用于「同一实体多渠道」的清单（如秘境持有清单：on=拾取渠道、shop=商店补货渠道，两渠道共用一个目标持有量 max）；
+ *   两渠道各自可置灰：主勾选看池项 `pickDisabled`（如仅商店在售、无掉落来源的道具不可拾），第二渠道经 `ch2.disabledOf`（缺省看 `item.channel2Disabled`）；
+ *   置灰的勾选渲染为未勾+禁选（存储里的陈旧值不生效也不展示）。行灰化（pc-irowoff）在可用渠道全部关时才生效。
+ *   排版：[拖拽手柄][序号] [主勾选] [名称(+≤cap 角标)] [数字输入] [第二渠道勾选]（数量紧跟名称、渠道勾选居右成列）。
  * `fd.sortable`（配 fd.orderKey）时每行行首多一个拖拽手柄 + 序号，展示序按 order 排（下标即优先级，越靠前越先拾）。
  * `cap>0` 表示游戏**自身已有一道硬上限**（如秘境道具的 ITEM.para1_v1）：行内标 `≤cap`、输入框带 max/data-cap，
  *   超过 cap 的值在渲染时就回落为 cap（与 mountItemList 的 change 修正同口径）。
- * @param {Array<{id:string|number,label:string,cap?:number}>|function(object):Array} items 池源
+ * @param {Array<{id:string|number,label:string,cap?:number,pickDisabled?:boolean,channel2Disabled?:boolean}>|function(object):Array} items 池源
  * @param {object} state 当前配置对象（cfg[fd.key]）
- * @param {object} fd 字段描述符（label / hint / topHint / items / sortable / orderKey）
+ * @param {object} fd 字段描述符（label / hint / topHint / items / sortable / orderKey / channel2）
  * @param {Array<string>} [order] 拖拽序（cfg[fd.orderKey]），缺省按池原序展示
  * @returns {string}
  */
@@ -394,30 +404,45 @@ export function itemListInnerHTML(items, state, fd, order) {
   );
   const map = state && typeof state === 'object' ? state : {};
   const sortable = !!(fd && fd.sortable);
+  const ch2 = fd && fd.channel2;
   const rows = arr
-    .map((it, i) => {
+    .map((it) => {
       const key = String(it.id);
       const s = map[key];
-      const on = s ? s.on !== 0 : true;
       const cap = Math.max(0, Math.floor(Number(it.cap) || 0));
       let max = s && Number.isFinite(s.max) ? s.max : 0;
       if (cap > 0 && max > cap) max = cap; // 游戏自身上限抢先：超 cap 的旧存档值直接回落展示
       const label = it.label || key;
-      return (
-        `<div class="pc-irow${on ? '' : ' pc-irowoff'}" data-ikey="${escAttr(key)}">` +
-        (sortable
-          ? `<span class="pc-shandle" title="按住拖拽调整拾取优先级">⣿</span>` +
-            `<span class="pc-irank">${i + 1}</span>`
-          : '') +
-        `<input type="checkbox" class="pc-ichk" data-ik="${escAttr(key)}"${on ? ' checked' : ''}>` +
-        `<span class="pc-iname" title="${escAttr(label)}">${escAttr(label)}</span>` +
-        (cap > 0
-          ? `<span class="pc-icap" title="游戏自身持有上限 ${cap}，填写超出会被自动修正">≤${cap}</span>`
-          : '') +
+      // 两渠道可得性：置灰=渲染未勾+禁选（陈旧存储值不展示）；行灰化只看可用渠道
+      const pickOff = !!it.pickDisabled;
+      const on = pickOff ? false : s ? s.on !== 0 : true;
+      const ch2Off = !!(ch2 && (ch2.disabledOf ? ch2.disabledOf(it) : it.channel2Disabled));
+      const ch2On = ch2 && !ch2Off && s ? Number(s[ch2.key]) === 1 : false;
+      const rowOff = pickOff && !ch2 ? !on : pickOff ? !ch2On : ch2 ? !on && !ch2On : !on;
+      const mainChk =
+        `<label class="pc-ichklbl pc-ichkpush" title="${pickOff ? '该物品无掉落来源，不可拾取' : '是否自动拾取'}">` +
+        `<input type="checkbox" class="pc-ichk" data-ik="${escAttr(key)}"${on && !pickOff ? ' checked' : ''}${pickOff ? ' disabled' : ''}>` +
+        `<span>${escAttr(ch2 ? ch2.aLabel || '拾' : '')}</span></label>`;
+      const ch2Chk = ch2
+        ? `<label class="pc-ichklbl pc-ichklbl2" title="${escAttr(ch2.title || '')}${ch2Off ? '（该项不走此渠道）' : ''}">` +
+          `<input type="checkbox" class="pc-ichk2" data-ik="${escAttr(key)}" data-iflag="${escAttr(ch2.key)}"${ch2On ? ' checked' : ''}${ch2Off ? ' disabled' : ''}>` +
+          `<span>${escAttr(ch2.label)}</span></label>`
+        : '';
+      const numCell =
         `<input type="number" class="pc-imax" data-ik="${escAttr(key)}" min="0" step="1"` +
         (cap > 0 ? ` max="${cap}" data-cap="${cap}"` : '') +
-        ` value="${max}" placeholder="${cap > 0 ? cap : '不限'}"` +
-        ` title="${cap > 0 ? '背包上限，最大 ' + cap + '（0=跟随游戏上限）' : '背包上限，0=不限'}">` +
+        ` value="${max > 0 ? max : ''}" placeholder="${cap > 0 ? cap : '无上限'}"` +
+        ` title="${cap > 0 ? '目标持有量，0=补/拾到上限 ' + cap + '（超出会被自动修正）' : '目标持有量，0=无上限'}">` +
+        (cap > 0
+          ? `<span class="pc-icap" title="游戏自身持有上限 ${cap}，填写超出会被自动修正">≤${cap}</span>`
+          : '');
+      return (
+        `<div class="pc-irow${rowOff ? ' pc-irowoff' : ''}" data-ikey="${escAttr(key)}">` +
+        (sortable ? `<span class="pc-shandle" title="按住拖拽调整拾取优先级">⣿</span>` : '') +
+        `<span class="pc-iname" title="${escAttr(label)}">${escAttr(label)}</span>` +
+        numCell +
+        mainChk +
+        ch2Chk +
         `</div>`
       );
     })
@@ -425,7 +450,7 @@ export function itemListInnerHTML(items, state, fd, order) {
   return (
     `<div class="pc-ilisttop">` +
     `<span class="pc-rngtitle">${escAttr(fd.label || '物品清单')}</span>` +
-    `<span class="pc-rnghint">${escAttr(fd.topHint || '取消勾选=不拾；数字=背包上限，0=不限；行内 ≤N = 游戏自身上限')}</span>` +
+    `<span class="pc-rnghint">${escAttr(fd.topHint || '取消勾选=不拾；数字=背包上限，0=无上限；行内 ≤N = 游戏自身上限')}</span>` +
     `</div>` +
     `<div class="pc-irows">${rows || '<div class="pc-rnghint">池为空</div>'}</div>` +
     (fd.hint ? `<div class="pc-rnghint">${escAttr(fd.hint)}</div>` : '')

@@ -66,7 +66,7 @@ const common = {
   minify: release,
   legalComments: release ? 'none' : 'eof',
   logLevel: 'info',
-  // 编译期常量注入：三入口（content/bridge/background）各自内联同一份值；
+  // 编译期常量注入：各入口（content/anti-throttle/bridge/background）独立打包内联同一份值；
   // 非 release 一律空串 = 无限制态，运行时闸门全部短路放行，dev 行为零变化。
   define: {
     __LICENSE_HASH__: JSON.stringify(licHash),
@@ -81,6 +81,11 @@ const builds = [
     ...common,
     entryPoints: ['extension/src/content.entry.js'],
     outfile: 'extension/dist/content.js',
+  },
+  {
+    ...common,
+    entryPoints: ['extension/src/anti-throttle.js'],
+    outfile: 'extension/dist/anti-throttle.js',
   },
   { ...common, entryPoints: ['extension/src/bridge.js'], outfile: 'extension/dist/bridge.js' },
   {

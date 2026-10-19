@@ -11,6 +11,9 @@
 // 功能模块（net.js + feats/<层级>/*.js）由 content.entry.js 先于本文件加载并各自向 reactor 注册说明书，
 // 面板层级由 core/menu.js 声明；本文件在主城就绪（HomeMapLoadFinish 或首次进入 Home/NWorldMap 场景，先到先触发）
 // 后经 registry.startFeatures() 推配置起停。
+// 另有 anti-throttle.js（document_start 入口）在隐藏标签页里接管 rAF/定时器并伪装可见性，
+// 主城就绪闸门里由本文件降为常驻档，常驻与否由面板「后台保活」（configs.keepAlive）定；
+// 授权被拒/降级这两条不 startFeatures、不 mountUI 的链路上，面板开关无从生效，由 antiThrottleOff() 直接交还原生。
 import { createLog } from './core/log.js';
 import { game } from './core/game.js';
 import { bus } from './core/bus.js';
@@ -37,6 +40,15 @@ import { installModeGate } from './core/mode.js';
 
   /** @type {string[]} 视为「主城就绪」的场景名：重启直落世界地图时不会触发 HomeMapLoadFinish，靠场景信号兜底 */
   const READY_SCENES = ['Home', 'NWorldMap'];
+
+  /**
+   * 撤除反节流：交还原生 rAF/定时器并恢复真实可见性（applyPolicy(false) 幂等）。
+   * 与 downshift() 的区别：降频只是把满速驱动收为常驻档，撤防才真正把可见性伪装摘掉。
+   */
+  function antiThrottleOff() {
+    const at = window.pocketccAntiThrottle;
+    if (at) at.applyPolicy(false);
+  }
 
   /**
    * 功能主控闸门：主城就绪放行，双路信号先到先触发（幂等只放行一次）：
@@ -104,11 +116,15 @@ import { installModeGate } from './core/mode.js';
           logCore.info('greet: withheld (rev %s)', revision());
           showWelcome('fail', uid);
           // 阻断：返回永不 settle 的链——不迁移/不读盘/不装重连钩子，主城放行侧同样挂在此链上，功能全停
+          // 反节流同步撤防：后台保活是扩展赋予的增值行为，未授权不享受；
+          //   且此链上 mountUI 不执行，面板开关永无机会生效，不主动摘就只能靠刷新页面恢复
+          antiThrottleOff();
           return new Promise(() => {});
         }
         if (!uid && !slotFree()) {
           // 授权包降级态（登录卡死取不到 UID）：无从比对，同样挂起链不拉功能（与旧降级仍跑自动重连不同，授权优先）
           logCore.info('greet: silent (no uid to match, rev %s)', revision());
+          antiThrottleOff();
           return new Promise(() => {});
         }
         handOffBridge(uid); // 先放行 bridge 存储代理，再升配置读写
@@ -120,6 +136,9 @@ import { installModeGate } from './core/mode.js';
       });
     watchLoginSuccess();
     watchHomeMapReady(() => {
+      // 主城就绪：加载期专用的 60Hz 满速驱动到此为止，先降为常驻档兜底（授权挂起/配置未读到也收得住）；
+      // 真正「常驻还是彻底交还」由 configs.keepAlive 决定，registry.startFeatures 里 internal apply 随后精确落位
+      if (window.pocketccAntiThrottle) window.pocketccAntiThrottle.downshift();
       configsReady
         .then(() => greet(bootUid))
         .then(() => {

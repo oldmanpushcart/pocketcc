@@ -2,12 +2,14 @@
  * 异能秘境 feat（reactor id:'secretRealm'，活动设置分组）装配层。
  *
  * 定位：本期只做「队伍停靠态、无战斗语义」的自动化（除治疗），且**只在异能秘境地图内生效**。
- *   拾取/增益井/拍宠物三大能力**默认生效、无独立开关**（面板不留存其开关配置，feat 本身 enabled 为总闸）；
- *   新增的编队治疗与 BOSS 攻打同属「会消耗背包道具 / 会产生战斗行为」一类，给独立开关且**默认关**：
+ *   拾取/增益井/拍宠物/BOSS 攻打+投喂+石头诸能力**默认生效、无独立开关**（面板不留存其开关配置，feat 本身 enabled 为总闸）；
+ *   唯编队治疗属「会消耗背包道具」一类，保留独立开关且**默认关**：
  *   1. 物品自动拾取：掉落箱物品 / 掉落箱宠物 / 资源点 bag 三类合并，
- *      面板用 itemlist 逐行勾选 + 秘境背包持有上限（0=跟随游戏 para1_v1，>0 额外限）；
+ *      面板用 itemlist 逐行勾选 + 秘境背包持有上限（全仓统一约定：0=无上限；>0 时另受游戏 para1_v1 夹取）；
  *      **清单按道具 ID 聚合**（实证 dump：rss_station 按点位分行，item=41001 有 44 个 specId、item=41009 有 5 个，
  *      逐点位列行会出大片同名项；而 max 本就按 getItemNumById(itemId) 计）；
+ *      **持有清单是两渠道共用的主清单**：每行一个目标持有量 T，行内「拾」「店」两枚勾选是把它推向 T 的两个渠道
+ *      （商店补货并入本清单的 shop 标志，不再另列商品清单——物品只有持有上限，没有渠道上限）；
  *      行名来源：`item:` 取 ITEM 表 `.name`（rss_station 行无名字，只 `.item` 指向产出道具），
  *      `pet:` 取 `enigma_beast_type[cfg.type].name1`（enigma_beast 行亦无 name 字段）；
  *      行首可拖拽排序（pickOrder）：**下标即拾取优先级**，同点位配额不够时先给靠前的项（一群人就抢的场景）；
@@ -17,14 +19,30 @@
  *   3. 自动拍宠物：已在拍异能兽/**BOSS**（push 21530 置位 capturingPetPos，BOSS 带 boss:1）
  *      后接管整个拍节奏——免费手拍打底、拖拽事件（push 21527 type=2，窗口只有 2.0s）到达即拍、
  *      能量攒满 3 格放高分持续拍（报文实证 390 分/拍）、心动时刻（type=5 投喂弹窗）择优投喂后**立刻关掉弹窗**
- *      （不关则它会倒数归零再替玩家随机投一票）；不负责找怪、不派兵、不自费消耗投喂道具。
+ *      （不关则它会倒数归零再替玩家随机投一票）；不负责找怪、不派兵，也不自费投喂道具（**只有大BOSS 窗例外**，见第 6 条）。
  *   4. 编队治疗（healEnabled，默认关）：对受伤军队使用秘境背包里的治疗道具——白名单取 dataConfig(3035)
  *      （实证 41002 急救绷带 / 41003 全科医疗包），受伤判据取 8584 应答的 armyPower/maxArmyPower，
  *      一拍一件、marchId 直接复用应答里的 Int64 对象（报文实证 8584↔8534 严格交替）。
- *   5. BOSS 攻打 + 石头拾取（bossEnabled，默认关）：push 21535 里 `state===21` 且自己停在**同区域** 176 平台时
- *      发 8521 打 BOSS（一轮小BOSS 4.6~5.4s、大BOSS 8~11s，返航由服务器自动派）；石头档读 21539 账本逐点发 8548。
+ *   5. BOSS 攻打 + 石头拾取（**无面板开关**，恒生效；用户反馈：次序/轮次/队长都是游戏规则或无意义项）：push 21535 里 `state===21` 且自己停在**同区域** 176 平台时
+ *      发 8521 打 BOSS（一轮小BOSS 4.6~5.4s、大BOSS 8~11s，返航由服务器自动派）；石头档读 21539 账本逐点发 8548（恒领）。
+ *      大小BOSS 时间错开、不同现，故不设攻打次序、轮次无限（打死为止）；**仅队长可发**（游戏规则，8521 驱动的是全队那一条行军，引擎内 isTeamLeader 已闸）；
+ *      攻打目标**先打距当前平台最近的一档**（就近是同区域的强代理，避开 142）；auto-relocate（自动挪台）恒关（风险最高）。
  *      区域配对是**服务器独占判据**（客户端不查 esrId），本地只能靠「试探 + 撞 enigma_realm142 降级该(平台,BOSS) 对」
  *      学习——故被 142 拒时**不拉黑 bossId**（换了平台同一只照样能打），详见 boss.js 文件头。
+ *   6. 大BOSS 拍宠投喂（**无面板开关**，恒投；必选环节）：拍宠物引擎在 `capturingPetPos.boss===1` 的窗里投
+ *      behave 行 5/6 的道具（8546 `{specId}`，与游戏同一个入口）——大BOSS 要 allFavor=1000000，
+ *      光靠免费手拍（实测 6~11 分/拍）拍不满；普通异能兽窗不投，详见 capture.js 文件头。
+ *   7. 商店补货（**无独立开关**：持有清单任一行勾了「店」渠道即自动开启）：补货项 = 条目 shop=1 的道具，
+ *      目标持有量 T = max>0?max:携带上限 para1_v1（买/拾共用的同一个 T）；
+ *      **只在队伍已停靠商店点（161、marchState=ARRIVED）时**才补货——
+ *      买货必须“人在店里”（verbatim NWorldMapTileClickUtils：本队在驻军列表才开 PabShopPanel；8542 SHOP_BUY 不带坐标），
+ *      故引擎绝不主动开车到店。到店先 8540 拉货单（**每次到店只 INFO 一次**，因 8540 重查会把本店非 type3 货位 getTime 归零），
+ *      再按道具展开货行逐项 8542 买；货行额度买完（`_lastNum=0`）而 T 未达时发 8543 刷新（每次扣 1 个 41010 人造水晶，dataConfig 3029 预检，
+ *      余额耗尽即停）；type3 跨店限量不可刷，且**已从面板清单移除**（如「传奇百兽碎片自选箱」，整场活动限购）——
+ *      到店由引擎**默认最高优先级自动购买**（先于任何勾选补货项，无需「店」勾选），见 shop.js #grabType3。货表运行时枚举 `enigma_secret_realm_shop`（该表离线无数据），详见 shop.js 文件头。
+ *   8. 攻击警告应对（warnEnabled，默认关）：push 21534 num>0（有其它队盯上我）时按玩家选的档处置—
+ *      **立即转移**（默认）= 发 8521 去就近 175 营帐/174 平台（取 10018 快照里未被 PVP 的最近一个，快照无则不凭空造）；
+ *      **抗争到底** = 不发任何转移包。全仓唯一能挪队的口就是 8521（游戏警告面板无撤离按钮）；仅队长可发、仅在停在非BOSS点才动，见 warn.js 文件头。
  *
  * 秘境是「独立活动/独立地图/独立战斗体系/独立背包」的隔离世界：
  *   - 场景名沿用 NWorldMap，但 watchingType===PAB（isPabBattleMap）才是真正的进入标志；
@@ -39,7 +57,7 @@
  *   - 真正闸门 realmActive()：scene.name()==='NWorldMap' && secretRealm.isPabBattleMap()；
  *   - 引擎内部每拍/每事件都复检 realmActive()，非秘境即长睡/直接跳过。
  *
- * 分层：仿 mine-cave 目录化，index.js 装配 + capture.js/pickup.js/heal.js/boss.js 四引擎 + constants.js 私货；feats 间不互 import。
+ * 分层：仿 mine-cave 目录化，index.js 装配 + capture.js/pickup.js/heal.js/boss.js/shop.js/warn.js 六引擎 + constants.js 私货；feats 间不互 import。
  */
 import { reactor } from '../../../core/reactor.js';
 import { createLog } from '../../../core/log.js';
@@ -48,6 +66,8 @@ import { CaptureEngine } from './capture.js';
 import { PickupEngine } from './pickup.js';
 import { HealEngine, parseHealWhitelist } from './heal.js';
 import { BossEngine } from './boss.js';
+import { ShopEngine, shopItemIdSet, shopType3ItemIds } from './shop.js';
+import { WarnEngine } from './warn.js';
 import {
   TABLE_ITEM,
   TABLE_RSS_STATION,
@@ -66,28 +86,48 @@ const log = createLog('SECRETM');
 /** @type {object|null} reactor 上下文（install/run 时置入） */
 var ctxRef = null;
 /**
- * 当前激活的四个引擎实例（run 建、pause 停）。必须持有引用，否则引擎的 `stop()` 在全仓无调用方：
+ * 当前激活的六个引擎实例（run 建、pause 停）。必须持有引用，否则引擎的 `stop()` 在全仓无调用方：
  *   reactor pause 只摘 ctx.on.* 登记的触发器，管不到引擎自建的 #timer / 在飞 await 循环，
  *   不存引用就会让「暂停前的陈旧快照」在 resume 后被旧引擎继续发成写请求。
- * @type {{pickup:object|null, capture:object|null, heal:object|null, boss:object|null}}
+ * @type {{pickup:object|null, capture:object|null, heal:object|null, boss:object|null, shop:object|null, warn:object|null}}
  */
-var engines = { pickup: null, capture: null, heal: null, boss: null };
+var engines = { pickup: null, capture: null, heal: null, boss: null, shop: null, warn: null };
 /**
  * 面板模块配置（configure 推入，引擎惰性读）：物品拾取/增益井/拍宠物三大能力默认生效、无独立开关，这里只剩可配置的子项——
- *   pickItems=itemlist 状态对象 `{ [idStr]: {on:0|1, max:number} }`，idStr 前缀 `item:`（道具维度，含资源点产出）/`pet:`；
+ *   pickItems=itemlist 状态对象 `{ [idStr]: {on:0|1, shop?:0|1, max:number} }`，idStr 前缀 `item:`（道具维度，含资源点产出）/`pet:`；
+ *     on=拾取渠道、shop=商店补货渠道（仅货表在售道具可勾）、max=两渠道共用的目标持有量 T；
  *   pickOrder=拖拽得到的池 key 序（下标即优先级，未排过序为空数组）；pickRank=它的反查表 `{key: idx}`（引擎用）；
  *   buffEffects=要拿的增益类（effect_buff 数组，默认三类；空=不限即六类全要）；
  *   heal=编队治疗 {enabled,threshold,maxPerTick,items[]}（items 空=跟随游戏 dataConfig(3035) 白名单序）；
- *   boss=BOSS 攻打与石头 {enabled,order,maxRounds,stone,relocate}（relocate 默认关：自动挪台风险最高）。
- * @type {{pickItems:Object<string,{on:number,max:number}>, pickOrder:string[], pickRank:Object<string,number>, buffEffects:number[], heal:object, boss:{enabled:boolean,order:string,maxRounds:number,stone:boolean,relocate:boolean}}}
+ *   boss=BOSS 攻打固定档 BOSS_AUTO（无面板开关，用户反馈：次序/轮次/投喂/队长要么是游戏规则（仅队长可发，引擎内 isTeamLeader 已闸）、要么无意义）：攻打/投喂/石头恒开、轮次无限、就近、relocate 恒关（不自动挪台）；
+ *   shop=商店补货派生总闸 {enabled}（enabled 非用户勾选，而是 pickItems 是否存在 shop=1 项的派生态；且**只在队伍已停靠 161 商店点时**补货，见 shop.js）；
+ *   warn=攻击警告应对 {enabled,mode}（mode='transfer' 立即转移（默认）/'stand' 抗争到底；默认关，自动挪队风险最高，见 warn.js）。
+ * @type {{pickItems:Object<string,{on:number,max:number,shop?:number}>, pickOrder:string[], pickRank:Object<string,number>, buffEffects:number[], heal:object, boss:object, shop:{enabled:boolean}, warn:{enabled:boolean,mode:string}}}
  */
+/**
+ * BOSS 攻打固定档（面板不再给开关）：用户反馈「攻打次序/轮次/投喂/队长」要么是游戏规则（仅队长可发，boss.js 内 isTeamLeader 已闸）、
+ *   要么无意义（大小BOSS 时间错开、不同现，无需选次序；轮次无限、打死为止）。故攻打/投喂/石头恒开，relocate（自动挪台，风险最高）恒关。
+ *   order 保留 'guard' 仅因 boss.js #orderCmp 需要一个合法值——大小既错开，次序实际不影响选目标。
+ * @type {{enabled:boolean,order:string,maxRounds:number,stone:boolean,relocate:boolean,feed:boolean}}
+ */
+const BOSS_AUTO = Object.freeze({
+  enabled: true,
+  order: 'guard',
+  maxRounds: 0,
+  stone: true,
+  relocate: false,
+  feed: true,
+});
+
 var modCfg = {
   pickItems: {},
   pickOrder: [],
   pickRank: {},
   buffEffects: DEFAULT_BUFF_EFFECTS.slice(),
   heal: { enabled: false, threshold: 10, maxPerTick: 1, items: [] },
-  boss: { enabled: false, order: 'guard', maxRounds: 0, stone: true, relocate: false },
+  boss: BOSS_AUTO,
+  shop: { enabled: false },
+  warn: { enabled: false, mode: 'transfer' },
 };
 
 /**
@@ -254,22 +294,31 @@ function buildHealOptions() {
  *     实证 dump：rss_station 按点位分行，同一道具对应几十行（item=41001 有 44 个 specId、item=41009 有 5 个），
  *     逐 specId 列行会出大量同名项；而数量上限本就按 `getItemNumById(itemId)` 计→ 只有道具维度语义正确。
  *   - `pet:{cfgId}`   = enigma_beast 全表（掉落箱宠物，本期不合并）。
- * buff 类不在此清单（走增益井 buffEffects 拾取链路，pos 语义不同）。
- * `cap` = 该道具的游戏自身上限（见 capOfItemRow）：面板行内标 `≤N`，超出 N 的填写值会被自动修正。
+ *   两渠道可得性：`shopSellable` = 该道具在货表 enigma_secret_realm_shop 在售（shopItemIdSet 运行时枚举），不在售/表未就绪时「店」勾选置灰；
+ *   `pickDisabled` = 该道具无任何掉落/资源点来源（仅商店在售，如各档异能诱饵/秘境护盾）时「拾」勾选置灰；`pet:` 行恒 channel2Disabled（宠物不经商店售卖）。
  * 表未就绪/符号缺失时 try/catch 兜住，回空数组——面板显示「池为空」但不致命。
- * @returns {Array<{id:string,label:string,cap:number}>}
+ * @returns {Array<{id:string,label:string,cap:number,shopSellable?:boolean,pickDisabled?:boolean,channel2Disabled?:boolean}>}
  */
 function buildPickPool() {
   const rows = [];
   /** @type {Object<string,1>} 已登记的道具行（防两类来源重复、防多点位重复） */
   const seen = {};
+  // 商店在售集（货表离线无数据，只运行时可枚；表未就绪回空对象 → 全部置灰，面板下次重刷自然恢复）
+  const shopSet = shopItemIdSet(l10n);
+  // type3（跨店共享限量、整场活动限购，如「传奇百兽碎片自选箱」）道具：从面板清单移除，改由商店引擎到店默认最高优先级自动买（见 shop.js #grabType3）
+  const t3Set = shopType3ItemIds(l10n);
   try {
     const itemRows = l10n.tableRows(TABLE_ITEM) || [];
     for (let i = 0; i < itemRows.length; i++) {
       const r = itemRows[i];
-      if (r && Number(r.type) === ITEM_TYPE_PAB && r.id != null) {
+      if (r && Number(r.type) === ITEM_TYPE_PAB && r.id != null && !t3Set[Number(r.id)]) {
         seen[KEY_ITEM + r.id] = 1;
-        rows.push({ id: KEY_ITEM + r.id, label: rowLabel(r, r.id), cap: capOfItemRow(r) });
+        rows.push({
+          id: KEY_ITEM + r.id,
+          label: rowLabel(r, r.id),
+          cap: capOfItemRow(r),
+          shopSellable: shopSet[Number(r.id)] === 1,
+        });
       }
     }
   } catch (e) {
@@ -283,19 +332,39 @@ function buildPickPool() {
       if (Number(r.effect_buff) !== 0) continue; // buff 类走增益井 buffEffects 链路，不入拾取清单
       // rss_station 行无名字字段（实证 PabBagItem.updateResourceItem 只读 .item/.item_num）→ 名字取它产出的道具，并按该道具合并成一行
       const itemId = Number(r.item) || 0;
-      if (!itemId || seen[KEY_ITEM + itemId]) continue;
+      if (!itemId || t3Set[itemId] || seen[KEY_ITEM + itemId]) continue;
       seen[KEY_ITEM + itemId] = 1;
-      rows.push({ id: KEY_ITEM + itemId, label: itemLabel(itemId), cap: itemCap(itemId) });
+      rows.push({
+        id: KEY_ITEM + itemId,
+        label: itemLabel(itemId),
+        cap: itemCap(itemId),
+        shopSellable: shopSet[itemId] === 1,
+      });
     }
   } catch (e) {
     /* 同上 */
+  }
+  // 仅商店在售、无任何掉落/资源点来源的道具（如各档异能诱饵、秘境护盾）：
+  //   必须补进持有清单才能勾「店」补货；无拾取来源 → pickDisabled（「拾」置灰）。
+  //   type3（跨店共享限量、整场活动限购）已在上面被排除——它们不进面板，改由商店引擎默认自动买。
+  for (const itemIdStr of Object.keys(shopSet)) {
+    const itemId = Number(itemIdStr) || 0;
+    if (!(itemId > 0) || t3Set[itemId] || seen[KEY_ITEM + itemId]) continue;
+    seen[KEY_ITEM + itemId] = 1;
+    rows.push({
+      id: KEY_ITEM + itemId,
+      label: itemLabel(itemId),
+      cap: itemCap(itemId),
+      shopSellable: true,
+      pickDisabled: true,
+    });
   }
   try {
     const beastRows = l10n.tableRows(TABLE_BEAST) || [];
     for (let i = 0; i < beastRows.length; i++) {
       const r = beastRows[i];
       if (!r || r.cfgId == null) continue;
-      rows.push({ id: 'pet:' + r.cfgId, label: beastLabel(r, r.cfgId) });
+      rows.push({ id: 'pet:' + r.cfgId, label: beastLabel(r, r.cfgId), channel2Disabled: true });
     }
   } catch (e) {
     /* 同上 */
@@ -340,11 +409,11 @@ function install(ctx) {
 }
 
 /**
- * pickItems 归一化：保留对象本体、丢弃非法键/值；on 归 0/1、max 归 >=0 整数；空/缺省回 {}。
+ * pickItems 归一化：保留对象本体、丢弃非法键/值；on 归 0/1、shop 归 0/1、max 归 >=0 整数（0=补/拾到携带上限）；空/缺省回 {}。
  * `item:{itemId}` 键额外把 max 夹到游戏自身上限（para1_v1）——旧存档里超出上限的值会被修正，
- * 与面板输入框的自动修正同口径（pet 键无上限概念，不动）。
+ * 与面板输入框的自动修正同口径（pet 键无上限概念，不动；pet 键也不长 shop 标志）。
  * @param {*} raw registry 传入的原值
- * @returns {Object<string,{on:number,max:number}>}
+ * @returns {Object<string,{on:number,max:number,shop:number}>}
  */
 function sanitizePickItems(raw) {
   const out = {};
@@ -355,13 +424,14 @@ function sanitizePickItems(raw) {
     const e = raw[k];
     if (!e || typeof e !== 'object') continue;
     const on = Number(e.on) === 0 ? 0 : 1;
+    const shop = Number(e.shop) === 1 ? 1 : 0;
     let max = Math.max(0, Math.floor(Number(e.max) || 0));
     if (max > 0 && k.indexOf(KEY_ITEM) === 0) {
       const cap = itemCap(k.slice(KEY_ITEM.length));
       if (cap > 0 && max > cap) max = cap;
     }
-    if (on === 1 && max === 0) continue; // 默认态（on 且不限）不落盘，保持存档精简
-    out[k] = { on: on, max: max };
+    if (on === 1 && max === 0 && shop === 0) continue; // 默认态（拾取开、无目标、不补货）不落盘，保持存档精简
+    out[k] = { on: on, max: max, shop: shop };
   }
   return out;
 }
@@ -448,74 +518,80 @@ function sanitizeHeal(raw) {
 }
 
 /**
- * 面板的平铺 BOSS 字段（bossEnabled/bossOrder/bossMaxRounds/bossStone/bossRelocate）→ 引擎用的嵌套对象。
- * 与 heal 同理：面板字段必须是标量（registry 按 fd.key 直写 cfg[key]），引擎侧的 `{boss:{…}}` 在此拼装。
- * @param {object} c 面板原配置
- * @returns {{enabled:boolean,order:string,maxRounds:number,stone:boolean,relocate:boolean}}
+ * 商店补货总闸（自动）：持有清单里只要勾了任一行的「店」渠道（条目 shop=1）即视为开启补货，
+ * 不再单独设一个 shopEnabled 勾选（用户反馈：补货应是清单勾选的自然结果，无需额外激活）。
+ * @param {Object<string,{shop?:number}>} pickItems sanitizePickItems 产物
+ * @returns {boolean}
  */
-function pickBossRaw(c) {
+function shopRestockWanted(pickItems) {
+  const keys = Object.keys(pickItems || {});
+  for (let i = 0; i < keys.length; i++) {
+    if (keys[i].indexOf(KEY_ITEM) === 0 && Number(pickItems[keys[i]].shop) === 1) return true;
+  }
+  return false;
+}
+
+/**
+ * 面板的平铺攻击警告字段（warnEnabled/warnMode）→ 引擎用的嵌套对象。
+ * @param {object} c 面板原配置
+ * @returns {{enabled:boolean,mode:*}}
+ */
+function pickWarnRaw(c) {
   return {
-    enabled: c && c.bossEnabled === true,
-    order: c && c.bossOrder,
-    maxRounds: c && c.bossMaxRounds,
-    stone: !(c && c.bossStone === false), // 默认随攻打开（石头只读不改战局，无独立风险）
-    relocate: c && c.bossRelocate === true,
+    enabled: c && c.warnEnabled === true,
+    mode: c && c.warnMode,
   };
 }
 
 /**
- * boss 归一化：只留引擎需要的五个字段并夹到合法区间（面板脏值/旧存档缺字段都不致引擎拿到 NaN）。
- * `order` 只认 'guard'（先清小BOSS，默认）/'boss'（先打大BOSS），其余一律回落 'guard'；
- * `maxRounds` = 单只 BOSS 本会话最多发动几轮（0=不限，防逐日空转）。
- * @param {*} raw 面板原值
- * @returns {{enabled:boolean,order:string,maxRounds:number,stone:boolean,relocate:boolean}}
+ * warn 归一化：enabled 归布尔；mode 只认 'transfer'（立即转移，默认）/'stand'（抗争到底），其余一律回落 'transfer'。
+ * @param {*} raw pickWarnRaw 产物
+ * @returns {{enabled:boolean,mode:string}}
  */
-function sanitizeBoss(raw) {
+function sanitizeWarn(raw) {
   const e = raw && typeof raw === 'object' ? raw : {};
-  return {
-    enabled: e.enabled === true,
-    order: e.order === 'boss' ? 'boss' : 'guard',
-    maxRounds: Math.max(0, Math.floor(Number(e.maxRounds) || 0)),
-    stone: e.stone !== false,
-    relocate: e.relocate === true,
-  };
+  return { enabled: e.enabled === true, mode: e.mode === 'stand' ? 'stand' : 'transfer' };
 }
 
 /**
  * 面板配置 → 模块配置（toModuleCfg 与 configure 共用同一份归一化，防两处口径漂移）。
- * 物品拾取/增益井/拍宠物无开关（恒生效），故只归一可配置子项 pickItems / pickOrder / buffEffects / heal / boss。
+ * 物品拾取/增益井/拍宠物无开关（恒生效），故只归一可配置子项 pickItems / pickOrder / buffEffects / heal / boss / shop / warn。
  * `pickRank` 由 pickOrder 预先摊平成 `{池 key: 下标}`：拾取排序每批候选都要查序，不在热路径上做 indexOf。
  * @param {object} c 面板原配置
- * @returns {{pickItems:object, pickOrder:string[], pickRank:Object<string,number>, buffEffects:number[], heal:object, boss:object}}
+ * @returns {{pickItems:object, pickOrder:string[], pickRank:Object<string,number>, buffEffects:number[], heal:object, boss:object, shop:object}}
  */
 function buildModuleCfg(c) {
   const order = sanitizePickOrder(c && c.pickOrder);
   const rank = {};
   for (let i = 0; i < order.length; i++) if (rank[order[i]] == null) rank[order[i]] = i;
+  const pickItems = sanitizePickItems(c && c.pickItems);
   return {
-    pickItems: sanitizePickItems(c && c.pickItems),
+    pickItems: pickItems,
     pickOrder: order,
     pickRank: rank,
     buffEffects: sanitizeBuffEffects(c && c.buffEffects, BUFF_SLOT_MAX),
     heal: sanitizeHeal(pickHealRaw(c)),
-    boss: sanitizeBoss(pickBossRaw(c)),
+    boss: BOSS_AUTO,
+    // 商店无独立开关：只要持有清单里有任一行勾了「店」渠道就自动补货（enabled 为派生态，供 shop.js #tick 读）
+    shop: { enabled: shopRestockWanted(pickItems) },
+    warn: sanitizeWarn(pickWarnRaw(c)),
   };
 }
 
 /**
- * 接收面板配置（registry 经 toModuleCfg 推入）：itemlist 状态对象 + 拖拽优先级序 + 增益类勾选 + 治疗/BOSS 子配置。
- * @param {object} c { pickItems, pickOrder, buffEffects, heal, boss }
+ * 接收面板配置（registry 经 toModuleCfg 推入）：持有清单状态对象（含 shop 渠道标志）+ 拖拽优先级序 + 增益类勾选 + 治疗/BOSS/商店/警告子配置。
+ * @param {object} c { pickItems, pickOrder, buffEffects, heal, boss, shop }
  */
 function configure(c) {
   modCfg = buildModuleCfg(c);
 }
 
 /**
- * 收掉四个引擎（幂等）：只清各自的定时器与待发队列，事件退订仍由 reactor 统一摘除。
+ * 收掉五个引擎（幂等）：只清各自的定时器与待发队列，事件退订仍由 reactor 统一摘除。
  * 停用异常只告警不阻断（下一个引擎照收），且引用一律置 null，免得脏实例被当成还活着。
  */
 function stopEngines() {
-  for (const k of ['pickup', 'capture', 'heal', 'boss']) {
+  for (const k of ['pickup', 'capture', 'heal', 'boss', 'shop', 'warn']) {
     const e = engines[k];
     if (!e) continue;
     engines[k] = null;
@@ -535,7 +611,7 @@ function pause() {
 }
 
 /**
- * 运行（激活）：起四引擎。拾取靠事件订阅（退订由 reactor 托管），拍宠物/治疗/BOSS 靠 createCycle 电平循环；
+ * 运行（激活）：起六引擎。拾取靠事件订阅（退订由 reactor 托管），拍宠物/治疗/BOSS/商店/警告靠 createCycle 电平循环；
  *   二者内部各自复检 realmActive()/alive()，非秘境或未激活即空转长睡。resume 重跑 run 时引擎 start 幂等。
  * @param {object} ctx reactor 上下文
  */
@@ -555,14 +631,25 @@ function run(ctx) {
   // 传 ctx：BOSS 攻打要订阅 21535/21521（状态机与在位现场）+ 10018（平台 esrId 快照，只写不 kick）
   engines.boss = new BossEngine(env);
   engines.boss.start(ctx);
+  // 不传 ctx：商店补货是纯电平轮巡（sendSecret promise，无 push 订阅）；无独立开关，持有清单任一行勾了「店」渠道即自动跑（sc.enabled 为派生态），否则长睡；
+  //   且只在队伍已停靠 161 商店点时补货（引擎绝不主动开车，见 shop.js 文件头）
+  engines.shop = new ShopEngine(env);
+  engines.shop.start(ctx);
+  // 警告引擎订阅 21534/10018（需 ctx）：纯事件 kick + 兑底重扫；面板 warn.enabled 默关，未勾即长睡；
+  //   「立即转移」只在停在非BOSS点且队长时发 8521 去就近营帐（不抢 BOSS 方向盘，见 warn.js）
+  engines.warn = new WarnEngine(env);
+  engines.warn.start(ctx);
   log.info(
-    'started (item overrides=%d, buff classes=%d, heal=%s, boss=%s/%s, stone=%s).',
+    'started (item overrides=%d, buff classes=%d, heal=%s, boss=%s/%s, stone=%s, shop=%s, warn=%s/%s).',
     Object.keys(modCfg.pickItems).length,
     modCfg.buffEffects.length,
     modCfg.heal.enabled ? 'on' : 'off',
     modCfg.boss.enabled ? 'on' : 'off',
     modCfg.boss.order,
     modCfg.boss.stone ? 'on' : 'off',
+    modCfg.shop.enabled ? 'on' : 'off',
+    modCfg.warn.enabled ? 'on' : 'off',
+    modCfg.warn.mode,
   );
 }
 
@@ -585,23 +672,33 @@ reactor.register({
     healThreshold: 10,
     healMaxPerTick: 1,
     healItems: [],
-    bossEnabled: false,
-    bossOrder: 'guard',
-    bossMaxRounds: 0,
-    bossStone: true,
-    bossRelocate: false,
+    warnEnabled: false,
+    warnMode: 'transfer',
   },
   fields: [
     {
       key: 'pickItems',
       type: 'itemlist',
-      label: '拾取清单',
-      section: '物品拾取',
+      label: '持有清单',
+      section: '物品持有',
       sortable: true,
       orderKey: 'pickOrder',
-      topHint: '可拖拽排序，越靠前越先拾；勾选行=是否拾取，数字=秘境背包上限（0=跟随游戏上限）',
+      // 两渠道共用一个目标持有量 T（行内数字）：拾取勾 on、商店补货勾 shop（channel2）——
+      //   物品只有持有上限，没有渠道上限；旧版独立的「补货清单」已并入本清单的 shop 标志。
+      channel2: {
+        key: 'shop',
+        label: '商店',
+        aLabel: '拾取',
+        title:
+          '勾选=商店补货渠道（自动生效，无需另开总闸）：队伍停在商店点（161、已到达）时自动买到此行目标持有量；货行额度买完而目标未达时自动发 8543 刷新（需人造水晶 41010 够，不足即停）；仅货表在售道具可勾，type3 全场限量不可刷',
+        disabledOf: function (it) {
+          return !!it.channel2Disabled || it.shopSellable === false;
+        },
+      },
+      topHint:
+        '可拖拽排序，越靠前越先拾；拾取/商店=两个渠道勾选，数字=目标持有量（0=补/拾到携带上限）',
       items: buildPickPool,
-      hint: '默认生效：当前刷新点位内掉落箱物品/宠物、资源点 bag 逐项 GET（受游戏 para1_v1、dataConfig 3021/3013/3061 总量上限）',
+      hint: '拾取默认生效：当前刷新点位内掉落箱物品/宠物、资源点 bag 逐项 GET（受游戏 para1_v1、dataConfig 3021/3013/3061 总量上限）；「商店」勾选=商店补货渠道（同一个目标持有量，买/拾谁先到谁停），勾上任一项即自动开启补货（仅在队伍已停靠商店点时生效，引擎不主动开车）；无掉落来源的仅商店道具「拾取」置灰，不经商店售卖的道具（如异能晶块/人造水晶等货币、宠物）「商店」置灰',
     },
     {
       key: 'buffEffects',
@@ -648,46 +745,22 @@ reactor.register({
       hint: '选项 = 游戏自己的白名单 dataConfig(3035)（实证 41002 急救绷带 / 41003 全科医疗包）；空=按该白名单顺序逐件用',
     },
     {
-      key: 'bossEnabled',
+      key: 'warnEnabled',
       type: 'checkbox',
-      label: '开启 BOSS 攻打',
-      section: 'BOSS 攻打',
-      hint: '默认关（会产生战斗行为）：21535 里 state===21 且自己停在 176 平台且 marchState=ARRIVED 时发 8521；一拍一条、不并发不补发（返航由服务器自动派）',
+      label: '开启攻击警告应对',
+      section: '攻击警告',
+      hint: '默认关（自动挪队风险最高）：push 21534 num>0（有其他队盯上我）时按下方选项处置；游戏警告面板只画红点、无撤离/应战按钮，故两选项均我们实装',
     },
     {
-      key: 'bossOrder',
+      key: 'warnMode',
       type: 'select',
-      label: '攻打次序',
-      section: 'BOSS 攻打',
+      label: '警告处置方式',
+      section: '攻击警告',
       options: [
-        { value: 'guard', label: '先清小BOSS（默认）' },
-        { value: 'boss', label: '先打大BOSS' },
+        { value: 'transfer', label: '立即转移（默认）' },
+        { value: 'stand', label: '抗争到底' },
       ],
-      hint: '同一时刻只允许一支队在打，故串行；大/小由本体瓦片类型判（177大/178小），平手时先进入 state21 的在先',
-    },
-    {
-      key: 'bossMaxRounds',
-      type: 'number',
-      label: '单只最多轮数',
-      section: 'BOSS 攻打',
-      min: 0,
-      step: 1,
-      zeroUnlimited: true,
-      hint: '0=不限（整场持续打）；>0 = 单只 BOSS 本会话最多发动几轮 8521，防逐日空转',
-    },
-    {
-      key: 'bossStone',
-      type: 'checkbox',
-      label: '领取石头',
-      section: '石头拾取',
-      hint: '读 21539 账本逐点发 8548（每小BOSS 掉 5 个点位、每人每点限 1 次，**不要求队伍站在石头点上**）；领过/撞 enigma_realm60 即该点不再发，未参战（179）整组静默 10 分',
-    },
-    {
-      key: 'bossRelocate',
-      type: 'checkbox',
-      label: '自动搜同区域平台（风险高）',
-      section: 'BOSS 攻打',
-      hint: '默认关：当前平台没有可打目标时，从 10018 快照里挑「同区域且 state=22/isFight≠1/无驻军」最近的平台发 8521 挪过去（仅队长可用）；区域是服务器独占判据，本项靠试探学习',
+      hint: '立即转移=发 8521 去就近 175 营帐/174 平台（只取 10018 视口快照里未被 PVP 的最近一个；快照里无则不凭空造目标）；仅队长可发、仅在停在非BOSS点(marchState=ARRIVED)才动，转移后 45s 静默。抗争到底=不发任何转移包，原地应战',
     },
   ],
   toModuleCfg: buildModuleCfg,

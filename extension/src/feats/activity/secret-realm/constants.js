@@ -8,6 +8,16 @@
  *   （PabRewardBoxNode / PabResLibraryNode / RealPabController / PabPetCaptureNodeNew / NRequestIdV2）。
  *   **次通道 outbound 已打通后的实战样本**：dashcam 20261011T195811（8546/8527/8526/8538 均出现
  *   `dir:"req:sendPBV2"`，心跳 0 条），本轮的节拍与拒绝码语义全部以该会话为准。
+ *   **商店 / 攻击警告 / 行军闭环的实战样本**：dashcam 20261018T200040-异能秘境-我是队长.ndjson
+ *   （8540/8542/8543 四条商店链路、21534 攻击警告 591 条、8521→8522→21529→21522→8527→8526 开车闭环
+ *   均在这一份里首次录到）。
+ *   **本轮被新证据推翻的旧结论**（改代码前先读这几条，别按旧口径写注释）：
+ *   • 「8521 全部 s=0、零拒绝」错 —— 本份 8521 有 80 条 `enigma_realm158` + 3 条 163 + 1 条 common_159995；
+ *   • 「178 小BOSS 本体瓦片 0 条、区域闸只对大BOSS 成立」错 —— 10018 是**视口增量**，去重后 178@(230,234)
+ *     实有 664 条且带 `esrId:22 state:21`；
+ *   • `enigma_realm142 / 141` 在**全部 19 份录音里 0 命中** → 这两条分支是「字典 + 源码文案」推出的**未观测
+ *     预防性代理**，不是实测行为（旧注释把它写成实测结论，已降级）；
+ *   • 172/173 曾被标反 —— verbatim `NWorldMapEntityType`：**172 = PAB_MONSTER 异能兽、173 = PAB_RESOURCE 资源点**。
  */
 
 // ─────────── 秘境协议号（NRequestIdV2.ENIGMA_SECRET_ROOM_*，均走 watch 通道 85xx）───────────
@@ -24,15 +34,22 @@ export const CMD_RESOURCE_GET_BUFF = 8538;
 /** @type {number} ENIGMASECRET_ROOM_BEAST_OPERATE：拍宠物投喂一拍（req {specId}；本 feat 走原生 petCaptureOperation，不直发此号，仅留档） */
 export const CMD_BEAST_OPERATE = 8546;
 /**
- * ENIGMA_SECRET_ROOM_MARCH_MOVE：行军到某瓦片（req {x,y}）——「上临时停泊平台」与「攻打 BOSS」是同一个入口。
+ * ENIGMA_SECRET_ROOM_MARCH_MOVE：行军到某瓦片（req `{x,y}`）——「上临时停泊平台」/「攻打 BOSS」/「撤离受击点」
+ *   都是这一个入口（**全仓唯一能主动挪队伍的口**，游戏侧攻击警告面板没有「撤离」按钮）。
  * 报文实证 dashcam 20261017T210400：攻打 boss12@(230,234) 发的是 `8521 {x:230,y:234}`（起点必须是同区域平台），
  *   源码 verbatim RealPabController.sendToBuildingMarch = `checkRequestIdNoRes(8521) || sendPBV2(8521,{x:e,y:t},…)`。
+ * 在位闸 verbatim：`isCanMarch() = !!roomBaseInfo && teamIsMooring()`，而
+ *   `teamIsMooring() = !roomBaseInfo || marchState ∈ {ARRIVED(2), FIGHTING(12), PAB_FEED(21)}`（ACL 已包 teamIsMooring）。
+ * 拒绝实测（dashcam 20261018T200040，共 310 次）：158×80「小队尚未抵达」/163×3「目标点不能行军」
+ *   /17×1「战场即将封闭」/common_159995×1「param error」——**并非旧注释写的「零拒绝」**。
  * @type {number}
  */
 export const CMD_MARCH_MOVE = 8521;
 /**
- * ENIGMA_SECRET_ROOM_POINT_INFO：拉某点位驻军明细（req {x,y}）。
- * 源码侧证（RealPabController.requestBuildingTeamsInfo）；本期 BOSS 攻打只用 21535/瓦片 extData，未接入。
+ * ENIGMA_SECRET_ROOM_POINT_INFO：拉某点位驻军明细（req `{x,y}` → `{type, teams:[{teamId,sid,aid,allianceTag,playerNum,power,leaderPlayerInfo,…}]}`）。
+ * 源码侧证（RealPabController.requestBuildingTeamsInfo）；报文实证它是面板「前往」按钮的前置查询：
+ *   `8522{x,y} → 8521{x,y}` 同点配对 **131 组、延迟 0.5~1.0s**（个别 1.7/5.5s）→ 人工点流就是「查驻军 → 点前往」，
+ *   自动开车可直接复刻这一对（不需要猜）。
  * @type {number}
  */
 export const CMD_POINT_INFO = 8522;
@@ -64,10 +81,42 @@ export const CMD_BOSS_GUARD_REWARD_INFO = 8547;
 /**
  * ENIGMA_SECRET_ROOM_BOSS_GUARD_REWARD_GET：领取一颗石头（req `{x,y}`，**不带 bossId**，服务器按坐标反推）。
  * 源码 verbatim requestBossGuardRewardGet；报文实证同一会话：在平台 (237,229) 领到了石头点 (230,228)
- *   → **不要求队伍站在石头点位上**（与掉落箱/资源点的 158「小队尚未抵达」那族完全不同）。
+ *   → **不要求队伍站在石头点位上**（与采集/拾取族的 158「小队尚未抵达」完全不同；158 在 8527/8538/8546/8521
+ *   上都观测过、就是没在 8548 上观测过，四份录音 8548 只有 1 条拒绝且是 enigma_realm60）。
  * @type {number}
  */
 export const CMD_BOSS_GUARD_GET = 8548;
+/**
+ * ENIGMA_SECRET_ROOM_SHOP_INFO：拉某商店点位货单（req `{x,y}` → `{items:[{specId,getTime}], readyList:[{uid,playerInfo(JSON 字符串),ready}]}`）。
+ * 报文实证 dashcam 20261018T200040：9 个货位恒为 `specId ∈ {11,12,13,14,15,16,17,19,20}`（**18 缺席**，1011/1017/1018 三份一致）；
+ *   **应答不带 x,y** → 点位身份只能从 req 侧取，req↔resp 按 `Event.reqTime` 配对。
+ * ⚠ **本查询会把本店的非 type3 货位 `getTime` 归零**（实证同一店 19:1 → 再发一次 8540 → 19:0）：
+ *   所以「还能买几次」只能以**本次应答为基准**做增量，不能拿上一次应答的 getTime 当现状。
+ * @type {number}
+ */
+export const CMD_SHOP_INFO = 8540;
+/**
+ * ENIGMA_SECRET_ROOM_SHOP_READY_CHANGE：商店集合就绪开关（req `{x,y,ready:0|1}`）——**与补货无关**，
+ *   是面板上的「我已就绪」勾选（verbatim PabShopPanel.onReadyToggleClick，应答侧对应 `readyList[{uid,ready}]`）。
+ *   19 份录音 0 条（玩家从未点过）→ 本 feat 不接，只登记防误用。
+ * @type {number}
+ */
+export const CMD_SHOP_READY_CHANGE = 8541;
+/**
+ * ENIGMA_SECRET_ROOM_SHOP_BUY：买一件（req `{specId,num}`，**无坐标** → 商店身份由服务器自持）。
+ * 报文实证：`{specId:19,num:1}` / `{specId:16,num:1}` / `{specId:20,num:1}`；应答只带新的 `{items}`。
+ *   `getTime` 语义 = **该 specId 已购次数**：BUY → +1；REFRESH → 归零（非 type3）。
+ * @type {number}
+ */
+export const CMD_SHOP_BUY = 8542;
+/**
+ * ENIGMA_SECRET_ROOM_SHOP_REFRESH：刷新货单额度（req `{x,y}`）——**额度用完后唯一的重开手段**。
+ * 报文实证（dashcam 20261018T200040）：每次恰好扣 **1 个 41010 人造水晶**（余量 10→9→…→1，与用户口径一致），
+ *   且只把**非 type3** 货位的 getTime 归零（实测 19:1 →刷新→ 19:0，而同拍 type3 的 20 仍为 20:1）。
+ * 源码 verbatim PabShopPanel.onRefreshClick：余量 < `_shopRefreshCost`（dataConfig 3029）即 tips enigma_realm74 开不了口。
+ * @type {number}
+ */
+export const CMD_SHOP_REFRESH = 8543;
 /**
  * ENIGMA_SECRET_ROOM_MARCH_ARMY_INFO：拉编队各支军队的血量（req `{uid}`，**uid 是字符串**）。
  * 报文实证 req = `{"uid":"14913381732485"}`；resp = `{playerInfo, infos:[{armyPower,maxArmyPower,power,marchId:{_low,_high,_unsigned},heros,armys}]}`。
@@ -75,6 +124,33 @@ export const CMD_BOSS_GUARD_GET = 8548;
  * @type {number}
  */
 export const CMD_MARCH_ARMY_INFO = 8584;
+/**
+ * ENIGMA_SECRET_ROOM_ATTACK_SELF_TEAM：「谁在打我」的**只读查询**（req `{uid:String(UID)}` → `{fightTeams[],waitTeams[]}`）。
+ * 源码 verbatim（由攻击警告弹窗调用）；本份录音 **0 条** = 玩家从未打开过该面板
+ *   → 不能拿它当「有攻击警告」的价判据（计数只看 push 21534），它只能当「按需拉详情」的候选料源。
+ * @type {number}
+ */
+export const CMD_ATTACK_SELF_TEAM = 8549;
+/**
+ * ENIGMA_SECRET_ROOM_CALL_HELP：求援（req `{uid:String(UID)}` → resp `{x,y}`）。
+ * 源码 verbatim：**不是战斗动作**，而是拿应答坐标拼 `ELEMENT_MONSTER+",-1,"+viewId` 向联盟频道发一条
+ *   CHAT_PAB_ALLIANCE 链接消息 + tips enigma_realm218 → 「抗争到底」档若开求援就是一条聊天，需按聊天侧规范走。
+ * @type {number}
+ */
+export const CMD_CALL_HELP = 8551;
+/**
+ * ENIGMA_SECRET_ROOM_REVIVE：战败复活（req `{uid}`，`ok===1` 后游戏 `jumpToTarget(roomBaseInfo.startPoint)`）。
+ * 消费口在战败面板 PabWorldDefeatPanel（tips enigma_realm198 带 reviveNum+1）；本 feat 不代答（属越权），只登记。
+ * @type {number}
+ */
+export const CMD_REVIVE = 8552;
+/**
+ * ENIGMA_SECRET_ROOM_LEAVE：退出 BOSS 战区（req `{uid:UID+""}`，`ok===1` 后游戏 `pabFightQuit()`）。
+ * verbatim：`baseActivityInfo.type===1 && isPABServer()` 时额外 `leaveObserve()+purge()+emit(UPDATE_PAB_SELF_ATTACK,0)`；
+ *   未选完 options 时 tips enigma_realm203。**整场退出、不是「换个点」** → 不作为「立即转移」手段。
+ * @type {number}
+ */
+export const CMD_LEAVE_AREA = 8589;
 
 // ─────────── 秘境推送号（走 watch 通道下行，主 NetReciver 汇聚后由 core/net.js 派 `net.<cmd>`）───────────
 /**
@@ -106,9 +182,17 @@ export const PUSH_BEAST_EVENT = 21527;
  */
 export const PUSH_FEED_BEAST = 21530;
 /**
- * ENIGMA_SECRET_ROOM_BASE_INFO：**roomBaseInfo 全量快照**下推（载荷 `{info:{teamId,leaderUid,marchState,startPoint,pointType,targetPoint,fightEndTime,buffMap,…}}` 共 24 键）。
+ * ENIGMA_SECRET_ROOM_BASE_INFO：**roomBaseInfo 全量快照**下推（载荷 `{info:{teamId,leaderUid,marchState,startPoint,pointType,targetPoint,fightEndTime,buffMap,members[…powerInfos],…}}` 共 24 键）。
  * 实测 210400 会话 239 条 ≈ 每 17s 一条 + 行军状态变化时补发 → **稀疏，不能当唯一唤醒源**，只用作现场校验与 Int64 料源。
- * `marchState` 观测：1=MARCHING（在飞）2=ARRIVED（到达）21=PAB_FEED；`startPoint` 是**当前所在点**（ARRIVED 时 sp==tp）。
+ * `startPoint` 是**当前所在点**（ARRIVED 时 sp==tp），实测一整套四段式（文件头 boss.js §②）。
+ * `marchState` 的全枚举 verbatim `NMarchState`（Script 侧，共 20 项）：
+ *   INIT 0、MARCHING 1、ARRIVED 2、RETURNING 3、ARRIVED_HOME 4、GATHERING 5、ENCAMPING 6、RALLY_ASSEMBLING 7、
+ *   RALLY_ASSEMBLED 8、REINFORCING 9、GARRISON 10、OCCUPY 11、**FIGHTING 12**、BATTLING 13、WAITINGRETURN 14、
+ *   BEHEMOTH_MONSTER_ATTACK 15、EXPLOREING 18、GVE_ARRIVED 19、CROSS_TREASURE_TEAM_HOLDING 20、**PAB_FEED 21**、
+ *   ACTIVITY_GATHERING 22、PAUSED 23。
+ *   → 秘境侧实际只观测到 1（行军中）/ 2（到达）/ 21（在拍）；旧注释只列了这三个，本处补全以防误把 12 当未知值。
+ *   ⚠ 与瓦片 `m.state` 用的 **PabFightStageState** 是两套枚举（那里 11/12 = PVP_READY/PVP_FIGHTING、22 = PALNE_MARCH），
+ *     数值重叠但语义无关，不要互用。
  * @type {number}
  */
 export const PUSH_BASE_INFO = 21521;
@@ -127,11 +211,14 @@ export const PUSH_BAG_INFO = 21525;
  */
 export const PUSH_BOSS_STATE = 21535;
 /**
- * ENIGMA_SECRET_ROOM_BOSS_GUARD_REWARD_INFO_PUSH：小BOSS 死后掉落的石头点位账本（**全量**下发）。
+ * ENIGMA_SECRET_ROOM_BOSS_GUARD_REWARD_INFO_PUSH：小BOSS 石头点位账本（**全量**下发）——**「能不能领」的唯一判据**。
  * 载荷 `{rewardInfo:[{bossId,fightTime:Int64,rewardInfo:[{pos{x,y,k,rid},rewardNum,rewardMaxNum,isFight}]}]}`；
  *   游戏 Handler：`bossGurardRewardInfo = a.rewardInfo`（源码拼写就是 Gurard）+ emit UPDATE_PAB_BOSS_GURARD_REWARD。
- * 报文实证时间线（210400）：初始 `0/0` 无 F → 参战后 `0/0F` → **BOSS 死亡时 `0/1F`** → 逐点 8548 → `1/1F`；
+ * 报文实证时间线（210400）：初始 `0/0` 无 F → 参战后 `0/0F` → **账本给点时 `0/1F`** → 逐点 8548 → `1/1F`；
  *   **每个小BOSS 固定 5 个点位、每人每点位限领 1 次**（rewardMaxNum 只到 1）。
+ * ⚠ 旧结论「石头 = 小BOSS 死后掉落的石头」已被推翻（实证 dashcam 20261018T200040）：
+ *   boss12 仍 `state:21`（21535 里未收场）时 +1510.9s 就已经能领它那 5 个点 →
+ *   **石头能不能领只能看本账本（`rewardNum<rewardMaxNum && isFight===1`），不能拿 BOSS 死亡/state 做前置条件**。
  * @type {number}
  */
 export const PUSH_BOSS_GUARD_REWARD = 21539;
@@ -144,33 +231,118 @@ export const PUSH_BOSS_GUARD_REWARD = 21539;
  */
 export const PUSH_BOSS_FEED_VIEW = 21540;
 /**
- * PUSH_TILEINFO（NResponseIdV2）：世界/秘境地图的**瓦片刷新**下推，秘境图内载荷逐条形如
- *   `{v,x,y,k,id,pointType,m:{viewId,sET,sBT,teams[],esrId,state,iNum,bid,camp,isFight,bPower,ePower,allPower,fTeamIds,…}}`，
- *   `m` 即 extData（实证 210400 会话 7733 条）。**这是 BOSS 攻打侧取「平台↔区域配对键 esrId」的唯一料源**：
- *   ACL 不提供瓦片查询（游戏侧 tile getter 的调用方式未实证，不猜符号链），BOSS 引擎直接订阅本推送自己按 `x,y` 建快照。
+ * PUSH_TILEINFO（NResponseIdV2）：世界/秘境地图的**视口内瓦片增量刷新**下推，秘境图内载荷逐条形如
+ *   `{v,x,y,k,id,pointType,m:{viewId,sET,sBT,teams[],esrId,state,iNum,bid,camp,isFight,fTeamIds,…}}`，
+ *   `m` 即 extData（实证 210400 会话 7733 条、20261018T200040 会话更多）。
+ *   **这是 BOSS 攻打侧取「平台↔区域配对键 esrId」与自动开车侧取「资源点档位 iNum / 在试点 state」的唯一本地料源**：
+ *   ACL 不提供瓦片查询（游戏侧 tile getter 的调用方式未实证，不猜符号链），引擎直接订阅本推送自己按 `x,y` 建快照。
+ * ⚠ **本推送是「进视口才推」的增量，不是全域快照**（旧结论「178 小BOSS 本体瓦片 0 条」就是把它当成了全域）：
+ *   镜头没到那块区域就一条不会有 → 「快照里没有某点」不等于「该点不存在」，只能当「无证据」、不能当反证。
+ * `m.state` 的口径是 **PabFightStageState**（不是 NMarchState）：verbatim WIPabResource.updateTileState 对
+ *   `state===11||12` 走 `getRoomPointFightingPVPInfoByXY` + dataConfig(3018) 算战斗倒计时（tips enigma_realm110/139）
+ *   → **瓦片 state 11/12 就是「本点正在被 PVP」的本地判据**（攻击警告侧的点位级证据）。
  * @type {number}
  */
 export const PUSH_TILE_INFO = 10018;
+/**
+ * ENIGMA_SECRET_ROOM_TEAM_ARRIVE：行军到达目标点的推送（载荷 `{x,y,pointType}`）。
+ * 报文实证（dashcam 20261018T200040）在闭环里的位置：
+ *   `8521{x,y}req → 10007(state1) → 8521 resp{ok:1} → 8522{x,y}req → **21529{x,y,pointType}** → 10007(state2→12)
+ *   → 8522 resp{type,teams[]} → 21522 RESOURCE_CHANGE → 8527{rId}×N → 8526/8532 → 下一条 8521`（单轮实测 +31~44.2s）。
+ *   → **它是「已到达」最及时的信号**，也是 8521 撞 `enigma_realm158`（小队尚未抵达）的唯一解除信号。
+ * @type {number}
+ */
+export const PUSH_TEAM_ARRIVE = 21529;
+/**
+ * ENIGMA_SECRET_ROOM_MARCH_INFO：**行车记录**下推（玩家地图上的行军线就靠它）。
+ * 载荷 verbatim：`{marchArrive, lv, returnStartTime, target:{itemId,tx,ty,tk,w,h,targetType}, marchType,
+ *   marchStartTime, returnArriveTime, marchIcon, state, marchId:"字符串", aid, begin:{bx,by}}`；
+ *   `state` 实测 1（行军）/2（到达）/12（交战）；资源点目标 `target.itemId=15`、`target.targetType` 即目标 pointType。
+ *   → 「自动开车」的进度料源（不必等 21521 那 17s 一条的稀疏快照）。
+ * @type {number}
+ */
+export const PUSH_MARCH_INFO = 10007;
+/**
+ * ENIGMA_SECRET_ROOM_SELF_ATTACKED：**「有多少队正在打我」的计数**下推（载荷仅 `{num}`）。
+ * 游戏侧链路 verbatim：`PushResponse` → `PabController.attackWarnNum = a.num` + emit UPDATE_PAB_SELF_ATTACK →
+ *   **唯一消费者 PabWorldUINew.updateAttackWarnState**：`attackWarnNode.active = e>0`、红点数字 `Math.max(0,e)`、
+ *   `e<=0` 时清空弹窗——**纯展示，游戏没有给玩家任何「撤离/应战」按钮** → 「立即转移 vs 抗争到底」必须由本 feat 实装。
+ * 报文实证（dashcam 20261018T200040，591 条）：`0×525 / 1..14 / 42×1`；
+ *   **转移即消警**（全库只有 3 例警告期转移，其中一例 `+424.6s 8521 resp{ok:1}` 与 `21534 num=0` 同拍）。
+ * @type {number}
+ */
+export const PUSH_SELF_ATTACKED = 21534;
+/**
+ * ENIGMA_SECRET_ROOM_POINT_FIGHTING_INFO：某点位「谁在打 / 谁在驻」的战斗信息下推（载荷含 x,y 与队伍列表）。
+ * 游戏侧写进 `roomPointFightingPVPInfo`/`roomPointFightingPVEInfo`（verbatim RealPabController 的
+ *   updatePvpPanelInfo/getPvpPanelInfo 以 `NWorldMapUtils.getCellIndex(x,y,serverId)` 为键）
+ *   → 它是「本点正在被 PVP」的**按点详情料源**（与瓦片 `m.state 11/12` 互为佐证）。
+ * @type {number}
+ */
+export const PUSH_POINT_FIGHTING_INFO = 21523;
+/**
+ * ENIGMA_SECRET_ROOM_RESOURCE_CHANGE：资源点 bag 变动下推（载荷带 `uid`/`playerInfo`）。
+ * ⚠ 与 8526 RESOURCE_INFO 的口径差异已实证：**应答条目不带 uid，而本推送带**
+ *   → 「谁已领过」只能从推送侧拿，INFO 侧必须自己记账（见 REJ_SAME_ITEM_ONCE 注）。
+ * @type {number}
+ */
+export const PUSH_RESOURCE_CHANGE = 21522;
+/**
+ * ENIGMA_SECRET_ROOM_DROP_CHANGE：掉落箱变动下推（载荷 `{x,y,dropInfo:[{dropId,info{itemId,itemCount},uid,hide}],beastGetNum,bagGetNum}`）。
+ * @type {number}
+ */
+export const PUSH_DROP_CHANGE = 21532;
+/**
+ * ENIGMA_SECRET_ROOM_OTHER_ATTACK_ON_FEED：「拍宠物时被他人攻击」推送（理论上属攻击警告一族）。
+ * **19 份录音 0 条** → 只登记，链路不依赖它（计数只看 21534）。
+ * @type {number}
+ */
+export const PUSH_OTHER_ATTACK_ON_FEED = 21536;
 
-// ─────────── PAB 地图实体类型（NWorldMapCommon，瓦片 type；仅作点位类型留档）───────────
-/** @type {number} PAB_BOSS_GUARD_REWARD：小BOSS 死后掉落的石头点位（领取 req 8548） */
+// ─────────── PAB 地图实体类型（verbatim NWorldMapCommon.NWorldMapEntityType 全 PAB 段，瓦片 pointType）───────────
+/**
+ * PAB 全段枚举（verbatim，不再凭报文目测排序）：
+ *   160 ALLY_HELP / **161 SHOP** / 162 BOSS_GUARD_REWARD / 163 DROP / 172 MONSTER / 173 RESOURCE /
+ *   174 COMMON_PLANE / 175 TENT / 176 BOSS_PLANE / 177 BOSS / 178 BOSS_GUARD / 179 TEAM /
+ *   186 EMERGENCY / 187 CNC_MAP_BUILDING / 188 LANDSCAPE。
+ *   ⚠ **172 = 异能兽、173 = 资源点**（旧注释把两者标反过，已按枚举纠正）。
+ * 各型瓦片 `m` 实测样本（dashcam 20261018T200040，顶层恒 `{v,x,y,k,id,pointType,m}`）：
+ *   • 161 商店 `{viewId:22, esrId:2}`（**全库只有这两个字段** → 商店身份只能靠 pointType+坐标）
+ *   • 162 石头 `{viewId:10, bossId, fTime:"毫秒字符串", indexId:1..5, rank, sET, esrId:0, state:0}`
+ *   • 163 掉落 `{viewId:9, teamId, playerInfo, esrId:0, iNum}`
+ *   • 172 野怪 `{viewId:4, fTeamIds[], sET, sBT, teams[], esrId:15, state:0/1/2/5}`
+ *   • 173 资源 `{viewId:14, sET:"0", sBT:"0", teams[], esrId:15, state:0, iNum:2|3|5|10}`
+ *   • 175 帐篷 `{viewId:7, sET:"0", sBT:"0", teams[], esrId:0, state:0}`
+ *   • 176 平台 `{isFight, viewId:11, sET, teams[], esrId, state, bid:11, camp}`
+ *   • 179 玩家 `{uid, aTag, playerInfo, esrId:0, aId, sid}`
+ */
+/** @type {number} PAB_SHOP：商店点位（四条 854x 协议的目标点） */
+export const PAB_SHOP = 161;
+/** @type {number} PAB_BOSS_GUARD_REWARD：小BOSS 石头点位（领取 req 8548；能不能领看 21539 账本，不看 BOSS 死活） */
 export const PAB_BOSS_GUARD_REWARD = 162;
 /** @type {number} PAB_DROP：掉落箱点位 */
 export const PAB_DROP = 163;
-/** @type {number} PAB_MONSTER：异能兽点位 */
+/** @type {number} PAB_MONSTER：异能兽点位（**不是资源点**） */
 export const PAB_MONSTER = 172;
-/** @type {number} PAB_RESOURCE：资源/增益井点位 */
+/** @type {number} PAB_RESOURCE：资源/增益井点位（`m.iNum` = 资源点档位，可作选点排序键） */
 export const PAB_RESOURCE = 173;
+/** @type {number} PAB_COMMON_PLANE：普通停泊平台 */
+export const PAB_COMMON_PLANE = 174;
+/** @type {number} PAB_TENT：帐篷点（实测本份录音 8521 有 24+1 次打向它） */
+export const PAB_TENT = 175;
 /**
  * @type {number} PAB_BOSS_PLANE：临时停泊平台（tileArea=1；「攻打 BOSS」必须从这里出发）
  * 瓦片 extData 关键字段：`esrId`（区域配对键）/`state`/`sET`/`teams[]`/`isFight`。
  * **`bid` 与 `viewId` 恒为 11，不是 bossId**（曾据此误判配对关系）。
+ * 实测去重 253 个平台，esrId 分**三桶** 20/21/22（旧注记的「134 个分两桶」是因为把视口增量当全域快照统计）。
  */
 export const PAB_BOSS_PLANE = 176;
 /** @type {number} PAB_BOSS：大BOSS 本体瓦片（tileArea=9） */
 export const PAB_BOSS = 177;
-/** @type {number} PAB_BOSS_GUARD：小BOSS 本体瓦片（tileArea=9） */
+/** @type {number} PAB_BOSS_GUARD：小BOSS 本体瓦片（tileArea=9；**并非「整份录音 0 条」**，178@(230,234) 实有 664 条带 esrId:22 state:21） */
 export const PAB_BOSS_GUARD = 178;
+/** @type {number} PAB_TEAM：玩家小队坐标点（瓦片 m 带 uid/aTag/playerInfo/aId/sid） */
+export const PAB_TEAM = 179;
 
 // ─────────── BOSS 阶段（PabFightStageState，实证 Script/PabController__PabController.js 全枚举）───────────
 /** @type {number} ST_NORMAL：常规阶段 */
@@ -207,17 +379,16 @@ export const ST_BOSS_DEAD_END = 30;
 
 // ─────────── 平台↔BOSS 的区域配对（取自 push 10018 PUSH_TILEINFO 的 `m` 字段，实证 dashcam 20261017T210400）───────────
 /**
- * 瓦片 extData 里标识「属于哪个 BOSS 区域」的键（**这是唯一的本地配对判据，但料源残缺**）。
- * 实证（dashcam 20261017T210400）：
- *   • 176 平台共 134 个按 esrId 分两桶（esrId=20 有 78 个、含攻打大BOSS 实用 (208,192)；
- *     esrId=22 有 56 个、含打 boss12 实用 (237,229)、(236,232)）；
- *   • boss9@(203,203) 的 **177 大BOSS 瓦片** esrId=20、boss12 半径 12 内平台全 esrId=22 —— 与所用平台完全对应；
- *   • **178 小BOSS 本体瓦片在整份录音里 0 条**（boss12 本体 (230,234) 的瓦片是 `pointType:0, m:null`，
- *     boss11@(175,177) 干脆 ABSENT）→ 「读 BOSS 本体 esrId」**只对大BOSS 成立**；
- *   • **162 石头瓦片的 esrId 恒为 0** → 石头点位也不能用作区域配对；
- *   • boss11 半径 12 内 0 个平台 = **无任何本地区域证据** → 只能靠「试探一次 + 撞 142 记错区域」学习。
+ * 瓦片 extData（= push 10018 的 `m` 子对象，**不是顶层**）里标识「属于哪个 BOSS 区域」的键。
+ * 实证（dashcam 20261018T200040 + 20261017T210400，注意 10018 是视口增量、只能统计到“看到过的”）：
+ *   • 176 平台去重 253 个，esrId 分三桶 20/21/22（旧记录“134 个分两桶”是把增量当全域统计所致）；
+ *   • **178 小BOSS 本体瓦片确实带 esrId**（178@(230,234) 实有 664 条 `esrId:22 state:21`）
+ *     → 旧结论「读 BOSS 本体 esrId 只对大BOSS 成立」**已被推翻**，只是它依赖镜头是否扫到那块区域；
+ *   • **162 石头瓦片的 esrId 恒为 0** → 石头点位不能用作区域配对（这一条仍成立）；
+ *   • 172/173 两型的 esrId 实测恒为 15、175/179/163 恒为 0 → **它们不参与区域配对**；
+ *   • 全库键频：`esrId 57916 / sET 56905 / sBT 34779 / iNum 15937 / fTeamIds 892`（无 `esrIId` 这个拼法，0 命中）。
  *   ⚠ 客户端攻打入口 `NWorldPabBossPopup.marchClick` **完全不查 esrId** → 区域是**服务器独占判据**，
- *     本键只是「避免撞 142」的本地优化，不是硬闸。
+ *     本键只是「避免撞 142」的本地优化，不是硬闸（且 142 本身在 19 份录音里 0 命中，属未观测分支）。
  * @type {string}
  */
 export const TILE_KEY_ESR_ID = 'esrId';
@@ -245,6 +416,23 @@ export const CFG_TAP_LIMIT_PER_SEC = 630027;
  * @type {number}
  */
 export const CFG_PAB_HEAL_ITEMS = 3035;
+/**
+ * 商店货币对（dataConfig(3028) → `"购买币|刷新币"`，split('|')）：[0]=41009 异能晶块、[1]=41010 人造水晶。
+ * 源码 verbatim PabShopPanel.initView / PabShopItem.updateShopItem（`_costItemCfg = ITEM[t[0]]`，图标与预检都用它）。
+ * @type {number}
+ */
+export const CFG_SHOP_CURRENCY = 3028;
+/**
+ * 单次刷新消耗（dataConfig(3029)，verbatim `_shopRefreshCost = Number(getDataConfigData(3029))`）。
+ * **报文实证值 = 1**（dashcam 20261018T200040：18 次 8543 → 41010 余量 10→9→…→1，每次恰好扣 1），
+ *   与用户口径「消耗 1 个人造水晶」一致；但仍**运行时读本键**，不把 1 写死。
+ * @type {number}
+ */
+export const CFG_SHOP_REFRESH_COST = 3029;
+/** @type {number} 资源点档位名串（dataConfig(630002) → `"min,max,loc|min,max,loc|…"`，verbatim getResBuildingNameByItemNum 拿 `m.iNum` 查区间） */
+export const CFG_RES_BUILDING_NAME = 630002;
+/** @type {number} 点位 PVP 战斗时长串（dataConfig(3018)，verbatim WIPabResource.updateTileState 用它给瓦片 state 11/12 算倒计时） */
+export const CFG_PVP_FIGHT_TIME = 3018;
 
 // ─────────── EventCenter 事件名（EventId 值 == 成员名；net 应答/推送处理器全局 emit，载荷含 x,y 与完整数据）───────────
 /**
@@ -262,9 +450,22 @@ export const EVT_RES_LIBRARY_UPDATE = 'PabRoomResLibraryDataUpdate';
 // ─────────── 拍宠物动作与节奏（RealPabController / PetCaptureTouchNodeNew / PetCaptureDragNodeNew / PabPetFeedEventPopup verbatim）───────────
 /** @type {string} 投喂物/动作配置表名（TableName.enigma_beast_behave；行 id 即 BEAST_OPERATE 的 specId，字段 item/time/favor/bar_pers/pai_times） */
 export const TABLE_BEAST_BEHAVE = 'enigma_beast_behave';
-// 投喂道具 specId 5/6（enigma_beast_behave 行 5/6 的 .item → 秘境背包道具，实证 PabPetCaptureNodeNew 取行 (t+5) → `petCaptureOperation(o+5)`）：
-//   报文实证同一会话普通拍 changeScore 恒落在 6~11 区间（1451/1517 条），投喂道具与免费手拍同量级却要消耗秘境背包道具
-//   → 本 feat 基础拍走免费手拍（SPEC_TAP），不主动投喂，故不导出可投喂集合。
+/**
+ * 投喂道具的**首格 specId**（enigma_beast_behave 行 5/6 的 `item` = 可投喂的秘境背包道具）。
+ * 源码 verbatim PabPetCaptureNodeNew：`init` 取行 `(t+5).toString()`（**`for(t=0;t<2;t++)` → 只有 2 格**）填 `_captureItemIds`，
+ *   即 `_captureItemIds[t] = ITEM[behave[t+5].item].id`；`onItemFeedClick(e,t)` → `getItemNumById(_captureItemIds[o])>0
+ *   && petCaptureOperation(o+5)` → **specId = 格子下标 + 5**，且游戏自己先查背包余量。
+ *   `RealPabController.petCaptureOperation` 的载荷只有 `{specId}`（报文实证：8546 全库请求形态仅此一种，
+ *   `checkCaptureOperationCd` 首行只拦 specId===1 → 投喂不受每秒限额约束）。
+ * 道具身份闭环实证（dashcam 20261018T200040）：`8542{specId:19}×10 → 21525 里 41011 +10 → 8546{specId:5}×10`
+ *   → **behave[5].item = 41011 全素香肠**（就是商店 specId 19 的货，单价 500 晶块）。
+ * 为什么要投：大BOSS 的 `allFavor=1000000`，而免费手拍 changeScore 实测仅 6~11（≈4 拍/秒）
+ *   → 光靠手拍不可能拍满，behave 行的 `favor` 才是这一阶段的加分主力（单件投喂实测 changeScore=400）。
+ * @type {number}
+ */
+export const SPEC_FEED_FIRST = 5;
+/** @type {number} 投喂格子数（behave 行 5、6 —— 实证 PabPetCaptureNodeNew `for(t=0;t<2;t++)`，**不是 6 档**） */
+export const SPEC_FEED_COUNT = 2;
 // 8546 specId 全谱（报文实证 dashcam 20261011T203911，跨 3 份录音的完整请求序列）：
 //   1 免费手拍（chg 5~9）；2/3 拖拽事件答案（chg=0 但 selfenergy +1，即 behave 表行号本身就是拖拽答案）；
 //   4 能量满释放（chg 300/390、能量归 0）；7/8/9/10 心动时刻（投喂弹窗）选项（chg 50/100/200/500）。
@@ -377,6 +578,53 @@ export const TABLE_BEAST_TYPE = 'enigma_beast_type';
  * @type {string}
  */
 export const TABLE_EFFECT_BUFF = 'EFFECTBUFF';
+/**
+ * 商店货表名（TableName.enigma_secret_realm_shop）。
+ * 源码 verbatim PabShopItem.updateShopItem：`getTableDataById(enigma_secret_realm_shop, specId)` →
+ *   字段 `id / item_id / item_num / cost / buy_times / type`（`_lastNum = max(buy_times - getTime, 0)`，
+ *   `type===3` 时显示 `enigma_realm242`「本期所有商店限量」）。
+ * ⚠ **本表离线无数据**（references/游戏逆向/{extracted,raw} 全查过，只有 TableName 枚举与两处 UI 引用）
+ *   → **商品全量只能运行时 `l10n.tableRows(TABLE_SHOP)` 枚举**，不能写死。（specId→itemId 的已实测部分见 SHOP_SPEC_ECONOMY）
+ * @type {string}
+ */
+export const TABLE_SHOP = 'enigma_secret_realm_shop';
+/**
+ * 报文反出的商店经济映射（**只能反出用户买过的 3 项**，其余必须运行时读表）。
+ * 反法：对每次 8542/8543 后的 21525 背包快照做差分（两份不同日期录音交叉验证）：
+ *   • specId 19 → **41011 全素香肠**，单价 41009 扣 500/件（买 10 次 → 41011 +10、41009 −5000）；
+ *   • specId 16 → **41006 强异能诱饵**（8534 造点用），单价扣 3000；
+ *   • specId 20 → **38006601 传奇百兽箱碎片自选箱**（×40，名字取 references/字典表.txt `item_name_38006601`），
+ *     单价扣 2000、且 41009 总扣 2000 = `cost`；本项 `type===3` → **跨店共享额度**。
+ *   未反出的：specId 11/12/13/14/15/17（本份录音里 getTime 始终 0 = 从未买过）。
+ * @type {Object<number,{itemId:number,price:number,note:string}>}
+ */
+export const SHOP_SPEC_ECONOMY = {
+  16: { itemId: 41006, price: 3000, note: '强异能诱饵（8534 造点材料）' },
+  19: {
+    itemId: 41011,
+    price: 500,
+    note: '全素香肠（behave[5] 投喂道具，游戏携带上限 para1_v1=10）',
+  },
+  20: {
+    itemId: 38006601,
+    price: 2000,
+    note: '传奇百兽箱碎片自选箱（一次给 40 个，type=3 全店共享限量）',
+  },
+};
+/**
+ * 商店点位（用户口径「一共 4 个商店」，地图核对 verbatim：push 10018 里 `pointType===161` 的瓦片）。
+ * 实测四项（dashcam 20261018T200040 + 发车会话，同一 `k=30911` 服务器）：
+ *   `(95,163) id=41776`、`(250,96) id=24702`、`(315,255) id=65438`、`(154,314) id=80462`；
+ *   本次用户只去了 (95,163) 与 (315,255)。**id 跨 k 稳定、坐标随图而异** → 本常量只作默认候选，
+ *   **主料源必须是运行时 10018 的 161 型瓦片快照**（不要把这四个坐标当硬码）。
+ * @type {Array<{x:number,y:number}>}
+ */
+export const SHOP_POINTS_SEED = [
+  { x: 95, y: 163 },
+  { x: 250, y: 96 },
+  { x: 315, y: 255 },
+  { x: 154, y: 314 },
+];
 
 // ─────────── 服务器拒绝原因键（pbAckV2.header.d，经 game-api sendSecret 的 Ret.reason 透传；实证 dashcam 20261011T195811 的 8527 应答）───────────
 /**
@@ -389,6 +637,11 @@ export const REJ_SAME_ITEM_ONCE = 'enigma_realm119';
 /**
  * 小队尚未抵达目标点（**服务器独占**判据：客户端 pabBagItemOperate 只看限额/已领/背包上限，不查在位）。
  * 撞到即说明「点位明细已陈旧、队伍已开走」→ 该点位本轮不再发。
+ * **命中的 cmd 族已实测**（dashcam 20261018T200040 / 20261011T195811）：
+ *   8527×16（领资源 bag）/ 8538×2（领 buff）/ 8546×1（拍宠物投喂）/ **8521×80（行军，本份最多的一条拒绝码）**；
+ *   唯独 8548（石头）从未撞过 → 「石头不要求在位」仍成立。
+ * **解除信号 = push 21529 TEAM_ARRIVE**（载荷带 x,y,pointType）；8521 撞它时语义是「我正在行军、
+ *   尚未到位」→ 不烧配对/区域账、不拉黑目标，只退避等到达推送。
  * @type {string}
  */
 export const REJ_NOT_ARRIVED = 'enigma_realm158';
@@ -403,13 +656,55 @@ export const REJ_NO_MARCH_TARGET = 'enigma_realm163';
 /**
  * 只能攻击当前所在停泊平台对应区域内的极异能兽（**服务器独占判据**：全仓客户端源码 0 引用，
  *   只会以 `s=3 d=enigma_realm142` 的拒绝形态出现）→ 撞到即说明我所在平台的 esrId 与目标 BOSS 不同区域。
+ * ⚠ **未观测**：19 份录音里 **0 命中** → 本分支是「字典文案 + 客户端不查 esrId」推出来的**预防性代理**，
+ *   不是实测行为（旧注释把它当实测结论写，已降级）。保留的理由：它不会错杀——真撞到只会降级那一对。
  * @type {string}
  */
 export const REJ_BOSS_AREA = 'enigma_realm142';
-/** @type {string} 请先行军到对应区域的临时停泊平台（我不在 176 平台上，NWorldPabBossPopup.marchClick 同口径 tips） */
+/**
+ * @type {string} 请先行军到对应区域的临时停泊平台（我不在 176 平台上，NWorldPabBossPopup.marchClick 同口径 tips）。
+ * ⚠ **同样未观测**（19 份录音 0 命中）；且它本质是「本地 roomBaseInfo 滞后」，而实测 21521 一场≈17s 一条
+ *   → 退一个推送周期再评的处置仍合理，但不要当已验证行为写注释。
+ */
 export const REJ_NEED_PLANE = 'enigma_realm141';
 /** @type {string} 当前资源点内获取物品次数已用完（石头点位已领满，实证重复领同点 8548 回此码）→ 该点位永久拉黑 */
 export const REJ_STONE_USED_UP = 'enigma_realm60';
+/**
+ * 目标点不存在，请拖动地图刷新数据并重试（字典 verbatim）。
+ * **报文实证**：8527×3（dashcam 20261011T195811）——语义是「我手里的瓦片/点位数据陈旧」，
+ *   与 158（人在路上）不同 → 处置应「重拉该点 INFO / 等 10018 刷新」，不能复用 158 的静默窗。
+ * @type {string}
+ */
+export const REJ_POINT_NOT_EXIST = 'enigma_realm159';
+/**
+ * 战场即将封闭，请指挥官尽快选择带出秘境战场的物资（字典 verbatim）。
+ * **报文实证**：8521×2（20261018T200040 / 发车那份各 1）→ 这是**收场期信号**，
+ *   撞到应停掉一切行军/攻打类动作（再发只会连续吃拒），不能当普通拒绝重试。
+ * @type {string}
+ */
+export const REJ_BATTLEFIELD_CLOSING = 'enigma_realm17';
+/**
+ * param error（通用参数错，字典 verbatim）。**报文实证**：8521×1 / 8527×9 / 8538×4。
+ * 形态与「载荷不完整/坐标越界」一致 → 属**我们的包形态问题**信号（不拉黑目标，但要打 info 供排查）。
+ * @type {string}
+ */
+export const REJ_PARAM_ERROR = 'common_159995';
+/**
+ * BOSS 已被击杀（字典 verbatim）。**报文实证**：8546×3（拍 BOSS 时撞上）→ 目标已消失，不重试、整只降级。
+ * @type {string}
+ */
+export const REJ_BOSS_KILLED = 'enigma_realm_new_1';
+/**
+ * 异能兽已被捕获（字典 verbatim）。**报文实证**：8546×1 → 拍宠目标已被抢，静默换下一只。
+ * @type {string}
+ */
+export const REJ_BEAST_CAPTURED = 'enigma_realm_new_2';
+/**
+ * 操作错误，请点击交互区域（字典 verbatim）。**报文实证**：8546×1 → 与「在拍闸门与服务器现场不一致」同形，
+ *   不重试（重试只会撞同一堵），等 21530 刷正 capturingPetPos。
+ * @type {string}
+ */
+export const REJ_BAD_INTERACT = 'enigma_realm_new_3';
 /** @type {string} 没有参与本次战斗，不能领取奖励（`isFight!==1`）→ 该 bossId 整组跳过 */
 export const REJ_NOT_IN_FIGHT = 'enigma_realm179';
 /** @type {string} 该位置已有友军占用，请选择其他位置（平台 extData.teams 命中友军，NWorldPabBossPlanePopup 同口径） */
@@ -448,6 +743,14 @@ export const tuning = {
   tapMaxPerSecFallback: 4,
   /** 拍宠物：能量满释放（specId=4）之后的静默（毫秒），behave[4].time 读不到时的兜底；实证报文该窗口 6.4~10.2s */
   energyBurstFallbackMs: 7000,
+  /**
+   * 拍宠物：大BOSS 环节两次投喂道具（8546 specId 5/6）之间的最小间隔（毫秒）。
+   * **实证人手节奏**（dashcam 20261018T200040，首次录到投喂包）：10 件落在 2.5s 内，
+   *   逐件间隔 100/200/200/300/600ms，单件 changeScore=400（免费手拍只 6~11）。
+   *   旧值 3000 是在「全库没一次投喂包」的假设下拍的保守数（注释自己标了无实证），现已有实测→ 取 200。
+   *   不取 100：两件之间还夹着商店补货（香肠携带上限 para1_v1=10）与手拍，留一档余量防吃频控。
+   */
+  bossFeedGapMs: 200,
   /** 拾取：被拒 dropId 的当日拉黑存活（毫秒），过期后允许再试（防永久误拉黑） */
   rejectBlacklistMs: 6 * 3600 * 1000,
   /**
@@ -526,12 +829,64 @@ export const tuning = {
    *   给一个「≈一条推送周期」的窗；用通用 5s 会在刷正前多撞两枪。
    */
   planeRefreshMs: 15000,
+  /**
+   * BOSS 攻打：「近区候选」的判定半径（欧氏格数，与 #platformCandidates 同口径）。
+   * 实证（全库 15 份秘境录音的 10018 的 176 平台 `m.esrId` × 21535 的 bossBaseInfo.pos 对账）：
+   *   每只 BOSS 到**它自己区域**平台最近 1.4~7.1 格（boss9 2.0 / boss10 1.4 / boss11 7.1 / boss12 2.0），
+   *   而到**跨区域**平台最近 19.8~63.9 格 → 12 落在两档实测值的空档里。
+   *   注意这是**排序档而不是过滤闸**（远档仍留在队尾，否则近处全被区域闸拦下时我们会罢工），
+   *   真正的判据仍是服务器的 esrId 比对；本档的作用是把「同一平台上该先撞哪一枪」从试探改成就近，
+   *   避开 142（竞对脚本用的就是纯就近排序，无 esrId 配对）。
+   */
+  bossNearRadius: 12,
+  /**
+   * 拾取：掉落宠物的**品质筛选阈值**（enigma_beast 行 `quality`，低于它的不占配额）。
+   * 借鉴竞对口径（他写死 >=4）；读不到行或行无该字段一律放行（fail-open，不把低品质当高品质拦死）。
+   */
+  dropPetQualityMin: 4,
   /** 石头：相邻两条 8548 的节拍初值（毫秒），沿用 getGapMs 同曲线退避 */
   stoneGapMs: 250,
   /** 石头：同一 bossId 撞 `isFight!==1`（未参战）后的组级静默（毫秒）——不可恢复，但防改版后变成可领时永久锁死 */
   stoneSkipMs: 600000,
   /** 瓦片 extData 快照的条目上限（Map 保持插入序，溢出丢最早一项；与 tileAccMax 同手法） */
   tileExtMax: 256,
+  /**
+   * 商店：相邻两条 854x 的最小间隔（毫秒）。沿用次通道频控同口径（getGapMs 250）：
+   *   实证人手就是 250ms 量级（dashcam 20261018T200040：8542→8543 平均间隔 1.0~1.3s，但那是人在选数量）。
+   */
+  shopGapMs: 250,
+  /**
+   * 商店：同一店两条 BUY 之间的额外静默（毫秒）。
+   * 必要性：BUY 无坐标、应答只回 `{items}`，**多店轮巡时同拍两笔会串号**（req↔resp 靠 reqTime 配对能分清身份，
+   *   但服务器侧「上一笔未结算」形态实测会出 enigma_realm162）→ 串行 + 小静默。
+   *   实施点：shop.js 以 #lastBuyEndAt（上一笔 8542 应答落地时刻）在 #tick 夹住下一笔动作。
+   */
+  shopBuyGapMs: 600,
+  /**
+   * 商店：进图后首次扫商店的延迟（毫秒）。太早会撞上玩家自己的操作窗（面板也发 8540，会互刷 getTime 基准）。
+   */
+  shopFirstDelayMs: 15000,
+  /**
+   * 商店：两次完整轮巡（4 个点位逐个 8540）之间的最小间隔（毫秒）。取 10 分：
+   *   实证人手一局只在 +1975s / +2525s 进了两次店（间隔 550s），补货不是高频动作。
+   */
+  shopSweepMs: 600000,
+  /**
+   * 攻击警告：判定「我确实被盯上」的**连续存活窗**（毫秒）。21534 实测 591 条里 525 条是 0（频繁跳变），
+   *   单条 num>0 就转走会把玩家自己“手操撤离”变成抽风；本窗内无新的 num>0 即认为警报解除。
+   */
+  warnAliveMs: 8000,
+  /**
+   * 攻击警告：转点后的**再评估静默**（毫秒）。转移本身要 31~44s（实测一整套 8521→采集→8526 闭环），
+   *   且 8521 在行军途中必吃 158×80 的教训在这里同样适用 → 不到达就不重评。
+   *   取 45000：比实测闭环上限（44.2s）多一档。
+   */
+  warnMoveCooldownMs: 45000,
+  /**
+   * 攻击警告：转移引擎的空闲轮询兑底（毫秒）。用户档定为「num>0 立即转移」（不做存活窗去抖），
+   *   故触发主要靠 push 21534 事件 kick；本值只用于「警告挂起但快照里暂无就近营帐」时的重扫间隔。
+   */
+  warnScanMs: 3000,
 };
 
 /** @type {number} 未真正发出的哨兵码（sendSecret 超时/异常回此值；与 game-api SECRET_NOT_SENT 同义） */

@@ -71,13 +71,18 @@ export const REQ_SKILL_USE = 7551;
 /** @type {number} CROSS_TREASURE_SKILL_USE_RECORD_OPEN：使用记录 */
 export const REQ_SKILL_USE_RECORD_OPEN = 7552;
 /**
- * @type {number} CROSS_TREASURE_GET_MARCH_INFOS：来袭方军情（注意：应答里 uid 是**字符串**，与 Long 并存须归一）。
- * **游戏原生读，feat 不发**：真人客户端进来袭面板时发此包（req `{treasureId,type:1|2}`）拉详细军情；
- *   本 feat 的来袭保命只靠 21383 HURT_MARCH_SIZE 推送驱动（见 engine-flow.js `onRaid`/`#autoStrategies`），无需主动查。
- *   同属游戏原生读、feat 不发的还有：7503 SERVER_INFO / 7575 GET_CROSS_IN_INFOS / 7571 POINT_INFO / 7572 REWARD_INFO /
- *   7577（活动总览、点位、奖励面板的只读查询）——均无需在 feat 内复刻，故未定义常量。
+ * @type {number} CROSS_TREASURE_GET_MARCH_INFOS：行军军情，req `{treasureId,type:1|2}`（1=我方、2=来袭方），
+ *   应答 `crossTreasureGetMarchInfos.{marchInfos[],leaderUid}`。
+ *   **marchInfos 项字段**（报文实证 dashcam 20261018T105933 seq229）：`{uid(字符串,非 Long),level,playerInfo(JSON 串),power,maxArmyPower,armyPower,heros,armys,deadArmys}`。
+ *   我方（type1）`armyPower/maxArmyPower` 齐备→战力门控防御与定向火线急救可判；敌方（type2）`armyPower` 常 undefined、`maxArmyPower` 可用（实证 20261016 旧结论只对敌方成立）。
+ *   现由本 feat **主动查**（借鉴竞对）：掠袭时拉敌我战力做门控防御、战中拉我方战损做按 uid 火线急救、以及 21383 漏推时以 type2 侦察补武装（见 engine-flow.js `#reconMarches`）。
  */
 export const REQ_GET_MARCH_INFOS = 7578;
+/**
+ * @type {number} CROSS_TREASURE_REWARD_INFO：夺宝奖励背包，req `{treasureId}`，
+ *   应答 `crossTreasureRewardInfo.backpack[]{id(Int64),itemId,protect,…}`。掠袭时取未保护项按品质/幸运池择最贵重者用安全锁定(17)保护（借鉴竞对 roundFight）。
+ */
+export const REQ_REWARD_INFO = 7572;
 
 // ─────────────────────── 推送号（NResponseId 段 21371–21386）与 pbAck 业务子字段名 ───────────────────────
 
@@ -163,6 +168,7 @@ export const REQ_FIELD = {
   [REQ_SKILL_BACKPACK_OPEN]: 'crossTreasureSkillBackpackOpen',
   [REQ_SKILL_USE]: 'crossTreasureSkillUse',
   [REQ_GET_MARCH_INFOS]: 'crossTreasureGetMarchInfos',
+  [REQ_REWARD_INFO]: 'crossTreasureRewardInfo',
 };
 
 // ─────────────────────── PB 枚举语义数值（服务器契约，非游戏符号） ───────────────────────
@@ -279,13 +285,20 @@ export const SKILL_COPY = 22;
 export const SKILL_REFRESH = 23;
 /** @type {number} 数据转换（随机转另一科技；type=14=SKILL_TRANSFER，group=2 个人，转场阶段立即用） */
 export const SKILL_TRANSFER = 24;
-/** @type {number} 安全锁定（type=9=PRECTED_REWARD，group 2 个人技；保护已获奖励，需选奖励子面板，引擎暂未自动使用） */
+/** @type {number} 安全锁定（type=9=PRECTED_REWARD，group 2 个人技；保护已获奖励，掠袭时自动锁最贵重一项，见 #protectBestReward）*/
 export const SKILL_PROTECT_REWARD = 17;
 /**
+ * 科技「族(type)级限窗回合内本回合去重」上限（借鉴竞对 `config.skill_limit_round`，键=cross_treasure_skill.type）：
+ *   值=限窗回合号——≤该回合时、同族本回合已用过即拦（防防御/增益类整局逐回合狂烧）；缺省/0=不限。
+ *   type 经 skills.js `SKILL_BY_ID[specId].type` 得到。竞对实测默认如下（1=百战不倒/2=铜墙/5=先知/6=隐形/7=闪现/10=幸运/15=百战不倒新版/16=毫发难伤）。
+ * @type {Object<number,number>}
+ */
+export const SKILL_TYPE_LIMIT = { 1: 9, 2: 9, 5: 10, 6: 9, 7: 9, 10: 9, 15: 9, 16: 9 };
+/**
  * @type {number} 火线急救（type=4=RISE_PLAYER，group 1 队伍技=队长专属；治成员伤兵）。
- *   **逐员战损字段不可得**（dashcam 全趟核对：`team.member[].power` 受击后恒定不降、`fightInfo` 仅
- *   `{beginTime,endTime,fightWin,skillPendingEffectInfoList}` 无逐员伤兵数、7578 来袭方 `armyPower` 为 undefined），无法择“战损最重成员”；
- *   且原生 7551{27} 实发**不带 tarUid**（应答回显 tarUid=0=服务器自决治谁，实证 dashcam 20261017T185937），故引擎也不带 tarUid、跟齐原生。
+ *   **战损判定口径更新（借鉴竞对，报文实证 dashcam 20261018T105933 seq229）**：7578 type1（我方行军）的 `armyPower/maxArmyPower` 齐备，
+ *   可择「armyPower<maxArmyPower 且缺口最大」者按 uid 定向施治（`#mostDamagedUid`）；旧结论「逐员战损不可得」只对 `team.member[].power`/fightInfo/敌方 type2 成立。
+ *   侦察失败/战损数据缺失时回退「不带 tarUid、由服务器自决」（与原生 7551{27} 一致，实证 dashcam 20261017T185937 tarUid=0）。
  *   施治门控：status=FIGHT 且本回合真被掠袭过（#raidRounds）——因为 FIGHT 是每回合必经结算相位（未挨打也进），单靠 status 会每回合白烧（用户口径 2026-10-17：无人受伤不治疗）。
  */
 export const SKILL_AID = 27;

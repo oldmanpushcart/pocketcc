@@ -131,6 +131,8 @@ export const PANEL_CSS = `
     .pc-ulistadd{flex:0 0 auto;width:22px;height:20px;padding:0;border-radius:6px;cursor:pointer;
       border:1px dashed rgba(255,255,255,.28);background:transparent;color:#cfe8ff;font:inherit;font-size:14px;line-height:18px;}
     .pc-ulistadd:hover{background:rgba(255,255,255,.1);}
+    /* uidlist 行首勾选框（fd.itemCheck，夺宝玩家池）：勾中才入池，未勾行由 feat 侧自行排除 */
+    .pc-ulichk{flex:0 0 auto;width:15px;height:15px;margin:0 2px 0 0;cursor:pointer;accent-color:#4aa3ff;}
     .pc-ulistadd:disabled{opacity:.4;cursor:default;}
     .pc-uli .pc-udel{flex:0 0 18px;width:18px;height:22px;padding:0;border:none;background:transparent;
       color:#ff9c9c;font:inherit;font-size:14px;line-height:22px;cursor:pointer;}
@@ -154,12 +156,11 @@ export const PANEL_CSS = `
     .pc-srow.pc-srowoff .pc-srank{opacity:.3;}
     .pc-smove{flex:0 0 auto;width:22px;height:22px;padding:0;border-radius:6px;cursor:pointer;
       border:1px solid rgba(255,255,255,.22);background:transparent;color:#cfe8ff;font:inherit;font-size:14px;line-height:20px;}
-    /* 物品清单字段（type:'itemlist'，秘境拾取）：行不可增删，每行一枚 checkbox + 一个数字输入（背包上限，0=不限）。
-       容器高限 280px 内部滚动，避免百行池撝爆面板（见 mountItemList）。 */
+    /* 物品清单字段（type:'itemlist'，秘境拾取）：行不可增删，每行 [拖拽 序号] 名称 [数字(0=占位显示上限/无上限)] [拾] [店]。
+       容器不单独限高/滚动（整块随面板 .pc-pane 统一滞动），避免清单内嵌滞动条。 */
     .pc-ilist{display:flex;flex-direction:column;gap:4px;width:100%;margin:2px 0 6px;}
     .pc-ilisttop{display:flex;align-items:center;justify-content:space-between;gap:8px;}
-    .pc-irows{display:flex;flex-direction:column;gap:2px;width:100%;max-height:280px;overflow-y:auto;
-      padding-right:2px;}
+    .pc-irows{display:flex;flex-direction:column;gap:2px;width:100%;padding-right:2px;}
     .pc-irow{display:flex;align-items:center;gap:6px;padding:2px 4px;border-radius:4px;background:rgba(255,255,255,.03);}
     /* 可拖拽排序的 itemlist（fd.sortable）：只手柄可起拖（行内有输入框，整行起拖会抢焦点/选字），
        touch-action:none 保证触摸设备上 pointermove 不被滚动抢走（同 .pc-srow） */
@@ -170,13 +171,21 @@ export const PANEL_CSS = `
     .pc-irow.pc-irowoff .pc-irank{opacity:.3;}
     .pc-irow.pc-irowoff{opacity:.5;}
     .pc-ichk{flex:0 0 auto;width:14px;height:14px;margin:0;cursor:pointer;accent-color:#4aa3ff;}
-    .pc-iname{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px;}
+    /* 渠道勾选标签（[拾取]/[商店]）：勾选框+文字紧排，亮色文字避免整行发灰；置灰渠道（disabled）单独降透明+禁选光标 */
+    .pc-ichklbl{flex:0 0 auto;display:inline-flex;align-items:center;gap:2px;cursor:pointer;color:#e8eef7;font-size:12px;}
+    .pc-ichklbl input:disabled{cursor:not-allowed;}
+    .pc-ichklbl:has(input:disabled){opacity:.4;cursor:not-allowed;}
+    /* 名称固定列宽（.pc-iname 66px）保证输入框左对齐；主勾选（拾取）靠 margin-left:auto 把「拾取/商店」整组推到行右侧对齐成列 */
+    .pc-ichkpush{margin-left:auto;}
+    .pc-ichk2{flex:0 0 auto;width:14px;height:14px;margin:0;cursor:pointer;accent-color:#4aa3ff;}
+    .pc-ichklbl2{margin-left:14px;}
+    .pc-iname{flex:0 0 66px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px;color:#e8eef7;}
     /* 行内角标：池项带 cap（游戏自身硬上限，如秘境 ITEM.para1_v1）时标 ≤N，提醒超出会被自动修正 */
     .pc-icap{flex:0 0 auto;padding:0 4px;border-radius:4px;font-size:11px;color:#9ecbff;
       background:rgba(74,163,255,.12);border:1px solid rgba(74,163,255,.22);}
     .pc-imax{flex:0 0 auto;width:64px;padding:2px 4px;border-radius:4px;
       border:1px solid rgba(255,255,255,.15);background:rgba(0,0,0,.25);color:#e8eef7;font:inherit;font-size:12px;}
-    /* 背包上限 placeholder（cap=0 时的「不限」）：与打野 .pc-hln 同款亮色，不被浏览器默认浅灰吞掉 */
+    /* 背包上限 placeholder（cap=0 时的「无上限」）：与打野 .pc-hln 同款亮色，不被浏览器默认浅灰吞掉 */
     .pc-imax::placeholder{color:#cfe3ff;opacity:1;}
     .pc-smove:hover{background:rgba(255,255,255,.1);}
     .pc-smove:disabled{opacity:.3;cursor:default;}

@@ -143,10 +143,14 @@ const CSS = `
     border-radius:8px;background:rgba(14,18,26,.96);border:1px solid rgba(255,255,255,.18);
     box-shadow:0 6px 20px rgba(0,0,0,.5);z-index:2;padding:4px;}
   .pcw-pop[hidden]{display:none;}
+  .pcw-pop.atpop{max-height:300px;}
   .pcw-popitem{display:block;width:100%;text-align:left;border:none;background:transparent;color:#e8eef7;
     font:inherit;font-size:12px;padding:5px 8px;border-radius:5px;cursor:pointer;
     white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
   .pcw-popitem:hover{background:rgba(70,140,255,.22);}
+  .pcw-atuid{color:#9fd0ff;font-size:11px;margin-left:4px;cursor:pointer;}
+  .pcw-atuid::after{content:' ⧉';opacity:.7;}
+  .pcw-atuid:hover{color:#cfe6ff;}
   .pcw-popfilter{display:block;width:100%;box-sizing:border-box;margin:0 0 4px;padding:4px 8px;
     border-radius:6px;border:1px solid rgba(255,255,255,.2);background:rgba(0,0,0,.35);
     color:#e8eef7;font:inherit;font-size:12px;}
@@ -972,11 +976,22 @@ export class ChatOverlay {
           .indexOf(q) >= 0
       )
         list.push(s);
-      if (list.length >= 80) break; // 渲染上限，防大列表卡 DOM
+      if (list.length >= 500) break; // 渲染上限（500 覆盖现实联盟规模，仍设上界防大列表卡 DOM）
     }
     box.innerHTML =
       list
-        .map((s, i) => `<button class="pcw-popitem" data-i="${i}">${esc('@' + s.name)}</button>`)
+        .map(
+          (s, i) =>
+            `<button class="pcw-popitem" data-i="${i}">${esc('@' + s.name)}${
+              s.uid
+                ? '<span class="pcw-atuid" data-copy="' +
+                  esc(String(s.uid)) +
+                  '">(' +
+                  esc(String(s.uid)) +
+                  ')</span>'
+                : ''
+            }</button>`,
+        )
         .join('') || '<div class="pcw-empty">无匹配对象</div>';
     Array.from(box.querySelectorAll('.pcw-popitem')).forEach((b) => {
       b.addEventListener('click', () => {
@@ -984,6 +999,13 @@ export class ChatOverlay {
         this.#atPop.hidden = true;
         if (!s) return;
         this.#insertAt(s);
+      });
+    });
+    // UID 仅展示：点击只复制、不触发所在行的 @ 插入（stopPropagation 挡住冒泡到 button）
+    Array.from(box.querySelectorAll('.pcw-atuid')).forEach((el) => {
+      el.addEventListener('click', (ev) => {
+        ev.stopPropagation();
+        this.#copyText(el.dataset.copy || '');
       });
     });
   }

@@ -12,9 +12,10 @@
  *   猜错可继续提交（服务端不锁，靠 play/show 阶段计时），命中即 `uidWinMap[我的uid]=true`。
  *
  * 视图编解码（聊天汇总用，纯函数无网络）：`viewToStr([2,1,-1,-1,-1])`→5 位定长串 `"21---"`（我方广播用 `-`）；
- *   `strToView(s)`→视图数组：**数字位=已知、任意非数字符号=未知占位（-1）**——真机队友手输时不确定的位用非数字表示，
- *   符号不固定（`53**32`/`53??32`/`53--32` 等价，但数字对应的位固定，见 dashcam 队友频道 17 手输）；
- *   `parseCodeViews(text)`→从一条聊天文本按「数字/符号为码体、空白与字母/汉字为分隔」正则切出定长 5 位候选视图；
+ *   `strToView(s)`→视图数组：**数字位=已知、任意标点/符号或 x/o 字母=未知占位（-1）**——不枚举掩码符，凡「非数字、
+ *   非分隔符」皆视作未知位（真机队友手输的未知位符号五花八门：`?`/`*`/`-`/`×`/`□`/`x`/`o`…，穷举白名单必漏）；
+ *   含真实单词字母（x/o 之外）即判噪声丢弃，避免把英文词误读成视图；
+ *   `parseCodeViews(text)`→以「空白/汉字/emoji/成对句读标点」切出定长 5 且≥1 数字位的码体段为候选视图；
  *   `merge([[2,-1,..],[-1,1,..]])`→逐位取已知。内部统一用 `-1` 表示未知。
  */
 
@@ -22,6 +23,31 @@
 const MAX_CANDIDATES = 1000;
 /** @type {number} 密码视图位数（codeNum 定长，与真机 5 位对齐） */
 const CODE_LEN = 5;
+/**
+ * @type {RegExp} 码体**分隔符**（u 标志）：空白、汉字（`\p{Script=Han}`）、emoji（`\p{Extended_Pictographic}`），
+ *   以及几乎不会被队友当作「单格未知掩码」的成对/句读标点（半角与全角的括号、书名号、引号、逗号、分号、冒号、
+ *   斜杠、竖线等）。**刻意不含** `? ？ * ＊ - _ ＿ ~ × ○ ·` 等常作未知位占位的符号——它们留在码体内按「非数字即未知」解析。
+ *   思路是「枚举分隔符（小而稳定）而非枚举掩码符（无穷无尽）」：任何未预见的手输符号都自动归为未知位，不再丢视图。
+ */
+const CODE_SEP_RE =
+  /[\s\p{Script=Han}\p{Extended_Pictographic}，。、；：（）〔〕《》〈〉【】［］｛｝“”‘’()[\]{}<>,;:|"\\/]/u;
+/** @type {RegExp} 可作未知占位的字母（x/o 两族，人类填「空格」的通用写法）；其余文字字母视为噪声。 */
+const MASK_LETTER_RE = /[xXoO]/;
+/** @type {RegExp} 任意标点或符号（`\p{P}`/`\p{S}`）——一律视作未知掩码位，无需枚举具体符号。 */
+const SYMBOL_RE = /[\p{P}\p{S}]/u;
+
+/**
+ * 单字符数字值：ASCII `0-9` 与全角 `０-９` 归一为 0..9，其余回 -1（非可识别数字）。
+ *   不用 `Number(ch)` 也不用 `\p{Nd}`——前者不认全角、后者含阿拉伯-印度数字等本场景不会出现的字符且无法直接取值。
+ * @param {string} ch 单个字符
+ * @returns {number} 0..9 或 -1
+ */
+function digitValue(ch) {
+  var c = ch.charCodeAt(0);
+  if (c >= 48 && c <= 57) return c - 48; // ASCII 0-9
+  if (c >= 0xff10 && c <= 0xff19) return c - 0xff10; // 全角 ０-９
+  return -1;
+}
 
 /**
  * codeNum 是否已全明文（无 -1）。全明文的密码无需穷举，直接提交唯一候选。
@@ -92,42 +118,47 @@ export function viewToStr(codeNum) {
 }
 
 /**
- * 聊天串 → 视图数组（**数字位=已知 0..9、任意非数字符号=未知 -1**）。
- *   真机队友手输不确定的位用非数字表示，符号不固定（`?`/`*`/`-`/`×`/`＿`…），但数字对应的位固定——故不校验具体符号、
- *   只按「非数字即未知」逐位映射（调用方 parseCodeViews 已先按位定长切好）。跳过空白；含字母/汉字即判噪声回 null（非纯视图）。
+ * 聊天串 → 视图数组（**数字位=已知 0..9、任意标点/符号或 x/o 字母=未知 -1**）。
+ *   不枚举掩码符：凡「非数字」的字符，只要属于标点/符号（{@link SYMBOL_RE}）或 x/o 占位字母（{@link MASK_LETTER_RE}）
+ *   即视作未知位；出现其它文字字母（英文单词、其它语系）即判整串为噪声回 null，避免把 "c00lk" 之类误读成视图。
+ *   要求至少含 1 个已知数字位（队友至少知道自己那一位），否则回 null。调用方 parseCodeViews 已先切出定长段。
  * @param {string} s 待解析串
  * @returns {Array<number>|null} 视图数组或 null（非法）
  */
 export function strToView(s) {
   s = String(s == null ? '' : s);
   if (!s.length) return null;
-  if (/[\p{L}]/u.test(s)) return null; // 含字母/汉字即非纯视图（噪声），丢弃
   var out = [];
+  var hasDigit = false;
   for (var i = 0; i < s.length; i++) {
     var ch = s.charAt(i);
-    if (ch >= '0' && ch <= '9')
-      out.push(ch.charCodeAt(0) - 48); // 数字=已知
-    else if (/\s/.test(ch))
-      continue; // 空白=分隔，跳过
-    else out.push(-1); // 其余任意非数字=未知占位（符号不限）
+    var dv = digitValue(ch);
+    if (dv >= 0) {
+      out.push(dv); // 数字=已知（ASCII/全角均经 digitValue 归一为 0..9）
+      hasDigit = true;
+    } else if (MASK_LETTER_RE.test(ch) || SYMBOL_RE.test(ch)) {
+      out.push(-1); // 标点/符号掩码 或 x/o 字母占位 = 未知
+    } else {
+      return null; // 其它文字字母=噪声，整串判非法
+    }
   }
-  return out.length ? out : null;
+  return hasDigit ? out : null; // 纯掩码（无任何已知位）不是有效视图
 }
 
 /**
- * 从一条聊天文本提取 5 位密码视图（队友手输/我方广播均适用）：以「空白、字母（含中日韩汉字）、句子标点」为分隔
- *   切出「数字+掩码符号」候选段，段长恰为 {@link CODE_LEN} 者交 {@link strToView} 按位解析。
- *   分隔标点只取句读（，。、；：,;: 与括号），**不含 `? * - ×` 等可作未知占位的符号**（它们当掩码保留）。
- *   数字位固定、未知位用任意非数字符号（`53**32`/`53??32`/`53--32` 等价）。噪声段（长度不符/含字母）自然丢弃。
+ * 从一条聊天文本提取 5 位密码视图（队友手输/我方广播均适用）：以 {@link CODE_SEP_RE}（空白/汉字/emoji/成对句读标点）
+ *   切分，取长度恰为 {@link CODE_LEN} 的码体段交 {@link strToView} 按位解析（其内含「≥1 已知数字位」校验）。
+ *   **为何要求定长 5**：每个数字的「位置」只有在完整的 5 格框架里才可对齐——队友各报自己那一位，位数不足或超长的段
+ *   无法定位，宁弃勿猜。`95185`/`9----`/`xxxx5`/`???8?`/`□□□□5` 等价可切；纯掩码段与含真实单词的段自然丢弃。
  * @param {string} text 聊天原文
  * @returns {Array<Array<number>>} 视图数组列表（可能为空）
  */
 export function parseCodeViews(text) {
   var s = String(text == null ? '' : text);
   var out = [];
-  var segs = s.split(/[\s\p{L}，、。；：“”‘’（）〔〕《》【】,;:(){}<>]+/u);
+  var segs = s.split(CODE_SEP_RE); // split 会按正则所有匹配处切开（无需 /g），且不留 lastIndex 残留
   for (var i = 0; i < segs.length; i++) {
-    if (segs[i].length !== CODE_LEN) continue;
+    if (segs[i].length !== CODE_LEN) continue; // 定长 5 才能对齐每一位数字的位置
     var v = strToView(segs[i]);
     if (v && v.length === CODE_LEN) out.push(v);
   }

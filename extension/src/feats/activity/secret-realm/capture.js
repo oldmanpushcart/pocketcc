@@ -46,16 +46,25 @@
  *   ① 的轮询兜底只在**推送通道失联**（tuning.pushAliveMs 内一条 21527 都没来过）时启用，并用自持的 #pollSig
  *   防逐拍重发——因为 feedInfo.eventSpecId 会在同一值上连续挂十几秒，拿它做 #handled 身份会漏、不做身份会重发。
  *
- * 不做的事：不主动投喂 enigma_beast_behave 行 5/6 的道具（报文实证其分值与免费手拍同量级，却要消耗秘境背包道具）。
+ * 大BOSS 环节的投喂（BOSS_AUTO.feed 恒开、无面板开关；必选环节）：`capturingPetPos.boss===1` 时才投，选物与发包完全
+ *   照游戏自己的链路（见 #feedBossItem）——手拍 changeScore 实测 6~11，而大BOSS 要 allFavor=1000000，
+ *   不投道具根本拍不动。普通异能兽窗不投（7000~5000 分靠手拍+能量拍就能填，白耗道具）。
+ *   `boss===1` 是**精确**闸而非近似：全库只有大BOSS 窗带这个字段（实证 dashcam 20261011T203911 与
+ *   20261017T210400，两次都落在同一坐标 (203,203) 且窗内 allFavor 恒为 1000000；其余录音里连
+ *   allFavor=11000 的高分宠都不带 boss 字段，protobuf 缺省即 0）→ 不会把道具错投给普通宠或小BOSS。
  *
  * 只读+发包红线：只调游戏原生 petCaptureOperation，另多一个原生收窗动作（UIManager.CloseUI，与面板自己
  *   close() 同源、只销毁窗口实例，不碰 Update/Delete、不镜像本地态——capturingInfo / capturingPetPos
- *   均由游戏自己的推送与应答刷新，本引擎逐拍现读）。
+ *   均由游戏自己的推送与应答刷新，本引擎逐拍现读）。**不碰竞对脚本那套 UI 层驱动**
+ *   （cc.find 节点路径 + 写 `_touchProgressAdd=13` + 直调 onTouchBegin/dragTargetSuccess/onItemFeedClick），
+ *   它踩改写本地态的红线且改版即碎；我们只拿它的**业务判据**（有道具就投、投首个可用的），发包走协议层。
  */
 import { createCycle } from '../../../core/cycle.js';
 import {
   SPEC_TAP,
   SPEC_ENERGY_USE,
+  SPEC_FEED_FIRST,
+  SPEC_FEED_COUNT,
   ENERGY_MAX,
   EVT_TYPE_DRAG,
   EVT_TYPE_FEED_POP,
@@ -125,6 +134,10 @@ export class CaptureEngine {
   #pollSig = '';
   /** @type {string} 上一次 21530 报的在拍目标（`x,y[ boss]`，''=不在拍），仅用于识别换宠/收尾 */
   #petKey = '';
+  /** @type {number} 下一次允许投喂道具的时刻（Date.now；兼作「没货时也别逐拍翻表」的轻退避） */
+  #nextFeedAt = 0;
+  /** @type {boolean} 本只宠已就「两个投喂格都没货」打过 info（换宠/重新开始才重置，防刷屏） */
+  #toldNoFeed = false;
 
   /** @param {object} env 注入底座 {alive, realmActive, cfg, secret, gameData, gameConf, l10n, ui, log} */
   constructor(env) {
@@ -161,6 +174,12 @@ export class CaptureEngine {
     // ③ 能量满 → 高分值持续拍（390 分/拍，报文 14/14 复现）
     if (toNum(cap.selfenergy) >= ENERGY_MAX) return this.#useEnergy(pab);
 
+    // ③′ 大BOSS 窗的投喂道具（BOSS_AUTO.feed 恒开，无面板开关）：排在手拍之前，投完照常回正常节拍继续拍
+    if (st.boss) {
+      const bb = env.cfg().boss;
+      if (bb && bb.feed && this.#feedBossItem(pab)) return tuning.tapIntervalMs;
+    }
+
     // ⑤ 免费手拍打底（受每秒限额闸门约束）
     if (!this.#tapBudget()) return tuning.tapIntervalMs * 2; // 本秒配额用尽 → 稍等再复检
     this.#op(pab, SPEC_TAP, null);
@@ -168,13 +187,14 @@ export class CaptureEngine {
   }
 
   /**
-   * 在拍取样：游戏现场的 `capturingPetPos` 已置位（push 21530，结束推 {x:-1,y:-1}）时回 {cap}，否则 null。
+   * 在拍取样：游戏现场的 `capturingPetPos` 已置位（push 21530，结束推 {x:-1,y:-1}）时回 {cap,boss}，否则 null。
    * 推送入口（拖拽/心动时刻）与轮询入口共用这份闸门，保证两条路对「能不能拍」的判断一字不差。
    * **不拿 capturingInfo 做闸门**：窗口起点不保证有 feedInfo 下发（实证 7 个窗口里两个 BOSS 窗口的起点没有），
    *   而 capturingInfo 可能还是上一只的残留（nowFavor>=allFavor）→ 拿它当在位/未喂满判据会把新宠锁死。
    *   收尾另有权威：21530 的 {x:-1,y:-1}（实证 6 个已收窗全有）。
    * @param {object} pab PabController 实例
-   * @returns {{cap:object}|null} 在拍回 {cap}（cap 恒为对象，缺 feedInfo 时是 EMPTY_CAP），不在拍回 null
+   * @returns {{cap:object,boss:boolean}|null} 在拍回 {cap,boss}（cap 恒为对象，缺 feedInfo 时是 EMPTY_CAP；
+   *   boss=这一只在拍的是**大BOSS**（allFavor=1000000）而非普通宠，21530 载荷 `boss:1` 实证且全库精确），不在拍回 null
    */
   #feedState(pab) {
     const pos = pab.capturingPetPos;
@@ -182,7 +202,57 @@ export class CaptureEngine {
     const y = Number(pos && pos.y);
     if (!(x > 0) || !(y > 0)) return null; // 未置位 / 服务器已推 {x:-1,y:-1} 收尾 = 不在拍
     const cap = pab.capturingInfo;
-    return { cap: cap && typeof cap === 'object' ? cap : EMPTY_CAP };
+    return {
+      cap: cap && typeof cap === 'object' ? cap : EMPTY_CAP,
+      boss: Number(pos.boss) === 1,
+    };
+  }
+
+  /**
+   * 大BOSS 环节投喂道具（8546 specId 5/6）。
+   * 选物与发包均源码 verbatim PabPetCaptureNodeNew：`init` 用 `behave[t+5].item` 填 `_captureItemIds`（t=0/1），
+   *   `onItemFeedClick` → 首个 `getItemNumById(itemId)>0` 的格子 → `petCaptureOperation(t+5)`；
+   *   而 `RealPabController.petCaptureOperation(e)` 的载荷**只有 `{specId:e}`**（不带 x/y/bossId——
+   *   旧设计文档猜的「含 bossId」已被源码推翻），且 `checkCaptureOperationCd` 首行只拦 specId===1
+   *   → 投喂不受每秒限额约束（#tapBudget 不占用它那一格）。
+   * 为什么要投：大BOSS `allFavor=1000000`，免费手拍 changeScore 实测仅 6~11 → 光靠手拍不可能拍满。
+   * 节流 `tuning.bossFeedGapMs`：报文实证 dashcam 20261018T200040 人手连续投 10 件落在 2.5s 内、
+   *   单件间隔 100~600ms、每件 changeScore=400（道具身份闭环：8542{specId:19}×10 → 21525 里 41011+10 →
+   *   8546{specId:5}×10）→ 故取 200ms。**成功口径不以 favor 达标为判据**：人手全程也只拍到 997805/1000000
+   *   未拍满，投喂只在道具在场时逐格尽力投（缺料即交商店补货，见 index.js shop 档），不追求拍满。
+   * @param {object} pab PabController 实例
+   * @returns {boolean} true=这一拍投出了一件
+   */
+  #feedBossItem(pab) {
+    const env = this.#env;
+    const now = Date.now();
+    if (now < this.#nextFeedAt) return false;
+    for (let t = 0; t < SPEC_FEED_COUNT; t++) {
+      const spec = SPEC_FEED_FIRST + t;
+      const row = env.l10n.tableRow(TABLE_BEAST_BEHAVE, spec);
+      const itemId = row ? Number(row.item) : 0;
+      if (!itemId || env.secret.getItemNumById(itemId) <= 0) continue;
+      this.#nextFeedAt = now + tuning.bossFeedGapMs;
+      this.#toldNoFeed = false;
+      const favor = row && row.favor != null ? String(row.favor) : '?';
+      this.#op(
+        pab,
+        spec,
+        'boss feed item ' + itemId + ' (behave ' + spec + ', favor=' + favor + ')',
+      );
+      return true;
+    }
+    // 两格都没货：不再逐拍翻表（下一个节流点复检），并把「缺道具」只说一次
+    this.#nextFeedAt = now + tuning.bossFeedGapMs;
+    if (!this.#toldNoFeed) {
+      this.#toldNoFeed = true;
+      env.log.info(
+        'boss feed skipped: neither behave %d/%d item is in the secret bag (needs manual restock).',
+        SPEC_FEED_FIRST,
+        SPEC_FEED_FIRST + SPEC_FEED_COUNT - 1,
+      );
+    }
+    return false;
   }
 
   /**
@@ -215,6 +285,8 @@ export class CaptureEngine {
     }
     this.#quietUntil = 0;
     this.#pollSig = '';
+    this.#nextFeedAt = 0; // 换一只就重新允许投一次（上一只的节流点不该压住新一只的首件）
+    this.#toldNoFeed = false;
     env.log.info('capture: feeding %s.', key);
   }
 
@@ -335,6 +407,9 @@ export class CaptureEngine {
   /**
    * 弹窗择优：在 eventSpecId 候选里挑 enigma_beast_behave `.favor`（"min|max"）上限最高的一项。
    * 全部读不到 favor 时回候选首项（至少不错过这次事件）。
+   * **心动时刻候选实测恒为 `[7,8,9,10]`**（两份录音 21527 type=5 一致）：推送里的 `specId[]` 就是候选值本身，
+   *   而游戏/竞对弹窗自己补发的是 `7 + 落点下标`（同值域）→ 本函数直取候选值发包即为正确形态（实证：用户手操
+   *   20261018 全发 10、20261017 混合 7/8/9/10，均与本处取最高 favor 上限的口径一致）。
    * @param {Array<number|string>} es 候选 specId 数组
    * @returns {number} 目标 specId
    */
@@ -405,6 +480,8 @@ export class CaptureEngine {
     this.#tapCount = 0;
     this.#pollSig = '';
     this.#petKey = '';
+    this.#nextFeedAt = 0;
+    this.#toldNoFeed = false;
     this.#active = true;
     if (ctx && ctx.on && typeof ctx.on.push === 'function') {
       this.#lastPushAt = Date.now(); // 先给一个存活窗，避免开局第一拍就走兜底路

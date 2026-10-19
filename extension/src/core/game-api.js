@@ -988,6 +988,16 @@ function taskRelaxTypeOpen(type) {
  */
 const GAME_DAY_RESET_OFFSET = 57600;
 
+/**
+ * @type {number} 特殊科技组 sid 10900（联盟建筑捐赠）：剩余捐赠次数走独立能量池
+ * EnergyType.ALLIANCE_BUILDING_DONATE_GOLD_NUM=6，且服务端恒回 addPoint=0（只加建筑经验、不计个人每日荣誉）。
+ * 能量池实测（dashcam 全量 10021 归集）：pointMax=200、restoreSec=20 —— 比通用池 4（10/1800）大两个数量级、
+ * 回点快 90 倍；把它混进普通科技目标会长期霸占 donateTarget（它排在 dev 列表第 8 组，前序满级即命中），
+ * 把捐赠交互抬到 3 次/分钟的常驻量。故 ACL 把它从 donateTarget 摘出、单列 buildingTarget 披露，
+ * 由 feat 作「补捐链」消费（只在普通链本轮没捐成时搭顺风车）。
+ */
+const SCIENCE_SID_BUILDING_DONATE = 10900;
+
 export const gameData = {
   /** 当前服务器时间（秒），实时取值不缓存；取不到返回 0 */
   serverTime() {
@@ -1633,15 +1643,18 @@ export const gameData = {
    * 口径：recommendId 为官员推荐项（0=无推荐）；costCoin 走游戏
    * getCostCoin()（PLAYER_LEVEL[等级].donation_gold，随等级变）；dailyHonor 为今日已获荣誉
    * （科技捐与遗迹捐共用同一计数：1067 应答 curPoint 直接写回 donateDailyHonor，抓包实证）。
-   * firstDonateable：按游戏弹窗 showBtn 同款可捐口径扫的第一项（无有效推荐时的回退目标）——
+   * firstDonateable：按游戏弹窗 showBtn 同款可捐口径扫的第一项（诊断用，可能就是建筑项 10900）——
    *   isLock()（ItemData 方法：sid=10400 恒 false，服务器初始化后为 true）且 !isMaxLevel()（未满级）
    *   且 isStatus()（status==0，即非研究中；研究中捐赠按钮被隐藏）；找不到返回 null。
-   * donateTarget：本轮真正该捐的目标，已把「推荐优先/回退首项」两级策略与可捐校验合成——
-   *   推荐项（RecommendId，即 sid）必须自身通过同一 canDon 口径才算数，否则回退 firstDonateable，
-   *   两者皆无则 null（上层跳过）。这是对「满级/研究中的推荐项直接捐会被服务器拒」的修正。
+   * donateTarget：本轮真正该捐的「普通科技」目标（出个人荣誉那条），已把可捐校验与优先级合成——
+   *   推荐项（RecommendId，即 sid）必须自身通过同一 canDon 口径才被采纳，否则回退首个可捐的
+   *   **非建筑**项；两者皆无则 null（上层跳过，建筑余量交给 buildingTarget 补捐）。这是对
+   *   「满级/研究中的推荐项直接捐会被服务器拒」的修正，也是对「10900 霸占首项导致常驻高频捐赠」的修正。
+   * buildingTarget：sid 10900（联盟建筑捐赠）自身可捐时给出 {id,name,recommended}，否则 null；
+   *   recommended 仅当官员推荐位恰为 10900 且其可捐时为 true。次数池与荣誉语义见 SCIENCE_SID_BUILDING_DONATE。
    * honorCap：今日荣誉上限，走游戏 Alliance.getAllianceScienceScore()（内部读 DATACONFIG 16005），
    *   取不到为 0（上层据此不设此闸）。
-   * @returns {object|null} {recommendId,recommendName,dailyHonor,honorCap,costCoin,firstDonateable,donateTarget,donateRecommended}；不在盟/数据未填充返回 null
+   * @returns {object|null} {recommendId,recommendName,dailyHonor,honorCap,costCoin,firstDonateable,donateTarget,donateRecommended,buildingTarget}；不在盟/数据未填充返回 null
    */
   allianceScience() {
     // 现读、不缓存（同 allianceBoss：游戏由 1143 应答 / push 10430/10432 刷新该容器，缓存会在刷新后读到过期科技态）
@@ -1664,23 +1677,32 @@ export const gameData = {
         return it && typeof it.getName === 'function' ? String(it.getName() || '') : '';
       };
       var recId = Number(src.RecommendId) || 0;
+      // 一趟扫描同时收三个口径：任意首项（诊断）/ 首个非建筑项（普通链回退）/ 建筑项本身（补捐链）
       var first = null;
+      var firstNormal = null;
+      var building = null;
       var lists = [src.scienceDevDataList, src.scienceWarDataList];
-      for (var li = 0; li < lists.length && !first; li++) {
+      for (var li = 0; li < lists.length; li++) {
         var arr = lists[li] || [];
         for (var i = 0; i < arr.length; i++) {
           var it = arr[i];
-          if (canDon(it)) {
-            first = { scienceId: Number(it.sid) || 0, name: nameOf(it) };
-            break;
+          if (!canDon(it)) continue;
+          var id = Number(it.sid) || 0;
+          if (!first) first = { scienceId: id, name: nameOf(it) };
+          if (id === SCIENCE_SID_BUILDING_DONATE) {
+            if (!building) building = { id: id, name: nameOf(it) };
+          } else if (!firstNormal) {
+            firstNormal = { scienceId: id, name: nameOf(it) };
           }
+          if (first && firstNormal && building) break;
         }
+        if (first && firstNormal && building) break;
       }
-      // 两级目标：推荐项须自身可捐才采纳，否则回退首项
+      // 普通链目标：推荐项须自身可捐才采纳（建筑项不算普通链目标），否则回退首个可捐的非建筑项
       var target = null,
         recommended = false,
         recName = '';
-      if (recId > 0) {
+      if (recId > 0 && recId !== SCIENCE_SID_BUILDING_DONATE) {
         var rec = src.getScienceItemDataByGroupId(recId);
         if (canDon(rec)) {
           target = { id: recId, name: nameOf(rec) };
@@ -1688,8 +1710,17 @@ export const gameData = {
           recName = target.name;
         }
       }
-      if (!target && first) {
-        target = { id: first.scienceId, name: first.name };
+      if (!target && firstNormal) {
+        target = { id: firstNormal.scienceId, name: firstNormal.name };
+      }
+      // 建筑补链目标：官员把推荐位给了 10900 时也算「推荐」，仅供日志与上层判定
+      var bldTarget = null;
+      if (building) {
+        bldTarget = {
+          id: building.id,
+          name: building.name,
+          recommended: recId === SCIENCE_SID_BUILDING_DONATE,
+        };
       }
       var a2 = userData().Alliance;
       var cap =
@@ -1705,6 +1736,7 @@ export const gameData = {
         firstDonateable: first,
         donateTarget: target,
         donateRecommended: recommended,
+        buildingTarget: bldTarget,
       };
     } catch (e) {
       return null;
@@ -2479,8 +2511,34 @@ export const secretRealm = {
     }
   },
   /**
+   * 已在保护中的宠物 id 列表（游戏 verbatim `getBagPetIsPretecting` 的数据源：`roomBagInfo.protectBeasts`）。
+   * 符号知识收口在此：那个数组的元素是 **protobuf Int64**（游戏侧靠 `.equals(e)` 比对），
+   *   而上层拿到的是池化对象、且红线要求 64 位 ID 不做 Number 转换 → 统一在此按 `toString()` 归成字符串集。
+   * @returns {string[]} 保护中的宠物 id（背包未初始化/符号缺失回空数组，上层据此**不拦**）
+   */
+  getProtectingPetIds() {
+    var p = secretRealm.getPabController();
+    var arr = (p && p.roomBagInfo && p.roomBagInfo.protectBeasts) || null;
+    if (!Array.isArray(arr)) return [];
+    var out = [];
+    for (var i = 0; i < arr.length; i++) {
+      var v = arr[i];
+      if (v == null) continue;
+      try {
+        out.push(String(typeof v.toString === 'function' ? v.toString() : v));
+      } catch (e) {
+        /* 单个元素取不到就跳过，不能让整表读废 */
+      }
+    }
+    return out;
+  },
+  /**
    * 本人是否队长（游戏 verbatim `isTeamLeader(uid=true 口径)`：`String(UserData.UID) === roomBaseInfo.leaderUid`）。
-   * 上临时停泊平台（176）仅队长可派（实证 NWorldPabBossPlanePopup.refreshUI），治疗不要求此闸。
+   * 两个玩法都拿它当闸：① 上临时停泊平台（176）——verbatim `NWorldPabBossPlanePopup.refreshUI` 里
+   *   `marchBtn.active = isTeamLeader()`；② 攻打 BOSS（8521）——**UI 本身不查**（`NWorldPabBossPopup.refreshUI`
+   *   覆盖了基类那句 `active = _isOpen && isTeamLeader() && !_haveSelfTeam`，`state===BOSS_FIGHTING` 直接置 active），
+   *   但 8521 驱动的是**全队那一条**行军（roomBaseInfo 实证为队级快照：单一 startPoint/marchState + leaderUid），
+   *   多人房各自发只会互抢方向盘，故主动收到队长（竞对脚本亦同款）。治疗不要求此闸。
    * @returns {boolean} roomBaseInfo 缺失/符号缺失回 false
    */
   isTeamLeader() {
@@ -2576,6 +2634,24 @@ export const csHunt = {
       return !!c.isOpenCSTeamHunt() && Number(c.huntCount) > 0;
     } catch (e) {
       return false;
+    }
+  },
+  /**
+   * 当前被掠夺行军数（csHuntCtrl().lootMarchNum）：控制器权威态，由推送 21383 HURT_MARCH_SIZE 直接写入
+   *   （`lootMarchNum = marchSize`，见 references/游戏逆向/夺宝奇兵分析报告.md「21383 直接写 lootMarchNum」）。
+   *   借鉴竞对 roundFight 以 `lootMarchNum > 0` 作「正在被真人掠夺」的一手判据。#7 真实收益：它是游戏侧写的权威计数，
+   *   **不被 feat 侧处置时把 #raidSize 置 0 的清零污染**，故能跨回合持续反映仍在场的掠袭（而非「漏推兜底」：
+   *   lootMarchNum 本身也是由游戏侧 21383 handler 写入，漏推时两侧同失）；且 21383 有 ~40s 心跳复位 0，无陈旧 >0 长期误武装风险。
+   *   符号缺失/控制器不在场/字段非数值一律回 0（调用方据此降级到 7578 侦察）。
+   * @returns {number} 被掠夺行军数（0=无/未知）
+   */
+  lootMarchNum() {
+    var c = csHuntCtrl();
+    if (!c) return 0;
+    try {
+      return Number(c.lootMarchNum) || 0;
+    } catch (e) {
+      return 0;
     }
   },
   /**

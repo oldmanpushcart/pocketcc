@@ -24,7 +24,9 @@
  *
  * 调度（A 族 createCycle，单一收敛态 + 全本地可重放读）：
  *   - wait 档：睡到点 + 缓冲（封顶 IDLE×8，到点前零发包，重读无损）；
- *   - capped 档：睡到本地日界 + 缓冲（封顶 26h），不逐轮空查；
+ *   - capped 档：睡到本地日界 + 缓冲（封顶 26h），不逐轮空查；例外：日界后 1h 宽限窗内仍判 capped
+ *     降为 IDLE 巡检——防御保险：若日切重置回写滞后（直发不回写）或 times 实为滚动队列，
+ *     一次性 24h 长睡会整天跳过；注：36 档累计间隔≈>24h，正常跑不到封顶，此分支平时无感（20261019）。
  *   - 数据未就绪（timeReward null / 表未加载）：IDLE 档巡检；
  *   - 连续被拒 3 次：退 IDLE×2。
  *
@@ -57,6 +59,9 @@ const WAIT_CAP_MS = IDLE_TICK_MS * 8;
 
 /** @type {number} 日切唤醒缓冲（毫秒），对齐矿洞/战争之源的日界留白口径 */
 const DAY_ROLL_BUFFER_MS = 1000 * 60 * 5;
+
+/** @type {number} 日界后宽限窗（毫秒）：窗内 capped 判据不可信（重置回写常晚于本端醒来），降为 IDLE 巡检 */
+const DAY_ROLL_GRACE_MS = 1000 * 60 * 60;
 
 /** @type {number} 非服务器返回的哨兵 code（发送异常/在途频控用，与真实 s 码区分） */
 const CODE_NOT_SENT = -1;
@@ -111,10 +116,14 @@ function readyInfo() {
 
 /**
  * 睡到下一个本地日界 + 缓冲（capped 档）；封顶 26h 防时钟异常导致超睡。
+ * 日界后 1h 宽限窗内不做长睡：此时仍判 capped 大概率是服务端重置尚未回写（旧 times 钉在 UserData），
+ * 一次性 24h 睡会跳过整天；改 IDLE 巡检直到回写追平或窗过。
  * @returns {number} 毫秒
  */
 function dayRollDelay() {
   var now = new Date();
+  var dayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+  if (now.getTime() - dayStart < DAY_ROLL_GRACE_MS) return IDLE_TICK_MS;
   var next = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1, 0, 0, 0, 0);
   var ms = next.getTime() - now.getTime() + DAY_ROLL_BUFFER_MS;
   return Math.min(Math.max(ms, IDLE_TICK_MS), 1000 * 60 * 60 * 26);

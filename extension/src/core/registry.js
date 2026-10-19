@@ -1,5 +1,6 @@
 // 特征存储 + 运行时编排。功能 descriptor 的单一真相在各功能模块的 reactor.register（经 reactor.list() 收集）；
 // internal 特例（不经 reactor）descriptor 留在下方 INTERNAL_FEATURES：reconnect 由 session hook 直读 configs.reconnect；
+// keepAlive 由 apply 回调驱动 window.pocketccAntiThrottle（后台保活档位）；
 // netLog / eventLog 分别由 apply 回调驱动 net.setLog / event.setLog（两个互不相干的独立开关，各自存储）。
 // 面板层级（类别→组→子项）由 core/menu.js 声明，descriptor 只管字段/存储/默认值；
 // 启用勾选即 configs[id].enabled（组闸门级联出的 enabled 变化也走同一真相字段，reactor 无感知）。
@@ -31,6 +32,24 @@ const INTERNAL_FEATURES = [
       { key: 'intervalSec', label: '重连间隔(秒)', min: 5, step: 5 },
       { key: 'connectTimeoutSec', label: '连接超时(秒)', min: 10, step: 10 },
     ],
+  },
+  {
+    // 后台保活：主城就绪后不交还反节流心跳，隐藏标签里继续按 idleHz 驱动引擎帧与定时器（可见性伪装一并保持）。
+    // 关掉则回到浏览器默认行为：隐藏页 rAF 停摆、定时器被节流到 1s（满 5 分钟后 1/min），
+    //   createCycle 每拍 sleep 与游戏侧心跳都会被拖到分钟级——后台挂自动化靠这一档。
+    // 句柄由 anti-throttle.js（document_start 入口）自挂 window.pocketccAntiThrottle。
+    id: 'keepAlive',
+    label: '后台保活',
+    storageKey: 'pocketcc.keepAlive.config',
+    internal: true,
+    defaults: { enabled: true, idleHz: 10 },
+    // 帧率上限由 shim 侧 clampHz 收口（通用数字字段只输出/钳制 min，max 属性在面板上不起作用），故把区间写进标签自说明
+    fields: [{ key: 'idleHz', type: 'number', label: '后台帧率(Hz) 5~60', min: 5, step: 5 }],
+    apply: (cfg) => {
+      const at = window.pocketccAntiThrottle;
+      if (!at) return;
+      at.applyPolicy(!!(cfg && cfg.enabled), cfg ? cfg.idleHz : undefined);
+    },
   },
   {
     // 网络日志：internal 功能，enabled 即 net 模块的 log 开关。无独立模块/无可调参数，

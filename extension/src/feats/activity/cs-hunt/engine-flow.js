@@ -14,7 +14,7 @@
  *
  * 横切自动项（默认开、无 UI）：
  *   - 来袭保命：21383 marchSize>0 且时效窗内 → 队长按 DEFENSE_PRIORITY（隐形10>毫发盾26>回合盾2>闪现11，皆 group=1）用一；
- *   - 盾维持：WAIT 转场串联后主动消耗一盾（毫发优先、铜墙仅 round<10），不等来袭白压到末回合；
+ *   - 盾只在真被掠袭且敌强时经「来袭保命」按需消耗（用户口径 2026-10-18：删除旧「WAIT 期主动铺盾」——实证 20261018T190716 无人来袭仍第 4/5 回合白烧唯一铜墙铁壁）；
  *   - 战中策略（FIGHT 相位且**本回合真被掠袭过**才动手）：火线急救(27·不带 tarUid 服务器自决治谁) → 增益族逐个（FIGHT 是每回合必经结算相位，未挨打也进，无掠袭证据即不动）；
  *   - 末回合清空：round===ROUND_MAX(10) → 逐拍清空背包可主动技能（排除先知9/刷新23/回合盾2——第 10 回合用它已无「下个回合」可抵御，陪跑仅 personal）。
  *
@@ -45,7 +45,9 @@ import {
   HELPER_EXCLUDE_SKILLS,
   HUNT_STATUS,
   REQ_EVENT_DECIDE,
+  REQ_GET_MARCH_INFOS,
   REQ_HUNT_INFO,
+  REQ_REWARD_INFO,
   REQ_SKILL_BACKPACK_OPEN,
   REQ_SKILL_USE,
   ROUND_MAX,
@@ -54,11 +56,13 @@ import {
   SKILL_FLASH,
   SKILL_LUCKY,
   SKILL_PROPHET,
+  SKILL_PROTECT_REWARD,
   SKILL_REFRESH,
   SKILL_SHIELD_BATTLE,
   SKILL_SHIELD_ROUND,
   SKILL_STEALTH,
   SKILL_TRANSFER,
+  SKILL_TYPE_LIMIT,
 } from './constants.js';
 import {
   isFullyKnown,
@@ -68,7 +72,7 @@ import {
   solveCandidates,
   viewToStr,
 } from './codebox.js';
-import { canPhase, chooseCopyTarget } from './skills.js';
+import { canPhase, chooseCopyTarget, SKILL_BY_ID } from './skills.js';
 import { handle as scenePickReward } from './scenes/pick-reward.js';
 import { handle as sceneRollDice } from './scenes/roll-dice.js';
 import { handle as sceneCodeBox } from './scenes/code-box.js';
@@ -91,6 +95,13 @@ const DECIDE_ACT_MS = 15000;
 const DECIDE_MIN_MS = 5000;
 /** @type {string} 7550 应答 pbAck 业务槽名（= REQ_FIELD[7550]） */
 const REQ_OPEN_FIELD = 'crossTreasureSkillBackpackOpen';
+const REQ_USE_FIELD = 'crossTreasureSkillUse';
+/** @type {string} 7578 应答业务槽名（= REQ_FIELD[7578]，内含 marchInfos[]/leaderUid） */
+const REQ_MARCH_FIELD = 'crossTreasureGetMarchInfos';
+/** @type {string} 7572 应答业务槽名（= REQ_FIELD[7572]，内含 backpack[]） */
+const REQ_REWARD_FIELD = 'crossTreasureRewardInfo';
+/** @type {number} 主动侦察（#reconMarches）结果缓存复用窗口（毫秒）：节流 7578 双查，防每拍刷屏 */
+const RECON_MIN_MS = 4000;
 /** @type {number[]} 来袭保命优先级（皆 group=1 队伍技能=队长专属）：隐形>毫发(战斗盾)>铜墙(回合盾)>闪现（用户口径 2026-10-17：闪现「下回合开始才移动」救不了当轮→降到盾后） */
 const DEFENSE_PRIORITY = [SKILL_STEALTH, SKILL_SHIELD_BATTLE, SKILL_SHIELD_ROUND, SKILL_FLASH];
 /** @type {number[]} 末回合清空排除项（先知 9 有 DECIDE 事件门、全量刷新 23 仅 pickSkill 场景有意义、铜墙铁壁 2 第 10 回合用「抵御下个回合」已无下回合=浪费） */
@@ -145,6 +156,10 @@ export class FlowEngine {
   #pending = new Set();
   /** @type {boolean} 背包已拉过（每跑首次需要技能时拉一次，消耗后作废） */
   #backpackLoaded = false;
+  /** @type {number} 连续读到空背包的次数（区分未就绪占位 ack vs 真·空背包：前 2 次空不固化、第 3 次认作真空） */
+  #bpEmptyStreak = 0;
+  /** @type {boolean} 上一次 #useSkill 已从 7551 内嵌背包权威刷新，紧随的 #reloadBackpack 可跳过 7550（省往返、规避用后瞬时空背包） */
+  #bpFreshFromUse = false;
   /** @type {number} 最近一次 21383 来袭规模（>0=被真人掠夺）；处置后归零 */
   #raidSize = 0;
   /** @type {number} 最近一次收到来袭推送的时刻（毫秒，RAID_ACTIVE_MS 时效） */
@@ -155,6 +170,14 @@ export class FlowEngine {
   #lastFightWake = 0;
   /** @type {number} 已完成末回合清空的回合（防同回合重复批量发） */
   #flushedRound = 0;
+  /** @type {Object<number,number>} 科技族(type)→最近使用回合（#5 族级限窗本回合去重账本，借鉴竞对 sci） */
+  #typeUseRound = {};
+  /** @type {{mine:object[],enemy:object[]}|null} 最近一次 7578 侦察结果缓存（RECON_MIN_MS 内复用，服务 #2 战力门控/#4 补武装/#2 定向急救） */
+  #lastRecon = null;
+  /** @type {number} 上次侦察时刻（毫秒，RECON_MIN_MS 节流） */
+  #lastReconAt = 0;
+  /** @type {Set<number>} 已做过「21383 漏推补武装」侦察的回合（每回合至多一次，防 FIGHT 期反复空查） */
+  #reconCheckedRounds = new Set();
   /** @type {Object<string,number>} 每回合进 DECIDE 的时刻（毫秒，10s 下限用） */
   #enterAt = {};
   /** @type {Object<string,number>} 每回合 pickSkill 已用全量刷新次数（≤2） */
@@ -255,13 +278,37 @@ export class FlowEngine {
         decideDelay = await this.#handleDecide(treasureId, ei);
       else if (ei.status === EVENT_PHASE_STATE.EVENT) await this.#handleEvent(treasureId, ei, cfg);
     } else if (status === HUNT_STATUS.WAIT) {
-      // 探索回合（每场 round 起始 status=1/WAIT）：数据转换→重拉背包→再判并执行完美镜像复制先知；转场未发写包时再主动维持盾（毫发/铜墙）
-      var wrote = await this.#explorationSkills(treasureId, round);
-      if (!wrote) await this.#shieldMaintain(treasureId, round);
+      // 探索回合（每场 round 起始 status=1/WAIT）：数据转换→重拉背包→再判并执行完美镜像复制先知。
+      //   【不再主动维持盾】：实证 20261018T190716 无人来袭时第 4/5 回合白烧唯一铜墙铁壁——盾只在真被掠袭且敌强时
+      //   经 #autoStrategies（来袭保命）按需消耗；WAIT 期主动铺盾违背用户口径「无人打就不该用盾」，删除。
+      await this.#explorationSkills(treasureId, round);
     } else if (status === HUNT_STATUS.FIGHT) {
       // 战斗结算相位（status=3，**每回合必经、未挨打也进**，实证 20261016T191700 全程无 21383 掠袭仍每回合成对推 fightWin 0→3）：
       //   增益/急救仅本回合真被掠袭过（#raidRounds）才动手，否则每回合白烧急救与增益；非掠袭回合直接闲置
       await this.#fightStrategies(treasureId, round);
+    }
+    // #4/⑥ 主动侦察补武装（借鉴竞对）：FIGHT 态但 21383 漏推（#raidSize≤0）时，每回合至多一次判来袭；
+    //   ⑥ lootMarchNum 直读优先——控制器权威计数（21383 直写）>0 即一手掠袭证据，免发 7578；仅当控制器也无（回 0）才回退 #4 轻量 7578 type2 侦察；
+    //   来袭非空即补武装来袭态（交随后 #autoStrategies 走保护+门控防御），并记入掠袭回合（点燃战中急救/增益前提）
+    if (
+      status === HUNT_STATUS.FIGHT &&
+      this.#raidSize <= 0 &&
+      !this.#reconCheckedRounds.has(round)
+    ) {
+      this.#reconCheckedRounds.add(round);
+      var lm = csHunt.lootMarchNum();
+      if (lm > 0) {
+        this.#raidSize = lm;
+        this.#raidAt = Date.now();
+        if (round > 0) this.#raidRounds.add(round);
+      } else {
+        var rec = await this.#reconMarches(treasureId);
+        if (rec.enemy.length) {
+          this.#raidSize = rec.enemy.length;
+          this.#raidAt = Date.now();
+          if (round > 0) this.#raidRounds.add(round);
+        }
+      }
     }
     // 横切自动项：来袭保命 / 末回合清空（与事件阶段无关，各自门控）
     await this.#autoStrategies(treasureId, status, round);
@@ -363,6 +410,13 @@ export class FlowEngine {
     if (!this.#done.has(ck) && this.#usable(SKILL_COPY)) {
       this.#done.add(ck);
       var target = chooseCopyTarget({ copyable: this.#copyableSet() });
+      // ③ 先知充裕即不再复制（借鉴竞对 skillPrioritys）：#4 阈值须比 pick-skill 剪枝宽一格——复制发生在 WAIT(R)、先知消费在
+      //   DECIDE(R) 属**同一回合**（报文实证相位 1(R)→2(R)decide→event→3(R)），可消化窗口是 ROUND_MAX-round+1，
+      //   充裕判据即 backpackCount+round > ROUND_MAX（非 >=）；否则 round=10 持有 0 时会误停、白扔一张当回合立即可用的镜像。
+      //   （注：pick-skill.js 的 >= 是对的——它落在 EVENT 阶段、当回合 DECIDE 已过，剩余窗口恰为 ROUND_MAX-round；两处形同义异，勿统一）
+      if (target === SKILL_PROPHET && this.#backpackCount(SKILL_PROPHET) + round > ROUND_MAX) {
+        target = 0;
+      }
       if (target) {
         await this.#useSkill(treasureId, SKILL_COPY, '完美镜像复制先知', {
           param: JSON.stringify({ copySkillSpecId: target }),
@@ -432,11 +486,14 @@ export class FlowEngine {
       sendPB: function (cmd, inner, label) {
         return self.#host.sendPB(cmd, inner, label);
       },
-      ensureBackpack: function () {
-        return self.#ensureBackpack();
+      ensureBackpack: function (force) {
+        return self.#ensureBackpack(force);
       },
       canUse: function (id) {
         return self.#canUse(id);
+      },
+      backpackCount: function (id) {
+        return self.#backpackCount(id);
       },
       useSkill: function (id, label, opt) {
         return self.#useSkill(treasureId, id, label, opt);
@@ -451,6 +508,18 @@ export class FlowEngine {
         var pools = self.#host.cfg().luckyRewards;
         var wl = (pools && pools[EVENT_TYPE.ROLL_DICE]) || [];
         return wl.length > 0 && !!rewardResult && hitWhitelist(rewardResult, wl);
+      },
+      // 服务端权威幂等：本回合我已掷过（eventRollDiceInfo.memberList 里我 uid 的 rollNum>0）→ 抗引擎重启/推送重放误重掷（借鉴竞对 memberList.rollNum 判断）
+      alreadyRolled: function () {
+        var ml = ei.eventRollDiceInfo && ei.eventRollDiceInfo.memberList;
+        if (!Array.isArray(ml)) return false;
+        var me = gameData.myUidStr();
+        if (!me) return false;
+        for (var i = 0; i < ml.length; i++) {
+          if (bits.int64Str(ml[i] && ml[i].uid) === me && Number(ml[i] && ml[i].rollNum) > 0)
+            return true;
+        }
+        return false;
       },
       canPhase: function (id) {
         return canPhase(id, HUNT_STATUS.EVENT, EVENT_PHASE_STATE.EVENT);
@@ -520,18 +589,22 @@ export class FlowEngine {
    * @param {number} round 当前回合
    */
   async #autoStrategies(treasureId, status, round) {
-    // 1) 来袭保命：21383 marchSize>0 且未超时效窗 → 队长按优先级用一盾/隐身/闪现（皆 group=1，队员无）
+    // 1) 掠袭处置（21383 推送到 或 #4 侦察补武装）：**先保护最有价值奖励（不可逆优先，#1）→ 队长战力门控保命（#2）**
     if (this.#raidSize > 0 && Date.now() - this.#raidAt <= RAID_ACTIVE_MS) {
       await this.#ensureBackpack();
-      for (var i = 0; i < DEFENSE_PRIORITY.length; i++) {
-        var id = DEFENSE_PRIORITY[i];
-        var dk = round + ':def:' + id;
-        if (!this.#usable(id) || this.#done.has(dk)) continue;
-        this.#done.add(dk);
-        await this.#useSkill(treasureId, id, '来袭保命');
-        break;
+      await this.#protectBestReward(treasureId, round); // #1：安全锁定(17) group2 个人技，主跑各保各的贵重奖励
+      // #2 战力门控：仅队长有 group1 自保技；敌强才防（拿不到战力数据默认防御），省得弱敌来犯也照烧盾
+      if (this.#host.isLeader() && (await this.#enemyOverwhelms(treasureId))) {
+        for (var i = 0; i < DEFENSE_PRIORITY.length; i++) {
+          var id = DEFENSE_PRIORITY[i];
+          var dk = round + ':def:' + id;
+          if (!this.#canSpend(id) || this.#done.has(dk)) continue; // #canSpend = #usable + #5 族级限窗去重
+          this.#done.add(dk);
+          await this.#useSkill(treasureId, id, '来袭保命');
+          break;
+        }
       }
-      this.#raidSize = 0; // 本波已处置，等下一次 21383 再武装
+      this.#raidSize = 0; // 本波已处置，等下一次 21383/侦察再武装
       return;
     }
     // 2) 末回合清空：round===ROUND_MAX 时逐拍用掉一个可主动技能（排除先知/刷新；陪跑只刷 personal）
@@ -558,47 +631,170 @@ export class FlowEngine {
   }
 
   /**
-   * 盾主动维持（B，用户口径 2026-10-17）：WAIT 探索回合转场串联之后主动消耗盾，不再被动压到末回合浪费。
-   *   毫发难伤（战斗盾，「下次战斗抵御」→早用零损失）优先；其次铜墙铁壁（回合盾，「抵御下回合」→仅 round<10 用，
-   *   第 10 回合用了也无下回合=浪费，与末回合清空剔除项同调）。每回合至多一盾；group=1 天然仅队长可用。
+   * 掠袭时保护最有价值奖励（#1，借鉴竞对 roundFight）：安全锁定(17) 是 group2 个人技，主跑各保各的贵重奖励。
+   *   读 7572 奖励背包 → 滤未保护项 → 按 #rewardScore 降序择最贵重者 → 7551{17} 带 param `{protectRewardIdArr:[idStr]}`。
+   *   陪跑（拿不到奖励）全程无奖励可保，直接跳过（与 HELPER_EXCLUDE_SKILLS 同调）。每回合至多保护一次。
    * @param {string|number} treasureId 本跑 id
    * @param {number} round 当前回合
    */
-  async #shieldMaintain(treasureId, round) {
+  async #protectBestReward(treasureId, round) {
+    if (this.#host.cfg().mode === 'helper') return; // 陪跑无奖励可保
+    if (!this.#usable(SKILL_PROTECT_REWARD)) return;
+    var pk = round + ':protect';
+    if (this.#done.has(pk)) return;
     await this.#ensureBackpack();
-    var mk = round + ':maint';
-    if (this.#done.has(mk)) return;
-    var pick = this.#usable(SKILL_SHIELD_BATTLE)
-      ? SKILL_SHIELD_BATTLE
-      : round < ROUND_MAX && this.#usable(SKILL_SHIELD_ROUND)
-        ? SKILL_SHIELD_ROUND
-        : 0;
-    if (!pick) return;
-    this.#done.add(mk);
-    var ok = await this.#useSkill(treasureId, pick, '盾维持');
-    if (!ok) this.#done.delete(mk); // 写被拒（在途去重/限额）→ 回退幂等键，下拍重试，不失一回合维持位
-    await this.#reloadBackpack();
+    if (!this.#usable(SKILL_PROTECT_REWARD)) return;
+    var ret = await this.#host.sendPB(
+      REQ_REWARD_INFO,
+      { treasureId: bits.int64(treasureId) },
+      '夺宝奖励背包',
+    );
+    var ack = ret && ret.payload ? ret.payload[REQ_REWARD_FIELD] : null;
+    var list = ack && Array.isArray(ack.backpack) ? ack.backpack : [];
+    var wl = flattenLuckyPools(this.#host.cfg().luckyRewards);
+    var self = this;
+    var cands = list
+      .filter(function (x) {
+        return x && !x.protect && x.id != null;
+      })
+      .sort(function (a, b) {
+        return self.#rewardScore(b, wl) - self.#rewardScore(a, wl);
+      });
+    if (!cands.length) {
+      this.#done.add(pk); // 无未保护项 → 本回合不再重复查 7572
+      return;
+    }
+    var idStr = bits.int64Str(cands[0].id);
+    if (!idStr) return;
+    this.#done.add(pk);
+    var ok = await this.#useSkill(treasureId, SKILL_PROTECT_REWARD, '掠袭保护奖励', {
+      param: JSON.stringify({ protectRewardIdArr: [idStr] }),
+    });
+    if (!ok) this.#done.delete(pk); // 写被拒 → 回退幂等键，下拍重试
+  }
+
+  /**
+   * 奖励项贵重度计分（#1 排序键）：道具品质为基线，神器（ITEM.type=155）额外加权，命中已勾幸运池再加最高权重。
+   * @param {object} r 奖励背包项 `{itemId,...}`
+   * @param {number[]} wl 幸运池 itemId 清单
+   * @returns {number}
+   */
+  #rewardScore(r, wl) {
+    var row = gameData.tableRow('ITEM', Number(r.itemId));
+    var score = (Number(row && row.quality) || 0) * 10;
+    if (Number(row && row.type) === 155) score += 500; // 神器（不可翻倍但最贵重）
+    if (wl.indexOf(Number(r.itemId)) >= 0) score += 1000; // 命中已勾幸运池
+    return score;
+  }
+
+  /**
+   * 主动侦察行军军情（#2/#4 底座，借鉴竞对 7578 双查）：type1=我方（战力/伤兵齐备）、type2=来袭方。
+   *   RECON_MIN_MS 内复用缓存，防每拍刷屏。失败/缺字段按空数组降级，交由调用方 fail-safe。
+   * @param {string|number} treasureId 本跑 id
+   * @returns {Promise<{mine:object[],enemy:object[]}>}
+   */
+  async #reconMarches(treasureId) {
+    if (this.#lastRecon && Date.now() - this.#lastReconAt < RECON_MIN_MS) return this.#lastRecon;
+    var mine = await this.#queryMarch(treasureId, 1);
+    var enemy = await this.#queryMarch(treasureId, 2);
+    this.#lastRecon = { mine: mine, enemy: enemy };
+    this.#lastReconAt = Date.now();
+    return this.#lastRecon;
+  }
+
+  /**
+   * 单侧 7578 查询（#reconMarches 子步）：取 `crossTreasureGetMarchInfos.marchInfos[]`，缺省回空数组。
+   * @param {string|number} treasureId 本跑 id
+   * @param {number} type 1=我方、2=来袭方
+   * @returns {Promise<object[]>}
+   */
+  async #queryMarch(treasureId, type) {
+    var ret = await this.#host.sendPB(
+      REQ_GET_MARCH_INFOS,
+      { treasureId: bits.int64(treasureId), type: type },
+      '行军军情',
+    );
+    var ack = ret && ret.payload ? ret.payload[REQ_MARCH_FIELD] : null;
+    return ack && Array.isArray(ack.marchInfos) ? ack.marchInfos : [];
+  }
+
+  /**
+   * 战力门控（#2，借鉴竞对 useSkill 前阈值判定）：敌max(maxArmyPower)×1.3 > 我max(armyPower) 才值得消耗防御技。
+   *   fail-safe：拿不到有效敌方/我方战力数据时返回 true（保守防御），避免漏防。
+   * @param {string|number} treasureId 本跑 id
+   * @returns {Promise<boolean>}
+   */
+  async #enemyOverwhelms(treasureId) {
+    var rec = await this.#reconMarches(treasureId);
+    var enemyMax = 0;
+    for (var i = 0; i < rec.enemy.length; i++) {
+      var p = toNum(rec.enemy[i].maxArmyPower);
+      if (p > enemyMax) enemyMax = p;
+    }
+    if (!enemyMax) return true; // 无敌方战力数据 → 保守防御
+    var myMax = 0;
+    for (var j = 0; j < rec.mine.length; j++) {
+      var a = toNum(rec.mine[j].armyPower);
+      if (a > myMax) myMax = a;
+    }
+    if (!myMax) return true; // 无我方战力数据 → 保守防御
+    return enemyMax * 1.3 > myMax;
+  }
+
+  /**
+   * 定向急救目标（#2，借鉴竞对按战损择人）：我方（type1）armyPower<maxArmyPower 且缺口最大者的 uid。
+   *   无伤兵/数据缺失回退 ''（调用方据此不带 tarUid、由服务器自决，与原生 7551{27} 一致）。
+   * @param {string|number} treasureId 本跑 id
+   * @returns {Promise<string>} 最伤者 uid（字符串），无则 ''
+   */
+  async #mostDamagedUid(treasureId) {
+    var rec = await this.#reconMarches(treasureId);
+    var bestUid = '';
+    var bestGap = 0;
+    for (var i = 0; i < rec.mine.length; i++) {
+      var m = rec.mine[i];
+      var cur = toNum(m.armyPower);
+      var cap = toNum(m.maxArmyPower);
+      var gap = cap > cur ? cap - cur : 0;
+      if (gap > bestGap) {
+        bestGap = gap;
+        bestUid = uidToStr(m.uid);
+      }
+    }
+    return bestGap > 0 ? bestUid : '';
   }
 
   /**
    * 战中自动项（status=FIGHT 相位，每拍至多一个写动作）：
    *   **前提闸：本回合须真被真人掠袭过（#raidRounds.has(round)）**——实证 FIGHT 是每回合必经的结算相位（无任何 21383 掠袭也逐回合推 fightWin 0→3），
    *     若只判 status=FIGHT 会每回合白烧一发急救 + 提前耗光增益，违背用户口径「无人受伤不治疗」。
-   *   ① 火线急救(27)（group=1 队长技）——**逐员战损字段不可得**（power 受击不降/fightInfo 无伤兵/7578 armyPower undefined），
-   *     且原生 7551{27} 实发**不带 tarUid**（应答回显 tarUid=0=服务器自决治谁，实证 dashcam 20261017T185937），故跟齐原生形态不带 tarUid、由服务器裁决目标；
-   *   ② 战中增益族即用（C）——百战不倒/固定增强/战场变换/诱敌来袭按 FIGHT_BUFF_SKILLS 优先级逐个用，每 (round,specId) 一次性。
+   *   ① 火线急救(27)（group=1 队长技）——**按战损定向施治（#2，借鉴竞对）**：7578 type1 我方 armyPower<maxArmyPower 取缺口最大者 uid 传 tarUid（`#mostDamagedUid`）；
+   *     侦察失败/无伤兵数据时回退不带 tarUid、由服务器自决（与原生 7551{27} tarUid=0 一致，实证 dashcam 20261017T185937）；
+   *   ② 战中增益族即用（C）——百战不倒/固定增强/战场变换/诱敌来袭按 FIGHT_BUFF_SKILLS 优先级逐个用，每 (round,specId) 一次性，且经 #canSpend 族级限窗去重。
    * @param {string|number} treasureId 本跑 id
    * @param {number} round 当前回合
    */
   async #fightStrategies(treasureId, round) {
     // 未被掠袭的回合不进（FIGHT 是常态相位，不等于有人受伤）
     if (!this.#raidRounds.has(round)) return;
+    // ② 战斗已结算即收手（借鉴竞对 roundFight 顶闸 `if(!fightInfo || fightInfo.fightWin) return`）：
+    //   fightWin 是枚举（报文实证取值 {0,1,2,3}，非布尔）——0=战斗中/未判定，非 0=本回合胜负已结算/结束；
+    //   仅在**正向读到已结算（fightInfo 在场、fightWin 字段存在且 fightWin≠0）**时跳过；缺 fightInfo 或缺 fightWin 字段
+    //   均走 fail-open（不能把「没读到」当成「已结算」误拦正常防御）：#5 显式判 != null，避免 Number(undefined)!==0 误伤。
+    var fi = this.#hunt && this.#hunt.fightInfo;
+    if (fi && fi.fightWin != null && Number(fi.fightWin) !== 0) return;
     await this.#ensureBackpack();
-    // ① 火线急救：每回合一次，持且未生效即施治（不带 tarUid，与原生一致，服务器自决目标）
+    // ① 火线急救：每回合一次，持且未生效即施治；能择到战损最重者则带 tarUid 定向施治，否则不带（服务器自决，与原生一致）
     var aidk = round + ':aid';
-    if (!this.#done.has(aidk) && this.#usable(SKILL_AID)) {
+    if (!this.#done.has(aidk) && this.#canSpend(SKILL_AID)) {
       this.#done.add(aidk);
-      var aidOk = await this.#useSkill(treasureId, SKILL_AID, '火线急救');
+      var healUid = await this.#mostDamagedUid(treasureId);
+      var aidOk = await this.#useSkill(
+        treasureId,
+        SKILL_AID,
+        '火线急救',
+        healUid ? { tarUid: healUid } : undefined,
+      );
       if (!aidOk) this.#done.delete(aidk);
       await this.#reloadBackpack();
       return;
@@ -607,7 +803,7 @@ export class FlowEngine {
     for (var i = 0; i < FIGHT_BUFF_SKILLS.length; i++) {
       var id = FIGHT_BUFF_SKILLS[i];
       var bk = round + ':buff:' + id;
-      if (!this.#usable(id) || this.#done.has(bk)) continue;
+      if (!this.#canSpend(id) || this.#done.has(bk)) continue;
       this.#done.add(bk);
       var buffOk = await this.#useSkill(treasureId, id, '战中增益');
       if (!buffOk) this.#done.delete(bk); // 写被拒 → 回退幂等键，下拍重试
@@ -622,9 +818,11 @@ export class FlowEngine {
    * 拉一次技能背包（7550）缓存 personal/team 两个 specId 集合。每跑首次需要时拉。
    *   **只在拿到有效 skillBackpack 应答时才置 #backpackLoaded=true**：发送失败/在途去重时 ack 空，
    *   若照样置 loaded 会把空背包固化进缓存，后续 #usable(幸运等) 全程误判 false（实证幸运在背包却漏用）。
+   *   `force=true` 绕过 loaded 缓存强制作一次权威读：掷骰命中幸运池时用，杜绝 load-once 陈旧缓把「其实有幸运」误判成没有而漏用。
+   * @param {boolean} [force] 忽略已落地缓存，强制重拉
    */
-  async #ensureBackpack() {
-    if (this.#backpackLoaded) return;
+  async #ensureBackpack(force) {
+    if (this.#backpackLoaded && !force) return;
     var team = this.#host.team();
     if (!team) return;
     var treasureId = team.treasureId || team.id;
@@ -636,16 +834,42 @@ export class FlowEngine {
     var ack = ret && ret.payload ? ret.payload[REQ_OPEN_FIELD] : null;
     var sb = ack && ack.skillBackpack;
     if (!sb) return; // 拉取失败（ack 空/无 skillBackpack）→ 不落地、不清旧缓存，下一拍自然重试
-    this.#personal = specIdCount(sb.personalSkillInfoList);
-    this.#teamSkills = specIdCount(sb.teamSkillInfoList);
-    this.#pending = specIdSet(sb.skillPendingEffectInfoList);
+    var personal = specIdCount(sb.personalSkillInfoList);
+    var teamS = specIdCount(sb.teamSkillInfoList);
+    var pending = specIdSet(sb.skillPendingEffectInfoList);
+    // **空背包（三表皆空）多半是 OPEN 首帧/在途去重的未就绪占位 ack，非「玩家真的一无所有」**：连续前 2 次空不固化、保留旧缓存下拍重试，
+    //   否则会把 load-once 缓存毒化成 #personal={} → 掷骰时 #canUse(幸运) 误判 false 漏用幸运（实证 20261018T105933 round6：掷骰前一次 7550 返空 PERSONAL 被固化）
+    if (personal.size === 0 && teamS.size === 0 && pending.size === 0 && this.#bpEmptyStreak < 2) {
+      this.#bpEmptyStreak++;
+      return;
+    }
+    this.#bpEmptyStreak = 0; // 非空（或连续空满配额确认为真·空）→ 落权威态、清零计数
+    this.#commitBackpack(personal, teamS, pending);
+  }
+
+  /**
+   * 从已算好的三张表提交一份权威背包态并置已落地；顺带清「用后已新鲜」标记（本次是 7550 重拉，非 7551 内嵌回写）。
+   * @param {Map<number,number>} personal 个人技能 specId→张数
+   * @param {Map<number,number>} teamS 队伍技能 specId→张数
+   * @param {Set<number>} pending 生效中 specId
+   */
+  #commitBackpack(personal, teamS, pending) {
+    this.#personal = personal;
+    this.#teamSkills = teamS;
+    this.#pending = pending;
     this.#backpackLoaded = true;
+    this.#bpFreshFromUse = false;
   }
 
   /**
    * 消耗技能后重拉背包（作废缓存再取，保证 #canUse 反映最新持有）。
    */
   async #reloadBackpack() {
+    // 上一步 #useSkill 已用 7551 应答内嵌的 skillBackpack（消耗后权威态）刷新 → 无需再发 7550（省一次往返，且规避「用后立刻 7550 拿到瞬时空背包」，实证 20261018T105933 每次用后 7550 均返空）
+    if (this.#bpFreshFromUse) {
+      this.#bpFreshFromUse = false;
+      return;
+    }
     this.#backpackLoaded = false;
     await this.#ensureBackpack();
   }
@@ -671,6 +895,21 @@ export class FlowEngine {
   }
 
   /**
+   * 自动策略统一闸门（#5，借鉴竞对 skill_limit_round + sci）：在 #usable（持有且非生效中）基础上，叠加**族级限窗本回合去重**——
+   *   某 type 在 `SKILL_TYPE_LIMIT[type]` 限窗回合内本回合已用过即拦（防防御/增益类整局逐回合狂烧）。仅自动项走此闸，scene 侧仍用 #usable。
+   * @param {number} id skillSpecId
+   * @returns {boolean}
+   */
+  #canSpend(id) {
+    if (!this.#usable(id)) return false;
+    var row = SKILL_BY_ID[id];
+    var lim = row ? SKILL_TYPE_LIMIT[row.type] : 0;
+    if (!lim) return true; // 未知/不限族 → 仅受 #usable 约束
+    var r = Number(this.#hunt && this.#hunt.round) || 0;
+    return this.#typeUseRound[row.type] !== r || lim < r; // 竞对口径：限窗回合内本回合已用过该族→拦
+  }
+
+  /**
    * 发一条 7551 使用科技（Int64 treasureId 装箱，skillSpecId 裸数字，对齐 dashcam）。
    * @param {string|number} treasureId 本跑 id
    * @param {number} id skillSpecId
@@ -686,9 +925,24 @@ export class FlowEngine {
     }
     var ret = await this.#host.sendPB(REQ_SKILL_USE, inner, label);
     if (ret.ok) {
-      this.#backpackLoaded = false; // 消耗后背包态变（close_after / ×1）
-      // 乐观记入生效中：使紧随的 #reloadBackpack 若拉取失败（早返回不清 #pending）也不会拿「消耗前陈旧持有态」驱动幽灵重发
-      this.#pending.add(id);
+      // 优先用 7551 应答内嵌 skillBackpack（消耗后权威态：已扣持有、含最新生效中）刷新缓存，省掉随后的 7550 重拉（借鉴竞对 useSkill 用 crossTreasureSkillUse.skillBackpack 回写）
+      var ackUse = ret.payload ? ret.payload[REQ_USE_FIELD] : null;
+      var sb = ackUse && ackUse.skillBackpack;
+      if (sb) {
+        this.#commitBackpack(
+          specIdCount(sb.personalSkillInfoList),
+          specIdCount(sb.teamSkillInfoList),
+          specIdSet(sb.skillPendingEffectInfoList),
+        );
+        this.#bpFreshFromUse = true; // 紧随的 #reloadBackpack 可据此跳过 7550
+      } else {
+        this.#backpackLoaded = false; // 无内嵌背包 → 作废缓存，紧随的 #reloadBackpack 走 7550
+        this.#pending.add(id); // 乐观记入生效中，防陈旧持有态驱动幽灵重发
+      }
+      // #5 族级用量记账：成功用后记本回合（供 #canSpend 的限窗本回合去重闸，借鉴竞对 sci[type]=round）
+      var rr = Number(this.#hunt && this.#hunt.round) || 0;
+      var trow = SKILL_BY_ID[id];
+      if (rr && trow && trow.type != null) this.#typeUseRound[trow.type] = rr;
     }
     return ret.ok;
   }
@@ -707,8 +961,24 @@ export class FlowEngine {
     if (sceneKey !== EVENT_TYPE.ROLL_DICE) return false; // 幸运只在 rollDice 用（溢出兜底走末回合清空）
     var pools = this.#host.cfg().luckyRewards;
     var wl = (pools && pools[sceneKey]) || [];
-    if (!wl.length) return false; // 该场景未勾任何物品 → 不参与幸运判定
-    if (!rewardResult || !hitWhitelist(rewardResult, wl)) return false;
+    if (!wl.length) {
+      // 静默漏用的两大盲区之一：幸运池空（未勾任何物品）→ 留痕，使实机「有幸运却没翻倍」可判（此前唯一留痕只覆盖 #usable 分支）
+      log.info('幸运×2跳过(' + label + ')：幸运池为空（该场景未勾任何物品）');
+      return false;
+    }
+    if (!rewardResult || !hitWhitelist(rewardResult, wl)) {
+      // 静默漏用的两大盲区之二：中奖奖励未命中已勾池（含勾选 id 与实际奖励 id 分歧）→ 留痕两侧 id 便于对账
+      var got =
+        rewardResult && Array.isArray(rewardResult.items)
+          ? rewardResult.items
+              .map(function (z) {
+                return Number(z.itemId);
+              })
+              .join(',')
+          : '-';
+      log.info('幸运×2跳过(' + label + ')：中奖[' + got + '] ∉ 已勾池 ' + JSON.stringify(wl));
+      return false;
+    }
     await this.#ensureBackpack();
     if (!this.#usable(SKILL_LUCKY)) {
       // 命中已勾幸运池但幸运不可用 → 留痕（下次奖励前只翻一次的正常态 vs 背包未落地/真不持有，便于实机排查漏用）
@@ -765,6 +1035,15 @@ export class FlowEngine {
   }
 
   /**
+   * 背包中该 specId 的持有张数（personal + team 求和，与队长身份无关——剪枝/复制只看总持有量）。
+   * @param {number} id skillSpecId
+   * @returns {number}
+   */
+  #backpackCount(id) {
+    return (this.#personal.get(id) || 0) + (this.#teamSkills.get(id) || 0);
+  }
+
+  /**
    * 末回合清空候选池：队长=team∪personal，队员=personal；剔除事件门（先知9/刷新23）。
    * @returns {number[]}
    */
@@ -810,11 +1089,17 @@ export class FlowEngine {
     this.#teamSkills.clear();
     this.#pending.clear();
     this.#backpackLoaded = false;
+    this.#bpEmptyStreak = 0;
+    this.#bpFreshFromUse = false;
     this.#raidSize = 0;
     this.#raidAt = 0;
     this.#raidRounds.clear();
     this.#lastFightWake = 0;
     this.#flushedRound = 0;
+    this.#typeUseRound = {};
+    this.#lastRecon = null;
+    this.#lastReconAt = 0;
+    this.#reconCheckedRounds.clear();
     this.#enterAt = {};
     this.#refreshCount = {};
     this.#peerViews = {};
@@ -971,4 +1256,45 @@ function hitWhitelist(rewardResult, whitelist) {
     if (whitelist.indexOf(Number(items[i].itemId)) >= 0) return true;
   }
   return false;
+}
+
+/**
+ * 数值归一（战力/兵力门控用）：非有限或 ≤0 一律回 0，杜绝 NaN/负值污染阈值比较。
+ * @param {*} v 原始值（可能是数字/字符串/undefined）
+ * @returns {number}
+ */
+function toNum(v) {
+  var n = Number(v);
+  return isFinite(n) && n > 0 ? n : 0;
+}
+
+/**
+ * uid 归一为字符串（7578 marchInfos[].uid 实测为字符串，兼容对象态的 Int64）。
+ * @param {*} v 原始 uid（字符串 / `{_low,_high}` 对象 / null）
+ * @returns {string} 归一字符串，空则 ''
+ */
+function uidToStr(v) {
+  if (v == null || v === '') return '';
+  if (typeof v === 'object') return bits.int64Str(v) || '';
+  return String(v);
+}
+
+/**
+ * cfg.luckyRewards（各场景 itemId 数组）→ 扁平去重的 itemId 清单（掠袭保护奖励 #rewardScore 的幸运加权依据）。
+ * @param {Object<string,number[]>|undefined} pools 幸运池（场景 key→itemId 数组）
+ * @returns {number[]}
+ */
+function flattenLuckyPools(pools) {
+  var out = [];
+  if (!pools) return out;
+  var keys = Object.keys(pools);
+  for (var i = 0; i < keys.length; i++) {
+    var arr = pools[keys[i]];
+    if (!Array.isArray(arr)) continue;
+    for (var j = 0; j < arr.length; j++) {
+      var id = Number(arr[j]);
+      if (id && out.indexOf(id) < 0) out.push(id);
+    }
+  }
+  return out;
 }

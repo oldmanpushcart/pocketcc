@@ -9,7 +9,7 @@
 //   组关 → 子项功能 enabled=false 逐个 pause；组开 → 恢复各子项 intentEnabled（用户意图，组关不丢失）。
 //   组的 enabled 存于 configs[group.id]（存储键由本文件声明），不进 reactor。
 // 布局对应：联盟集结/快捷战斗/自动重连都是 category 下的 feature 卡片（不再多套一层 group，避免重复路径）；
-//   网络日志/事件日志与自动重连在系统设置下平级。新增 feat 须挂进本树，否则不出现在面板。
+//   网络日志/事件日志与自动重连/后台保活（两个引擎级开关）在系统设置下平级。新增 feat 须挂进本树，否则不出现在面板。
 
 /**
  * @typedef {object} MenuNode 菜单节点
@@ -137,6 +137,7 @@ export const MENU = [
       { id: 'globalMap', kind: 'feature', label: '全局地图', showFields: true },
       { id: 'quickJump', kind: 'feature', label: '镜头跳转', showFields: true },
       { id: 'reconnect', kind: 'feature', label: '自动重连', showFields: true },
+      { id: 'keepAlive', kind: 'feature', label: '后台保活', showFields: true },
       { id: 'netLog', kind: 'feature', label: '网络日志' },
       { id: 'eventLog', kind: 'feature', label: '事件日志' },
       { id: 'netRecord', kind: 'feature', label: '报文录制', showFields: true },

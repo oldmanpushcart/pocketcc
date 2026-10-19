@@ -31,7 +31,7 @@
  *
  * 面板语义（本期改造）：
  *   - 拾取（掉落箱物品/宠物、资源点 bag）默认生效、无总开关；细化通过 pickItems 行式配置：
- *       每项一个 checkbox（on/off 是否拾取）+ 一个数字（秘境背包数量上限，0=跟随游戏 para1_v1，不额外限）。
+ *       每项一个「拾」checkbox（on/off 是否拾取）+ 一个数字（目标持有量 T，0=跟随游戏 para1_v1；条目另有 shop 标志=商店补货渠道，与本引擎无关）。
  *   - 增益井 buff 亦默认生效（协议不同、pos 语义不同），不参与 pickItems 清单（类勾选见 buffEffects）。
  *   - 拍宠物另在 capture.js，与此解耦。
  *
@@ -71,7 +71,18 @@
  *     - 游戏背包上限 checkItemNumMax(itemId)（仅 type==171 且 para1_v1 有值时判）为真 → 跳过；
  *     - **feat 侧 per-item max**：cfg.pickItems['item:'+itemId].max（>0 生效）且 `pab.getItemNumById(itemId)` >= max → 跳过；
  *     - **feat 侧 per-item off**：cfg.pickItems['item:'+itemId].on===0 → 跳过；
- *     - 宠物 dropBeastInfo 同走 DROP_GET，上限键 dataConfig(3061)；pet 只做 on/off（无数量概念，忽略 max）。
+ *     - 宠物 dropBeastInfo 同走 DROP_GET，上限键 dataConfig(3061)；pet 只做 on/off（无数量概念，忽略 max）；
+ *     - **本尊已在保护中则不领**：`roomBagInfo.protectBeasts` 里有 `info.id` → 跳过。判据不是抄竞对的猜测，
+ *       而是游戏自己就在做同一件事（源码 verbatim：领取面板 `updateContent(e.dropBeastInfo, PabBagItemType.Pet)` →
+ *       `updateItem` 里 `isProtecting = getBagPetIsPretecting(t.id)`，那个 `t.id` 就是掉落项的 `info.id`，
+ *       与 `protectBeasts` 用 Int64 `.equals` 直比 → 两者同一 id 空间）；数据源符号知识收在 ACL `getProtectingPetIds()`。
+ *       ⚠ 全库录音里 `protectBeasts` **恒为 `[]`**（没一次实机保护过），故此闸只有源码级实证、无运行时命中样本；
+ *       它 fail-open（读不到就不拦），最坏情况是白撞一次服务器拒绝，不会错杀。
+ *     - **品质阈值**（`tuning.dropPetQualityMin`，竞对口径 >=4）：enigma_beast 行 `quality` 低于它就不占配额；
+ *       读不到行/字段一律放行（fail-open）。
+ *       ⚠ 竞对还拿 `dataConfig(3017)` 当「高品质宠物占位上限」，但游戏源码里 3017 只出现在
+ *         **领取选择器的格子数**（`for(g=0;g<3017+PabExtraPackItemNum;g++)`，即我们已经用作 specItem.para1_v1
+ *         第二键的那个单次数量），与 `protectBeasts` 无任何关系（后者全库只有一个消费者）→ 不照抄。
  *   资源 bag（RESOURCE_GET 8527，req {rId=dropId}，**无 x,y**）：
  *     - 上限 dataConfig(3013).split('|')[0]=itemMax；`bagGetNum>=itemMax` 停；
  *     - 已领 checkItemIdGeted(specId)：bagInfo 里 `specId==e && uid==me` → 跳过；
@@ -100,6 +111,7 @@ import {
   EVT_REWARD_BOX_UPDATE,
   EVT_RES_LIBRARY_UPDATE,
   TABLE_RSS_STATION,
+  TABLE_BEAST,
   BUFF_SLOT_MIN,
   BUFF_SLOT_MAX,
   CODE_NOT_SENT,
@@ -131,7 +143,7 @@ function idKey(v) {
 }
 
 /**
- * pickItems 行查询：给定 cfg + 池 key → 返回 `{on:boolean, max:number}`（未登记的项视为默认：on=true / max=0=不限）。
+ * pickItems 行查询：给定 cfg + 池 key → 返回 `{on:boolean, max:number}`（未登记的项视为默认：on=true / max=0=无上限）。
  * @param {object} cfg 面板配置（含 pickItems 对象）
  * @param {string} key 池 key（'item:xxx' / 'rss:xxx' / 'pet:xxx'）
  * @returns {{on:boolean, max:number}}
@@ -188,7 +200,8 @@ function snapshotRes(inner, x, y) {
 /**
  * 掉落箱明细快照：把 8532 DROP_INFO 的应答凑成与 21532 推送同形的载荷（应答的数组键名是 `info`，推送用 `dropInfo`），
  * 并补上从**发包侧**配对来的 x,y。同样必须就地快照（应答对象是池化引用，要跨去抖窗口才消费）；
- * 下游只读 dropId / info.itemId / info.cfgId / uid，故只复制这几个字段（`info` 取浅拷贝，不持池化子对象引用）。
+ * 下游只读 dropId / info.itemId / info.cfgId / info.id / uid，故只复制这几个字段（`info` 取浅拷贝，不持池化子对象引用；
+ *   `info.id` 是 protobuf Int64，**在快照时就归成字符串**，既不留池化引用、又与 ACL 那侧的 `toString()` 同形）。
  * @param {object} inner 8532 应答 {info[],dropBeastInfo[],bagGetNum,beastGetNum,endTime}
  * @param {number} x 配对到的点位横号
  * @param {number} y 配对到的点位纵号
@@ -202,7 +215,12 @@ function snapshotReward(inner, x, y) {
       const b = arr[i];
       if (!b || b.dropId == null) continue;
       const info = b.info || {};
-      out.push({ dropId: b.dropId, uid: b.uid, info: { itemId: info.itemId, cfgId: info.cfgId } });
+      // id 就地转串：两条数据源（21532 透传的对象 / 本快照的串）到下游都经 idKey 归一，比对不会因形态而失配
+      out.push({
+        dropId: b.dropId,
+        uid: b.uid,
+        info: { itemId: info.itemId, cfgId: info.cfgId, id: idKey(info.id) },
+      });
     }
     return out;
   };
@@ -514,6 +532,9 @@ export class PickupEngine {
     const petMine = dropBeastInfo.some(function (o) {
       return o && String(o.uid) === me;
     });
+    // 已在保护中的宠物 id 集（游戏 getBagPetIsPretecting 同一数据源：roomBagInfo.protectBeasts，ACL 已归成字符串）
+    const protecting = env.secret.getProtectingPetIds();
+    const qMin = Number(tuning.dropPetQualityMin) || 0;
     if ((petMine ? 1 : 0) < petMax) {
       const petCands = [];
       for (let j = 0; j < dropBeastInfo.length; j++) {
@@ -523,6 +544,17 @@ export class PickupEngine {
         if (this.#takenByOther(pet, me)) continue; // 已被队友领走（d=enigma_realm161）
         if (this.#gotLocal(tileKey, pet.dropId, null, 0)) continue;
         const cfgId = Number(pet.info && pet.info.cfgId);
+        // 本尊已在保护中（info.id 是 Int64，走 idKey 不拆数字）：再发一发 DROP_GET 只会撞服务器「已有该宠」类拒绝
+        const pid = idKey(pet.info && pet.info.id);
+        if (pid && protecting.indexOf(pid) >= 0) {
+          env.log.debug(
+            'pickup: pet dropId %s (cfg %d) already protecting, skip.',
+            pet.dropId,
+            cfgId,
+          );
+          continue;
+        }
+        if (cfgId && qMin > 0 && !this.#petQualityEnough(cfgId, qMin)) continue; // 低品质不占配额（竞对口径）
         if (cfgId) {
           const row = pickRow(cfg, 'pet:' + cfgId);
           if (!row.on) continue;
@@ -544,6 +576,21 @@ export class PickupEngine {
       const petTasks = petCands.sort(this.#byPriority(cfg)).slice(0, petRoom);
       await this.#pipe(petTasks, ts);
     }
+  }
+
+  /**
+   * 掉落宠物的品质是否达阈（enigma_beast 行的 `quality`，竞对脚本写死 >=4，此处收进 tuning 可回滚）。
+   * **fail-open**：读不到行、行无该字段、值非有限数 → 一律放行（阈值只用于「已知是低品质」时省配额，
+   *   不能因为配置表改名把全部宠物锁死）。
+   * @param {number} cfgId 物种 cfgId
+   * @param {number} min 最低品质
+   * @returns {boolean}
+   */
+  #petQualityEnough(cfgId, min) {
+    const row = this.#env.l10n.tableRow(TABLE_BEAST, cfgId);
+    const q = row ? Number(row.quality) : NaN;
+    if (!Number.isFinite(q)) return true;
+    return q >= min;
   }
 
   /**

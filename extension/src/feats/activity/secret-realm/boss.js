@@ -16,13 +16,12 @@
  *      `ms=1 pt=176 sp=平台 tp=BOSS` → `ms=2 pt=178 sp=tp=BOSS` → `ms=1 pt=178 sp=BOSS tp=平台` → `ms=2 pt=176 sp=tp=平台`。
  *      两小同时、一大最后：+37.6 全 22 → +1139.1 先 12 进 21（同一毫秒 11 也进 21）→ +2159.1 boss9 才进 21（11/12 同时转 28）
  *      → +2303.4 boss9 转 30。实测一轮：小BOSS 4.6~5.4s、大BOSS 8~11s；**返航由服务器自动派**（返回段无第二条 8521）。
- *   ③ 区域配对（**设计方案 §3.1 被本轮实测推翻的部分**，必须按实测而非文档）：
- *      瓦片 extData.esrId 是本地唯一配对判据，但料源残缺 —— 178 小BOSS 本体瓦片在整份录音里 **0 条**
- *      （boss12@(230,234) 的瓦片是 `pointType:0, m:null`、boss11@(175,177) 干脆 ABSENT）、
- *      162 石头瓦片的 `esrId` **恒为 0** → 「读 BOSS 本体瓦片 esrId」**只对大BOSS（177）成立**。
- *      平台（176）是本地唯一能拿到 esrId 的料源：176 共 134 个分两桶（esrId=20 有 78 个、含打 boss9 实用 (208,192)；
- *      esrId=22 有 56 个、含打 boss12 实用 (237,229)），boss9 半径 12 内平台全 esrId=20、boss12 半径 12 内全 esrId=22、
- *      **boss11 半径 12 内 0 个平台 = 无任何本地区域证据**。
+ *   ③ 区域配对（瓦片 esrId 料源）：
+ *      ⚠ **旧结论「178 小BOSS 本体瓦片 0 条、读 esrId 只对大BOSS(177) 成立」已被推翻**：push 10018 是
+ *        **视口增量**，去重后 178@(230,234) 实有 664 条且带 `esrId:22 state:21`（之前只取了单帧）→
+ *        177/178 本体瓦片的 esrId 都能拿到，BOSS 本体 esrId 与平台 esrId 可直接精确比对。
+ *        162 石头瓦片的 `esrId` 仍**恒为 0**（不参与配对）。
+ *      平台（176）：共 253 个分三桶 esrId（实证去重后 20/21/22），boss 半径内平台 esrId 与 BOSS 一致。
  *      ⚠ **平台瓦片的 `bid`/`viewId` 恒为 11，不是 bossId**（曾据此误判配对关系），bossId 一律取 21535 的 `bossId`。
  *      → 配对闸三级：① 拿到 BOSS 本体 esrId → 与当前平台 esrId 精确比对（强闸）；
  *        ② 该 bossId 已学过区域 → 按学到的 esrId 比对（强闸）；
@@ -35,6 +34,12 @@
  *      ? super.marchClick() : ShowTips("enigma_realm141")`）→ 区域是**服务器独占判据**，本地无法预知；
  *      故被 `enigma_realm142` 拒时**只降级「(平台 esrId, bossId)」这一对**，绝不把 bossId 整体拉黑
  *      （否则换了平台的玩家就永久打不了这只）。
+ *      **就近档**（排序键、非过滤闸）：实测同一只 BOSS 到**它自己区域**的平台最近 1.4~7.1 格、到**跨区域**平台
+ *        最近 19.8~63.9 格（`tuning.bossNearRadius` 注有全库对账数据）→ 把近区候选排在前面，等于用「距离」
+ *        这个零成本代理优先进「大概率同区域」的那一枪，把 142 试探次数压到最少（竞对脚本就是纯按距离排序）。
+ *      **队长闸**（本引擎主动加，与上面那条 UI 不对称并不矛盾）：8521 驱动的是**全队那一条**行军
+ *        （roomBaseInfo 实证为队级快照：单一 startPoint/marchState + leaderUid）→ 五人房各自发会互抢
+ *        方向盘，并把 #rounds/#probed 各客户端各算一份的偏差放大，故成员侧不发攻打（与竞对脚本同款）。
  *   ④ 客户端另有三条闸（NWorldPabCommonPopup.marchClick verbatim，本引擎逐条复刻）：
  *      `roomBaseInfo && startPoint` 在场；目标点 ≠ 当前点（否则 `enigma_realm157` 静默）；
  *      **在拍普通宠**（`capturingPetPos.x>0 && boss!=1`）时挪点会清空当前捕获进度（游戏要弹 `enigma_realm208` 确认）
@@ -43,15 +48,21 @@
  *      → ACL `sendMarch()` 已内置该闸，回 `false` 就是「这一拍没发出去」，不作任何记账、下一拍重试。
  *
  * ── 触发源（事件驱动 + 兜底 cycle）──────────────────────────────────────────────
- *   kick：push 21535（状态机）、push 21521（行军/在位现场）、push 21539（石头账本）。
+ *   kick：push 21535（状态机）、push 21521（行军/在位现场）、push 21539（石头账本）、
+ *     push 21529 TEAM_ARRIVE（最及时的「已抵达」信号，也是 158「尚未抵达」的解除信号 → 收到即重跑被打 158 的攻打）。
  *   **push 10018 只写快照、绝不 kick**（实测 7733 条 ≈3 条/秒，kick 会把 2s 兜底拍打成 3Hz）。
  *   兜底：cycle fallback `tuning.bossScanMs`（21535 一场只推 5 条、21521 稀疏，漏拍必须能自愈）。
  *   推送载荷口径两条不同（实证）：21521/21535/21539 是 `ev.data = {header:{ts,s}, data:{…}}`（本引擎只拿它们当唤醒源，
  *   业务态一律重读 ACL 落地快照）；**10018 是平的** `ev.data = {pointInfos:[{v,x,y,k,id,pointType,m}]}`。
  *
- * ── 拒绝码处置（攻打；录音 8521 共 73 req / 73 resp **全部 s=0、零拒绝**，故 142/141/157/163 全属防御性实现）──
+ * ── 拒绝码处置（攻打）──
+ *   ⚠ **旧口径「8521 全 s=0、零拒绝」已被 dashcam 20261018T200040 推翻**：本份 8521 共 310 次、
+ *     拒绝分布 `158×80 / 163×3 / 17×2 / common_159995×1`（158 = 「小队尚未抵达」，量最大）——故 158 不再是防御性实现，
+ *     而是主流程常态（行军指令发得太早、尚未 ARRIVED）。其余 142/141 仍在 19 份录音 0 命中（未观测预防性代理）。
  *   退避是这一档的第一条：任一 `s≠0` 都先进 `tuning.rejectBackoffMs`（5s）静默，141 更给
  *     `tuning.planeRefreshMs`（15s，等 push 21521 把 roomBaseInfo 刷正）——否则被拒路径会以 ≈5 条/秒重发同一条 8521。
+ *   `enigma_realm158` → **小队尚未抵达**（行军态未 ARRIVED 就发攻打）→ **不烧配对试探额度、不拉黑**，
+ *     只退 `tuning.rejectBackoffMs`；抵达信号以 push 21529 TEAM_ARRIVE 为准（见下「触发源」），收到即重跑。
  *   `enigma_realm142` → 该 (平台 esrId, bossId) 记 wrongArea（区域闸降级，**不拉黑 bossId**）；
  *   `enigma_realm141` → 已不在 176（被顶掉/被召回）→ 回 IDLE，等 21521 刷正；
  *   `enigma_realm157` → 目标点==当前点，正常语义 → 静默（debug），不拉黑；
@@ -62,6 +73,8 @@
  *
  * ── 石头档（8548 BOSS_GUARD_REWARD_GET `{x,y}`，**不带 bossId**）──────────────────
  * 报文实证同一会话：bossId 由服务器按坐标反推，且**不要求队伍站在石头点上**（在平台 (237,229) 领到了石头点 (230,228)）；
+ *   ⚠ **石头能不能领只看账本（push 21539）给没给点，不看 BOSS 死活**（旧「死后掉落」说法无据）：
+ *     实证 boss12 仍处 state21（战斗中）时 +1510.9s 已能领到它的石头 → 只要有 21539 条目就发 8548。
  *   应答 inner = `{rewardInfo:{bossId,fightTime:Int64,rewardInfo:[单点]}, rewardResult:{resource,items[…],enigmaBeast}, boxOpen, boxOpenBeast}`。
  *   **每个小BOSS 固定 5 个点位、每人每点位限领 1 次**（rewardMaxNum 只到 1；boss12 五点 =
  *   (230,228)(232,230)(229,235)(231,235)(228,230)）。重复领同点 → `s=3 d=enigma_realm60` 且应答 rewardInfo 退化成空数组。
@@ -76,7 +89,7 @@
  *   （ACL 不提供瓦片查询，游戏侧 tile getter 的调用方式未实证，不猜符号链），不调游戏侧任何 Update/Delete、
  *   不镜像血量/积分。Int64（stateEndTime/fightEndTime/fightTime）一律 `toNum` 读、不回写。
  *
- * ── 挪台档（面板 bossRelocate，默认关）────────────────────────────────
+ * ── 挪台档（BOSS_AUTO.relocate 恒关，无面板开关；风险最高，默认不启用）──────
  *   设计方案 §3.4 的「停泊点自动选择」：只在**本拍有 state21 的 BOSS 过不了区域闸**时启动（需求源 #blockedNow），
  *   候选 = 快照里 `pt=176 && esrId 命中目标区域（或跨区域探一台）&& state=22 && isFight!==1 && teams 空` 中
  *   **距当前位置最近**的一台，发同一条 8521（目标 = 平台坐标）。闸门与风险口径见 #tryRelocate 注释
@@ -90,6 +103,7 @@ import {
   PUSH_BOSS_STATE,
   PUSH_BOSS_GUARD_REWARD,
   PUSH_TILE_INFO,
+  PUSH_TEAM_ARRIVE,
   PAB_BOSS_PLANE,
   PAB_BOSS,
   PAB_BOSS_GUARD,
@@ -98,6 +112,7 @@ import {
   ST_PLANE_MARCH,
   REJ_BOSS_AREA,
   REJ_NEED_PLANE,
+  REJ_NOT_ARRIVED,
   REJ_ALREADY_THERE,
   REJ_NO_MARCH_TARGET,
   REJ_RETRY,
@@ -158,6 +173,22 @@ function tileKey(x, y) {
 }
 
 /**
+ * 两瓦片的欧氏格距（攻打就近档与挪台候选共用一份口径，与 `tuning.bossNearRadius` 的实证数字对齐）。
+ * 任一坐标非法回 Infinity = 排到最后、不进「近区」档（不拿 NaN 参与比较，否则排序结果不确定）。
+ * @param {number} ax 甲点横号
+ * @param {number} ay 甲点纵号
+ * @param {number} bx 乙点横号
+ * @param {number} by 乙点纵号
+ * @returns {number}
+ */
+function dist(ax, ay, bx, by) {
+  const dx = Number(ax) - Number(bx);
+  const dy = Number(ay) - Number(by);
+  if (!Number.isFinite(dx) || !Number.isFinite(dy)) return Infinity;
+  return Math.sqrt(dx * dx + dy * dy);
+}
+
+/**
  * BOSS 攻打 + 石头拾取引擎（单条电平循环：先攻打档、再石头档）。
  */
 export class BossEngine {
@@ -195,7 +226,7 @@ export class BossEngine {
   #stoneInflight = '';
   /** @type {number} 石头档当前节拍（毫秒），撞「未发出」按曲线翻倍到 tuning.getGapMaxMs */
   #stoneGap = tuning.stoneGapMs;
-  /** @type {Object<string,number>} bossId → 已发动攻打轮数（面板 bossMaxRounds / 设计方案 attackMaxRounds 的账，0=不限） */
+  /** @type {Object<string,number>} bossId → 已发动攻打轮数（BOSS_AUTO.maxRounds 恒 0=不限，打死为止） */
   #rounds = {};
   /** @type {number} 本轮返回给 cycle 的睡眠（0=还有活，立即再跑） */
   #sleep = 0;
@@ -267,6 +298,11 @@ export class BossEngine {
     // 只有「当前所在点是 176 平台」才允许发下一次（四段式实证：在飞两段 pt 分别是旧平台与 BOSS 本体）
     if (Number(base.pointType) !== PAB_BOSS_PLANE) return;
     if (!env.secret.teamIsMooring()) return;
+    // 队长闸（见文件头 §③「队长闸」）：UI 不查队长，但 8521 驱动的是全队那一条行军，成员侧不发
+    if (!env.secret.isTeamLeader()) {
+      env.log.debug('boss attack: not team leader (team march is leader-driven), skip.');
+      return;
+    }
     if (env.secret.isSecretSending(CMD_MARCH_MOVE) || this.#marchInFlight) {
       this.#sleep = 200;
       return;
@@ -344,14 +380,17 @@ export class BossEngine {
 
   /**
    * 从 21535 落地态里挑一个可打目标（state===21 + 战斗窗口未过 + 未被拉黑 + 过区域闸）。
+   * 每条候选带一个 `d` = 到**当前所停平台**的欧氏格距（就近档用，见文件头 §③）。
    * @param {object} b 面板 boss 配置 {order,maxRounds}
-   * @returns {{bossId:number,x:number,y:number,kind:number,platEsr:number|null}|null}
+   * @returns {{bossId:number,x:number,y:number,kind:number,d:number,platEsr:number|null}|null}
    */
   #pickTarget(b) {
     const env = this.#env;
     this.#blockedNow = [];
     const list = env.secret.getBossBaseInfo();
     if (!Array.isArray(list) || !list.length) return null;
+    const ob = env.secret.getRoomBaseInfo();
+    const orig = ob && (ob.startPoint || ob.targetPoint);
     const cand = [];
     for (let i = 0; i < list.length; i++) {
       const s = list[i];
@@ -370,7 +409,13 @@ export class BossEngine {
       }
       const maxR = Math.max(0, Math.floor(Number(b.maxRounds) || 0));
       if (maxR > 0 && (this.#rounds[bid] || 0) >= maxR) continue;
-      cand.push({ bossId: bid, x: x, y: y, kind: this.#tileTypeAt(k) });
+      cand.push({
+        bossId: bid,
+        x: x,
+        y: y,
+        kind: this.#tileTypeAt(k),
+        d: orig ? dist(x, y, orig.x, orig.y) : Infinity,
+      });
     }
     if (!cand.length) return null;
     cand.sort(this.#orderCmp(b && b.order === 'boss' ? 'boss' : 'guard'));
@@ -384,11 +429,12 @@ export class BossEngine {
       this.#blockedNow.push({ bossId: t.bossId, kind: t.kind });
     }
     env.log.debug(
-      'boss attack: no target passes area gate (platEsr=%s, blocked=%s).',
+      'boss attack: no target passes area gate (platEsr=%s, candidates=%s [bossId@距当前平台格数]).',
       String(platEsr),
-      this.#blockedNow
+      cand
+        .slice(0, 6)
         .map(function (x) {
-          return x.bossId;
+          return x.bossId + '@' + (Number.isFinite(x.d) ? x.d.toFixed(1) : '?');
         })
         .join('/'),
     );
@@ -397,14 +443,21 @@ export class BossEngine {
 
   /**
    * 目标排序比较器（同区域只允许一支队在打，故一次只挑一个）。
+   * 键序：**就近档**（`tuning.bossNearRadius`，非过滤——远档仍留在队尾）→ 面板偏好 → 先进 state21 的在先 → bossId。
+   * 就近档排在偏好**之前**的理由：偏好是「想先清小还是先打大」，而跨区域目标根本打不出去（142）
+   *   → 先在本档内满偏好，本档空了才往远处探，而不是一路撞远处的 142。
    * 大/小BOSS 由**本体瓦片类型**判：177 大 / 178 小 / 取不到（录音里 178 一条都没有）按「未知」归先打档，
-   *   避免因为缺证据就把小BOSS 拖到最后。平手时先进入 state21 的在先（实证两小同时、一大最后）。
+   *   避免因为缺证据就把小BOSS 拖到最后。
    * @param {'guard'|'boss'} priority 面板偏好
    * @returns {(a:object,c:object)=>number}
    */
   #orderCmp(priority) {
     const self = this;
+    const near = tuning.bossNearRadius;
     return function (a, c) {
+      const na = a.d <= near ? 0 : 1;
+      const nc = c.d <= near ? 0 : 1;
+      if (na !== nc) return na - nc;
       const pa = a.kind === PAB_BOSS ? 1 : 0;
       const pc = c.kind === PAB_BOSS ? 1 : 0;
       const va = priority === 'boss' ? pa : 1 - pa;
@@ -576,6 +629,9 @@ export class BossEngine {
 
   /**
    * 从瓦片快照里筛可用候选平台（距当前位置最近优先）。
+   * 距离度量已与攻打就近档统一为**欧氏格距** `dist()`（旧实现是曼哈顿）：`tuning.bossNearRadius` 的
+   *   实证数字就是欧氏算出来的，两处共用一把尺子；但请注意这会轻微改变挪台候选的相对次序
+   *   （如 (10,0) 与 (7,7)：曼哈顿同为 10、欧氏分 10 / 9.9），拿旧录音对拍时别当成 bug。
    * @param {string} curKey 当前坐标键（排除自身）
    * @param {number|null} curEsr 当前平台 esrId（同区域不挪，防 209）
    * @param {number|null} want 期望区域（null=区域未知，接受任意未被证伪的快照区域）
@@ -602,7 +658,7 @@ export class BossEngine {
       const p = k.split(',');
       const x = Number(p[0]);
       const y = Number(p[1]);
-      list.push({ x: x, y: y, esrId: t.esrId, d: Math.abs(x - cx) + Math.abs(y - cy), at: t.at });
+      list.push({ x: x, y: y, esrId: t.esrId, d: dist(x, y, cx, cy), at: t.at });
     }
     if (!list.length) return null;
     list.sort(function (a, c) {
@@ -727,6 +783,23 @@ export class BossEngine {
     const rej = (r && r.reason) || '';
     const tag = 'boss' + t.bossId + '@(' + t.x + ',' + t.y + ')';
     this.#cooldownUntil = Date.now() + tuning.rejectBackoffMs;
+    if (rej === REJ_NOT_ARRIVED) {
+      // 158 = 小队尚未抵达（行军态未 ARRIVED 就发攻打）：不是区域错、也不是目标失效，
+      //   不烧配对试探额度（不 #noteArea(false)）、不拉黑坐标；只退回避，等 push 21529 TEAM_ARRIVE 解除后重跑。
+      const akey = 'arrive158|' + tag;
+      if (!this.#toldReject[akey]) {
+        this.#toldReject[akey] = 1;
+        env.log.info(
+          'boss attack: %s rejected %s (team not arrived) → backoff %dms, will resume on push 21529, NOT probing/blacklisting.',
+          tag,
+          rej,
+          tuning.rejectBackoffMs,
+        );
+      } else {
+        env.log.debug('boss attack: %s still rejected %s (waiting 21529).', tag, rej);
+      }
+      return;
+    }
     if (rej === REJ_BOSS_AREA) {
       this.#markWrongArea(t);
       env.log.info(
@@ -994,6 +1067,10 @@ export class BossEngine {
         self.onSceneWake();
       });
       ctx.on.push(PUSH_BOSS_GUARD_REWARD, function () {
+        self.onSceneWake();
+      });
+      // 21529 TEAM_ARRIVE：最及时的「已抵达」信号，兼 158「尚未抵达」的解除器 → 踢一拍重跑被打 158 的攻打
+      ctx.on.push(PUSH_TEAM_ARRIVE, function () {
         self.onSceneWake();
       });
       // 瓦片流：只写快照、不 kick（3 条/秒）

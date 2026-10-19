@@ -29,7 +29,7 @@ import { reactor } from '../../../core/reactor.js';
 import { createCycle } from '../../../core/cycle.js';
 import { createLog } from '../../../core/log.js';
 import { bits, csHunt } from '../../../core/game-api.js';
-import { TeamEngine } from './engine-team.js';
+import { TeamEngine, getDailyRuns } from './engine-team.js';
 import { SKILL_GROUP_IDS, groupName, skillGroupRep } from './skills.js';
 import { EVENT_TYPE, LUCKY_GIFTS } from './constants.js';
 
@@ -50,7 +50,7 @@ var installed = false;
 var engine = null;
 /**
  * 面板模块配置（configure 灌入，引擎经 env.cfg() 惰性读）。
- * @type {{mode:'main'|'helper', targetMemberNum:number, rolePool:Array<{uid:string,name:string}>, rejectOutsidePool:boolean, useBeaconWhenShort:boolean, presetPool:number[], skillPool:number[], luckyRewards:Object<string,number[]>}}
+ * @type {{mode:'main'|'helper', targetMemberNum:number, rolePool:Array<{uid:string,name:string}>, rejectOutsidePool:boolean, useBeaconWhenShort:boolean, dailyRuns:number, presetPool:number[], skillPool:number[], luckyRewards:Object<string,number[]>}}
  *   presetPool = 单元素数组（面板单选一个预设 1~8）；skillPool = 族代表 id 的优先级序（见 skills.js SKILL_GROUPS）。
  */
 var modCfg = normalize({});
@@ -65,8 +65,10 @@ function isMain(cfg) {
 }
 
 /**
- * 角色池归一：只留合法 uid（Int64 一律字符串，禁 Number 化），去重，保留面板行序。
- * @param {*} raw uidlist 面板原值 `[{uid,name}]`
+ * 角色池归一：只留合法 uid（Int64 一律字符串，禁 Number 化）且**已勾选**的行（行 .on===false 不入池；
+ *   存量无 on 视为已勾，向后兼容），去重，保留面板行序。未勾行在归一处即被剔除，
+ *   下游两条消费链（队长审批入队 poolSet / 陪跑找队 #joinTeam）同时生效。
+ * @param {*} raw uidlist 面板原值 `[{uid,name,on}]`
  * @returns {Array<{uid:string, name:string}>}
  */
 function sanitizePool(raw) {
@@ -74,6 +76,7 @@ function sanitizePool(raw) {
   var arr = Array.isArray(raw) ? raw : [];
   for (var i = 0; i < arr.length; i++) {
     var it = arr[i] || {};
+    if (it.on === false) continue; // 面板勾选框（itemCheck）未勾=不入夺宝玩家池
     var uid = bits.int64Str(it.uid);
     if (!uid) continue;
     if (
@@ -221,6 +224,8 @@ function normalize(raw) {
     rolePool: sanitizePool(raw.rolePool),
     rejectOutsidePool: !!raw.rejectOutsidePool,
     useBeaconWhenShort: !!raw.useBeaconWhenShort,
+    // ⑤ 每日夺宝局数上限（借鉴竞对 setting.team.count）：0=不限；主跑每完成一局计 1、跳日归零、到上限当日停跑
+    dailyRuns: Math.max(0, Number(raw.dailyRuns) || 0),
     // 面板单选一个预设，但引擎（buildPlanFromPool）仍收数组：包成单元素保持出兵语义链路不变
     presetPool: (function () {
       var p = sanitizePreset(
@@ -253,6 +258,15 @@ function statusText() {
     '玩法开关：' + st.open,
     '玩法模式：' + (modCfg.mode === 'helper' ? '陪跑（不耗次数）' : '主跑（要奖励）'),
   ];
+  if (modCfg.mode !== 'helper') {
+    var ran = getDailyRuns(); // -1=当日计数尚未读回
+    var lim = modCfg.dailyRuns | 0;
+    lines.push(
+      '今日已跑：' +
+        (ran < 0 ? '?' : ran) +
+        (lim > 0 ? ' / ' + lim + ' 局上限' : ' 局（未设上限）'),
+    );
+  }
   if (!team) return lines.join('\n') + '\n当前无队';
   lines.push(
     '队伍 ' +
@@ -346,13 +360,13 @@ function run(ctx) {
   //   发包与应答落地都在引擎里（resp 订阅已挂），装配层只负责点火强拉一次
   engine.refreshInfo(true);
   log.info(
-    'started (mode=%s, 目标人数=%d, 出征预设=%j, 信标补次数=%s, 科技池=%j, 幸运池=%d 项).',
+    'started (mode=%s, 目标人数=%d, 出征预设=%j, 信标补次数=%s, 科技池=%j, 幸运池(rollDice)=%s).',
     modCfg.mode,
     modCfg.targetMemberNum,
     modCfg.presetPool,
     modCfg.useBeaconWhenShort ? '开' : '关',
     modCfg.skillPool,
-    modCfg.luckyRewards.length,
+    JSON.stringify(modCfg.luckyRewards.rollDice),
   );
   cycle.kick();
 }
@@ -362,7 +376,10 @@ function run(ctx) {
  * @param {object} c 归一化后的模块配置
  */
 function configure(c) {
-  modCfg = normalize(c);
+  // c 已是 registry 调 toModuleCfg(=normalize) 产出的运行时形状，直接整体接收；**绝不二次 normalize**——
+  //   首轮归一已把扁平面板键 luckyRollDice 转成 luckyRewards.rollDice，再 normalize 会读不到 luckyRollDice → 幸运池重置为空，
+  //   致 #tryLucky 首闸 !wl.length 静默跳过、幸运必现漏用（实证 20261018T105933 两场主跑；同 auto-hunt 文件头「配置链路」踩坑记录）
+  if (c) modCfg = c;
 }
 
 /** 收引擎（幂等）：只清引擎自持状态，事件退订由 reactor 统一摘除。 */
@@ -412,6 +429,7 @@ reactor.register({
     rolePool: [],
     rejectOutsidePool: false,
     useBeaconWhenShort: false,
+    dailyRuns: 0,
     preset: 1,
     skillPool: SKILL_GROUP_IDS.slice(),
     // 幸运池只留 rollDice 一组勾选（键与 luckyFieldKey(rollDice) 对应）；旧 luckyPickReward/luckyCodeBox/luckyDefPVE 及全量勾选存档已废弃、不再读
@@ -455,8 +473,9 @@ reactor.register({
       section: '组队',
       max: 10,
       itemLabel: '玩家',
+      itemCheck: true,
       placeholder: '请输入玩家UID',
-      hint: '队长（主跑开车）按名单审批入队申请（7523）；陪跑找队时逐个名单成员 630 取名→7530 按名搜其创建的未满队→7522 申请加入；留空=陪跑不主动找队',
+      hint: '勾选的玩家才入池：队长（主跑开车）按池内名单审批入队申请（7523）；陪跑找队时逐个池内成员 630 取名→7530 按名搜其创建的未满队→7522 申请加入；全不勾/留空=陪跑不主动找队',
     },
     {
       key: 'rejectOutsidePool',
@@ -465,6 +484,16 @@ reactor.register({
       section: '组队',
       showIf: isMain,
       hint: '勾选则池外申请回 7523 op:2 拒绝；不勾则忽略（留着等其他队友好）',
+    },
+    {
+      key: 'dailyRuns',
+      type: 'number',
+      label: '每日局数上限',
+      section: '组队',
+      min: 0,
+      step: 1,
+      showIf: isMain,
+      hint: '0=不限；主跑每完成一局计 1（持久跨页、明日自动归零），到上限当日不再建队/加入，陪跑不计数不受此限',
     },
     {
       key: 'useBeaconWhenShort',

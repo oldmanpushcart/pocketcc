@@ -53,12 +53,14 @@ export function mountUidList(box) {
   };
 
   // ＋ / ×：结构性改动后整块重刷（索引会变，故重绑而非逐控件）
+  // 结构性改动前浅拷单行，避免污染 defaults 共享引用（＋新行带 on：itemCheck 字段缺省勾选=入池）
+  const newRow = () => (fd.itemCheck ? { uid: '', name: '', on: true } : { uid: '', name: '' });
   const add = box.querySelector('.pc-ulistadd');
   if (add)
     add.addEventListener('click', (e) => {
       e.stopPropagation();
       if (arr.length >= max) return;
-      arr.push({ uid: '', name: '' });
+      arr.push(newRow());
       rerender();
       const rows = box.querySelectorAll('.pc-uli');
       const last = rows[rows.length - 1];
@@ -76,6 +78,21 @@ export function mountUidList(box) {
       applyFeature(f);
     });
   });
+
+  // 行首勾选框（fd.itemCheck）：就地写回行对象 .on，无结构变化不重刷（勾选态由 DOM 自持）
+  if (fd.itemCheck)
+    box.querySelectorAll('.pc-ulichk').forEach((chk) => {
+      chk.addEventListener('change', (e) => {
+        e.stopPropagation();
+        const i = +chk.dataset.uidx;
+        if (i >= 0 && i < arr.length) {
+          if (arr[i] === (f.defaults[fd.key] || [])[i]) arr[i] = { ...arr[i] }; // 防改 on 时写穿 defaults 共享引用
+          arr[i].on = chk.checked;
+        }
+        saveFeature(f);
+        applyFeature(f);
+      });
+    });
 
   // 每行 UID 控件：复用 setupUidField 的状态机，但读写 friends[idx].{uid,name}
   box.querySelectorAll('.pc-uli').forEach((wrap) => setupUidListRow(wrap, f, arr));
@@ -500,7 +517,8 @@ export function mountSortList(box) {
 
 /**
  * 装配物品清单容器（.pc-ilist）：行不可增删，每行一枚 checkbox + 一个数字输入；`fd.sortable` 时行首多一个拖拽手柄。
- * 状态形状：`cfg[fd.key] = { [idStr]: { on: 0|1, max: number } }`，未登记的项默认 on=1/max=0（不限）。
+ * 状态形状：`cfg[fd.key] = { [idStr]: { on: 0|1, max: number, [channel2.key]?: 0|1 } }`，未登记的项默认 on=1/max=0（无上限）。
+ * `fd.channel2` 存在时行内多一枚第二渠道勾选（.pc-ichk2，回写 `state[key][ch2.key]`，如秘境持有清单的 shop 渠道）。
  * 拖拽序：`cfg[fd.orderKey] = string[]`（池 key 的优先级序，下标即优先级），只由拖拽写入（写全量 DOM 序）；
  *   旧存档无此数组 = 未排过序，面板按池原序展示，引擎也不按序优先（见 feats/activity/secret-realm/pickup.js）。
  * 池项带 `cap`（游戏自身硬上限）时，输入超出 cap 会被自动修正为 cap 并回写框内值。
@@ -560,7 +578,7 @@ export function mountItemList(box) {
         wrapSel: '.pc-irows',
         rankSel: '.pc-irank',
         handleSel: '.pc-shandle', // 行内有输入框：只从拖拽手柄起拖，不抢输入框焦点/选字
-        skipCls: ['pc-ichk', 'pc-imax'],
+        skipCls: ['pc-ichk', 'pc-ichk2', 'pc-imax'],
         commit: commitFromDom,
       })
     : function () {};
@@ -577,6 +595,18 @@ export function mountItemList(box) {
         applyFeature(f);
       });
     });
+    // 第二渠道勾选（如商店补货 shop）：回写 state[key][ch2.key]，与 on 一样整块重刷以更新行高亮
+    box.querySelectorAll('.pc-ichk2').forEach((chk) => {
+      chk.addEventListener('change', () => {
+        const k = chk.dataset.ik;
+        const flag = chk.dataset.iflag || 'shop';
+        const e = ensureEntry(k);
+        e[flag] = chk.checked ? 1 : 0;
+        rerender();
+        saveFeature(f);
+        applyFeature(f);
+      });
+    });
     box.querySelectorAll('.pc-imax').forEach((num) => {
       num.addEventListener('change', () => {
         const k = num.dataset.ik;
@@ -584,7 +614,7 @@ export function mountItemList(box) {
         let v = Math.max(0, Math.floor(Number(num.value) || 0));
         const cap = Math.max(0, Math.floor(Number(num.dataset.cap) || 0));
         if (cap > 0 && v > cap) v = cap; // 游戏自身上限抢先：超出直接修正为上限
-        num.value = v;
+        num.value = v > 0 ? v : ''; // 0 回写为空→露出占位（无上限/游戏持有上限），与渲染同口径
         e.max = v;
         // 不重刷，避免抢用户当前输入框；需高亮 off 行时可手动失焦后看下一刷新周期
         saveFeature(f);

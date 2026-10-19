@@ -23,9 +23,16 @@
  *
  * 一拍只做一个动作（与游戏逐件点击同口径），且**一拍最多发一次 8584**：
  *   快照新鲜 → 决策并用掉一件道具（返回 healGapMs）；
- *   快照过期/缺场 → 发一次 8584 拉新快照（返回 healGapMs，等应答到达即 kick 复跑）；
+ *   快照过期/缺场 → **先过一遍零成本预筛**（见下）才发 8584 拉新快照（返回 healGapMs，应答到达即 kick 复跑）；
  *   无伤 / 无道具 / 未激活 → 返回 healScanMs 长睡（没伤就不该频着拉全编队血量）。
  *   成功用掉一件后把快照标记为「早于本次动作」→ 下一拍自动去重拉新血，既不猜血量也不与游戏自补的那条 8584 撞车。
+ *
+ * 零成本预筛（#mayNeedHeal，本轮从竞对脚本借鉴）：8584 是个「拉全编队血量」的查询包，而 push 21521
+ *   已把每支军队的 `{power, initPower}` 送到本地（`roomBaseInfo.members[].powerInfos[]`，报文实证
+ *   dashcam 20261011T203911：`{"initPower":1.13e+35,"power":1.01e+35}`）→ 先用面板阈值扫一眼，
+ *   确认无伤就**一个查询包也不发**（竞对靠的是同一条思路，只是他把阈值写死 0.9/0.97 两档）。
+ *   预筛只做「拦明显无伤」这一件事，不拿它决定给哪支军队用道具（那仍以 8584 的权威快照为准，红线），
+ *   且任何证据缺失（找不到我 / 无 powerInfos / 算不出比值）一律放行。
  *
  * 拒绝码处置（sendSecret 已把 `pbAckV2.header.d` 归一成 Ret.reason，feat 侧不摸 raw）：
  *   - enigma_realm162「异常操作，请再次尝试」= 服务器抖动形态（实证录音里 8546 撞 13 次、重试即过）
@@ -164,8 +171,56 @@ export class HealEngine {
     }
     // 快照缺场/过期 → 拉一次（一拍只发一次 INFO；游戏弹层自补的那条 8584 由 resp 订阅照收）
     if (env.secret.isSecretSending(CMD_MARCH_ARMY_INFO)) return tuning.healGapMs;
+    if (!this.#mayNeedHeal(h)) {
+      env.log.debug('heal: prescan says nobody wounded (21521 powerInfos), skip 8584.');
+      return tuning.healScanMs;
+    }
     env.secret.sendSecret(CMD_MARCH_ARMY_INFO, { uid: this.#uid() });
     return tuning.healGapMs;
+  }
+
+  /**
+   * 零成本预筛：只回答「值不值得为拉血量发一个 8584」，**不参与「给哪支军队用道具」的决策**。
+   * 料源：push 21521 落地的 `roomBaseInfo.members[].powerInfos[]`（每条一个 `{power, initPower}`，
+   *   与 8584 的 `armyPower/maxArmyPower` 同为一个「当前/初始」比值口径，报文实证 dashcam 20261011T203911）。
+   * 阈值直接用面板 `threshold`（掉血百分比）：`1 - power/initPower >= threshold/100` 即算「有伤员」，
+   *   与 #healOne 对 8584 快照的判据逐位同式（预筛与权威路不一致会在阈值边界上互相矛盾）。
+   *   竞对在此处写死了 0.9（只有普通包）/0.97（有高级包）两档，本引擎不拆档——多一档道具类型差异的代价是
+   *   面板多一个旋钮，而预筛本来就不影响最终用哪一件（那由 #healOne 按白名单顺序定）。
+   * 三条 fail-open（宁可多发一次查询，也不把治疗闸死）：members 缺失/找不到我 / 该 member 无 powerInfos
+   *   / 数组里一条都算不出比值。
+   * 代价（写清不藏着）：21521 实测 ≈17s 一条（一场 239 条）→ 刚掉下去的血最长要等一条推送才进得了门；
+   *   而本引擎节拍本就是 healScanMs 4s 一轮、一件一件用，治疗不是秒级需求，故可接受。
+   * @param {object} h 面板 heal 配置 {threshold}
+   * @returns {boolean} true=有伤员或无证据（放行，发 8584）；false=确认无伤（不发）
+   */
+  #mayNeedHeal(h) {
+    const env = this.#env;
+    const base = env.secret.getRoomBaseInfo();
+    const members = base && base.members;
+    if (!Array.isArray(members) || !members.length) return true;
+    const me = this.#uid();
+    let mine = null;
+    for (let i = 0; i < members.length; i++) {
+      const m = members[i];
+      if (m && String(m.uid) === me) {
+        mine = m;
+        break;
+      }
+    }
+    const infos = mine && mine.powerInfos;
+    if (!Array.isArray(infos) || !infos.length) return true;
+    const need = Math.min(100, Math.max(0, Number(h.threshold) || 0)) / 100;
+    let judged = 0;
+    for (let j = 0; j < infos.length; j++) {
+      const p = infos[j];
+      const init = toNum(p && p.initPower);
+      if (!(init > 0)) continue;
+      judged++;
+      // 与 #healOne 逐位同式（`1 - ratio >= need` 即伤员）：写成 `ratio <= 1 - need` 在阈值边界上两者可能判反
+      if (1 - toNum(p.power) / init >= need) return true;
+    }
+    return judged === 0; // 一条比值都算不出来 = 无证据 → 放行
   }
 
   /**
