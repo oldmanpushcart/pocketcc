@@ -15,6 +15,8 @@
  * 失败路由（名额语义定稿：活动组队列 per-type 上限恒 5，与战斗组 canMarch 名额互不占用）：
  *   队满 world_130516 = "行军根本没发出"，箱保留（实证 8852 仍返回该箱）→ 退回 pending 等 slotFree 重排；
  *   当日上限 mysterioustriangle_10 = 原箱不再返回（实证）→ 类型级当日熔断弃轮。
+ *   pending 重排只对"回空"撤项：8852 每次只回一个当前可领箱，回的是别的坐标时按住项原样回队等腾位，
+ *   不级联撤堆（否则拍网格已推进、再也探不到它们）；有按住项时末拍不收摊，pending 寿命由窗口硬止兜底。
  *   257 不占战斗组行军位（活动组行军在 push 入口被改写 uid=uid+marchId、不计 myMarchNum），
  *   但占活动组自己的队列位——名额闸把"撞墙才知道"变成"派遣前就知道"。
  *
@@ -974,17 +976,31 @@ async function onProbe(flow, payload) {
 function concludeTick(flow, k, gotBox, genuineMiss) {
   if (genuineMiss) flow.missStreak++;
 
-  // 刚性网格末拍：卡片既算出 N 箱，第 lastK 拍一旦没命中可动新箱就不可能再有箱 → 直接收摊（省掉尾部空转拍）
-  if (!gotBox && flow.lastK > 0 && k >= flow.lastK) {
+  // 刚性网格末拍：卡片既算出 N 箱，第 lastK 拍一旦没命中可动新箱就不可能再有箱 → 直接收摊（省掉尾部空转拍）。
+  // 但仍有按住待派的箱时不收：拍网格只保证"不再发现新箱"，不保证已发现的箱都派出去了——
+  //   远处 10 箱车前 5 在途占满名额时，后 5 箱全在 pending 等腾位，此刻收摊会连带清掉它们（漏领根因之二）；
+  //   这些箱的寿命由 flow.E 的 expire 兜底，不会无限挂
+  if (!gotBox && flow.lastK > 0 && k >= flow.lastK && !hasPendingFor(flow)) {
     dropFlow(flow, 'grid done');
     return;
   }
-  if (!gotBox && flow.missStreak >= stopThreshold(flow)) {
+  if (!gotBox && flow.missStreak >= stopThreshold(flow) && !hasPendingFor(flow)) {
     dropFlow(flow, 'empty ' + flow.missStreak + ' periods');
     return;
   }
 
   startProbeTick(flow, k + 1);
+}
+
+/**
+ * 该流程是否还有按住待派的箱（concludeTick 的收摊闸门用：pending 未排空前不许提前收摊）
+ * @param {object} flow 目标流程
+ * @returns {boolean}
+ */
+function hasPendingFor(flow) {
+  return pendingPickups.some(function (it) {
+    return it.flow === flow;
+  });
 }
 
 /**
@@ -1072,8 +1088,11 @@ function livePendingFor(getType) {
 }
 
 /**
- * slotFree 事件 handler：某 getType 腾位到点 → 榨干名额。逐支重查 8852 校验箱仍在且坐标一致，
- * 一致则立即入堆 pickup（受 pickup 条间闸门自然错开 ≥1s），不一致（被抢/消失）撤 pending 项。
+ * slotFree 事件 handler：某 getType 腾位到点 → 榨干名额。逐支重查 8852 校验箱仍对我可领，
+ * 一致则立即入堆 pickup（受 pickup 条间闸门自然错开 ≥1s）。⚠️ 8852 每次只回**一个**当前可领箱：
+ * 回空才是"队首箱已消失/被抢"（撤 pending 项并从已派集合退回）；回的是别的坐标只说明"它不是当前可领箱"
+ * （更早的按住箱可能已过期，它自己还在地上）——按住项必须原样回队等后续腾位，绝不能级联撤掉，
+ * 否则整堆 pending 被一次错配清空、而拍网格已推进不会再探它（远处 10 箱车、5 箱按住等腾位时漏领 5 箱的根因）。
  * 循环至本轮占用名额达 freeSlots 上限或无 pending；仍有 pending 则按最新 nextReleaseAt 续排
  * @param {number} getType 拾取行军类型
  */
@@ -1084,7 +1103,8 @@ async function onSlotFree(getType) {
   while (aliveFn() && dispatched < slots) {
     var pend = livePendingFor(getType);
     if (!pend.length) break;
-    // 选所属 flow 窗口最紧（E 最小）者先派，快过期的箱优先榨名额
+    // 选所属 flow 窗口最紧（E 最小）者先派，快过期的箱优先榨名额；同堆内按入队序即拍序（=投放序，
+    //   而 8852 回的正是"最早可领箱"=拍序最早者，队首比对一次即够，无需逐项重查）
     var item = pend[0];
     for (var i = 1; i < pend.length; i++) if (pend[i].flow.E < item.flow.E) item = pend[i];
 
@@ -1095,17 +1115,9 @@ async function onSlotFree(getType) {
     var res = await queryBox(item.flow.dropType, item.flow.marchId);
     if (!aliveFn() || flows.get(item.marchId) !== item.flow) return; // 期间流程收摊/pause
 
-    if (res.state === 'hit' && res.x + ',' + res.y === item.key) {
-      // 箱仍在且坐标一致：入堆（pickup 闸门保证条间 ≥1s）；名额已被本轮占用，dispatched 计数封顶防超发
-      pushEvent(
-        Math.max(Date.now(), lastPickupAt + cfg.retryMs + dispatched * cfg.retryMs),
-        'pickup',
-        item.marchId,
-        { item: item },
-      );
-      dispatched++;
-    } else {
-      // 箱被抢/消失：撤 pending，坐标从已派集合退回（中性不重派）
+    if (res.state === 'empty') {
+      // 对该流程已无任何可领箱：队首项确认消失（被抢/过期/上限），从已派集合退回（中性不重派）；
+      // 后续按住项留 pending——若还有活箱，下一次重查会 hit
       item.flow.dispatched.delete(item.key);
       log.debug(
         'pending box vanished before dispatch. marchId=%s;x=%d;y=%d',
@@ -1113,7 +1125,44 @@ async function onSlotFree(getType) {
         item.x,
         item.y,
       );
+      continue;
     }
+    if (res.state !== 'hit') {
+      addPending(item); // 网络异常：原样回队，靠下次 slotFree/收摊对账，不计失败不级联
+      break;
+    }
+
+    var qKey = res.x + ',' + res.y;
+    if (qKey === item.key) {
+      // 箱仍是当前可领箱：入堆（pickup 闸门保证条间 ≥1s）；名额已被本轮占用，dispatched 计数封顶防超发
+      pushEvent(
+        Math.max(Date.now(), lastPickupAt + cfg.retryMs + dispatched * cfg.retryMs),
+        'pickup',
+        item.marchId,
+        { item: item },
+      );
+      dispatched++;
+      continue;
+    }
+
+    // 回的是别的坐标：本项只是"不再是当前可领箱"（大概率更早、还活着），原样回队等下次腾位
+    addPending(item);
+    if (item.flow.dispatched.has(qKey) || inBackoff(item.flow, qKey)) {
+      // 该坐标已被本流程按住（在 pending 尾/退避中）：下一轮循环会轮到它，或须等退避到点，让位退出
+      break;
+    }
+    // 拍网格之后新冒出来的箱（如收摊闸门放开后延迟落地的箱）：当场认账派遣；本轮到此为止，
+    //   下一箱要等这支的 902 真正受理后 8852 才会推进，继续重查只会拿同一个坐标空转
+    item.flow.dispatched.add(qKey);
+    log.info(
+      'fresh box at slot-free. marchId=%s;x=%d;y=%d;held=%d',
+      item.marchId,
+      res.x,
+      res.y,
+      pendingPickups.length,
+    );
+    await requestPickup(item.flow, qKey, res.x, res.y);
+    break;
   }
   // 仍有同类型 pending（名额不够或被本轮漏掉）→ 按最新释放估算续排
   if (livePendingFor(getType).length) await scheduleSlotFree(getType);
