@@ -126,6 +126,16 @@ import {
 const BOSS_TILE_TYPES = [PAB_BOSS, PAB_BOSS_GUARD];
 
 /**
+ * 点型是否 BOSS 相关（176 平台 / 177 大BOSS / 178 小BOSS）——自动驾驶开启时本引擎可否发攻打行军的判据
+ *   （与 drive.js isBossish 同口径：不在这些点上时行军权全归 drive）。
+ * @param {number} pt 瓦片 pointType
+ * @returns {boolean}
+ */
+function isBossTile(pt) {
+  return pt === PAB_BOSS_PLANE || pt === PAB_BOSS || pt === PAB_BOSS_GUARD;
+}
+
+/**
  * protobuf Long / {_low,_high} / number / 字符串 → 数值（取不到回 0）。与 capture.js/heal.js 同口径。
  * @param {*} v 数值字段原值
  * @returns {number}
@@ -301,6 +311,14 @@ export class BossEngine {
     // 队长闸（见文件头 §③「队长闸」）：UI 不查队长，但 8521 驱动的是全队那一条行军，成员侧不发
     if (!env.secret.isTeamLeader()) {
       env.log.debug('boss attack: not team leader (team march is leader-driven), skip.');
+      return;
+    }
+    // 自动驾驶让闸：drive.enabled 时「开往平台/巡航/逃袭」的行军权归 drive 统一方向盘，本引擎只在队伍
+    //   已停在 176/177/178 上才发攻打行军（到平台后攻打仍照旧由本引擎接管）；非 BOSS 点一律让位，
+    //   避免 drive 的 TO 行军与攻打行军互抢那一条 8521 在途位（见 drive.js 文件头）。关掉 drive 时行为不变。
+    const drv = env.cfg().drive;
+    if (drv && drv.enabled && !isBossTile(Number(base.pointType))) {
+      env.log.debug('boss attack: drive on & not on a BOSS tile → skip (reason=drive-driving).');
       return;
     }
     if (env.secret.isSecretSending(CMD_MARCH_MOVE) || this.#marchInFlight) {

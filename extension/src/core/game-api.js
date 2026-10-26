@@ -980,6 +980,134 @@ function taskRelaxTypeOpen(type) {
   }
 }
 
+/** @type {number} 金币收割机 buildingId（push 10101 实证：GameDefine.MapPointType.Harvester 组下唯一建筑，collectorMaxNum 只挂在它身上） */
+const COIN_HARVESTER_BUILDING_ID = 1801;
+/** @type {number} BUILDING 表 produce_type=1 = 金币产出型（民居/金矿场）——源码 BuildingData.getProductCacheCount 首闸 `1!=this._Data.produce_type` 即 return 0 */
+const COIN_PRODUCE_TYPE = 1;
+
+/**
+ * 取调用方镜像的下一次到点时刻（只推进、不拉回：拿不到或更旧回 0 表示不覆写）。
+ * @param {Object<string,number>|null} mirrors 镜像表
+ * @param {string} id 建筑实例 id
+ * @param {number} authoritative 游戏侧权威到点时刻
+ * @returns {number} 覆写秒数（无覆写回 0）
+ */
+function mirrorOf(mirrors, id, authoritative) {
+  if (!mirrors) return 0;
+  var v = Number(mirrors[id]) || 0;
+  return v > authoritative ? v : 0;
+}
+
+/**
+ * 主城金币产出态只读快照（自动收取金币的唯一真相来源）——复刻游戏自身的收取链路：
+ *   当前版本功能位 key_novice_adjustments 生效，金币是「矿持续产出 → 折进缓存池 → 收割机一次提现」两段：
+ *   ① 金矿场/民居（BUILDING.produce_type=1）定时产出，游戏用 BuildingData.getProductCacheCount 按
+    「(floor((now-ProductTime)/produce_time)+1) × para」逐矿本地累加，经 UpdateHaverstCache 折进缓存池
+    UserData.CacheResource（只在建筑 UpdateData/推送时刷新，非定时器——玩家说的「定时产出、没走服务器 push」即此）。
+ *      **矿不单独收取**：产物只涨缓存池、没有独立的结算入口，一次收割机收取即连同全部缓存一起结进钱包。
+ *   ② 金币收割机（buildingId 1801）把「ProCount + CacheResource」一起收进钱包。游戏点击建筑 gotoCollectMachine →
+ *      collectMachineExcute 的**免费分支**只发 GET_ORDER `{id:收割机实例id}`，可免费收的门槛为
+ *      「ProCount+CacheResource > PLAYER_LEVEL.gold_mine_reaper_store_max × 0.2」或「距上次收取 > 14400s」
+ *      （后者依赖游戏写 LocalDataKey.CollectMechineGetTime，本端只读不改写，故由 feat 自记时刻）；
+ *      未达门槛游戏弹 CollectionMachine 走付费「立即收取」——本能力不披露、feat 也不该碰。
+ *   收割机可收判据（源码 UserData.AutoHarvesting / BuildingData 实证）：在场、Broken!=1、未报满仓。
+ *   mines[] 仅保留「最近一批到点」的本地钟算信息作唤醒/涨币信号（收割机收完后靠它判断下笔何时值得收），
+ *   不作为逐矿收取候选。全程只读游戏数据，不调用任何游戏 Update/Delete 写接口。
+ * @param {{mirrors?:Object<string,number>}} [opt] mirrors=本端自持的收割机下一次到点时刻表（直发不回写时由调用方维护）
+ * @returns {{available:boolean, now:number, cacheResource:number, harvester:({id:string, buildingId:number, broken:number, proCount:number, collectorMax:number, productTime:number, mirrorProductTime:number, intervalSec:number}|null),
+ *   mines:Array<{id:string, buildingId:number, productTime:number, intervalSec:number}>,
+ *   harvestPending:number, harvestReady:boolean, storeMax:number, harvestFloor:number, nextWakeSec:number}}
+ *   available=false：DataCenter/UserData.Buildings 未就绪（调用方本轮不发）；
+ *   harvestPending=收割机可收量（ProCount+CacheResource）；harvestFloor=免费收取门槛（拿不到等级配置时降为 pending>0 即收）；
+ *   nextWakeSec=距下一次「有矿到点 / 收割机自身到点」的秒数（纯本地钟算，游戏无到点推送；0=无待产信息）。
+ */
+function coinState(arg) {
+  var empty = {
+    available: false,
+    now: 0,
+    cacheResource: 0,
+    harvester: null,
+    mines: [],
+    harvestPending: 0,
+    harvestReady: false,
+    storeMax: 0,
+    harvestFloor: 0,
+    nextWakeSec: 0,
+  };
+  var u = userData();
+  var list = u && u.Buildings;
+  if (!u || !Array.isArray(list) || !list.length) return empty;
+  var now = gameData.serverTime();
+  if (!(now > 0)) return empty;
+  var lvRow = l10n.tableRow('PLAYER_LEVEL', gameData.level());
+  var storeMax = lvRow ? Number(lvRow.gold_mine_reaper_store_max) || 0 : 0;
+  var cache = Number(u.CacheResource) || 0;
+  /** @type {object|null} 收割机（金币仓库） */
+  var harvester = null;
+  /** @type {Object<string,number>} 调用方注入的「下一次到点时刻」覆写表（直发 102 不回写游戏本地态的补偿，key=建筑实例 id 字符串） */
+  var mirrors = (arg && arg.mirrors) || null;
+  /** @type {object[]} 金币产出建筑（金矿场/民居） */
+  var mines = [];
+  for (var i = 0; i < list.length; i++) {
+    var b = list[i];
+    var cfg = b && b.Data;
+    if (!cfg) continue;
+    var id = bits.int64Str(b.Id);
+    if (!id) continue;
+    var productTime = Number(b.ProductTime) || 0;
+    var buildingId = Number(b.BuildingId) || 0;
+    if (buildingId === COIN_HARVESTER_BUILDING_ID) {
+      var hMirror = mirrorOf(mirrors, id, productTime);
+      harvester = {
+        id: id,
+        buildingId: buildingId,
+        broken: Number(b.Broken) || 0,
+        proCount: Number(b.ProCount) || 0,
+        collectorMax: Number(b.CollectorMaxNum) || 0,
+        productTime: hMirror || productTime,
+        mirrorProductTime: hMirror,
+        intervalSec: Number(cfg.produce_time) || 0,
+      };
+      continue;
+    }
+    if (Number(cfg.produce_type) !== COIN_PRODUCE_TYPE) continue; // 只算金币产出建筑：士兵/其他产物建筑收了也不出币
+    var intervalSec = Number(b.TotalTime) || 0; // BuildingData._totalTime = BUILDING.produce_time（士兵类才改写，金币建筑恒为配置值）
+    // 矿不单独收取，仅作唤醒/涨币信号：ProductTime 是下一批到点时刻（权威态由游戏建筑推送刷新，无需镜像补偿）。
+    if (productTime <= 0) continue;
+    mines.push({ id: id, buildingId: buildingId, productTime: productTime, intervalSec: intervalSec });
+  }
+  var harvestPending = harvester ? harvester.proCount + cache : 0;
+  // 收割机可收态：在场、未破损、未报满仓（满仓后再发也不涨，游戏同判据不再显示可收）。collectorMax 读数异常（浮点精度）时不参与闸门。
+  var collectorMax = harvester ? harvester.collectorMax : 0;
+  var harvestReady = !!(
+    harvester &&
+    harvester.broken !== 1 &&
+    !(collectorMax > 0 && collectorMax <= 1e15 && harvestPending >= collectorMax)
+  );
+  // 下一次值得醒来的时刻：最早的矿到点 / 收割机自身下一批到点；已过点的候选不参与（本轮就能收，不需要定时）
+  var nextWakeSec = 0;
+  var pickNext = function (t) {
+    if (!(t > 0)) return;
+    var d = t - now;
+    if (d <= 0) return;
+    if (!nextWakeSec || d < nextWakeSec) nextWakeSec = d;
+  };
+  for (var j = 0; j < mines.length; j++) pickNext(mines[j].productTime);
+  if (harvester) pickNext(harvester.productTime);
+  return {
+    available: true,
+    now: now,
+    cacheResource: cache,
+    harvester: harvester,
+    mines: mines,
+    harvestPending: harvestPending,
+    harvestReady: harvestReady,
+    storeMax: storeMax,
+    harvestFloor: storeMax > 0 ? storeMax * 0.2 : 1,
+    nextWakeSec: nextWakeSec,
+  };
+}
+
 /**
  * 游戏日界偏移（秒）：每日 0 点刷新对应的 UTC 秒内偏移。真相来自 extracted DateUtils.getOffsetDaysByTime
  * 的归日式 `(t-57600)%86400`，57600=16h → 日界线落在 UTC 16:00 = 服务器本地 0:00（UTC+8）。
@@ -989,14 +1117,14 @@ function taskRelaxTypeOpen(type) {
 const GAME_DAY_RESET_OFFSET = 57600;
 
 /**
- * @type {number} 特殊科技组 sid 10900（联盟建筑捐赠）：剩余捐赠次数走独立能量池
+ * @type {number} 排除捐赠的科技组 sid 10900（字典 alliance_tech_name10900=快速作战）：剩余捐赠次数走独立能量池
  * EnergyType.ALLIANCE_BUILDING_DONATE_GOLD_NUM=6，且服务端恒回 addPoint=0（只加建筑经验、不计个人每日荣誉）。
  * 能量池实测（dashcam 全量 10021 归集）：pointMax=200、restoreSec=20 —— 比通用池 4（10/1800）大两个数量级、
  * 回点快 90 倍；把它混进普通科技目标会长期霸占 donateTarget（它排在 dev 列表第 8 组，前序满级即命中），
- * 把捐赠交互抬到 3 次/分钟的常驻量。故 ACL 把它从 donateTarget 摘出、单列 buildingTarget 披露，
- * 由 feat 作「补捐链」消费（只在普通链本轮没捐成时搭顺风车）。
+ * 把捐赠交互抬到 3 次/分钟的常驻量。用户定案（快速作战不捐）：ACL 把它从捐赠目标中整体排除——
+ * 不进 donateTarget（含回退首项）、不采纳推荐位命中、不再单列 buildingTarget 披露。
  */
-const SCIENCE_SID_BUILDING_DONATE = 10900;
+const SCIENCE_SID_EXCLUDE_DONATE = 10900;
 
 export const gameData = {
   /** 当前服务器时间（秒），实时取值不缓存；取不到返回 0 */
@@ -1609,6 +1737,21 @@ export const gameData = {
     return { times: times, rewardTime: rewardTime };
   },
   /**
+   * 每日特惠（hero daily deal）免费奖励领取态只读快照（UserData.heroDailyDealGiftIsReceived，
+   *   游戏字段来源 choose_hero_daily_reward：登录全量下发 + push 10053 PUSH_USER_DATA_COMMON 回写）。
+   * 口径与游戏 HeroDailyDealGiftShopNode.refreshFreeRewardItem 同判据：
+   *   0=今日可领、1=今日已领、-1=构造默认（数据未同步/玩法未对该玩家开），拿不到 UserData 返回 null。
+   * @returns {number|null}
+   */
+  heroDailyDealReceived() {
+    var u = userData();
+    if (!u) return null;
+    var v = u.heroDailyDealGiftIsReceived;
+    if (v == null || v === '') return null;
+    var n = Number(v);
+    return Number.isFinite(n) ? n : null;
+  },
+  /**
    * 联盟机甲本地态快照（Alliance.AllianceBossData 的 getter，游戏由 push 10435 / 1160 / 1161 应答刷新）。
    * 口径提醒：todayTime / todayFree 两字段由 updateData 的 `null != e.todayTime` 守卫单独维护，
    * 而 push 10435 的载荷里没有它们（只有 allianceBoss 一块）→ 未开面板时恒为构造默认 0，不可据此判免费。
@@ -1643,18 +1786,16 @@ export const gameData = {
    * 口径：recommendId 为官员推荐项（0=无推荐）；costCoin 走游戏
    * getCostCoin()（PLAYER_LEVEL[等级].donation_gold，随等级变）；dailyHonor 为今日已获荣誉
    * （科技捐与遗迹捐共用同一计数：1067 应答 curPoint 直接写回 donateDailyHonor，抓包实证）。
-   * firstDonateable：按游戏弹窗 showBtn 同款可捐口径扫的第一项（诊断用，可能就是建筑项 10900）——
+   * firstDonateable：按游戏弹窗 showBtn 同款可捐口径扫的第一项（诊断用，快速作战 10900 已排除不会命中）——
    *   isLock()（ItemData 方法：sid=10400 恒 false，服务器初始化后为 true）且 !isMaxLevel()（未满级）
    *   且 isStatus()（status==0，即非研究中；研究中捐赠按钮被隐藏）；找不到返回 null。
    * donateTarget：本轮真正该捐的「普通科技」目标（出个人荣誉那条），已把可捐校验与优先级合成——
-   *   推荐项（RecommendId，即 sid）必须自身通过同一 canDon 口径才被采纳，否则回退首个可捐的
-   *   **非建筑**项；两者皆无则 null（上层跳过，建筑余量交给 buildingTarget 补捐）。这是对
-   *   「满级/研究中的推荐项直接捐会被服务器拒」的修正，也是对「10900 霸占首项导致常驻高频捐赠」的修正。
-   * buildingTarget：sid 10900（联盟建筑捐赠）自身可捐时给出 {id,name,recommended}，否则 null；
-   *   recommended 仅当官员推荐位恰为 10900 且其可捐时为 true。次数池与荣誉语义见 SCIENCE_SID_BUILDING_DONATE。
+   *   推荐项（RecommendId，即 sid）必须自身通过同一 canDon 口径且不是排除项才被采纳，否则回退首个可捐的
+   *   **非排除**项；两者皆无则 null（快速作战 10900 按用户定案不捐，从目标合成中整体排除）。
+   *   这是对「满级/研究中的推荐项直接捐会被服务器拒」的修正，也是对「10900 霸占首项导致常驻高频捐赠」的修正。
    * honorCap：今日荣誉上限，走游戏 Alliance.getAllianceScienceScore()（内部读 DATACONFIG 16005），
    *   取不到为 0（上层据此不设此闸）。
-   * @returns {object|null} {recommendId,recommendName,dailyHonor,honorCap,costCoin,firstDonateable,donateTarget,donateRecommended,buildingTarget}；不在盟/数据未填充返回 null
+   * @returns {object|null} {recommendId,recommendName,dailyHonor,honorCap,costCoin,firstDonateable,donateTarget,donateRecommended}；不在盟/数据未填充返回 null
    */
   allianceScience() {
     // 现读、不缓存（同 allianceBoss：游戏由 1143 应答 / push 10430/10432 刷新该容器，缓存会在刷新后读到过期科技态）
@@ -1677,10 +1818,9 @@ export const gameData = {
         return it && typeof it.getName === 'function' ? String(it.getName() || '') : '';
       };
       var recId = Number(src.RecommendId) || 0;
-      // 一趟扫描同时收三个口径：任意首项（诊断）/ 首个非建筑项（普通链回退）/ 建筑项本身（补捐链）
+      // 一趟扫描收两个口径：任意首项（诊断）/ 首个可捐普通项（普通链回退）；排除项 10900 不参与任何口径
       var first = null;
       var firstNormal = null;
-      var building = null;
       var lists = [src.scienceDevDataList, src.scienceWarDataList];
       for (var li = 0; li < lists.length; li++) {
         var arr = lists[li] || [];
@@ -1688,21 +1828,18 @@ export const gameData = {
           var it = arr[i];
           if (!canDon(it)) continue;
           var id = Number(it.sid) || 0;
+          if (id === SCIENCE_SID_EXCLUDE_DONATE) continue; // 快速作战不捐（用户定案）
           if (!first) first = { scienceId: id, name: nameOf(it) };
-          if (id === SCIENCE_SID_BUILDING_DONATE) {
-            if (!building) building = { id: id, name: nameOf(it) };
-          } else if (!firstNormal) {
-            firstNormal = { scienceId: id, name: nameOf(it) };
-          }
-          if (first && firstNormal && building) break;
+          if (!firstNormal) firstNormal = { scienceId: id, name: nameOf(it) };
+          if (first && firstNormal) break;
         }
-        if (first && firstNormal && building) break;
+        if (first && firstNormal) break;
       }
-      // 普通链目标：推荐项须自身可捐才采纳（建筑项不算普通链目标），否则回退首个可捐的非建筑项
+      // 普通链目标：推荐项须自身可捐且非排除项才采纳，否则回退首个可捐的非排除项
       var target = null,
         recommended = false,
         recName = '';
-      if (recId > 0 && recId !== SCIENCE_SID_BUILDING_DONATE) {
+      if (recId > 0 && recId !== SCIENCE_SID_EXCLUDE_DONATE) {
         var rec = src.getScienceItemDataByGroupId(recId);
         if (canDon(rec)) {
           target = { id: recId, name: nameOf(rec) };
@@ -1712,15 +1849,6 @@ export const gameData = {
       }
       if (!target && firstNormal) {
         target = { id: firstNormal.scienceId, name: firstNormal.name };
-      }
-      // 建筑补链目标：官员把推荐位给了 10900 时也算「推荐」，仅供日志与上层判定
-      var bldTarget = null;
-      if (building) {
-        bldTarget = {
-          id: building.id,
-          name: building.name,
-          recommended: recId === SCIENCE_SID_BUILDING_DONATE,
-        };
       }
       var a2 = userData().Alliance;
       var cap =
@@ -1736,7 +1864,6 @@ export const gameData = {
         firstDonateable: first,
         donateTarget: target,
         donateRecommended: recommended,
-        buildingTarget: bldTarget,
       };
     } catch (e) {
       return null;
@@ -2122,6 +2249,19 @@ export const gameData = {
     var u = userData();
     if (!u) return { used: 0, max: 0 };
     return { used: Number(u.myMarchNum) || 0, max: Number(u.myMarchNumMAX) || 0 };
+  },
+  /**
+   * 主城金币产出态快照（金矿场/民居到点产出 + 金币收割机可收量），口径见文件内 coinState 注释。
+   * 只读、无副作用；符号/数据缺失回 {available:false}，调用方本轮不发。
+   * @returns {ReturnType<typeof coinState>}
+   */
+  coinState(opt) {
+    try {
+      return coinState(opt);
+    } catch (e) {
+      log.debug('coinState threw: %s', e && (e.message || e));
+      return { available: false };
+    }
   },
 };
 
@@ -2737,13 +2877,20 @@ export const csHunt = {
    */
   readTeam(raw) {
     if (!raw || typeof raw !== 'object') return null;
+    var uid = '';
+    try {
+      uid = bits.int64Str(userData() ? userData().UID : null);
+    } catch (e) {}
     var members = Array.isArray(raw.member) ? raw.member : [];
     var memberUids = [];
     var marchedCount = 0;
+    var selfMarchId = '';
     for (var i = 0; i < members.length; i++) {
-      memberUids.push(bits.int64Str(members[i] && members[i].uid));
+      var mu = bits.int64Str(members[i] && members[i].uid);
+      memberUids.push(mu);
       var mid = bits.int64Str(members[i] && members[i].marchId);
       if (mid && mid !== '0') marchedCount++; // marchId 非零 = 该成员已派兵到集结点
+      if (mu && mu === uid) selfMarchId = mid; // 与 readState().team 同形：回填本人 marchId（页外快照判「队长自己是否已出兵」的唯一依据）
     }
     var ready = Array.isArray(raw.readyMember) ? raw.readyMember : [];
     var readyUids = [];
@@ -2759,6 +2906,8 @@ export const csHunt = {
       treasureId: bits.int64Str(raw.treasureId),
       memberCount: memberUids.length,
       memberUids: memberUids,
+      selfInTeam: memberUids.indexOf(uid) >= 0,
+      selfMarchId: selfMarchId,
       marchedCount: marchedCount,
       readyCount: readyUids.length,
       readyUids: readyUids,

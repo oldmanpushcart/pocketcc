@@ -25,12 +25,17 @@
  *   - specify 指定玩家：只在 cfg.uids 名单内挑拜访目标，**同意申请也只认这份名单**（cfg.autoAgree='list'）——
  *             名单是用户显式意志，故不再套联盟/离线阈值（但仍守 WAIT、不在途）；
  *   - random 随机玩家：1585 全量里按「WAIT → 不在我已发出且等同意的集合 →（allyOnly）同联盟 tag
- *             → 在线或离线时长达标」逐级过滤，**过滤后为空则逐级回退**（先放宽离线阈值、再放宽联盟闸门），
+ *             → 在线或离线时长达标 →（reqAttrs）对方放置的兽命中属相/品种/品质」逐级过滤，
+ *             **过滤后为空则逐级回退**（先放宽离线阈值、再放宽联盟闸门；属相/品种/品质三项均选「不限」时不启用属性匹配），
  *             仍空才本轮跳过申请并记 warn——窄口径导致整轮空转且无声是最难查的故障；同意口径走 off/ally/all 三档。
  *   两个模式的候选集都是**等概率随机取一个**（用户口径：随机一个匹配的玩家/宠物）。
  *
+ * 随机模式的「按属性找对象」口径（reqTypes/reqQualities/reqFactions）：判据落在 1585 条目的 `main`（对方家
+ *   放置的那只，报文实证带 cfgId）→ enigma_beast 行取 {faction,type,quality} 比对；任一维度选中即启用匹配，
+ *   且**没挂主宠的家一律出局**（要求摆明就是「对方得有符合的兽」），表行取不到同样出局（宁可不发也不猜）。
+ *
  * 出访兽匹配口径逐字对齐游戏 EnigmaBeastBreedSelectPop.updateUI：
- *   cfg.breeding（该物种可培育）&& data.breeding===0（空闲）&& 不在联盟机械领域 && 物种/品质命中；
+ *   cfg.breeding（该物种可培育）&& data.breeding===0（空闲）&& 不在联盟机械领域 && 属相/物种/品质命中（空数组 = 不限）；
  *   游戏 UI 只硬挡 breeding===2、对「派一只已寄养在别人家（=1）的兽」靠服务器拒；脚本额外挡掉 1，不赌服务器幂等。
  *
  * 配额闸门（gameConf.dataConfig）：310007 每日免费申请次数 / 310008 同时等待同意上限 /
@@ -108,6 +113,15 @@ const OWN_IDLE = 0;
 const OWN_MAIN = 2; // 当我家主宠
 
 /**
+ * 属相（游戏叫「异能」，配置表字段 faction）基数：verbatim EnigmaBeastController 导出的 `FACTION_NUM = 4`，
+ *   字典 `enigma_beast_faction_name001..004` = 火系/水系/风系/地系（005「暗系」已有词条但游戏
+ *   EnigmaBeastFactionTip 仍只画 1..FACTION_NUM，故按 1..4 枚举、表里真出现更多值时再并入）。
+ *   一只兽的属相 = `enigma_beast[cfgId].faction`（verbatim EnigmaBeastItem.updateUI 读 `cfg.faction` 画图标）。
+ * @type {number}
+ */
+const BEAST_FACTION_NUM = 4;
+
+/**
  * 闸门配置 id（TableUtils.getDataConfigData，单位见各项注释）。
  * @type {object}
  */
@@ -167,8 +181,13 @@ var cfg = {
   uids: [],
   allyOnly: true,
   maxOfflineHours: 24,
+  reqFactions: [],
+  reqTypes: [],
+  reqQualities: [],
+  applyFactions: [],
   applyTypes: [],
   applyQualities: [],
+  mainFactions: [],
   mainTypes: [],
   mainQualities: [],
   enableMain: true,
@@ -345,6 +364,16 @@ function normUids(v) {
   return out;
 }
 
+/**
+ * 单选下拉的值归一成白名单数组（面板三个属性维度都改成单选，控件里 0 = 不限）：
+ *   直接复用 normNums —— 它本就丢掉非正值，所以 0/空串/脏值一律塌成「不限」的空数组。
+ * @param {*} v 单选值（数字或字符串）
+ * @returns {number[]} 空数组 = 不限，否则单元素
+ */
+function normOne(v) {
+  return normNums(v);
+}
+
 // ─────────────────────────── 当日账本（在途首发时刻 / 次数耗尽标记） ───────────────────────────
 /**
  * 跳日收敛：「次数耗尽」标记只在当日有效；首发时刻不按日清（它随条目消失而删）。
@@ -437,7 +466,7 @@ function inField(sid) {
 }
 
 /**
- * 池内某物种配置行（enigma_beast 按 cfgId 出 {type,quality,breeding,…}）
+ * 池内某物种配置行（enigma_beast 按 cfgId 出 {faction,type,quality,breeding,…}）
  * @param {number} cfgId 配置 id
  * @returns {object|null}
  */
@@ -446,16 +475,18 @@ function beastCfg(cfgId) {
 }
 
 /**
- * 从兽池挑可出访/可当主宠的候选（口径逐字对齐游戏 SelectPop.updateUI，另加品质维度）：
+ * 从兽池挑可出访/可当主宠的候选（口径逐字对齐游戏 SelectPop.updateUI，另加属相/品质维度）：
  *   cfg.breeding 为真（该物种可培育）&& breeding===0（空闲；游戏仅硬挡 ===2，脚本额外挡 1，因 1 必被服务器拒）
- *   && 不在机械领域 && 物种/品质命中（空数组 = 不限）。
+ *   && 不在机械领域 && 属相/物种/品质命中（空数组 = 不限）。
  * @param {object[]} beasts 1570 的 infos
+ * @param {number[]} factions 属相白名单（空 = 不限）
  * @param {number[]} types 物种白名单（空 = 不限）
  * @param {number[]} qualities 品质白名单（空 = 不限）
  * @param {Set<string>} used 本轮已消耗掉的 strId（同轮不重复申请）
- * @returns {Array<{strId:string,cfgId:number,quality:number,star:number,level:number,potential:number}>} 候选
+ * @returns {Array<{strId:string,cfgId:number,faction:number,type:number,quality:number,star:number,level:number,potential:number}>} 候选
  */
-function pickBreedable(beasts, types, qualities, used) {
+function pickBreedable(beasts, factions, types, qualities, used) {
+  var fSet = factions && factions.length ? new Set(factions.map(Number)) : null;
   var typeSet = types && types.length ? new Set(types.map(Number)) : null;
   var qSet = qualities && qualities.length ? new Set(qualities.map(Number)) : null;
   var out = [];
@@ -467,11 +498,13 @@ function pickBreedable(beasts, types, qualities, used) {
     var c = beastCfg(b.cfgId);
     if (!c || !c.breeding) continue;
     if (inField(sid)) continue;
+    if (fSet && !fSet.has(Number(c.faction) | 0)) continue;
     if (typeSet && !typeSet.has(Number(c.type) | 0)) continue;
     if (qSet && !qSet.has(Number(c.quality) | 0)) continue;
     out.push({
       strId: sid,
       cfgId: b.cfgId | 0,
+      faction: Number(c.faction) | 0,
       type: Number(c.type) | 0,
       quality: Number(c.quality) | 0,
       star: b.star | 0,
@@ -495,9 +528,27 @@ function mainSort(a, b) {
 
 // ─────────────────────────── 目标挑选 ───────────────────────────
 /**
+ * 随机模式的「按属性找对象」判据：对方家放置的那只（1585 条目 `main`）是否命中 cfg 里的属相/物种/品质。
+ * 任一维度不命中、或那家根本没挂 main（要求摆明就是「对方得有符合的兽」）、或表行取不到（宁可不发也不猜）→ false。
+ * @param {object} v 1585 的一条 visit（读它的 main.cfgId）
+ * @param {{factions:number[],types:number[],qualities:number[]}} req 白名单（各维度空数组 = 不限）
+ * @returns {boolean}
+ */
+function matchesReqMain(v, req) {
+  var mid = v && v.main && v.main.cfgId;
+  if (!mid) return false;
+  var c = beastCfg(mid);
+  if (!c) return false;
+  if (req.factions.length && req.factions.indexOf(Number(c.faction) | 0) === -1) return false;
+  if (req.types.length && req.types.indexOf(Number(c.type) | 0) === -1) return false;
+  if (req.qualities.length && req.qualities.indexOf(Number(c.quality) | 0) === -1) return false;
+  return true;
+}
+
+/**
  * 拜访列表按一组闸门过滤成候选集。
  * @param {object[]} visit 1585 的 visit
- * @param {object} g 闸门 {ally:boolean 联盟限制, offlineSec:number|Infinity 允许的离线时长, mine:string[]} 白名单（非空则只取名单内）
+ * @param {object} g 闸门 {ally:boolean 联盟限制, offlineSec:number|Infinity 允许的离线时长, mine:string[]} 白名单（非空则只取名单内）, reqAttrs:{factions,types,qualities}|null 对方放置兽的属相/物种/品质白名单
  * @param {Set<string>} inflightUids 我已发出且等同意的家
  * @param {number} nowSec 服务器时刻（秒）
  * @param {string} myUid 我的 StrUid
@@ -515,8 +566,9 @@ function filterVisit(visit, g, inflightUids, nowSec, myUid, myTag) {
     if (inflightUids.has(uid)) continue; // ② 我已申请且等同意
     if (g.mine && g.mine.length && g.mine.indexOf(uid) === -1) continue;
     if (g.ally && (!myTag || String(v.ownerAllianceTag || '') !== myTag)) continue; // ③ 同联盟
+    if (g.reqAttrs && !matchesReqMain(v, g.reqAttrs)) continue; // ④ 对方放置的兽命中选定属性
     if (g.offlineSec !== Infinity) {
-      // ④ 在线或近期离线
+      // ⑤ 在线或近期离线
       var off = v.lastOfflineTime | 0;
       if (off !== 0 && nowSec - off > g.offlineSec) continue;
     }
@@ -537,10 +589,17 @@ function filterVisit(visit, g, inflightUids, nowSec, myUid, myTag) {
  */
 function pickRandomTarget(visit, inflightUids, nowSec, myUid, myTag) {
   var offlineSec = clampNum(cfg.maxOfflineHours, 1, 24 * 60, 24) * 3600;
+  // 属性匹配不再走开关（reqMainBeast 已移除）：三个维度都选「不限」=不启用；任一非空即参与筛选。
+  //   面板上“匹配的兽”那一行只在 mode==='random' 时可见。
+  var hasReqAttr =
+    cfg.reqFactions.length > 0 || cfg.reqTypes.length > 0 || cfg.reqQualities.length > 0;
+  var reqAttrs = hasReqAttr
+    ? { factions: cfg.reqFactions, types: cfg.reqTypes, qualities: cfg.reqQualities }
+    : null;
   var gates = [
-    { ally: !!cfg.allyOnly, offlineSec: offlineSec },
-    { ally: !!cfg.allyOnly, offlineSec: Infinity }, // 放宽：不再看离线时长
-    { ally: false, offlineSec: Infinity }, // 再放宽：不再看联盟
+    { ally: !!cfg.allyOnly, offlineSec: offlineSec, reqAttrs: reqAttrs },
+    { ally: !!cfg.allyOnly, offlineSec: Infinity, reqAttrs: reqAttrs }, // 放宽：不再看离线时长
+    { ally: false, offlineSec: Infinity, reqAttrs: reqAttrs }, // 再放宽：不再看联盟
   ];
   for (var i = 0; i < gates.length; i++) {
     var pool = filterVisit(visit, gates[i], inflightUids, nowSec, myUid, myTag);
@@ -647,16 +706,22 @@ function hasMainBeast(beasts, mainList, myUid) {
  * @returns {Promise<boolean>} 是否发出了设置请求
  */
 async function ensureMain(beasts) {
-  var pool = pickBreedable(beasts, cfg.mainTypes, cfg.mainQualities, null);
+  var pool = pickBreedable(beasts, cfg.mainFactions, cfg.mainTypes, cfg.mainQualities, null);
   if (!pool.length) {
-    log.warn('no main candidate under current type/quality filter.');
+    log.warn('no main candidate under current faction/type/quality filter.');
     return false;
   }
   pool.sort(mainSort);
   var pick = pool[0];
   var ret = await send(CMD_MAIN_SET, { id: bits.int64(pick.strId) });
   if (ret.code === 0) {
-    log.info('main beast set. strId=%s;cfgId=%d;quality=%d', pick.strId, pick.cfgId, pick.quality);
+    log.info(
+      'main beast set. strId=%s;cfgId=%d;faction=%d;quality=%d',
+      pick.strId,
+      pick.cfgId,
+      pick.faction,
+      pick.quality,
+    );
     return true;
   }
   if (ret.code !== CODE_NOT_SENT)
@@ -948,7 +1013,7 @@ async function applyNewBeasts(beasts, visit, inflight, nowSec, nowMs) {
       res.noTarget = true;
       break;
     }
-    var pool = pickBreedable(beasts, cfg.applyTypes, cfg.applyQualities, used);
+    var pool = pickBreedable(beasts, cfg.applyFactions, cfg.applyTypes, cfg.applyQualities, used);
     if (!pool.length) {
       res.noBeast = true;
       break;
@@ -958,7 +1023,15 @@ async function applyNewBeasts(beasts, visit, inflight, nowSec, nowMs) {
 
     var ret = await send(CMD_OTHER_APPLY, { uid: target, id: bits.int64(pick.strId), apply: true });
     if (ret.code === 0) {
-      log.info('apply sent. uid=%s;beast=%s;cfgId=%d', target, pick.strId, pick.cfgId);
+      log.info(
+        'apply sent. uid=%s;beast=%s;cfgId=%d;faction=%d;type=%d;quality=%d',
+        target,
+        pick.strId,
+        pick.cfgId,
+        pick.faction,
+        pick.type,
+        pick.quality,
+      );
       inflightSeen[target] = nowMs;
       inflightUids.add(target);
       persistLedger();
@@ -982,7 +1055,7 @@ async function applyNewBeasts(beasts, visit, inflight, nowSec, nowMs) {
   if (res.noTarget && cfg.mode === 'specify')
     log.debug('no visit candidate in specified list (all busy / inflight).');
   else if (res.noTarget) log.warn('no visit candidate even after fallbacks.');
-  if (res.noBeast) log.warn('no free beast matches type/quality filter.');
+  if (res.noBeast) log.warn('no free beast matches faction/type/quality filter.');
   return res;
 }
 
@@ -1220,10 +1293,23 @@ function isRandom(c) {
   return c.mode !== 'specify';
 }
 
+/** @type {string} 单选下拉的「不限」选项文案（面板统一口径，三个属性维度共用） */
+const UNLIMITED_LABEL = '不限';
+
+/**
+ * 单选下拉选项表：首项固定「不限」(值 0)，后面接真实取值。
+ *   值 0 经 normOne 归一即空数组，下游一律按「该维度不参与筛选」处理。
+ * @param {Array<{value:number,label:string}>} real 真实选项
+ * @returns {Array<{value:number,label:string}>}
+ */
+function withUnlimited(real) {
+  return [{ value: 0, label: UNLIMITED_LABEL }].concat(real);
+}
+
 /**
  * 异能兽物种枚举（enigma_beast 全表去重 type），标签走游戏同一条链：
  *   enigma_beast_type.name_type → LOCAL.getText。查不到回「物种 N」（宁显原文也不空列表）。
- * @returns {Array<{value:number,label:string}>}
+ * @returns {Array<{value:number,label:string}>} 含首位「不限」
  */
 function typeOptions() {
   var rows = l10n.tableRows('enigma_beast');
@@ -1235,16 +1321,44 @@ function typeOptions() {
   seen.sort(function (a, b) {
     return a - b;
   });
-  return seen.map(function (t) {
-    var r = l10n.tableRow('enigma_beast_type', t);
-    var key = r && r.name_type;
-    return { value: t, label: key ? l10n.text(key) : '物种 ' + t };
+  return withUnlimited(
+    seen.map(function (t) {
+      var r = l10n.tableRow('enigma_beast_type', t);
+      var key = r && r.name_type;
+      return { value: t, label: key ? l10n.text(key) : '物种 ' + t };
+    }),
+  );
+}
+
+/**
+ * 属相枚举（游戏 UI 叫「异能」，`enigma_beast_faction_name00x` → 火系/水系/风系/地系），
+ *   口径同游戏 EnigmaBeastFactionTip：循环 1..FACTION_NUM，名字走 resCfg.getFactionName 同一条链。
+ *   文案缺失（l10n.text 回键原文）时回「属相 N」；表里真出现超出 1..4 的值也一并列入（不硬丢）。
+ * @returns {Array<{value:number,label:string}>} 含首位「不限」
+ */
+function factionOptions() {
+  var vals = [];
+  for (var f = 1; f <= BEAST_FACTION_NUM; f++) vals.push(f);
+  var rows = l10n.tableRows('enigma_beast');
+  for (var i = 0; i < rows.length; i++) {
+    var v = rows[i] && Number(rows[i].faction) | 0;
+    if (v > 0 && vals.indexOf(v) === -1) vals.push(v);
+  }
+  vals.sort(function (a, b) {
+    return a - b;
   });
+  return withUnlimited(
+    vals.map(function (f) {
+      var key = 'enigma_beast_faction_name' + ('00' + f).slice(-3);
+      var name = l10n.text(key);
+      return { value: f, label: name === key ? '属相 ' + f : name };
+    }),
+  );
 }
 
 /**
  * 品质枚举（游戏 QUALITY_NUM=5，名字键 enigma_beast_quality + padNumber(q,3)，与 EnigmaBeastResCfg.getQualityName 同源）
- * @returns {Array<{value:number,label:string}>}
+ * @returns {Array<{value:number,label:string}>} 含首位「不限」
  */
 function qualityOptions() {
   var out = [];
@@ -1252,7 +1366,7 @@ function qualityOptions() {
     var key = 'enigma_beast_quality' + ('00' + q).slice(-3);
     out.push({ value: q, label: l10n.text(key) });
   }
-  return out;
+  return withUnlimited(out);
 }
 
 // ─────────────────────────── 注册说明书 ───────────────────────────
@@ -1278,11 +1392,16 @@ reactor.register({
     agreeList: true,
     allyOnly: true,
     maxOfflineHours: 24,
+    reqFactions: 0,
+    reqTypes: 0,
+    reqQualities: 0,
     autoAgree: 'ally',
-    applyTypes: [],
-    applyQualities: [],
-    mainTypes: [],
-    mainQualities: [],
+    applyFactions: 0,
+    applyTypes: 0,
+    applyQualities: 0,
+    mainFactions: 0,
+    mainTypes: 0,
+    mainQualities: 0,
     enableMain: true,
     autoHelp: true,
     claim: true,
@@ -1293,7 +1412,7 @@ reactor.register({
   //   我家那只 main 兽 =「放置的异能兽」；代码注释仍用「主宠 / 出访兽」简称，与面板同一回事。
   // 「找谁培育」是这一张卡的总闸式字段：select 一翻，另一侧的参数整片收起（fd.showIf），因为它们在业务上就不参与——
   //   「指定玩家」下拜访与同意都只认名单（名单是用户显式意志，不再套联盟/离线阈值）；「随机玩家」下没有名单可言。
-  //   两模式共用的段（派出的兽 / 我放置的兽 / 自动领奖与加油）不受模式影响，照常展开。
+  //   两模式共用的段（派出的兽 / 放置的兽 / 自动领奖与加油）不受模式影响，照常展开。
   fields: [
     {
       key: 'mode',
@@ -1350,40 +1469,48 @@ reactor.register({
         { value: 'all', label: '全部同意' },
       ],
     },
+    // 随机模式专属：把「挑对象」从「只看家空不空」升级成「看对方摆的那只合不合我意」。
+    //   三个下拉任一非「不限」即启用匹配（没单独的开关）；此时没挂主宠的家一律出局。
+    //   指定模式不展开——名单本身已是用户显式意志，叠属性只会把名单筛空而无声。
     {
-      key: 'applyTypes',
-      type: 'multiopts',
-      label: '派出的物种',
+      key: 'reqAttrTrio',
+      type: 'tripick',
+      label: '匹配的兽',
+      section: '培育对象',
+      parts: [
+        { key: 'reqFactions', title: '属相', options: factionOptions },
+        { key: 'reqTypes', title: '品种', options: typeOptions },
+        { key: 'reqQualities', title: '品质', options: qualityOptions },
+      ],
+      hint: '任一项非「不限」即启用匹配；没放置兽的家会被排除',
+      showIf: isRandom,
+    },
+    // 三个属性维度都是单选（用户口径：不需要多选）、「不限」= 该轴不参与筛选；
+    //   属相/品种/品质均取自 enigma_beast 行（faction / type / quality）。一行摆开，面板不再拉成三行。
+    {
+      key: 'applyAttrTrio',
+      type: 'tripick',
+      label: '派出的兽',
       section: '派出的兽',
-      options: typeOptions,
-      hint: '全不勾 = 不限物种',
+      parts: [
+        { key: 'applyFactions', title: '属相', options: factionOptions },
+        { key: 'applyTypes', title: '品种', options: typeOptions },
+        { key: 'applyQualities', title: '品质', options: qualityOptions },
+      ],
+      hint: '一项都不选 = 该轴不看；三项均「不限」时不堆属性限制',
     },
+    { key: 'enableMain', label: '自动放置一只兽', type: 'checkbox', section: '放置的兽' },
     {
-      key: 'applyQualities',
-      type: 'multiopts',
-      label: '派出的品质',
-      section: '派出的兽',
-      gridMin: 60,
-      options: qualityOptions,
-      hint: '全不勾 = 不限品质',
-    },
-    { key: 'enableMain', label: '自动放置一只兽', type: 'checkbox', section: '我放置的兽' },
-    {
-      key: 'mainTypes',
-      type: 'multiopts',
-      label: '放置物种',
-      section: '我放置的兽',
-      options: typeOptions,
-      hint: '全不勾 = 不限物种；按品质→星级→等级→潜力取最优',
-    },
-    {
-      key: 'mainQualities',
-      type: 'multiopts',
-      label: '放置品质',
-      section: '我放置的兽',
-      gridMin: 60,
-      options: qualityOptions,
-      hint: '全不勾 = 不限品质',
+      key: 'mainAttrTrio',
+      type: 'tripick',
+      label: '放置的兽',
+      section: '放置的兽',
+      parts: [
+        { key: 'mainFactions', title: '属相', options: factionOptions },
+        { key: 'mainTypes', title: '品种', options: typeOptions },
+        { key: 'mainQualities', title: '品质', options: qualityOptions },
+      ],
+      hint: '按品质→星级→等级→潜力取最优',
     },
     { key: 'claim', label: '自动领取培育产出', type: 'checkbox', section: '自动领奖与加油' },
     { key: 'autoHelp', label: '自动给别人培育加油', type: 'checkbox', section: '自动领奖与加油' },
@@ -1416,10 +1543,15 @@ reactor.register({
       uids: normUids(c.uids),
       allyOnly: c.allyOnly !== false,
       maxOfflineHours: clampNum(c.maxOfflineHours, 1, 24 * 60, 24),
-      applyTypes: normNums(c.applyTypes),
-      applyQualities: normNums(c.applyQualities),
-      mainTypes: normNums(c.mainTypes),
-      mainQualities: normNums(c.mainQualities),
+      reqFactions: normOne(c.reqFactions),
+      reqTypes: normOne(c.reqTypes),
+      reqQualities: normOne(c.reqQualities),
+      applyFactions: normOne(c.applyFactions),
+      applyTypes: normOne(c.applyTypes),
+      applyQualities: normOne(c.applyQualities),
+      mainFactions: normOne(c.mainFactions),
+      mainTypes: normOne(c.mainTypes),
+      mainQualities: normOne(c.mainQualities),
       enableMain: !!c.enableMain,
       autoAgree: agree,
       autoHelp: !!c.autoHelp,

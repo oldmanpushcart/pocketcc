@@ -102,8 +102,8 @@ const TEAM_POLL_MS = 20000;
 const APPLY_LIST_POLL_MS = 20000;
 /** @type {number} 630 PLAYER_INFO：按 uid 查玩家昵称（陪跑按名搜队用；业务强相关报文，收口本 feat，不入通用 net.js） */
 const CMD_PLAYER_INFO = 630;
-/** @type {number} 无队找队时逐个按名搜队（630→7530→7522）的最小拉取间隔（毫秒）：一趟遍历多打网络，不逐拍刷 */
-const JOIN_POLL_MS = 25000;
+/** @type {number} 无队找队时按名搜队（630→7530→7522）每拍只搜 1 个池成员的最小间隔（毫秒）：游标轮转，杜绝一趟连打整池网络（2026-10-25 定 5s：单拍只发 1 次 7530，8 人池扫一圈 ~40s） */
+const JOIN_POLL_MS = 5000;
 /** @type {number} 同一目标定位信标消耗的最小间隔（毫秒）：防 21375 未到时逐拍重复消耗（每次都是真道具） */
 const BEACON_COOLDOWN_MS = 20000;
 /** @type {number} 终局后等飞船回城散队的兑底超时（毫秒）：主解除靠 10019 到家/21371 散队推送，此仅防漏推死等（实证散队约在 END 后 1-2 分钟，5 分钟富余） */
@@ -302,6 +302,12 @@ export class TeamEngine {
   #marchStartTeamId = '';
   /** @type {boolean} 收到过本队 21372 召集（召集已发出，队员只需表态同意） */
   #called = false;
+  /**
+   * 本人是否已在最近一次 21372 召集的 readyMember 名单内（推送是窗口当前电平的最fresh源）。
+   *   tick 第 4 步据此跳过补发；换队/散队/stop 随 #marchStartTeamId 一并复位。
+   * @type {boolean}
+   */
+  #selfReadySeen = false;
   /** @type {Set<string>} 已成功发出 7523 决策的 uid（防同一申请重复审批；跨 7528 兜底复核去重） */
   #approved = new Set();
   /**
@@ -321,6 +327,8 @@ export class TeamEngine {
   #lastInfoAt = 0;
   /** @type {number} 上次找队（630→7530→7522）的墙上时刻（毫秒），节流 */
   #lastJoinAt = 0;
+  /** @type {number} 陪跑找队轮转游标（rolePool 下标，每拍只搜 1 个成员，走到底回卷；stop 清） */
+  #joinCursor = 0;
   /** @type {string} 已向哪个队发过 7522 申请（防找队快照滞后时重复申请同一队） */
   #appliedTeamId = '';
   /** @type {Map<string,string>} 引擎级 uid→昵称缓存（陪跑找队 630 取名用；查过不重查，查无记空串避免反复打网络；stop 清空） */
@@ -445,6 +453,7 @@ export class TeamEngine {
     this.#useItemTeamId = '';
     this.#marchedTeamId = '';
     this.#marchStartTeamId = '';
+    this.#selfReadySeen = false;
     this.#called = false;
     this.#approved.clear();
     this.#applyPending.clear();
@@ -453,6 +462,7 @@ export class TeamEngine {
     this.#blockedLoggedReason = '';
     this.#lastInfoAt = 0;
     this.#lastJoinAt = 0;
+    this.#joinCursor = 0;
     this.#appliedTeamId = '';
     this.#uidName.clear();
     this.#lastBeaconAt = 0;
@@ -540,6 +550,7 @@ export class TeamEngine {
       this.#useItemTeamId = '';
       this.#marchedTeamId = '';
       this.#marchStartTeamId = '';
+      this.#selfReadySeen = false;
       this.#called = false;
       this.#approved.clear();
       this.#applyPending.clear();
@@ -561,6 +572,7 @@ export class TeamEngine {
     this.#useItemTeamId = '';
     this.#marchedTeamId = '';
     this.#marchStartTeamId = '';
+    this.#selfReadySeen = false;
     this.#called = false;
     this.#approved.clear();
     this.#applyPending.clear();
@@ -620,7 +632,20 @@ export class TeamEngine {
     if (!this.#team || (teamId && this.#team.id !== teamId)) return;
     var ready = Array.isArray(payload.readyMember) ? payload.readyMember : [];
     this.#called = true;
-    log.debug('ready call: team %s, ready=%d', this.#team.id, ready.length);
+    // 名单里有没有本人——没有则说明召集窗口被重开且本人准备被重置（迟到队员到位后全员重准备的实证
+    //   20261023：同一队 ready 名单 0→1→2→3→0 循环十余次，7527 因一次性闸门再没补发，队友视角「迟迟不准备」）
+    var myUid = gameData.myUidStr();
+    var selfIn = false;
+    for (var i = 0; i < ready.length; i++) {
+      var ru = ready[i];
+      if (bits.int64Str(ru && ru.uid != null ? ru.uid : ru) === myUid) selfIn = true;
+    }
+    this.#selfReadySeen = selfIn;
+    if (!selfIn && this.#marchStartTeamId === this.#team.id) {
+      this.#marchStartTeamId = ''; // 重武装召集表态闸门，交 tick 第 4 步补发 7527
+      log.info('召集窗口重开且本人未在准备名单（ready=%d），补发准备', ready.length);
+    }
+    log.debug('ready call: team %s, ready=%d self=%s', this.#team.id, ready.length, selfIn);
     this.#wake();
   }
 
@@ -852,16 +877,41 @@ export class TeamEngine {
 
     // 4) 召集出发（用户口径硬条件）：队长在「等待人数到齐」且「全员都已完成出兵」时主动发起 7527；
     //    任一角色收到 21372 召集（readyMember 含本人）后表态同意。
-    if (this.#marchStartTeamId !== t.id) {
+    //    闸门语义是「当前召集窗口内本人未表态」而非「本队终身一次」：窗口重开时 #onReadyChange 会重武装
+    //    #marchStartTeamId；快照 readyUids/#selfReadySeen 已含本人则不重发（7527 若是切换语义会误取消准备）。
+    var selfReady =
+      this.#selfReadySeen ||
+      (Array.isArray(t.readyUids) && t.readyUids.indexOf(gameData.myUidStr()) >= 0);
+    if (this.#marchStartTeamId !== t.id && !selfReady) {
       var called = this.#called || t.readyCount > 0; // 收到召集/已在 ready 名单 → 表态（成员/队长通用）
       // 人数到齐：memberCount 达目标（targetMemberNum）且非空
       var full = this.#isLeader() && t.memberCount > 0 && t.memberCount >= targetMembers(cfg);
       // 全员完成出兵：每个成员 marchId 非零（都派兵到集结点了）
       var allMarched = this.#isLeader() && t.memberCount > 0 && t.marchedCount === t.memberCount;
       if (called || (full && allMarched)) {
+        var wasCalled = this.#called;
         this.#marchStartTeamId = t.id;
         this.#called = false;
-        await this.#sendPB(REQ_MARCH_START, { op: 1 }, '同意出发');
+        var ret = await this.#sendPB(REQ_MARCH_START, { op: 1 }, '同意出发');
+        var code = ret ? ret.code : CODE_NOT_SENT;
+        // 闸门只能在 7527 真正受理后提交：过早召集被拒（common_159995=有人 7519 尚未落地）或未真正发出时回滚，
+        //   交下拍全员出兵落地后重试（否则一次性闸门被拒因吃掉 → 本队永久不再召集，页外 21372 又收不到 → 卡死）
+        if (code !== 0) {
+          this.#marchStartTeamId = '';
+          this.#called = wasCalled; // 召集电平仍在则保留，下拍据此（或 allMarched 追平后）重试
+        }
+      } else if (full) {
+        // 召集闸未开的静默期留痕（对齐调度决策日志规范）：页外 21372 不可达时卡点只能靠本行事后归因。
+        //   只在 full（人已达目标）时打——那就是「人齐了却不发车」的真卡点；未凑齐属正常凑人期，交面板状态栏
+        log.info(
+          '等待召集出发 reason=%s; members=%d/%d; marched=%d; selfMarch=%s（约每 %d 秒随 7501 轮询复查）',
+          t.marchedCount === 0 ? '全员未出兵' : '有人未派兵成功',
+          t.memberCount,
+          targetMembers(cfg),
+          t.marchedCount,
+          t.selfMarchId && t.selfMarchId !== '0' ? 'ok' : 'MISSING',
+          TEAM_POLL_MS / 1000,
+        );
       }
     }
 
@@ -938,7 +988,7 @@ export class TeamEngine {
   /**
    * 无队分支（活动双闸已由 tick 顶的 #gateActivity 放行）：按玩法模式派发——
    *   主跑 → 一律 7521 建队开车（不回退找队，避免无人建队时一直「找不到夺宝小队」）；
-   *   陪跑 → 逐个玩家池成员按名搜队申请加入（#joinTeam）。
+   *   陪跑 → 按间隔逐个搜玩家池成员按名搜队申请加入（#joinTeam，每拍只搜 1 个）。
    * @param {object} cfg 模块配置
    * @param {object|null} st csHunt 只读快照（控制器不在场为 null）
    * @returns {Promise<number>} 下一拍间隔
@@ -991,10 +1041,11 @@ export class TeamEngine {
   }
 
   /**
-   * 陪跑找队（用户口径「主动挨个去搜索玩家池中的玩家」）：遍历 rolePool 每个玩家 uid（跳过自己）→
+   * 陪跑找队（用户口径「主动挨个去搜索玩家池中的玩家」，2026-10-25 调整为每拍只搜 1 个）：按 #joinCursor
+   *   轮转取池内下一个有效玩家（跳过自己/无效 uid）→
    *   ① 630 PLAYER_INFO 按 uid 取昵称（#lookupName，带缓存）→ ② 7530 按昵称 likeName 搜其创建的队 →
    *   ③ 命中未满、未申请、队长即该玩家的队 → 7522 op:1 申请加入，找到即停手。
-   *   整趟按 JOIN_POLL_MS 节流；申请后等 21371/21373 落地接管（不轮询等审批）。
+   *   每拍之间按 JOIN_POLL_MS 节流（原一趟连打整池已废弃）；游标走到底回卷重扫；申请后等 21371/21373 落地接管（不轮询等审批）。
    *   报文实证 dashcam 20261016T190507：630 应答 data.playerInfo(JSON 串).username=昵称；7530 请求 {likeName}，
    *   应答 crossTreasureSearchTeamList.team[]（row.id/uid 为 Long，members/maxMembers/applied）；7522 {teamId:Long,op:1}。
    *   已知局限：likeName 是子串匹配，昵称含 emoji/空格时整串搜可能搜不到（真机手动也常剥字搜），故查无即跳过下一个成员。
@@ -1009,34 +1060,49 @@ export class TeamEngine {
     this.#lastJoinAt = now;
     var pool = Array.isArray(cfg.rolePool) ? cfg.rolePool : [];
     var myUid = gameData.myUidStr();
-    for (var i = 0; i < pool.length; i++) {
+    var n = pool.length;
+    // 每拍只搜 1 个成员：从游标起取下一个有效玩家（跳过无效 uid/自己/查无昵称），走完全池即回卷从头再扫
+    var idx = -1;
+    var uidStr = '';
+    var name = '';
+    for (var step = 0; step < n && idx < 0; step++) {
       if (!this.#env.alive()) return IDLE_TICK_MS;
+      var i = (this.#joinCursor + step) % n;
       var it = pool[i] || {};
-      var uidStr = bits.int64Str(it.uid);
+      uidStr = bits.int64Str(it.uid);
       if (!uidStr || uidStr === myUid) continue; // 跳过无效 uid 与自己（陪跑不加本人开的队）
-      var name = (await this.#lookupName(net, uidStr)) || String(it.name || '').trim();
+      name = (await this.#lookupName(net, uidStr)) || String(it.name || '').trim();
       if (!name) continue;
-      var ret = await this.#sendPB(REQ_SEARCH_TEAM_LIST, { likeName: name }, '按名搜队');
-      var payload = ret && ret.payload ? ret.payload[ACK_SEARCH_TEAM_LIST] : null;
-      var teams = payload && Array.isArray(payload.team) ? payload.team : [];
-      for (var k = 0; k < teams.length; k++) {
-        var row = teams[k] || {};
-        var teamId = bits.int64Str(row.id);
-        var leaderUid = bits.int64Str(row.uid);
-        if (!teamId || row.applied || teamId === this.#appliedTeamId) continue;
-        if (Number(row.members) >= Number(row.maxMembers || 5)) continue; // 已满
-        if (leaderUid && leaderUid !== uidStr) continue; // 只要「该玩家创建」的队（同名他人一律跳过）
-        this.#blockedLoggedReason = '';
-        this.#appliedTeamId = teamId;
-        await this.#sendPB(
-          REQ_TEAM_APPLY_OR_CANCEL,
-          { teamId: bits.int64(teamId), op: 1 },
-          '申请入队',
-        );
-        return ACTIVE_TICK_MS;
-      }
+      idx = i;
+      this.#joinCursor = (i + 1) % n;
     }
-    this.#blockOnce('nojoin', '玩家池中暂无已创建可加入小队的成员（按名逐个搜未命中未满队）');
+    if (idx < 0) {
+      this.#blockOnce('nojoin', '玩家池为空或全部无效 uid/查无昵称，暂不搜队');
+      return JOIN_POLL_MS;
+    }
+    // 本拍只搜这一个：7530 按昵称搜其创建的队，命中未满/未申请/队长即该玩家的队即 7522 申请
+    var ret = await this.#sendPB(REQ_SEARCH_TEAM_LIST, { likeName: name }, '按名搜队');
+    var payload = ret && ret.payload ? ret.payload[ACK_SEARCH_TEAM_LIST] : null;
+    var teams = payload && Array.isArray(payload.team) ? payload.team : [];
+    for (var k = 0; k < teams.length; k++) {
+      var row = teams[k] || {};
+      var teamId = bits.int64Str(row.id);
+      var leaderUid = bits.int64Str(row.uid);
+      if (!teamId || row.applied || teamId === this.#appliedTeamId) continue;
+      if (Number(row.members) >= Number(row.maxMembers || 5)) continue; // 已满
+      if (leaderUid && leaderUid !== uidStr) continue; // 只要「该玩家创建」的队（同名他人一律跳过）
+      this.#blockedLoggedReason = '';
+      this.#appliedTeamId = teamId;
+      await this.#sendPB(
+        REQ_TEAM_APPLY_OR_CANCEL,
+        { teamId: bits.int64(teamId), op: 1 },
+        '申请入队',
+      );
+      return ACTIVE_TICK_MS;
+    }
+    log.info(
+      `按名搜队：本拍已搜 ${name}（池 ${n} 员轮转，下一拍 ${(idx + 1) % n} 号），未命中未满队`,
+    );
     return JOIN_POLL_MS;
   }
 

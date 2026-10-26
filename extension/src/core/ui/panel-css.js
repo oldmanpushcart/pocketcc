@@ -192,6 +192,11 @@ export const PANEL_CSS = `
     .pc-row input[type=checkbox]{width:16px;height:16px;cursor:pointer;flex:0 0 auto;}
     .pc-row select.pc-fsel{max-width:150px;flex:0 0 auto;padding:3px 6px;border-radius:6px;
       border:1px solid rgba(255,255,255,.25);background:rgba(20,26,38,.9);color:#e8eef7;font:inherit;}
+    /* 行内多下拉（type:'tripick'，如异能兽培育属相/品种/品质同一行）：标签只占文字宽，三个下拉在剩余空间里等分收缩。
+       用 .pc-row > 提升特异度，压过通用的 .pc-row > span{flex:1}（否则两个 span 各占一半、三下拉会撑破右边界） */
+    .pc-row > .pc-triolab{flex:0 0 auto;}
+    .pc-row > .pc-trio{display:flex;gap:4px;flex:1 1 auto;min-width:0;}
+    .pc-trio select.pc-fsel{flex:1 1 0;min-width:0;width:auto;max-width:none;padding:3px 4px;font-size:12px;}
     .pc-fval{font-variant-numeric:tabular-nums;color:#9ecbff;opacity:.9;flex:0 0 auto;
       text-align:right;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
     /* 只读 text 字段的多行变体（fd.multiline，如次元矿洞今日进度）：标签在上、值整行，pre-line 保留换行不截断 */

@@ -89,6 +89,12 @@ const MECH_MAX_AGE_SEC = 10 * 3600;
 /** @type {number} 单轮每行机械田存在性探针上限（候选过多时限流，超出本轮回退普通田、下轮再试） */
 const MECH_PROBE_CAP = 6;
 /**
+ * @type {number} 1193 全量重拉的最小间隔（毫秒，漏推自愈）：mechLive 靠 10452 增量推送维持，但推送可能整批漏达
+ * （MV3 service worker 休眠/网络抖动/切场景），而条目又被 pruneMechLive 按 10h 老化——长时间挂机后活表会「只减不增」
+ * 清空、永久找不到机械田。故到点即重拉一次全量（并入不清空、单请求廉价），把漏掉的在建塔补回。远小于塔存活 10h。
+ */
+const MECH_REFRESH_MS = 20 * 60 * 1000;
+/**
  * @type {number} 机械田最小剩余存活时间（秒）：排序后剩余不足此值的塔视为「快结束」直接剔除，
  * 免得派兵跑到一个将到期（甚至往返路上就消失）的田上。仅在能查到存活时长时生效。
  */
@@ -182,6 +188,8 @@ var mechLive = new Map();
 var mechLoaded = false;
 /** @type {Promise|null} 1193 全量在飞 promise（单飞去重；await 者共享同一 promise，确保首轮真正等到机械田落地再选点，不再空返回） */
 var mechLoading = null;
+/** @type {number} 上次 1193 全量成功落地的墙上时刻（毫秒）：驱动 MECH_REFRESH_MS 周期性重拉（漏推自愈），0=从未成功 */
+var mechLoadedAt = 0;
 
 /**
  * 本地账本：rowIdx（字符串键）→ [{marchId:string, x:number, y:number, marchType:number}]，每行至多 1 条。
@@ -663,6 +671,7 @@ function loadMechRecords() {
         } catch (err) {}
       }
       mechLoaded = true;
+      mechLoadedAt = Date.now(); // 记本次全量时刻，交 MECH_REFRESH_MS 周期闸驱动后续漏推自愈重拉
       log.info('alliance mech records loaded: %d tower hit, live=%d.', added, mechLive.size);
     })
     .catch(function (err) {
@@ -1100,7 +1109,8 @@ async function cyclePass() {
     var cand = null;
     var mechApplicable = row.level < 6;
     if (mechApplicable) {
-      if (!mechLoaded) {
+      // 首次未拉 或 距上次全量超 MECH_REFRESH_MS（漏推自愈）→ 重拉 1193（并入不清空，单飞在 mechLoading 内去重）
+      if (!mechLoaded || Date.now() - mechLoadedAt >= MECH_REFRESH_MS) {
         await loadMechRecords();
         if (!aliveFn()) return;
       }
@@ -1322,6 +1332,7 @@ function run(ctx) {
   mechLive = new Map();
   mechLoaded = false;
   mechLoading = null;
+  mechLoadedAt = 0;
   ctx.on.push(PUSH_ALLIANCE_RECORD, onAllianceRecordPush);
   if (offHomeReturn) offHomeReturn(); // 先退再挂，防 resume 重激活重复注册
   offHomeReturn = march.onHomeReturn(onFarmMarchHome);

@@ -34,7 +34,9 @@ export async function handle(ctx) {
   }
   ctx.markDone(key);
   // 幸运必须先于掷骰：命中已勾池且持有幸运则先 7551{18}、再 7535（tryLucky 内部按需 ensureBackpack 取持有态，新鲜度由 #useSkill 内嵌回写保证）
-  await ctx.tryLucky('rollDice', rdi.winRewardResult, '掷骰奖励');
+  var luckyUsed = await ctx.tryLucky('rollDice', rdi.winRewardResult, '掷骰奖励');
+  // 未命中白名单但已溢出（持有>本回合后剩余窗）时同样提前烧一张（用户口径 2026-10-25，见 engine #tryLuckyOverflow）
+  if (!luckyUsed && ctx.tryLuckyOverflow) await ctx.tryLuckyOverflow(ctx.round, '掷骰奖励');
   await ctx.sendPB(
     REQ_EVENT_ROLL_DICE,
     { treasureId: bits.int64(ctx.treasureId), round: ctx.round },

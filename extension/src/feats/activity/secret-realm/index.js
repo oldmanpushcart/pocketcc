@@ -43,6 +43,10 @@
  *   8. 攻击警告应对（warnEnabled，默认关）：push 21534 num>0（有其它队盯上我）时按玩家选的档处置—
  *      **立即转移**（默认）= 发 8521 去就近 175 营帐/174 平台（取 10018 快照里未被 PVP 的最近一个，快照无则不凭空造）；
  *      **抗争到底** = 不发任何转移包。全仓唯一能挪队的口就是 8521（游戏警告面板无撤离按钮）；仅队长可发、仅在停在非BOSS点才动，见 warn.js 文件头。
+ *   9. 自动驾驶（driveEnabled，默认关）：其余引擎全是「到点即干活」，本引擎是唯一的**方向盘**——决定「下一个去哪」。
+ *      纯就近巡航 173 资源/163 掉落箱 + 受击（21534）逃就近营帐且威胁解除后自动回攻原 BOSS 平台 + 商店补货有缺口时开车到 161
+ *      + BOSS 窗开着而不在 BOSS 点时开往就近可用 176 平台（driveBoss）；候选只取 10018 视口快照，快照耗尽即驻留。
+ *      开启时 warn.js 让出转移、boss.js 让出非 BOSS 点的攻打行军（两处让闸），到平台后攻打仍归 boss.js；仅队长可发 8521，见 drive.js 文件头。
  *
  * 秘境是「独立活动/独立地图/独立战斗体系/独立背包」的隔离世界：
  *   - 场景名沿用 NWorldMap，但 watchingType===PAB（isPabBattleMap）才是真正的进入标志；
@@ -57,7 +61,7 @@
  *   - 真正闸门 realmActive()：scene.name()==='NWorldMap' && secretRealm.isPabBattleMap()；
  *   - 引擎内部每拍/每事件都复检 realmActive()，非秘境即长睡/直接跳过。
  *
- * 分层：仿 mine-cave 目录化，index.js 装配 + capture.js/pickup.js/heal.js/boss.js/shop.js/warn.js 六引擎 + constants.js 私货；feats 间不互 import。
+ * 分层：仿 mine-cave 目录化，index.js 装配 + capture.js/pickup.js/heal.js/boss.js/shop.js/warn.js/drive.js 七引擎 + constants.js 私货；feats 间不互 import。
  */
 import { reactor } from '../../../core/reactor.js';
 import { createLog } from '../../../core/log.js';
@@ -68,6 +72,7 @@ import { HealEngine, parseHealWhitelist } from './heal.js';
 import { BossEngine } from './boss.js';
 import { ShopEngine, shopItemIdSet, shopType3ItemIds } from './shop.js';
 import { WarnEngine } from './warn.js';
+import { DriveEngine } from './drive.js';
 import {
   TABLE_ITEM,
   TABLE_RSS_STATION,
@@ -86,12 +91,20 @@ const log = createLog('SECRETM');
 /** @type {object|null} reactor 上下文（install/run 时置入） */
 var ctxRef = null;
 /**
- * 当前激活的六个引擎实例（run 建、pause 停）。必须持有引用，否则引擎的 `stop()` 在全仓无调用方：
+ * 当前激活的七个引擎实例（run 建、pause 停）。必须持有引用，否则引擎的 `stop()` 在全仓无调用方：
  *   reactor pause 只摘 ctx.on.* 登记的触发器，管不到引擎自建的 #timer / 在飞 await 循环，
  *   不存引用就会让「暂停前的陈旧快照」在 resume 后被旧引擎继续发成写请求。
- * @type {{pickup:object|null, capture:object|null, heal:object|null, boss:object|null, shop:object|null, warn:object|null}}
+ * @type {{pickup:object|null, capture:object|null, heal:object|null, boss:object|null, shop:object|null, warn:object|null, drive:object|null}}
  */
-var engines = { pickup: null, capture: null, heal: null, boss: null, shop: null, warn: null };
+var engines = {
+  pickup: null,
+  capture: null,
+  heal: null,
+  boss: null,
+  shop: null,
+  warn: null,
+  drive: null,
+};
 /**
  * 面板模块配置（configure 推入，引擎惰性读）：物品拾取/增益井/拍宠物三大能力默认生效、无独立开关，这里只剩可配置的子项——
  *   pickItems=itemlist 状态对象 `{ [idStr]: {on:0|1, shop?:0|1, max:number} }`，idStr 前缀 `item:`（道具维度，含资源点产出）/`pet:`；
@@ -101,8 +114,9 @@ var engines = { pickup: null, capture: null, heal: null, boss: null, shop: null,
  *   heal=编队治疗 {enabled,threshold,maxPerTick,items[]}（items 空=跟随游戏 dataConfig(3035) 白名单序）；
  *   boss=BOSS 攻打固定档 BOSS_AUTO（无面板开关，用户反馈：次序/轮次/投喂/队长要么是游戏规则（仅队长可发，引擎内 isTeamLeader 已闸）、要么无意义）：攻打/投喂/石头恒开、轮次无限、就近、relocate 恒关（不自动挪台）；
  *   shop=商店补货派生总闸 {enabled}（enabled 非用户勾选，而是 pickItems 是否存在 shop=1 项的派生态；且**只在队伍已停靠 161 商店点时**补货，见 shop.js）；
- *   warn=攻击警告应对 {enabled,mode}（mode='transfer' 立即转移（默认）/'stand' 抗争到底；默认关，自动挪队风险最高，见 warn.js）。
- * @type {{pickItems:Object<string,{on:number,max:number,shop?:number}>, pickOrder:string[], pickRank:Object<string,number>, buffEffects:number[], heal:object, boss:object, shop:{enabled:boolean}, warn:{enabled:boolean,mode:string}}}
+ *   warn=攻击警告应对 {enabled,mode}（mode='transfer' 立即转移（默认）/'stand' 抗争到底；默认关，自动挪队风险最高，见 warn.js；自动驾驶开启时本引擎让出转移、交 drive.js EVADE 接管）；
+ *   drive=自动驾驶 {enabled,boss,shopTime,shopDwellMs,emptyDwellMs}（enabled=面板 driveEnabled 总闸（默关）；boss=driveBoss 子闸——BOSS 窗开着时是否自动开往 176 平台，缺省 true；shopTime=大BOSS 前定点商店勤务开关（缺省 true）；shopDwellMs=到店驻留毫秒（面板秒×1000，默认 25000）；emptyDwellMs=资源/掉落拿空后 settle 毫秒（默认 0=立即走），见 drive.js）。
+ * @type {{pickItems:Object<string,{on:number,max:number,shop?:number}>, pickOrder:string[], pickRank:Object<string,number>, buffEffects:number[], heal:object, boss:object, shop:{enabled:boolean}, warn:{enabled:boolean,mode:string}, drive:{enabled:boolean,boss:boolean,shopTime:boolean,shopDwellMs:number,emptyDwellMs:number}}}
  */
 /**
  * BOSS 攻打固定档（面板不再给开关）：用户反馈「攻打次序/轮次/投喂/队长」要么是游戏规则（仅队长可发，boss.js 内 isTeamLeader 已闸）、
@@ -128,6 +142,7 @@ var modCfg = {
   boss: BOSS_AUTO,
   shop: { enabled: false },
   warn: { enabled: false, mode: 'transfer' },
+  drive: { enabled: false, boss: true, shopTime: true, shopDwellMs: 25000, emptyDwellMs: 0 },
 };
 
 /**
@@ -554,6 +569,44 @@ function sanitizeWarn(raw) {
 }
 
 /**
+ * 面板的平铺自动驾驶字段 → 引擎用的嵌套对象（秒字段保留原值，sanitizeDrive 负责编毫秒）。
+ * @param {object} c 面板原配置
+ * @returns {{enabled:boolean,boss:boolean,shopTime:boolean,shopDwellSec:number,emptyDwellSec:number}}
+ */
+function pickDriveRaw(c) {
+  return {
+    enabled: c && c.driveEnabled === true,
+    boss: !(c && c.driveBoss === false),
+    shopTime: !(c && c.driveShopTime === false),
+    shopDwellSec: c && c.driveShopDwell != null ? c.driveShopDwell : 25,
+    emptyDwellSec: c && c.driveEmptyDwell != null ? c.driveEmptyDwell : 0,
+  };
+}
+
+/**
+ * drive 归一化：enabled/boss/shopTime 归布尔（boss/shopTime 缺省 true）；秒→毫秒并夹 [0,300s]（非法回默认 25s/0s）。
+ * @param {*} raw pickDriveRaw 产物
+ * @returns {{enabled:boolean,boss:boolean,shopTime:boolean,shopDwellMs:number,emptyDwellMs:number}}
+ */
+function sanitizeDrive(raw) {
+  const e = raw && typeof raw === 'object' ? raw : {};
+  let sd = Number(e.shopDwellSec);
+  if (!Number.isFinite(sd)) sd = 25;
+  if (sd < 0) sd = 0;
+  else if (sd > 300) sd = 300;
+  let ed = Number(e.emptyDwellSec);
+  if (!Number.isFinite(ed)) ed = 0;
+  else if (ed > 300) ed = 300;
+  return {
+    enabled: e.enabled === true,
+    boss: e.boss !== false,
+    shopTime: e.shopTime !== false,
+    shopDwellMs: sd * 1000,
+    emptyDwellMs: ed * 1000,
+  };
+}
+
+/**
  * 面板配置 → 模块配置（toModuleCfg 与 configure 共用同一份归一化，防两处口径漂移）。
  * 物品拾取/增益井/拍宠物无开关（恒生效），故只归一可配置子项 pickItems / pickOrder / buffEffects / heal / boss / shop / warn。
  * `pickRank` 由 pickOrder 预先摊平成 `{池 key: 下标}`：拾取排序每批候选都要查序，不在热路径上做 indexOf。
@@ -575,6 +628,7 @@ function buildModuleCfg(c) {
     // 商店无独立开关：只要持有清单里有任一行勾了「店」渠道就自动补货（enabled 为派生态，供 shop.js #tick 读）
     shop: { enabled: shopRestockWanted(pickItems) },
     warn: sanitizeWarn(pickWarnRaw(c)),
+    drive: sanitizeDrive(pickDriveRaw(c)),
   };
 }
 
@@ -591,7 +645,7 @@ function configure(c) {
  * 停用异常只告警不阻断（下一个引擎照收），且引用一律置 null，免得脏实例被当成还活着。
  */
 function stopEngines() {
-  for (const k of ['pickup', 'capture', 'heal', 'boss', 'shop', 'warn']) {
+  for (const k of ['pickup', 'capture', 'heal', 'boss', 'shop', 'warn', 'drive']) {
     const e = engines[k];
     if (!e) continue;
     engines[k] = null;
@@ -611,7 +665,7 @@ function pause() {
 }
 
 /**
- * 运行（激活）：起六引擎。拾取靠事件订阅（退订由 reactor 托管），拍宠物/治疗/BOSS/商店/警告靠 createCycle 电平循环；
+ * 运行（激活）：起七引擎。拾取靠事件订阅（退订由 reactor 托管），拍宠物/治疗/BOSS/商店/警告/自动驾驶靠 createCycle 电平循环；
  *   二者内部各自复检 realmActive()/alive()，非秘境或未激活即空转长睡。resume 重跑 run 时引擎 start 幂等。
  * @param {object} ctx reactor 上下文
  */
@@ -639,8 +693,12 @@ function run(ctx) {
   //   「立即转移」只在停在非BOSS点且队长时发 8521 去就近营帐（不抢 BOSS 方向盘，见 warn.js）
   engines.warn = new WarnEngine(env);
   engines.warn.start(ctx);
+  // 自动驾驶引擎（driveEnabled，默关）：受击逃帐/回攻/BOSS 平台/商店/资源巡航的统一方向盘（仅队长发 8521）；
+  //   开启时 warn.js 让出转移、boss.js 让出非 BOSS 点的攻打行军（两处让闸），见 drive.js 文件头
+  engines.drive = new DriveEngine(env);
+  engines.drive.start(ctx);
   log.info(
-    'started (item overrides=%d, buff classes=%d, heal=%s, boss=%s/%s, stone=%s, shop=%s, warn=%s/%s).',
+    'started (item overrides=%d, buff classes=%d, heal=%s, boss=%s/%s, stone=%s, shop=%s, warn=%s/%s, drive=%s/%s).',
     Object.keys(modCfg.pickItems).length,
     modCfg.buffEffects.length,
     modCfg.heal.enabled ? 'on' : 'off',
@@ -650,6 +708,8 @@ function run(ctx) {
     modCfg.shop.enabled ? 'on' : 'off',
     modCfg.warn.enabled ? 'on' : 'off',
     modCfg.warn.mode,
+    modCfg.drive.enabled ? 'on' : 'off',
+    modCfg.drive.boss ? 'boss' : 'cruise',
   );
 }
 
@@ -674,6 +734,11 @@ reactor.register({
     healItems: [],
     warnEnabled: false,
     warnMode: 'transfer',
+    driveEnabled: false,
+    driveBoss: true,
+    driveShopTime: true,
+    driveShopDwell: 25,
+    driveEmptyDwell: 0,
   },
   fields: [
     {
@@ -761,6 +826,57 @@ reactor.register({
         { value: 'stand', label: '抗争到底' },
       ],
       hint: '立即转移=发 8521 去就近 175 营帐/174 平台（只取 10018 视口快照里未被 PVP 的最近一个；快照里无则不凭空造目标）；仅队长可发、仅在停在非BOSS点(marchState=ARRIVED)才动，转移后 45s 静默。抗争到底=不发任何转移包，原地应战',
+    },
+    {
+      key: 'driveEnabled',
+      type: 'checkbox',
+      label: '自动驾驶（自动开往资源点/BOSS/商店）',
+      section: '自动驾驶',
+      hint: '默认关（主动挪队伍是全 feat 风险最高的动作族，不同于「到点即干活」的默认生效三件套）：开启后由统一方向盘决定下一个去哪——纯就近巡航 173 资源/163 掉落箱、受击（21534 num>0）逃就近营帐且威胁解除后自动回攻原 BOSS 平台、商店补货有缺口时开车到 161 店点。开启时接管 warn.js 的转移与 boss.js 非 BOSS 点的攻打行军（到平台后攻打仍归 boss.js）；仅队长可发 8521；候选只取自 10018 视口快照，快照耗尽即驻留并提示',
+    },
+    {
+      key: 'driveBoss',
+      type: 'checkbox',
+      label: 'BOSS 窗口自动开往平台',
+      section: '自动驾驶',
+      showIf: function (cfg) {
+        return !!(cfg && cfg.driveEnabled);
+      },
+      hint: '开启后：存在 state=21 且战斗窗未散场的 BOSS 而本队不在 BOSS 点时，就近开往可用 176 平台（到达后攻打自动接棒 boss.js）；关则只巡航资源/商店、不为 BOSS 挪台',
+    },
+    {
+      key: 'driveShopTime',
+      type: 'checkbox',
+      label: '大BOSS 前定点商店勤务',
+      section: '自动驾驶',
+      showIf: function (cfg) {
+        return !!(cfg && cfg.driveEnabled);
+      },
+      hint: '默认开：整场约 55min，大BOSS 在 +40min 开打（报文实证 fightBeginTime 偏移）、小BOSS +23min。开启后在 +10/15/20min（相对整场开始）任一时刻若本场还没去过商店，强制开车去就近 161 店点补一趟投喂料（到店即视作完成、本场不再重复；未到点/无候选每拍重试）。关掉则回到「仅补货有缺口时才去店」',
+    },
+    {
+      key: 'driveShopDwell',
+      type: 'number',
+      label: '商店驻留(秒)',
+      section: '自动驾驶',
+      min: 0,
+      step: 1,
+      showIf: function (cfg) {
+        return !!(cfg && cfg.driveEnabled);
+      },
+      hint: '到 161 店点后驻留多久让 shop.js 逐行补货，驻留满即离店（默认 25s）。定时勤务与补货缺口两档共用本值',
+    },
+    {
+      key: 'driveEmptyDwell',
+      type: 'number',
+      label: '资源/掉落拿空后再驻留(秒)',
+      section: '自动驾驶',
+      min: 0,
+      step: 1,
+      showIf: function (cfg) {
+        return !!(cfg && cfg.driveEnabled);
+      },
+      hint: '资源点(173)/掉落箱(163)改为「拿空即走」：物品拾取+BUFF拾取（或物品+宠物）都空后，再多驻留本秒数才挪队（0=立即走，默认 0）。等不到拿空由内部 45s 安全上限兜底，不会死守',
     },
   ],
   toModuleCfg: buildModuleCfg,

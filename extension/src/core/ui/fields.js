@@ -613,7 +613,10 @@ export function buildFieldsHTML(fid, f) {
     }
     if (fd.type === 'select') {
       const cur = String(c[fd.key]);
-      const opts = (fd.options || [])
+      // 与 multiOptsInnerHTML 同源口径：fd.options 既可以是数组也可以是函数（开面板时现形现扫配置表）。
+      //   不先判类型直接 .map 会在游戏表未就绪时抛「(fd.options || []).map is not a function」。
+      const opts = (typeof fd.options === 'function' ? fd.options(c) : fd.options) || [];
+      const html = opts
         .map(
           (o) =>
             `<option value="${o.value}"${String(o.value) === cur ? ' selected' : ''}>${o.label}</option>`,
@@ -621,7 +624,30 @@ export function buildFieldsHTML(fid, f) {
         .join('');
       return (
         `<label class="pc-row"><span>${fd.label}</span>` +
-        `<select class="pc-fsel" data-id="${fid}" data-key="${fd.key}">${opts}</select></label>`
+        `<select class="pc-fsel" data-id="${fid}" data-key="${fd.key}">${html}</select></label>`
+      );
+    }
+    if (fd.type === 'tripick') {
+      // 行内多下拉（如异能兽培育「派出的兽 [属相][品种][品质]」）：一个 label 接 N 个 select，
+      //   每个 part 自己一个 data-key，change 与 syncControls 都走 select.pc-fsel 的同一条陆径（不需特例接线）。
+      //   选项支持数组与函数两种形式（同 select 口径，函数在装配时求值一次）。
+      const cells = (fd.parts || [])
+        .map((p) => {
+          const cur = String(c[p.key]);
+          const opts = (typeof p.options === 'function' ? p.options(c) : p.options) || [];
+          const inner = opts
+            .map(
+              (o) =>
+                `<option value="${o.value}"${String(o.value) === cur ? ' selected' : ''}>${o.label}</option>`,
+            )
+            .join('');
+          const title = p.title ? ` title="${escAttr(p.title)}"` : '';
+          return `<select class="pc-fsel pc-ftri" data-id="${fid}" data-key="${escAttr(p.key)}"${title}>${inner}</select>`;
+        })
+        .join('');
+      return (
+        `<label class="pc-row"><span class="pc-triolab">${fd.label}</span>` +
+        `<span class="pc-trio">${cells}</span></label>`
       );
     }
     if (fd.type === 'string') {

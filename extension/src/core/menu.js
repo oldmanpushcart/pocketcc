@@ -53,9 +53,11 @@ export const MENU = [
         storageKey: 'pocketcc.group.playerBasics',
         children: [
           { id: 'dailySupply', kind: 'feature', label: '每日补给' },
+          { id: 'autoCoinCollect', kind: 'feature', label: '自动收取金币' },
           { id: 'armoryMaterial', kind: 'feature', label: '军火库生产材料' },
           { id: 'secretWeaponDrop', kind: 'feature', label: '秘密武器空投' },
           { id: 'oneClickClaim', kind: 'feature', label: '一键领取' },
+          { id: 'dailyDeal', kind: 'feature', label: '每日特惠' },
         ],
       },
       { id: 'playerLike', kind: 'feature', label: '玩家点赞', showFields: true },

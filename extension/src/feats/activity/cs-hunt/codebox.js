@@ -15,7 +15,8 @@
  *   `strToView(s)`→视图数组：**数字位=已知、任意标点/符号或 x/o 字母=未知占位（-1）**——不枚举掩码符，凡「非数字、
  *   非分隔符」皆视作未知位（真机队友手输的未知位符号五花八门：`?`/`*`/`-`/`×`/`□`/`x`/`o`…，穷举白名单必漏）；
  *   含真实单词字母（x/o 之外）即判噪声丢弃，避免把英文词误读成视图；
- *   `parseCodeViews(text)`→以「空白/汉字/emoji/成对句读标点」切出定长 5 且≥1 数字位的码体段为候选视图；
+ *   `parseCodeViews(text)`→以「空白/汉字/emoji/成对句读标点」切出码体段为候选视图：**前 {@link CODE_LEN} 位承载数字、
+ *   超出部分须全为未知掩码**（真机队友常在 5 位密码后多打一个 `?`/`？` 占位，如 `0?????`=首位 0＋五个未知，须收下而非整条丢弃）；
  *   `merge([[2,-1,..],[-1,1,..]])`→逐位取已知。内部统一用 `-1` 表示未知。
  */
 
@@ -146,10 +147,13 @@ export function strToView(s) {
 }
 
 /**
- * 从一条聊天文本提取 5 位密码视图（队友手输/我方广播均适用）：以 {@link CODE_SEP_RE}（空白/汉字/emoji/成对句读标点）
- *   切分，取长度恰为 {@link CODE_LEN} 的码体段交 {@link strToView} 按位解析（其内含「≥1 已知数字位」校验）。
- *   **为何要求定长 5**：每个数字的「位置」只有在完整的 5 格框架里才可对齐——队友各报自己那一位，位数不足或超长的段
- *   无法定位，宁弃勿猜。`95185`/`9----`/`xxxx5`/`???8?`/`□□□□5` 等价可切；纯掩码段与含真实单词的段自然丢弃。
+ * 从一条聊天文本提取密码视图（队友手输/我方广播均适用）：以 {@link CODE_SEP_RE}（空白/汉字/emoji/成对句读标点）
+ *   切分，段长按「≥ {@link CODE_LEN} 且前 CODE_LEN 位之外的多余位全为未知（-1）」收取，交 {@link strToView} 按位解析
+ *   （其内含「≥1 已知数字位」校验）。
+ *   **为何前 5 位对齐、尾部只容掩码**：每个数字的「位置」只有在完整的 5 格框架里才可对齐——不足 5 位的段无法定位，
+ *   宁弃勿猜；真机队友手输常在 5 位后再补一个未知占位（`0?????`＝首位 0＋五个 `?`），若仍要求恰为 5 会把这条唯一已知位
+ *   也丢掉致汇总缺口退化穷举，故放宽为「多出的尾格必须全是掩码」。此约束同时防污染：纯数字长串（如 `123456`）尾部非掩码，
+ *   依旧被拒。`95185`/`9----`/`xxxx5`/`???8?`/`□□□□5`/`0?????` 等价可切；含真实单词的段自然丢弃。
  * @param {string} text 聊天原文
  * @returns {Array<Array<number>>} 视图数组列表（可能为空）
  */
@@ -158,9 +162,14 @@ export function parseCodeViews(text) {
   var out = [];
   var segs = s.split(CODE_SEP_RE); // split 会按正则所有匹配处切开（无需 /g），且不留 lastIndex 残留
   for (var i = 0; i < segs.length; i++) {
-    if (segs[i].length !== CODE_LEN) continue; // 定长 5 才能对齐每一位数字的位置
+    if (segs[i].length < CODE_LEN) continue; // 不足 5 位无法对齐每一位数字的位置
     var v = strToView(segs[i]);
-    if (v && v.length === CODE_LEN) out.push(v);
+    if (!v || v.length < CODE_LEN) continue;
+    // 前 CODE_LEN 位之外的多余位必须全是未知掩码（容忍队友多打的尾部占位），否则判为噪声段丢弃
+    var tailAllUnknown = true;
+    for (var j = CODE_LEN; j < v.length; j++) if (v[j] >= 0) tailAllUnknown = false;
+    // 截齐到定长 5：尾部多出的掩码不携带信息，不截会使 merge 变 6 位、7537 codeNum 违反定长 5 契约
+    if (tailAllUnknown) out.push(v.slice(0, CODE_LEN));
   }
   return out;
 }

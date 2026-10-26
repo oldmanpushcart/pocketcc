@@ -199,7 +199,7 @@ var threatOn = true;
 /** @type {Set<string>} 本轮判定为“打不过”而跳过的 truckId（内存态，每轮新列表清空；与服务器拒绝拉黑 blocked 分离） */
 var skipRound = new Set();
 /**
- * 我方出征侧本轮快照（probeSelf 每轮 doScan 算一次）：{power:battlePowerVal（可能来自缓存）, branch:101/201/301, raw:未过滤编成, ready:探到战力, tried:本轮已尝试探测}
+ * 我方出征侧本轮快照（probeSelf 每轮 doScan 算一次）：{power:battlePowerVal（可能来自缓存）, branch:101/201/301, raw:满编编成（仅 999 分母与军种判定用，出兵另走 buildTroop 校准）, ready:探到战力, tried:本轮已尝试探测}
  * @type {{power:number, branch:number, raw:object|null, ready:boolean, tried:boolean}}
  */
 var my = { power: 0, branch: 0, raw: null, ready: false, tried: false };
@@ -588,11 +588,12 @@ function dailyLeft() {
 /**
  * 从预设队伍造 6476 troop（heroList:[{heroId}] / armyPosList:[{pos,armyId,armyNum}] / formationV2）。
  * battle 产出的 heroList 是纯 id 数组、armyListNew 即 armyPosList 口径，这里做字段名/形态适配。
+ * 出兵口径＝活动派兵（adjust({ignoreMarched:true})）：兵池变小（战损等）时按实时额度校准每格数量，
+ *   不再直接复用满编 raw——raw 的 num 是预设保存时的快照上限，超发会被服务端拒绝导致出兵失败。
  * @returns {object|null} 无兵可派返回 null
  */
 function buildTroop() {
-  // 启用判定时复用 probeSelf 算好的未过滤 raw 编成（与 999 分母同源）；否则沿用过滤+重算版
-  var data = threatOn && my.raw ? my.raw : new Battle().plan().preset(presetIdx).adjust().build();
+  var data = new Battle().plan().preset(presetIdx).adjust({ ignoreMarched: true }).build();
   if (!data || !data.armyListNew || !data.armyListNew.length) return null;
   var armyPosList = data.armyListNew.map(function (a) {
     var e = { pos: a.pos | 0, armyId: a.armyId, armyNum: a.armyNum | 0 };
@@ -754,7 +755,7 @@ async function probeSelf(force) {
       powerProbing = false;
     }
     if (atPreset !== presetIdx) {
-      // 在飞期间面板换了预设：本次应答与刚算的 raw/branch 均属旧编成，整块作废（buildTroop 需回落到按新预设实时重算），
+      // 在飞期间面板换了预设：本次应答与刚算的 raw/branch 均属旧编成，整块作废（战力判定下轮按新预设重探），
       // 不把判定留在“旧队出兵 + 无战力过滤”的窗口里；configure 已 kick，cycle pending 会用新预设补探一轮
       my.raw = null;
       my.branch = 0;

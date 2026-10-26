@@ -6,12 +6,9 @@
  * 本功能只做一件事：有可捐目标时把两条链路的捐赠次数能量用掉——自然恢复的额度不用就是白丢。
  * 按用户定案不做钻石捐赠（两条链路的 type=2 都不碰）：价目阶梯/随机，非日常必要支出。
  *
- * 三条捐赠链（协议不同、能量池不同、优先级不同）：
+ * 两条捐赠链（协议不同、能量池不同）：
  *   科技主链：1144 ALLIANCE_DOANTE_SCIENCE {scienceId,type:1,num}，能量池 4（10 点/30 分钟回 1），出个人荣誉；
  *     num 仅支持 1 或 10 → 本功能固定逐枚发 num=1（一 tick 内循环至多 SCIENCE_LOOP_MAX_PER_TICK 枚），不打包余量（任意 num 会被服务端判参数错误 alliance_120515）；
- *   建筑补链：同 1144、目标固定是 sid 10900（联盟建筑捐赠），能量池 6（报文实测 pointMax=200、restoreSec=20），
- *     只加建筑经验、服务端恒回 addPoint=0；**只在主链本轮没捐成时才跑**（无普通可捐目标 / 池 4 已空），
- *     且不参与回点唤醒——它 20 秒回 1 点，认它做唤醒等于常驻 3 次/分钟的轮询（真机刷屏根因）；
  *   遗迹（要塞 WorldSite）：1067 WORLDSITE_DONATE {id,type:1}，能量池 7
  *     （ALLIANCE_WORLDSITE_DONATE_GOLD_NUM，报文实测 pointMax=10、restoreSec=3600），
  *     游戏弹窗只有单捐按钮、无批量口径 → 一次一枚，tick 内循环 + RELIC_GAP_MS 间距把当轮点数花光；
@@ -22,8 +19,9 @@
  *   1. 优先捐推荐项：科技 scienceData.RecommendId（push 10430 刷新）；
  *      遗迹 AllianceWorldSiteController.instance.recommendSite（1070 应答，登录组装链与每日零点自动刷）；
  *   2. 无推荐时回退第一个可捐赠项（科技按弹窗 showBtn 口径、遗迹按红点口径，均在 ACL 里判）；
- *   3. **建筑项 10900 已从 donateTarget 摘出**为 sc.buildingTarget：它排在 dev 列表第 8 组，前序满级就命中它，
- *      一旦被当普通目标就会长期霸占捐赠（20 秒回 1 点、永远捐不完），普通科技（出荣誉那条）反而吃不到池 4 回点。
+ *   3. **快速作战（sid 10900）按用户定案不捐**：它排在 dev 列表第 8 组，一旦被当普通目标就会长期霸占捐赠
+ *      （20 秒回 1 点、永远捐不完、服务端恒回 addPoint=0 不出荣誉）；排除口径收口在 ACL
+ *      （game-api.js SCIENCE_SID_EXCLUDE_DONATE），本 feat 不再比 sid 值、也不再有建筑补捐链。
  *   **关键修正**：推荐项本身也必须处于可捐态（未满级、非研究中/经验未满）才会被采纳——
  *   满级或研究中的推荐项直接捐会被服务器拒（实证：1067 code=3「已经到达最大等级」），此时自动回退首项。
  *
@@ -37,8 +35,6 @@
  *     但每捐一次也会把 point 往下扣并同样推一条 10021（reason=alliance_donate/WONDER_DONATE_*），
  *     一次捐光会连推多条递减——故按方向过滤（只认 pt>prev），否则会形成“捐→被推→再捐”的请求风暴；
  *     10021 只在在线时推，离线错过由精准定时器兜底；
- *   - **建筑池 6 不订阅唤醒**（报文实测 restoreSec=20）：认它就等于给自己挂个 3 次/分钟的常驻轮询，
- *     而它出的个人荣誉恒为 0；建筑余量改由主链/遗迹链的回点唤醒与巡检档顺带抽干（见 donateScience 的补捐链）；
  *   - **不再订阅 10430/10432 做唤醒**：列表/荣誉变更不新增捐赠额度（额度只靠回点产生），
  *     订阅它们只会在繁忙联盟里被他人捐赠刷屏、反复拉起整轮 tick 徒增请求；
  *   - 能量有余但金币不足/连续被拒 → BUSY 档慢等；两池全空 → 按较早回点唤醒；
@@ -67,7 +63,7 @@ const CMD_DONATE = 1144;
 /** @type {number} RequestId.WORLDSITE_DONATE，捐赠遗迹（要塞），载荷 {id,type}，无批量字段 */
 const CMD_DONATE_RELIC = 1067;
 
-/** @type {number} ResponseId.PUSH_ENERGY(10021)，能量池变更推送；只认载荷 type∈{4,7} 两个捐赠池且只在点数回升时触发（建筑池 6 回点太快，不订阅） */
+/** @type {number} ResponseId.PUSH_ENERGY(10021)，能量池变更推送；只认载荷 type∈{4,7} 两个捐赠池且只在点数回升时触发 */
 const CMD_PUSH_ENERGY = 10021;
 
 /** @type {number} EnergyType.ALLIANCE_DONATE_NUM（GameDefine），科技金币捐赠次数能量池（报文实证 pointMax=10、restoreSec=1800） */
@@ -75,14 +71,6 @@ const ENERGY_DONATE = 4;
 
 /** @type {number} EnergyType.ALLIANCE_WORLDSITE_DONATE_GOLD_NUM，遗迹金币捐赠次数能量池（报文实证 pointMax=10、restoreSec=3600） */
 const ENERGY_RELIC = 7;
-
-/**
- * @type {number} EnergyType.ALLIANCE_BUILDING_DONATE_GOLD_NUM，仅 sid 10900（联盟建筑捐赠）使用的金币捐赠次数池。
- * 报文实测（dashcam 全量 10021 归集）：pointMax=200、restoreSec=20 —— 回点是主链的 90 倍，且服务端恒回
- * addPoint=0（只加建筑经验）；目标由 ACL 的 sc.buildingTarget 给出（sid 语义收口在 ACL，本 feat 不再比 sid 值），
- * 只在主链没捐成时作补捐链、且不参与回点唤醒（见文件头「触发」）。
- */
-const ENERGY_BUILDING = 6;
 
 /** @type {number} 科技池自然恢复周期（秒，抓包实证 restoreSec=1800）；getter 没给出回点秒数时的兜底 */
 const SCIENCE_RECOVER_SEC = 1800;
@@ -100,8 +88,8 @@ const RELIC_GAP_MS = 600;
 const SCIENCE_DONATE_GAP_MS = 600;
 
 /**
- * @type {number} 科技/建筑单 tick 的连捐枚数上限（二次防御）：通用池 4 / 遗迹池 7 本就 pointMax≈10，
- * 但补捐链的建筑池 6 余量可达 200（一次性捕获的 energy.point 无界），故把单次突发锁到 10 枚；
+ * @type {number} 科技/遗迹单 tick 的连捐枚数上限（二次防御）：通用池 4 / 遗迹池 7 本就 pointMax≈10，
+ * 但一次性捕获的 energy.point 无界（真机曾在建筑池 6 上单轮冲出上百枚），故把单次突发锁到 10 枚；
  * 未捐完的余量靠 donated→CHAIN_GAP_MS 复查自然续捐，既不会一次刷屏上百条，也不影响把能量花光。
  */
 const SCIENCE_LOOP_MAX_PER_TICK = 10;
@@ -141,8 +129,8 @@ var lastEnergyPoint = {};
  * 之所以自己记：我们只发包、不走游戏应答处理，游戏侧 donateDailyHonor 不会被我们的捐包刷新，
  * sc.dailyHonor>=sc.honorCap 这道闸在直发路径下形同虚设——一旦荣誉封顶，捐包仍会被服务端接但
  * addPoint=0（荣誉不再增长、纯浪费）。封顶信号只认「主链/遗迹链应答 addPoint==0」这一服务端事实，
- * 命中即记当日并停捐，跨零点自动失效；建筑补链恒回 addPoint=0，不参与该判定（见 donateLoop 的
- * honorCapSignal），否则只要当轮目标恰为建筑就会把两链误停整天。
+ * 命中即记当日并停捐，跨零点自动失效（快速作战 10900 已被 ACL 排除，不再有恒回 addPoint=0
+ * 的建筑补捐链误封两链的隐患）。
  */
 var honorCappedDay = '';
 
@@ -166,7 +154,7 @@ function aliveFn() {
 // ── 排程 ──────────────────────────────────────────────────────────────
 /**
  * 下一拍择时：刚捐过短隔续查 > 任一池有余量慢查 > 两池回点精准唤醒 → 巡检档。返回值交给 cycle 排下次。
- * 输入只有主链池 4 与遗迹池 7：建筑池 6 的余量不进择时（20 秒回一点的常驻量会让「是否有余量」永远成立）。
+ * 输入只有主链池 4 与遗迹池 7（快速作战的建筑池 6 按用户定案不捐，不进择时）。
  * @param {object} [snap] 本轮 {donated, sciEnergy, relEnergy} 判定结果（缺省按闲档）
  * @returns {number} 毫秒
  */
@@ -278,7 +266,7 @@ async function sendRaw(cmd, body) {
 
 // ── 主流程 ────────────────────────────────────────────────────────────
 /**
- * 单轮主体：本地数据 → 荣誉闸 → 科技链（主链 + 可选建筑补链）→ 遗迹链。
+ * 单轮主体：本地数据 → 荣誉闸 → 科技主链 → 遗迹链。
  * @returns {Promise<object|null>} 排程线索 {donated, sciEnergy, relEnergy}；数据不可用返回 null（走闲档）
  */
 async function tickBody() {
@@ -306,7 +294,19 @@ async function tickBody() {
   }
 
   var donated = false;
-  var sci = await donateScience(sc).catch(function (err) {
+  var sci = await donateLoop({
+    tag: 'science',
+    target: sc.donateTarget
+      ? {
+          id: sc.donateTarget.id,
+          name: sc.donateTarget.name,
+          recommended: sc.donateRecommended,
+        }
+      : null,
+    poolType: ENERGY_DONATE,
+    cost: sc.costCoin,
+    honorCapSignal: true,
+  }).catch(function (err) {
     log.warn('science donate threw.', err);
     return null;
   });
@@ -329,13 +329,13 @@ async function tickBody() {
 }
 
 /**
- * 逐枚 num=1 连捐的一轮内部循环（科技主链与建筑补链共用）。
+ * 逐枚 num=1 连捐的一轮内部循环（科技主链专用）。
  * num 固定 1 而非「余量打包」：游戏金币捐赠 num 仅支持 1 或 10，任意 point 值当 num 发会被服务端判参数错误（alliance_120515）。
  * 逐枚发对齐游戏连捐（onClickDonateCoinBtn 循环 donateScience(sid,1)）；任一枚被拒/金币不足即收手交下轮。
  * 日志：单枚走 debug，整轮只聚合一条 info（大池逐枚 info 会每 2.5 秒刷 10 条，真机刷屏）。
  * @param {{tag:string, target:{id:number,name:string,recommended:boolean}|null, poolType:number, cost:number, honorCapSignal:boolean}} o
- *   tag=日志链路名；honorCapSignal=true 时把服务端 addPoint==0 当作当日荣誉封顶信号（只主链该这么做：
- *   建筑链只加建筑经验、实证恒回 0，据此停捐会把两链误封整天）
+ *   tag=日志链路名；honorCapSignal=true 时把服务端 addPoint==0 当作当日荣誉封顶信号（只主链该这么做，
+ *   避免其它链路历史上恒回 0 的应答误封两链整天）
  * @returns {Promise<{donated:boolean, energy:object|null, capped:boolean}>} energy 为该链所用池的（捐后）快照
  */
 async function donateLoop(o) {
@@ -358,7 +358,7 @@ async function donateLoop(o) {
   var sumHonor = 0;
   var crits = 0;
   var capped = false;
-  // 单 tick 突发锁到 SCIENCE_LOOP_MAX_PER_TICK 枚（建筑池 6 可达 200）；未捐完靠 donated→CHAIN_GAP 复查续捐
+  // 单 tick 突发锁到 SCIENCE_LOOP_MAX_PER_TICK 枚；未捐完靠 donated→CHAIN_GAP 复查续捐
   var loopMax = Math.min(energy.point, SCIENCE_LOOP_MAX_PER_TICK);
   for (var i = 0; i < loopMax; i++) {
     if (!aliveFn()) break;
@@ -434,48 +434,6 @@ async function donateLoop(o) {
     energy: done > 0 ? gameData.energy(o.poolType) || energy : energy,
     capped: capped,
   };
-}
-
-/**
- * 科技链：先跑主链（普通可捐目标 + 通用池 4，出个人荣誉），主链本轮没捐成才让建筑补链
- * （sid 10900 + 建筑池 6，只出建筑经验）搭一轮顺风车。
- * 排序用意：建筑池 20 秒回 1 点、余量可达 200，若与主链平级会长期霸占目标与发包窗口，
- * 把真正出荣誉的普通科技饿在池 4 回点上；补捐链仍会把建筑能量花光（用户定案：全捐），只是排在后面。
- * @param {object} sc gameData.allianceScience() 快照
- * @returns {Promise<{donated:boolean, energy:object|null, capped:boolean}>}
- *   energy 恒为通用池 4 快照——建筑池 6 的点数不进择时输入（否则 200 余量会让 nextTickDelay 恒判「有余量」）
- */
-async function donateScience(sc) {
-  var main = await donateLoop({
-    tag: 'science',
-    target: sc.donateTarget
-      ? {
-          id: sc.donateTarget.id,
-          name: sc.donateTarget.name,
-          recommended: sc.donateRecommended,
-        }
-      : null,
-    poolType: ENERGY_DONATE,
-    cost: sc.costCoin,
-    honorCapSignal: true,
-  });
-  // 荣誉封顶或本轮主链真捐出去了：同 tick 不再让建筑链抢发包窗口（建筑靠 donated→CHAIN_GAP 的下一轮补捐）
-  if (main.capped || main.donated || !aliveFn()) return main;
-
-  var bld = await donateLoop({
-    tag: 'science-building',
-    target: sc.buildingTarget
-      ? {
-          id: sc.buildingTarget.id,
-          name: sc.buildingTarget.name,
-          recommended: sc.buildingTarget.recommended,
-        }
-      : null,
-    poolType: ENERGY_BUILDING,
-    cost: sc.costCoin,
-    honorCapSignal: false,
-  });
-  return { donated: bld.donated, energy: main.energy, capped: false };
 }
 
 /**
@@ -654,8 +612,7 @@ function run(ctx) {
   // 报文实证：每捐一次会把 point 往下扣并同样推一条 10021（reason=alliance_donate/WONDER_DONATE_*），
   // 一次捐光 10 点会连推 10 条递减——若不看方向逐条 cycle.kick，就是“捐→被推→再捐”的自我反馈风暴。
   // 捐赠额度只能靠回点产生，10430/10432（列表/荣誉变更）不新增额度，故不再订阅它们做轮询。
-  // 建筑池 6 不订阅：实测 restoreSec=20，认它做唤醒等于常驻 3 次/分钟的轮询（而它出的个人荣誉恒为 0）；
-  // 建筑余量由主链/遗迹链的回点唤醒与 BUSY/IDLE 档顺带抽干（见 donateScience 的补捐链）。
+  // 快速作战（sid 10900）的建筑池 6 不订阅也不捐（用户定案）：目标排除口径收口在 ACL，本 feat 不再比 sid 值。
   ctx.on.push(CMD_PUSH_ENERGY, function (ev) {
     var d = ev && ev.data;
     if (!d || (d.type !== ENERGY_DONATE && d.type !== ENERGY_RELIC)) return;

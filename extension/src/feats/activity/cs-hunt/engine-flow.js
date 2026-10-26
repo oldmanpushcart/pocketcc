@@ -5,7 +5,7 @@
  *   （alive/cfg/team/isLeader/sendPB/onWake/chat），本引擎不反向 import 装配层、不自己摸 net/bus、不自建定时器。
  *   一场（round）四相位（报文实证 status：WAIT=探索 → EVENT/decide=选择 → EVENT/event=交互 → FIGHT=战斗）：
  *   - `WAIT`（探索回合，status=1）转场串联（顺序）：① 有数据转换(24)→7551{24} 立即用 → 重拉背包
- *     ② 有复制(22)→7551{22,param:copySkillSpecId} 复制先知（用户策略「转换后重判是否有值得复制的科技」，严格只复制先知）；
+ *     ② 有复制(22)→7551{22,param:copySkillSpecId} 复制先知（先知溢出则转复制幸运降临18；用户策略「转换后重判是否有值得复制的科技」）；
  *     每用一发即 7550 刷新背包再判下一项；均本回合一次性去重。复制目标含队伍技能（22/24 皆 group=2 个人技，陪跑成员可用）。
  *   - `DECIDE.play`：队长且有先知(9)→7551{9} 提前揭示（先知 group=1 队长专属、type5 游戏强制仅 DECIDE，故留此阶段）。
  *   - `DECIDE.show`/剩余倒计时≤ DECIDE_ACT_MS(10s)：先知感知选法发 7532{indexDecide}（详见「选场景」段）。
@@ -13,10 +13,12 @@
  *   - 结束：无动作（交 TeamEngine/游戏）。
  *
  * 横切自动项（默认开、无 UI）：
- *   - 来袭保命：21383 marchSize>0 且时效窗内 → 队长按 DEFENSE_PRIORITY（隐形10>毫发盾26>回合盾2>闪现11，皆 group=1）用一；
- *   - 盾只在真被掠袭且敌强时经「来袭保命」按需消耗（用户口径 2026-10-18：删除旧「WAIT 期主动铺盾」——实证 20261018T190716 无人来袭仍第 4/5 回合白烧唯一铜墙铁壁）；
+ *   - 来袭保命：21383 marchSize>0 即立即执行（不再等战力门控）→ 队长按 DEFENSE_PRIORITY（隐形10>闪现11>毫发盾26=回合盾2>其他战中增益族）用一；
+ *     盾分两类（用户口径 2026-10-25）：毫发无伤 26=次数盾，每道预警烧一张（只看持有，不受同回合去重/生效中拦截）；
+ *     铜墙铁壁 2=回合盾，盾生效中或本回合已施即不再重复施；
+ *   - 盾只在真被掠袭（21383 预警）时经「来袭保命」按需消耗、收到预警即烧（用户口径 2026-10-18 删「WAIT 期主动铺盾」；2026-10-24 删「敌强才防」战力门控，改为预警即保命）；
  *   - 战中策略（FIGHT 相位且**本回合真被掠袭过**才动手）：火线急救(27·不带 tarUid 服务器自决治谁) → 增益族逐个（FIGHT 是每回合必经结算相位，未挨打也进，无掠袭证据即不动）；
- *   - 末回合清空：round===ROUND_MAX(10) → 逐拍清空背包可主动技能（排除先知9/刷新23/回合盾2——第 10 回合用它已无「下个回合」可抵御，陪跑仅 personal）。
+ *   - 末回合清空：round===ROUND_MAX(10) → 逐拍清空背包可主动技能（排除先知9/刷新23；回合盾2 不再排除——第 10 回合后仍有「返程回合」可被攻击，铜墙铁壁抵御的正是返程，陪跑仅 personal）。
  *
  * 选场景（indexDecide=1-based）——先知感知（**emit 前置：`uidDecide === 我方 uid` 轮值闸**）：
  *   - revealed = play 态 eventSpecIdList 非 0 位（先知揭示集）、hidden = 仍为 0 位；
@@ -72,7 +74,7 @@ import {
   solveCandidates,
   viewToStr,
 } from './codebox.js';
-import { canPhase, chooseCopyTarget, SKILL_BY_ID } from './skills.js';
+import { canPhase, chooseCopyTarget, skillName, SKILL_BY_ID } from './skills.js';
 import { handle as scenePickReward } from './scenes/pick-reward.js';
 import { handle as sceneRollDice } from './scenes/roll-dice.js';
 import { handle as sceneCodeBox } from './scenes/code-box.js';
@@ -102,10 +104,17 @@ const REQ_MARCH_FIELD = 'crossTreasureGetMarchInfos';
 const REQ_REWARD_FIELD = 'crossTreasureRewardInfo';
 /** @type {number} 主动侦察（#reconMarches）结果缓存复用窗口（毫秒）：节流 7578 双查，防每拍刷屏 */
 const RECON_MIN_MS = 4000;
-/** @type {number[]} 来袭保命优先级（皆 group=1 队伍技能=队长专属）：隐形>毫发(战斗盾)>铜墙(回合盾)>闪现（用户口径 2026-10-17：闪现「下回合开始才移动」救不了当轮→降到盾后） */
-const DEFENSE_PRIORITY = [SKILL_STEALTH, SKILL_SHIELD_BATTLE, SKILL_SHIELD_ROUND, SKILL_FLASH];
-/** @type {number[]} 末回合清空排除项（先知 9 有 DECIDE 事件门、全量刷新 23 仅 pickSkill 场景有意义、铜墙铁壁 2 第 10 回合用「抵御下个回合」已无下回合=浪费） */
-const FLUSH_EXCLUDE = [SKILL_PROPHET, SKILL_REFRESH, SKILL_SHIELD_ROUND];
+/** @type {number[]} 来袭保命优先级（用户口径 2026-10-24）：动态隐身(10) > 自由闪现(11) > 毫发无伤盾(26) = 铜墙铁壁(2) > 其他战中增益族。
+ *   前四皆 group=1 队伍技=队长专属；尾部拼 FIGHT_BUFF_SKILLS 作「无专属自保技可用时以增益兜底」。 */
+const DEFENSE_PRIORITY = [
+  SKILL_STEALTH,
+  SKILL_FLASH,
+  SKILL_SHIELD_BATTLE,
+  SKILL_SHIELD_ROUND,
+].concat(FIGHT_BUFF_SKILLS);
+/** @type {number[]} 末回合清空排除项（先知 9 有 DECIDE 事件门、全量刷新 23 仅 pickSkill 场景有意义）。
+ *   铜墙铁壁(2) 不再排除（用户口径 2026-10-24）：第 10 回合后仍有「返程回合」可被攻击，回合盾抵御的正是返程，须用掉。 */
+const FLUSH_EXCLUDE = [SKILL_PROPHET, SKILL_REFRESH];
 /** @type {number} 21383 marchSize>0 后视为「正在被攻」的时效窗（毫秒），窗内才保命 */
 const RAID_ACTIVE_MS = 30000;
 /** @type {number} FIGHT 态推送唤醒的最小间隔（毫秒）：21376 每回合在 FIGHT 窗推 4~10 条，限流防把 4s 节奏加密成逐推送一拍 */
@@ -409,18 +418,41 @@ export class FlowEngine {
     var ck = round + ':seq:copy';
     if (!this.#done.has(ck) && this.#usable(SKILL_COPY)) {
       this.#done.add(ck);
-      var target = chooseCopyTarget({ copyable: this.#copyableSet() });
-      // ③ 先知充裕即不再复制（借鉴竞对 skillPrioritys）：#4 阈值须比 pick-skill 剪枝宽一格——复制发生在 WAIT(R)、先知消费在
+      var copyable = this.#copyableSet();
+      var target = chooseCopyTarget({ copyable: copyable });
+      var prophetCnt = this.#backpackCount(SKILL_PROPHET);
+      // ③ 先知溢出即转复制幸运降临（用户口径 2026-10-24）：复制发生在 WAIT(R)、先知消费在
       //   DECIDE(R) 属**同一回合**（报文实证相位 1(R)→2(R)decide→event→3(R)），可消化窗口是 ROUND_MAX-round+1，
-      //   充裕判据即 backpackCount+round > ROUND_MAX（非 >=）；否则 round=10 持有 0 时会误停、白扔一张当回合立即可用的镜像。
-      //   （注：pick-skill.js 的 >= 是对的——它落在 EVENT 阶段、当回合 DECIDE 已过，剩余窗口恰为 ROUND_MAX-round；两处形同义异，勿统一）
-      if (target === SKILL_PROPHET && this.#backpackCount(SKILL_PROPHET) + round > ROUND_MAX) {
-        target = 0;
+      //   溢出判据即 backpackCount+round > ROUND_MAX（非 >=）；否则 round=10 持有 0 时会误停、白扔一张当回合立即可用的镜像。
+      //   （注：pick-skill.js 剪枝已同步改回 `>`（2026-10-25 玩家反馈 r9 差一）——三处溢出判据统一为持有>剩余窗；
+      //   旧注「pick-skill 用 >= 是对的」系溢出补丁前的过时定标，会把「恰好可消化」误剪，勿再采信）
+      //   先知已溢出（再复制先知无用）时，若背包持有幸运降临(18) 则改复制它（翻倍奖励更值），否则本轮不复制。
+      if (target === SKILL_PROPHET && prophetCnt + round > ROUND_MAX) {
+        var hasLucky = copyable.indexOf(SKILL_LUCKY) >= 0;
+        target = hasLucky ? SKILL_LUCKY : 0;
+        // 溢出→转幸运的分流留 info（真机验证点②：镜像复制幸运是否发生、因何发生）
+        log.info(
+          '完美镜像·先知溢出(持有%d+回合%d>%d)→%s',
+          prophetCnt,
+          round,
+          ROUND_MAX,
+          hasLucky ? '转复制幸运降临' : '背包无幸运，本轮不复制',
+        );
       }
       if (target) {
-        await this.#useSkill(treasureId, SKILL_COPY, '完美镜像复制先知', {
-          param: JSON.stringify({ copySkillSpecId: target }),
-        });
+        var copyOk = await this.#useSkill(
+          treasureId,
+          SKILL_COPY,
+          '完美镜像复制' + (target === SKILL_LUCKY ? '幸运降临' : '先知'),
+          { param: JSON.stringify({ copySkillSpecId: target }) },
+        );
+        // 复制目标与服务器受理结果留 info（真机验证点②：copySkillSpecId=18 是否被接受，被拒时下行 sendPB 给 reason）
+        log.info(
+          '完美镜像·复制 %s(%d) %s',
+          target === SKILL_LUCKY ? '幸运降临' : '先知',
+          target,
+          copyOk ? '已接受' : '被拒(见 reason)',
+        );
         await this.#reloadBackpack();
         wrote = true;
       }
@@ -500,6 +532,11 @@ export class FlowEngine {
       },
       tryLucky: function (sceneKey, rewardResult, label) {
         return self.#tryLucky(treasureId, sceneKey, rewardResult, label);
+      },
+      // 幸运溢出提前消耗（用户口径 2026-10-25，实证 20261025T110353 第三跑 r9 持2张无 rollDice 窗、靠手动）：
+      //   有奖场景动作前若 持有数 > 本回合后剩余回合数 即先烧一张翻倍本次奖励（兑底末回合清空顾不到后续回合的浪费）
+      tryLuckyOverflow: function (round, label) {
+        return self.#tryLuckyOverflow(treasureId, round, label);
       },
       backpackReady: function () {
         return self.#backpackLoaded;
@@ -589,20 +626,56 @@ export class FlowEngine {
    * @param {number} round 当前回合
    */
   async #autoStrategies(treasureId, status, round) {
-    // 1) 掠袭处置（21383 推送到 或 #4 侦察补武装）：**先保护最有价值奖励（不可逆优先，#1）→ 队长战力门控保命（#2）**
+    // 1) 掠袭处置（21383 推送到 或 #4 侦察补武装）：**先保护最有价值奖励（不可逆优先，#1）→ 队长收到预警即按优先级保命（#2）**
     if (this.#raidSize > 0 && Date.now() - this.#raidAt <= RAID_ACTIVE_MS) {
+      var raidSize = this.#raidSize;
+      var raidAgeMs = Date.now() - this.#raidAt;
       await this.#ensureBackpack();
       await this.#protectBestReward(treasureId, round); // #1：安全锁定(17) group2 个人技，主跑各保各的贵重奖励
-      // #2 战力门控：仅队长有 group1 自保技；敌强才防（拿不到战力数据默认防御），省得弱敌来犯也照烧盾
-      if (this.#host.isLeader() && (await this.#enemyOverwhelms(treasureId))) {
+      // 用户口径 2026-10-24：收到来袭预警即立即按 DEFENSE_PRIORITY 保命，删除旧 #enemyOverwhelms「敌强才防」战力门控
+      //   （旧门控会把弱敌预警也吞掉、延误自保）；自保技皆 group=1 队长专属，非队长由 #canSpend 天然拦，故保留 isLeader 闸。
+      if (this.#host.isLeader()) {
+        // 用户口径 2026-10-25（报文实证 20261025T110353 第三跑 round3）：
+        //   毫发无伤(26)=次数盾——每道预警烧一张，不拦同回合再消耗，生效中(#pending，命中即解除重武装)与无持有才是闸；
+        //   铜墙铁壁(2)=回合盾——盾生效期间不再施，其余同旧口径；同回合已有任一「来袭保命」记账则增益不再叠烧。
+        var shieldPending =
+          this.#pending.has(SKILL_SHIELD_ROUND) || this.#pending.has(SKILL_SHIELD_BATTLE);
+        var spentDef = false;
         for (var i = 0; i < DEFENSE_PRIORITY.length; i++) {
           var id = DEFENSE_PRIORITY[i];
           var dk = round + ':def:' + id;
-          if (!this.#canSpend(id) || this.#done.has(dk)) continue; // #canSpend = #usable + #5 族级限窗去重
+          var isCountShield = id === SKILL_SHIELD_BATTLE;
+          if (isCountShield) {
+            // 次数盾：只认「持有>0」（#canUse，不走 #usable 的生效中拦截——用户口径「几次预警用几次」，盾在生效中
+            //   又来预警说明新攻势在路上，须再垫一张；旧 :def: 记账与族级限窗把它压成一回合一张，
+            //   致后续预警 falls through 连环改烧回合盾/增益）
+            if (!this.#canUse(id)) continue;
+          } else {
+            if (id === SKILL_SHIELD_ROUND && shieldPending) continue; // 回合盾生效期间不再施（用户口径：一轮有一个在生效就够）
+            if (!this.#canSpend(id) || this.#done.has(dk)) continue; // #canSpend = #usable + #5 族级限窗去重
+          }
           this.#done.add(dk);
-          await this.#useSkill(treasureId, id, '来袭保命');
+          var defOk = await this.#useSkill(treasureId, id, '来袭保命');
+          // 每次消耗留 info（真机验证点①：无战力门控后是否对弱敌过烧）：记本波来袭规模/预警龄与择用技及受理结果
+          log.info(
+            '来袭保命·%s %s(%d)：round=%d 来袭规模=%d 预警龄=%dms%s',
+            defOk ? '已消耗' : '消耗被拒',
+            skillName(id),
+            id,
+            round,
+            raidSize,
+            raidAgeMs,
+            isCountShield ? '（次数盾·每预警烧一张）' : '',
+          );
+          spentDef = true;
           break;
         }
+        if (!spentDef)
+          log.debug(
+            '来袭保命·无可用自保技：round=%d 来袭规模=%d（皆未持有/生效中/本回合已烧）',
+            round,
+            raidSize,
+          );
       }
       this.#raidSize = 0; // 本波已处置，等下一次 21383/侦察再武装
       return;
@@ -622,7 +695,16 @@ export class FlowEngine {
         var fk = round + ':flush:' + sid;
         if (!this.#usable(sid) || this.#done.has(fk)) continue;
         this.#done.add(fk);
-        await this.#useSkill(treasureId, sid, '末回合清空');
+        var flushOk = await this.#useSkill(treasureId, sid, '末回合清空');
+        // 每次清空留 info（真机验证点③：回合盾铜墙铁壁是否在末回合被用掉）：记所用技与池剩
+        log.info(
+          '末回合清空·%s %s(%d)：round=%d 池剩%d',
+          flushOk ? '已用' : '用被拒',
+          skillName(sid),
+          sid,
+          round,
+          pool.length - j - 1,
+        );
         flushedOne = true;
         break;
       }
@@ -716,29 +798,6 @@ export class FlowEngine {
     );
     var ack = ret && ret.payload ? ret.payload[REQ_MARCH_FIELD] : null;
     return ack && Array.isArray(ack.marchInfos) ? ack.marchInfos : [];
-  }
-
-  /**
-   * 战力门控（#2，借鉴竞对 useSkill 前阈值判定）：敌max(maxArmyPower)×1.3 > 我max(armyPower) 才值得消耗防御技。
-   *   fail-safe：拿不到有效敌方/我方战力数据时返回 true（保守防御），避免漏防。
-   * @param {string|number} treasureId 本跑 id
-   * @returns {Promise<boolean>}
-   */
-  async #enemyOverwhelms(treasureId) {
-    var rec = await this.#reconMarches(treasureId);
-    var enemyMax = 0;
-    for (var i = 0; i < rec.enemy.length; i++) {
-      var p = toNum(rec.enemy[i].maxArmyPower);
-      if (p > enemyMax) enemyMax = p;
-    }
-    if (!enemyMax) return true; // 无敌方战力数据 → 保守防御
-    var myMax = 0;
-    for (var j = 0; j < rec.mine.length; j++) {
-      var a = toNum(rec.mine[j].armyPower);
-      if (a > myMax) myMax = a;
-    }
-    if (!myMax) return true; // 无我方战力数据 → 保守防御
-    return enemyMax * 1.3 > myMax;
   }
 
   /**
@@ -950,7 +1009,7 @@ export class FlowEngine {
   /**
    * 幸运降临：只在「这次我最大」(rollDice) 场景、掷骰中奖奖励命中已勾幸运池且有个人幸运(18) 时，先 7551 用之。
    *   用户口径 2026-10-17：幸运降临仅服务于 rollDice（其余有奖场景不再触发）；背包剩余幸运的溢出兜底
-   *   改由「科技使用策略·末回合清空」#flushCandidates 无脑用掉。场景参与判定：cfg.luckyRewards.rollDice 为空（一个都没勾）则直接跳过。
+   *   由 2026-10-25 新增的 #tryLuckyOverflow（有奖场景动作前提前烧）+ 末回合清空 #flushCandidates 两层承接。场景参与判定：cfg.luckyRewards.rollDice 为空（一个都没勾）则直接跳过。
    * @param {string|number} treasureId 本跑 id
    * @param {string} sceneKey 场景 key（EVENT_TYPE 值：仅 rollDice 会真正触发）
    * @param {object|null} rewardResult 含 items:[{itemId,itemCount}] 的奖励体
@@ -996,6 +1055,38 @@ export class FlowEngine {
       return false;
     }
     return this.#useSkill(treasureId, SKILL_LUCKY, '幸运×2(' + label + ')');
+  }
+
+  /**
+   * 幸运溢出提前消耗（用户口径 2026-10-25）：有奖场景（主跑）动作前判「背包持有幸运张数是否已多于本回合之后的
+   *   剩余消化窗」——剩余窗=ROUND_MAX-round 回合（每回合至多消一张），持有>剩余窗即本回合不消必浪费（实证
+   *   20261025T110353 第三跑 round9 持 2 张、后两回合皆非 rollDice，引擎等到 round10 才由清空兑底、用户只能手动提前用）。
+   *   溢出时不要求命中已勾池（翻倍落在何种奖励上都好过浪费）；走 #usable 闸（生效中不重施）；仅主跑。
+   * @param {string|number} treasureId 本跑 id
+   * @param {number} round 当前回合
+   * @param {string} label 日志标签（场景名）
+   * @returns {Promise<boolean>} 是否已触发使用幸运
+   */
+  async #tryLuckyOverflow(treasureId, round, label) {
+    if (this.#host.cfg().mode === 'helper') return false; // 陪跑无奖励可翻
+    await this.#ensureBackpack();
+    var held = this.#backpackCount(SKILL_LUCKY);
+    if (held <= ROUND_MAX - round) return false; // 未溢出：仍留机会给后续 rollDice 白名单触发
+    if (!this.#usable(SKILL_LUCKY)) return false;
+    var ok = await this.#useSkill(
+      treasureId,
+      SKILL_LUCKY,
+      '幸运×2·溢出提前用(' + label + ' r' + round + ' 持' + held + ')',
+    );
+    if (ok)
+      log.info(
+        '幸运溢出：round=%d 持有%d>本回合后剩余%d窗，先在%s场景烧一张翻倍本次奖励',
+        round,
+        held,
+        ROUND_MAX - round,
+        label,
+      );
+    return ok;
   }
 
   /**
