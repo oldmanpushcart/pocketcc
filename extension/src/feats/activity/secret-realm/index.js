@@ -47,6 +47,12 @@
  *      纯就近巡航 173 资源/163 掉落箱 + 受击（21534）逃就近营帐且威胁解除后自动回攻原 BOSS 平台 + 商店补货有缺口时开车到 161
  *      + BOSS 窗开着而不在 BOSS 点时开往就近可用 176 平台（driveBoss）；候选只取 10018 视口快照，快照耗尽即驻留。
  *      开启时 warn.js 让出转移、boss.js 让出非 BOSS 点的攻打行军（两处让闸），到平台后攻打仍归 boss.js；仅队长可发 8521，见 drive.js 文件头。
+ *   10. 拿满自动离场（autoLeaveEnabled，默认关）：借鉴竞品B judgeLeave——宠物携带背包（dataConfig 3017+扩容增益）被高品质（quality≥4）填满时，
+ *      把前「容量」只按品质降序选定带出（8581 BAG_GET_SET）后发一次整场退出（8589 LEAVE）。**整场退出不可逆**，故仅队长可发、
+ *      只在停稳非行军且（争夺窗已过或在 161 商店点）才撤、容量/背包清单读不到一律不触发、一场最多一次，见 leave.js 文件头。
+ *   11. 侦察囤情报（scoutEnabled，默认关）：借鉴竞品B scoutBeast 的**侦察链路**（不接它的派兵择点）——对 10018 快照里的就近野生点（172）
+ *      先 8536 BEAST_INFO 免费预检（应答带 beastId 即「已侦察」，直接囤、不花道具），无 beastId 且道具/冷却允许才 8537 BEAST_SCOUT（扣 1 个 41001）；
+ *      品质取 enigma_beast[beastId].quality 攒进内存缓存。**只囤情报不改变任何行车/攻打行为**（172 不在巡航档），消耗稀缺勘察车故默认关，见 scout.js 文件头。
  *
  * 秘境是「独立活动/独立地图/独立战斗体系/独立背包」的隔离世界：
  *   - 场景名沿用 NWorldMap，但 watchingType===PAB（isPabBattleMap）才是真正的进入标志；
@@ -61,7 +67,7 @@
  *   - 真正闸门 realmActive()：scene.name()==='NWorldMap' && secretRealm.isPabBattleMap()；
  *   - 引擎内部每拍/每事件都复检 realmActive()，非秘境即长睡/直接跳过。
  *
- * 分层：仿 mine-cave 目录化，index.js 装配 + capture.js/pickup.js/heal.js/boss.js/shop.js/warn.js/drive.js 七引擎 + constants.js 私货；feats 间不互 import。
+ * 分层：仿 mine-cave 目录化，index.js 装配 + capture.js/pickup.js/heal.js/boss.js/shop.js/warn.js/drive.js/leave.js/scout.js 九引擎 + constants.js 私货；feats 间不互 import。
  */
 import { reactor } from '../../../core/reactor.js';
 import { createLog } from '../../../core/log.js';
@@ -73,6 +79,8 @@ import { BossEngine } from './boss.js';
 import { ShopEngine, shopItemIdSet, shopType3ItemIds } from './shop.js';
 import { WarnEngine } from './warn.js';
 import { DriveEngine } from './drive.js';
+import { LeaveEngine } from './leave.js';
+import { ScoutEngine } from './scout.js';
 import {
   TABLE_ITEM,
   TABLE_RSS_STATION,
@@ -91,10 +99,10 @@ const log = createLog('SECRETM');
 /** @type {object|null} reactor 上下文（install/run 时置入） */
 var ctxRef = null;
 /**
- * 当前激活的七个引擎实例（run 建、pause 停）。必须持有引用，否则引擎的 `stop()` 在全仓无调用方：
+ * 当前激活的九个引擎实例（run 建、pause 停）。必须持有引用，否则引擎的 `stop()` 在全仓无调用方：
  *   reactor pause 只摘 ctx.on.* 登记的触发器，管不到引擎自建的 #timer / 在飞 await 循环，
  *   不存引用就会让「暂停前的陈旧快照」在 resume 后被旧引擎继续发成写请求。
- * @type {{pickup:object|null, capture:object|null, heal:object|null, boss:object|null, shop:object|null, warn:object|null, drive:object|null}}
+ * @type {{pickup:object|null, capture:object|null, heal:object|null, boss:object|null, shop:object|null, warn:object|null, drive:object|null, leave:object|null, scout:object|null}}
  */
 var engines = {
   pickup: null,
@@ -104,6 +112,8 @@ var engines = {
   shop: null,
   warn: null,
   drive: null,
+  leave: null,
+  scout: null,
 };
 /**
  * 面板模块配置（configure 推入，引擎惰性读）：物品拾取/增益井/拍宠物三大能力默认生效、无独立开关，这里只剩可配置的子项——
@@ -116,6 +126,8 @@ var engines = {
  *   shop=商店补货派生总闸 {enabled}（enabled 非用户勾选，而是 pickItems 是否存在 shop=1 项的派生态；且**只在队伍已停靠 161 商店点时**补货，见 shop.js）；
  *   warn=攻击警告应对 {enabled,mode}（mode='transfer' 立即转移（默认）/'stand' 抗争到底；默认关，自动挪队风险最高，见 warn.js；自动驾驶开启时本引擎让出转移、交 drive.js EVADE 接管）；
  *   drive=自动驾驶 {enabled,boss,shopTime,shopDwellMs,emptyDwellMs}（enabled=面板 driveEnabled 总闸（默关）；boss=driveBoss 子闸——BOSS 窗开着时是否自动开往 176 平台，缺省 true；shopTime=大BOSS 前定点商店勤务开关（缺省 true）；shopDwellMs=到店驻留毫秒（面板秒×1000，默认 25000）；emptyDwellMs=资源/掉落拿空后 settle 毫秒（默认 0=立即走），见 drive.js）。
+ *   leave=拿满自动离场 {enabled}（enabled=面板 autoLeaveEnabled 总闸（默关）；无子开关，离场为不可逆的整场退出，见 leave.js）。
+ *   scout=侦察囤情报 {enabled}（enabled=面板 scoutEnabled 总闸（默关）；只囤情报不派兵，花 41001 侦察野怪点品质，见 scout.js）。
  * @type {{pickItems:Object<string,{on:number,max:number,shop?:number}>, pickOrder:string[], pickRank:Object<string,number>, buffEffects:number[], heal:object, boss:object, shop:{enabled:boolean}, warn:{enabled:boolean,mode:string}, drive:{enabled:boolean,boss:boolean,shopTime:boolean,shopDwellMs:number,emptyDwellMs:number}}}
  */
 /**
@@ -143,6 +155,8 @@ var modCfg = {
   shop: { enabled: false },
   warn: { enabled: false, mode: 'transfer' },
   drive: { enabled: false, boss: true, shopTime: true, shopDwellMs: 25000, emptyDwellMs: 0 },
+  leave: { enabled: false },
+  scout: { enabled: false },
 };
 
 /**
@@ -533,6 +547,44 @@ function sanitizeHeal(raw) {
 }
 
 /**
+ * 面板的平铺拿满离场字段（autoLeaveEnabled）→ 引擎用的嵌套对象。
+ * @param {object} c 面板原配置
+ * @returns {{enabled:boolean}}
+ */
+function pickLeaveRaw(c) {
+  return { enabled: c && c.autoLeaveEnabled === true };
+}
+
+/**
+ * leave 归一化：只认 enabled 一个布尔（离场是不可逆的整场退出，故不留任何子开关，只一个默认关的总闸）。
+ * @param {*} raw pickLeaveRaw 产物
+ * @returns {{enabled:boolean}}
+ */
+function sanitizeLeave(raw) {
+  const e = raw && typeof raw === 'object' ? raw : {};
+  return { enabled: e.enabled === true };
+}
+
+/**
+ * 面板的平铺侦察字段（scoutEnabled）→ 引擎用的嵌套对象。
+ * @param {object} c 面板原配置
+ * @returns {{enabled:boolean}}
+ */
+function pickScoutRaw(c) {
+  return { enabled: c && c.scoutEnabled === true };
+}
+
+/**
+ * scout 归一化：只认 enabled 一个布尔（侦察会消耗稀缺勘察车道具，故不留子开关，只一个默认关的总闸；速率/预留护栏走 tuning）。
+ * @param {*} raw pickScoutRaw 产物
+ * @returns {{enabled:boolean}}
+ */
+function sanitizeScout(raw) {
+  const e = raw && typeof raw === 'object' ? raw : {};
+  return { enabled: e.enabled === true };
+}
+
+/**
  * 商店补货总闸（自动）：持有清单里只要勾了任一行的「店」渠道（条目 shop=1）即视为开启补货，
  * 不再单独设一个 shopEnabled 勾选（用户反馈：补货应是清单勾选的自然结果，无需额外激活）。
  * @param {Object<string,{shop?:number}>} pickItems sanitizePickItems 产物
@@ -629,6 +681,8 @@ function buildModuleCfg(c) {
     shop: { enabled: shopRestockWanted(pickItems) },
     warn: sanitizeWarn(pickWarnRaw(c)),
     drive: sanitizeDrive(pickDriveRaw(c)),
+    leave: sanitizeLeave(pickLeaveRaw(c)),
+    scout: sanitizeScout(pickScoutRaw(c)),
   };
 }
 
@@ -645,7 +699,17 @@ function configure(c) {
  * 停用异常只告警不阻断（下一个引擎照收），且引用一律置 null，免得脏实例被当成还活着。
  */
 function stopEngines() {
-  for (const k of ['pickup', 'capture', 'heal', 'boss', 'shop', 'warn', 'drive']) {
+  for (const k of [
+    'pickup',
+    'capture',
+    'heal',
+    'boss',
+    'shop',
+    'warn',
+    'drive',
+    'leave',
+    'scout',
+  ]) {
     const e = engines[k];
     if (!e) continue;
     engines[k] = null;
@@ -697,8 +761,16 @@ function run(ctx) {
   //   开启时 warn.js 让出转移、boss.js 让出非 BOSS 点的攻打行军（两处让闸），见 drive.js 文件头
   engines.drive = new DriveEngine(env);
   engines.drive.start(ctx);
+  // 拿满自动离场引擎（autoLeaveEnabled，默关）：宠物背包被高品质填满时择优带出（8581）+ 整场退出（8589）；
+  //   纯电平轮询无 push 订阅，仅队长可发、多重 fail-safe（容量/背包读不到即不撤），一场最多一次，见 leave.js 文件头
+  engines.leave = new LeaveEngine(env);
+  engines.leave.start(ctx);
+  // 侦察囤情报引擎（scoutEnabled，默关）：对 10018 快照里就近野生点（172）先 8536 免费预检、无 beastId 且道具/冷却允许才 8537 花 41001 侦察；
+  //   品质攒进内存缓存、不改变任何行车/攻打行为（172 不在巡航档）；订阅 10018 需 ctx，仅本人背包动作不要求队长，见 scout.js 文件头
+  engines.scout = new ScoutEngine(env);
+  engines.scout.start(ctx);
   log.info(
-    'started (item overrides=%d, buff classes=%d, heal=%s, boss=%s/%s, stone=%s, shop=%s, warn=%s/%s, drive=%s/%s).',
+    'started (item overrides=%d, buff classes=%d, heal=%s, boss=%s/%s, stone=%s, shop=%s, warn=%s/%s, drive=%s/%s, leave=%s, scout=%s).',
     Object.keys(modCfg.pickItems).length,
     modCfg.buffEffects.length,
     modCfg.heal.enabled ? 'on' : 'off',
@@ -710,6 +782,8 @@ function run(ctx) {
     modCfg.warn.mode,
     modCfg.drive.enabled ? 'on' : 'off',
     modCfg.drive.boss ? 'boss' : 'cruise',
+    modCfg.leave.enabled ? 'on' : 'off',
+    modCfg.scout.enabled ? 'on' : 'off',
   );
 }
 
@@ -739,6 +813,8 @@ reactor.register({
     driveShopTime: true,
     driveShopDwell: 25,
     driveEmptyDwell: 0,
+    autoLeaveEnabled: false,
+    scoutEnabled: false,
   },
   fields: [
     {
@@ -877,6 +953,20 @@ reactor.register({
         return !!(cfg && cfg.driveEnabled);
       },
       hint: '资源点(173)/掉落箱(163)改为「拿空即走」：物品拾取+BUFF拾取（或物品+宠物）都空后，再多驻留本秒数才挪队（0=立即走，默认 0）。等不到拿空由内部 45s 安全上限兜底，不会死守',
+    },
+    {
+      key: 'autoLeaveEnabled',
+      type: 'checkbox',
+      label: '拿满自动离场',
+      section: '拿满自动离场',
+      hint: '默认关（8589 是整场退出、不可逆，是全 feat 风险最高的一档）：开启后当宠物携带背包被高品质（quality≥4）填满时，把最好的若干只选定带出（8581）后发一次离场（8589）。仅队长可发，且只在队伍已停稳、不在行军途中、且（争夺窗已过或正停在 161 商店点）时才撤；容量/背包清单读不到一律不触发（宁可不撤，绝不误判拿满）。本场最多撤一次',
+    },
+    {
+      key: 'scoutEnabled',
+      type: 'checkbox',
+      label: '侦察野怪点品质',
+      section: '侦察囤情报',
+      hint: '默认关（侦察会消耗背包里稀缺的全地形勘察车 41001，非商店货、只能从野怪点产出拾取）：开启后只对当前视口快照里的就近野生点（172）动手——先 8536 免费预检（若该点已被侦察过，直接囤结果、不花道具），拿不到品质才发 8537 花 1 个勘察车侦察，把 beastId→品质攒进内存缓存。**只囤情报、不会为它派兵/挪队**（野怪点不在巡航档），且两次花道具之间有速率间隔、道具不足即自动改走免费预检。情报仅供面板展示与后续拓点参考',
     },
   ],
   toModuleCfg: buildModuleCfg,

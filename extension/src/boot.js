@@ -128,7 +128,13 @@ import { installModeGate } from './core/mode.js';
           return new Promise(() => {});
         }
         handOffBridge(uid); // 先放行 bridge 存储代理，再升配置读写
-        return (uid ? migrateLegacyKeys(uid) : undefined).then(() => loadAllConfigs());
+        // uid 为 null 也要继续读盘（无限制包 slotFree 不走上面的挂起闸）：registry 检测 ns 未设时
+        // 落默认配置并置 degraded，player.ready 后补读盘。空分支须用 Promise 兜住，否则 .then 崩整条启动链。
+        // 场景口径告知降级性质：还停在登录/启动场景（未扫码）是常态走 info；已进过主城却拿不到 UID 才是 warn。
+        const preLogin = READY_SCENES.indexOf(getCurrentScene()) === -1;
+        return Promise.resolve(uid ? migrateLegacyKeys(uid) : undefined).then(() =>
+          loadAllConfigs({ preLogin: preLogin }),
+        );
       })
       .then(() => {
         installReconnectHooks();

@@ -629,7 +629,8 @@ export function buildFieldsHTML(fid, f) {
     }
     if (fd.type === 'tripick') {
       // 行内多下拉（如异能兽培育「派出的兽 [属相][品种][品质]」）：一个 label 接 N 个 select，
-      //   每个 part 自己一个 data-key，change 与 syncControls 都走 select.pc-fsel 的同一条陆径（不需特例接线）。
+      //   每个 part 自己一个 data-key（= 存档键，与 field.key 不同）；渲染走本分支，change 与 syncControls
+      //   虽复用 select.pc-fsel 的同一条 DOM 陆径，但 wire.js 侧查 descriptor 须按 part.key 下探 parts。
       //   选项支持数组与函数两种形式（同 select 口径，函数在装配时求值一次）。
       const cells = (fd.parts || [])
         .map((p) => {

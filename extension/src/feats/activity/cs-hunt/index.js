@@ -29,7 +29,7 @@ import { reactor } from '../../../core/reactor.js';
 import { createCycle } from '../../../core/cycle.js';
 import { createLog } from '../../../core/log.js';
 import { bits, csHunt } from '../../../core/game-api.js';
-import { TeamEngine, getDailyRuns } from './engine-team.js';
+import { TeamEngine, getDailyRuns, DEFAULT_WAIT_MIN } from './engine-team.js';
 import { SKILL_GROUP_IDS, groupName, skillGroupRep } from './skills.js';
 import { EVENT_TYPE, LUCKY_GIFTS } from './constants.js';
 
@@ -50,7 +50,7 @@ var installed = false;
 var engine = null;
 /**
  * 面板模块配置（configure 灌入，引擎经 env.cfg() 惰性读）。
- * @type {{mode:'main'|'helper', targetMemberNum:number, rolePool:Array<{uid:string,name:string}>, rejectOutsidePool:boolean, useBeaconWhenShort:boolean, dailyRuns:number, presetPool:number[], skillPool:number[], luckyRewards:Object<string,number[]>}}
+ * @type {{mode:'main'|'helper', targetMemberNum:number, waitMin:number, rolePool:Array<{uid:string,name:string}>, rejectOutsidePool:boolean, useBeaconWhenShort:boolean, dailyRuns:number, autoSwitchToHelper:boolean, presetPool:number[], skillPool:number[], luckyRewards:Object<string,number[]>}}
  *   presetPool = 单元素数组（面板单选一个预设 1~8）；skillPool = 族代表 id 的优先级序（见 skills.js SKILL_GROUPS）。
  */
 var modCfg = normalize({});
@@ -218,14 +218,19 @@ function normalize(raw) {
   var n = Number(raw.targetMemberNum) || 0;
   if (n < 2) n = 2;
   if (n > 5) n = 5; // 主表 max_ppl_num=5（§9.1 实测），下限 2 由服务器校验（2 人可开整局，§9.3 实样）
+  var wm = Number(raw.waitMin); // 竞对口径 waitmin 默认 3；显式 0=关（不超时、等人齐），非法/负值亦回默认
+  if (!(wm >= 0)) wm = DEFAULT_WAIT_MIN;
   return {
     mode: mode,
     targetMemberNum: n,
+    waitMin: wm,
     rolePool: sanitizePool(raw.rolePool),
     rejectOutsidePool: !!raw.rejectOutsidePool,
     useBeaconWhenShort: !!raw.useBeaconWhenShort,
     // ⑤ 每日夺宝局数上限（借鉴竞对 setting.team.count）：0=不限；主跑每完成一局计 1、跳日归零、到上限当日停跑
     dailyRuns: Math.max(0, Number(raw.dailyRuns) || 0),
+    // ⑥ 每日局数满后自动转陪跑（借鉴竞对 autoSwitchToHelp）：默认关=到上限停跑（旧口径）；开=主跑跑满当日上限后自动转陪跑找跟队
+    autoSwitchToHelper: !!raw.autoSwitchToHelper,
     // 面板单选一个预设，但引擎（buildPlanFromPool）仍收数组：包成单元素保持出兵语义链路不变
     presetPool: (function () {
       var p = sanitizePreset(
@@ -360,9 +365,10 @@ function run(ctx) {
   //   发包与应答落地都在引擎里（resp 订阅已挂），装配层只负责点火强拉一次
   engine.refreshInfo(true);
   log.info(
-    'started (mode=%s, 目标人数=%d, 出征预设=%j, 信标补次数=%s, 科技池=%j, 幸运池(rollDice)=%s).',
+    'started (mode=%s, 目标人数=%d, 凑人超时=%d分钟, 出征预设=%j, 信标补次数=%s, 科技池=%j, 幸运池(rollDice)=%s).',
     modCfg.mode,
     modCfg.targetMemberNum,
+    modCfg.waitMin,
     modCfg.presetPool,
     modCfg.useBeaconWhenShort ? '开' : '关',
     modCfg.skillPool,
@@ -426,10 +432,12 @@ reactor.register({
     enabled: false,
     mode: 'main',
     targetMemberNum: 5,
+    waitMin: DEFAULT_WAIT_MIN,
     rolePool: [],
     rejectOutsidePool: false,
     useBeaconWhenShort: false,
     dailyRuns: 0,
+    autoSwitchToHelper: false,
     preset: 1,
     skillPool: SKILL_GROUP_IDS.slice(),
     // 幸运池只留 rollDice 一组勾选（键与 luckyFieldKey(rollDice) 对应）；旧 luckyPickReward/luckyCodeBox/luckyDefPVE 及全量勾选存档已废弃、不再读
@@ -467,6 +475,16 @@ reactor.register({
       hint: '主表 max_ppl_num=5；2 人即可开完整局（下限由服务器校验）',
     },
     {
+      key: 'waitMin',
+      type: 'number',
+      label: '凑人超时发车（分钟）',
+      section: '组队',
+      min: 0,
+      step: 1,
+      showIf: isMain,
+      hint: '借鉴竞对 waitmin：人数未达「凑够人数就发车」但已到位成员都已派兵成功时，建队等满本分钟数就直接召集出发（避免长期凑不齐 → 永久等待）；0=关闭（死等人数到齐）。仍守住「全员已派兵」（服务器对未派兵者会拒）',
+    },
+    {
       key: 'rolePool',
       type: 'uidlist',
       label: '指定队员/队长名单',
@@ -494,6 +512,14 @@ reactor.register({
       step: 1,
       showIf: isMain,
       hint: '0=不限；主跑每完成一局计 1（持久跨页、明日自动归零），到上限当日不再建队/加入，陪跑不计数不受此限',
+    },
+    {
+      key: 'autoSwitchToHelper',
+      type: 'checkbox',
+      label: '满次自动转陪跑',
+      section: '组队',
+      showIf: (cfg) => isMain(cfg) && Number(cfg.dailyRuns) > 0,
+      hint: '需先设「每日局数上限」>0 才生效：主跑跑满当日上限后，不直接停跑，而是自动转陪跑（不耗次数、不主动要奖励）继续跟别人的队；明日局数归零或调高上限自动回到主跑。不勾=保持旧行为（到上限当日停跑）',
     },
     {
       key: 'useBeaconWhenShort',

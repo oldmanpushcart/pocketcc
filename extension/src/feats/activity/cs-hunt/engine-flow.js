@@ -13,12 +13,23 @@
  *   - 结束：无动作（交 TeamEngine/游戏）。
  *
  * 横切自动项（默认开、无 UI）：
+ *   - 预警式防御（竞对 onAttacking 同义，server-js.js L16548-16591）：队长节流（WARN_POLL_MS）主动轮询 901 marchInfo 抓飞向本据点敌行军
+ *     → 630 取敌战力、仅 `敌 power×WARN_POWER_RATIO > 队内最强 power` 才提前布防 → 按到达 ETA：`<WARN_ETA_MS` 隐形(10) 否则闪现(11)，皆不可用兜底毫发(26)/铜墙(2)；
+ *     抢在 21383 结算前规避被掠。全程 fail-safe（数据缺失不动作），与下方「来袭保命」分占 marchId/回合幂等键不叠烧；
  *   - 来袭保命：21383 marchSize>0 即立即执行（不再等战力门控）→ 队长按 DEFENSE_PRIORITY（隐形10>闪现11>毫发盾26=回合盾2>其他战中增益族）用一；
  *     盾分两类（用户口径 2026-10-25）：毫发无伤 26=次数盾，每道预警烧一张（只看持有，不受同回合去重/生效中拦截）；
  *     铜墙铁壁 2=回合盾，盾生效中或本回合已施即不再重复施；
  *   - 盾只在真被掠袭（21383 预警）时经「来袭保命」按需消耗、收到预警即烧（用户口径 2026-10-18 删「WAIT 期主动铺盾」；2026-10-24 删「敌强才防」战力门控，改为预警即保命）；
- *   - 战中策略（FIGHT 相位且**本回合真被掠袭过**才动手）：火线急救(27·不带 tarUid 服务器自决治谁) → 增益族逐个（FIGHT 是每回合必经结算相位，未挨打也进，无掠袭证据即不动）；
- *   - 末回合清空：round===ROUND_MAX(10) → 逐拍清空背包可主动技能（排除先知9/刷新23；回合盾2 不再排除——第 10 回合后仍有「返程回合」可被攻击，铜墙铁壁抵御的正是返程，陪跑仅 personal）。
+ *   - 战中策略（FIGHT 相位且**本回合真被掠袭过**才动手）：火线急救(27·择战损最大者定向施治) → 增益族逐个（FIGHT 是每回合必经结算相位，未挨打也进，无掠袭证据即不动）；
+ *     掠袭回合内再叠加**敌强门控**（借鉴竞对 roundFight）：7578 双查军力，敌满员×1.3 > 我方最强 → 先垫一张毫发(26)；不达 ×1.5 → 弱敌不烧急救/增益留给强敌波；
+ *     数据缺失 fail-open。此闸只管消耗路，不碰「预警即保命」自保路（用户口径 2026-10-24）；
+ *   - 族级溢出提前烧（借鉴竞对 initRoundFight）：非末回合 FIGHT 相位，闪现(11)/百战(1/25)/铁壁(2) 任一「持有+回合 > ROUND_MAX」
+ *     （族限窗 9 下剩余回合消化不完、终局必带出）→ 趁早烧一张回收，每拍至多一个写、每回合每 specId 尝试一次；
+ *   - 末回合清空：round===ROUND_MAX(10) → **单拍串行清光**背包全部可用技（竞对 clearAllSkills 同回合连发 5+ 个 7551 实证服务器受理；
+     旧逐拍一技会被掠袭保命拍挤占、回合窗内清不完；排除先知9/刷新23；**完美镜像22 排首位**，
+   与转场同律带 `param:copySkillSpecId` 发（严格只复制先知、先知溢出转幸运18，无目标则跳过不空发）——
+   竞对 clearAllSkills COPY 先行把余技复制出来再清，不带走不亏（server-js.js L16149-16159）；
+   回合盾2 不再排除——第 10 回合后仍有「返程回合」可被攻击，铜墙铁壁抵御的正是返程，陪跑仅 personal；掠袭保命拍在末回合处置后同拍继续清空）。
  *
  * 选场景（indexDecide=1-based）——先知感知（**emit 前置：`uidDecide === 我方 uid` 轮值闸**）：
  *   - revealed = play 态 eventSpecIdList 非 0 位（先知揭示集）、hidden = 仍为 0 位；
@@ -119,6 +130,21 @@ const FLUSH_EXCLUDE = [SKILL_PROPHET, SKILL_REFRESH];
 const RAID_ACTIVE_MS = 30000;
 /** @type {number} FIGHT 态推送唤醒的最小间隔（毫秒）：21376 每回合在 FIGHT 窗推 4~10 条，限流防把 4s 节奏加密成逐推送一拍 */
 const WAKE_MIN_MS = 3000;
+/** @type {number} 预警式防御主动 901 侦察的最小间隔（毫秒）：队长态每此间隔拉一次敌行军窗（竞对靠 AttackingMarchUpdate 事件被动触发，
+ *   我方无该内部事件钩子，只能 tick 内轮询；此节流控制 32×20 大窗 + 630 的额外发包成本，用户口径 2026-10-27 接受） */
+const WARN_POLL_MS = 7000;
+/** @type {number} 预警式防御「隐形 vs 闪现」分流的到达剩余阈（毫秒）：敌行军 ETA<此值用隐形（来不及挪兵），否则闪现（竞对 onAttacking 60s 同口径） */
+const WARN_ETA_MS = 60000;
+/** @type {number} 预警式防御敌强门控倍率：仅当 `敌 power×此值 > 队内最强 power` 才提前布防（竞对 1.4 同口径；避免对弱敌过烧隐形/闪现） */
+const WARN_POWER_RATIO = 1.4;
+/** @type {number} 战中「敌强碾压」重阈（竞对 roundFight L16450 口径）：敌最弱在途军的满员战力×此值 > 我方最强在途军的现员战力 → 整队被碾压，先垫一张毫发无伤(26) */
+const FIGHT_RATIO_HEAVY = 1.3;
+/** @type {number} 战中「敌强」轻阈（竞对 roundFight L16453 口径）：低于此值视为弱敌掠袭，急救/增益不烧、留给强敌波 */
+const FIGHT_RATIO_LIGHT = 1.5;
+/** @type {number[]} 族级溢出「不带出」提前烧清单（竞对 initRoundFight L16232-16240 的 闪现type7/百战type1/铁壁type2）：
+ *   此三族族级限窗（SKILL_TYPE_LIMIT=9）下每回合至多消化 1 张，「持有+当前回合 > ROUND_MAX」即终局必带出——
+ *   FIGHT 相位趁早各烧一张回收，好过带出亏空（竞对口径）。百战不倒 1/25 为同族两 specId（游戏改版新增 type15 行）。 */
+const DIGEST_OVERFLOW_SKILLS = [SKILL_FLASH, 1, 25, SKILL_SHIELD_ROUND];
 
 /**
  * eventSpecId 六族 → scene 模块分派表（`Math.floor(eventSpecId/100)` 命中）。
@@ -137,10 +163,12 @@ const SCENES = {
  * @typedef {object} FlowHost TeamEngine 注入的运行底座（引擎不反向 import index，也不自摸 net/reactor）
  * @property {() => boolean} alive feat 是否仍激活
  * @property {() => object} cfg 模块配置（mode/skillPool/luckyRewards…）
- * @property {() => object|null} team 当前队伍快照（含 id/treasureId/status）
+ * @property {() => object|null} team 当前队伍快照（含 id/treasureId/status/maxMemberPower）
  * @property {() => boolean} isLeader 本人是否队长
  * @property {(cmd:number, inner:object, label:string) => Promise<{ok:boolean, code:number, payload:object|null}>} sendPB 发 V1 PB（复用 TeamEngine 的 REQ_FIELD 装箱与幂等闸）
  * @property {() => void} onWake 唤醒兜底循环
+ * @property {(x:number, y:number, k:number) => Promise<object[]>} [worldMarches] 预警式防御：901 marchInfo 拉敌行军窗（缺则跳过预警防御）
+ * @property {(uidStr:string) => Promise<number>} [playerPower] 预警式防御：630 取敌战力（缺则跳过预警防御）
  * @property {{send:(text:string, opts:object)=>Promise<object>, normalize:(raw:object)=>object|null}} chat 频道收发底座（codeBox 视图广播/汇总）
  */
 
@@ -187,6 +215,10 @@ export class FlowEngine {
   #lastReconAt = 0;
   /** @type {Set<number>} 已做过「21383 漏推补武装」侦察的回合（每回合至多一次，防 FIGHT 期反复空查） */
   #reconCheckedRounds = new Set();
+  /** @type {Set<string>} 预警式防御已处置过的敌来袭行军 marchId（同 marchId 只提前布防一次，换跑清；竞对 attackes[marchId] 去重同义） */
+  #warnAttacked = new Set();
+  /** @type {number} 上次预警式防御 901 主动侦察时刻（毫秒，WARN_POLL_MS 节流） */
+  #lastWarnAt = 0;
   /** @type {Object<string,number>} 每回合进 DECIDE 的时刻（毫秒，10s 下限用） */
   #enterAt = {};
   /** @type {Object<string,number>} 每回合 pickSkill 已用全量刷新次数（≤2） */
@@ -293,7 +325,7 @@ export class FlowEngine {
       await this.#explorationSkills(treasureId, round);
     } else if (status === HUNT_STATUS.FIGHT) {
       // 战斗结算相位（status=3，**每回合必经、未挨打也进**，实证 20261016T191700 全程无 21383 掠袭仍每回合成对推 fightWin 0→3）：
-      //   增益/急救仅本回合真被掠袭过（#raidRounds）才动手，否则每回合白烧急救与增益；非掠袭回合直接闲置
+      //   增益/急救仅本回合真被掠袭过（#raidRounds）且过敌强门控（③竞对口径：弱敌不烧、碾压先垫盾）才动手，否则白烧急救与增益；非掠袭回合直接闲置
       await this.#fightStrategies(treasureId, round);
     }
     // #4/⑥ 主动侦察补武装（借鉴竞对）：FIGHT 态但 21383 漏推（#raidSize≤0）时，每回合至多一次判来袭；
@@ -319,8 +351,20 @@ export class FlowEngine {
         }
       }
     }
-    // 横切自动项：来袭保命 / 末回合清空（与事件阶段无关，各自门控）
-    await this.#autoStrategies(treasureId, status, round);
+    // 预警式防御（借鉴竞对 onAttacking）：队长节流主动轮询 901 抓飞向本据点的敌行军，按敌战力/ETA 提前隐形/闪现，抢在 21383 结算前规避被掠
+    var warnedOut = false;
+    if (
+      host.isLeader() &&
+      status !== HUNT_STATUS.END &&
+      typeof host.worldMarches === 'function' &&
+      typeof host.playerPower === 'function' &&
+      Date.now() - this.#lastWarnAt >= WARN_POLL_MS
+    ) {
+      this.#lastWarnAt = Date.now();
+      warnedOut = await this.#warningDefense(treasureId, round);
+    }
+    // 横切自动项：掠袭保命 / 末回合清空（串行例外）/ 族级溢出提前烧（各自门控）；本拍若预警式防御已占写额（#sendPB 同 cmd 在途去重，除末回合串行外每拍至多一个 7551 写），则跳过自动项，下拍再判
+    if (!warnedOut) await this.#autoStrategies(treasureId, status, round);
     // 非事件阶段：按兜底节奏只读补拉 7531（刷 round / 来袭态）
     if (status !== HUNT_STATUS.EVENT) {
       await host.sendPB(REQ_HUNT_INFO, { treasureId: bits.int64(treasureId) }, '拉本跑详情');
@@ -620,7 +664,8 @@ export class FlowEngine {
   // ── 横切自动项（来袭保命 / 末回合清空） ─────────────────────────────
 
   /**
-   * 事件无关的自动技能推进：来袭保命（队长队技）→ 末回合清空。每拍至多一个写动作（#sendPB 同 cmd 在途去重）。
+   * 事件无关的自动技能推进：掠袭保命（队长队技）→ 末回合清空（单拍串行清光）→ 族级溢出提前烧。
+   * 除末回合清空外每拍至多一个写动作（#sendPB 同 cmd 在途去重，await 应答即放行下一条）。
    * @param {string|number} treasureId 本跑 id
    * @param {number} status 本跑状态
    * @param {number} round 当前回合
@@ -678,9 +723,13 @@ export class FlowEngine {
           );
       }
       this.#raidSize = 0; // 本波已处置，等下一次 21383/侦察再武装
-      return;
+      // 末回合不 return（借鉴竞对 clearAllSkills 与保命路并行不互斥）：保命拍不再挤占清空进度，同拍继续往下串行清空
+      if (round !== ROUND_MAX) return;
     }
-    // 2) 末回合清空：round===ROUND_MAX 时逐拍用掉一个可主动技能（排除先知/刷新；陪跑只刷 personal）
+    // 2) 末回合清空：round===ROUND_MAX 时**单拍串行清光**全部可用技（借鉴竞对 clearAllSkills L16149-16193——
+    //   竞对同回合格斗相位连发 5+ 个 7551 实证服务器受理，逐拍一技会被掠袭保命拍挤占、回合窗内清不完背包；
+    //   我方 #sendPB 在途去重使 await 串行天然逐条排队，每次 7551 应答内嵌背包回写让下一条 #usable 反映最新持有。
+    //   排除先知/刷新；陪跑只刷 personal）
     if (
       status === HUNT_STATUS.EVENT &&
       round > 0 &&
@@ -695,21 +744,140 @@ export class FlowEngine {
         var fk = round + ':flush:' + sid;
         if (!this.#usable(sid) || this.#done.has(fk)) continue;
         this.#done.add(fk);
-        var flushOk = await this.#useSkill(treasureId, sid, '末回合清空');
+        // 完美镜像(22) 置顶项须带 `param:copySkillSpecId` 才被服务器受理（协议实证见 #explorationSkills 正路，
+        //   竞对 clearAllSkills L16154 同律）；无 param 的裸 7551{22} 是畸形包。择目标与转场同策略：
+        //   严格只复制先知(9)，先知溢出（持有>剩余窗）转幸运(18)；皆不可用则记键跳过、继续清池内下一技（不卡死清空）。
+        var flushOpt = null;
+        if (sid === SKILL_COPY) {
+          var fCopyable = this.#copyableSet();
+          var fTarget = chooseCopyTarget({ copyable: fCopyable });
+          if (fTarget === SKILL_PROPHET && this.#backpackCount(SKILL_PROPHET) + round > ROUND_MAX)
+            fTarget = fCopyable.indexOf(SKILL_LUCKY) >= 0 ? SKILL_LUCKY : 0;
+          if (!fTarget) {
+            log.debug('末回合清空·镜像无复制目标，跳过(继续清余技)：round=%d', round);
+            continue;
+          }
+          flushOpt = { param: JSON.stringify({ copySkillSpecId: fTarget }) };
+        }
+        var flushOk = await this.#useSkill(treasureId, sid, '末回合清空', flushOpt);
         // 每次清空留 info（真机验证点③：回合盾铜墙铁壁是否在末回合被用掉）：记所用技与池剩
         log.info(
-          '末回合清空·%s %s(%d)：round=%d 池剩%d',
+          '末回合清空·%s %s(%d)：round=%d 池剩%d%s',
           flushOk ? '已用' : '用被拒',
           skillName(sid),
           sid,
           round,
           pool.length - j - 1,
+          sid === SKILL_COPY
+            ? ' 复制目标=' + skillName(flushOpt ? JSON.parse(flushOpt.param).copySkillSpecId : 0)
+            : '',
         );
-        flushedOne = true;
-        break;
+        if (sid === SKILL_COPY && !flushOk) this.#done.delete(fk); // 镜像被拒 → 回退幂等键，相位切换后（如 EVENT→FIGHT）可重试，不至整局卡死
+        flushedOne = true; // 不 break：同拍继续串行清池内下一技（生效中/已用项照常 skip，等下拍自然重试）
       }
-      if (!flushedOne) this.#flushedRound = round; // 池空或全用过 → 本回合清空完成
+      if (!flushedOne) this.#flushedRound = round; // 池空或全部不可用→本回合清空收口（后续拍不再重扫）
     }
+    // 3) 族级溢出「不带出」提前烧（借鉴竞对 initRoundFight L16232-16240）：非末回合 FIGHT 相位，闪现/百战/铁壁
+    //   任一「持有+当前回合 > ROUND_MAX」（族限窗 9 下剩余回合消化不完）→ 趁早烧一张回收，每拍至多一个写。
+    //   阈值用 `>` 非 `>=`（与 pick-skill ③剪枝/#tryLuckyOverflow 同律，r9 差一教训）；走 #canSpend（持有+非生效+族限窗本回合去重），
+    //   尝试键记账到回合——被拒不回退，同回合不逐拍循环撞被拒写。
+    if (status === HUNT_STATUS.FIGHT && round > 0 && round < ROUND_MAX) {
+      await this.#ensureBackpack();
+      for (var dj = 0; dj < DIGEST_OVERFLOW_SKILLS.length; dj++) {
+        var ovId = DIGEST_OVERFLOW_SKILLS[dj];
+        var ovk = round + ':digest:' + ovId;
+        if (this.#done.has(ovk)) continue;
+        var ovHeld = this.#backpackCount(ovId);
+        if (ovHeld + round <= ROUND_MAX) continue;
+        if (!this.#canSpend(ovId)) continue;
+        this.#done.add(ovk);
+        var ovOk = await this.#useSkill(treasureId, ovId, '溢出回收');
+        log.info(
+          '溢出回收·%s %s(%d)：round=%d 持有%d+%d>%d(族限窗剩余回合消化不完)',
+          ovOk ? '已烧' : '烧被拒',
+          skillName(ovId),
+          ovId,
+          round,
+          ovHeld,
+          round,
+          ROUND_MAX,
+        );
+        return; // 每拍至多一个写（末回合串行是唯一例外，另段已处理）
+      }
+    }
+  }
+
+  /**
+   * 预警式防御（借鉴竞对 onAttacking，server-js.js L16548-16591）：队长节流主动轮询 901，
+   *   抓飞向本据点（tInfo sid/x/y）的敌掠袭行军（marchType138/state1/目标=本据点坐标）→ 630 取敌战力
+   *   → 仅 `敌 power×1.4 > 队内最强 power`（竞对对弱敌不响应，省自保技）才布防 → 按到达 ETA 分流：
+   *   `marchArrive-服务器时刻 < 60s` 用隐形(10)、否则闪现(11)，皆不可用兜底毫发(26)/铜墙(2)。
+   *   marchId 去重（#warnAttacked，同 march 只提前布防一次）、每拍至多一个写。
+   *   全程 fail-safe：无 tInfo/敌战力未知/我方战力未知/901 空应答 → 跳过不动作（不烧技），交真到达时 21383 被动保命。
+   * @param {string|number} treasureId 本跑 id
+   * @param {number} round 当前回合
+   * @returns {Promise<boolean>} 本拍是否已发过一次 7551 写（true=占写额，tick 调用方据此跳过自动项）
+   */
+  async #warningDefense(treasureId, round) {
+    var host = this.#host;
+    var st = csHunt.readState();
+    var tInfo = st && st.info && st.info.tInfo;
+    if (!tInfo || tInfo.x == null || tInfo.y == null || tInfo.sid == null) return false;
+    var tx = Number(tInfo.x);
+    var ty = Number(tInfo.y);
+    var team = host.team() || (st && st.team);
+    var myMax = (team && Number(team.maxMemberPower)) || 0;
+    if (!(myMax > 0)) return false; // 我方战力未知 → 不提前烧防御技（保守）
+    var marches = await host.worldMarches(tx, ty, Number(tInfo.sid));
+    if (!marches || !marches.length) return false;
+    var nowMs = csHunt.serverMs();
+    for (var i = 0; i < marches.length; i++) {
+      var m = marches[i] || {};
+      if (Number(m.marchType) !== 138 || Number(m.state) !== 1) continue; // 只认在途飞向夺宝点的掠袭行军
+      var tgt = m.target || {};
+      if (Number(tgt.tx) !== tx || Number(tgt.ty) !== ty) continue; // 只认目标为本据点
+      var mid = m.marchId != null ? String(m.marchId) : '';
+      if (!mid || this.#warnAttacked.has(mid)) continue;
+      var eUid = bits.int64Str(m.uid);
+      if (!eUid) continue;
+      var ePow = await host.playerPower(eUid);
+      if (!(ePow > 0) || !(ePow * WARN_POWER_RATIO > myMax)) {
+        this.#warnAttacked.add(mid); // 敌战力未知/弱敌 → 记账跳过，不再重复查该 march
+        continue;
+      }
+      this.#warnAttacked.add(mid);
+      var arrStr = bits.int64Str(m.marchArrive);
+      var arrMs = arrStr ? Number(arrStr) : 0;
+      var eta = arrMs ? arrMs - nowMs : NaN;
+      var primary = isFinite(eta) && eta < WARN_ETA_MS ? SKILL_STEALTH : SKILL_FLASH;
+      var secondary = primary === SKILL_STEALTH ? SKILL_FLASH : SKILL_STEALTH;
+      var order = [primary, secondary, SKILL_SHIELD_BATTLE, SKILL_SHIELD_ROUND];
+      await this.#ensureBackpack();
+      for (var j = 0; j < order.length; j++) {
+        var id = order[j];
+        var dk = round + ':warn:' + id;
+        if (this.#done.has(dk)) continue;
+        // 次数盾 26 只看持有>0（#canUse，同来袭保命口径）；其余走 #canSpend（持有+非生效中+族级限窗）
+        if (id === SKILL_SHIELD_BATTLE ? !this.#canUse(id) : !this.#canSpend(id)) continue;
+        this.#done.add(dk);
+        var ok = await this.#useSkill(treasureId, id, '预警式防御');
+        log.info(
+          '预警式防御·%s %s(%d)：round=%d 敌uid=%s 敌战力=%d 我最强=%d ETA=%s',
+          ok ? '已用' : '用被拒',
+          skillName(id),
+          id,
+          round,
+          eUid,
+          ePow,
+          myMax,
+          isFinite(eta) ? Math.round(eta / 1000) + 's' : '未知',
+        );
+        if (!ok) this.#done.delete(dk); // 写被拒 → 回退幂等键（marchId 去重仍留，不重查该敌），下拍新威胁可重试
+        return true; // 无论成败本拍已占一个 7551 写额
+      }
+      return false; // 敌强坐实但无可用自保技 → 不占写额，交自动项（被动保命兜底）
+    }
+    return false;
   }
 
   /**
@@ -825,8 +993,12 @@ export class FlowEngine {
 
   /**
    * 战中自动项（status=FIGHT 相位，每拍至多一个写动作）：
-   *   **前提闸：本回合须真被真人掠袭过（#raidRounds.has(round)）**——实证 FIGHT 是每回合必经的结算相位（无任何 21383 掠袭也逐回合推 fightWin 0→3），
+   *   **前提闸一：本回合须真被真人掠袭过（#raidRounds.has(round)）**——实证 FIGHT 是每回合必经的结算相位（无任何 21383 掠袭也逐回合推 fightWin 0→3），
    *     若只判 status=FIGHT 会每回合白烧一发急救 + 提前耗光增益，违背用户口径「无人受伤不治疗」。
+   *   **前提闸二（③ 敌强门控，借鉴竞对 roundFight L16442-16458）：掠袭回合内再按 7578 双查战力分流**——
+   *     敌「最弱在途军的满员战力×FIGHT_RATIO_HEAVY > 我方最强在途军的现员战力」→ 整队被碾压，先垫一张毫发无伤(26)（每回合一次、烧成即收手）；
+   *     仍不达 ×FIGHT_RATIO_LIGHT → 弱敌掠袭，急救/增益不烧留给强敌波。侦察数据缺失（敌或我空）fail-open 保留无条件烧。
+   *     注：此闸只管**消耗路**（急救/增益/垫盾），不碰「预警即保命」自保路（用户口径 2026-10-24 保命无战力门控）。
    *   ① 火线急救(27)（group=1 队长技）——**按战损定向施治（#2，借鉴竞对）**：7578 type1 我方 armyPower<maxArmyPower 取缺口最大者 uid 传 tarUid（`#mostDamagedUid`）；
    *     侦察失败/无伤兵数据时回退不带 tarUid、由服务器自决（与原生 7551{27} tarUid=0 一致，实证 dashcam 20261017T185937）；
    *   ② 战中增益族即用（C）——百战不倒/固定增强/战场变换/诱敌来袭按 FIGHT_BUFF_SKILLS 优先级逐个用，每 (round,specId) 一次性，且经 #canSpend 族级限窗去重。
@@ -843,6 +1015,52 @@ export class FlowEngine {
     var fi = this.#hunt && this.#hunt.fightInfo;
     if (fi && fi.fightWin != null && Number(fi.fightWin) !== 0) return;
     await this.#ensureBackpack();
+    // ③ 敌强门控（借鉴竞对 roundFight L16442-16458）：7578 双查比对军力后决定消耗动作——
+    //   敌最弱在途军的满员战力(eCap)×1.3 > 我方最强在途军的现员战力(mPow) → 整队被碾压：先垫一张毫发无伤(26)（竞对 useSkill(16) 同位）；
+    //   不达 ×1.5 → 弱敌掠袭，急救/增益一张不烧（留给强敌波）。数据缺失（敌或我任一为空）fail-open 保留旧无条件行为。
+    //   竞对口径逐字采用：敌侧取 armyPower 最小者的 maxArmyPower（保守判据：连敌最弱队的满员都压过我方最强，才算碾压）。
+    var recF = await this.#reconMarches(treasureId);
+    if (recF.enemy.length && recF.mine.length) {
+      var eWk = recF.enemy.slice().sort(function (a, b) {
+        return toNum(a.armyPower) - toNum(b.armyPower);
+      })[0];
+      var mTop = recF.mine.slice().sort(function (a, b) {
+        return toNum(b.armyPower) - toNum(a.armyPower);
+      })[0];
+      var eCap = toNum(eWk && eWk.maxArmyPower);
+      var mPow = toNum(mTop && mTop.armyPower);
+      if (eCap * FIGHT_RATIO_HEAVY > mPow && this.#canUse(SKILL_SHIELD_BATTLE)) {
+        var fsk = round + ':fshield';
+        if (!this.#done.has(fsk)) {
+          this.#done.add(fsk); // 尝试级记账：被拒不回退、同回合不逐拍循环撞被拒写（次数盾「每预警一张」另属保命路）
+          var shOk = await this.#useSkill(treasureId, SKILL_SHIELD_BATTLE, '掠袭碾压垫盾');
+          log.info(
+            '掠袭碾压垫盾·%s 毫发无伤(26)：round=%d 敌满员%d×%s=%d > 我方最强%d',
+            shOk ? '已烧' : '烧被拒',
+            round,
+            eCap,
+            FIGHT_RATIO_HEAVY,
+            Math.round(eCap * FIGHT_RATIO_HEAVY),
+            mPow,
+          );
+          if (shOk) {
+            await this.#reloadBackpack();
+            return; // 竞对同律：垫盾成功即本拍收手，急救/增益留下拍（碾压局先活下来再谈输出）
+          }
+        }
+      }
+      if (!(eCap * FIGHT_RATIO_LIGHT > mPow)) {
+        log.debug(
+          '敌强门控·弱敌掠袭省急救/增益：round=%d 敌满员%d×%s=%d ≤ 我方最强%d',
+          round,
+          eCap,
+          FIGHT_RATIO_LIGHT,
+          Math.round(eCap * FIGHT_RATIO_LIGHT),
+          mPow,
+        );
+        return;
+      }
+    }
     // ① 火线急救：每回合一次，持且未生效即施治；能择到战损最重者则带 tarUid 定向施治，否则不带（服务器自决，与原生一致）
     var aidk = round + ':aid';
     if (!this.#done.has(aidk) && this.#canSpend(SKILL_AID)) {
@@ -1154,6 +1372,13 @@ export class FlowEngine {
     };
     add(this.#personal);
     if (this.#host.isLeader()) add(this.#teamSkills);
+    // ⑧ 完美镜像(22) 置顶（借鉴竞对 clearAllSkills 先循环 drain COPY）：末回合先把剩余科技复制出来，
+    //   复制出的新技在随后拍继续被清，不带走不亏；其余保持原序（掠袭保护另有每回合 #protectBestReward 主路）。
+    var ci = out.indexOf(SKILL_COPY);
+    if (ci > 0) {
+      out.splice(ci, 1);
+      out.unshift(SKILL_COPY);
+    }
     return out;
   }
 
@@ -1191,6 +1416,8 @@ export class FlowEngine {
     this.#lastRecon = null;
     this.#lastReconAt = 0;
     this.#reconCheckedRounds.clear();
+    this.#warnAttacked.clear();
+    this.#lastWarnAt = 0;
     this.#enterAt = {};
     this.#refreshCount = {};
     this.#peerViews = {};

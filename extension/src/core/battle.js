@@ -1,7 +1,7 @@
 /**
  * battle.js —— 行军发包载荷构造（只造数据，不发起行军）。
  * 模型：plan() 持有一个 raw「数据完备集」，preset()/minimal() 覆盖式装载整份来源（二者互斥），
- *   adjust() 只记校准意图，build() 单点把完备集投影成请求 MarchData（armyListNew/heroList/trapList/formationV2/extraArmy + presetHasHeroes）。
+ *   adjust() 只记校准意图，build() 单点把完备集投影成请求 MarchData（armyListNew/heroList/trapList/formationV2/extraArmy + presetHasHeroes/presetHeroIds）。
  *   完备集内部存预设 0 起格子 pos，战斗位编码（toBattlePos）统一在投影时做，避免重算器与投影口径打架。
  * 三场景：快速派兵 plan().minimal().build()；普通派兵 plan().preset(n).adjust().build()（校准+排除在途）；
  *   活动派兵 plan().preset(n).adjust({ignoreMarched:true}).build()（校准+不排除，快照战斗如卡车掠夺）。
@@ -274,6 +274,8 @@ function recalcData(d, excludeMarched) {
     formationV2: entry.formationV2 | 0,
     extraArmy: extraArmy,
     presetHasHeroes: d.heroIds.length > 0,
+    // 非报文位（与 presetHasHeroes 同列）：预设原始英雄集，未经可派过滤，供调用方做行军身份比对
+    presetHeroIds: d.heroIds.slice(),
   };
 }
 
@@ -367,6 +369,7 @@ function projectRaw(d) {
     formationV2: d.formationV2 | 0,
     extraArmy: toExtraArmy(d.extraRaw),
     presetHasHeroes: d.heroIds.length > 0,
+    presetHeroIds: d.heroIds.slice(),
   };
 }
 
@@ -416,6 +419,7 @@ function filterFallback(d) {
     formationV2: formationV2,
     extraArmy: toExtraArmy(d.extraRaw),
     presetHasHeroes: d.heroIds.length > 0,
+    presetHeroIds: d.heroIds.slice(),
   };
 }
 
@@ -432,6 +436,7 @@ function emptyMarchData() {
     formationV2: 0,
     extraArmy: {},
     presetHasHeroes: false,
+    presetHeroIds: [],
   };
 }
 

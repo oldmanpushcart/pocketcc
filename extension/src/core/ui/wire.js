@@ -148,18 +148,29 @@ export function wirePanel(panel) {
   // 下拉字段（如战争之源按形态选预设部队）：存档 + 运行中热更。
   // 值按 descriptor 的 option **原类型**回写：字符串档（如卡车「时段模板」、目标模式 random/specify）过去被 parseInt
   // 成 NaN → 静默回落 defaults，用户选完像没生效；没命中 option 才走旧的整数解析（保留非法值兜底）。
+  // tripick（行内多下拉，如异能兽培育「派出的兽 [属相][品种][品质]」）的 select data-key 是 part.key（applyFactions…），
+  //   不等于 field.key（applyAttrTrio），故 descriptor 查找须同时下探 parts，选项取该 part 自己的口径。
   panel.querySelectorAll('select.pc-fsel').forEach((sel) => {
     sel.addEventListener('change', () => {
       const f = findFeature(sel.dataset.id);
       if (!f) return;
-      const fd = f.fields.find((x) => x.key === sel.dataset.key);
+      const fd = f.fields.find(
+        (x) =>
+          x.key === sel.dataset.key ||
+          (x.type === 'tripick' && (x.parts || []).some((p) => p.key === sel.dataset.key)),
+      );
+      if (!fd) return;
+      const part =
+        fd.type === 'tripick' ? (fd.parts || []).find((p) => p.key === sel.dataset.key) : null;
+      const src = part ? part : fd;
+      const key = part ? part.key : fd.key;
       const opts =
-        (typeof fd.options === 'function' ? fd.options(configs[f.id]) : fd.options) || [];
+        (typeof src.options === 'function' ? src.options(configs[f.id]) : src.options) || [];
       const hit = opts.find((o) => String(o.value) === sel.value);
       let v = hit ? hit.value : parseInt(sel.value, 10);
-      if (!hit && isNaN(v)) v = f.defaults[fd.key];
+      if (!hit && isNaN(v)) v = f.defaults[key];
       sel.value = String(v);
-      configs[f.id][fd.key] = v;
+      configs[f.id][key] = v;
       saveFeature(f);
       applyFeature(f);
     });

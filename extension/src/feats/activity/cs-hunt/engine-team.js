@@ -5,6 +5,7 @@
  *   1. 队长无队 → 7521 建队（`{cfg:1}`，报文实证 dashcam 20261016T191700）；
  *   2. 队长审批 → 21374 置脏 → 7528 复核申请池 → 池内 7523 `{uid,op:1}`（池外按配置忽略/拒绝）；
  *   3. 队长凑够 targetMemberNum 且全员派兵到位（每人 marchId 非零）→ 7527 `{op:1}` 发起出发召集（服务端随后派 21372 给全队）；
+ *      凑人超时（借鉴竞对 waitmin，面板 waitMin 默认 3 分钟）：人数未达标但已到位成员皆已派兵 → 也直接召集，不永久等；
  *   4. 两角色共用：入队后表态要奖励/陪跑 7520 `{op:1|2}`（队长恒要奖励，不发此包）；
  *      本人满编出征 7519（NET.send，`{marchType:137,...}`，体内无 treasureId）；
  *      收 21372 召集 → 7527 `{op:1}` 同意出发。
@@ -37,6 +38,7 @@
  */
 import { Battle } from '../../../core/battle.js';
 import { march } from '../../../core/march.js';
+import { CMD_GET_WORLD_INFO } from '../../../core/map.js';
 import { bits, csHunt, gameData } from '../../../core/game-api.js';
 import { createLog } from '../../../core/log.js';
 import { storage } from '../../../core/storage.js';
@@ -102,6 +104,8 @@ const TEAM_POLL_MS = 20000;
 const APPLY_LIST_POLL_MS = 20000;
 /** @type {number} 630 PLAYER_INFO：按 uid 查玩家昵称（陪跑按名搜队用；业务强相关报文，收口本 feat，不入通用 net.js） */
 const CMD_PLAYER_INFO = 630;
+/** @type {number} 预警式防御 630 敌战力缓存鲜度窗（毫秒）：窗内同 uid 不重查，免每拍打 630；查无/异常亦缓存 0 防同一无果 uid 反复打网络 */
+const POWER_CACHE_MS = 60000;
 /** @type {number} 无队找队时按名搜队（630→7530→7522）每拍只搜 1 个池成员的最小间隔（毫秒）：游标轮转，杜绝一趟连打整池网络（2026-10-25 定 5s：单拍只发 1 次 7530，8 人池扫一圈 ~40s） */
 const JOIN_POLL_MS = 5000;
 /** @type {number} 同一目标定位信标消耗的最小间隔（毫秒）：防 21375 未到时逐拍重复消耗（每次都是真道具） */
@@ -110,6 +114,13 @@ const BEACON_COOLDOWN_MS = 20000;
 const WAIT_HOME_MAX_MS = 300000;
 /** @type {number} 回城等待期快照轮询重查间隔（毫秒）：行军不在队列表即判已到家 */
 const HOME_POLL_MS = 10000;
+/**
+ * @type {number} 队长凑人超时强制发车的默认分钟数（借鉴竞对 setting.team.waitmin 默认 3）：
+ *   人数未达 targetMemberNum 但已到位成员都已派兵成功，等满本分钟数即直接 7527 召集发车，
+ *   杜绝「目标人数高于实时来人数」时永久等下去；0 表示在面板里显式关闭。
+ *   【导出】面板 index.js 的 defaults/normalize 与此共用同一默认值，防两处口径漂移。
+ */
+export const DEFAULT_WAIT_MIN = 3;
 /**
  * @type {Set<string>} 7531 拉本跑详情命中即「本次出征已结束」的服务器权威终局拒因（多语言键）：
  *   cs_treasure294=夺宝奇兵小队不存在（字典表.txt L42336，实证日志 `code=3 reason=cs_treasure294`）。
@@ -283,6 +294,14 @@ export class TeamEngine {
   /** @type {number|null} 剩余夺宝次数（唯一来源是推送 21375，null=本会话还没收到过，即「未知」） */
   #count = null;
   /**
+   * ⑥ 每日局数满后「自动转陪跑」运行时开关位（借鉴竞对 autoSwitchToHelp，面板 cfg.autoSwitchToHelper 默认关）：
+   *   主跑跑满 cfg.dailyRuns 后，若开了本开关则本引擎内部把有效模式视为 'helper'（不改面板 modCfg、不动 UID 存档），
+   *   走陪跑找队/表态 op:2/不计数/不发 7534-7535 全套 helper 语义；未达上限（跳日归零或调高上限）即自动复位回主跑。
+   *   与面板 mode 独立：仅当 rawCfg.mode==='main' 且达上限且开关开时才置真，故开关关（默认）时行为与本字段引入前完全一致（到上限停跑）。
+   * @type {boolean}
+   */
+  #helperForced = false;
+  /**
    * 活动开关态（crossTreasureInfo.open：1=组队夺宝开、3=休赛，其余未开/雷达）。控制器不在场（子包未接管）时
    *   readState 恒 null，这是建队/找队前判「活动是否进行中」的唯一依据；由 7501 应答落地，null=本会话未收到（未知）。
    * @type {number|null}
@@ -325,6 +344,11 @@ export class TeamEngine {
   #blockedLoggedReason = '';
   /** @type {number} 上次 7501 拉态的墙上时刻（毫秒），兜底周期闸 */
   #lastInfoAt = 0;
+  /**
+   * @type {number} 当前队就位（本端首次看到该 teamId）的墙上时刻（毫秒）——「凑人超时」基准（借鉴竞对 `_ctWait`/`waitmin`）。
+   *   换队/散队/收引擎时与 #marchStartTeamId 一并复位；用本端观察时刻而非服务器 createTime（字典未见该字段，不臆造）。
+   */
+  #teamSince = 0;
   /** @type {number} 上次找队（630→7530→7522）的墙上时刻（毫秒），节流 */
   #lastJoinAt = 0;
   /** @type {number} 陪跑找队轮转游标（rolePool 下标，每拍只搜 1 个成员，走到底回卷；stop 清） */
@@ -333,6 +357,8 @@ export class TeamEngine {
   #appliedTeamId = '';
   /** @type {Map<string,string>} 引擎级 uid→昵称缓存（陪跑找队 630 取名用；查过不重查，查无记空串避免反复打网络；stop 清空） */
   #uidName = new Map();
+  /** @type {Map<string,{at:number,power:number}>} 预警式防御敌战力缓存（uid → {墙上时刻, power}）；stop 清空 */
+  #uidPower = new Map();
   /** @type {number} 上次消耗定位信标的墙上时刻（毫秒），冷却闸 */
   #lastBeaconAt = 0;
   /** @type {string} 已被服务器判「小队不存在」而收口的 treasureId（防陈旧控制器把同一死队回填后再次空拉 7531；stop 清） */
@@ -362,6 +388,20 @@ export class TeamEngine {
   }
 
   /**
+   * 有效模块配置：⑥ 当本引擎已因「每日局数满·自动转陪跑」置 #helperForced 时，把 mode 覆写为 'helper' 后回吐，
+   *   其余字段原样透传（返回浅拷贝，绝不改指 env.cfg() 的面板 modCfg 引用）；未强制则直接回吐原配置。
+   *   引擎内所有「依赖 mode 的行为分叉」（tick 表态 wantReward / 计次 / FlowEngine.isMain 门 7534-7535）一律读本方法，
+   *   而非裸读 env.cfg()，使自动转陪跑的运行语义与面板手选陪跑完全一致。
+   * @returns {object} 有效模块配置
+   */
+  #cfg() {
+    var c = this.#env.cfg();
+    if (this.#helperForced && c && c.mode !== 'helper')
+      return Object.assign({}, c, { mode: 'helper' });
+    return c;
+  }
+
+  /**
    * 供 FlowEngine 使用的运行底座：把本引擎的实时态、sendPB 幂等发包、频道 17 聊天收发暴露给它，
    *   避免流程引擎自摸 net/reactor/chat 或重复订阅（chat 底座懒取 window.pocketcc.chat，install 可能早于其就绪）。
    * @returns {object} FlowHost
@@ -369,11 +409,14 @@ export class TeamEngine {
   #flowHost() {
     return {
       alive: () => this.#env.alive(),
-      cfg: () => this.#env.cfg(),
+      cfg: () => this.#cfg(),
       team: () => this.#team,
       isLeader: () => this.#isLeader(),
       sendPB: (cmd, inner, label) => this.#sendPB(cmd, inner, label),
       onWake: () => this.#wake(),
+      // 预警式防御只读通路（竞对 onAttacking 同形）：901 marchInfo 拉敌行军窗 + 630 取敌战力
+      worldMarches: (x, y, k) => this.#worldMarches(x, y, k),
+      playerPower: (uidStr) => this.#playerPower(uidStr),
       chat: {
         send: (text, opts) => {
           var c = window.pocketcc && window.pocketcc.chat;
@@ -461,10 +504,13 @@ export class TeamEngine {
     this.#noArmyLoggedTeamId = '';
     this.#blockedLoggedReason = '';
     this.#lastInfoAt = 0;
+    this.#teamSince = 0;
     this.#lastJoinAt = 0;
     this.#joinCursor = 0;
     this.#appliedTeamId = '';
     this.#uidName.clear();
+    this.#uidPower.clear();
+    this.#helperForced = false;
     this.#lastBeaconAt = 0;
     this.#endedTreasureId = '';
     this.#waitHome = null;
@@ -557,6 +603,7 @@ export class TeamEngine {
       this.#lastApplyListAt = 0; // 新队就位：尽快拉一次 7528 兜底（补订阅前可能已到的申请）
       this.#noArmyLoggedTeamId = '';
       this.#appliedTeamId = ''; // 已入队，清找队申请记账
+      this.#teamSince = Date.now(); // 凑人超时基准：从本端看到新队起算
       log.info('team %s 就位（cfg=%d，成员 %d）', team.id, team.cfg, team.memberCount);
     }
     this.#team = team;
@@ -578,6 +625,7 @@ export class TeamEngine {
     this.#applyPending.clear();
     this.#noArmyLoggedTeamId = '';
     this.#appliedTeamId = ''; // 队已清空，允许重新找队申请
+    this.#teamSince = 0;
     this.#wake();
   }
 
@@ -595,7 +643,7 @@ export class TeamEngine {
     // ⑤ 主跑每完成一局计一次（陪跑不耗次数、不计数）：去重闸下沉到模块级 dailyRuns.lastId（⑤#2），
     //   既挡同实例内状态机 END / 21371 到家 / 7531 拒因多路收敛重计，也挡战斗演出 pause→resume→重建引擎后
     //   对同一 treasureId 的跨实例重计（lastId 随快照持久化，跨页亦生效）。
-    if (deadId && this.#env.cfg().mode !== 'helper') bumpDailyRun(deadId);
+    if (deadId && this.#cfg().mode !== 'helper') bumpDailyRun(deadId);
     // 终局≠散队：飞船还在返程，到家才散（实证 END@+986s → 散队@+1063s）；窗口内 7521/7522 会被拒
     //   ava_team_tips_011=已加入其他队伍 → 置回城等待闸门，由 10019 到家推/21371 清空推/轮询+超时解除
     var waitMarchId = t && t.selfMarchId && t.selfMarchId !== '0' ? String(t.selfMarchId) : '';
@@ -793,7 +841,18 @@ export class TeamEngine {
   async tick() {
     var env = this.#env;
     if (!env.alive()) return 0;
-    var cfg = env.cfg();
+    // ⑥ 自动转陪跑复位：已因「局数满」强制转陪跑，但当前已不达上限（跳日归零/调高上限）或关了该开关 → 复位回主跑
+    var rawCfg = env.cfg();
+    if (
+      this.#helperForced &&
+      (!isDailyLimitReached(rawCfg.dailyRuns) ||
+        !rawCfg.autoSwitchToHelper ||
+        rawCfg.mode === 'helper')
+    ) {
+      this.#helperForced = false;
+      log.info('每日夺宝局数不再处于满额强制态，结束自动转陪跑、回归主跑');
+    }
+    var cfg = this.#cfg();
 
     // 控制器不在场（子包未接管）时 readState 恒 null，队伍/开关态只能靠 7501 应答补齐：按兜底周期拉一次（漏推自愈）
     if (!csHunt.present()) await this.refreshInfo(false);
@@ -807,6 +866,12 @@ export class TeamEngine {
         stTid !== this.#endedTreasureId && // 已被服务器判「小队不存在」的死 id 不再从陈旧控制器回填
         (!this.#team || this.#team.id !== st.team.id || st.team.status !== this.#team.status)
       ) {
+        // 控制器回填路径同样要在换队时复位召集闸门与凑人超时基准（与 21371 落地处同律，否则旧队闸门残留卡死）
+        if (!this.#team || this.#team.id !== st.team.id) {
+          this.#marchStartTeamId = '';
+          this.#selfReadySeen = false;
+          this.#teamSince = Date.now();
+        }
         this.#team = st.team;
       }
       if (this.#count == null && st.huntCount > 0) {
@@ -879,6 +944,9 @@ export class TeamEngine {
     //    任一角色收到 21372 召集（readyMember 含本人）后表态同意。
     //    闸门语义是「当前召集窗口内本人未表态」而非「本队终身一次」：窗口重开时 #onReadyChange 会重武装
     //    #marchStartTeamId；快照 readyUids/#selfReadySeen 已含本人则不重发（7527 若是切换语义会误取消准备）。
+    //    凑人超时（借鉴竞对 waitmin L16064-16076）：人数未达目标但已到位成员皆派兵成功，等满 waitMin 分钟也发车，
+    //    否则 targetMemberNum 调高（最大 5）而现场只来 2~3 人时会永久等待；仍守住 allMarched（服务器对未派兵者会拒
+    //    common_159995，拒后回滚闸门交下拍重试，故超时只放宽「人数」不放宽「出兵」）。
     var selfReady =
       this.#selfReadySeen ||
       (Array.isArray(t.readyUids) && t.readyUids.indexOf(gameData.myUidStr()) >= 0);
@@ -888,10 +956,23 @@ export class TeamEngine {
       var full = this.#isLeader() && t.memberCount > 0 && t.memberCount >= targetMembers(cfg);
       // 全员完成出兵：每个成员 marchId 非零（都派兵到集结点了）
       var allMarched = this.#isLeader() && t.memberCount > 0 && t.marchedCount === t.memberCount;
-      if (called || (full && allMarched)) {
+      var waitMin = cfg.waitMin == null ? DEFAULT_WAIT_MIN : Number(cfg.waitMin);
+      var waitedOut =
+        this.#isLeader() &&
+        waitMin > 0 &&
+        !!this.#teamSince &&
+        Date.now() - this.#teamSince >= waitMin * 60000;
+      if (called || (full && allMarched) || (waitedOut && allMarched)) {
         var wasCalled = this.#called;
         this.#marchStartTeamId = t.id;
         this.#called = false;
+        if (!full && waitedOut)
+          log.info(
+            '凑人超时 %d 分钟，人数 %d/%d 直接发车（已到位成员均已派兵）',
+            waitMin,
+            t.memberCount,
+            targetMembers(cfg),
+          );
         var ret = await this.#sendPB(REQ_MARCH_START, { op: 1 }, '同意出发');
         var code = ret ? ret.code : CODE_NOT_SENT;
         // 闸门只能在 7527 真正受理后提交：过早召集被拒（common_159995=有人 7519 尚未落地）或未真正发出时回滚，
@@ -900,16 +981,17 @@ export class TeamEngine {
           this.#marchStartTeamId = '';
           this.#called = wasCalled; // 召集电平仍在则保留，下拍据此（或 allMarched 追平后）重试
         }
-      } else if (full) {
+      } else if (full || waitedOut) {
         // 召集闸未开的静默期留痕（对齐调度决策日志规范）：页外 21372 不可达时卡点只能靠本行事后归因。
-        //   只在 full（人已达目标）时打——那就是「人齐了却不发车」的真卡点；未凑齐属正常凑人期，交面板状态栏
+        //   full（人已达目标）或 waitedOut（凑人超时）时打——前者是「人齐了却不发车」的真卡点，后者是「差出兵」的超时卡点
         log.info(
-          '等待召集出发 reason=%s; members=%d/%d; marched=%d; selfMarch=%s（约每 %d 秒随 7501 轮询复查）',
+          '等待召集出发 reason=%s; members=%d/%d; marched=%d; selfMarch=%s; 已等=%ds（约每 %d 秒随 7501 轮询复查）',
           t.marchedCount === 0 ? '全员未出兵' : '有人未派兵成功',
           t.memberCount,
           targetMembers(cfg),
           t.marchedCount,
           t.selfMarchId && t.selfMarchId !== '0' ? 'ok' : 'MISSING',
+          this.#teamSince ? Math.round((Date.now() - this.#teamSince) / 1000) : -1,
           TEAM_POLL_MS / 1000,
         );
       }
@@ -998,6 +1080,17 @@ export class TeamEngine {
     //   #1 不能放在 mode 分叉前共用：dailyRuns.runs 为模块级+持久化、跨实例共享，而字段 showIf:isMain（切陪跑只隐藏不清值），
     //   若主跑跑满额度后切陪跑会整日被误挡（面板看不到该项、statusText 也不显示），与「陪跑不计数不受此限」契约相悖。
     if (cfg.mode !== 'helper' && isDailyLimitReached(cfg.dailyRuns)) {
+      // ⑥ 面板开了「满次自动转陪跑」：置强制位（下拍起 #cfg() 把有效 mode 视为 helper），立即转找队链路
+      if (cfg.autoSwitchToHelper) {
+        if (!this.#helperForced) {
+          this.#helperForced = true;
+          log.info(
+            '今日夺宝局数已达上限（%d 局），自动转陪跑找队（面板开关；跳日归零/调高上限即复位回主跑）',
+            cfg.dailyRuns,
+          );
+        }
+        return this.#joinTeam(cfg);
+      }
       this.#blockOnce(
         'daily',
         '今日夺宝局数已达上限（' + cfg.dailyRuns + ' 局），暂不建队/加入（明日自动恢复）',
@@ -1141,6 +1234,85 @@ export class TeamEngine {
     }
     this.#uidName.set(uidStr, name);
     return name;
+  }
+
+  /**
+   * 预警式防御：单窗 901（GET_WORLD_INFO）marchInfo 拉敌行军列表（竞对 onAttacking 同形：
+   *   以本据点 tInfo 为窗心、width32×height20、viewLevel0、k=tInfo.sid 跳服务服号），只回 marchList。
+   *   只读发包（零副作用）；网络底座缺失/应答非 ok/解析失败一律降级空数组，交由调用方 fail-safe（不拦不烧技）。
+   * @param {number} x 本据点 game x（tInfo.x）
+   * @param {number} y 本据点 game y（tInfo.y）
+   * @param {number} k 服号（tInfo.sid，跨服夺宝点所在服；非本服 ServerId）
+   * @returns {Promise<object[]>} marchList（项含 marchId/uid/marchType/state/target{tx,ty}/marchArrive 等，形状同竞对）
+   */
+  async #worldMarches(x, y, k) {
+    var net = this.#env.net();
+    if (!net) return [];
+    var body = {
+      x: x,
+      y: y,
+      k: k | 0,
+      rid: 0,
+      width: 32,
+      height: 20,
+      marchInfo: true,
+      viewLevel: 0,
+    };
+    var ret;
+    try {
+      ret = await net.send(CMD_GET_WORLD_INFO, body);
+    } catch (err) {
+      return [];
+    }
+    if (!ret || !ret.ok) return [];
+    var d = ret.data;
+    if (typeof d === 'string') {
+      try {
+        d = JSON.parse(d);
+      } catch (e) {
+        return [];
+      }
+    }
+    return d && Array.isArray(d.marchList) ? d.marchList : [];
+  }
+
+  /**
+   * 预警式防御：630 PLAYER_INFO 按 uid 取敌玩家战力（与队内最强 power 同口径比强）。POWER_CACHE_MS 内同 uid 不重查；
+   *   查无/异常缓存 0（敌强门控据此不拦——战力未知则不提前烧技，保守）。永不 reject。
+   * @param {string} uidStr 敌玩家 uid（字符串）
+   * @returns {Promise<number>} 战力（取不到回 0）
+   */
+  async #playerPower(uidStr) {
+    if (!uidStr) return 0;
+    var hit = this.#uidPower.get(uidStr);
+    if (hit && Date.now() - hit.at < POWER_CACHE_MS) return hit.power;
+    var net = this.#env.net();
+    if (!net) return 0;
+    var power;
+    try {
+      var ret = await net.send(CMD_PLAYER_INFO, { uid: String(uidStr) });
+      var d = ret && ret.ok ? ret.data : null;
+      if (typeof d === 'string') {
+        try {
+          d = JSON.parse(d);
+        } catch (e) {
+          d = null;
+        }
+      }
+      var pi = d && d.playerInfo;
+      if (typeof pi === 'string') {
+        try {
+          pi = JSON.parse(pi);
+        } catch (e) {
+          pi = null;
+        }
+      }
+      power = pi ? Number(pi.power) || 0 : 0;
+    } catch (err) {
+      power = 0;
+    }
+    this.#uidPower.set(uidStr, { at: Date.now(), power: power });
+    return power;
   }
 
   /**

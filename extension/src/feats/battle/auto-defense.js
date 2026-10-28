@@ -7,7 +7,7 @@
  *       敌战力取不到按「无限高·最悲观」照常开盾；拒因 war_fever_003/kingdom_077 以 910 status=3 为最终裁决。
  *     · 策略 2 绕后攻击：迁城到敌主城 8 单位内最近合法可落点（911），迁城落地确认后以预设部队 902 打敌主城。
  *       不做行军加速——贴近即压缩行军；8 单位内无落点则放弃顺延。
- *     · 策略 3 迁城逃避：以我方主城为锚、背向敌取离敌更远的合法落点（911）迁走；迁成后镜头跟随到新落地点。
+ *     · 策略 3 迁城逃避：以我方主城为锚、背向敌取离敌更远的合法落点（911）迁走；本地 ±20 带内无落点则按 3×3 大扇区轮换到远处重试（离敌最远扇区优先，≤5 轮，借鉴竞品B）；迁成后镜头跟随到新落地点。
  *     · 策略 4 原地反击：不迁城，直接以预设部队 902 从当前主城攻打敌主城（闸门同绕后攻击：需全部部队回城 + 有空闲队列）。
  *
  * 坐标/战力来源（报文实证）：敌主城坐标与战力一次 630 PLAYER_INFO 按 uid 直查（应答顶层 x/y=主城、power/level），
@@ -462,7 +462,7 @@ async function strategyAttack(snap) {
 }
 
 /**
- * 策略 3：迁城逃避（911 迁到背向敌、离敌更远的可落点）。
+ * 策略 3：迁城逃避（911 迁到背向敌、离敌更远的可落点；本地带无落点则扇区轮换重试，见 defense.relocateAway）。
  * @param {object} snap 共享快照
  * @returns {Promise<{result:string, reason:string, stop:boolean}>}
  */
@@ -485,6 +485,7 @@ async function strategyRelocate(snap) {
       radius: defense.AWAY_RADIUS,
       threat: threat,
       ctx: { net: net, serverId: serverId() },
+      alive: aliveFn, // 扇区轮换逐轮前检查：上层暂停/卸载即中断，不带着旧快照继续飞图发包
     },
   );
   if (!aliveFn()) return { result: 'fail', reason: '流程已暂停', stop: false };

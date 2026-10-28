@@ -74,7 +74,7 @@ const DRAIN_GAP_MS = 1000 * 3;
 /** @type {number} 单拍内连续投放的次数上限（安全阀，远大于 max 攒数；防止服务器 cnt 异常导致空转） */
 const DRAIN_MAX_USES = 8;
 /** @type {number} 发完 4170 后等待 push 10101 落地的静置毫秒（实录 push 与应答近乎同拍，给足抖动） */
-const DROP_SETTLE_MS = 1000 * 800;
+const DROP_SETTLE_MS = 800;
 /** @type {number} 空投建筑恢复点（end）到点后的补探余量（毫秒），避开服务器结算时序 */
 const RECOVER_BUFFER_MS = 1000 * 15;
 /** @type {number} 待收队列非空时的重试收敛间隔（毫秒），别让空投干等整轮 */

@@ -159,12 +159,20 @@ let loadedDegraded = false;
  * 全部读回并合并进 configs（原地覆写，保持对象 identity）。
  * 前提：UID 已就绪、存储已设命名空间；否则（waitUid 降级的登录卡死场景）跳过读盘，
  * configs 直接回退 defaults，保证自动重连仍可用。
+ * @param {{preLogin?: boolean}} [opts] preLogin=true 表示调用方判定本次降级发生在登录页/启动场景
+ *   （用户还没扫码，UID 本就不可能存在）——属可预期常态，降级日志走 info；
+ *   缺省 false，即“已在游戏内却读不到 UID”，按 log.js 约定算真异常，走 warn。
  * @returns {Promise<void>}
  */
-export async function loadAllConfigs() {
+export async function loadAllConfigs(opts) {
+  const preLogin = !!(opts && opts.preLogin);
   if (!hasNamespace()) {
     loadedDegraded = true;
-    log.warn('storage namespace not set, configs fall back to defaults');
+    // 同一条降级按场景分级别：登录页等 UID 是常态（info），游戏内等不到才是异常（warn）
+    (preLogin ? log.info : log.warn)(
+      'storage namespace not set, configs fall back to defaults%s',
+      preLogin ? ' (still on login scene, uid not yet available)' : '',
+    );
     for (const f of features().concat(GROUPS)) {
       const c = configs[f.id] || (configs[f.id] = {});
       for (const k of Object.keys(c)) delete c[k];

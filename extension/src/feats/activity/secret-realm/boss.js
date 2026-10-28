@@ -397,8 +397,8 @@ export class BossEngine {
   }
 
   /**
-   * 从 21535 落地态里挑一个可打目标（state===21 + 战斗窗口未过 + 未被拉黑 + 过区域闸）。
-   * 每条候选带一个 `d` = 到**当前所停平台**的欧氏格距（就近档用，见文件头 §③）。
+   * 从 21535 落地态里挑一个可打目标（state===21 + 战斗窗口未过 + 石头账本未榨干（见 #stoneExhausted）+
+   * 未被拉黑 + 过区域闸）。每条候选带一个 `d` = 到**当前所停平台**的欧氏格距（就近档用，见文件头 §③）。
    * @param {object} b 面板 boss 配置 {order,maxRounds}
    * @returns {{bossId:number,x:number,y:number,kind:number,d:number,platEsr:number|null}|null}
    */
@@ -417,6 +417,12 @@ export class BossEngine {
       if (this.#fightOver(s)) continue;
       const bid = Number(s.bossId);
       if (!bid) continue;
+      // 石头账本已榨干的小BOSS 不再开台（借鉴竞品B guard_policy=3：打完不再吃行军——178 的唯一产出就是 21539
+      //   点位账（每人每点限领 1 次、固定 5 点），全组领完/不可领后再攻不产出任何东西；大BOSS 无组不过滤）。
+      if (this.#stoneExhausted(bid)) {
+        env.log.debug('boss attack: boss %s skipped (guard-stone ledger exhausted).', bid);
+        continue;
+      }
       const x = Math.floor(toNum(s.pos.x));
       const y = Math.floor(toNum(s.pos.y));
       const k = x + ',' + y;
@@ -737,6 +743,36 @@ export class BossEngine {
     const end = toNum(s.stateEndTime);
     if (!(end > 1e11)) return false; // 不是毫秒量级的绝对时刻 → 不猜
     return Date.now() > end;
+  }
+
+  /**
+   * 某 BOSS 的**石头账本是否已榨干**（攻打档的产出预筛，借鉴竞品B guard_policy=3）：
+   *   21539 全量账本里该 bossId 有条目、且所有点位都满足 `rewardMaxNum>0 且 rewardNum≥rewardMaxNum` → 再攻不产出。
+   *   ⚠ 与 #stoneTick 的「可领」判据**不同式**：账本初态是 `0/0`、参战后才是 `0/1F`（constants 21539 段实证），
+   *   若拿 isFight/「可领」当过滤闸会把从未攻过的 BOSS 拦死；本闸只认「真领满」，另要求 rewardMaxNum>0
+   *   防 `0/0` 初态被 ≥ 误判为满。**无组（大BOSS/账本未推）回 false 不过滤**，读不到账本同样回 false
+   *   （fail-open，绝不拿缺证据当「领完」把 BOSS 拉死）。只读，不改写任何游戏态。
+   * @param {number} bossId 21535 条目的 bossId
+   * @returns {boolean}
+   */
+  #stoneExhausted(bossId) {
+    const groups = this.#env.secret.getBossGuardRewardInfo();
+    if (!Array.isArray(groups) || !groups.length) return false;
+    let seen = false;
+    for (let i = 0; i < groups.length; i++) {
+      const g = groups[i];
+      if (!g || Number(g.bossId) !== bossId) continue;
+      seen = true;
+      const pts = Array.isArray(g.rewardInfo) ? g.rewardInfo : [];
+      for (let j = 0; j < pts.length; j++) {
+        const p = pts[j];
+        if (!p) continue;
+        const max = toNum(p.rewardMaxNum);
+        if (max > 0 && toNum(p.rewardNum) >= max) continue;
+        return false; // 有点位未满（含 0/0 初态）→ 还有产出可挣
+      }
+    }
+    return seen;
   }
 
   // ── 发包 ────────────────────────────────────────────────────────────

@@ -10,6 +10,9 @@
  *     ③ self-overlap 硬闸：候选 footprint 命中我方现主城 footprint 扩格集即拦（补① ignoreSelf 漏，实证 (337,476) 压现城被服务器拒「位置被占用」）；
  *     ④ 联盟堡垒禁迁区（仅 `!isKVK() && ServerState!=Fight` 时启用，对齐游戏 moveCity 权威条件）：主动发 1001 取 infos（陈旧模型不可信）推旋转系「实心菱形区间」（奇偶无关，避开 AlliancePointPool 采样盲区），逐 footprint 格判越界外扩 margin=1（实证：越界 1 格仍被服务器 csb_tips_005 拒），排除己方 aid；KVK 图或作战态（ServerState==Fight）整图放开别盟领地→跳过 1001 且不建区间（实证 extracted WorldMapController.moveCity：禁迁仅在 (!isKVK||!八国色) && ServerState!=Fight && owner>0 && owner!=我的Aid 时拒绝）。
  *     判定前先 flyTo 锚点 + 订阅 net.901 + 主动 901 触发加载，经 settle 就绪门（新 901 & canMoveCity 为 boolean & 静默 800ms & 邻域 placeFlags 命中>0）后才采信；未进世界图 / 符号不可得 / 领地模型未就绪（canMoveCity 恒 null 或 901 报了领土点但 AllianceTerritory 空）即判「无从判定」返回 null 交上层顺延，绝不猜测。
+ *   - 迁城逃避「扇区轮换重试」（借鉴竞品B randomPoint 的 3×3 大扇区撒点，relocateAwayWithSectorRetry）：我城 ±AWAY_RADIUS 带内无背向落点时，
+ *     不再直接放弃，而是把全图按 3×3 切成大扇区、取离敌最远的扇区中心（跳过我城所在扇区），逐轮（≤RELOC_SECTOR_TRIES）flyTo+建 judge 后在中心
+ *     ±RELOC_SECTOR_RADIUS 内找最近合法落点；每轮建 judge 各发一次 901/1001，成本与竞品同量级（其失败重试 5 轮 ×100 随机点）。
  *
  * 合规：只读游戏数据 + 驱动游戏自身视口加载（nav.flyTo 切世界图/移动相机，属导航交互非数据改写），不调任何游戏 Update/Delete 改写本地数据；发包动作（910/911/902）
  *   留在 feat，本模块只产出「用哪个道具 / 迁到哪个坐标」这类决策输入。
@@ -44,6 +47,12 @@ const NEAR_RADIUS = 8;
 
 /** @type {number} 「迁城逃避」在我方主城周围搜索的切比雪夫上限带（在此带内取背向敌、离敌更远的可落点） */
 const AWAY_RADIUS = 20;
+
+/** @type {number} 逃避扇区轮换重试的最大轮数（借鉴竞品B randomMoveCity 5 轮；每轮 = 一个大扇区中心邻域搜索，中心取离敌最远者优先） */
+const RELOC_SECTOR_TRIES = 5;
+
+/** @type {number} 扇区中心邻域搜索半径（game 格，对齐竞品 randomPoint ±32 撒点带；带内取距中心最近合法点而非随机点） */
+const RELOC_SECTOR_RADIUS = 32;
 
 /** @type {{xMax:number, yMax:number}} 世界坐标上界「兜底」常量（派生自 core/map.js SERVER 真相，实证标准本服图 gameXMax=408*2、gameYMax=952）。仅在 worldMap.gameBounds() 探测失败时退回此常量。 */
 const WORLD_BOUNDS = { xMax: SERVER.gameXMax, yMax: SERVER.gameYMax };
@@ -371,21 +380,127 @@ function searchAway(home, threat, judge, inBounds, radius) {
 }
 
 /**
- * 搜索一个合法可迁落点（迁城卡落点，B/C 两策略共用）。
- * @param {{x:number, y:number}} anchor 搜索锚点：near 模式=敌主城坐标；away 模式=我方主城坐标
- * @param {{mode:'near'|'away', radius?:number, threat?:{x:number,y:number}, exclude?:{x:number,y:number},
- *          bounds?:{xMax:number,yMax:number}, ctx?:{net:object, serverId:number}}} [opts]
- *   near：在 anchor 周围 radius（默认 8）内取距敌最近可落点（exclude 若给出则跳过该格，避免落点等于现有主城位）；away：在 anchor 周围 radius（默认 20）带内取背向 threat 更远可落点。
- * @returns {Promise<{x:number, y:number}|null>} 可落坐标；radius 内无落点/无从判定 → null（调用方记 fail 并顺延下一条）
+ * 把全图按 3×3 切成大扇区，取扇区 (col,row) 中心（game 口径，借鉴竞品B randomPoint 的 getMapSize 数学：
+ * x=(col·2+1)·width/6·2、y=(row·2+1)·height/6 且拨成偶行偶 x；本仓库直接持 game 尺寸，width=xMax/2）。
+ * 中心可能是错行「半格」，由调用方 snapRealTile 拨正后作搜索锚。
+ * @param {{xMax:number,yMax:number}} bounds game 口径世界边界
+ * @param {number} col 扇区列 0..2
+ * @param {number} row 扇区行 0..2
+ * @returns {{x:number,y:number}} 扇区中心
  */
-async function findRelocatableSpot(anchor, opts) {
-  if (!anchor || anchor.x == null || anchor.y == null) return null;
+function sectorCenter(bounds, col, row) {
+  var x = Math.floor(((col * 2 + 1) * bounds.xMax) / 6);
+  var y = Math.floor(((row * 2 + 1) * bounds.yMax) / 6);
+  if (y % 2 === 1) y++; // 对齐竞品：中心拨成偶行（偶行偶 x 半格）；奇行区错半行，不影响「落点大致在扇区中心」语义
+  return { x: x, y: y };
+}
+
+/** 把任意 game 点拨到同位置最近的真实 tile（奇偶错行则 x++，保证搜索锚自身合法） */
+function snapRealTile(p) {
+  var x = p.x | 0;
+  var y = p.y | 0;
+  return { x: (x & 1) === (y & 1) ? x : x + 1, y: y };
+}
+
+/**
+ * 迁城逃避编排：先在我城 ±radius 带内找背向敌最远落点（主路径，保「远离威胁」语义）；
+ * 带内无点则进入扇区轮换（借鉴竞品B 5 轮换大区域）：9 个扇区按「中心离敌最远」排序、跳过我城所在扇区，
+ * 逐轮 flyTo+建 judge 后在扇区中心 ±RELOC_SECTOR_RADIUS 内取最近合法落点，命中即归；全空 → null。
+ * @param {{x:number,y:number}} home 我方主城坐标（搜索锚）
+ * @param {{x:number,y:number}|null} threat 威胁（敌主城）坐标；null 则退化为随机离敌序
+ * @param {{radius?:number, bounds?:{xMax:number,yMax:number}, ctx?:{net:object, serverId:number}, alive?:()=>boolean, sectorTries?:number}} [opts]
+ *   alive 每轮扇区重试前检查（上层暂停/卸载即中断轮换，与 feat 侧 aliveFn 语义一致）；sectorTries 缺省 RELOC_SECTOR_TRIES，传 0 关闭轮换
+ * @returns {Promise<{x:number,y:number}|null>} 可落坐标；无从判定/全无落点 → null
+ */
+async function relocateAway(home, threat, opts) {
+  if (!home || home.x == null || home.y == null) return null;
   opts = opts || {};
   var bounds = opts.bounds || worldMap.gameBounds() || WORLD_BOUNDS;
   var inBounds = function (x, y) {
     return x >= 0 && y >= 0 && x <= bounds.xMax && y <= bounds.yMax;
   };
-  var radius = opts.radius || (opts.mode === 'away' ? AWAY_RADIUS : NEAR_RADIUS);
+  var radius = opts.radius || AWAY_RADIUS;
+  // 主路径：本地带内背向敌最远点（同 findRelocatableSpot away 旧行为）
+  var judge = await makeJudge(home, {
+    serverId: opts.ctx && opts.ctx.serverId,
+    net: opts.ctx && opts.ctx.net,
+  });
+  if (!judge) {
+    log.debug('relocateAway: 本地锚 judge 未建立（世界图未就绪/canMoveCity 不可得）→ 无从判定');
+    return null;
+  }
+  var spot = searchAway(home, threat, judge, inBounds, radius);
+  if (spot) return spot;
+  var sectorTries = opts.sectorTries != null ? opts.sectorTries : RELOC_SECTOR_TRIES;
+  if (sectorTries <= 0) return null;
+  // 扇区轮换：离敌最远的扇区优先，跳过我城所在扇区（刚在那儿搜过，重来无益）
+  var hCol = Math.min(2, Math.floor((home.x | 0) / (bounds.xMax / 3)));
+  var hRow = Math.min(2, Math.floor((home.y | 0) / (bounds.yMax / 3)));
+  var queue = [];
+  for (var col = 0; col < 3; col++) {
+    for (var row = 0; row < 3; row++) {
+      if (col === hCol && row === hRow) continue;
+      var c = snapRealTile(sectorCenter(bounds, col, row));
+      var d = threat ? dist2(threat.x | 0, threat.y | 0, c.x, c.y) : -dist2(home.x | 0, home.y | 0, c.x, c.y);
+      queue.push({ c: c, col: col, row: row, d: d });
+    }
+  }
+  queue.sort(function (a, b) {
+    return b.d - a.d;
+  });
+  var tries = Math.min(sectorTries, queue.length);
+  for (var q = 0; q < tries; q++) {
+    if (opts.alive && !opts.alive()) return null;
+    var sc = queue[q];
+    log.debug(
+      'relocateAway: 本地带(%d)无背向落点 → 扇区轮换 %d/%d sector=(%d,%d) center=(%d,%d)',
+      radius,
+      q + 1,
+      tries,
+      sc.col,
+      sc.row,
+      sc.c.x,
+      sc.c.y,
+    );
+    var j2 = await makeJudge(sc.c, {
+      serverId: opts.ctx && opts.ctx.serverId,
+      net: opts.ctx && opts.ctx.net,
+    });
+    if (!j2) continue; // 该扇区世界图未就绪 → 顺延下一扇区（不阻断轮换）
+    var s2 = searchNear(sc.c, j2, inBounds, RELOC_SECTOR_RADIUS, null);
+    if (s2) {
+      log.info(
+        'relocateAway: 扇区轮换命中 sector=(%d,%d) → (%d,%d) 距敌²=%d',
+        sc.col,
+        sc.row,
+        s2.x,
+        s2.y,
+        threat ? dist2(threat.x | 0, threat.y | 0, s2.x, s2.y) : -1,
+      );
+      return s2;
+    }
+  }
+  return null;
+}
+
+/**
+ * 搜索一个合法可迁落点（迁城卡落点，B/C 两策略共用）。
+ * @param {{x:number, y:number}} anchor 搜索锚点：near 模式=敌主城坐标；away 模式=我方主城坐标
+ * @param {{mode:'near'|'away', radius?:number, threat?:{x:number,y:number}, exclude?:{x:number,y:number},
+ *          bounds?:{xMax:number,yMax:number}, ctx?:{net:object, serverId:number}, alive?:()=>boolean, sectorTries?:number}} [opts]
+ *   near：在 anchor 周围 radius（默认 8）内取距敌最近可落点（exclude 若给出则跳过该格，避免落点等于现有主城位）；away：委托 relocateAway（本地带背向搜索 + 扇区轮换重试）。
+ * @returns {Promise<{x:number, y:number}|null>} 可落坐标；radius 内无落点/无从判定 → null（调用方记 fail 并顺延下一条）
+ */
+async function findRelocatableSpot(anchor, opts) {
+  if (!anchor || anchor.x == null || anchor.y == null) return null;
+  opts = opts || {};
+  // away 先于建 judge 委托：否则本地锚 judge（一发 901+可能一发 1001）建两次
+  if (opts.mode === 'away') return relocateAway(anchor, opts.threat, opts);
+  var bounds = opts.bounds || worldMap.gameBounds() || WORLD_BOUNDS;
+  var inBounds = function (x, y) {
+    return x >= 0 && y >= 0 && x <= bounds.xMax && y <= bounds.yMax;
+  };
+  var radius = opts.radius || NEAR_RADIUS;
   var judge = await makeJudge(anchor, {
     serverId: opts.ctx && opts.ctx.serverId,
     net: opts.ctx && opts.ctx.net,
@@ -393,9 +508,6 @@ async function findRelocatableSpot(anchor, opts) {
   if (!judge) {
     log.debug('findRelocatableSpot: 世界图未就绪 / canMoveCity 不可得，无从判定落点合法性');
     return null;
-  }
-  if (opts.mode === 'away') {
-    return searchAway(anchor, opts.threat, judge, inBounds, radius);
   }
   return searchNear(anchor, judge, inBounds, radius, opts.exclude);
 }
@@ -409,4 +521,5 @@ export const defense = {
   WORLD_BOUNDS,
   pickShieldItem,
   findRelocatableSpot,
+  relocateAway,
 };

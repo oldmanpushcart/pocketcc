@@ -63,6 +63,7 @@ const SYM = {
     mechaTowerCtrl: 'MechaTowerController', // 重装母舰（Mecha 塔）控制器门面：具名导出 MechaTowerController 类，静态 getInstance() 由 subpack2 Real 接管后实例才有 isOpenFunc（一键领取子玩法闸只读查询）
     enigmaBeastCtrl: 'EnigmaBeastController', // 异能兽控制器门面：default=类（静态 getInstance() 由 subpack Real 接管后才有实例），模块顶层还导出 BeastOpenType/BeastServerStatus 枚举（培育开启闸只读查询）
     csHuntCtrl: 'CSHuntController', // 夺宝奇兵（跨服寻宝）控制器门面：ES 命名空间具名导出（无 .default），静态 getInstance() 由 subpack2 RealCSHuntController 接管后返回实例；同模块还导出 CSHuntPhaseType/CSHuntEventType/CSHuntEventPhaseType/CSActivityPhaseType/CSEventSkillSpeType 字符串与数值枚举
+    mailData: 'MailData', // 邮件数据层（CommonJS 直挂 exports）：MailShowGroupType 展示分组枚举 + mailManager（NMailModel 实例，由 subpack/SubpackMain 载入时 `m.mailManager=new I.default` 挂上，故晚于核心就绪）
   },
   /** 新图单例属性链：module[cls][inst]，枚举对象 module[goType] */
   newMap: { cls: 'NWorldMapTodoController', inst: 'instance', goType: 'NWorldMapGoType' },
@@ -356,6 +357,9 @@ export const CAPS = {
     var C = m && (m.CSHuntController || ns(m));
     return !!(C && typeof C.getInstance === 'function');
   },
+  // 邮件只读缓存：MailData 模块在场即可（mailManager 实例由 subpack 载入时挂上，安装期未必就绪，
+  //   故 feat 侧应声明为软依赖 'mailData?'，运行期再由 mail.* 内部 probe 自愈重探）
+  mailData: () => !!game.get(SYM.modules.mailData),
 };
 
 /**
@@ -1074,7 +1078,12 @@ function coinState(arg) {
     var intervalSec = Number(b.TotalTime) || 0; // BuildingData._totalTime = BUILDING.produce_time（士兵类才改写，金币建筑恒为配置值）
     // 矿不单独收取，仅作唤醒/涨币信号：ProductTime 是下一批到点时刻（权威态由游戏建筑推送刷新，无需镜像补偿）。
     if (productTime <= 0) continue;
-    mines.push({ id: id, buildingId: buildingId, productTime: productTime, intervalSec: intervalSec });
+    mines.push({
+      id: id,
+      buildingId: buildingId,
+      productTime: productTime,
+      intervalSec: intervalSec,
+    });
   }
   var harvestPending = harvester ? harvester.proCount + cache : 0;
   // 收割机可收态：在场、未破损、未报满仓（满仓后再发也不涨，游戏同判据不再显示可收）。collectorMax 读数异常（浮点精度）时不参与闸门。
@@ -2691,6 +2700,55 @@ export const secretRealm = {
     }
   },
   /**
+   * 秘境背包已捕获宠物清单（撤离带出/拿满判据的料源）的**只读副本**。
+   * 数据源 verbatim（竞品B enigmaSecret.judgeLeave / exitStage）：`PabController.roomBagInfo.beastInfo`，条目取
+   *   `cfgId`（enigma_beast 主键，查 quality 用）与 `id`（protobuf Int64，即 8581 BAG_GET_SET 的 `uuIds` 元素）。
+   * ⚠ `beastInfo` 键**我方未实机确认存在**（模块分析报告记的 roomBagInfo 五键里没有它，竞品同游戏版本才用得到）→
+   *   读不到（缺字段/非数组）回 null 而非空数组，让上层能区分「清单为空」与「键不存在」，绝不拿读不到当「拿满」误离场。
+   * 只读：`id` 原样透传（不做 Number/字符串化，与 protectBeasts 同一 Int64 形态，直接回填 8581 uuIds）。
+   * @returns {Array<{cfgId:number,id:*}>|null} 不在秘境/背包未初始化/键缺失回 null
+   */
+  getRoomBagPets() {
+    var p = secretRealm.getPabController();
+    var bag = p && p.roomBagInfo;
+    var list = bag && bag.beastInfo;
+    if (!Array.isArray(list)) return null;
+    var out = [];
+    for (var i = 0; i < list.length; i++) {
+      var b = list[i];
+      if (!b) continue;
+      out.push({ cfgId: Number(b.cfgId) || 0, id: b.id });
+    }
+    return out;
+  },
+  /**
+   * 宠物携带背包**总容量** = 基础格数 dataConfig(3017) + 增益 `GameDefine.BuffType.PabExtraPackItemNum` 的扩容。
+   * verbatim（竞品B exitStage/judgeLeave 同式，与我方 pickup.js 文件头记的领取选择器格子数 `3017+PabExtraPackItemNum` 吻合）：
+   *   `Number(getDataConfigData(3017)) + pab.getPabBuffValueByType(GameDefine.BuffType.PabExtraPackItemNum)`。
+   * 任一环取不到即** fail-safe 回 0**（调用方 leave.js 把 0 当「容量未知、不触发离场」，防把未坐实的阈值当成「拿满」误发整场退出）：
+   *   3017 读不到/为 0、控制器无 getPabBuffValueByType、BuffType 枚举缺成员，都收 0。
+   * @returns {number} 总容量（0 = 容量不可信，不触发离场）
+   */
+  petPackCapacity() {
+    var base = Number(gameConf.dataConfig(3017)) || 0;
+    if (!(base > 0)) return 0;
+    var p = secretRealm.getPabController();
+    if (!p || typeof p.getPabBuffValueByType !== 'function') return base;
+    var GD = probe(SYM.modules.gameDefine + '.BuffType', () =>
+      ns(game.get(SYM.modules.gameDefine)),
+    );
+    var BT = GD && (GD.BuffType || (GD.default && GD.default.BuffType));
+    var extraType = BT && BT.PabExtraPackItemNum;
+    if (extraType == null) return base; // 增益类型枚举取不到 → 只算基础格（少报扩容，判满偏保守）
+    var extra = 0;
+    try {
+      extra = Number(p.getPabBuffValueByType(extraType)) || 0;
+    } catch (e) {
+      extra = 0;
+    }
+    return base + (extra > 0 ? extra : 0);
+  },
+  /**
    * 行军到某瓦片（秘境 8521 MARCH_MOVE，req `{x,y}`）——「上平台」与「攻打 BOSS」同一个入口。
    * 与游戏 verbatim `sendToBuildingMarch` 同口径：先查在途（`checkRequestIdNoRes`，游戏侧同一道闸）再发，
    *   故本方法**不直调游戏方法**（游戏侧那个方法除了这两个动作不写本地态，但我们走 ACL 统一通道以便超时与
@@ -2797,7 +2855,7 @@ export const csHunt = {
   /**
    * 只读快照（面板展示/调度决策的唯一进数据）：字段缺失降级不抛错，控制器不在场回 null。
    * @returns {object|null} {open,active,huntCount,lastRecoverTimeMill,lastRound,leader,selfMarchId,team,info}
-   *   - team：{id,uid(队长),cfg,status,treasureId,memberCount,memberUids,selfInTeam,selfMarchId,readyCount,readyUids,readyStartTimeMill,marchStartTimeMill,marchArriveTimeMill,marchReturnArriveTimeMill} 或 null
+   *   - team：{id,uid(队长),cfg,status,treasureId,memberCount,memberUids,selfInTeam,selfMarchId,marchedCount,maxMemberPower,readyCount,readyUids,readyStartTimeMill,marchStartTimeMill,marchArriveTimeMill,marchReturnArriveTimeMill} 或 null
    *   - info：{treasureId,round,status,tInfo,eventInfo} —— eventInfo 为控制器 live 对象（其内 Int64 仍是 Long，用 bits.int64Str 读），无跑动中为 null
    */
   readState() {
@@ -2815,11 +2873,14 @@ export const csHunt = {
       var members = Array.isArray(t.member) ? t.member : [];
       var memberUids = [];
       var marchedCount = 0;
+      var maxMemberPower = 0; // 队内最强成员战力（预警式防御敌强门控用；竞对 onAttacking 同读 team.member[].power）
       for (var i = 0; i < members.length; i++) {
         var mu = bits.int64Str(members[i] && members[i].uid);
         memberUids.push(mu);
         var mid = bits.int64Str(members[i] && members[i].marchId);
         if (mid && mid !== '0') marchedCount++; // marchId 非零 = 该成员已派兵到集结点
+        var mpw = Number(members[i] && members[i].power) || 0;
+        if (mpw > maxMemberPower) maxMemberPower = mpw;
         if (mu && mu === uid) {
           selfMarchId = mid;
         }
@@ -2841,6 +2902,7 @@ export const csHunt = {
         selfInTeam: memberUids.indexOf(uid) >= 0,
         selfMarchId: selfMarchId,
         marchedCount: marchedCount,
+        maxMemberPower: maxMemberPower,
         readyCount: readyUids.length,
         readyUids: readyUids,
         readyStartTimeMill: int64Num(t.readyStartTimeMill),
@@ -3035,6 +3097,153 @@ export const session = {
     });
     if (!p || typeof p.userLogout !== 'function') return;
     p.userLogout();
+  },
+};
+
+// ─────────────────────── 邮件（只读缓存 / 原生拉取） ───────────────────────
+
+/**
+ * 邮件管理器（MailData.mailManager = NMailModel 实例）：由 subpack/SubpackMain 载入时挂上，
+ * 早于它探测会拿不到——probe 失败不缓存，下次调用自愈重探。
+ * @returns {object|null}
+ */
+function mailManager() {
+  return probe('MailData.mailManager', () => {
+    var m = game.get(SYM.modules.mailData);
+    var mm = m && m.mailManager;
+    return mm && typeof mm.getGroupMails === 'function' ? mm : null;
+  });
+}
+
+/**
+ * 展示分组语义名 → MailShowGroupType 数值。
+ * ❗当前运行时实证 MailShowGroupType 成员名用 `t_` 前缀（t_alliance=1 / t_active=2 / t_system=3 / t_battle=4 / t_collect=5 /
+ *   t_battle_pve=6 / t_store=7，另有 NULL=-1），并非早期误记的 `type_owner=1`（那是另一个枚举）。为不再因前缀漂移而静默失效，
+ *   这里按「去掉 t_/type_ 前缀后的基名」不区分大小写匹配成员，且只认正数分组值（跳过 NULL 与 TS 反查的数字键）。
+ * @param {string} name 分组语义基名（如 'alliance'/'system'，不带前缀）
+ * @returns {number} 枚举值，未命中 0
+ */
+function mailGroupValue(name) {
+  var m = game.get(SYM.modules.mailData);
+  var E = m && m.MailShowGroupType;
+  if (!E || !name) return 0;
+  var want = String(name).toLowerCase();
+  for (var k in E) {
+    var v = E[k];
+    if (typeof v !== 'number' || v <= 0) continue; // 只认成员键（数字反查键的值是字符串；NULL=-1 不算分组）
+    if (k.replace(/^t(ype)?_/i, '').toLowerCase() === want) return v;
+  }
+  return 0;
+}
+
+/**
+ * 邮件只读能力：读游戏内存缓存（group/all，零发包）与走游戏原生 933 MAIL_nGetGroupList 拉取（load）。
+ * 不调任何 Delete/Read/Favorite 类改写方法（只读+发包红线）；load 也只是拉列表进游戏缓存，与玩家点开邮件面板同源。
+ */
+export const mail = {
+  /**
+   * 邮件管理器（mailManager）是否已就绪：mailManager 由 SubpackMain.main()（subpack 载入）挂上，
+   * 晚于核心与部分 feat 的 run 时机。纯读探测（复用 mailManager 的 probe 缓存），供调用方在未就绪时延后重试，
+   * 而非把「此刻读不到缓存」误当成永久能力缺失。
+   * @returns {boolean} mailManager 在场且可 getGroupMails 则为 true
+   */
+  ready() {
+    return !!mailManager();
+  },
+  /**
+   * 某展示分组的邮件列表（游戏缓存，纯读）。分组实证：DATACONFIG 130157 把 mailType 归组（'1|9' ⇒ 分组值 1=t_alliance 含 mailType 9），
+   * 故「遗迹区域刷新」（mailType 9）在 t_alliance(=1) 组里。
+   * @param {string} name 分组语义基名（'alliance'/'system'/'store'…，不带 t_/type_ 前缀）
+   * @returns {object[]} 邮件数组（{title,content,sendTime,mailType,…}），符号/分组缺失回 []
+   */
+  group(name) {
+    var g = mailGroupValue(name);
+    var mm = mailManager();
+    if (!g || !mm) return [];
+    try {
+      var list = mm.getGroupMails(g);
+      return Array.isArray(list) ? list : [];
+    } catch (e) {
+      return [];
+    }
+  },
+  /**
+   * 全部分组邮件扁平去重（按 mailId，sendTime 降序）：免调用方逐组点名，也免赌「某邮件在哪组」。
+   * @returns {object[]}
+   */
+  all() {
+    var mm = mailManager();
+    if (!mm) return [];
+    var m = game.get(SYM.modules.mailData);
+    var E = (m && m.MailShowGroupType) || null;
+    var out = [];
+    var seen = new Set();
+    var groups = new Set();
+    // 按枚举「成员键→正数分组值」收集全部展示分组（当前实证 t_alliance=1..t_store=7）：不依赖成员名前缀，
+    //   也自然跳过 TS 反查的数字键（其值为字符串）与 NULL=-1。
+    if (E) {
+      for (var key in E) {
+        var gv = E[key];
+        if (typeof gv === 'number' && gv > 0) groups.add(gv);
+      }
+    }
+    groups.forEach(function (v) {
+      var list;
+      try {
+        list = mm.getGroupMails(v);
+      } catch (e) {
+        return;
+      }
+      if (!Array.isArray(list)) return;
+      for (var i = 0; i < list.length; i++) {
+        var mail0 = list[i];
+        if (!mail0) continue;
+        var id = String(mail0.mailId == null ? mail0.id || '' : mail0.mailId);
+        if (id) {
+          if (seen.has(id)) return;
+          seen.add(id);
+        }
+        out.push(mail0);
+      }
+    });
+    out.sort(function (a, b) {
+      return (Number(b && b.sendTime) || 0) - (Number(a && a.sendTime) || 0);
+    });
+    return out;
+  },
+  /**
+   * 拉某分组邮件进游戏缓存（原生 NMailModel.loadGroupMails → 933，首页翻页请求）。
+   * 永不 reject：符号缺失/抛错/超时无回调一律回 false，调用方自行降级。
+   * @param {string} name 分组语义名
+   * @param {number} [timeoutMs] 回调超时（默认 10s，游戏回调在其内部 setTimeout 里投递）
+   * @returns {Promise<boolean>} 是否拉到（回调已达）
+   */
+  load(name, timeoutMs) {
+    var g = mailGroupValue(name);
+    var mm = mailManager();
+    if (!g || !mm || typeof mm.loadGroupMails !== 'function') return Promise.resolve(false);
+    return new Promise(function (resolve) {
+      var done = false;
+      var finish = function (ok) {
+        if (done) return;
+        done = true;
+        resolve(ok);
+      };
+      var timer = setTimeout(function () {
+        finish(false);
+      }, timeoutMs || 10000);
+      try {
+        mm.loadGroupMails(g, {
+          callback: function () {
+            clearTimeout(timer);
+            finish(true);
+          },
+        });
+      } catch (e) {
+        clearTimeout(timer);
+        finish(false);
+      }
+    });
   },
 };
 
@@ -3569,6 +3778,7 @@ export const debug = {
   gameConf,
   bits,
   session,
+  mail,
   avatar,
   worldMap,
   worldSignals,

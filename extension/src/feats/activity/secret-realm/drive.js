@@ -28,13 +28,23 @@
  *       拿空后再驻留可配 settle（默认 0=立即走）；两路都探不到拿空（真满载且我们拾不完/无证据）由 driveWorkMaxMs 兜底强制离点。
  *     · 商店 161 = 固定驻留可配 driveShopDwellMs（默认 25s，到店即视作「大BOSS 前那趟商店」已办）。
  *     · BOSS 平台 176 / 其它 = 固定驻留 driveWorkDwellMs 让 boss.js 打仗（驻留满不记消费）。
- *   评估优先级：①威胁(21534 num>0) → EVADE；②回攻待办 → RETURN；③state21 BOSS 窗开着而我不在 BOSS 点 → 就近 176 平台；
- *   ④**大BOSS 前定点商店勤务**（elapsed≥fightBegin 检查点且本场未到店 → 强制就近 161，办完不再重复）；
- *   ⑤商店补货有缺口（reactive）→ 就近 161；⑥纯就近巡航 173 资源/井 + 163 掉落箱（用户拍板：档位 iNum 不做排序键）。
+ *   评估优先级：①威胁(21534 num>0) → EVADE；②回攻待办 → RETURN；③已停 BOSS 相关点 = HOLD（攻打归 boss.js）；
+ *   ④state21 BOSS 窗开着而我不在 BOSS 点 → 就近 176 平台；开台预置（借鉴竞品B plane_time）：无 21 窗但某 BOSS 的
+ *     state22 读秒距开启 ≤ driveBossLeadMs → 提前挪向距该 BOSS 最近的可用平台（行军要 31~44s，等 21 推到再动必烧掉开台窗）；
+ *   ⑤**大BOSS 前定点商店勤务**（elapsed≥fightBegin 检查点且本场未到店 → 强制就近 161，办完不再重复）；
+ *   ⑥商店补货有缺口（reactive）→ 就近 161；⑦巡航 173 资源/井 + 163 掉落箱（借鉴竞品B 评分制：档位 iNum 为收益、
+ *     距当前点/最近活BOSS/最近商店的加权格距为成本，取净收益最大者；无证据点退回纯就近）。
  *   到点确认**双路**：主路 = roomBaseInfo.startPoint 与目的地一致且 ARRIVED（21521/21529 kick 后进闸复核，
  *   不依赖事件时序）；兜底 = TO 超时 driveMarchTimeoutMs（90s，实测闭环上限 44.2s 加两档余量）→ 记消费转重评。
  *   拒绝处置（与 warn.js/boss.js 同口径）：158 在途未达 = 迟到信号正常形态；157 = 已在该点 → 直接进 WORK；
  *   163 → 该目标当日不重选；其余任一 `s≠0` → rejectBackoffMs 退避重评。
+ *   当前点被 PVP（瓦片 state 11/12，借鉴竞品B autoLeader 保命让闸）→ 方向盘让位原地应战、快照无证据不拦。
+ *
+ *   静默闸可观测（实战「一次都没动」无从定责的补丁）：停泊/在途/HOLD/非队长四道常闭闸走 #gateState 边沿日志
+ *   （进入打 info、恢复打放行 info，各一次）；在途闸 isSecretSending(8521) 连续 ≥ driveMarchTimeoutMs 为真且
+ *   本端已在停泊态（isCanMarch 同判据成立却仍有未答包 = NetMgrSimple._cachePacks 幽灵条目——条目只在收到同 o
+ *   应答或重连清理时 splice，应答丢失即永堵）→ warn 一条并绕过闸发一笔探测包自愈（裸协议不受客户端闸约束，
+ *   服务端按 158/157/ok 正常语义回执，通道随之清堵）。
  *
  * 躲避档（用户拍板）：受击（21534 num>0）→ 逃**就近未被 PVP 营帐**（174/175；快照无则驻留重扫）；
  *   威胁解除（num=0，实证「转移即消警」）且逃离点是 BOSS 相关点(176/177/178) → 回攻：优先回原平台，
@@ -226,8 +236,14 @@ export class DriveEngine {
   #workDeadline = 0;
   /** @type {boolean} 大BOSS 前定点商店勤务：本场是否已完成（到店即置真） */
   #shopErrandDone = false;
+  /**
+   * @type {{x:number,y:number}|null} 本拍 #liveBossLead() 命中的「即将开台」BOSS 本体坐标（#nearestBossPlatform 预置档的就近锚点）
+   */
+  #bossLead = null;
   /** @type {number} 当前场 fightBeginTime（毫秒）；变化即视为换场、复位勤务与按点账 */
   #matchFightBegin = 0;
+  /** @type {number} 通道在途闸（isSecretSending 8521）连续为真的起始时刻（0=不在途；自愈判据基准） */
+  #inflightStuckSince = 0;
 
   /** @param {object} env 注入底座 {alive, realmActive, cfg, secret, gameConf, l10n, log} */
   constructor(env) {
@@ -355,13 +371,23 @@ export class DriveEngine {
     const b = env.cfg().drive;
     if (!b || !b.enabled) return tuning.driveScanMs;
     const now = Date.now();
-    if (now < this.#cooldownUntil) return this.#cooldownUntil - now;
+    if (now < this.#cooldownUntil) {
+      this.#gateState('cooldown', true, 'left=' + (this.#cooldownUntil - now) + 'ms');
+      return this.#cooldownUntil - now;
+    }
+    this.#gateState('cooldown', false, '');
+    // 预置锚点每拍重算（仅 #liveBossLead 命中时重写；早退路径不留陈旧坐标）
+    this.#bossLead = null;
 
     const base = env.secret.getRoomBaseInfo();
     if (!base || !base.startPoint) return tuning.driveScanMs;
     const S = env.secret.getNMarchState();
     const arrived = S && S.ARRIVED != null ? Number(S.ARRIVED) : 2;
     const curKey = tileKey(base.startPoint.x, base.startPoint.y);
+    // 统一停泊判据（与游戏 isCanMarch=!!roomBaseInfo&&teamIsMooring 同口径；在途闸自愈与 #gateState 共用）
+    const moored = Number(base.marchState) === arrived && env.secret.teamIsMooring();
+    // TO 相位不重评（在途 marchState=MARCHING 属正常形态），闸日志只在方向盘评估拍打边沿
+    if (!this.#toKind) this.#gateState('notarrived', !moored, 'marchState=' + base.marchState);
 
     // 换场复位：fightBeginTime 变化 = 新一场秘境 → 复位大BOSS 前商店勤务与按点拿空账（坐标可同位不同场）
     const fb = toNum(base.fightBeginTime);
@@ -406,20 +432,33 @@ export class DriveEngine {
       if (!bossPlane) this.#consume(wk);
     }
 
-    // 全队动作闸：8521 驱动队级行军，仅队长可发（与 boss.js/warn.js 同闸）
-    if (!env.secret.isTeamLeader()) {
-      this.#note('leader', 'drive: 非队长，8521 驱动全队行军，不动方向盘。');
-      return tuning.driveScanMs;
-    }
-    if (Number(base.marchState) !== arrived || !env.secret.teamIsMooring())
-      return tuning.driveScanMs;
+    // 全队动作闸：8521 驱动队级行军，仅队长可发（与 boss.js/warn.js 同闸；边沿日志：换队/接手后重新评估）
+    this.#gateState('leader', !env.secret.isTeamLeader(), '');
+    if (!env.secret.isTeamLeader()) return tuning.driveScanMs;
+    if (!moored) return tuning.driveScanMs;
     const curPt = Number(base.pointType) || 0;
     if (this.#captureBusy()) {
       // 挪点会清空当前捕获进度（游戏要弹 enigma_realm208 确认），自动化绝不代确认
       this.#note('capturing', 'drive: 正在拍普通异能兽，等拍完再挪点。');
       return 3000;
     }
-    if (env.secret.isSecretSending(CMD_MARCH_MOVE)) return 200;
+    if (env.secret.isSecretSending(CMD_MARCH_MOVE)) {
+      if (!this.#inflightStuckSince) this.#inflightStuckSince = now;
+      const stuck = now - this.#inflightStuckSince;
+      // 幽灵条目自愈（报文侧证据：NetMgrSimple 只在收到同 o 号应答时 splice _cachePacks，应答丢失即永堵；
+      //   此刻 moored 已成立 = 游戏自己判「可发」而通道仍报在途）→ 绕过闸发一笔探测包，服务端按正常语义回执、通道清堵
+      if (stuck >= tuning.driveMarchTimeoutMs) {
+        env.log.warn(
+          'drive: 8521 通道在途标记堵塞 %ds 且已停泊（疑似幽灵条目），绕过闸发一笔探测包自愈。',
+          Math.round(stuck / 1000),
+        );
+        this.#inflightStuckSince = 0;
+        this.#dispatch('cruise', this.#nearestCruise(curKey), true);
+        return this.#sleepAfterDispatch();
+      }
+      return 200;
+    }
+    this.#inflightStuckSince = 0;
 
     // ① 受击逃袭（最高优先级：保命先于一切收益动作）；已停在营帐/平台（174/175）时不再逃——
     //   再逃只会同档跳来跳去（warn.js「别原地打转」同理），原地等消警
@@ -440,26 +479,40 @@ export class DriveEngine {
         return this.#sleepAfterDispatch();
       }
     }
-    // ③ 已停 BOSS 相关点 = HOLD：攻打/投喂/石头归 boss.js，本引擎不抢它的方向盘
+    // 当前点正被 PVP（瓦片 state 11/204 同口径的 11/12）→ 方向盘让位原地应战（竞品 autoLeader 同款保命闸：
+    //   交战中挪队只会把部队撒在路上；快照无当前点证据 = 无证据不拦）
+    const curTile = this.#tiles.get(curKey);
+    const curPvp =
+      !!curTile && (curTile.state === ST_PVP_READY || curTile.state === ST_PVP_FIGHTING);
+    this.#gateState('curpvp', curPvp, curPvp ? '(' + curKey + ') state=' + curTile.state : '');
+    if (curPvp) return tuning.driveScanMs;
+    // ③ 已停 BOSS 相关点 = HOLD：攻打/投喂/石头归 boss.js，本引擎不抢它的方向盘（边沿日志：进/出各一条）
     if (isBossish(curPt)) {
+      this.#gateState('hold', true, 'pt=' + curPt);
       return tuning.driveScanMs;
     }
-    // ④ BOSS 窗开着而我不在 BOSS 点 → 就近开往可用 176 平台（到达后攻打自动接棒）
-    if (b.boss !== false && this.#hasLiveBoss()) {
-      this.#dispatch('boss-plane', this.#nearestBossPlatform(curKey));
-      return this.#sleepAfterDispatch();
+    this.#gateState('hold', false, '');
+    // ④ BOSS 窗开着而我不在 BOSS 点 → 就近开往可用 176 平台（到达后攻打自动接棒）；
+    //   无 21 窗时退到开台预置档（竞品B plane_time 同款：读秒窗内提前挪，行军 31~44s 不再烧在腿上）。
+    if (b.boss !== false) {
+      const openNow = this.#hasLiveBoss();
+      const lead = openNow ? null : this.#liveBossLead();
+      if (openNow || lead) {
+        this.#dispatch('boss-plane', this.#nearestBossPlatform(curKey, !openNow));
+        return this.#sleepAfterDispatch();
+      }
     }
-    // ④b 大BOSS 前定点商店勤务：elapsed≥检查点且本场未到店 → 强制就近 161（未真上线则每拍重试，到店即完成）
+    // ⑤ 大BOSS 前定点商店勤务：elapsed≥检查点且本场未到店 → 强制就近 161（未真上线则每拍重试，到店即完成）
     if (b.shopTime !== false && !this.#shopErrandDone && this.#preBossShopDue()) {
       this.#dispatch('shop', this.#nearestShop(curKey));
       return this.#sleepAfterDispatch();
     }
-    // ⑤ 商店补货有缺口 → 就近到店（到店后补货归 shop.js）
+    // ⑥ 商店补货有缺口 → 就近到店（到店后补货归 shop.js）
     if (this.#shopGapWanted()) {
       this.#dispatch('shop', this.#nearestShop(curKey));
       return this.#sleepAfterDispatch();
     }
-    // ⑥ 纯就近巡航资源/井/掉落箱（用户拍板：档位不参与排序）
+    // ⑦ 巡航资源/井/掉落箱（档位评分 + 加权格距，见 #nearestCruise）
     this.#dispatch('cruise', this.#nearestCruise(curKey));
     return this.#sleepAfterDispatch();
   }
@@ -485,23 +538,46 @@ export class DriveEngine {
   }
 
   /**
-   * 就近可用 176 平台（档闸取 NWorldPabBossPlanePopup 四段闸的保守近似，双态均可开台：
-   *   21 = NWorldPabBossPopup 点亮攻击按钮的争夺窗、22 = PALNE_MARCH 读秒窗）：
+   * 就近可用 176 平台（档闸取 NWorldPabBossPlanePopup 四段闸的保守近似）：
    *   `isFight !== 1`（217 本平台在战斗中不重派）；`teams` 空（252 的「有任一驻军就不挪」近似，无 isFriend ACL）。
+   * 开台窗内（preWindow=false）：只认双态 21/22 瓦片（verbatim 旧口径）。
+   * 预置档（preWindow=true，竞品B plane_time 同款）：开台前平台瓦片未必已进 21/22 证据（快照未推/state 仍 0），
+   *   不强要态证据，改为**以即将开台的 BOSS 本体为就近锚**（#bossLead）选最近可用平台——离战斗点越近，
+   *   21 一开 boss.js 越快接棒；读不到锚点时退回纯就近。
    * @param {string} curKey 当前点位键
+   * @param {boolean} preWindow 是否预置档（无 21 窗、仅有读秒窗）
    * @returns {{x:number,y:number}|null}
    */
-  #nearestBossPlatform(curKey) {
-    return this.#nearestBy(
-      curKey,
-      function (t) {
-        if (t.pt !== PAB_BOSS_PLANE) return false;
-        if (t.state !== ST_BOSS_FIGHTING && t.state !== ST_PLANE_MARCH) return false;
-        if (t.isFight === 1) return false;
-        return t.teams === 0;
-      },
-      false,
-    );
+  #nearestBossPlatform(curKey, preWindow) {
+    if (!preWindow) {
+      return this.#nearestBy(
+        curKey,
+        function (t) {
+          if (t.pt !== PAB_BOSS_PLANE) return false;
+          if (t.state !== ST_BOSS_FIGHTING && t.state !== ST_PLANE_MARCH) return false;
+          if (t.isFight === 1) return false;
+          return t.teams === 0;
+        },
+        false,
+      );
+    }
+    const lead = this.#bossLead;
+    const cx = lead ? lead.x : Number(curKey.split(',')[0]);
+    const cy = lead ? lead.y : Number(curKey.split(',')[1]);
+    let best = null;
+    let bestD = Infinity;
+    this.#tiles.forEach(function (t, k) {
+      if (k === curKey) return;
+      if (t.pt !== PAB_BOSS_PLANE) return false;
+      if (t.isFight === 1) return false;
+      if (t.teams !== 0) return false;
+      const d = dist(t.x, t.y, cx, cy);
+      if (d < bestD || (d === bestD && best && t.at > best.at)) {
+        best = t;
+        bestD = d;
+      }
+    }, this);
+    return best ? { x: best.x, y: best.y } : null;
   }
 
   /**
@@ -575,20 +651,69 @@ export class DriveEngine {
   }
 
   /**
-   * 就近巡航点：173 资源/井 + 163 掉落箱，未被 PVP、未消费、未当日拉黑、非当前点（纯就近，iNum 不参与）。
+   * 巡航点选择（借鉴竞品B marchResource 的评分制，取代旧「纯就近」拍板）：
+   *   173 资源/井 + 163 掉落箱，未被 PVP、未消费、未当日拉黑、非当前点；
+   *   评分 = 档位收益 m.iNum（竞品同源字段；缺 iNum 的 163 条目按 0，仍能按就近去拾宠/拾物）
+   *          − 距当前点格距/2 − 距最近活 BOSS 格距/5 − 距最近商店格距/6（竞品 verbatim 权重的物理含义：
+   *          顺路优先——离战斗点/补给点越近的点越值得拐；除数越大权重越小）。
+   *   取净收益最大者；快照全无（无证据）回 null，绝不凭空造坐标。
    * @param {string} curKey 当前点位键
    * @returns {{x:number,y:number}|null}
    */
   #nearestCruise(curKey) {
-    return this.#nearestBy(
-      curKey,
-      function (t) {
-        if (t.pt !== PAB_RESOURCE && t.pt !== PAB_DROP) return false;
-        if (t.state === ST_PVP_READY || t.state === ST_PVP_FIGHTING) return false;
-        return true;
-      },
-      true,
-    );
+    const env = this.#env;
+    const cx = Number(curKey.split(',')[0]);
+    const cy = Number(curKey.split(',')[1]);
+    const accept = function (t) {
+      if (t.pt !== PAB_RESOURCE && t.pt !== PAB_DROP) return false;
+      if (t.state === ST_PVP_READY || t.state === ST_PVP_FIGHTING) return false;
+      return true;
+    };
+    // 成本锚点：最近活 BOSS（state21 未散场，与 #hasLiveBoss 同判据）与最近商店点（快照内 161）；取不到不计该项成本
+    let bossA = null;
+    const list = env.secret.getBossBaseInfo();
+    if (Array.isArray(list)) {
+      const nowMs = Date.now();
+      for (let i = 0; i < list.length; i++) {
+        const s = list[i];
+        if (!s || Number(s.state) !== ST_BOSS_FIGHTING || !s.pos) continue;
+        const end = toNum(s.stateEndTime);
+        if (end > 1e11 && nowMs > end) continue;
+        bossA = { x: Math.floor(toNum(s.pos.x)), y: Math.floor(toNum(s.pos.y)) };
+        break;
+      }
+    }
+    let shopA = null;
+    let shopD = Infinity;
+    this.#tiles.forEach(function (t) {
+      if (t.pt !== PAB_SHOP) return;
+      const d = dist(t.x, t.y, cx, cy);
+      if (d < shopD) {
+        shopD = d;
+        shopA = t;
+      }
+    });
+    const now = Date.now();
+    let best = null;
+    let bestScore = -Infinity;
+    this.#tiles.forEach(function (t, k) {
+      if (k === curKey) return;
+      if (!accept(t)) return;
+      if (this.#dayBlack[k]) return;
+      if (this.#consumed.get(k) === -1) return;
+      if ((this.#consumed.get(k) || 0) > now) return;
+      const dCur = dist(t.x, t.y, cx, cy);
+      if (!Number.isFinite(dCur)) return;
+      const dBoss = bossA ? dist(t.x, t.y, bossA.x, bossA.y) : Infinity;
+      const dShop = shopA ? dist(t.x, t.y, shopA.x, shopA.y) : Infinity;
+      const gain = t.iNum == null ? 0 : t.iNum;
+      const score = gain - dCur / 2 - (dBoss / 5 || 0) - (dShop / 6 || 0);
+      if (score > bestScore || (score === bestScore && best && t.at > best.at)) {
+        best = t;
+        bestScore = score;
+      }
+    }, this);
+    return best ? { x: best.x, y: best.y } : null;
   }
 
   /**
@@ -627,8 +752,9 @@ export class DriveEngine {
    * 发一笔 8521 并进入 TO 相位。`cand` 为 null（快照内无候选）时**不转移也不凭空造**，只留一次性提示。
    * @param {string} kind 目的地档位标记（evade/return/boss-plane/shop/cruise）
    * @param {{x:number,y:number}|null} cand 候选点（null=无证据）
+   * @param {boolean} [bypassGate] 自愈包专用：跳过 sendMarch 的客户端在途拦闸（幽灵条目堵的正是这道闸；裸协议不受它约束）
    */
-  #dispatch(kind, cand) {
+  #dispatch(kind, cand, bypassGate) {
     const env = this.#env;
     if (!cand) {
       // 回攻无落点：放弃待办转常规重评；其余档位保留需求位，等快照补上再试
@@ -659,7 +785,9 @@ export class DriveEngine {
         : null;
       this.#returnPending = isBossish(curPt);
     }
-    const ret = env.secret.sendMarch(cand.x, cand.y);
+    const ret = bypassGate
+      ? env.secret.sendSecret(CMD_MARCH_MOVE, { x: cand.x, y: cand.y })
+      : env.secret.sendMarch(cand.x, cand.y);
     if (!ret || typeof ret.then !== 'function') {
       env.log.debug('drive: 8521 not sent (in-flight/invalid coords), retry next tick.');
       return;
@@ -864,6 +992,36 @@ export class DriveEngine {
   }
 
   /**
+   * 是否有一只 BOSS 在**开台读秒窗**（state22）且距开启 ≤ tuning.driveBossLeadMs（借鉴竞品B plane_time 预置档）：
+   *   state22 的 stateEndTime = 转 21 的绝对毫秒时刻（constants 21535 段实证 boss9 翻转时刻对齐）；读不到合理毫秒值
+   *   不进预置档（不拿猜测的开启时刻赌行程）。命中时把本体坐标存进 #bossLead，供预置档按「距 BOSS 最近平台」择优。
+   * @returns {boolean}
+   */
+  #liveBossLead() {
+    this.#bossLead = null;
+    const list = this.#env.secret.getBossBaseInfo();
+    if (!Array.isArray(list)) return false;
+    const now = Date.now();
+    let best = Infinity;
+    let bestPos = null;
+    for (let i = 0; i < list.length; i++) {
+      const s = list[i];
+      if (!s || Number(s.state) !== ST_PLANE_MARCH) continue;
+      const open = toNum(s.stateEndTime);
+      if (!(open > 1e11)) continue;
+      const left = open - now;
+      if (left < 0 || left > tuning.driveBossLeadMs) continue;
+      if (left < best && s.pos) {
+        best = left;
+        bestPos = { x: Math.floor(toNum(s.pos.x)), y: Math.floor(toNum(s.pos.y)) };
+      }
+    }
+    if (!bestPos) return false;
+    this.#bossLead = bestPos;
+    return true;
+  }
+
+  /**
    * 是否在拍普通异能兽（verbatim boss.js #captureBusy 同判据：capturingPetPos.x>0 且非 BOSS 窗）。
    * @returns {boolean}
    */
@@ -917,6 +1075,24 @@ export class DriveEngine {
     if (this.#told[key]) return;
     this.#told[key] = 1;
     this.#env.log.info(msg);
+  }
+
+  /**
+   * 闸门状态边沿日志（进入/恢复各打一条 info，防「一次都没动」实战无从定责）。
+   * @param {string} name 闸名
+   * @param {boolean} on 本拍是否被该闸拦住
+   * @param {string} detail 附注（拼进日志尾）
+   */
+  #gateState(name, on, detail) {
+    const k = 'gate|' + name;
+    const tail = detail ? ' ' + detail : '';
+    if (on && !this.#told[k]) {
+      this.#told[k] = 1;
+      this.#env.log.info('drive: 闸[%s]拦住，方向盘不动。reason=%s%s', name, name, tail);
+    } else if (!on && this.#told[k]) {
+      delete this.#told[k];
+      this.#env.log.info('drive: 闸[%s]放行。reason=%s%s', name, name, tail);
+    }
   }
 
   // ── 生命周期 ────────────────────────────────────────────────────────

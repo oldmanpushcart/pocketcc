@@ -151,6 +151,35 @@ export const CMD_REVIVE = 8552;
  * @type {number}
  */
 export const CMD_LEAVE_AREA = 8589;
+/**
+ * ENIGMA_SECRET_ROOM_BAG_GET_SET：撤离前**选定带出内容**（req `{itemIds:[], uuIds:[宠物id]}`）。
+ * 源码侧证（竞品B enigmaSecret.judgeLeave verbatim）：把 `roomBagInfo.beastInfo` 按品质降序取前「背包容量」只的
+ *   `id`（protobuf Int64）填进 `uuIds`、`itemIds` 留空，`ok===1` 后才发 8589 LEAVE → 它是「只带最好的走」的预选项，
+ *   不是背包写入（配合 21521 段 `roomBagInfo.backItemIds/backBeasts` = 撤离带出选择结果）。
+ * ⚠ **本 feat 全部录音 0 条 8581**（玩家从未用过该自动离场路径）→ 线路形态仅源码级实证、无报文逐键核对，
+ *   且宠物清单键（竞品用 `beastInfo`）我方未实机确认存在 → 消费口见 leave.js，读不到清单即**不发**（宁不离场）。
+ * @type {number}
+ */
+export const CMD_BAG_GET_SET = 8581;
+/**
+ * ENIGMA_SECRET_ROOM_BEAST_INFO：查某野怪点（172）的异能兽信息（req `{x,y}`）。
+ * **报文实证**（dashcam 20261017T214415-异能秘境-队长.ndjson，逐键）：
+ *   • 侦察**前** 8536 应答 = `{beastType,pveId}`（**无 beastId**）——即点上有兽、但品质未知；
+ *   • 侦察**后**再发 8536 应答 = `{beastType,pveId,beastId}`（beastId = enigma_beast 主键，可查 quality）。
+ *   → 「应答带不带 beastId」就是「本点是否已侦察」的**免费**判据（不花道具即可复用他人/自己已侦察结果）。
+ * @type {number}
+ */
+export const CMD_BEAST_INFO = 8536;
+/**
+ * ENIGMA_SECRET_ROOM_BEAST_SCOUT：勘察某野怪点（172），**每次消耗 1 个 41001 全地形勘察车**（req `{x,y}`）。
+ * 源码 verbatim NWorldPabElementMonsterPopup.spyonClick：`getItemNumById(41001)<=0 ? ShowTips('101064') : sendPBV2(8537,{x,y})`；
+ *   道具身份实证 ITEM["41001"] 为该 popup 的勘察花费图标、`spyonCostLab="-1"`（每次扣 1）。
+ * **报文实证**（dashcam 20261017T214415）：8537 应答 = `{beastType,pveId,beastId:39}`（比 8536 侦察前多一个 beastId）。
+ * ⚠ 41001 是消耗品（可从秘境产出拾取，非商店货）→ 侦察侧必须先 8536 免费预检、仅对「未侦察且道具充足」的点花道具；
+ *   消费口见 scout.js，读不到现场/道具不足一律不发（fail-safe）。
+ * @type {number}
+ */
+export const CMD_BEAST_SCOUT = 8537;
 
 // ─────────── 秘境推送号（走 watch 通道下行，主 NetReciver 汇聚后由 core/net.js 派 `net.<cmd>`）───────────
 /**
@@ -404,6 +433,13 @@ export const TILE_KEY_SET = 'sET';
 export const CFG_DROP_ITEM_MAX = 3021;
 /** @type {number} 掉落箱宠物已领上限（checkPetIdGeted：已含我 uid 的 dropBeast 数 >= Number(dataConfig(3061)) 即满） */
 export const CFG_DROP_PET_MAX = 3061;
+/**
+ * 宠物携带背包**基础格数**（dataConfig(3017)）——同 PabBagItem 领取选择器的格子数
+ *   （verbatim `for(g=0; g<3017+PabExtraPackItemNum; g++)`，见 pickup.js 文件头 3017 条），
+ *   再叠加增益 `BuffType.PabExtraPackItemNum` 的扩容才是总容量。拿满自动离场（leave.js）的「拿满」判据用它算容量。
+ * @type {number}
+ */
+export const CFG_PET_PACK_BASE = 3017;
 /** @type {number} 资源/增益上限串（dataConfig(3013) → "itemMax|buffMax"，split('|') 取 [0]=bag 上限、[1]=buff 上限） */
 export const CFG_RES_LIMITS = 3013;
 /** @type {number} 手拍每秒次数上限（dataConfig(630027)；实证 RealPabController.checkCaptureOperationCd 用它做 `_touchOperateMaxNum`） */
@@ -611,6 +647,14 @@ export const SHOP_SPEC_ECONOMY = {
     note: '传奇百兽箱碎片自选箱（一次给 40 个，type=3 全店共享限量）',
   },
 };
+/**
+ * 野怪点勘察消耗的道具 id（**全地形勘察车**，非香肠）。
+ * 源码 verbatim NWorldPabElementMonsterPopup.spyonClick 花 `getItemNumById(41001)` 做门槛、refreshUI 取 ITEM["41001"]
+ *   作花费图标、spyonCostLab="-1"（每次侦察扣 1）；道具由秘境野怪点产出（rss_station 里 item=41001 有 44 个 specId），
+ *   **不经商店售卖**→ 只能用多少侦察多少，余量运行时读 getItemNumById(41001)，不写死。
+ * @type {number}
+ */
+export const ITEM_SCOUT_TOOL = 41001;
 /**
  * 商店点位（用户口径「一共 4 个商店」，地图核对 verbatim：push 10018 里 `pointType===161` 的瓦片）。
  * 实测四项（dashcam 20261018T200040 + 发车会话，同一 `k=30911` 服务器）：
@@ -942,6 +986,44 @@ export const tuning = {
    * @type {number[]}
    */
   driveShopPointsSec: [600, 900, 1200],
+  /**
+   * 驾驶：**BOSS 开台前预置窗口**（毫秒，不露面板）。借鉴竞品B enigmaSecret 的 plane_time（默认 60s）：
+   *   state22 的 `stateEndTime` = 转 21（开启争夺）的**绝对毫秒时刻**（constants 21535 段实证 boss9 翻转时刻精确对齐），
+   *   距开启 ≤ 本值即提前把队伍挪到就近可用 176 平台——行军本身要 31~44s（driveMarchTimeoutMs 注释实测），
+   *   等 21 推送到了再挪必然把开台前几十秒的争夺窗烧在腿上。
+   *   竞品取 60s 整；我们行军上限 44.2s + 一拍兜底 5s，同取 60000 恰好覆盖。
+   */
+  driveBossLeadMs: 60000,
+  /**
+   * 拿满自动离场（leave.js）：扫描间隔（毫秒）。离场是「读背包数 → 发一次 8581 → 发一次 8589」的低频动作，
+   *   不需要紧拍；本值只兜「品质增益/背包刷新漏拍」的重评节奏（离场动作另有内存态防重发）。
+   */
+  leaveScanMs: 3000,
+  // ── 侦察囤情报（scout.js）──
+  /**
+   * 侦察：扫描间隔（毫秒）。情报囤积非高频动作，本值只兜「快照新增野怪点/重扫冷却到点」的重评节奏。
+   */
+  scoutScanMs: 5000,
+  /**
+   * 侦察：相邻两次花道具 8537 的最小间隔（毫秒）——控 41001 消耗速率的主闸。
+   * 竞品在拍宠窗内取 5s、窗外取 60s（它靠侦察结果择机派兵）；我方只做囤情报、不派兵，取中档 15s：
+   *   既不至于把一背包勘察车一口气烧光，又能在整场（~55min）里陆续铺满视野。
+   */
+  scoutGapMs: 15000,
+  /**
+   * 侦察：8536 免费预检的两道闸——全局最小间隔（毫秒）与同一点位重查冷却（毫秒）。
+   * 8536 不耗道具、可多发，但次通道有按 cmd 的 cdTime 频控（命中静默不上线），故留全局间隔；
+   *   同一点位「查到无 beastId」后不立刻再查（等 scoutReQueryMs 后刷新，兼顾新生野怪）。
+   */
+  scoutInfoGapMs: 2000,
+  /** @type {number} 侦察：同一点位 8536 查到未侦察后的重查冷却（毫秒） */
+  scoutReQueryMs: 600000,
+  /**
+   * 侦察：为背包勘察车保留的最低余量（个数）——`getItemNumById(41001) <= 本值` 即不再花道具侦察。
+   * 默认 0=有多少探多少（勘察车非商店货、只能从野怪点产出拾取，无「留货打关键兽」的既有语义）；
+   *   若日后要把勘察车留给手动择宠，调高本值即可（面板不暴露，内置调参）。
+   */
+  scoutItemReserve: 0,
 };
 
 /** @type {number} 未真正发出的哨兵码（sendSecret 超时/异常回此值；与 game-api SECRET_NOT_SENT 同义） */
