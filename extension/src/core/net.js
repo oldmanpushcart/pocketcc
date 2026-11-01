@@ -685,6 +685,10 @@ export let netApi = null;
     var tap = null;
     /** @type {boolean} 终端是否已调用（builder 一次性，防一个 builder 开多个采集器） */
     var started = false;
+    // 一次性 builder 的共用守卫：原先 5 个 setter 各抄一遍 throw（同一句文案重复 5 次，改一次要五处对齐）
+    var guardStarted = function () {
+      if (started) throw new Error('pocketcc.net.collecting: builder already started.');
+    };
     var b = {
       /**
        * 设环形槽上限；非正数/非数字回落缺省并告警
@@ -692,7 +696,7 @@ export let netApi = null;
        * @returns {object} this（链式）
        */
       capacity: function (n) {
-        if (started) throw new Error('pocketcc.net.collecting: builder already started.');
+        guardStarted();
         if (typeof n !== 'number' || !(n > 0)) {
           log.warn('collecting.capacity: invalid %s, fallback to %d.', n, DEFAULT_COLLECT_CAPACITY);
           n = DEFAULT_COLLECT_CAPACITY;
@@ -706,7 +710,7 @@ export let netApi = null;
        * @returns {object} this（链式）
        */
       filter: function (fn) {
-        if (started) throw new Error('pocketcc.net.collecting: builder already started.');
+        guardStarted();
         if (typeof fn !== 'function')
           throw new Error('pocketcc.net.collecting: filter requires a function.');
         filters.push(fn);
@@ -719,7 +723,7 @@ export let netApi = null;
        * @returns {object} this（链式）
        */
       tap: function (fn) {
-        if (started) throw new Error('pocketcc.net.collecting: builder already started.');
+        guardStarted();
         if (typeof fn !== 'function')
           throw new Error('pocketcc.net.collecting: tap requires a function.');
         tap = fn;
@@ -731,7 +735,7 @@ export let netApi = null;
        * @returns {object} this（链式）
        */
       log: function () {
-        if (started) throw new Error('pocketcc.net.collecting: builder already started.');
+        guardStarted();
         tap = tapLog;
         return b;
       },
@@ -741,7 +745,7 @@ export let netApi = null;
        *     数组上附隐藏方法 json()（非枚举，混合格式序列化：外壳缩进、条目单行）；未安装时返回空数组 no-op
        */
       collect: function () {
-        if (started) throw new Error('pocketcc.net.collecting: builder already started.');
+        guardStarted();
         started = true;
         if (!installed) {
           log.warn('collect: net not installed.');
@@ -800,16 +804,20 @@ export let netApi = null;
     var tap = null;
     /** @type {boolean} 终端是否已调用 */
     var started = false;
+    // 同 collecting：三个 setter 共用一个守卫，不再各自抄一遍同句 throw
+    var guardStarted = function () {
+      if (started) throw new Error('pocketcc.net.stream: builder already started.');
+    };
     var b = {
       filter: function (fn) {
-        if (started) throw new Error('pocketcc.net.stream: builder already started.');
+        guardStarted();
         if (typeof fn !== 'function')
           throw new Error('pocketcc.net.stream: filter requires a function.');
         filters.push(fn);
         return b;
       },
       tap: function (fn) {
-        if (started) throw new Error('pocketcc.net.stream: builder already started.');
+        guardStarted();
         if (typeof fn !== 'function')
           throw new Error('pocketcc.net.stream: tap requires a function.');
         tap = fn;
@@ -820,7 +828,7 @@ export let netApi = null;
        * @returns {function(): boolean} unstream；调用即解除该订阅者并同步 hook 状态（幂等）
        */
       start: function () {
-        if (started) throw new Error('pocketcc.net.stream: builder already started.');
+        guardStarted();
         started = true;
         if (!installed) {
           log.warn('stream: net not installed.');
