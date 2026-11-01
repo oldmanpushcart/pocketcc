@@ -2592,6 +2592,9 @@ function watchNetMgr() {
  * @returns {object} Ret 形结果
  */
 function secretRet(code, data, reason) {
+  // 此处故意摸总线而不 import netApi：ACL 防腐层不得反向依赖网络模块（dep-cruiser
+  //   acl-not-depend-on-domain-or-net 为 error），net.js 自身不 import 本模块，函数内懒取也无时序风险。
+  // eslint-disable-next-line no-restricted-syntax
   var Net = window.pocketcc && window.pocketcc.net;
   var r = Net && Net.Ret ? Net.Ret.from(code, data) : { code: code, data: data, reason: null };
   if (reason != null) r.reason = reason;
@@ -3048,7 +3051,7 @@ export const secretRealm = {
     var BT = GD && (GD.BuffType || (GD.default && GD.default.BuffType));
     var extraType = BT && BT.PabExtraPackItemNum;
     if (extraType == null) return base; // 增益类型枚举取不到 → 只算基础格（少报扩容，判满偏保守）
-    var extra = 0;
+    var extra; // 不给死初值：try 与 catch 两条路径各自赋值，旧 `= 0` 从未被读到
     try {
       extra = Number(p.getPabBuffValueByType(extraType)) || 0;
     } catch (e) {

@@ -3,6 +3,7 @@
 // 探针，不参与任何生产调用链，也不进 reactor 装配。
 import { game } from './game.js';
 import { defense } from './defense.js';
+import { netApi } from './net.js';
 import { debug as gameApi, nav, worldMap } from './game-api.js';
 
 /**
@@ -39,7 +40,7 @@ export function installDevtools() {
   //   合规：只读探测 + 显式迁城发包(911)，不改写游戏数据，绝不发攻击(902)。
   window.pocketcc.testRelocateNear = async function (x, y, opts) {
     opts = opts || {};
-    var net = window.pocketcc.net;
+    var net = netApi; // 具名导出而非摸总线（core 红线：window.pocketcc.* 只允许代挂、不允许读）
     var gd = gameApi.gameData;
     if (!net) {
       console.warn('[testRelocateNear] pocketcc.net 不可用');

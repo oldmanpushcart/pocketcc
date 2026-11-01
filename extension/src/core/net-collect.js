@@ -13,6 +13,14 @@
 import { createLog } from './log.js';
 import { NS } from './constants.js';
 import { getUid } from './player.js';
+import { netApi } from './net.js';
+
+/**
+ * 录制器接口面具名导出（供 registry 走 ESM import，替代 window.pocketcc.netCollect 全局摸取）。
+ * IIFE 内在 api 构造完成后回赋值，命名口径同 net.js 的 netApi / event.js 的 eventApi。
+ * @type {object|null}
+ */
+export let netCollectApi = null;
 
 (function () {
   'use strict';
@@ -50,7 +58,7 @@ import { getUid } from './player.js';
    * @returns {object|null}
    */
   function netBase() {
-    return (window.pocketcc && window.pocketcc.net) || null;
+    return netApi;
   }
 
   /**
@@ -243,5 +251,6 @@ import { getUid } from './player.js';
 
   window.pocketcc = window.pocketcc || {};
   window.pocketcc.netCollect = api;
+  netCollectApi = api; // 具名导出：与 window 同源，供 import { netCollectApi } 使用
   // 不自启：由 registry 的 netRecord internal 功能经面板开关驱动 start/stop
 })();

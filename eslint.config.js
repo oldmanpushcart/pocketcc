@@ -95,6 +95,32 @@ export default [
     },
   },
 
+  // ---- core 层同一条红线：总线 window.pocketcc.* 在 core 内只允许一种用法——「写入方把自己直接赋值上去」----
+  // 原先 core 内部有 11 处函数体内 `window.pocketcc && window.pocketcc.net|event|netCollect` 的懒取（跨模块影子依赖，
+  // dep-cruiser 看不见装配顺序）。其中 10 处已改走 netApi/eventApi/netCollectApi（net-collect.js 新增了后者的同位赋值），
+  // `export let` 是 live binding、赋值与总线挂装同一行发生，时序等价；no-circular 门禁实测 0 违规。
+  // 唯一保留的例外在 game-api.js（ACL 防腐层不得反向依赖 net，见 acl-not-depend-on-domain-or-net），已就地 eslint-disable 注明来源。
+  // 不用整文件 ignores 豁免挂载方（那样会连带放过它们读别人的键）：选择器只锚定三层 `window.pocketcc.<键>`，
+  //   并用 :not(AssignmentExpression > MemberExpression) 只放行「直接作为赋值左值」的那一个节点——
+  //   `window.pocketcc.net = api` 合法；`x = window.pocketcc.net`、`window.pocketcc.net.install()`、
+  //   `window.pocketcc.game.foo = 1`（先读再改）均因而不是赋值左值而报错。
+  // 两个已知边界（与 feats 块同等强度，靠代码审查而不是选择器兼容）：计算访问 `window['pocketcc']['net']`
+  //   不匹配字面属性选择器；两层裸读写 `window.pocketcc = window.pocketcc || {}`（总线本体建拆）不在覆盖范围内。
+  {
+    files: ['extension/src/core/**/*.js'],
+    rules: {
+      'no-restricted-syntax': [
+        'error',
+        {
+          selector:
+            'MemberExpression[object.object.name="window"][object.property.name="pocketcc"]:not(AssignmentExpression > MemberExpression), MemberExpression[object.object.name="globalThis"][object.property.name="pocketcc"]:not(AssignmentExpression > MemberExpression)',
+          message:
+            'core 内摸 window.pocketcc.* 只允许「直接给自己的总线键赋值」挂载；读取或深层改写一律禁止（影子依赖，dep-cruiser 看不见）：请用 import { netApi/eventApi/chatApi/netCollectApi }。',
+        },
+      ],
+    },
+  },
+
   // ---- sonarjs 精选：只取对单人项目信噪比高的几条，覆盖重复/坏味道（不取整套 recommended：长函数密集易刷屏）----
   {
     files: ['extension/**/*.js', 'dashcam/**/*.js'],

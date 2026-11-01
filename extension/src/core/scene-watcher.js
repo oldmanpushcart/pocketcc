@@ -17,6 +17,7 @@ import { bus } from './bus.js';
 import { reactor } from './reactor.js';
 import { worldSignals } from './game-api.js';
 import { worldState } from './world-state.js';
+import { eventApi } from './event.js';
 
 /** @type {ReturnType<createLog>} 模块日志器（tag=SCENE） */
 const log = createLog('SCENE');
@@ -55,7 +56,7 @@ function onLaunch() {
  * 实际失败概率极低），失败即退化为纯轮询并记一次 warn。
  */
 function subscribeGameEvents() {
-  const event = window.pocketcc && window.pocketcc.event;
+  const event = eventApi;
   if (!event || !event.install()) {
     log.warn('event base unavailable, world state falls back to %dms polling', POLL_MS);
     return;

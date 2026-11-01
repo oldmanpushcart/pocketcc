@@ -17,6 +17,7 @@
 import { createLog } from './log.js';
 import { bus } from './bus.js';
 import { gameData } from './game-api.js';
+import { netApi } from './net.js';
 import { parseData } from './util.js';
 
 /** @type {ReturnType<createLog>} 模块日志器（tag=MARCH） */
@@ -62,9 +63,9 @@ const STATE_NAME = {
 /** @type {number} 非服务器返回的哨兵 code：发送异常/在途闸门未放开时用（收编各 feat 行军处 CODE_NOT_SENT） */
 const NOT_SENT = -1;
 
-/** @returns {object|undefined} pocketcc.net 底座（懒取，install 时机可能早于底座安装） */
+/** @returns {object|undefined} pocketcc.net 底座（懒取 netApi，install 时机可能早于底座安装） */
 function net() {
-  return window.pocketcc && window.pocketcc.net;
+  return netApi || undefined;
 }
 
 /** 应答 data 归一的 parse 兜底已上收 core/util.js（单一真相），本模块经文件头 import { parseData }。 */

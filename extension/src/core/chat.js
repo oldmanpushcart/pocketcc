@@ -19,6 +19,7 @@
 import { createLog } from './log.js';
 import { game } from './game.js';
 import { getUid } from './player.js';
+import { netApi } from './net.js';
 
 /**
  * chat 底座具名导出（供 reactor/feat 走 ESM import，替代 window.pocketcc.chat 全局摸取）。
@@ -401,7 +402,7 @@ export let chatApi = null;
    * @returns {Promise<net.Ret>} 主协议应答（ret.ok && JSON.parse(ret.data).success===1 才是发送成功）
    */
   function send(text, opts) {
-    var net = window.pocketcc && window.pocketcc.net;
+    var net = netApi;
     if (!net) return Promise.reject(new Error('chat.send: pocketcc.net unavailable.'));
     if (typeof text !== 'string' || !text)
       return Promise.reject(new Error('chat.send: empty text.'));
@@ -770,7 +771,7 @@ export let chatApi = null;
    */
   function systemMessages(opts) {
     opts = opts || {};
-    var net = window.pocketcc && window.pocketcc.net;
+    var net = netApi;
     if (!net) return Promise.reject(new Error('chat.systemMessages: pocketcc.net unavailable.'));
     var cmd = resolveSysCmd();
     if (net.isSending(cmd)) return Promise.resolve([]); // 在途去重闸门（同游戏）
