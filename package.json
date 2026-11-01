@@ -12,6 +12,7 @@
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
     "arch": "depcruise extension/src --config .dependency-cruiser.cjs",
+    "test": "node --test",
     "format": "prettier --write \"**/*.{js,mjs,cjs,json}\"",
     "format:check": "prettier --check \"**/*.{js,mjs,cjs,json}\""
   },

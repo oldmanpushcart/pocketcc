@@ -37,6 +37,36 @@ module.exports = {
       from: { path: '^extension/src/' },
       to: { dependencyTypes: ['npm', 'npm-no-pkg', 'npm-unknown'] },
     },
+    // ── 以下为 core 内部逻辑分层（把文件头注释里的边界约定升级为可执行闸门，当前基线均已成立）──
+    {
+      name: 'ui-only-boot-and-self',
+      severity: 'error',
+      comment:
+        '面板 UI 框架（core/ui/）只由 boot.js 装配、仅 ui 目录内部互引；玩法不得 import core/ui（各自 overlay 自带样式）',
+      from: {
+        path: '^extension/src/',
+        pathNot: ['^extension/src/core/ui/', '^extension/src/boot.js'],
+      },
+      to: { path: '^extension/src/core/ui/' },
+    },
+    {
+      name: 'acl-not-depend-on-domain-or-net',
+      severity: 'error',
+      comment:
+        'ACL 防腐层 core/game-api.js 只向下解游戏符号，不得反向依赖领域/网络模块（march/battle/map/defense/item/world-state/net/chat）',
+      from: { path: '^extension/src/core/game-api.js$' },
+      to: {
+        path: '^extension/src/core/(march|battle|map|defense|item|world-state|chat|net|net-.*)\\.js$',
+      },
+    },
+    {
+      name: 'schedule-primitives-thin',
+      severity: 'error',
+      comment:
+        '调度原语 cycle.js/drain.js 保持薄契约：除 log.js 外不得依赖其它 core 模块（退避/冷却/DSL 一律留给调用方）',
+      from: { path: '^extension/src/core/(cycle|drain)\\.js$' },
+      to: { path: '^extension/src/core/', pathNot: ['^extension/src/core/log\\.js$'] },
+    },
   ],
   options: {
     // 纯 JS 工程零运行期依赖：不进 node_modules，只解 src 内 import 图

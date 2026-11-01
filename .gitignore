@@ -10,10 +10,12 @@ ref_probe.mjs
 .qoder/
 nul
 .jscpd/
+.reviewtmp/
 
 # 逆向第三方产物：可由游戏包再生、体积大，不入库（保留同目录下的 authored 分析 md）
 references/游戏逆向/raw/
 references/游戏逆向/extracted/
+references/游戏逆向/vibe_images/
 
 # 竞对逆向：第三方脚本反混淆产物，仅供本地分析，不入公开仓库
 references/竞对逆向/

@@ -73,6 +73,8 @@ const common = {
     __LICENSE_SALT__: JSON.stringify(licSalt),
     __LICENSE_FRIEND__: JSON.stringify(licFriend || ''),
     __PCC_VERSION__: JSON.stringify(pkg.version),
+    // dev 专属调试探针闸门（core/devtools.js）：非 release=true 保留，release=false 配合 minify 死代码消除。
+    __DEVTOOLS__: JSON.stringify(!release),
   },
 };
 
@@ -93,6 +95,11 @@ const builds = [
     entryPoints: ['extension/src/background.js'],
     outfile: 'extension/dist/background.js',
   },
+  {
+    ...common,
+    entryPoints: ['extension/src/popup.js'],
+    outfile: 'extension/dist/popup.js',
+  },
 ];
 
 if (watch) {
@@ -101,6 +108,14 @@ if (watch) {
   console.log('[esbuild] watching... (Ctrl+C to stop)');
 } else {
   await Promise.all(builds.map((b) => esbuild.build(b)));
+  // popup.html 是静态资源（manifest action 指向 dist/popup.html），esbuild 不处理 HTML，构建时原样拷入 dist。
+  {
+    const { copyFile } = await import('node:fs/promises');
+    await copyFile(
+      new URL('./extension/src/popup.html', import.meta.url),
+      new URL('./extension/dist/popup.html', import.meta.url),
+    );
+  }
   // 授权包元信息 sidecar（仅 release）：供 scripts/obfuscate-release.mjs 判定是否二次混淆（licensed 标记）、
   // scripts/package-friend.mjs 取昵称组装分发目录；由 obfuscate 阶段消费后删除。
   // 不含 UID 明文/哈希；非 release 不产出（旧残留先删）。

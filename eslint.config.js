@@ -10,9 +10,15 @@ export default [
       'extension/dist/**',
       'release/**',
       'dashcam/store/**',
-      'warroom/data/**',
       'references/**',
       '.qoder/**',
+      // 非交付物、独立工程边界，从产品门禁中显式排除（降噪，与 .prettierignore 对齐）：
+      //   tools/          —— 粘贴到 DevTools 控制台执行的一次性逆向探针脚本，不入扩展产物；
+      //   warroom/        —— 独立 Node 分析子工程（自带 package.json + node_modules），各有工具链；
+      //   .reviewtmp/     —— 本地评审/迁移草稿目录（已 .gitignore），内容多为产物快照与一次性脚本。
+      'tools/**',
+      'warroom/**',
+      '.reviewtmp/**',
     ],
   },
   js.configs.recommended,
@@ -51,6 +57,8 @@ export default [
         __LICENSE_SALT__: 'readonly',
         __LICENSE_FRIEND__: 'readonly',
         __PCC_VERSION__: 'readonly',
+        // dev 调试探针编译期闸门（content.entry.js 引用，release 构建为 false）
+        __DEVTOOLS__: 'readonly',
       },
     },
     rules: {
@@ -59,9 +67,9 @@ export default [
     },
   },
 
-  // ---- Node 侧：dashcam / warroom 服务（ESM）与构建脚本 ----
+  // ---- Node 侧：dashcam 服务（ESM）与构建脚本 ----
   {
-    files: ['dashcam/**/*.js', 'warroom/**/*.js', 'esbuild.config.mjs', 'scripts/**/*.mjs'],
+    files: ['dashcam/**/*.js', 'esbuild.config.mjs', 'scripts/**/*.mjs'],
     languageOptions: {
       ecmaVersion: 2024,
       sourceType: 'module',
@@ -69,9 +77,27 @@ export default [
     },
   },
 
+  // ---- 玩法层架构红线：禁止直接摸 window.pocketcc.*（绕过 dependency-cruiser 依赖图的影子总线）----
+  // net/event/chat 一律走 reactor ctx（ctx.net/ctx.event/ctx.chat）或 import { netApi/chatApi } from core；
+  // 其余跨玩法能力下沉 core。window.pocketccAntiThrottle 是另一个全局（反节流句柄），属性名不同故不受限。
+  {
+    files: ['extension/src/feats/**/*.js'],
+    rules: {
+      'no-restricted-syntax': [
+        'error',
+        {
+          selector:
+            'MemberExpression[object.name="window"][property.name="pocketcc"], MemberExpression[object.name="globalThis"][property.name="pocketcc"]',
+          message:
+            '玩法层禁止直接摸 window.pocketcc.*（影子依赖，dep-cruiser 看不见）：net/event/chat 走 reactor ctx 或 import { netApi/eventApi/chatApi } from core，其余能力下沉 core。',
+        },
+      ],
+    },
+  },
+
   // ---- sonarjs 精选：只取对单人项目信噪比高的几条，覆盖重复/坏味道（不取整套 recommended：长函数密集易刷屏）----
   {
-    files: ['extension/**/*.js', 'dashcam/**/*.js', 'warroom/**/*.js'],
+    files: ['extension/**/*.js', 'dashcam/**/*.js'],
     plugins: { sonarjs },
     rules: {
       'sonarjs/no-identical-functions': 'warn', // 函数体相同→该抽公共
@@ -91,18 +117,13 @@ export default [
     },
   },
 
-  // ---- tools：粘贴到 DevTools 控制台执行的探针脚本，运行于页面 MAIN world ----
+  // ---- tests：node:test 单测（驱动 extension/src 纯逻辑原语），跑在 Node ESM 环境 ----
   {
-    files: ['tools/**/*.js'],
+    files: ['tests/**/*.js'],
     languageOptions: {
       ecmaVersion: 2024,
-      sourceType: 'script',
-      globals: {
-        ...globals.browser,
-        __require: 'readonly',
-        cc: 'readonly',
-        CryptoJS: 'readonly',
-      },
+      sourceType: 'module',
+      globals: { ...globals.node },
     },
   },
 

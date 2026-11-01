@@ -1,0 +1,225 @@
+<!doctype html>
+<html lang="zh-CN">
+
+<head>
+    <meta charset="utf-8" />
+    <title>口袋控制中心 · 凭证</title>
+    <style>
+        /* 视觉与面板同源（core/ui/panel-css.js）：中性白半透明描边 + #e8eef7 正文 + #cfe8ff 标题 + 蓝色高亮，
+         底承 welcome 的深色渐变。不复用 PANEL_CSS（那是 Shadow DOM 内的 .pc-* 类，popup 是独立文档）。 */
+        :root {
+            --fg: #e8eef7;
+            --head: #cfe8ff;
+            --accent: #9ecbff;
+            --muted: #9fb4cc;
+            --line: rgba(255, 255, 255, 0.12);
+            --line-strong: rgba(255, 255, 255, 0.2);
+            --fill: rgba(255, 255, 255, 0.06);
+            --focus: rgba(120, 180, 255, 0.55);
+            --err: #ff8a8a;
+        }
+
+        body {
+            width: 360px;
+            margin: 0;
+            padding: 14px;
+            box-sizing: border-box;
+            background: linear-gradient(160deg, #1c2433, #12161f);
+            color: var(--fg);
+            font:
+                13px/1.6 system-ui,
+                -apple-system,
+                'Segoe UI',
+                'Microsoft YaHei UI',
+                'Microsoft YaHei',
+                'PingFang SC',
+                'Noto Sans SC',
+                sans-serif;
+            -webkit-font-smoothing: antialiased;
+        }
+
+        .head {
+            font-size: 14px;
+            font-weight: 600;
+            letter-spacing: 0.5px;
+            color: var(--head);
+            margin-bottom: 8px;
+        }
+
+        .head .sub {
+            margin-left: 8px;
+            font-size: 10px;
+            font-weight: 400;
+            opacity: 0.6;
+            letter-spacing: 1.5px;
+        }
+
+        /* 状态行：与面板 .pc-world 胶囊同款底/描边，只换圆角为方卡 */
+        .status {
+            font-size: 12px;
+            line-height: 1.55;
+            color: #bfe3ff;
+            background: rgba(70, 140, 220, 0.12);
+            border: 1px solid rgba(120, 190, 255, 0.28);
+            border-radius: 8px;
+            padding: 7px 10px;
+            margin-bottom: 10px;
+            word-break: break-all;
+        }
+
+        .status.warn {
+            color: #ffd0b8;
+            background: rgba(255, 120, 60, 0.14);
+            border-color: rgba(255, 150, 90, 0.42);
+        }
+
+        .sec {
+            border-top: 1px dashed rgba(255, 255, 255, 0.14);
+            padding-top: 9px;
+            margin-bottom: 10px;
+        }
+
+        .sec-title {
+            font-size: 12px;
+            font-weight: 600;
+            color: var(--head);
+            letter-spacing: 0.5px;
+            margin-bottom: 4px;
+        }
+
+        .hint {
+            font-size: 11px;
+            line-height: 1.5;
+            color: var(--muted);
+            opacity: 0.9;
+            margin: 0 0 2px;
+        }
+
+        .row {
+            display: flex;
+            gap: 8px;
+            margin-top: 8px;
+        }
+
+        /* 按钮沿用面板 .pc-btn 观感：白半透明描边 + 半透明填充，主操作加一层蓝底提示 */
+        button {
+            flex: 1;
+            padding: 6px 10px;
+            border-radius: 8px;
+            cursor: pointer;
+            font: inherit;
+            font-size: 12px;
+            color: var(--fg);
+            border: 1px solid var(--line-strong);
+            background: rgba(255, 255, 255, 0.08);
+            transition:
+                background 0.15s,
+                border-color 0.15s;
+        }
+
+        button:hover {
+            background: rgba(255, 255, 255, 0.16);
+        }
+
+        button.primary {
+            border-color: rgba(120, 190, 255, 0.35);
+            background: rgba(70, 140, 255, 0.24);
+            color: #dbeaff;
+            font-weight: 600;
+        }
+
+        button.primary:hover {
+            background: rgba(70, 140, 255, 0.36);
+        }
+
+        textarea {
+            width: 100%;
+            box-sizing: border-box;
+            height: 68px;
+            margin-top: 8px;
+            resize: vertical;
+            padding: 5px 7px;
+            border-radius: 6px;
+            font:
+                11px/1.5 Consolas,
+                'Courier New',
+                monospace;
+            color: var(--fg);
+            border: 1px solid rgba(255, 255, 255, 0.14);
+            background: var(--fill);
+            word-break: break-all;
+        }
+
+        textarea:focus {
+            outline: none;
+            border-color: var(--focus);
+            background: rgba(120, 180, 255, 0.1);
+        }
+
+        textarea::placeholder {
+            color: #cfe3ff;
+            opacity: 0.55;
+        }
+
+        .result {
+            margin-top: 8px;
+            font-size: 12px;
+            line-height: 1.5;
+            white-space: pre-wrap;
+            word-break: break-all;
+        }
+
+        .result:empty {
+            display: none;
+        }
+
+        .result.ok {
+            color: var(--accent);
+        }
+
+        .result.err {
+            color: var(--err);
+        }
+
+        .foot {
+            margin-top: 10px;
+            font-size: 11px;
+            opacity: 0.45;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="head">登录凭证<span class="sub">导入 / 导出</span></div>
+    <div class="status" id="status">正在探测游戏页…</div>
+
+    <div class="sec">
+        <div class="sec-title">导出</div>
+        <div class="hint">把游戏页 localStorage 里的登录 token 存成本地 JSON 文件，全程零外发。</div>
+        <div class="row">
+            <button id="btn-export-file" class="primary">导出为文件</button>
+            <button id="btn-export-copy">复制到剪贴板</button>
+        </div>
+    </div>
+
+    <div class="sec">
+        <div class="sec-title">导入</div>
+        <div class="hint">
+            选择凭证文件，或把 JSON 粘贴到下框。写入成功后自动刷新游戏页，由免扫码链路重放登录。
+        </div>
+        <div class="row">
+            <button id="btn-import-file">选择文件…</button>
+        </div>
+        <textarea id="paste" placeholder='{"topwar_app_serverToken":"…"}' spellcheck="false"></textarea>
+        <div class="row">
+            <button id="btn-import-paste" class="primary">导入粘贴内容</button>
+        </div>
+        <div class="result" id="result"></div>
+    </div>
+
+    <div class="foot" id="foot"></div>
+    <!-- popup.html 与 popup.js 同在 dist/ 下：此处必须是同级相对路径（写成 dist/popup.js 会变成 dist/dist/… → 404，整页无脚本＝按钮全哑） -->
+    <script src="popup.js"></script>
+</body>
+
+</html>

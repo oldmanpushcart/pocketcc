@@ -1,7 +1,9 @@
 node_modules/
 extension/dist/
 dashcam/store/
-warroom/data/
+warroom/
 references/
+tools/
+report_sample.json
 package-lock.json
 *.log
