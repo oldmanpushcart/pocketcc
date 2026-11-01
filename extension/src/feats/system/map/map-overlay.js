@@ -18,6 +18,7 @@ import { createLog } from '../../../core/log.js';
 import { MapView } from './render.js';
 import { CITY_POINT_TYPE, shieldText, fmtLargeNum } from '../../../core/map.js';
 import { FILTER_TREE, SUB_MAP } from './map-meta.js';
+import { OverlayShell, clampGeom as overlayClamp } from '../../../core/overlay.js';
 
 /** @type {ReturnType<createLog>} 模块日志器（tag=MAPOVERLAY） */
 const log = createLog('MAPOVERLAY');
@@ -181,21 +182,8 @@ function coordText(it) {
   return x + ',' + y;
 }
 
-/**
- * 视口宽松钳制（同聊天浮层）：宽高钳到 [min, 视口]，坐标只保证露出 60×40px。
- * @param {{x:number,y:number,w:number,h:number}} g
- * @returns {{x:number,y:number,w:number,h:number}}
- */
-function clampGeom(g) {
-  const w = Math.max(MIN_W, Math.min(g.w, window.innerWidth));
-  const h = Math.max(MIN_H, Math.min(g.h, window.innerHeight));
-  return {
-    w,
-    h,
-    x: Math.max(0, Math.min(g.x, window.innerWidth - Math.min(w, 60))),
-    y: Math.max(0, Math.min(g.y, window.innerHeight - Math.min(h, 40))),
-  };
-}
+// 视口内几何钳制算法已上收 core/overlay.js（单一真相）；此处按本浮窗尺寸下限绑定为局部便捷名，保留既有调用点不变。
+const clampGeom = (g) => overlayClamp(g, MIN_W, MIN_H);
 
 /** 大类代表色（chip 色点用）：取该类首个细分类的色 */
 const CAT_COLOR = (() => {
@@ -204,15 +192,21 @@ const CAT_COLOR = (() => {
   return m;
 })();
 
-export class MapOverlay {
+export class MapOverlay extends OverlayShell {
   /** @param {object} handlers 回调面（见文件头注释） */
   constructor(handlers) {
-    this._h = handlers || {};
-    this._geom = clampGeom({
-      x: Math.max(0, (window.innerWidth - DEFAULT_W) / 2),
-      y: 40,
-      w: DEFAULT_W,
-      h: DEFAULT_H,
+    super(handlers, {
+      geom: {
+        x: Math.max(0, (window.innerWidth - DEFAULT_W) / 2),
+        y: 40,
+        w: DEFAULT_W,
+        h: DEFAULT_H,
+      },
+      minW: MIN_W,
+      minH: MIN_H,
+      log,
+      closeSel: '.pcg-close',
+      barSel: '.pcg-titlebar',
     });
     /** @type {string[]} 选中的细分类 key（默认全选，业务层会用 setSubs 回填） */
     this._subs = Object.keys(SUB_MAP);
@@ -222,21 +216,13 @@ export class MapOverlay {
     this._owner = 'all';
     /** @type {?string} 当前展开 POP 的大类 key（null=无） */
     this._openCat = null;
-    this._host = null;
-    this._root = null;
-    this._win = null;
     this._body = null;
     this._canvas = null;
     this._wrap = null;
     this._srvBadge = null;
     /** @type {MapView|null} */
     this.view = null;
-    this._toastTimer = null;
     this._ro = null;
-    /** @type {?Function} 视口 resize 监听（右上锚定重摆，unmount 时移除） */
-    this._resizeHandler = null;
-    /** @type {?number} resize 防抖定时器 */
-    this._resizeTimer = null;
     /** @type {boolean} 右侧坐标列表是否展开（常驻开，已无收起按钮） */
     this._listOpen = true;
     /** @type {Array<object>} 列表当前数据（业务层推入，已按图例过滤、新→旧） */
@@ -259,14 +245,6 @@ export class MapOverlay {
    */
   mount(store, size) {
     if (this._host) return;
-    const host = document.createElement('div');
-    host.id = 'pocketcc-map-host';
-    host.style.cssText = 'all:initial;';
-    const root = host.attachShadow({ mode: 'open' });
-    const style = document.createElement('style');
-    style.textContent = CSS;
-    root.appendChild(style);
-
     const inS = (k) => this._subs.indexOf(k) >= 0;
     const catsHtml = FILTER_TREE.map((cat) => {
       const anyOn = cat.subs.some((s) => inS(s.key));
@@ -317,38 +295,35 @@ export class MapOverlay {
       `<input class="pcg-level-num" type="number" min="0" max="100" step="1" placeholder="不限"></span>` +
       `</div>`;
 
-    const win = document.createElement('div');
-    win.className = 'pcg-win';
-    win.innerHTML =
-      `<div class="pcg-head">` +
-      `<div class="pcg-titlebar"><span class="pcg-grip">⠿</span><span class="pcg-title">全局地图</span>` +
-      `<span class="pcg-srvbadge" hidden></span><span class="pcg-tspacer"></span>` +
-      `<button class="pcg-close" title="关闭">✕</button></div>` +
-      `<div class="pcg-bar">` +
-      `<button class="pcg-btn primary act-scan">开始扫描</button>` +
-      `<button class="pcg-btn warn act-stop" hidden>停止扫描</button>` +
-      `<button class="pcg-btn act-fit">复位</button>` +
-      `<button class="pcg-btn act-zin">＋</button>` +
-      `<button class="pcg-btn act-zout">－</button>` +
-      `<button class="pcg-btn act-grid" title="切换坐标网格">网格</button>` +
-      `<button class="pcg-btn act-clear" title="清空本区已扫点位（含持久数据，不动其他区）">清空</button>` +
-      `<span class="pcg-prog"><span class="pcg-text">未扫描</span><span class="pcg-track"><span class="pcg-fill"></span></span></span>` +
-      `</div>` +
-      `<div class="pcg-legend">${legend}</div>` +
-      shield +
-      `</div>` +
-      `<div class="pcg-body"><div class="pcg-cwrap"><canvas class="pcg-canvas"></canvas><div class="pcg-status" hidden></div><div class="pcg-toast"></div></div>` +
-      `<div class="pcg-list"${this._listOpen ? '' : ' hidden'}><input class="pcg-lsearch" type="text" placeholder="搜索坐标/名称/类型">` +
-      `<div class="pcg-lcount"></div><div class="pcg-lrows"></div></div></div>` +
-      `<div class="pcg-rz" data-dir="l"></div><div class="pcg-rz" data-dir="r"></div>` +
-      `<div class="pcg-rz" data-dir="b"></div><div class="pcg-rz" data-dir="bl"></div>` +
-      `<div class="pcg-rz" data-dir="br"></div>`;
-    root.appendChild(win);
-    document.body.appendChild(host);
-
-    this._host = host;
-    this._root = root;
-    this._win = win;
+    const win = this._mountWindow({
+      hostId: 'pocketcc-map-host',
+      css: CSS,
+      winClass: 'pcg-win',
+      innerHTML:
+        `<div class="pcg-head">` +
+        `<div class="pcg-titlebar"><span class="pcg-grip">⠿</span><span class="pcg-title">全局地图</span>` +
+        `<span class="pcg-srvbadge" hidden></span><span class="pcg-tspacer"></span>` +
+        `<button class="pcg-close" title="关闭">✕</button></div>` +
+        `<div class="pcg-bar">` +
+        `<button class="pcg-btn primary act-scan">开始扫描</button>` +
+        `<button class="pcg-btn warn act-stop" hidden>停止扫描</button>` +
+        `<button class="pcg-btn act-fit">复位</button>` +
+        `<button class="pcg-btn act-zin">＋</button>` +
+        `<button class="pcg-btn act-zout">－</button>` +
+        `<button class="pcg-btn act-grid" title="切换坐标网格">网格</button>` +
+        `<button class="pcg-btn act-clear" title="清空本区已扫点位（含持久数据，不动其他区）">清空</button>` +
+        `<span class="pcg-prog"><span class="pcg-text">未扫描</span><span class="pcg-track"><span class="pcg-fill"></span></span></span>` +
+        `</div>` +
+        `<div class="pcg-legend">${legend}</div>` +
+        shield +
+        `</div>` +
+        `<div class="pcg-body"><div class="pcg-cwrap"><canvas class="pcg-canvas"></canvas><div class="pcg-status" hidden></div><div class="pcg-toast"></div></div>` +
+        `<div class="pcg-list"${this._listOpen ? '' : ' hidden'}><input class="pcg-lsearch" type="text" placeholder="搜索坐标/名称/类型">` +
+        `<div class="pcg-lcount"></div><div class="pcg-lrows"></div></div></div>` +
+        `<div class="pcg-rz" data-dir="l"></div><div class="pcg-rz" data-dir="r"></div>` +
+        `<div class="pcg-rz" data-dir="b"></div><div class="pcg-rz" data-dir="bl"></div>` +
+        `<div class="pcg-rz" data-dir="br"></div>`,
+    }).win;
     this._body = win.querySelector('.pcg-body');
     this._canvas = win.querySelector('.pcg-canvas');
     this._wrap = win.querySelector('.pcg-cwrap');
@@ -391,25 +366,8 @@ export class MapOverlay {
       });
       this._ro.observe(this._body);
     }
-    // 视口变化（窗口缩放/F11 全屏等）：右上锚定——保持与视口右/上两边的距离，
-    // 宽度变化时按旧右距重算 x（面板跟右缘走），y 不变；与聊天浮层/悬浮图标一致
-    let lastVW = window.innerWidth;
-    this._resizeHandler = () => {
-      if (this._resizeTimer) clearTimeout(this._resizeTimer);
-      this._resizeTimer = setTimeout(() => {
-        this._resizeTimer = null;
-        if (!this._win) return;
-        const nvw = window.innerWidth;
-        const g = this._geom;
-        const dispW = Math.min(g.w, lastVW); // 旧视口下的显示宽
-        const rightGap = lastVW - (g.x + dispW); // 面板右缘到旧视口右边距
-        this._geom = clampGeom({ x: nvw - rightGap - Math.min(g.w, nvw), y: g.y, w: g.w, h: g.h });
-        lastVW = nvw;
-        this._applyGeom();
-        this._notify('onGeomChange', this.getGeom()); // x 语义已随视口平移，同步存档
-      }, 120);
-    };
-    window.addEventListener('resize', this._resizeHandler);
+    // 视口变化（窗口缩放/F11 全屏等）：右上锚定重摆，逻辑上收 core/overlay.js
+    this._wireResizeAnchor();
     win.hidden = true;
   }
 
@@ -423,33 +381,9 @@ export class MapOverlay {
     if (w > 0 && h > 0) this.view.resize(w, h);
   }
 
-  /** 显示 */
-  show() {
-    if (!this._win) return;
-    if (this._win.hidden) {
-      this._win.hidden = false;
-      this._syncCanvas();
-      this._notify('onVisibleChange', true);
-    }
-  }
-
-  /** 隐藏（仅停显示，渲染循环/订阅由业务层管） */
-  hide() {
-    if (this._win && !this._win.hidden) {
-      this._win.hidden = true;
-      this._notify('onVisibleChange', false);
-    }
-  }
-
-  /** 切换显隐 */
-  toggle() {
-    if (this._win && this._win.hidden) this.show();
-    else this.hide();
-  }
-
-  /** @returns {boolean} 是否可见 */
-  isVisible() {
-    return !!(this._win && !this._win.hidden);
+  /** 显示前同步画布尺寸（覆写基类钩子；基类 show 会在通知 onVisibleChange 之前调本钩子）。 */
+  _afterShow() {
+    this._syncCanvas();
   }
 
   /**
@@ -524,14 +458,7 @@ export class MapOverlay {
     this._srvBadge.textContent = '区 ' + k;
   }
 
-  /** toast 小提示 */
-  toast(msg) {
-    if (!this._toast) return;
-    this._toast.textContent = msg;
-    this._toast.classList.add('show');
-    if (this._toastTimer) clearTimeout(this._toastTimer);
-    this._toastTimer = setTimeout(() => this._toast.classList.remove('show'), 2200);
-  }
+  /** toast 已上收基类 OverlayShell（this._toast 于 mount 里赋值，时长口径一致）。 */
 
   /** @returns {boolean} 列表是否展开（坐标列表已常驻，恒 true） */
   isListOpen() {
@@ -610,41 +537,16 @@ export class MapOverlay {
         : '');
   }
 
-  /** 恢复几何（读档） */
-  setGeom(g) {
-    if (!g) return;
-    this._geom = clampGeom({
-      x: g.x != null ? g.x : this._geom.x,
-      y: g.y != null ? g.y : this._geom.y,
-      w: g.w != null ? g.w : this._geom.w,
-      h: g.h != null ? g.h : this._geom.h,
-    });
-    this._applyGeom();
+  /** setGeom（读档）应用后同步画布（基类钩子）；getGeom 已上收基类 OverlayShell。 */
+  _afterGeom() {
     this._syncCanvas();
   }
 
-  /** @returns {{x:number,y:number,w:number,h:number}} 当前几何拷贝 */
-  getGeom() {
-    return Object.assign({}, this._geom);
-  }
-
-  /** 卸载浮层 */
-  unmount() {
-    if (this._toastTimer) {
-      clearTimeout(this._toastTimer);
-      this._toastTimer = null;
-    }
+  /** 释放本浮窗私货：搜索防抖定时器、MapView、ResizeObserver（公共定时器/监听/host 由基类 unmount 收尾）。 */
+  _teardownExtras() {
     if (this._listTimer) {
       clearTimeout(this._listTimer);
       this._listTimer = null;
-    }
-    if (this._resizeTimer) {
-      clearTimeout(this._resizeTimer);
-      this._resizeTimer = null;
-    }
-    if (this._resizeHandler) {
-      window.removeEventListener('resize', this._resizeHandler);
-      this._resizeHandler = null;
     }
     if (this.view) {
       this.view.destroy();
@@ -654,80 +556,11 @@ export class MapOverlay {
       this._ro.disconnect();
       this._ro = null;
     }
-    if (this._host) {
-      this._host.remove();
-      this._host = null;
-      this._root = null;
-      this._win = null;
-    }
   }
 
   // ─────────────────────── 内部接线 ───────────────────────
 
-  _applyGeom() {
-    if (!this._win) return;
-    const g = clampGeom(this._geom);
-    const s = this._win.style;
-    s.left = g.x + 'px';
-    s.top = g.y + 'px';
-    s.width = g.w + 'px';
-    s.height = g.h + 'px';
-  }
-
-  /** 屏蔽游戏输入：浮层内指针/键盘/滚轮冒泡到 win 即止 */
-  _wireBlockGameEvents() {
-    const stop = (e) => e.stopPropagation();
-    for (const t of [
-      'pointerdown',
-      'pointerup',
-      'pointermove',
-      'mousedown',
-      'mouseup',
-      'click',
-      'dblclick',
-      'wheel',
-      'keydown',
-      'keyup',
-      'keypress',
-      'touchstart',
-      'touchend',
-      'contextmenu',
-    ]) {
-      this._win.addEventListener(t, stop);
-    }
-  }
-
-  /** 标题栏拖拽 + 关闭 */
-  _wireHead() {
-    this._win.querySelector('.pcg-close').addEventListener('click', () => this.hide());
-    const bar = this._win.querySelector('.pcg-titlebar');
-    let drag = null;
-    bar.addEventListener('pointerdown', (e) => {
-      if (e.target.closest('.pcg-close')) return;
-      drag = { sx: e.clientX, sy: e.clientY, ox: this._geom.x, oy: this._geom.y };
-      bar.setPointerCapture(e.pointerId);
-    });
-    bar.addEventListener('pointermove', (e) => {
-      if (!drag) return;
-      this._geom = clampGeom({
-        x: drag.ox + e.clientX - drag.sx,
-        y: drag.oy + e.clientY - drag.sy,
-        w: this._geom.w,
-        h: this._geom.h,
-      });
-      this._applyGeom();
-    });
-    const end = (e) => {
-      if (!drag) return;
-      drag = null;
-      try {
-        bar.releasePointerCapture(e.pointerId);
-      } catch (err) {}
-      this._notify('onGeomChange', this.getGeom());
-    };
-    bar.addEventListener('pointerup', end);
-    bar.addEventListener('pointercancel', end);
-  }
+  // _applyGeom / _wireBlockGameEvents / _wireHead 已上收基类 OverlayShell（closeSel/barSel 经构造注入）。
 
   /** 工具栏：扫描/停止/复位/缩放 */
   _wireToolbar() {
@@ -1000,18 +833,5 @@ export class MapOverlay {
     });
   }
 
-  /**
-   * 回调面转发（异常吞掉，不冒泡到游戏）
-   * @param {string} name handlers 键
-   * @param {...*} args
-   * @returns {*}
-   */
-  _notify(name, ...args) {
-    try {
-      return this._h[name] ? this._h[name](...args) : undefined;
-    } catch (e) {
-      log.warn('handler %s threw: %s', name, e && e.message);
-      return undefined;
-    }
-  }
+  // _notify（回调派发）已上收基类 OverlayShell。
 }

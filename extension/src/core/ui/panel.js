@@ -240,7 +240,23 @@ export function refreshTexts(root) {
   root.querySelectorAll('.pc-fval').forEach((span) => {
     const f = findFeature(span.dataset.fid);
     if (!f) return;
-    const fd = f.fields.find((x) => x.key === span.dataset.fkey);
+    let fd = f.fields.find((x) => x.key === span.dataset.fkey);
+    if (!fd) {
+      // 行内只读格的 data-fkey ≠ 顶层 fd.key，需下探子描述符（同 wire.js 委托口径）：
+      //   rallygrid（联盟集结目标紧凑表）行内的计数格 r.count.key / ctrlrow（惧星集结一行多控件）的 cell.key
+      for (const x of f.fields) {
+        const sub =
+          x.type === 'rallygrid'
+            ? (x.rows || []).find((r) => r.count && r.count.key === span.dataset.fkey)?.count
+            : x.type === 'ctrlrow'
+              ? (x.cells || []).find((p) => p.key === span.dataset.fkey)
+              : null;
+        if (sub) {
+          fd = sub;
+          break;
+        }
+      }
+    }
     if (!fd) return;
     let next;
     if (span.dataset.hlstat != null) {
@@ -320,6 +336,7 @@ export function syncControls(panel) {
     box.innerHTML = mineRulesInnerHTML(configs[f.id][fd.key], fd, configs[f.id]);
   });
   // 下田规则：整块重刷内层（行可增删且行形状随田类型变，同 minerules）
+  // 注意：重刷会重建种类多选下拉的 DOM，展开态随之收起（只在配置补载后发生，可接受）
   panel.querySelectorAll('.pc-frule').forEach((box) => {
     const f = findFeature(box.dataset.id);
     if (!f) return;

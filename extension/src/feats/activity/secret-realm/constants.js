@@ -140,7 +140,9 @@ export const CMD_ATTACK_SELF_TEAM = 8549;
 export const CMD_CALL_HELP = 8551;
 /**
  * ENIGMA_SECRET_ROOM_REVIVE：战败复活（req `{uid}`，`ok===1` 后游戏 `jumpToTarget(roomBaseInfo.startPoint)`）。
- * 消费口在战败面板 PabWorldDefeatPanel（tips enigma_realm198 带 reviveNum+1）；本 feat 不代答（属越权），只登记。
+ * 消费口在战败面板 PabWorldDefeatPanel（tips enigma_realm198 带 reviveNum+1）。与竞品B同逻辑：本 feat 在自动驾驶下
+ *   代答一条 8552（判据 verbatim `deadType==1 && dataConfig(3056) > reviveNum`，见 pilot.js #maybeRevive），
+ *   受面板 `driveRevive` 子闸 + `driveReviveGapMs` 限速 + 上限读不到/为 0 一律不发 三重约束。
  * @type {number}
  */
 export const CMD_REVIVE = 8552;
@@ -313,11 +315,14 @@ export const PUSH_POINT_FIGHTING_INFO = 21523;
  * ENIGMA_SECRET_ROOM_RESOURCE_CHANGE：资源点 bag 变动下推（载荷带 `uid`/`playerInfo`）。
  * ⚠ 与 8526 RESOURCE_INFO 的口径差异已实证：**应答条目不带 uid，而本推送带**
  *   → 「谁已领过」只能从推送侧拿，INFO 侧必须自己记账（见 REJ_SAME_ITEM_ONCE 注）。
+ * 投递：`ctx.on.push(21522)`，业务体在 `ev.data.data`（PBV2 包装层 `{header,data}` 的内层，
+ *   与旧 EventCenter 事件 PabRoomResLibraryDataUpdate 的载荷是**同一对象引用**）。
  * @type {number}
  */
 export const PUSH_RESOURCE_CHANGE = 21522;
 /**
  * ENIGMA_SECRET_ROOM_DROP_CHANGE：掉落箱变动下推（载荷 `{x,y,dropInfo:[{dropId,info{itemId,itemCount},uid,hide}],beastGetNum,bagGetNum}`）。
+ * 投递：`ctx.on.push(21532)`，业务体同样在 `ev.data.data`（原事件 PabRoomRewardBoxDataUpdate）。
  * @type {number}
  */
 export const PUSH_DROP_CHANGE = 21532;
@@ -396,7 +401,12 @@ export const ST_PLANE_MARCH = 22;
 /**
  * @type {number} ST_BOSS_FEED：**大BOSS 死后进入拍宠物阶段**（WIPabBoss 的 feedNode 闸门：
  *   `state===23 && extData.fTeamIds.includes(roomBaseInfo.teamId.toString())`）。
- *   **源码侧证、报文未录**：四份录音里 boss9 只见 21→30，没有 23。
+ *   **报文实证 dashcam 20261101T200401**：旧注释说「本会话没有一条落到 23」仅对早期四份录音成立——本份
+ *   +2217.0s 大BOSS (203,203) 实测 `state 21→23` 与 push 21530 `{x:203,y:203,boss:1}` 同毫秒到达，窗内
+ *   10018 共刷 41 帧都维持 23，收窗时 21530 回 `{x:-1,y:-1}` 且 21535 推 state30。
+ *   → 该阶段**服务器不接受对该点的攻打行军**（8521 连吃 `common_159995`），且 21535 不在切换那一刻推
+ *   → 只能靠 10018 的瓦片 state 或 21530 的 capturingPetPos 识别（boss.js §④/§④-b 两条闸）。
+ *   早期四份录音里 boss9 只见 21→30（无 23）属未录到，不是该阶段不存在。
  */
 export const ST_BOSS_FEED = 23;
 /** @type {number} ST_BOSS_FIGHTING_END：BOSS 战斗结束 */
@@ -469,19 +479,21 @@ export const CFG_SHOP_REFRESH_COST = 3029;
 export const CFG_RES_BUILDING_NAME = 630002;
 /** @type {number} 点位 PVP 战斗时长串（dataConfig(3018)，verbatim WIPabResource.updateTileState 用它给瓦片 state 11/12 算倒计时） */
 export const CFG_PVP_FIGHT_TIME = 3018;
+/**
+ * 本场复活次数上限（dataConfig(3056)，verbatim 竞品B onPabRoomBaseInfoChange：
+ *   `deadType==1 && Number(getDataConfigData(3056)) > reviveNum` → 发 8552 REVIVE）。
+ * 读不到/为 0 → 一律不自动复活（闭开：宁可不复活，也不盲目消耗次数）。
+ * @type {number}
+ */
+export const CFG_REVIVE_LIMIT = 3056;
 
-// ─────────── EventCenter 事件名（EventId 值 == 成员名；net 应答/推送处理器全局 emit，载荷含 x,y 与完整数据）───────────
-/**
- * 掉落箱某点位数据刷新事件（载荷 {x,y,dropInfo,dropBeastInfo,bagGetNum,beastGetNum}）。
- * 游戏 PabRewardBoxNode 靠它按 x,y 匹配刷新面板；本 feat 订阅后仅对「当前到达点」发 GET，不做 INFO 扫描。
- * @type {string}
- */
-export const EVT_REWARD_BOX_UPDATE = 'PabRoomRewardBoxDataUpdate';
-/**
- * 资源/增益井某点位数据刷新事件（载荷 {x,y,bagInfo,buffInfo,bagGetNum,buffGetNum,refreshTime}）。
- * @type {string}
- */
-export const EVT_RES_LIBRARY_UPDATE = 'PabRoomResLibraryDataUpdate';
+// ─────────── 点位刷新推送的投递口径（已从 EventCenter 改为直连 net.push）───────────
+// 游戏侧对这两条推送只在 PushResponse 里做一次转译：
+//   ENIGMA_SECRET_ROOM_RESOURCE_CHANGE(21522).Handler → EVENT.emit(EventId.PabRoomResLibraryDataUpdate, o.data)
+//   ENIGMA_SECRET_ROOM_DROP_CHANGE(21532).Handler     → EVENT.emit(EventId.PabRoomRewardBoxDataUpdate, o.data)
+// 我们直连 `ctx.on.push`，拿到的包体与那条事件载荷是**同一对象引用**，故原 EVT_* 常量随迁移删除：
+//   21522 → PUSH_RESOURCE_CHANGE（= 原 PabRoomResLibraryDataUpdate）
+//   21532 → PUSH_DROP_CHANGE（= 原 PabRoomRewardBoxDataUpdate）
 
 // ─────────── 拍宠物动作与节奏（RealPabController / PetCaptureTouchNodeNew / PetCaptureDragNodeNew / PabPetFeedEventPopup verbatim）───────────
 /** @type {string} 投喂物/动作配置表名（TableName.enigma_beast_behave；行 id 即 BEAST_OPERATE 的 specId，字段 item/time/favor/bar_pers/pai_times） */
@@ -625,6 +637,32 @@ export const TABLE_EFFECT_BUFF = 'EFFECTBUFF';
  */
 export const TABLE_SHOP = 'enigma_secret_realm_shop';
 /**
+ * 秘境建筑表名（TableName.enigma_secret_realm_building）——**四个商店的权威坐标就存在这张表里**。
+ * 源码 verbatim 两处交叉证实：
+ *   • PabWorldUINew.initMiniMapBuildingItem：`getTableGroupArray(enigma_secret_realm_building)` 逐行
+ *     `if (3 !== t[o].build_type || t[o].group !== getPabGroupId()) continue;` → 用行里的坐标画小地图商店图标；
+ *   • 竞品B enigmaSecret.onPabRoomBaseInfoChange：
+ *     `getTableByKeyFromBuffer(enigma_secret_realm_building).filter(e => e.build_type == 3 && e.group == getPabGroupId())`
+ *     → `e.coords.split(',')` 得 (x,y)，灌进 `state.shops`。
+ * → 字段：`build_type`(3=商店) / `group`(房间分组) / `coords`("x,y" 字符串) / `map_zoom`(小地图图标)。
+ *   本表在线下发（`getTableGroupArray` 可枚），**离线无数据**，只能在秘境里读。
+ * @type {string}
+ */
+export const TABLE_BUILDING = 'enigma_secret_realm_building';
+/**
+ * 秘境回合表名（TableName.enigma_secret_realm_timer）：`realm roundid` → 回合开放时刻。
+ * 竞品用它算资源点「回合已开放」（`ServerTime > fightBegin/1000 + timer[realm[esrId].roundid].start`）。
+ * ⚠ 我方录音里 172/173 的 esrId 恒 15、无逐点差异，故 v3 **不拿它做闸**（拿它只会误拦），只留作诊断可读。
+ * @type {string}
+ */
+export const TABLE_TIMER = 'enigma_secret_realm_timer';
+/**
+ * 秘境主表名（TableName.enigma_secret_realm）：esrId → roundid / 区域归属，回合表的外键来源。
+ * 同上，v3 只读不闸。
+ * @type {string}
+ */
+export const TABLE_REALM = 'enigma_secret_realm';
+/**
  * 报文反出的商店经济映射（**只能反出用户买过的 3 项**，其余必须运行时读表）。
  * 反法：对每次 8542/8543 后的 21525 背包快照做差分（两份不同日期录音交叉验证）：
  *   • specId 19 → **41011 全素香肠**，单价 41009 扣 500/件（买 10 次 → 41011 +10、41009 −5000）；
@@ -655,6 +693,33 @@ export const SHOP_SPEC_ECONOMY = {
  * @type {number}
  */
 export const ITEM_SCOUT_TOOL = 41001;
+/**
+ * 全素香肠（投喂 BOSS 的道具，商店 specId 19 的产出，携带上限 10）。
+ * 竞品B 的固定购买规则之一就是「41011 < 10 才买」（`option.buy_sausage`），v3 拿它当「该去商店了」的信号。
+ * @type {number}
+ */
+export const ITEM_SAUSAGE = 41011;
+/**
+ * 急救绷带（竞品B `beastStage` 的补给判据之一：`setting.items[id==41002].num` 达标才算「备货够了，可以去拍百兽」）。
+ * @type {number}
+ */
+export const ITEM_BANDAGE = 41002;
+/**
+ * 全科医疗包（同上，竞品用 41003）。
+ * @type {number}
+ */
+export const ITEM_MEDKIT = 41003;
+/**
+ * 高品质线（enigma_beast.quality ≥ 本值算「拿得出手的宠」）：竞品B 的 `exitStage` 拿满判据
+ *   与 `judgeLeave` 择优带出共用同一个阈值（verbatim `quality >= 4`）。
+ * @type {number}
+ */
+export const QUALITY_HIGH = 4;
+/**
+ * 购买币（异能晶块）道具 id：8542/8543 的计价单位（dataConfig 3028 的 [0]）。
+ * @type {number}
+ */
+export const ITEM_BUY_CURRENCY = 41009;
 /**
  * 商店点位（用户口径「一共 4 个商店」，地图核对 verbatim：push 10018 里 `pointType===161` 的瓦片）。
  * 实测四项（dashcam 20261018T200040 + 发车会话，同一 `k=30911` 服务器）：
@@ -728,8 +793,14 @@ export const REJ_POINT_NOT_EXIST = 'enigma_realm159';
  */
 export const REJ_BATTLEFIELD_CLOSING = 'enigma_realm17';
 /**
- * param error（通用参数错，字典 verbatim）。**报文实证**：8521×1 / 8527×9 / 8538×4。
- * 形态与「载荷不完整/坐标越界」一致 → 属**我们的包形态问题**信号（不拉黑目标，但要打 info 供排查）。
+ * param error（通用参数错，字典 verbatim）。
+ * ⚠ **旧口径「属我们的包形态问题」已被 dashcam 20261101T200401 推翻**：该会话 9/9 命中全在 8521 MARCH_MOVE，
+ *   而它的 req 无论成功还是被拒都是同一副 `{x,y}` 两键（284 条逐键一致）→ 不是包形态，是**阶段态**：
+ *   8 连发生在大BOSS 投喂/拍宠窗（+2217.0s push 21530 `{x,y,boss:1}` 且瓦片 `state 21→23`，窗长 39.2s），
+ *   1 发发生在小BOSS 本体瓦片已 `pointType→0`（点消失）之后一秒。
+ *   旧记录里的 8527×9 / 8538×4 仍属载荷不完整/`pos` 语义未核（与攻打档不同源）。
+ * 处置：攻打侧短拉黑该坐标（`tuning.paramBlacklistMs`，见 boss.js #handleMarchReject），不烧配对试探额度；
+ *   主防线是两条实时闸（capturingPetPos 在拍窗 + 现场瓦片 state），见 boss.js 文件头 §④/§④-b。
  * @type {string}
  */
 export const REJ_PARAM_ERROR = 'common_159995';
@@ -874,6 +945,20 @@ export const tuning = {
    */
   planeRefreshMs: 15000,
   /**
+   * BOSS 攻打：撞 `common_159995`（该点当前不可打）后对**该坐标**的短拉黑存活（毫秒）。
+   * 取 60000：实证大BOSS 投喂窗长 39.2s（dashcam 20261101T200401：+2217.0s 21530 开 boss:1 → +2256.2s 收窗），
+   *   60s 能盖住整窗；到期后 21535 早已被推正（收窗即推 state30），不会把能打的点锁死。
+   *   不用 rejectBlacklistMs（6h）：那是 163「目标点不能行军」的永久错，而本码是阶段态，窗过即可打。
+   */
+  paramBlacklistMs: 60000,
+  /**
+   * BOSS 攻打：现场瓦片闸（boss.js #liveTileBlock）认 10018 快照的**最长可用年龄**（毫秒）。
+   * 必要性：21535 在阶段切换那一刻不推（实证同份录音 21→23 时下一条 21535 晚 39.2s；小BOSS 瓦片
+   *   `pointType→0` 时它的 state28 晚 400s），而 10018 实测≈ 3 条/秒的视口增量会先看到现场。
+   * 取 60000：与一次行军四段式（≈4~11s）同量级；超龄的证据不再参与拦停（fail-open，回退旧行为）。
+   */
+  bossTileFreshMs: 60000,
+  /**
    * BOSS 攻打：「近区候选」的判定半径（欧氏格数，与 #platformCandidates 同口径）。
    * 实证（全库 15 份秘境录音的 10018 的 176 平台 `m.esrId` × 21535 的 bossBaseInfo.pos 对账）：
    *   每只 BOSS 到**它自己区域**平台最近 1.4~7.1 格（boss9 2.0 / boss10 1.4 / boss11 7.1 / boss12 2.0），
@@ -907,6 +992,15 @@ export const tuning = {
    */
   shopBuyGapMs: 600,
   /**
+   * 商店：相邻两条 8543（刷新）之间的最小间隔（毫秒）。
+   * 必要性（实战 20261101T200401）：刷新只由 `#refreshFor` 触发，而它的预算此前是「每次到店归零」的
+   *   单值计数，节拍又只受 shopGapMs(250) 约束 → 27:05 一秒内连发 6 条 8543 把 `driveSausageRefreshMax`
+   *   和刷新币 41010 一起烧光。竞品没有这层节流，是因为它靠 `shop_stay_time(15s)` 驻留天然封顶
+   *   （一次停靠最多 15s ÷ 300ms 节拍，且 `shopConver` 一拍只发一条、await 串行）。
+   *   取 2000：一店一次停靠最多 3 刷，留出应答 items 落地的时间，也不至于把「刷出货」的机会全让掉。
+   */
+  shopRefreshGapMs: 2000,
+  /**
    * 商店：进图后首次扫商店的延迟（毫秒）。太早会撞上玩家自己的操作窗（面板也发 8540，会互刷 getTime 基准）。
    */
   shopFirstDelayMs: 15000,
@@ -931,7 +1025,7 @@ export const tuning = {
    *   故触发主要靠 push 21534 事件 kick；本值只用于「警告挂起但快照里暂无就近营帐」时的重扫间隔。
    */
   warnScanMs: 3000,
-  // ── 自动驾驶（drive.js）──
+  // ── 自动驾驶（pilot.js）──
   /**
    * 驾驶：状态机空闲轮询兜底（毫秒）。kick 源是 21534/21529/21535/21521（10018 只写快照不 kick），
    *   本值只兜「推送漏拍 + 驻留/冷却计时到点」的重评节奏。
@@ -952,7 +1046,7 @@ export const tuning = {
   driveWorkDwellMs: 45000,
   /**
    * 驾驶：**资源点/掉落箱「拿空」后**再多驻留的 settle（毫秒，面板可配，可 0=拿空立即走）。
-   * 拿空判据有**两路料源任一命中即走**（见 drive.js #isTileEmpty）：
+   * 拿空判据有**两路料源任一命中即走**（见 pilot.js #isTileEmpty）：
    *   ① 过渡路（独立订阅 21522/21532 按点记账，零耦合 pickup）：173 bag 空闲==0 且 buff 空闲==0；163 drop 空闲==0 且 beast 空闲==0；
    *   ② 当前态路（读 10018 快照，到点即判，解决「到点前已被别人采空、之后无人再碰→无 CHANGE」的死等）：
    *      173 `m.rTime` 落在未来=井已被抽空（rTime 只覆盖 bag，若 CHANGE 显示 buffFree>0 则不据此判空）；163 `m.iNum`==0=无可拾条目。
@@ -964,6 +1058,32 @@ export const tuning = {
    *   驻留满即离店；与「大BOSS 前定点勤务」和 reactive 补货共用本值。默认 25s。
    */
   driveShopDwellMs: 25000,
+  /**
+   * 驾驶：**到店即锁路由**的时长（毫秒）。竞品B verbatim `cd_time.march = ServerTime + shop_stay_time`（默认 15s，
+   *   server-js.js L25268）——这是一道**全局路由锁**：停靠期内 `roomDispatch` 一次都跑不到 `autoLeader`，
+   *   于是「在店里把货扫完」不会被下一拍的选点逻辑打断，离店后还额外有 15s 不许再被拉回任何店。
+   *   我方此前只有 `#shopCoolUntil = now + 3000`（竞品 `shops[].time*1000+3000` 那条同点去重），
+   *   25s 驻留满即完全解锁 → 实战 20261101T200401 表现为「自己不出来、手动拉出去又自动回商店」，一局 11 次回同一家店。
+   *   取 15000：与竞品同值（同时用作 #pickShop 的每店去重窗、#enterWork 的 shopCoolUntil 下限）。
+   */
+  driveShopStayMs: 15000,
+  /**
+   * 驾驶：**同一家店两次到店的**最小间隔（毫秒）。竞品 `marchShop` 只有 3s 同点去重，
+   *   但它有 `cd_time.march` 全局锁 + `marchResource` 排在链尾兜底之前垫着，不会连续敲同一家；
+   *   我方 `#pickShop` 此前**不查任何访问记忆**（`#consumed`/`#marched`/账本 time 一概没用），
+   *   于是「缺香肠」这类纯电平理由会每拍把车开回最近的那家（实战 11 次全敲 (95,163)，另三家从未访问）。
+   *   取 8 分钟：与 `driveShopIntervalMs` 同量级（= 竞品 shop_interval），只在**真到店服务过**的店上生效
+   *   （锚点建账播的 time 不吃本闸，见 #shopLedger 的 `visited` 位）。
+   */
+  driveShopRevisitMs: 480000,
+  /**
+   * 驾驶：**商店补货到店后的冷却**（毫秒）。
+   *   ⑥ 补货档是纯电平闸（背包缺口 = 去商店），而缺口很可能“永远补不满”（商店无货/额度空/刷新币不足），
+   *   且到店后本档没有“已办”概念：实战 20261031 出现「车在商店→驻留 25s→离店→缺口仍在→又开回同一商店」永动，
+   *   手动拉出去也会被拉回。故到店即计冷却，冷却期内不再因缺口派车。
+   *   取 10 分钟：与 driveConsumedTtlMs / 资源点刷新量级同档，足够让人手动接管，也不至于永不补货。
+   */
+  driveShopGapCooldownMs: 600000,
   /**
    * 驾驶：资源/掉落点「拿空即走」的**安全兜底上限**（毫秒，不露面板）。
    * 到点判空已有两路（CHANGE 过渡 + 10018 当前态 rTime/iNum），「到点即空」由当前态路当拍即判即走、不吃本值；
@@ -981,8 +1101,9 @@ export const tuning = {
    * 报文实证（20261004T202430 / 20261011T203911 / 20261018T200040，同 UID）：整场 fightEnd−fightBegin=3300s(55min)；
    *   小BOSS 攻打窗开 ≈ +1380s(23min)、**大BOSS 攻打窗开 ≈ +2400s(40min)**（两份独立录像吻合）。
    *   三只 BOSS 在 0~23min 全是 state22（不可开打）→ 这段是纯巡航空档，把「大BOSS 前必去的一趟商店」办掉最安全。
-   *   取 [600,900,1200]（10/15/20min）：任一时刻命中即发 8521 去就近 161，未真上线则每拍重试、天然覆盖后两点，
-   *   到店（进 WORK）即置本场勤务完成、不再重复；late-entry（elapsed 已过 20min）也会立刻触发。
+   *   取 [600,900,1200]（10/15/20min）：任一时刻命中即把「去一家 161」排进**链尾兜底**（不抢采井/打野），
+   *   未真上线则每拍重试、天然覆盖后两点，到店（进 WORK）即置本场勤务完成、不再重复；
+   *   late-entry（elapsed 已过 20min）也会立刻进入候选（定期去店仍主要靠 driveShopIntervalMs 的 8min 节拍）。
    * @type {number[]}
    */
   driveShopPointsSec: [600, 900, 1200],
@@ -994,6 +1115,153 @@ export const tuning = {
    *   竞品取 60s 整；我们行军上限 44.2s + 一拍兜底 5s，同取 60000 恰好覆盖。
    */
   driveBossLeadMs: 60000,
+  /**
+   * 驾驶：**无候选静默上限**（毫秒）。视口快照里连续这么久没有任何可去的 173/163（全被抽空、等别人用完刷新）时，
+   *   方向盘不再原地等：主动朝未覆盖方向开一段，用行军把新视口的 10018 推出来。
+   *   实证 20261031T213125：视口内 3 个 173 被别队抽空，rTime 落在 2~3 分钟后，引擎干等 3 分钟没动；
+   *   而 10018 只覆盖视口，不移动就永远看不到别处的井。取 30s（≈6 拍）：给「马上刷新」留耐心，又不至于长期停摆。
+   *   0 = 关闭探索（无货就原地等）。
+   */
+  driveIdleExploreMs: 30000,
+  /**
+   * 驾驶：**探索步长**（格）。无候选时朝 8 扇区轮转方向各走这么远，落在已见点位上就换下一个方向。
+   *   取 12：约一个视口半径量级，既能推出新点位，又不至于把一趟行军拉成两百格长跑（行军 31~44s 是硬成本）。
+   */
+  driveExploreStep: 12,
+  // ── v3 pilot（主动视口 / 表格锚点 / 到点分派）──
+  /**
+   * pilot：**901 主动拉视口的最小间隔**（毫秒）。
+   * v3 与 v2 的根本差别就在这里：候选池不再靠 10018 push 慢慢积累（push 只在镜头扫过时来，
+   *   实测 tiles.size 常年 2~3），而是每 3s 以自己为中心主动拉一刀（20×30 格）。
+   * 竞品B 同样 3s 一拉（`cd_time.march = ServerTime + 3`）。取 3000。
+   */
+  driveViewMs: 3000,
+  /**
+   * pilot：901 连续失败多少次后判定「秘境里这条通道不可用」，退回 push+锚点模式（仍能开商店/BOSS）。
+   * 退避重试间隔 driveViewRetryMs（不因一次抖动就永久关掉）。
+   */
+  driveViewOffAfter: 3,
+  /** @type {number} pilot：901 判定不可用后的重试间隔（毫秒） */
+  driveViewRetryMs: 60000,
+  /**
+   * pilot：同一目标点「已派过车」的冷却（毫秒）。竞品B `marched_list` 同源（60s）——
+   *   治「到点拿不到东西→下一拍又选中同一个点」的原地打转。
+   */
+  driveMarchedTtlMs: 60000,
+  /**
+   * pilot：资源点选点的最小产出。竞品B 取 `5 + ceil(队伍人数/2)`；我方不读队伍人数，用固定 5，
+   *   低于这个数的井坑收益抵不上 31~44s 行军成本。
+   */
+  driveResourceMinYield: 5,
+  /**
+   * pilot：**宽松档（巡航兜底）采井的产出下限**（件数）。竞品只有一档 `marchResource(5+ceil(人数/2), 100)`，
+   *   链尾兜底那次 `marchResource()` 虽不传参，但 `iNum` 在竞品的候选过滤里仍是硬条件（`t.iNum < e` 直接 skip）。
+   *   我方宽松档传 0 → `iNum==0` 的空井也入选 → 实战 20261101T200401：04:08 到 107,161、04:12（4 秒）即判空走人，
+   *   下一拍又被「缺香肠」档拉回商店，形成「空点—商店」秒级往返。
+   *   取 1：只排除「快照里明确为 0 件」的点（`iNum` 读不到仍放行，保持宽松档的探索用途）。
+   */
+  driveCruiseMinYield: 1,
+  /**
+   * pilot：**商店勤务的定期节拍**（毫秒）。竞品B `shop_interval * 60`（默认 8 分钟）同一语义：
+   *   距上次到店超过这个间隔且当前点不是商店 → 再去一家（#shopWant 的 `stage` 档，抢在日常链前）。
+   *   我方扩展的「勤务/缺香肠/持有缺口」三档**不拦路**，只作链尾兜底那一下的选店排序（与竞品一致）。
+   * 取 8 分钟：与竞品同值（原 5 分钟会把手上的百兽箱/香肠额度提前榨干，且和到店冷却打架）。
+   */
+  driveShopIntervalMs: 480000,
+  /**
+   * pilot：开局多久之后才把商店列为待办（毫秒，相对 fightBeginTime）。
+   * 竞品B 同款 `fightBeginTime + 63000`：刚进场那半分钟落地/开镜都没稳，别急着开车。
+   */
+  driveShopWarmupMs: 63000,
+  /**
+   * pilot：香肠携带目标（`41011 < 本值`）。竞品同值 10，但它在竞品的语义里只决定**进了店买不买**
+   *   （`option.buy_sausage`）；我方把它兼作「链尾兜底有理由再去一家店」的排序依据，
+   *   ⚠ 它**不抢在采井/打野之前**（旧口径如此，导致实战 20261101T200401 一局 11 次回店）。
+   */
+  driveSausageTarget: 10,
+  /**
+   * pilot：BOSS 读秒（state22）**结束后的宽限窗**（毫秒）。读秒一结束 BOSS 就转 21 可打，但 21 的推送可能迟到、
+   *   而 `stateEndTime` 已过期——若此时窗口判 null，车会从平台上落下去巡航，把整场 BOSS 让掉。
+   *   竞品B 的 `marchBoss` 正是 `state==22 && stateEndTime < now` 也照打（server-js.js L24874）。
+   *   取 90s：覆盖大BOSS 一轮 8~11s + 返航 + 推送延迟，且远小于下一轮开台间隔。
+   */
+  driveBossGraceMs: 90000,
+  // ── v3.1「与竞品B 同逻辑」补齐的九档（G1–G9）──
+  /**
+   * pilot/leave：玩法分层（竞品B `team_type`，0 只拿百兽箱 / 1 加打 BOSS / 2 全都要）。
+   *   它决定 `exitStage`（该收场）的三级判据取哪一级，以及是否走 BOSS 档。取竞品默认 2。
+   */
+  driveTeamType: 2,
+  /**
+   * pilot 行军策略（竞品B `march_policy`）：0 避让优先 / 1 跟队集结优先 / 2 摇人优先。
+   *   0：被锁定或在途时改道去「野怪/井/店」；1：不查别人在途行军（跟队派）；2：在途即静止等待。
+   */
+  driveMarchPolicy: 0,
+  /**
+   * pilot 打野策略（竞品B `beast_policy`）：0 打野优先于采井 / 1 采井优先于打野 / 2 完全不打野。
+   */
+  driveBeastPolicy: 0,
+  /**
+   * pilot BOSS 挑选策略（竞品B `guard_policy`）：0 跳过第 3 近的 BOSS / 1 跳过最近的 /
+   *   2 跳过「石头奖励已领过且我到场打过」的 / 3 跳过任何有石头记录的。
+   */
+  driveGuardPolicy: 0,
+  /** @type {number} pilot 打野档的最小品质（竞品 `marchBeast(4)`：enigma_beast 行 quality ≥ 本值才去） */
+  driveBeastMinQuality: 4,
+  /**
+   * pilot：读秒**开始前**的禁店窗（毫秒）与窗宽（毫秒）。竞品 `shopStage` verbatim
+   *   `!bossBaseInfo.find(state==22 && abs(stateEndTime - now - 60000) < 60000)` → 即开台前 0~120s 一律不去店
+   *   （这段路上车必须空出来挪平台）。
+   */
+  driveShopBossLockMs: 60000,
+  driveShopBossLockWinMs: 60000,
+  /**
+   * pilot：读秒**结束后**的高光窗（毫秒基准 + 窗宽）与窗内节拍。竞品 `shopStage` verbatim
+   *   `abs(stateEndTime - now - 150000) < 30000 && gap > 120` → 即开台后 120~180s（拍宠/结算高光期）
+   *   把到店间隔从 8 分钟砍到 2 分钟：这段时间店里会刷出百兽箱与牛排。
+   */
+  driveShopNearEndMs: 150000,
+  driveShopNearEndWinMs: 30000,
+  driveShopNearEndGapMs: 120000,
+  /**
+   * pilot：打野档的禁走窗（毫秒）。竞品 `marchBeast` 开头 verbatim
+   *   `team_type>0 && bossBaseInfo.find(state==22 && abs(stateEndTime - now - 90000) < 90000)` → return
+   *   （读秒结束后 0~180s 留给拍宠与平台，不把车撒去野怪点）。
+   */
+  driveBeastNoMarchMs: 180000,
+  /**
+   * pilot：G4 在途行军集合的保鲜期（毫秒）。901 每 3s 一刀，本值只兜「901 降级/长时间未刷新」：
+   *   集合过期就不再用它筛候选，否则旧快照会把所有点永久标成「别人在途」，车一个点都选不中。
+   */
+  driveMarchStaleMs: 15000,
+  /**
+   * pilot：井/箱严格档的产出下限增量与距离上限（竞品 `marchResource(5 + ceil(队伍人数/2), 100)` 的第二个参数）。
+   *   「该收场」阶段只打**近处大井**，别为远处的井跑 40s。
+   */
+  driveStrictResMaxDist: 100,
+  /** @type {number} pilot：停在 172 野怪点的驻留（毫秒）。竞品 `cd_time.march = now + 20`（等拍宠/交战结算） */
+  driveStayMonsterMs: 20000,
+  /**
+   * pilot：173 井的动态驻留（竞品 verbatim `min(res_stay_time, 未拿件数 × 0.8 + 1.1)` 秒）。
+   *   我方主判据仍是「拿空即走」，本组值只作**竞品口径的兜底上限**（推送缺件时不至于无限占坑）。
+   */
+  driveResStayPerBagMs: 800,
+  driveResStayBaseMs: 1100,
+  driveResStayMaxMs: 8000,
+  /**
+   * pilot：本场已到场打过的 BOSS 是否计入跳过账（竞品 `state.boss[bossId]=1` + `guard_policy==2`）。
+   *   true=按竞品口径跳过重复目标；false=只按石头奖励记录判（更激进，会重打同一个）。
+   */
+  driveBossDedupe: true,
+  /**
+   * shop：为「刷出香肠」而连续刷店的上限（次/每次到店）。竞品靠 15s 驻留天然封顶；
+   *   我方驻留 25s 且刷新是异步一拍一次，故显式封顶，防把 41010 全烧光仍不出货。
+   */
+  driveSausageRefreshMax: 6,
+  /**
+   * pilot：两次复活的最小间隔（毫秒）。8552 应答可能迟到，本值防同一次死亡反复消耗复活次数。
+   */
+  driveReviveGapMs: 15000,
   /**
    * 拿满自动离场（leave.js）：扫描间隔（毫秒）。离场是「读背包数 → 发一次 8581 → 发一次 8589」的低频动作，
    *   不需要紧拍；本值只兜「品质增益/背包刷新漏拍」的重评节奏（离场动作另有内存态防重发）。
@@ -1026,5 +1294,5 @@ export const tuning = {
   scoutItemReserve: 0,
 };
 
-/** @type {number} 未真正发出的哨兵码（sendSecret 超时/异常回此值；与 game-api SECRET_NOT_SENT 同义） */
-export const CODE_NOT_SENT = -1;
+// 未真正发出的哨兵码：单一真相在 core/util.js，此处按玩法聚合面 re-export，子 feat 仍从 './constants.js' 取。
+export { CODE_NOT_SENT } from '../../../core/util.js';

@@ -24,6 +24,7 @@
  *
  * 生命周期由 reactor 托管：install/run 两钩子，places 限定 base/world（Home/NWorldMap），战斗模式暂停（offInCombat）。
  */
+import { parseData } from '../../core/util.js';
 import { createLog } from '../../core/log.js';
 import { game } from '../../core/game.js';
 import { reactor } from '../../core/reactor.js';
@@ -133,21 +134,6 @@ var synced = false;
  */
 function aliveFn() {
   return ctxRef ? ctxRef.alive() : false;
-}
-
-/**
- * 网络应答 data 归一化：可能是原始 JSON 串（游戏侧 JSON_PARSE(e.d)）或已是对象；失败回 null。
- * @param {*} d ret.data
- * @returns {object|null}
- */
-function parseData(d) {
-  if (d == null) return null;
-  if (typeof d === 'object') return d;
-  try {
-    return JSON.parse(d);
-  } catch (e) {
-    return null;
-  }
 }
 
 // ─────────────────────── 游戏态只读访问（try/catch 降级） ───────────────────────
@@ -383,7 +369,8 @@ async function harvestDue() {
     if (!aliveFn()) return;
     synced = true; // 点火后已完成一次权威读，不再强制；失败则退回 produce 试探（由 blocked 兜底）
     var d = parseData(ret && ret.data);
-    if (ret && ret.ok && d) {
+    // 显式判 object：parseData 归口守卫版后非 object 恒返 null，此处不依赖其内部约定
+    if (ret && ret.ok && d && typeof d === 'object') {
       if (d.st != null) shadow.st = Number(d.st) || 0;
       if (Array.isArray(d.wait)) shadow.wait = d.wait.slice();
       log.debug('harvest/sync. code=%d;waitRemain=%d', ret.code, shadow.wait.length);
@@ -426,7 +413,7 @@ async function fillQueue() {
     }
     if (!aliveFn()) return;
     var d = parseData(ret && ret.data);
-    if (ret && ret.ok && d && Array.isArray(d.wait)) {
+    if (ret && ret.ok && d && typeof d === 'object' && Array.isArray(d.wait)) {
       queue = d.wait.slice();
       shadow.wait = queue;
       if (d.st != null) shadow.st = Number(d.st) || 0;

@@ -40,10 +40,18 @@
  *      **队长闸**（本引擎主动加，与上面那条 UI 不对称并不矛盾）：8521 驱动的是**全队那一条**行军
  *        （roomBaseInfo 实证为队级快照：单一 startPoint/marchState + leaderUid）→ 五人房各自发会互抢
  *        方向盘，并把 #rounds/#probed 各客户端各算一份的偏差放大，故成员侧不发攻打（与竞对脚本同款）。
- *   ④ 客户端另有三条闸（NWorldPabCommonPopup.marchClick verbatim，本引擎逐条复刻）：
+ *   ④ 客户端闸（NWorldPabCommonPopup.marchClick verbatim，本引擎逐条复刻）：
  *      `roomBaseInfo && startPoint` 在场；目标点 ≠ 当前点（否则 `enigma_realm157` 静默）；
  *      **在拍普通宠**（`capturingPetPos.x>0 && boss!=1`）时挪点会清空当前捕获进度（游戏要弹 `enigma_realm208` 确认）
  *      → 自动化**放弃这一轮**，等拍完再打（攻打档绝不替玩家确认清进度）。
+ *      ⚠ **旧口径「攻打同区域 BOSS 不受在拍闸约束」已被 dashcam 20261101T200401 推翻**：大BOSS 进入投喂/
+ *        拍宠物窗（push 21530 推 `{x,y,boss:1}` + 瓦片 `state 21→23`）那一刻，**服务端拒绝对该点的攻打行军**
+ *        （8521 连吃 `common_159995`），游戏侧此时也只给拍宠 UI、不给攻击按钮 → 本引擎把 `boss===1` 的在拍窗
+ *        一并纳入在拍闸（拍 BOSS 期间把队伍开走同样等于丢掉己方那一窗的分数，与拍普通宠同口径）。
+ *   ④-b **现场瓦片闸**（本引擎主动加）：`state===21` 这条料源是 push 21535 的快照，而 21535 **在阶段切换那一刻
+ *        不推**（实证：大BOSS 21→23 时 21535 下一条要到 +39.2s 窗关闭才推 state30；小BOSS 本体瓦片 +1244.1s 已
+ *        `pointType→0`（点消失），21535 的 state28 却晚 400s 才推）→ 单靠它会「越该停手越连撞」。故候选点若被
+ *        push 10018 快照证明当前不是 21（含点已消失），这一拍不发（见 #liveTileBlock）。
  *   ⑤ 游戏侧「每 cmd 只允许一条在途」（verbatim `checkRequestIdNoRes(8521) || sendPBV2(8521,{x,y},…)`）
  *      → ACL `sendMarch()` 已内置该闸，回 `false` 就是「这一拍没发出去」，不作任何记账、下一拍重试。
  *
@@ -69,6 +77,10 @@
  *   `enigma_realm163` → 目标点不能行军 → 该坐标拉黑 `tuning.rejectBlacklistMs`（6h）；
  *   `enigma_realm162` → 服务器抖动形态 → 该 bossId 给**一次**重试；
  *   `CODE_NOT_SENT`  → 未真正上线（次通道频控/静默短路）→ **不动配对账**（尤其不置 #probed），下一拍重试；
+ *   `common_159995`  → 攻打档里**不是包形态错**（req 恒 `{x,y}` 两键，成功与被拒同形，实证 20261101T200401 的
+ *     284 条 8521 里 9 条吃它：8 连在大BOSS 投喂窗 +2217~+2252.5s、1 发在小BOSS 瓦片刚消失 +1245.0s）
+ *     → 语义是「该点当前不可打」→ **短拉黑该坐标** `tuning.paramBlacklistMs`（60s，覆盖实测 39.2s 的投喂窗），
+ *     不烧配对试探额度（不是区域错）、不拉黑 bossId；正常路径已被 ④/④-b 两条闸挡住，走到这里说明本地闸再次失真。
  *   其它 `s≠0`       → info 一条（同一目标只提示首见，之后降 debug，防逐拍刷屏）。
  *
  * ── 石头档（8548 BOSS_GUARD_REWARD_GET `{x,y}`，**不带 bossId**）──────────────────
@@ -109,6 +121,7 @@ import {
   PAB_BOSS_GUARD,
   PAB_BOSS_GUARD_REWARD,
   ST_BOSS_FIGHTING,
+  ST_BOSS_FEED,
   ST_PLANE_MARCH,
   REJ_BOSS_AREA,
   REJ_NEED_PLANE,
@@ -118,6 +131,7 @@ import {
   REJ_RETRY,
   REJ_STONE_USED_UP,
   REJ_NOT_IN_FIGHT,
+  REJ_PARAM_ERROR,
   CODE_NOT_SENT,
   tuning,
 } from './constants.js';
@@ -127,7 +141,7 @@ const BOSS_TILE_TYPES = [PAB_BOSS, PAB_BOSS_GUARD];
 
 /**
  * 点型是否 BOSS 相关（176 平台 / 177 大BOSS / 178 小BOSS）——自动驾驶开启时本引擎可否发攻打行军的判据
- *   （与 drive.js isBossish 同口径：不在这些点上时行军权全归 drive）。
+ *   （与 pilot.js isBossish 同口径：不在这些点上时行军权全归 drive）。
  * @param {number} pt 瓦片 pointType
  * @returns {boolean}
  */
@@ -315,7 +329,7 @@ export class BossEngine {
     }
     // 自动驾驶让闸：drive.enabled 时「开往平台/巡航/逃袭」的行军权归 drive 统一方向盘，本引擎只在队伍
     //   已停在 176/177/178 上才发攻打行军（到平台后攻打仍照旧由本引擎接管）；非 BOSS 点一律让位，
-    //   避免 drive 的 TO 行军与攻打行军互抢那一条 8521 在途位（见 drive.js 文件头）。关掉 drive 时行为不变。
+    //   避免 drive 的 TO 行军与攻打行军互抢那一条 8521 在途位（见 pilot.js 文件头）。关掉 drive 时行为不变。
     const drv = env.cfg().drive;
     if (drv && drv.enabled && !isBossTile(Number(base.pointType))) {
       env.log.debug('boss attack: drive on & not on a BOSS tile → skip (reason=drive-driving).');
@@ -325,10 +339,9 @@ export class BossEngine {
       this.#sleep = 200;
       return;
     }
-    if (this.#captureBusy()) {
-      env.log.debug(
-        'boss attack: busy capturing a normal pet (realm208 would clear progress), skip.',
-      );
+    const busy = this.#captureBusy();
+    if (busy) {
+      env.log.debug('boss attack: busy capturing (%s), skip this round.', busy);
       return;
     }
     const target = this.#pickTarget(b);
@@ -384,16 +397,24 @@ export class BossEngine {
   // ── 目标选择与区域配对 ──────────────────────────────────────────────
 
   /**
-   * 是否在拍普通异能兽（`capturingPetPos.x>0 && boss!=1`）——verbatim NWorldPabCommonPopup.marchClick 里
-   *   这一条会触发 `enigma_realm208`「离开后当前异能兽捕获进度将被清空」的确认弹窗。
-   *   攻打**同区域的 BOSS** 不走这条闸（BOSS 本体也是 capturingPetPos.boss===1 的对象），但**在拍普通宠时挪点**必须让路。
-   * @returns {boolean}
+   * 是否在拍异能兽/**大BOSS**（`capturingPetPos.x>0`，push 21530 写、结束推 `{x:-1,y:-1}`）。
+   *   两条依据都要求攻打档让路：
+   *   ① 拍**普通宠**（`boss!=1`）：verbatim NWorldPabCommonPopup.marchClick 里挪点会触发
+   *     `enigma_realm208`「离开后当前异能兽捕获进度将被清空」的确认弹窗 → 自动化绝不替玩家确认；
+   *   ② 拍**大BOSS**（`boss===1`，即瓦片 `state=23` 的投喂/拍宠窗）：实证 20261101T200401，该窗内
+   *     对同一坐标的 8521 全部被服务端拒 `common_159995`（8 连），且把队伍开走同样丢掉己方这一窗的分。
+   *   ⚠ 旧注释写的「攻打同区域的 BOSS 不走这条闸」是**未实证的推断**，已被上面那份报文推翻（见文件头 §④）。
+   *   本窗不需要额外兜底：游戏侧每 10s 有自愈（瓦片 state 不是 FEED/BOSS_FEED 时把 capturingPetPos 打回
+   *   `{x:-1,y:-1}`，verbatim PabWorldUINew.updateCapturingData），窗关闭后 2s 的兜底拍即恢复攻打。
+   * @returns {string|null} 让路原因（`null`=可以打；debug 日志用，不再回布尔把两种语义混起来）
    */
   #captureBusy() {
     const pab = this.#env.secret.getPabController();
     const cap = pab && pab.capturingPetPos;
-    if (!cap) return false;
-    return toNum(cap.x) > 0 && Number(cap.boss) !== 1;
+    if (!cap || toNum(cap.x) <= 0) return null;
+    return Number(cap.boss) === 1
+      ? 'BOSS feed window at (' + Math.floor(toNum(cap.x)) + ',' + Math.floor(toNum(cap.y)) + ')'
+      : 'a normal pet (realm208 would clear progress)';
   }
 
   /**
@@ -426,6 +447,12 @@ export class BossEngine {
       const x = Math.floor(toNum(s.pos.x));
       const y = Math.floor(toNum(s.pos.y));
       const k = x + ',' + y;
+      // 现场瓦片闸（文件头 §④-b）：10018 已证明该点不是 state21（进投喂窗/点消失）→ 不发这一枪
+      const live = this.#liveTileBlock(k);
+      if (live) {
+        env.log.debug('boss attack: boss%d @(%s) skipped by live tile (%s).', bid, k, live);
+        continue;
+      }
       const exp = this.#targetBlack[k] || 0;
       if (exp) {
         if (Date.now() < exp) continue;
@@ -733,6 +760,23 @@ export class BossEngine {
   }
 
   /**
+   * 现场瓦片闸（文件头 §④-b）：候选 BOSS 点若被 push 10018 快照证明当前**不是 state21**，这一拍不发。
+   *   只在证据新鲜时生效（`tuning.bossTileFreshMs`）：快照来自视口增量，队伍不动 / 未被推送覆盖的点
+   *   本就没有现场证据 → 一律 fail-open 回 `null` 保持旧行为，绝不把「读不到」当「不能打」。
+   * @param {string} key 'x,y' 候选 BOSS 本体坐标键
+   * @returns {string|null} 拦下原因（`null`=放行；仅进 debug 日志，不影响配对账）
+   */
+  #liveTileBlock(key) {
+    const t = this.#tiles.get(key);
+    if (!t) return null;
+    if (Date.now() - t.at > tuning.bossTileFreshMs) return null;
+    const st = Number(t.state);
+    if (st === ST_BOSS_FIGHTING) return null;
+    if (!t.pt) return 'point removed (pointType=0)';
+    return 'tile state=' + st + (st === ST_BOSS_FEED ? ' (BOSS feed window)' : '');
+  }
+
+  /**
    * 战斗窗口是否已过（state===21 时 `stateEndTime` = 窗口结束的**绝对毫秒**，实证 boss11/12 +420s、boss9 +600s）。
    * 游戏侧对应的 tips 是 `cab_ui_info_065`，但它写在**倒计时分支**（state!==21）里，对 state21 不构成客户端闸
    *   → 这里只作「别把枪烧在已散场的 BOSS 上」的本地保守判据；读不到值（缺字段）一律放行。
@@ -893,6 +937,24 @@ export class BossEngine {
       env.log.info('boss attack: %s rejected %s → target blacklisted.', tag, rej);
       return;
     }
+    if (rej === REJ_PARAM_ERROR) {
+      // common_159995 在攻打档的语义是「该点当前不可打」（见文件头§拒绝码清单），**不是包形态错**（req 恒 `{x,y}`）
+      //   → 短拉黑该坐标（覆盖整窗投喂期），不烧配对试探额度（它不是区域错）、不拉黑 bossId
+      this.#targetBlack[tileKey(t.x, t.y)] = Date.now() + tuning.paramBlacklistMs;
+      const mkey = 'param159995|' + tag;
+      if (!this.#toldReject[mkey]) {
+        this.#toldReject[mkey] = 1;
+        env.log.info(
+          'boss attack: %s rejected %s (point not attackable now) → target blacklisted %dms, area probe NOT burned.',
+          tag,
+          rej,
+          tuning.paramBlacklistMs,
+        );
+      } else {
+        env.log.debug('boss attack: %s still rejected %s (waiting blacklist to expire).', tag, rej);
+      }
+      return;
+    }
     if (rej === REJ_RETRY && !this.#marchRetried[t.bossId] && (!b || b.enabled)) {
       this.#marchRetried[t.bossId] = 1;
       env.log.debug('boss attack: %s rejected %s, retry once.', tag, rej);
@@ -1021,6 +1083,25 @@ export class BossEngine {
       const p = list[i];
       if (!p) continue;
       const pt = Number(p.pointType) || 0;
+      const k = tileKey(p.x, p.y);
+      if (!k) continue;
+      if (pt === 0) {
+        // 点位从地图消失（实证 20261101T200401：小BOSS 本体 +1244.1s `pointType→0`，而 21535 的 state28 晚 400s 才推）
+        //   → 已在快照里的点落成**负证据**条目（pt=0 / state=0），让 #liveTileBlock 拦下，
+        //   而不是留着旧的 state21 证据继续放行（本来只收四类瓦片会把这条现场变更直接漏掉）
+        if (this.#tiles.has(k)) {
+          this.#tiles.set(k, {
+            pt: 0,
+            esrId: null,
+            state: 0,
+            sET: 0,
+            isFight: 0,
+            teams: 0,
+            at: now,
+          });
+        }
+        continue;
+      }
       if (
         pt !== PAB_BOSS_PLANE &&
         pt !== PAB_BOSS_GUARD &&
@@ -1028,8 +1109,6 @@ export class BossEngine {
         pt !== PAB_BOSS_GUARD_REWARD
       )
         continue;
-      const k = tileKey(p.x, p.y);
-      if (!k) continue;
       const m = p.m && typeof p.m === 'object' ? p.m : {};
       const esr = m.esrId == null ? null : Number(m.esrId);
       if (this.#tiles.size >= tuning.tileExtMax && !this.#tiles.has(k)) {

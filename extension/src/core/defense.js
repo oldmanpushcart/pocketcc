@@ -23,6 +23,7 @@ import { gameData, nav, worldMap } from './game-api.js';
 import { worldState } from './world-state.js';
 import { bus } from './bus.js';
 import { SERVER, pickSub, fetchWindow } from './map.js';
+import { sleep } from './util.js';
 
 /** @type {ReturnType<createLog>} 模块日志器（tag=DEFENSE） */
 const log = createLog('DEFENSE');
@@ -132,11 +133,7 @@ async function makeJudge(anchor, opts) {
   var maxWait = opts.maxWait || 6000,
     step = 120;
   var net = opts.net;
-  var sleep = function (ms) {
-    return new Promise(function (r) {
-      setTimeout(r, ms);
-    });
-  };
+  // sleep 已上收 core/util.js（钳位版，单一真相），本模块经文件头 import { sleep }
   var fly = function () {
     try {
       nav.flyTo({ x: ax, y: ay, z: opts.serverId | 0 || null, subMap: null, click: false });
@@ -441,7 +438,9 @@ async function relocateAway(home, threat, opts) {
     for (var row = 0; row < 3; row++) {
       if (col === hCol && row === hRow) continue;
       var c = snapRealTile(sectorCenter(bounds, col, row));
-      var d = threat ? dist2(threat.x | 0, threat.y | 0, c.x, c.y) : -dist2(home.x | 0, home.y | 0, c.x, c.y);
+      var d = threat
+        ? dist2(threat.x | 0, threat.y | 0, c.x, c.y)
+        : -dist2(home.x | 0, home.y | 0, c.x, c.y);
       queue.push({ c: c, col: col, row: row, d: d });
     }
   }

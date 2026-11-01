@@ -38,10 +38,12 @@
  * 合规：只读游戏数据（经 game-api ACL）+ 直发协议；编队走 core/battle.js 从预设队伍实时重算造数据（不碰游戏本地态、不 OpenUI）。
  *   6476 派真实部队出征战斗、消耗兵力，属派行军类 → 受战斗模式门控 offInCombat:true（战斗态由 reactor 整体 pause，退出即 resume 补扫）。
  */
+import { CODE_NOT_SENT, sleep } from '../../core/util.js';
 import { createLog } from '../../core/log.js';
 import { bus } from '../../core/bus.js';
 import { storage } from '../../core/storage.js';
 import { reactor } from '../../core/reactor.js';
+import { netApi } from '../../core/net.js';
 import { Battle } from '../../core/battle.js';
 import { l10n, gameData } from '../../core/game-api.js';
 import { item } from '../../core/item.js';
@@ -96,9 +98,6 @@ var ratio = { counter: 1.5, same: 1.2, countered: 0.8 };
 const GRADE_LABELS = { 1: '普通', 2: '高级', 3: '稀有', 4: '史诗', 5: '传奇' };
 /** @type {number[]} 全部品级档 */
 const ALL_GRADES = [1, 2, 3, 4, 5];
-
-/** @type {number} 非服务器返回的哨兵 code（闸门未放开 / 在途 / 发送异常，与真实 s 码区分，不当拒绝拉黑） */
-const CODE_NOT_SENT = -1;
 
 /** @type {string} 当日拉黑持久数据键（storage.data blob 内逻辑名） */
 const DATA_NAME = 'truckIntercept.blocked';
@@ -155,11 +154,7 @@ const REFRESH_PRESETS = {
   /** 密集：全天都盯，深夜也不归零（Σ=94） */
   dense: [6, 6, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 3, 3, 2, 2],
   /** 正常（默认）：热点密·白天中·深夜稀（Σ=70） */
-  normal: [
-    9, 9, 1, 1, 1, 1, 1, 1, 
-    4, 4, 5, 5, 3, 3, 3, 3, 
-    3, 3, 3, 3, 1, 1, 1, 1
-  ],
+  normal: [9, 9, 1, 1, 1, 1, 1, 1, 4, 4, 5, 5, 3, 3, 3, 3, 3, 3, 3, 3, 1, 1, 1, 1],
   /** 省心：只盯热点与上午，20 点后不刷（Σ=54） */
   calm: [6, 6, 3, 3, 3, 3, 3, 3, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 0, 0, 0, 0],
 };
@@ -295,17 +290,6 @@ function safeStringify(v) {
   } catch (e) {
     return String(v);
   }
-}
-
-/**
- * 等待毫秒
- * @param {number} ms
- * @returns {Promise<void>}
- */
-function sleep(ms) {
-  return new Promise(function (r) {
-    setTimeout(r, Math.max(0, ms | 0));
-  });
 }
 
 // ── 优先级（configure / rankMap / 匹配） ────────────────────────────────
@@ -514,7 +498,7 @@ async function send(cmd, body) {
  */
 function ensureNet() {
   if (net) return net;
-  var g = typeof window !== 'undefined' && window.pocketcc && window.pocketcc.net;
+  var g = netApi;
   if (g && g.install && g.install()) net = g;
   return net || null;
 }

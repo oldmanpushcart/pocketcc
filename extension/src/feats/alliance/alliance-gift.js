@@ -35,6 +35,7 @@
  *   故不声明 places、不声明 offInCombat（战斗态下继续跑）；但声明了 kinds:['homeland']（A 档）：
  *   进峡谷/天梯/秘境/征服者图即 pause，回本服图自动 resume（可行性报告 §7.2 保守选择，要升 B 可改）。
  */
+import { sleep } from '../../core/util.js';
 import { createLog } from '../../core/log.js';
 import { game } from '../../core/game.js';
 import { reactor } from '../../core/reactor.js';
@@ -126,17 +127,6 @@ var installed = false;
  */
 function aliveFn() {
   return ctxRef ? ctxRef.alive() : false;
-}
-
-/**
- * 等待毫秒
- * @param {number} ms 时长
- * @returns {Promise<void>}
- */
-function sleep(ms) {
-  return new Promise(function (resolve) {
-    setTimeout(resolve, ms);
-  });
 }
 
 // ─────────────────────────── 数据读取 ───────────────────────────

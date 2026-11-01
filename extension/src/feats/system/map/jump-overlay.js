@@ -14,7 +14,7 @@
  *   onClearHistory()            点「清空记录」
  *   onSendShare(channelKey, items) 分享态下点「分享▾」（channelKey 为频道下拉当前选中项的 key：固定名 'world'/'alliance' 或数字 c 串）
  *   onDelete(items)             删除（单行传 [item]，多选态传选中集）
- *   onVisibleChange(visible)    show/hide 之后
+ *   onVisibleChange(visible)    显示（_afterShow 聚焦钩子已在前）/ 隐藏之后派发
  *   onGeomChange(geom)          拖拽/resize 松手后落盘
  *
  * 分享交互：每行尾有「分享」按钮（单条分享入口），点它进入分享态并预选该行；工具栏「多选」
@@ -23,6 +23,7 @@
  *   （仅分享态显、两步确认）；业务层发完调 exitShareMode() 退出；发送期间 setSharing(true) 锁按钮。
  */
 import { createLog } from '../../../core/log.js';
+import { OverlayShell, clampGeom as overlayClamp } from '../../../core/overlay.js';
 
 /** @type {ReturnType<createLog>} 模块日志器（tag=JUMPOVERLAY） */
 const log = createLog('JUMPOVERLAY');
@@ -126,40 +127,33 @@ function esc(s) {
   );
 }
 
-/**
- * 视口宽松钳制（同地图/聊天浮层）：宽高钳到 [min, 视口]，坐标只保证露出 60×40px。
- * @param {{x:number,y:number,w:number,h:number}} g
- * @returns {{x:number,y:number,w:number,h:number}}
- */
-function clampGeom(g) {
-  const w = Math.max(MIN_W, Math.min(g.w, window.innerWidth));
-  const h = Math.max(MIN_H, Math.min(g.h, window.innerHeight));
-  return {
-    w,
-    h,
-    x: Math.max(0, Math.min(g.x, window.innerWidth - Math.min(w, 60))),
-    y: Math.max(0, Math.min(g.y, window.innerHeight - Math.min(h, 40))),
-  };
-}
+// 视口内几何钳制算法已上收 core/overlay.js（单一真相）；此处按本浮窗尺寸下限绑定为局部便捷名，保留 7 处既有调用点不变。
+const clampGeom = (g) => overlayClamp(g, MIN_W, MIN_H);
 
-export class JumpOverlay {
+export class JumpOverlay extends OverlayShell {
   /**
    * @param {object} handlers 回调面（见文件头注释）
    * @param {object} [opts] 选项：{channels?: Array<{key:string,label:string,fixed?:boolean}>} 分享频道下拉的固定项
    *   （由业务层给定；活动/跨服动态项用 refreshChannels 更新）
    */
   constructor(handlers, opts) {
-    this._h = handlers || {};
+    super(handlers, {
+      geom: {
+        x: Math.max(0, window.innerWidth - DEFAULT_W - 24),
+        y: 48,
+        w: DEFAULT_W,
+        h: DEFAULT_H,
+      },
+      minW: MIN_W,
+      minH: MIN_H,
+      log,
+      closeSel: '.pcj-close',
+      barSel: '.pcj-titlebar',
+    });
     /** @type {Array<{key:string,label:string,fixed?:boolean}>} 固定频道项（构造传入） */
     this._fixedChannels = (opts && Array.isArray(opts.channels) ? opts.channels : []).slice();
     /** @type {Array<{key:string,label:string}>} 动态频道项（refreshChannels 推入，排在固定项之后） */
     this._dynChannels = [];
-    this._geom = clampGeom({
-      x: Math.max(0, window.innerWidth - DEFAULT_W - 24),
-      y: 48,
-      w: DEFAULT_W,
-      h: DEFAULT_H,
-    });
     /** @type {Array<object>} 当前渲染的列表项（业务层推入，反查用） */
     this._items = [];
     /** @type {boolean} 分享态（true 时每行显 checkbox、隐藏单条分享按钮、底栏显页脚） */
@@ -168,9 +162,6 @@ export class JumpOverlay {
     this._selected = new Set();
     /** @type {boolean} 发送在飞（锁住频道按钮，防重入） */
     this._sharing = false;
-    this._host = null;
-    this._root = null;
-    this._win = null;
     this._input = null;
     this._list = null;
     /** @type {?HTMLElement} 分享态底部页脚 */
@@ -181,12 +172,6 @@ export class JumpOverlay {
     this._chSel = null;
     this._srvBadge = null;
     this._countEl = null;
-    this._toast = null;
-    this._toastTimer = null;
-    /** @type {?Function} 视口 resize 监听（右上锚定重摆，unmount 时移除） */
-    this._resizeHandler = null;
-    /** @type {?number} resize 防抖定时器 */
-    this._resizeTimer = null;
   }
 
   /**
@@ -195,47 +180,36 @@ export class JumpOverlay {
    */
   mount() {
     if (this._host) return;
-    const host = document.createElement('div');
-    host.id = 'pocketcc-jump-host';
-    host.style.cssText = 'all:initial;';
-    const root = host.attachShadow({ mode: 'open' });
-    const style = document.createElement('style');
-    style.textContent = CSS;
-    root.appendChild(style);
-
-    const win = document.createElement('div');
-    win.className = 'pcj-win';
-    win.innerHTML =
-      `<div class="pcj-titlebar"><span class="pcj-grip">⠿</span><span class="pcj-title">镜头跳转</span>` +
-      `<span class="pcj-srvbadge" hidden></span><span class="pcj-tspacer"></span>` +
-      `<button class="pcj-close" title="关闭 (Ctrl+G)">✕</button></div>` +
-      `<div class="pcj-inputwrap">` +
-      `<textarea class="pcj-input" rows="2" spellcheck="false" placeholder="粘贴坐标，支持：S4251 343,471 / 343,471@4251 / 343:471 / 343,471（可多行，行尾可带 #备注）"></textarea>` +
-      `<div class="pcj-hint">只给坐标默认跳本区；带区号（S4251 或 @4251）跨区跳转。行尾「#文字」为分享备注（缺省「坐标分享」）。回车跳转，Shift+回车换行。</div>` +
-      `</div>` +
-      `<div class="pcj-bar">` +
-      `<button class="pcj-btn primary act-go">跳转</button>` +
-      `<button class="pcj-btn act-share" title="进入多选态（勾选多条批量分享/删除）">多选</button>` +
-      `<button class="pcj-btn danger act-del-sel" title="删除选中记录（两步确认）">删除选中</button>` +
-      `<button class="pcj-btn warn act-clear">清空记录</button>` +
-      `<span class="pcj-count"></span>` +
-      `</div>` +
-      `<div class="pcj-list"><div class="pcj-empty">暂无跳转记录</div></div>` +
-      `<div class="pcj-footer" hidden>` +
-      `<span class="pcj-selinfo">已选 0</span>` +
-      `<button class="pcj-btn act-sel-all" title="选中全部记录">全选</button>` +
-      `<button class="pcj-btn act-sel-none" title="取消全部选中">取消全选</button>` +
-      `<span class="pcj-fspacer"></span>` +
-      `<select class="pcj-chsel" title="分享目的频道"></select>` +
-      `<button class="pcj-btn pcj-send" title="把选中坐标分享到下拉选中的频道">分享到</button>` +
-      `</div>` +
-      `<div class="pcj-toast"></div><div class="pcj-rz"></div>`;
-    root.appendChild(win);
-    document.body.appendChild(host);
-
-    this._host = host;
-    this._root = root;
-    this._win = win;
+    const win = this._mountWindow({
+      hostId: 'pocketcc-jump-host',
+      css: CSS,
+      winClass: 'pcj-win',
+      innerHTML:
+        `<div class="pcj-titlebar"><span class="pcj-grip">⠿</span><span class="pcj-title">镜头跳转</span>` +
+        `<span class="pcj-srvbadge" hidden></span><span class="pcj-tspacer"></span>` +
+        `<button class="pcj-close" title="关闭 (Ctrl+G)">✕</button></div>` +
+        `<div class="pcj-inputwrap">` +
+        `<textarea class="pcj-input" rows="2" spellcheck="false" placeholder="粘贴坐标，支持：S4251 343,471 / 343,471@4251 / 343:471 / 343,471（可多行，行尾可带 #备注）"></textarea>` +
+        `<div class="pcj-hint">只给坐标默认跳本区；带区号（S4251 或 @4251）跨区跳转。行尾「#文字」为分享备注（缺省「坐标分享」）。回车跳转，Shift+回车换行。</div>` +
+        `</div>` +
+        `<div class="pcj-bar">` +
+        `<button class="pcj-btn primary act-go">跳转</button>` +
+        `<button class="pcj-btn act-share" title="进入多选态（勾选多条批量分享/删除）">多选</button>` +
+        `<button class="pcj-btn danger act-del-sel" title="删除选中记录（两步确认）">删除选中</button>` +
+        `<button class="pcj-btn warn act-clear">清空记录</button>` +
+        `<span class="pcj-count"></span>` +
+        `</div>` +
+        `<div class="pcj-list"><div class="pcj-empty">暂无跳转记录</div></div>` +
+        `<div class="pcj-footer" hidden>` +
+        `<span class="pcj-selinfo">已选 0</span>` +
+        `<button class="pcj-btn act-sel-all" title="选中全部记录">全选</button>` +
+        `<button class="pcj-btn act-sel-none" title="取消全部选中">取消全选</button>` +
+        `<span class="pcj-fspacer"></span>` +
+        `<select class="pcj-chsel" title="分享目的频道"></select>` +
+        `<button class="pcj-btn pcj-send" title="把选中坐标分享到下拉选中的频道">分享到</button>` +
+        `</div>` +
+        `<div class="pcj-toast"></div><div class="pcj-rz"></div>`,
+    }).win;
     this._input = win.querySelector('.pcj-input');
     this._list = win.querySelector('.pcj-list');
     this._footer = win.querySelector('.pcj-footer');
@@ -254,58 +228,17 @@ export class JumpOverlay {
     this._renderChannelSel();
     this._applyGeom();
 
-    // 视口变化（窗口缩放/F11 全屏等）：右上锚定——保持与视口右/上两边的距离（同地图/聊天浮层）
-    let lastVW = window.innerWidth;
-    this._resizeHandler = () => {
-      if (this._resizeTimer) clearTimeout(this._resizeTimer);
-      this._resizeTimer = setTimeout(() => {
-        this._resizeTimer = null;
-        if (!this._win) return;
-        const nvw = window.innerWidth;
-        const g = this._geom;
-        const dispW = Math.min(g.w, lastVW);
-        const rightGap = lastVW - (g.x + dispW);
-        this._geom = clampGeom({ x: nvw - rightGap - Math.min(g.w, nvw), y: g.y, w: g.w, h: g.h });
-        lastVW = nvw;
-        this._applyGeom();
-        this._notify('onGeomChange', this.getGeom());
-      }, 120);
-    };
-    window.addEventListener('resize', this._resizeHandler);
+    // 视口变化（窗口缩放/F11 全屏等）：右上锚定重摆，逻辑上收 core/overlay.js
+    this._wireResizeAnchor();
     win.hidden = true;
   }
 
-  /** 显示 */
-  show() {
-    if (!this._win) return;
-    if (this._win.hidden) {
-      this._win.hidden = false;
-      this._notify('onVisibleChange', true);
-      // 打开即把焦点给输入框，便于「按下热键就粘贴」
-      try {
-        this._input.focus();
-        this._input.select();
-      } catch (e) {}
-    }
-  }
-
-  /** 隐藏 */
-  hide() {
-    if (this._win && !this._win.hidden) {
-      this._win.hidden = true;
-      this._notify('onVisibleChange', false);
-    }
-  }
-
-  /** 切换显隐 */
-  toggle() {
-    if (this._win && this._win.hidden) this.show();
-    else this.hide();
-  }
-
-  /** @returns {boolean} 是否可见 */
-  isVisible() {
-    return !!(this._win && !this._win.hidden);
+  /** 显示后聚焦输入框并全选，便于「按下热键就粘贴」（覆写基类钩子；show/hide/toggle/isVisible 均在基类）。 */
+  _afterShow() {
+    try {
+      this._input.focus();
+      this._input.select();
+    } catch (e) {}
   }
 
   /**
@@ -378,124 +311,19 @@ export class JumpOverlay {
     }
   }
 
-  /** 恢复几何（读档） */
-  setGeom(g) {
-    if (!g) return;
-    this._geom = clampGeom({
-      x: g.x != null ? g.x : this._geom.x,
-      y: g.y != null ? g.y : this._geom.y,
-      w: g.w != null ? g.w : this._geom.w,
-      h: g.h != null ? g.h : this._geom.h,
-    });
-    this._applyGeom();
-  }
+  // setGeom/getGeom/toast 已上收基类 OverlayShell（本浮窗无 setGeom 私货，故不覆写 _afterGeom）。
 
-  /** @returns {{x:number,y:number,w:number,h:number}} 当前几何拷贝 */
-  getGeom() {
-    return Object.assign({}, this._geom);
-  }
-
-  /** toast 小提示 */
-  toast(msg) {
-    if (!this._toast) return;
-    this._toast.textContent = msg;
-    this._toast.classList.add('show');
-    if (this._toastTimer) clearTimeout(this._toastTimer);
-    this._toastTimer = setTimeout(() => this._toast.classList.remove('show'), 2200);
-  }
-
-  /** 卸载浮层 */
-  unmount() {
+  /** 释放本浮窗私货：两步确认「删除选中」的解除器（公共定时器/监听/host 由基类 unmount 收尾）。 */
+  _teardownExtras() {
     if (this._delSelDisarm) {
       this._delSelDisarm();
       this._delSelDisarm = null;
-    }
-    if (this._toastTimer) {
-      clearTimeout(this._toastTimer);
-      this._toastTimer = null;
-    }
-    if (this._resizeTimer) {
-      clearTimeout(this._resizeTimer);
-      this._resizeTimer = null;
-    }
-    if (this._resizeHandler) {
-      window.removeEventListener('resize', this._resizeHandler);
-      this._resizeHandler = null;
-    }
-    if (this._host) {
-      this._host.remove();
-      this._host = null;
-      this._root = null;
-      this._win = null;
     }
   }
 
   // ─────────────────────── 内部接线 ───────────────────────
 
-  _applyGeom() {
-    if (!this._win) return;
-    const g = clampGeom(this._geom);
-    const s = this._win.style;
-    s.left = g.x + 'px';
-    s.top = g.y + 'px';
-    s.width = g.w + 'px';
-    s.height = g.h + 'px';
-  }
-
-  /** 屏蔽游戏输入：浮层内指针/键盘/滚轮冒泡到 win 即止 */
-  _wireBlockGameEvents() {
-    const stop = (e) => e.stopPropagation();
-    for (const t of [
-      'pointerdown',
-      'pointerup',
-      'pointermove',
-      'mousedown',
-      'mouseup',
-      'click',
-      'dblclick',
-      'wheel',
-      'keydown',
-      'keyup',
-      'keypress',
-      'touchstart',
-      'touchend',
-      'contextmenu',
-    ]) {
-      this._win.addEventListener(t, stop);
-    }
-  }
-
-  /** 标题栏拖拽 + 关闭 */
-  _wireHead() {
-    this._win.querySelector('.pcj-close').addEventListener('click', () => this.hide());
-    const bar = this._win.querySelector('.pcj-titlebar');
-    let drag = null;
-    bar.addEventListener('pointerdown', (e) => {
-      if (e.target.closest('.pcj-close')) return;
-      drag = { sx: e.clientX, sy: e.clientY, ox: this._geom.x, oy: this._geom.y };
-      bar.setPointerCapture(e.pointerId);
-    });
-    bar.addEventListener('pointermove', (e) => {
-      if (!drag) return;
-      this._geom = clampGeom({
-        x: drag.ox + e.clientX - drag.sx,
-        y: drag.oy + e.clientY - drag.sy,
-        w: this._geom.w,
-        h: this._geom.h,
-      });
-      this._applyGeom();
-    });
-    const end = (e) => {
-      if (!drag) return;
-      drag = null;
-      try {
-        bar.releasePointerCapture(e.pointerId);
-      } catch (err) {}
-      this._notify('onGeomChange', this.getGeom());
-    };
-    bar.addEventListener('pointerup', end);
-    bar.addEventListener('pointercancel', end);
-  }
+  // _applyGeom / _wireBlockGameEvents / _wireHead 已上收基类 OverlayShell（closeSel/barSel 经构造注入）。
 
   /** 输入框：回车提交（Shift+回车换行） */
   _wireInput() {
@@ -788,18 +616,5 @@ export class JumpOverlay {
     hd.addEventListener('pointercancel', end);
   }
 
-  /**
-   * 回调面转发（异常吞掉，不冒泡到游戏）
-   * @param {string} name handlers 键
-   * @param {...*} args
-   * @returns {*}
-   */
-  _notify(name, ...args) {
-    try {
-      return this._h[name] ? this._h[name](...args) : undefined;
-    } catch (e) {
-      log.warn('handler %s threw: %s', name, e && e.message);
-      return undefined;
-    }
-  }
+  // _notify（回调派发）已上收基类 OverlayShell。
 }

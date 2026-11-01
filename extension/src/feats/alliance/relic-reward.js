@@ -30,6 +30,7 @@
  *   纯发包、不派行军，不受战斗模式门控（同联盟帮助口径，不设 offInCombat）；生命周期由 reactor 托管，pause 摘触发器、
  *   resume 补扫一轮。面板：整池奖励摆出，拖拽整行调先后 = 领取优先级（配置只存顺序，全员默认参与）。
  */
+import { CODE_NOT_SENT, sleep } from '../../core/util.js';
 import { createLog } from '../../core/log.js';
 import { bus } from '../../core/bus.js';
 import { storage } from '../../core/storage.js';
@@ -69,8 +70,6 @@ const POLL_INTERVAL = 1000 * 60 * 10;
 const CLAIM_GAP_MS = 600;
 /** @type {number} 窗口 endTime 到点后的翻轮补扫余量（毫秒），避开服务器结算时序 */
 const FLIP_BUFFER_MS = 1000 * 30;
-/** @type {number} 非服务器返回的哨兵 code（在途频控/发送异常，与真实 s 码区分，不当拒绝拉黑） */
-const CODE_NOT_SENT = -1;
 /** @type {string} 当日拉黑持久数据键（storage.data blob 内逻辑名） */
 const DATA_NAME = 'relicReward.rejected';
 
@@ -142,17 +141,6 @@ function payloadOf(ret) {
     }
   }
   return d && typeof d === 'object' ? d : null;
-}
-
-/**
- * 等待毫秒（裸 sleep，pause 语义由循环内 aliveFn() 检查承担）
- * @param {number} ms 毫秒
- * @returns {Promise<void>}
- */
-function sleep(ms) {
-  return new Promise(function (resolve) {
-    setTimeout(resolve, Math.max(0, ms | 0));
-  });
 }
 
 /**

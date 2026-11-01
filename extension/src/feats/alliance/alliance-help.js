@@ -23,6 +23,7 @@
  *   定时器是功能内部的生产逻辑，pause 后 alive()=false，挂着的定时器到点空转一次不再自重排，resume 时 run 重新点火。
  *   未声明 scenes → scene 门控默认放行，任何场景都跑（与重构前一致）。
  */
+import { CODE_NOT_SENT } from '../../core/util.js';
 import { createLog } from '../../core/log.js';
 import { game } from '../../core/game.js';
 import { createDrain } from '../../core/drain.js';
@@ -71,9 +72,6 @@ const TASK_RECEIVE = 'RECEIVE';
 
 /** @type {string} 任务种类：发起自助帮助申请（1139） */
 const TASK_APPLY = 'APPLY';
-
-/** @type {number} 非服务器返回的哨兵 code：闸门未放开 / 发送异常时用，与真实 s 码区分开 */
-const CODE_NOT_SENT = -1;
 
 /**
  * 配置项

@@ -124,14 +124,11 @@ export function createCycle(o) {
     if (!alive()) return;
     var d = Math.max(0, delay);
     wakeAt = Date.now() + d;
-    timer = setTimeout(
-      function () {
-        timer = null;
-        wakeAt = 0;
-        if (alive()) exec();
-      },
-      d,
-    );
+    timer = setTimeout(function () {
+      timer = null;
+      wakeAt = 0;
+      if (alive()) exec();
+    }, d);
   }
 
   /** 外部触发汇入口：非在飞则立即起一轮，在飞则置 pending（本轮结束后由 run() 决定补扫）。 */
@@ -179,14 +176,19 @@ export function createCycle(o) {
     if (running) {
       if (!stuckWarned && execSince && Date.now() - execSince > STUCK_WARN_MS) {
         stuckWarned = true;
-        log.warn('round in flight %ds, run() may be hanging (no intervention).',
-          Math.round((Date.now() - execSince) / 1000));
+        log.warn(
+          'round in flight %ds, run() may be hanging (no intervention).',
+          Math.round((Date.now() - execSince) / 1000),
+        );
       }
       return;
     }
     if (timer) {
       if (wakeAt && Date.now() > wakeAt + WAKE_GRACE_MS) {
-        log.warn('scheduled wake missed (was %s), self-heal kick.', new Date(wakeAt).toLocaleString());
+        log.warn(
+          'scheduled wake missed (was %s), self-heal kick.',
+          new Date(wakeAt).toLocaleString(),
+        );
         clearTimer();
         exec();
       }

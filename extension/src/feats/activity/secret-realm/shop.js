@@ -46,6 +46,7 @@ import {
   TABLE_SHOP,
   TABLE_ITEM,
   ITEM_TYPE_PAB,
+  ITEM_SAUSAGE,
   PAB_SHOP,
   REJ_RETRY,
   CODE_NOT_SENT,
@@ -81,6 +82,16 @@ export class ShopEngine {
    * 只在 #loadedXY 对应当前这次停靠时有效；每次应答整体覆盖。
    */
   #items = {};
+  /**
+   * @type {Object<string,number>} 各店本次会话为「刷出目标品」已发过的 8543 次数（G5，按点键 `x,y` 记），
+   *   上限取 `driveSausageRefreshMax`。
+   *   ⚠ 此前是单值且在**每次 8540 应答后归零**（而刷店成功的应答本身就是一条 8540/8543 items），
+   *   叠上 shopGapMs(250) 的节拍 → 实战 20261101T200401 在 27:05 一秒内烧光 6 次配额和刷新币 41010。
+   *   现按店计且**不在 INFO 时归零**：一家店一局最多 6 刷（四家共 24 刷），宁可少刷也不把币烧光。
+   */
+  #refreshTries = {};
+  /** @type {number} 上一笔 8543 发起时刻（毫秒）：#tick 用它夹出 shopRefreshGapMs 最小间隔 */
+  #lastRefreshAt = 0;
   /** @type {string} #items 装载时所在的商店点坐标键（''=未装；换点或重新到店都要重 INFO 一次） */
   #loadedXY = '';
   /** @type {Object<number,number>} specId → 本会话已购件数（我们自己的进度账，权威于 getTime 做「还差多少」） */
@@ -151,17 +162,34 @@ export class ShopEngine {
     if (!env.alive()) return 0;
     if (!env.realmActive()) return tuning.shopSweepMs;
     const sc = env.cfg().shop;
-    if (!sc || !sc.enabled) return tuning.shopSweepMs;
+    // 总闸：
+    //   ① 持有清单里任一行勾了「店」渠道（sc.enabled）→ 用户显式要求的补货；
+    //   ② **自动驾驶开着（drive.enabled）** → 车会自己开到店，不买白跑一趟。
+    //      这条是「到店也不会自动购买」的修正：v2 只有 ①，用户没勾任何「店」渠道时，
+    //      车就算停在店里也一件不买——而自动驾驶本身就是「替我开去商店」的意图表达。
+    const dv = env.cfg().drive;
+    const autoBuy = !!(dv && dv.enabled);
+    if (!(sc && sc.enabled) && !autoBuy) return tuning.shopSweepMs;
     const cur = this.#atShop();
     if (!cur) {
       this.#loadedXY = '';
-      return tuning.shopSweepMs; // 没停在商店点：保守档不主动开车，长睡等玩家把队开到店里
+      // 没停在商店点：
+      //   · 自动驾驶开着 → **短轮询**：车随时可能到店，而到店只停 driveShopDwellMs（默认 25s），
+      //     本引擎若睡满 shopSweepMs（10 分钟）就错过了整个驻留窗 = 用户口径「到店也不买货」；
+      //   · 手动档 → 保守长睡，等玩家把队开到店里再醒（本引擎绝不主动开车）。
+      return autoBuy ? tuning.driveScanMs : tuning.shopSweepMs;
     }
     if (this.#busy) return tuning.shopGapMs;
     // 同一店两条 BUY 之间的额外静默（constants 注释实证：上一笔未结算形态会出 enigma_realm162）
     if (this.#lastBuyEndAt) {
       const buyGapLeft = this.#lastBuyEndAt + tuning.shopBuyGapMs - Date.now();
       if (buyGapLeft > 0) return buyGapLeft;
+    }
+    // 8543 刷店的最小间隔（竞品靠 15s 驻留 + await 串行天然封顶，我方 250ms 节拍会一秒把配额烧光）：
+    //   这里**只短睡到间隔满**（不能当「本轮无动作」处理，否则 #actOnce 回 false 会睡到 shopSweepMs 而错过整个驻留窗）
+    if (this.#lastRefreshAt) {
+      const refGapLeft = this.#lastRefreshAt + (Number(tuning.shopRefreshGapMs) || 0) - Date.now();
+      if (refGapLeft > 0) return refGapLeft;
     }
 
     // 首次到店（或换了店）：INFO 一次装载货单
@@ -192,6 +220,8 @@ export class ShopEngine {
         const items = this.#parseItems(r);
         this.#items = items;
         this.#loadedXY = xy;
+        // 刷店预算**不在这里归零**（根因 F：刷新应答也会回到本路，归零等于预算无限）：按店计、会话级不重置
+        this.#markLedger(cur);
         env.log.debug('shop: INFO %s loaded %d goods.', xy, Object.keys(items).length);
       } else {
         env.log.debug('shop: INFO %s not ok (%s).', xy, (r && r.reason) || 'code ' + (r && r.code));
@@ -219,6 +249,46 @@ export class ShopEngine {
   }
 
   /**
+   * G7 把本店货单回写成 pilot 的店账（竞品B 在 `onPabRoomShopDataUpdate` 里用应答 items 直接回写
+   *   `state.shops[i].time/sausage/piece`，同一个口子）：
+   *   `sausage`/`piece` = 该货位的 `getTime`（本次服务已购次数，>0 = 已买过；竞品存原值而不是布尔，
+   *   因为 `marchShop(1)` 的排序要比大小），`time` = 本次服务时刻（秒）。
+   *   我方额外记 `sausageShelf`（本货单上到底有没有香肠货位）： pilot 的 #shopAllTried 靠它区分
+   *   「这家不卖」（已试尽）与「在架但还没买到」（还要再试），否则四家都买到过香肠的判据在实战里永不成立。
+   *   pilot 拿它算 shopStage 的 gap、选店「香肠没买过」优先与 exitStage 的百兽箱判据。
+   * @param {{x:number,y:number,key:string}} cur 当前商店点
+   */
+  #markLedger(cur) {
+    const env = this.#env;
+    if (!cur || !cur.key || typeof env.markShopLedger !== 'function') return;
+    // 竞品 verbatim：`items.find(specId 对应 item_id==41011)?.getTime ?? 旧值`——存的是**已购次数**（可比大小排序）
+    let sausage = 0;
+    let shelf = 0;
+    const sSpecs = this.#specsOf(ITEM_SAUSAGE) || [];
+    for (let i = 0; i < sSpecs.length; i++) {
+      if (sSpecs[i] in this.#items) shelf = 1; // 本店货单上有香肠货位（不管买没买过）
+      const t = this.#items[sSpecs[i]] || 0;
+      if (t > sausage) sausage = t;
+    }
+    let piece = 0;
+    if (this.#ensureIndex()) {
+      const t3 = this.#type3Specs || [];
+      for (let i = 0; i < t3.length; i++) {
+        const spec = t3[i] && t3[i].spec;
+        if (spec == null) continue;
+        const t = this.#items[spec] || 0;
+        if (t > piece) piece = t;
+      }
+    }
+    env.markShopLedger(cur.key, {
+      time: Math.floor(Date.now() / 1000),
+      sausage: sausage,
+      piece: piece,
+      sausageShelf: shelf,
+    });
+  }
+
+  /**
    * 找第一个「可买」或「可刷」的选中道具并发起一笔动作（一拍一个）。
    * 数据源是合并后的持有清单（pickItems）：行 key=`item:{itemId}`，条目 `shop=1` 即商店补货渠道勾选；
    *   目标持有量 T = `max>0 ? max : 携带上限 para1_v1`（无渠道上限，只有持有上限），
@@ -240,6 +310,9 @@ export class ShopEngine {
     // type3（跨店共享限量、整场活动限购，如「传奇百兽碎片自选箱」）：已从面板清单移除，到店默认最高优先级自动拿下，
     //   不受任何「店」勾选控制——只要商店引擎在跑就先买它，再进入下面按勾选的补货流程。
     if (this.#grabType3(cur, buyBalance)) return true;
+    // 香肠（41011）默认补满：竞品B `option.buy_sausage && getItemNumById(41011) < 10` 同款固定规则。
+    //   香肠是投喂 BOSS 的硬通货；自动驾驶模式下到店必补，不受「店」勾选控制。
+    if (this.#grabSausage(cur, buyBalance)) return true;
     for (let i = 0; i < keys.length; i++) {
       const k = keys[i];
       if (k.indexOf(KEY_ITEM) !== 0) continue;
@@ -425,6 +498,99 @@ export class ShopEngine {
   }
 
   /**
+   * 香肠（41011 全素香肠）的**默认补满**：竞品B `option.buy_sausage && getItemNumById(41011) < 10` 同款固定规则。
+   *   为什么需要它：v2 的补货完全由持有清单「店」勾选驱动，用户没勾 → 到店也一件不买
+   *   （实战口径「到商店也不会自动购买」）。本规则只在**自动驾驶开着**时生效（手动档不篡改用户意图），
+   *   只要人已停在本店、背包香肠不足 `tuning.driveSausageTarget`(10) 就买一笔，直到买满或本店额度耗尽。
+   * @param {{x:number,y:number,key:string}} cur 当前商店点
+   * @param {number} buyBalance 购买币余额
+   * @returns {boolean} true=这一拍发出了一笔购买
+   */
+  #grabSausage(cur, buyBalance) {
+    const env = this.#env;
+    const dv = env.cfg().drive;
+    if (!dv || !dv.enabled) return false;
+    const target = Number(tuning.driveSausageTarget) || 0;
+    if (!(target > 0)) return false;
+    const have = env.secret.getItemNumById(ITEM_SAUSAGE);
+    if (have >= target) return false;
+    const specs = this.#specsOf(ITEM_SAUSAGE);
+    let onShelf = false;
+    for (let i = 0; i < specs.length; i++) {
+      const spec = specs[i];
+      if (this.#done[spec]) continue;
+      if (!(spec in this.#items)) continue; // 本店当前货单没香肠
+      onShelf = true;
+      const row = this.#row(spec);
+      if (!row) {
+        this.#done[spec] = 1;
+        continue;
+      }
+      const cost = Number(row.cost) || 0;
+      if (cost <= 0 || buyBalance < cost) {
+        this.#done[spec] = 1; // 买不起——本店降级（缺购买币）
+        continue;
+      }
+      const getTime = this.#items[spec] || 0;
+      const quotaLeft = Math.max((Number(row.buy_times) || 0) - getTime, 0);
+      if (quotaLeft <= 0) {
+        this.#done[spec] = 1; // 本店额度买完，剩下的交给下一家店
+        continue;
+      }
+      const affordable = Math.floor(buyBalance / cost);
+      const qty = Math.min(target - have, quotaLeft, affordable, this.#carryRoom(ITEM_SAUSAGE));
+      if (qty < 1) {
+        this.#done[spec] = 1;
+        continue;
+      }
+      // desired 传 0（不按累计件数降级）：目标差额由入口的 have>=target 每拍复判，拿捏最准
+      return this.#sendBuy(cur, spec, qty, 0, this.#bought[spec] || 0);
+    }
+    // G5：货单上**根本没香肠**（不是额度买完，那是「交给下一家店」）→ 竞品 `shopConver` 口径
+    //   「无目标品且刷新币够 → 8543 刷店」，上限 driveSausageRefreshMax。
+    if (!onShelf && specs.length) return this.#refreshFor(cur, 'sausage');
+    return false;
+  }
+
+  /**
+   * 为目标品不在架而刷一次店（G5）。预算与封顶都在本函数：**按店计**且会话内不归零，
+   *   每次刷完还受 #tick 里的 shopRefreshGapMs 夹隔；刷新币预检与游戏 tips enigma_realm74 同口径
+   *   （不够就彻底放弃，不反复烧币）。
+   * @param {{x:number,y:number,key:string}} cur 当前商店点
+   * @param {string} what 目标品描述（日志用）
+   * @returns {boolean} true=本拍发出了一笔 8543
+   */
+  #refreshFor(cur, what) {
+    const env = this.#env;
+    const max = Number(tuning.driveSausageRefreshMax) || 0;
+    if (!(max > 0)) return false;
+    const tries = Number(this.#refreshTries[cur.key]) || 0;
+    if (tries >= max) {
+      this.#note(
+        'rmax' + cur.key,
+        'shop: ' +
+          what +
+          ' still off-shelf at ' +
+          cur.key +
+          ' after ' +
+          max +
+          ' refreshes, give up.',
+      );
+      return false;
+    }
+    const cur0 = this.#currency();
+    if (!cur0) return false;
+    const rcost = this.#refreshCost();
+    if (rcost > 0 && env.secret.getItemNumById(cur0.refreshId) < rcost) {
+      this.#note('rcur' + cur.key, 'shop: ' + what + ' off-shelf, no refresh currency.');
+      return false;
+    }
+    this.#refreshTries[cur.key] = tries + 1;
+    env.log.info('shop: %s off shelf at %s, refreshing (%d/%d).', what, cur.key, tries + 1, max);
+    return this.#sendRefresh(cur);
+  }
+
+  /**
    * 发一笔 8542 购买。成功则累加 #bought 并用应答 items 刷新 getTime；162 抖动重试一次；其余降级。
    * @param {{x:number,y:number,key:string}} cur 当前商店点
    * @param {number} spec specId
@@ -444,6 +610,7 @@ export class ShopEngine {
         this.#items = this.#parseItems(r);
         this.#lastBuyEndAt = Date.now();
         this.#bought[spec] = bought + qty;
+        this.#markLedger(cur);
         env.log.info(
           'shop: bought spec %d x%d (total %d%s).',
           spec,
@@ -483,12 +650,15 @@ export class ShopEngine {
   #sendRefresh(cur) {
     const env = this.#env;
     if (env.secret.isSecretSending(CMD_SHOP_REFRESH)) return false;
+    // 节流时间戳在**发起时**就推进（不能只在成功路径推进，否则旧值不挪会把调度压到下限）
+    this.#lastRefreshAt = Date.now();
     this.#busy = true;
     env.secret.sendSecret(CMD_SHOP_REFRESH, { x: cur.x, y: cur.y }).then((r) => {
       this.#busy = false;
       if (!env.alive()) return;
       if (isOk(r)) {
         this.#items = this.#parseItems(r);
+        this.#markLedger(cur);
         env.log.info('shop: refreshed %s.', cur.key);
         this.#kickSoon();
       } else {
@@ -595,6 +765,8 @@ export class ShopEngine {
     this.#busy = false;
     this.#items = {};
     this.#loadedXY = '';
+    this.#refreshTries = {};
+    this.#lastRefreshAt = 0;
     this.#bought = {};
     this.#done = {};
     this.#told = {};
@@ -616,6 +788,15 @@ export class ShopEngine {
     env.log.info('shop engine started (only restocks when parked at a shop point 161).');
   }
 
+  /**
+   * 外部唤醒（pilot 到店时调用）：让补货立刻开跑，不用等下一次电平轮询。
+   *   到店那一瞬是本引擎唯一能看到「人在店里」的机会（车只停 driveShopDwellMs），所以方向盘一到店就踢一脚。
+   *   幂等：未运行/无循环时静默返回。
+   */
+  kick() {
+    if (this.#active && this.#cycle) this.#cycle.kick();
+  }
+
   /** 停止：置死 #active（cycle 睡眠期定时器靠存活位在到点检查处终止）。 */
   stop() {
     this.#active = false;
@@ -623,6 +804,8 @@ export class ShopEngine {
     this.#items = {};
     this.#loadedXY = '';
     this.#lastBuyEndAt = 0;
+    this.#lastRefreshAt = 0;
+    this.#refreshTries = {};
     this.#specsByItem = null;
     this.#type3Specs = null;
   }

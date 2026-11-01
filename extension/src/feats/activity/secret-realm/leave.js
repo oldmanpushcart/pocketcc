@@ -5,15 +5,19 @@
  *   见 constants CMD_LEAVE_AREA 条）——一旦发出就把整队从秘境战场撤下，是全 feat 不可逆性最高的一档，故不留任何子开关、
  *   只给一个默认关的总闸，且引擎内多重 fail-safe：任一判据读不到就**不离场**，绝不拿缺证据当「拿满」。
  *
- * 借鉴竞品B enigmaSecret.judgeLeave / exitStage（verbatim），但**只取其安全骨架**、不照抄它的 team_type 分层
- *   （那是竞品自己的调度语义，我方无对应概念）：
- *   • 「拿满」= 背包里 quality≥4 的高品质宠物数 ≥ 携带背包总容量（dataConfig(3017)+PabExtraPackItemNum 增益，ACL petPackCapacity）；
+ * 借鉴竞品B enigmaSecret.judgeLeave / exitStage（G7：与竞品同逻辑）：
+ *   • 触发闸 = `exitStage` 三级（与 pilot.js 共用一份判据，经 `env.driveExitStage()` 直读）：
+ *     `i`=任一店账本 `piece>0`（已在某店买到过百兽箱）/ `1` 再加 `a`=有 BOSS 进入 state30（已打死）/
+ *     `2` 再加 `r`=高品质（quality≥4）宠数 ≥ 携带容量；末尾统一用 `fightEndTime` 已过兜底。
+ *     本 feat 单独开着（drive 关）时 piece 仍由 shop.js 回写，拿满+买到箱会命中 `tier==2`。
+ *   • 容量 verbatim `dataConfig(3017) + BuffType.PabExtraPackItemNum`（ACL petPackCapacity）；
  *     容量读不到（回 0）/ 宠物清单读不到（beastInfo 键不存在，回 null）→ 一律不触发（见 game-api 两条 ACL 注释）；
  *   • 「可安全离场」= 已停泊（teamIsMooring）**且非在途行军**（marchState≠MARCHING）+（战斗窗口已过 或 正停在 161 商店点）
  *     ——verbatim judgeLeave 的 `!isTeamLeader() || pointType==PAB_SHOP || ServerMSTime>=fightEndTime`，我方收紧为
  *     「停稳 + 窗口结束/在商店」，绝不在队伍行军途中或 BOSS 争夺窗里撤场；
- *   • 「择优带出」= 把高品质宠物按 quality 降序取前「容量」只的 `id`（protobuf Int64）填 8581 `{itemIds:[], uuIds:[...]}`，
- *     `ok===1` 后才发 8589 `{uid:String(UID)}`（verbatim judgeLeave）。清单为空（一场没拍到宠）→ 不发离场（本档就是为「拿满」而来）。
+ *   • 「择优带出」= verbatim `beastInfo.sort(by quality desc).splice(0, cap).map(id)`：
+ *     **先排序再取前「容量」只**（而不是先筛高品质再取）——它是「带最好的走」而不是「只带好的走」；
+ *     id（protobuf Int64）原样填 8581 `{itemIds:[], uuIds:[...]}`，`ok===1` 后才发 8589 `{uid:String(UID)}`。
  *
  * 频控与红线：只走 ACL sendSecret 发 8581/8589，不碰游戏 Update/Delete、不调 pabFightQuit（离场是服务器态，游戏自刷新）；
  *   **仅队长可发**（8589 撤的是全队那一次在场，多人房各自发会互撤，与 8521/8548 同口径收 isTeamLeader 闸）；
@@ -26,12 +30,13 @@ import {
   CMD_BAG_GET_SET,
   PAB_SHOP,
   TABLE_BEAST,
+  QUALITY_HIGH,
   CODE_NOT_SENT,
   tuning,
 } from './constants.js';
 
-/** 离场「拿满」计的高品质阈值（enigma_beast 行 quality，同 pickup.js dropPetQualityMin / 竞品 exitStage 口径 >=4） */
-const QUALITY_MIN = 4;
+/** 离场「拿满」计的高品质阈值（enigma_beast 行 quality，同竞品 exitStage 口径 >=4） */
+const QUALITY_MIN = QUALITY_HIGH;
 
 /**
  * protobuf Long / {_low,_high} / number / 字符串 → 数值（取不到回 0）。与 boss.js/capture.js/heal.js 同口径。
@@ -75,7 +80,7 @@ export class LeaveEngine {
   }
 
   /**
-   * 一拍：总闸开 + 本场未离场 + 队长 + 容量可信 + 背包被高品质填满 + 现场可安全撤场 → 择优 8581 后 8589 离场。
+   * 一拍：总闸开 + 本场未离场 + 队长 + 容量/清单可信 + exitStage 该收场 + 现场可安全撤场 → 择优 8581 后 8589 离场。
    * 永不 reject；任一 fail-safe 判据不满足即按 leaveScanMs 长睡（保守：读不到就不撤场）。
    * @returns {number} 下拍睡眠（毫秒）
    */
@@ -97,18 +102,29 @@ export class LeaveEngine {
     if (!Array.isArray(pets)) return tuning.leaveScanMs;
 
     const stats = this.#packStats(pets, cap);
-    if (stats.count < cap) return tuning.leaveScanMs; // 高品质未满仓 → 继续拍
-    if (!stats.uuIds.length) return tuning.leaveScanMs; // 无可带出的 id（形态异常）→ 不盲发离场
+    // G7 触发闸：与 pilot 共用一份 exitStage 三级判据（内部已含 fightEndTime 兜底）；
+    //   pilot 引擎不可用时退化为只认「本场战斗窗口已过」，不拿缺证据当「该收场」。
+    const want = typeof env.driveExitStage === 'function' ? !!env.driveExitStage() : false;
+    if (!want && !this.#fightOver()) return tuning.leaveScanMs;
+    if (!stats.uuIds.length) return tuning.leaveScanMs; // 背包一场没拍到宠 → 不带东西白撤整场
     if (!this.#exitSafe()) return tuning.leaveScanMs; // 现场不宜撤场（行军中/争夺窗内）→ 等下一拍
 
     this.#doLeave(stats.uuIds);
     return tuning.leaveScanMs;
   }
 
+  /** 本场战斗窗口是否已过（`roomBaseInfo.fightEndTime` 毫秒绝对时刻；读不到当未过）。 */
+  #fightOver() {
+    const base = this.#env.secret.getRoomBaseInfo();
+    const end = toNum(base && base.fightEndTime);
+    return end > 1e11 && Date.now() >= end;
+  }
+
   /**
-   * 背包里高品质（quality≥QUALITY_MIN）宠物计数 + 择优带出清单（按 quality 降序取前 cap 只的 id）。
-   * 读不到 enigma_beast 行/字段的条目不计入「拿满」、也不占带出名额（离场侧宁可少认满、不可误判满——与 pickup
-   *   品质闸的 fail-open 反向，因为这里误判满的代价是一次不可逆的整场退出）。
+   * 背包统计（verbatim 竞品B `judgeLeave` 的带出口径 + `exitStage` 的拿满口径）：
+   *   `uuIds` = **全体**宠物按 quality 降序取前 `cap` 只的 id（先排序再截断，而不是先筛高品质再取；
+   *     读不到 enigma_beast 行的排最后，不会挤掉已知好宠）；
+   *   `count` = 其中高品质（quality≥QUALITY_MIN）只数（诊断用；拿满判据已交给 exitStage 的 `r`）。
    * @param {Array<{cfgId:number,id:*}>} pets getRoomBagPets 副本
    * @param {number} cap 携带背包总容量
    * @returns {{count:number, uuIds:Array<*>}} count=高品质只数；uuIds=前 cap 只的 id 原值
@@ -121,15 +137,18 @@ export class LeaveEngine {
       if (!b || b.id == null) continue;
       const row = b.cfgId ? env.l10n.tableRow(TABLE_BEAST, b.cfgId) : null;
       const q = row ? Number(row.quality) : NaN;
-      if (!Number.isFinite(q) || q < QUALITY_MIN) continue; // 非高品质/读不到 → 不计满、不占名额
-      ranked.push({ q: q, id: b.id });
+      ranked.push({ q: Number.isFinite(q) ? q : -1, id: b.id });
     }
     ranked.sort(function (a, b) {
       return b.q - a.q;
     });
+    let count = 0;
+    for (let i = 0; i < ranked.length; i++) {
+      if (ranked[i].q >= QUALITY_MIN) count++;
+    }
     const uuIds = [];
     for (let i = 0; i < ranked.length && i < cap; i++) uuIds.push(ranked[i].id);
-    return { count: ranked.length, uuIds: uuIds };
+    return { count: count, uuIds: uuIds };
   }
 
   /**
@@ -212,9 +231,9 @@ export class LeaveEngine {
 
   /**
    * 启动：复位一场态 + 建低频兜底循环（无 push 订阅，背包/容量每拍现读）。
-   * @param {object} ctx reactor 上下文（未用，签名与其它引擎对齐）
+   * @param {object} _ctx reactor 上下文（未用，签名与其它引擎对齐）
    */
-  start(ctx) {
+  start(_ctx) {
     const env = this.#env;
     const self = this;
     this.#active = true;

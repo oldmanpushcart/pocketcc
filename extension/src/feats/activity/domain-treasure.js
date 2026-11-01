@@ -16,6 +16,7 @@
  *   consume 有"名额满即停"的独有逻辑，不套 createDrain，作为 cycleRun 一轮的后半段原样保留在本文件。
  *   兜底定时器是功能内部生产逻辑，pause 后 alive()=false 自然停摆，resume 时 run 复位状态并重新点火。
  */
+import { CODE_NOT_SENT, sleep } from '../../core/util.js';
 import { createLog } from '../../core/log.js';
 import { game } from '../../core/game.js';
 import { reactor } from '../../core/reactor.js';
@@ -46,12 +47,6 @@ const ACTIVITY_TYPE_DOMAIN_TREASURE = 279;
  * @type {number}
  */
 const MARCH_TYPE = 180;
-
-/**
- * 非服务器返回的哨兵 code：闸门未放开 / 发送异常时用，与真实 s 码区分开
- * @type {number}
- */
-const CODE_NOT_SENT = -1;
 
 /** @type {string} 902 被拒的服务器错误标识：矿脉剩余时间不足以支撑行军。拉黑该矿，直到它从 8623 名单消失 */
 const ERR_MINE_TIME_NOT_ENOUGH = 'field_lottery_37';
@@ -122,17 +117,6 @@ var installed = false;
  */
 function aliveFn() {
   return ctxRef ? ctxRef.alive() : false;
-}
-
-/**
- * 等待毫秒
- * @param {number} ms 时长
- * @returns {Promise<void>}
- */
-function sleep(ms) {
-  return new Promise(function (resolve) {
-    setTimeout(resolve, ms);
-  });
 }
 
 /**

@@ -10,6 +10,7 @@
  * 每目标可配每日参与上限（0=无限），跨日自动清零，持久化到 pocketcc.feat.allianceRally.daily。
  * 延迟期内 reactor pause → alive=false → 到点自然放弃；信号包络只存标量。
  */
+import { CODE_NOT_SENT } from '../../core/util.js';
 import { createLog } from '../../core/log.js';
 import { game } from '../../core/game.js';
 import { reactor } from '../../core/reactor.js';
@@ -43,9 +44,6 @@ const RALLY_TARGETS = {
   9100: { key: 'fearStar', label: '惧星' }, // 惧星，pointType=86
   12: { key: 'refugeeCamp', label: '难民营' }, // 难民营，pointType=18
 };
-
-/** @type {number} 非服务器返回的哨兵 code：发送异常时用，与真实 s 码区分开 */
-const CODE_NOT_SENT = -1;
 
 /** @type {string} 当日参与计数持久态的数据 blob 逻辑名（与配置分离：频繁写入走 storage.data，面板导出/导入只涉及配置）*/
 const DAILY_STATE_NAME = 'allianceRally.daily';
@@ -274,22 +272,20 @@ function isDailyLimitReached(key) {
 }
 
 /**
- * 当前面板展示的“今日已参与”文本：N / limit（limit=0 时显示 ∞）。
+ * 当前面板展示的“今日已参与”纯计数：只返数字本体（无 / 上限后缀），与自动打野 huntlist「已打」格同口径，
+ * 保持一列窄格内容不撑宽（上限信息已可由同一行的「每日上限」 input 直接看到）。
  * 纯展示函数：不再调 rollDateIfNeeded——首次渲染（mountUI→get）早于异步读盘完成，
  * 旧实现在 UI 路径上触发日期改写+落盘尝试，弹出误报的 skip-save warn。
  * 未读回时借这次渲染补发一次加载，并显示占位符（计数读回后随面板下次刷新更新）。
  * @param {string} key 目标 key
- * @param {number} limit 每日上限
  * @returns {string}
  */
-function formatToday(key, limit) {
+function formatToday(key) {
   if (!dailyStateLoaded) {
     ensureDailyLoaded();
     return '-';
   }
-  var n = dailyState.counts[key] | 0;
-  limit = limit | 0;
-  return limit > 0 ? n + ' / ' + limit : n + ' / ∞';
+  return String(dailyState.counts[key] | 0);
 }
 
 /**
@@ -508,62 +504,72 @@ reactor.register({
     refugeeCampDailyLimit: 0,
   },
   fields: [
-    { key: 'warHammerEnabled', label: '自动加入', type: 'checkbox', section: '战锤' },
-    { key: 'warHammerDelaySec', label: '延迟入队(秒)', min: 0, step: 1, section: '战锤' },
     {
-      key: 'warHammerDailyLimit',
-      label: '每日上限',
-      min: 0,
-      step: 1,
-      zeroUnlimited: true,
-      section: '战锤',
-    },
-    {
-      key: 'warHammerTodayCount',
-      label: '今日已参与',
-      type: 'text',
-      section: '战锤',
-      get: function (c) {
-        return formatToday('warHammer', c && c.warHammerDailyLimit);
-      },
-    },
-    { key: 'fearStarEnabled', label: '自动加入', type: 'checkbox', section: '惧星' },
-    { key: 'fearStarDelaySec', label: '延迟入队(秒)', min: 0, step: 1, section: '惧星' },
-    {
-      key: 'fearStarDailyLimit',
-      label: '每日上限',
-      min: 0,
-      step: 1,
-      zeroUnlimited: true,
-      section: '惧星',
-    },
-    {
-      key: 'fearStarTodayCount',
-      label: '今日已参与',
-      type: 'text',
-      section: '惧星',
-      get: function (c) {
-        return formatToday('fearStar', c && c.fearStarDailyLimit);
-      },
-    },
-    { key: 'refugeeCampEnabled', label: '自动加入', type: 'checkbox', section: '难民营' },
-    { key: 'refugeeCampDelaySec', label: '延迟入队(秒)', min: 0, step: 1, section: '难民营' },
-    {
-      key: 'refugeeCampDailyLimit',
-      label: '每日上限',
-      min: 0,
-      step: 1,
-      zeroUnlimited: true,
-      section: '难民营',
-    },
-    {
-      key: 'refugeeCampTodayCount',
-      label: '今日已参与',
-      type: 'text',
-      section: '难民营',
-      get: function (c) {
-        return formatToday('refugeeCamp', c && c.refugeeCampDailyLimit);
-      },
+      // 联盟集结目标紧凑表：一行五列（目标名 · 延迟入队(秒)输入 · 每日上限输入 · 今日已打文本 · 启用 checkbox），
+      // 将旧的【战锤/惧星/难民营】三段 × 4 行的布局压成 3 行。行内子格元数据（min/step/zeroUnlimited）挂在 delay/limit 上，
+      // wire.js 数字委托按 rows 下探；count 只读格的 data-fkey 接 r.count.get，refreshTexts 同路径下探。
+      type: 'rallygrid',
+      key: 'rallyGrid',
+      cols: ['', '延迟入队(秒)', '每日上限', '今日已打', ''],
+      rows: [
+        {
+          name: '战锤',
+          enableKey: 'warHammerEnabled',
+          delay: { key: 'warHammerDelaySec', min: 0, step: 1 },
+          limit: {
+            key: 'warHammerDailyLimit',
+            min: 0,
+            step: 1,
+            zeroUnlimited: true,
+            placeholder: '不限',
+            title: '每日上限；留空 / 0 = 不限',
+          },
+          count: {
+            key: 'warHammerTodayCount',
+            get: function () {
+              return formatToday('warHammer');
+            },
+          },
+        },
+        {
+          name: '惧星',
+          enableKey: 'fearStarEnabled',
+          delay: { key: 'fearStarDelaySec', min: 0, step: 1 },
+          limit: {
+            key: 'fearStarDailyLimit',
+            min: 0,
+            step: 1,
+            zeroUnlimited: true,
+            placeholder: '不限',
+            title: '每日上限；留空 / 0 = 不限',
+          },
+          count: {
+            key: 'fearStarTodayCount',
+            get: function () {
+              return formatToday('fearStar');
+            },
+          },
+        },
+        {
+          name: '难民',
+          enableKey: 'refugeeCampEnabled',
+          delay: { key: 'refugeeCampDelaySec', min: 0, step: 1 },
+          limit: {
+            key: 'refugeeCampDailyLimit',
+            min: 0,
+            step: 1,
+            zeroUnlimited: true,
+            placeholder: '不限',
+            title: '每日上限；留空 / 0 = 不限',
+          },
+          count: {
+            key: 'refugeeCampTodayCount',
+            get: function () {
+              return formatToday('refugeeCamp');
+            },
+          },
+        },
+      ],
     },
   ],
   toModuleCfg: function (c) {

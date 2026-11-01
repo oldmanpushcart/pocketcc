@@ -153,7 +153,7 @@ export class WarnEngine {
       this.#pendingWarn = false; // 「抗争到底」或关档：不动作，也不留待发警告
       return tuning.warnScanMs;
     }
-    // 自动驾驶让闸：drive.enabled 时非 BOSS 点的受击转移由 drive.js EVADE 承担（纯就近、与回攻状态机联动），
+    // 自动驾驶让闸：drive.enabled 时非 BOSS 点的受击转移由 pilot.js EVADE 承担（纯就近、与回攻状态机联动），
     //   本引擎的「BOSS 点不抢方向盘」特化失去意义 → 交出 8521 发送权；关掉自动驾驶时本引擎行为完全不变（手动开车档仍可用）。
     const drv = env.cfg().drive;
     if (drv && drv.enabled) {

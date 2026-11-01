@@ -1,7 +1,7 @@
 /**
  * 聊天窗口 feat：半透明浮层（chat-overlay.js）的业务层。
  * 数据全部走 pocketcc.chat（只读+发包，不触碰游戏任何状态与 UI）：
- *   接收：EventCenter 的 newChatPush/chatpushpm/chatdel/chatupdate（经 ctx.on.event 订阅，pause 自动摘）
+ *   接收：聊天 socket 的 chatpush/chatpushpm/chatdel/chatupdate（经 ctx.on.chat 订阅，pause 自动摘）
  *         → normalize → 预处理成可渲染 entry → 按频道/会话键入环形缓冲（每键 600 条，uuid 去重）；
  *   私聊/跨服为双列家族视图（微信 PC 风：左会话列表右聊天窗）；跨服 chip 侧栏列出全部活动动态房
  *         （游戏把这些子频道摆在世界 TAB 下：VchatChannelConfigV5 world subs 含 CROSS/KVK/各活动频道，
@@ -22,6 +22,8 @@ import { l10n, nav, gameData, gameConf, bits, avatar } from '../../../core/game-
 import { getUid } from '../../../core/player.js';
 import { storage } from '../../../core/storage.js';
 import { reactor } from '../../../core/reactor.js';
+import { chatApi } from '../../../core/chat.js';
+import { netApi } from '../../../core/net.js';
 import { ChatOverlay, AT_ALL_LABEL } from './chat-overlay.js';
 import { classify, CST_LABEL } from './classify.js';
 
@@ -226,7 +228,7 @@ function bufOf(key, title) {
  * @returns {void}
  */
 function syncRoomIds() {
-  var chat = window.pocketcc.chat;
+  var chat = chatApi;
   if (!chat || !chat.chatHeads) return;
   for (var h of chat.chatHeads()) {
     if (!h.id || h.channel === 1 || h.channel === 3) continue; // 私聊走 pm:<uid>；跨服多房间由侧栏视图按 cross:<roomId> 管理
@@ -391,7 +393,7 @@ function hhmm(ms) {
  * @returns {{entry:object, key:string, self:boolean}} entry + 归属缓冲键 + 是否本人
  */
 function buildEntry(raw, kind) {
-  var chat = window.pocketcc.chat;
+  var chat = chatApi;
   var norm = chat.normalize(raw, kind);
   var custom = safeParse(raw.custom) || {};
   var atData = custom.atData || null;
@@ -831,7 +833,7 @@ function refreshView(key) {
  * @returns {void}
  */
 function ingest(kind, payload) {
-  var chat = window.pocketcc.chat;
+  var chat = chatApi;
   if (!chat) return;
   var items = Array.isArray(payload) ? payload : [payload];
   for (var raw of items) {
@@ -953,7 +955,7 @@ function onUpdate(payload) {
  * @returns {void}
  */
 function onChatInfoList(ev) {
-  var chat = window.pocketcc.chat;
+  var chat = chatApi;
   if (!chat || !chat.toSysItem) return;
   var d = ev && ev.data;
   if (typeof d === 'string') d = safeParse(d);
@@ -1028,7 +1030,7 @@ async function loadChannelHistory() {
   if (channelHistoryState !== 'idle') return;
   channelHistoryState = 'busy';
   try {
-    var chat = window.pocketcc.chat;
+    var chat = chatApi;
     var ret = await chat.historyRooms();
     // 服务器系统消息（GET_CHAT_PUSH_LIST）与 loadHistoryV2 结果同批入缓冲：合并后统一按时间升序，
     // 避免系统条目（fu="-1"）追加到列表尾部错序（游戏 getHistoryData 在 system_chat_on_server 下同源合并）。
@@ -1086,7 +1088,7 @@ function absorbHistoryItems(list) {
  * @returns {Promise<void>}
  */
 async function absorbExtraRooms() {
-  var chat = window.pocketcc.chat;
+  var chat = chatApi;
   if (!chat.chatHeads) return;
   var joined = new Set(chat.status().rooms || []);
   var tried = new Set();
@@ -1159,7 +1161,7 @@ async function loadOlder() {
   b.pullPages++;
   setStatus('loading');
   try {
-    var chat = window.pocketcc.chat;
+    var chat = chatApi;
     var ret = await chat.olderHistory(b.roomId, oldest.id);
     // 被拒（code!==1）不锁死：退计次、留样本日志，下次滚顶还能重试；只有确认成功的空页才是真到头
     if (!ret || !ret.ok) {
@@ -1229,7 +1231,7 @@ async function locateMessage(uuid) {
   if (locateInflight || !uuid) return;
   var key = activeKey;
   var b = bufOf(key);
-  var chat = window.pocketcc.chat;
+  var chat = chatApi;
   var roomId = b.roomId;
   if (!roomId && b.c != null) {
     // 缓冲未带 roomId：按频道从 chatHeads 兜底解析（world/alliance/group 固定单会话）
@@ -1288,7 +1290,7 @@ async function locateMessage(uuid) {
  * @returns {Promise<void>}
  */
 async function applySummary() {
-  var chat = window.pocketcc.chat;
+  var chat = chatApi;
   if (!chat || !chat.summary) return;
   var ret = await chat.summary();
   var data = ret && ret.data && ret.data.data;
@@ -1320,7 +1322,7 @@ async function loadPmHistory(key) {
   var uid = key.slice(3);
   if (!uid || uid === 'unknown') return;
   try {
-    var chat = window.pocketcc.chat;
+    var chat = chatApi;
     var ret = await chat.history(uid);
     var list = historyList(ret);
     b.list = [];
@@ -1371,7 +1373,7 @@ async function loadDynRoom(key) {
   if (b.c == null) b.c = chanOfKey(key);
   b.roomId = key.slice(key.indexOf(':') + 1);
   try {
-    var chat = window.pocketcc.chat;
+    var chat = chatApi;
     var ret = await chat.historyRooms([b.roomId]);
     absorbHistoryItems(historyList(ret));
     if (overlay && overlay.isVisible() && activeKey === key) renderActive();
@@ -1420,7 +1422,7 @@ function updateSide() {
     overlay.setSideList([], activeKey);
     return;
   }
-  var chat = window.pocketcc.chat;
+  var chat = chatApi;
   var heads = chat && chat.chatHeads ? chat.chatHeads() : [];
   var items = [];
   var has = new Set();
@@ -1515,7 +1517,7 @@ function servePmInfo() {
   var pk = pmInfoQueue.shift();
   if (!pk) return;
   var uid = pk.slice(3);
-  var net = window.pocketcc.net;
+  var net = netApi;
   if (!net || !/^\d+$/.test(uid)) {
     pmInfoCache.set(pk, { state: 'fail', txt: '' });
     servePmInfo();
@@ -1641,7 +1643,7 @@ function maybeRefreshPmInfo(key) {
  * @returns {void}
  */
 function backfillPmInfo() {
-  var chat = window.pocketcc.chat;
+  var chat = chatApi;
   var keys = new Set();
   for (var [k] of bufs) {
     if (k.indexOf('pm:') === 0) keys.add(k);
@@ -1683,7 +1685,7 @@ var pmListPromise = null;
 function seedPmList() {
   if (pmListFetched) return undefined;
   if (pmListPromise) return pmListPromise;
-  var chat = window.pocketcc.chat;
+  var chat = chatApi;
   if (!chat || !chat.pmList) return undefined;
   pmListPromise = (async () => {
     try {
@@ -1754,7 +1756,7 @@ function activateKey(key) {
       backfillPmInfo,
     );
     // 私聊 chip：先用游戏会话列表（chatHeads c=1，含浮层装前会话）预建缓冲，再进最近一个
-    var chat0 = window.pocketcc.chat;
+    var chat0 = chatApi;
     if (chat0 && chat0.chatHeads) {
       for (var h0 of chat0.chatHeads()) {
         if (h0.channel !== 1 || !h0.id) continue;
@@ -1821,7 +1823,7 @@ function viewTitle(key) {
  * @returns {void}
  */
 function syncRoomIdsCross() {
-  var chat = window.pocketcc.chat;
+  var chat = chatApi;
   if (!chat || !chat.chatHeads) return;
   for (var h of chat.chatHeads()) {
     if (!h.id || !isDynamicRoomChan(h.channel)) continue;
@@ -2003,7 +2005,7 @@ function resolveAvatar(d, entry) {
  * @returns {Promise<void>}
  */
 async function doRevoke(entry) {
-  var net = window.pocketcc.net;
+  var net = netApi;
   if (!net || !overlay) return;
   if (!entry || !entry.self) {
     overlay.toast('只能撤回自己的消息');
@@ -2153,7 +2155,7 @@ function parseMemberList(d, diag) {
  */
 async function ensureMembers() {
   if (membersCache && Date.now() - membersCache.at < MEMBERS_TTL_MS) return membersCache.list;
-  var net = window.pocketcc.net;
+  var net = netApi;
   if (!net) return [];
   try {
     var alliance = gameData.alliance();
@@ -2254,7 +2256,7 @@ function encodeAt(text, atList) {
  * @returns {Promise<boolean>} 是否已接受提交（overlay 据此清输入框）
  */
 async function doSend(text, atList, quoteEntry) {
-  var chat = window.pocketcc.chat;
+  var chat = chatApi;
   if (!chat) return false;
   var now = Date.now();
   if (now - lastSendAt < COOLDOWN_MS) {
@@ -2318,7 +2320,7 @@ async function doSend(text, atList, quoteEntry) {
  * @returns {Promise<void>}
  */
 async function doSharePos(x, y) {
-  var chat = window.pocketcc.chat;
+  var chat = chatApi;
   if (!chat) return;
   var now = Date.now();
   if (now - lastSendAt < COOLDOWN_MS) {
@@ -2408,7 +2410,7 @@ var battleInflight = false;
  */
 async function queryBattle(action) {
   if (battleInflight || !overlay) return;
-  var net = window.pocketcc.net;
+  var net = netApi;
   if (!net || !action || !action.uid || !action.mailId) {
     overlay.toast('战报暂不可查');
     return;
@@ -2513,7 +2515,7 @@ function makeHandlers() {
     },
     onCheckFriend: (entry) => checkFriend(entry),
     onNameInfo: (entry) => {
-      var net = window.pocketcc.net;
+      var net = netApi;
       if (!net || !entry || !entry.uid || entry.self || !overlay) return;
       net
         .send(CMD_PLAYER_INFO, { uid: String(entry.uid) })
@@ -2541,7 +2543,7 @@ function makeHandlers() {
         });
     },
     onNameAddFriend: (entry) => {
-      var net = window.pocketcc.net;
+      var net = netApi;
       if (!net || !entry || !entry.uid || entry.self) return;
       // 好友判定已由菜单侧 onCheckFriend 用 Friends Map 分流；这里是确认非好友后的发申请，服务器自拒兼做兜底
       net
@@ -2581,7 +2583,7 @@ function makeHandlers() {
 function install(ctx) {
   ctxRef = ctx;
   if (installed) return true;
-  if (!window.pocketcc.chat) {
+  if (!chatApi) {
     log.warn('chat base unavailable');
     return false;
   }
@@ -2638,22 +2640,22 @@ function configure(c) {
 }
 
 /**
- * 激活：订阅聊天事件（pause 由 ctx.on.event 统一摘除）。
+ * 激活：订阅聊天推送（pause 由 ctx.on.chat 统一摘除）。
  * @param {object} ctx reactor 上下文
  * @returns {void}
  */
 function run(ctx) {
   ctxRef = ctx;
-  ctx.on.event('newChatPush', function (p) {
+  ctx.on.chat('push', function (p) {
     ingest('push', p);
   });
-  ctx.on.event('chatpushpm', function (p) {
+  ctx.on.chat('pm', function (p) {
     ingest('pm', p);
   });
-  ctx.on.event('chatdel', function (p) {
+  ctx.on.chat('del', function (p) {
     onDel(p);
   });
-  ctx.on.event('chatupdate', function (p) {
+  ctx.on.chat('update', function (p) {
     onUpdate(p);
   });
   // CHAT_INFO_LIST(10919)：被攻击/主动攻击等系统战报消息的实时推（走主协议 bus.net.<cmd>，非聊天 socket 事件）

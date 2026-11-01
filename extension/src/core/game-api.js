@@ -88,6 +88,10 @@ const SYM = {
     mineCave: 'mine_cave',
     mineCaveLevel: 'mine_cave_level',
     mineCaveInteraction: 'mine_cave_interaction',
+    // 假面舞会/万圣节派对宝箱道具表（TableName.mask_mystery_party，成员名与值同名小写）。
+    // 客户端读这张表一律 getTableByKeyFromBuffer(…, "item_id", …)（UserItemCityRewardBtn/Panel、
+    // ItemData.GetDes 三处一致），主键并非 item_id，故须走 tableRowByKey 而非 tableRow。
+    maskMysteryParty: 'mask_mystery_party',
   },
   /** UserData 子对象上的数据成员名（属性链符号，Alliance.<name>；WorldCoord 为 UserData 直属成员，myWorldPos 经 SYM 引用）；buffPool=UserData.Buff 为 BuffPool 实例（非可 require 模块），getStateDataById 读战争状态/护盾 EndTime */
   dataProps: {
@@ -96,6 +100,13 @@ const SYM = {
     allianceBehemoth: 'allianceBehemothData',
     worldCoord: 'WorldCoord',
     buffPool: 'Buff',
+    // 假面舞会今日已领次数表 / 已领实例名单：10053 PUSH_USER_DATA_COMMON 的
+    // danceRec / myReceiveDance 两键回写。UserData 上的落地字段名已由客户端源码坐实（非探针）：
+    // UserItemCityRewardBtn 读 UserData.itemCityRewardReceivedNum[itemId] 与
+    // UserData.itemCityRewardReceivedInstIds.indexOf(String(instanceId))，故 maskDanceState() 的
+    // 候选表把这两个语义名列在推送键之前（推送键保留，防不同版本落地名不同）。
+    danceRec: 'danceRec',
+    myReceiveDance: 'myReceiveDance',
   },
   /** 行军/地块枚举成员名（只记名字，数值运行时向游戏枚举对象取） */
   marchEnum: {
@@ -310,6 +321,13 @@ export const CAPS = {
     var u = userData();
     var B = u && u[SYM.dataProps.buffPool];
     return !!(B && typeof B.getStateDataById === 'function');
+  },
+  // 机械大师「职业等级 buff」读数依赖：建塔面板 NWorldResourcePopup 用 Buff.getBuffDataById(resBuffId).Value
+  //   拿到本人可建的完整 buildId(bid)，与上面的 getStateDataById（战争状态）不同方法，故单列能力键。
+  buffValue: () => {
+    var u = userData();
+    var B = u && u[SYM.dataProps.buffPool];
+    return !!(B && typeof B.getBuffDataById === 'function');
   },
   commonTools: () => !!game.get(SYM.modules.commonTools),
   homeMapUtils: () => !!game.get(SYM.modules.homeMapUtils),
@@ -529,6 +547,35 @@ export const l10n = {
       return T.getTableGroupArray(tn) || [];
     } catch (e) {
       return [];
+    }
+  },
+  /**
+   * 按**任意列**取配置表首行（只读，getTableByKeyFromBuffer）。
+   * 与 tableRow 的区别不是便利而是正确性：tableRow 走 getTableDataById，只认表的**主键**；
+   * 而游戏侧对若干活动表是按业务列查的（实证：mask_mystery_party 全程按 `item_id` 查，
+   * UserItemCityRewardBtn/Panel、ItemData.GetDes 三处一致），主键另有其列时 tableRow 恒返回 null。
+   * 表未就绪/无匹配行返回 null。游戏侧比较是宽松 `!=`（数字/字符串同值即中），此处同构；
+   * 内部 getTableGroup(表名) 不带精简标志时会顺手把仍是串的原始行 parseRow 完，所以「表已加载但行未解析」
+   * 的首查也能拿到对象（而 getTableDataById 只解析它命中的那一行）。
+   * @param {string} semantic 语义表名（同 tableRow 的名字解析优先级）
+   * @param {string} field 列名（如 'item_id'）
+   * @param {*} value 列值（数字或数字串）
+   * @returns {object|null}
+   */
+  tableRowByKey(semantic, field, value) {
+    var T = TABLE();
+    if (!T || typeof T.getTableByKeyFromBuffer !== 'function') return null;
+    var tn = SYM.tables[semantic];
+    if (!tn) {
+      var E = tableNameEnum();
+      tn = (E && E[semantic]) || semantic;
+    }
+    if (value == null || value === '') return null;
+    try {
+      var rows = T.getTableByKeyFromBuffer(tn, field, value);
+      return Array.isArray(rows) && rows.length ? rows[0] : null;
+    } catch (e) {
+      return null;
     }
   },
   /**
@@ -1492,6 +1539,27 @@ export const gameData = {
     }
   },
   /**
+   * 机械大师职业 buff 读数（只读）：Buff.getBuffDataById(buffId).Value。
+   * 源码实证 NWorldResourcePopup（s = UserData.Buff.getBuffDataById(e); s && s.Value && canBuildTower(s.Value)）
+   * ——Value 即该资源族「本人可建的完整 buildId(bid)」（如 53006 = 粮 6 级），不是布尔/等级小数。
+   * 资源族 buffId：金 1101001 / 油 1101002 / 粮 1101003 / 雷神 1101072。
+   * 符号缺失、无该 buff、Value 非法一律回 0（调用方按「取不到职业上限」回退经验值）。
+   * @param {number} buffId 职业 buff id
+   * @returns {number} Value（完整 bid）；0=取不到
+   */
+  buffValueById(buffId) {
+    // Buff 门面是 UserData 上的 BuffPool 实例（userData().Buff），不可 require；现读不缓存（切图整体替换 UserData）
+    var u = userData();
+    var B = u && u[SYM.dataProps.buffPool];
+    if (!B || typeof B.getBuffDataById !== 'function') return 0;
+    try {
+      var d = B.getBuffDataById(+buffId);
+      return (d && Number(d.Value)) || 0;
+    } catch (e) {
+      return 0;
+    }
+  },
+  /**
    * 是否处于战争狂热（禁止开盾窗口）：复刻游戏 getWarFeverState，三个狂热阶段 stateId 任一命中即真。
    * 探测不可用（Buff 符号漂移）时返回 false——放行开盾尝试，交由 910 status=3+war_fever_003 权威裁决。
    * @returns {boolean}
@@ -1744,6 +1812,60 @@ export const gameData = {
     var rewardTime = Number(t.rewardTime);
     if (!(times >= 0) || !(rewardTime > 0)) return null;
     return { times: times, rewardTime: rewardTime };
+  },
+  /**
+   * 假面舞会（MASK_DANCE / cityReward 宝箱）今日领取态只读快照。
+   * 数据源：push 10053 PUSH_USER_DATA_COMMON 的 `{danceRec:{<boxItemId>:次数}, myReceiveDance:[<instanceId 字符串>]}`
+   *   （报文实证 dashcam 20261101T000624-2026万圣节.ndjson line 2336）。
+   * 口径：
+   *   - `byItem` 的键是**宝箱道具 id**（如 260617005），值是该道具今日已领次数；限额是**逐道具**口径
+   *     （客户端源码实证：游戏闸门写的是 `daily_limit > itemCityRewardReceivedNum[itemId]`，
+   *     ItemData.GetDes 的「今日剩余领取次数」也按单个 itemId 算），跨道具 id 求和当分母会把
+   *     「每种各 N 次」误压成「全族共 N 次」，导致多道具年份提前静默封顶；
+   *   - `instIds` 是**已领舞会实例 id 的字符串数组**（19 位，禁 Number 化），同实例只能领一次——`cityReward.players[]`
+   *     只是展示名单不含 uid，不可作幂等判据；
+   *   - 登录期是否全量下发仍未实证（§4-2 已由源码解决「字段叫什么」，未解决「什么时候有」），
+   *     故拿不到字段时返回 null 而非空态——调用方须回落到自己的镜像。
+   * @returns {{byItem:Object<string,number>, instIds:string[]}|null} 数据源/字段不可得返回 null
+   */
+  maskDanceState() {
+    var u = userData();
+    if (!u) return null;
+    // 候选名：SYM.dataProps 登记的线上键 + 客户端源码里的语义名（UserItemCityRewardBtn 读的两个 getter）。
+    // 角色一律由候选表**显式声明**，不靠名字正则猜：`itemCityRewardReceivedInstIds` 里的 "Rec" 会被次数表
+    // 判据命中，而数组的 typeof 也是 'object'——一旦被误归成 rec，调用方 `for in` 会拿到 19 位实例 id 串，
+    // Number 化后（精度已丢，破 Int64 红线）把「今日已领次数」拉成天文数字，导致当日静默封顶永不领取。
+    var roles = [
+      { role: 'rec', names: ['itemCityRewardReceivedNum', SYM.dataProps.danceRec] },
+      { role: 'insts', names: ['itemCityRewardReceivedInstIds', SYM.dataProps.myReceiveDance] },
+    ];
+    var rec = null;
+    var insts = null;
+    for (var r of roles) {
+      for (var name of r.names) {
+        var v;
+        try {
+          v = u[name];
+        } catch (e) {
+          v = null;
+        }
+        if (v == null || v === '') continue;
+        if (r.role === 'rec') {
+          if (typeof v === 'object' && !Array.isArray(v)) rec = rec || v;
+        } else if (Array.isArray(v)) {
+          insts = insts || v;
+        }
+      }
+    }
+    if (!rec && !insts) return null;
+    var byItem = {};
+    for (var k in rec || {}) {
+      var n = Number(rec[k]);
+      // 安全阀：「今日已领次数」的量级不可能超过 1000，越界即视为误收的脏数据直接丢弃——
+      // 封顶判据宁可少计（多发一次被拒请求），也不可被拉爆成恒真（当天一座都领不到且无法归因）。
+      if (Number.isFinite(n) && n >= 0 && n <= 1000) byItem[String(k)] = n;
+    }
+    return { byItem: byItem, instIds: (insts || []).map(String) };
   },
   /**
    * 每日特惠（hero daily deal）免费奖励领取态只读快照（UserData.heroDailyDealGiftIsReceived，
@@ -2658,6 +2780,192 @@ export const secretRealm = {
     } catch (e) {
       return 0;
     }
+  },
+  /**
+   * 秘境次通道 **JSON 版**发包（`TMWatchNetMgr.Instance.send`）——与 sendSecret（PBV2）并列的第二条口子。
+   *   为什么需要：`901 GET_WORLD_INFO` 在秘境图里走的是 JSON send（竞品B enigmaSecret.asend 同款），
+   *   用 sendPBV2 发它拿不到 pointList。回调形如 `{s, d}`（d 是 JSON 字符串），s!==0 或超时回 null。
+   * @param {number} cmd 命令号（秘境里用于 901 等 JSON 协议）
+   * @param {object|null} data 载荷
+   * @returns {Promise<object|null>} 解析后的应答体；未就绪/失败/超时一律 null（永不 reject）
+   */
+  sendSecretJson(cmd, data) {
+    var mgr = watchNetMgr();
+    if (!mgr || typeof mgr.send !== 'function') return Promise.resolve(null);
+    return new Promise(function (resolve) {
+      var settled = false;
+      var timer = setTimeout(function () {
+        if (settled) return;
+        settled = true;
+        resolve(null);
+      }, SECRET_TIMEOUT_MS);
+      var done = function (v) {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        resolve(v);
+      };
+      try {
+        mgr.send(cmd, data || null, null, function (resp) {
+          try {
+            if (!resp || Number(resp.s) !== 0) return done(null);
+            done(typeof resp.d === 'string' ? JSON.parse(resp.d) : resp.d || null);
+          } catch (e) {
+            done(null);
+          }
+        });
+      } catch (e) {
+        done(null);
+      }
+    });
+  },
+  /**
+   * **主动拉视口**（竞品B `marchResource` 的核心数据源，我们 v2 最大的缺失）。
+   *   以 (cx,cy) 为中心发 901，拿回 `pointList`（每个点带 x/y/pointType/m{iNum,state,teams,esrId,rTime}）
+   *   与 `marchList`（在途行军）。这是「不再依赖 10018 push 积累」的关键：push 只在镜头扫过时来，
+   *   主动查才能随时拿到候选池（v2 的 tiles.size 常年 2~3 就是没这一步）。
+   *   参数取竞品同款：width 20 / height 30 / viewLevel 1 / marchInfo true（实测覆盖 x±58 · y±39）。
+   * @param {number} cx 视口中心 x
+   * @param {number} cy 视口中心 y
+   * @param {{width?:number,height?:number,viewLevel?:number,k?:number}} [opt]
+   * @returns {Promise<{points:Array,marches:Array}|null>} 归一后的点/行军列表；未就绪/失败回 null
+   */
+  queryWorldView(cx, cy, opt) {
+    var o = opt || {};
+    var x = Number(cx);
+    var y = Number(cy);
+    if (!Number.isFinite(x) || !Number.isFinite(y)) return Promise.resolve(null);
+    var k = Number(o.k) || secretRealm.pabServerId() || 0;
+    return secretRealm
+      .sendSecretJson(901, {
+        x: x,
+        y: y,
+        k: k,
+        rid: 0,
+        width: Number(o.width) || 20,
+        height: Number(o.height) || 30,
+        marchInfo: true,
+        viewLevel: Number(o.viewLevel) || 0,
+      })
+      .then(function (r) {
+        if (!r) return null;
+        var pts = Array.isArray(r.pointList) ? r.pointList : [];
+        var ms = Array.isArray(r.marchList) ? r.marchList : [];
+        return {
+          points: pts,
+          marches: ms.map(function (m) {
+            var bb = m.begin || {};
+            var tt = m.target || {};
+            var inf = m.info || {};
+            return {
+              bx: Number(bb.bx != null ? bb.bx : bb.tx) || 0,
+              by: Number(bb.by != null ? bb.by : bb.ty) || 0,
+              tx: Number(tt.tx != null ? tt.tx : m.target_tx) || 0,
+              ty: Number(tt.ty != null ? tt.ty : m.target_ty) || 0,
+              state: Number(m.state != null ? m.state : m.marchState) || 0,
+              leaderUid: inf.leaderUid != null ? String(inf.leaderUid) : '',
+            };
+          }),
+        };
+      });
+  },
+  /**
+   * 秘境图服号（901 请求体的 k）：`NWorldMapData.instance.serverData.currentServerId`，缺失回退 selfServerId。
+   * @returns {number} 取不到回 0（调用方应放弃本次查询而不是拿错区发）
+   */
+  pabServerId() {
+    var C = probe(SYM.modules.nWorldMapData + '.cls', function () {
+      try {
+        var m = game.get(SYM.modules.nWorldMapData);
+        return (m && (m.NWorldMapData || m.default || m)) || null;
+      } catch (e) {
+        return null;
+      }
+    });
+    var W = C && (C.instance || C);
+    var sd = W && W.serverData;
+    return Number(sd && (sd.currentServerId || sd.selfServerId)) || 0;
+  },
+  /**
+   * 秘境增益值（游戏 verbatim `PabController.getPabBuffValueByType(type)`）：
+   *   竞品用它算背包容量（`dataConfig 3017 + PabExtraPackItemNum`）。
+   * @param {number} type BuffType 枚举值
+   * @returns {number} 取不到回 0
+   */
+  getPabBuffValueByType(type) {
+    var p = secretRealm.getPabController();
+    if (!p || typeof p.getPabBuffValueByType !== 'function') return 0;
+    try {
+      return Number(p.getPabBuffValueByType(Number(type))) || 0;
+    } catch (e) {
+      return 0;
+    }
+  },
+  /**
+   * 房间背包快照 `roomBagInfo`（push 21525 写入）的**只读引用**：bagInfo 道具 / beastInfo 野兽 / protectBeasts。
+   * 竞品用它算「百兽箱是否已满」「能捡几只兽」。Int64 字段原样返回，不在此做 Number 转换。
+   * @returns {object|null}
+   */
+  getRoomBagInfo() {
+    var p = secretRealm.getPabController();
+    return (p && p.roomBagInfo) || null;
+  },
+  /**
+   * 正在拍宠的坐标 `capturingPetPos`（push 21530 写入）；未在拍回 null（或 x/y 非正）。
+   * 驾驶层用它做「拍宠中不挪点」闸（挪点会清捕获进度）。
+   * @returns {{x:number,y:number}|null}
+   */
+  getCapturingPetPos() {
+    var p = secretRealm.getPabController();
+    var v = p && p.capturingPetPos;
+    if (!v) return null;
+    var x = Number(v.x);
+    var y = Number(v.y);
+    return x > 0 && y > 0 ? { x: x, y: y } : null;
+  },
+  /**
+   * 现在能不能发 8521（游戏 verbatim `isCanMarch = !!roomBaseInfo && teamIsMooring()`）。
+   * 驾驶层用它当统一可发闸，避免自己拼判据漏项。
+   * @returns {boolean}
+   */
+  isCanMarch() {
+    return !!secretRealm.getRoomBaseInfo() && secretRealm.teamIsMooring();
+  },
+  /**
+   * 全图行军列表归一（`NWorldMapData.instance.marches`）：竞品用它在选点前剔掉「已有己方行军指向该点」的目标。
+   * 两种源形态不同（本地扁平 `target_tx/marchState`、901 嵌套 `target.tx/state`），此处统一成 `{bx,by,tx,ty,state,leaderUid}`。
+   * @returns {Array<{bx:number,by:number,tx:number,ty:number,state:number,leaderUid:string}>}
+   */
+  getMarchList() {
+    var C = probe(SYM.modules.nWorldMapData + '.cls', function () {
+      try {
+        var m = game.get(SYM.modules.nWorldMapData);
+        return (m && (m.NWorldMapData || m.default || m)) || null;
+      } catch (e) {
+        return null;
+      }
+    });
+    var W = C && (C.instance || C);
+    var bag = (W && W.marches) || null;
+    var out = [];
+    if (!bag || typeof bag !== 'object') return out;
+    var keys = Object.keys(bag);
+    for (var i = 0; i < keys.length; i++) {
+      var m = bag[keys[i]];
+      if (!m) continue;
+      var bb = m.begin || {};
+      var tt = m.target || {};
+      var inf = m.info || {};
+      out.push({
+        bx: Number(bb.bx != null ? bb.bx : m.begin_bx) || 0,
+        by: Number(bb.by != null ? bb.by : m.begin_by) || 0,
+        tx: Number(tt.tx != null ? tt.tx : m.target_tx) || 0,
+        ty: Number(tt.ty != null ? tt.ty : m.target_ty) || 0,
+        state: Number(m.state != null ? m.state : m.marchState) || 0,
+        leaderUid: inf.leaderUid != null ? String(inf.leaderUid) : '',
+      });
+    }
+    return out;
   },
   /**
    * 已在保护中的宠物 id 列表（游戏 verbatim `getBagPetIsPretecting` 的数据源：`roomBagInfo.protectBeasts`）。

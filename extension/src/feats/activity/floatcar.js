@@ -31,11 +31,12 @@
  *   要到回城 push 合并进游戏行军对象后才有值——这正是释放打点只能"迭代精化"、不能一次算死的原因）。
  *
  * 生命周期由 reactor 托管：install/run 两个钩子（无可调面板项，故不写 configure），places 门控限定 base/world（Home/NWorldMap）。
- *   run 挂 newChatPush 监听；pause 摘监听、alive()=false 让堆事件与在飞流程自然收手，flows/pending 表保留，resume 续跑。
+ *   run 挂聊天 chatpush 监听；pause 摘监听、alive()=false 让堆事件与在飞流程自然收手，flows/pending 表保留，resume 续跑。
  * 类型级当日熔断：某类花车的 902 回 `mysterioustriangle_10`（今日剩余次数不足）即记该类"今日已满"，
  *   当场收掉同类型全部流程 + 滤掉同类型待派项，后续该类型的发车卡不再建流程（跨类型互不影响，跨日自动失效）。
  * 被拒退避："目标被占/限流"类拒绝按指数退避再试（队满与上限各有专路、不走这里），否则会被拒的坐标每秒重派一遍。
  */
+import { CODE_NOT_SENT } from '../../core/util.js';
 import { createLog } from '../../core/log.js';
 import { game } from '../../core/game.js';
 import { reactor } from '../../core/reactor.js';
@@ -52,9 +53,6 @@ const CMD_FLOAT_PARADE_QUERY_CAN_REWARD_BAG = 8852;
 
 /** @type {number} ChatShareLinkType.PARADE_FLOAT_MARCH_SHARE，花车行军分享卡（llm.t），卡片只带 marchId + expirationTime，不带坐标 */
 const SHARE_LINK_PARADE_FLOAT_MARCH = 38;
-
-/** @type {number} 非服务器返回的哨兵 code：发送异常时用，与真实 s 码区分开 */
-const CODE_NOT_SENT = -1;
 
 /** @type {number} 每箱摊到的窗口秒数：真机三点吻合（1 箱=180s / 2 箱=360s / 8 箱=1440s） */
 const BOX_WINDOW_SEC = 180;
@@ -590,7 +588,7 @@ async function scheduleSlotFree(getType) {
  * 这条聊天推送是不是"某台花车的发车分享卡"，是则解出建流程所需的种子值。
  * 判据只用 m 以 "link" 开头 + llm.t=38 + llm.extra.marchType 命中配置表；
  * 普通位置分享卡的 llm.t=0 且带 p{x,y,z}，天然不命中（真机对照组已验）
- * @param {object} msg newChatPush 载荷（单项对象，非数组）
+ * @param {object} msg chatpush 载荷（单项对象，非数组）
  * @returns {object|null} {floatId, marchId, dropType, getType, tSec, expSec} 或 null
  */
 function parseParadeShare(msg) {
@@ -814,8 +812,8 @@ function markCapReached(flow, data) {
 }
 
 /**
- * newChatPush 入口：同步过滤 + 建流程 + 铺首批事件。永不 throw（net/event 封装也会兜，但不依赖它）
- * @param {object} msg newChatPush 载荷（游戏 NetChatClient 把 socket "chatpush" 单参转出来）
+ * chatpush 入口：同步过滤 + 建流程 + 铺首批事件。永不 throw（chat 封装逐条 try/catch，但不依赖它）
+ * @param {object} msg chatpush 载荷（游戏 NetChatClient 把 socket "chatpush" 单参转给 EventCenter，我们直连同源）
  */
 function onChatPush(msg) {
   if (!aliveFn()) return;
@@ -1642,13 +1640,9 @@ function install(ctx) {
  */
 function run(ctx) {
   ctxRef = ctx;
-  ctx.on.event('newChatPush', onChatPush);
+  ctx.on.chat('push', onChatPush);
   startDriver();
-  log.info(
-    'started, listening event=newChatPush;flows=%d;pending=%d.',
-    flows.size,
-    pendingPickups.length,
-  );
+  log.info('started, listening chat=push;flows=%d;pending=%d.', flows.size, pendingPickups.length);
 }
 
 /**

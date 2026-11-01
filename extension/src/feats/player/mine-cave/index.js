@@ -11,6 +11,7 @@
  * 单一总开关（reactor enabled）驱动两引擎一起起停。
  * 全部「只读+发包」：不改写游戏本地数据、不 OpenUI、不模拟点击。
  */
+import { CODE_NOT_SENT } from '../../../core/util.js';
 import { createLog } from '../../../core/log.js';
 import { game } from '../../../core/game.js';
 import { reactor } from '../../../core/reactor.js';
@@ -19,8 +20,6 @@ import { MiningEngine } from './mining.js';
 import { StealEngine } from './steal-pack.js';
 
 const log = createLog('MINE-CAVE');
-
-const CODE_NOT_SENT = -1; // ask 未真正发出（同号在途/发送异常）的伪码
 
 // ─────────── 共享运行时 ───────────
 var MCFG = { rules: [] }; // 采集规则：每条 {type,level,star}；行存在即生效（已无行级 enabled 草稿门）

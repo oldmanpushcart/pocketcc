@@ -8,6 +8,7 @@
  * 有自己的队列/drain/定时器/刷新预算，与 ① 挖矿完全独立。
  * 注：盟友矿「帮忙封存」已按需求取消，封存只发生在裂隙矿场，故 packLeft 名额专属于本引擎。
  */
+import { CODE_NOT_SENT } from '../../../core/util.js';
 import { createLog } from '../../../core/log.js';
 import { createDrain } from '../../../core/drain.js';
 import { gameData } from '../../../core/game-api.js';
@@ -36,7 +37,6 @@ const CMD_WORLD_INFO = 7415; // 裂隙矿场（refresh:0 读 / refresh:1 换矿�
 const CMD_STEAL = 7419; // 偷取
 const CMD_HELP_PACK = 7420; // 封存/帮打包
 const CMD_HELP = 7418; // 加速帮忙
-const CODE_NOT_SENT = -1; // env.ask 未真正发出的伪码（与 index.js 同值；引擎不能反向 import index，故就近）
 const ACTION_GAP_MS = 1200; // drain 相邻两次动作的最小间隔（本引擎发送节奏，与 ① 各自独立）
 
 // ── ② 专属调度阈值 ──

@@ -3,16 +3,19 @@
  *
  * 定位（对齐 item.js / march.js 的核心模块范式）：
  *   - 只收口「跨 feat 复用的地图事实与只读查询」：瓦片/尺寸口径、pointType 实体字典、三系坐标互转、
- *     大数字/护盾可读串、单窗 901（GET_WORLD_INFO）拉取与子对象兜底取字段。
+ *     大数字/护盾可读串、单窗 901（GET_WORLD_INFO）拉取、906（WORLD_SEARCH_MONSTER）按条件搜一个可交互点，
+ *     以及子对象兜底取字段。901/906 都只发只读查询、回吐原始点，命中判定/黑名单/归属谓词等业务留调用方。
  *   - 不做「玩法专属」的东西：扫描块网格调参（SCAN_GRID）、筛选树/图例配色（FILTER_TREE 等）、
  *     面板默认值（DEFAULTS）、渲染样式（GRID_STYLE/TERRAIN_COLORS）、归属过滤谓词（classifyPoint/playerPass）
  *     都留在 feats/system/map/map-meta.js —— 那些是「全局地图」这个 feat 的私货，不是底座真相。
- *   - 只发 901 拉数据（只读查询），不改写游戏任何状态；k（服号）由调用方按 `UserData.ServerId|0` 传入
+ *   - 只发 901/906 拉数据（只读查询），不改写游戏任何状态；901 的 k（服号）由调用方按 `UserData.ServerId|0` 传入
  *     （实证陷阱：viewServerId() 在 Home 返回 -1，绝不可作 k，见 fetchWindow JSDoc）。
+ *     906 请求体无坐标/视口无关，groupType/pointType 的语义由各调用方决定（资源/野怪/集结/惧星…）。
  *
  * 数值来源均有实证（references/游戏逆向/全局地图知识点归档.md、地图模块分析报告.md、dashcam 报文实录）：
  *   瓦片 224×162 / 半宽高 112/81、缩放档、本服 cols=408/rows=952、单窗回点窗 x±58/y±39、pointType=NWorldMapEntityType。
  */
+import { parseData } from './util.js';
 
 /** @type {{W:number,H:number,HALF_W:number,HALF_H:number}} 等距瓦片像素常量（单块菱形地块） */
 export const TILE = { W: 224, H: 162, HALF_W: 112, HALF_H: 81 };
@@ -72,6 +75,8 @@ export const MAP_INFOS = {
 
 /** @type {number} GET_WORLD_INFO 命令号（视口拉取，客户端自报 x/y/width/height） */
 export const CMD_GET_WORLD_INFO = 901;
+/** @type {number} WORLD_SEARCH_MONSTER 命令号（服务端按 (groupType,等级区间,pointType) 搜一个可交互点，视口无关） */
+export const CMD_WORLD_SEARCH = 906;
 
 /**
  * pointType 实体类型字典（权威源 = NWorldMapEntityType，即 901 pointList[].pointType 取值枚举；
@@ -231,6 +236,9 @@ export const POINT_TYPE_MAP = (() => {
 /** @type {number} 玩家城池 pointType（护盾归属实体，见 POINT_TYPES） */
 export const CITY_POINT_TYPE = 1;
 
+/** @type {number} 要塞资源（王者遗迹刷出的 6 级田）pointType（见 POINT_TYPES 38 项；报文实证 dashcam 20261016 856 遗迹田条目 target.targetType=38、普通田=4） */
+export const FORTRESS_RES_POINT_TYPE = 38;
+
 /**
  * 护盾剩余可读串（列表行/悬浮用）：无盾或已过期→「无」；否则「剩余X小时X分钟」（不足 1 小时省小时段）。
  * @param {?number} shieldSec Unix 秒到期时间戳（null/0=无）
@@ -380,20 +388,7 @@ export function inCellBounds(cellX, cellY, cols, rows) {
 
 /* ===================== 只读查询（Phase2：收口 auto-farm / imperial-decree / defense 三处同构 901 探针骨架） ===================== */
 
-/**
- * 应答 data 归一（跨 feat 各写一版的 parse 兜底收于此）：对象直返；JSON 串解析；失败 null。
- * @param {*} v net Ret.data（字符串或已解析对象）
- * @returns {?object}
- */
-function parseData(v) {
-  if (v == null) return null;
-  if (typeof v === 'object') return v;
-  try {
-    return JSON.parse(v);
-  } catch (e) {
-    return null;
-  }
-}
+// 应答 data 归一的 parse 兜底已上收 core/util.js（单一真相），本模块经文件头 import { parseData }。
 
 /**
  * 从 901 点位多子对象（p/b/r/t/m）里兜底取首个非空字段（城点信息常嵌在子对象里，字段名跨版本略有漂移）。
@@ -454,6 +449,38 @@ export async function fetchWindow(net, x, y, opts) {
   return { ok: true, code: ret.code, points: list };
 }
 
+/**
+ * 906（WORLD_SEARCH_MONSTER）搜索骨架：isSending 门 → 发送 → 归一 → 抽一个可交互点。永不 reject。
+ *   fetchWindow 的亲兄弟：同为「请求 + 解析 + 取点」的只读骨架，命中判定/黑名单/taken/ownerId 等业务谓词全留调用方。
+ *   服务端一次只按 (groupType, minLevel~maxLevel, pointType) 回一个点（应答 d.point，部分场景 d.pointList[0]），
+ *   不带排序能力——“逐级降序”类策略（如普通田 5→1）由调用方循环本函数实现。
+ *   isSending 命中即视为本轮无候选（回 ok:false/sent:false），调用方当 noop 处理、不排队不重发。
+ * @param {{send:Function, isSending?:Function}} net 已安装 net
+ * @param {{groupType:number, minLevel:number, maxLevel:number, pointType:number}} body 906 请求体（逐键对齐报文，语义由调用方定）
+ * @param {{cmd?:number}} [opts] cmd=线上命令号（默认 906；次通道/换号场景才需覆盖）
+ * @returns {Promise<{ok:boolean, sent:boolean, code:*, point:object|null, points:object[], err?:*}>}
+ *   ok=服务端受理；point=单个归一点（含 x/y 且原始字段 r/m/b/pointType 等，未做业务过滤）；无点时 point=null、points 为空数组
+ */
+export async function searchPoint(net, body, opts) {
+  var cmd = (opts && opts.cmd) || CMD_WORLD_SEARCH;
+  if (net.isSending && net.isSending(cmd))
+    return { ok: false, sent: false, code: null, point: null, points: [] };
+  var ret;
+  try {
+    ret = await net.send(cmd, body);
+  } catch (err) {
+    return { ok: false, sent: false, code: null, point: null, points: [], err: err };
+  }
+  if (!ret || !ret.ok)
+    return { ok: false, sent: true, code: ret && ret.code, point: null, points: [] };
+  var d = parseData(ret.data) || {};
+  var points = Array.isArray(d.pointList) ? d.pointList : d.point ? [d.point] : [];
+  var point = d.point || points[0] || null;
+  if (!point || point.x == null || point.y == null)
+    return { ok: true, sent: true, code: ret.code, point: null, points: [] };
+  return { ok: true, sent: true, code: ret.code, point: point, points: points };
+}
+
 /** 世界地图底座单例（对齐 item / march 的命名空间范式；具名导出与本体同源） */
 export const map = {
   TILE,
@@ -463,6 +490,7 @@ export const map = {
   SERVER,
   MAP_INFOS,
   CMD_GET_WORLD_INFO,
+  CMD_WORLD_SEARCH,
   POINT_TYPES,
   POINT_TYPE_MAP,
   CITY_POINT_TYPE,
@@ -478,4 +506,5 @@ export const map = {
   inCellBounds,
   pickSub,
   fetchWindow,
+  searchPoint,
 };

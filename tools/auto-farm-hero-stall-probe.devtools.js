@@ -3,7 +3,7 @@
  *
  * 症状：面板日志每 60s 刷一条
  *   [AUTO-FARM] row 0 preset #6(战斗#6) heroes not yet released, skip this cycle.
- *   出处 feats/player/auto-farm.js 的英雄就绪守卫：plan.presetHasHeroes && !plan.heroList.length → 本轮跳过。
+ *   出处 feats/player/auto-farm/index.js 的英雄就绪守卫：plan.presetHasHeroes && !plan.heroList.length → 本轮跳过。
  *   守卫本意只挡「回城推送后兵池已刷新、英雄释放推送未到」的 1~2s 竞争窗口；连续十几分钟不消失 ⇒ 不是竞态，而是某个前提长期为假。
  *
  * 判据链（battle.js build → recalcData → game-api.battlePreset.recalc，实证游戏源码）：

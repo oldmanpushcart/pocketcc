@@ -45,6 +45,7 @@
  * 不行军不参战，不设 offInCombat；生命周期由 reactor 托管，pause 摘 push 订阅、resume 重 kick。
  * 面板：独立 feature 卡片（showFields），只出一个只读态览（待收数 / 上次剩余次数 / 上次落点），无可调参数（落点全自动）。
  */
+import { CODE_NOT_SENT, sleep } from '../../core/util.js';
 import { createLog } from '../../core/log.js';
 import { bus } from '../../core/bus.js';
 import { gameData } from '../../core/game-api.js';
@@ -83,8 +84,6 @@ const COLLECT_RETRY_MS = 1000 * 20;
 const NO_SPACE_RETRY_MS = 1000 * 60 * 3;
 /** @type {number} 连续被服务器拒绝次数达此数则加倍退避 */
 const REJECT_STREAK_MAX = 3;
-/** @type {number} 非服务器返回的哨兵 code（在途频控/发送异常，与真实 s 码区分，不当无次数退避） */
-const CODE_NOT_SENT = -1;
 
 /** @type {object|null} 网络底座（promise 封装 pocketcc.net） */
 var net;
@@ -141,17 +140,6 @@ function payloadOf(ret) {
     }
   }
   return d && typeof d === 'object' ? d : null;
-}
-
-/**
- * 等待毫秒（裸 sleep，pause 语义由循环内 aliveFn() 检查承担）
- * @param {number} ms 毫秒
- * @returns {Promise<void>}
- */
-function sleep(ms) {
-  return new Promise(function (resolve) {
-    setTimeout(resolve, Math.max(0, ms | 0));
-  });
 }
 
 // ── 发包 ────────────────────────────────────────────────────────────────

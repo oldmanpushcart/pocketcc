@@ -33,6 +33,7 @@
  *   不花钻石。日常任务形态：面板只出启用开关，无字段无配置（fields=[]，toModuleCfg 返回空）。
  *   不行军不参战，offInCombat:false。生命周期由 reactor 托管，pause 后 alive()=false 自然停。
  */
+import { CODE_NOT_SENT } from '../../core/util.js';
 import { createLog } from '../../core/log.js';
 import { gameData } from '../../core/game-api.js';
 import { reactor } from '../../core/reactor.js';
@@ -58,9 +59,6 @@ const MIN_WAKE_MS = 1000 * 3;
 
 /** @type {number} 距上次提现多久就放行一次收割（秒）：镜像游戏 LocalDataKey.CollectMechineGetTime 的 4h 分支（游戏写本地、本端只读不改写，故自记时刻） */
 const HARVEST_PERIOD_SEC = 14400;
-
-/** @type {number} 非服务器返回的哨兵 code（发送异常/在途频控用，与真实 s 码区分） */
-const CODE_NOT_SENT = -1;
 
 /** @type {number} 连续被服务器拒绝次数，达 3 次后退巡检档；收取成功即清零 */
 var rejectStreak = 0;

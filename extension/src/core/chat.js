@@ -2,20 +2,30 @@
  * pocketcc.chat
  * 游戏聊天通道（NetChatClient，socket.io 独立长连接）的薄封装：
  * 借用游戏自管的连接（auth/bind/故障转移/重连均不干预），只开五个面——
- *   发包：send() 文本消息走主协议 PostChatMsg(670)（真机实测口径：发送走主 socket，回声经聊天 socket 推 newChatPush）；
+ *   发包：send() 文本消息走主协议 PostChatMsg(670)（真机实测口径：发送走主 socket，回声经聊天 socket 推 chatpush）；
  *         sharePos() 发坐标分享链接（同 670，m="link" + llm 载荷）；sendEmoji() 发表情（m="link"+id + custom 载荷）；
  *   读数据：history/historyRooms/olderHistory/unread/markRead 走 sendProxy 隧道拉历史/未读/标已读（已破解 sign：md5(参数拼串+time)，插入序+字母序两套）；
  *         summary() 会话摘要+@气泡、pmList() 私聊会话列表、aroundHistory() 按 uuid 定位上下文（同 sendProxy 隧道）；
  *         systemMessages() 走主协议 PBV2 GET_CHAT_PUSH_LIST 查服务器系统消息（fu="-1" 条目，与频道历史合并）；
  *         proxy() 为 sendProxy 的 {url,query,body} 隧道通用底层（REST 代理），Promise 化 + 超时防挂死；
- *   收信：on/off 把 EventCenter 转发的聊天推送（newChatPush 等）映射为语义 type；normalize()/parseLink() 把两种推送 schema 归一为可渲染对象；
- *   日志：setLog 期间包 sendProxy 打印出站与应答 + 订阅聊天事件打印入站，关闭即摘。
+ *   收信：on/off 直连游戏聊天 socket（chatpush/chatpushpm/chatupdate/chatdel/reconnect）映射为语义 type，
+ *         自带实例更替自愈（connectSocket 包装 + io 工厂包装 + 低频身份自检），
+ *         登录重连/connect_timeout 故障转移/PAB 心跳重建后自动重挂；
+ *         normalize()/parseLink() 把两种推送 schema 归一为可渲染对象；
+ *   日志：setLog 期间包 sendProxy 打印出站与应答 + 同一管道订阅聊天 socket 打印入站，关闭即摘。
  * 房间跟随游戏 _rooms（世界/联盟等由游戏自己 addRoom），本模块不 join/leave、不改写游戏任何状态。
  * 参照 net.js 口径：单点 hook、先跑原函数再打印、只当最外层还是自己时才还原。
  */
 import { createLog } from './log.js';
 import { game } from './game.js';
 import { getUid } from './player.js';
+
+/**
+ * chat 底座具名导出（供 reactor/feat 走 ESM import，替代 window.pocketcc.chat 全局摸取）。
+ * IIFE 内在 api 构造完成后回赋值；bundle 同步求值，importer 读取时必已就绪（install 仍由各 API 懒兜底）。
+ * @type {object|null}
+ */
+export let chatApi = null;
 
 (function () {
   'use strict';
@@ -48,17 +58,45 @@ import { getUid } from './player.js';
   const SEND_TIMEOUT_MS = 15000;
 
   /**
-   * 语义 type → EventCenter 事件名（NetChatClient 把 socket 事件转成这些游戏事件广播）。
-   * 注意 del 取 chatdel：socket 的 chatdel 被游戏双重转发为 chatMsgDelete+chatdel，订一个即可。
+   * 语义 type → socket 事件名。游戏侧 NetChatClient 对这几个事件只做逐字透传
+   * （c.on('chatpush', e => EVENT.emit('newChatPush', e))，同引用无变形），故直连 socket 拿到的载荷
+   * 与走 EventCenter 完全一致；del 只挂一次（游戏把 chatdel 双转发为 chatMsgDelete + chatdel）。
    * @type {Object<string,string>}
    */
-  const EVENT_MAP = {
-    push: 'newChatPush',
+  const SOCKET_MAP = {
+    push: 'chatpush',
     pm: 'chatpushpm',
     update: 'chatupdate',
     del: 'chatdel',
-    reconnect: 'NETCHATCLIENT_RECONNECT',
+    reconnect: 'reconnect',
   };
+
+  /**
+   * socket 实例身份自检间隔（毫秒）。实例更替的主路径已由 connectSocket 包装与 io 工厂包装零延迟捕获，
+   * 这里只作兜底（_io 被别处改回原厂、或旧实例在无人调工厂时被丢弃），故放宽到 15s。
+   */
+  const REBIND_CHECK_MS = 15000;
+
+  /** @type {Map<string, Set<Function>>} 语义 type → 订阅者集（去重、退订配对、重挂遍历都走它） */
+  var subs = new Map();
+  /** @type {object|null} 监听当前挂靠的 socket 实例（身份锚） */
+  var boundSocket = null;
+  /** @type {Map<string, Function>} 在 boundSocket 上挂着的 type → 我们的 fan-out listener */
+  var bound = new Map();
+  /** @type {number|null} socket 身份自检定时器（只在有订阅时跑） */
+  var rebindTimer = null;
+  /** @type {Function|null} 原 connectSocket */
+  var connectOrig = null;
+  /** @type {Function|null} 我们的 connectSocket 包装 */
+  var connectMine = null;
+  /** @type {boolean} client 上 connectSocket 原本是否为自有属性（决定还原用赋值还是 delete） */
+  var connectOwn = false;
+  /** @type {boolean} connectSocket 当前是否已被包装 */
+  var connectHooked = false;
+  /** @type {Function|null} 原聊天 socket 工厂（client._io） */
+  var ioOrig = null;
+  /** @type {Function|null} 我们的工厂包装 */
+  var ioMine = null;
 
   /** @type {number|null} PostChatMsg 命令号（懒查 RequestId，查不到回落真机观测值 670） */
   var postCmd = null;
@@ -139,6 +177,8 @@ import { getUid } from './player.js';
     }
     client = c;
     installed = true;
+    hookConnect();
+    hookIo();
     log.info('installed.');
     return true;
   }
@@ -150,6 +190,10 @@ import { getUid } from './player.js';
   function uninstall() {
     if (!installed) return true;
     if (logEnabled) setLog(false);
+    stopRebindTimer();
+    dropAllSubs();
+    unhookConnect();
+    unhookIo();
     installed = false;
     client = null;
     log.info('uninstalled.');
@@ -212,8 +256,8 @@ import { getUid } from './player.js';
   }
 
   /**
-   * 底层 socket.io 对象逃生口（调试用；勿在其上常驻 on() 监听——重连换 socket 实例会丢订阅，
-   * 收消息一律走 on()/pocketcc.event 路径）
+   * 底层 socket.io 对象逃生口（调试用；勿在其上自行常驻 on() 监听——socket 实例会被游戏整只替换
+   * （connectSocket / 故障转移 / PAB 心跳重建），丢了没人替你重挂；收消息一律走 on()，它自带重挂自愈）
    * @returns {object|null} 未连接/模块缺失返回 null
    */
   function socket() {
@@ -350,7 +394,7 @@ import { getUid } from './player.js';
    * 应答走主 socket（status=0；ret.data 为应答字符串原文，net 不做 JSON_PARSE——成功时是
    * '{"success":1,m:...}' JSON 串需自行 parse 判 success===1，业务拒时为 '<文案键,参数>' 裸串 parse 得 null），
    * 消息回声另经聊天 socket 推回：
-   * 频道消息（世界/联盟）→ newChatPush，私聊 → chatpushpm，不等价于本 Promise）。
+   * 频道消息（世界/联盟）→ chatpush，私聊 → chatpushpm，不等价于本 Promise）。
    * @param {string} text 消息文本
    * @param {object} [opts] 选项：{channel 'world'|'pm'|'alliance'（缺省 world，显式传数字 c 可越过预设）,
    *     c 频道号, uid 私聊目标 UID（channel='pm' 时必填）, group, llm, custom 字符串（传 null 用生成值）}
@@ -802,9 +846,9 @@ import { getUid } from './player.js';
   }
 
   /**
-   * 把聊天推送归一为可直接渲染的对象（频道 newChatPush 与私聊 chatpushpm 两个 schema 字段不同构，
+   * 把聊天推送归一为可直接渲染的对象（频道 chatpush 与私聊 chatpushpm 两个 schema 字段不同构，
    * 本函数抹平差异；kind 缺省据 fu/tu 是否在场所属频道自动判别）。
-   * @param {object} msg socket 推来的原始对象（newChatPush 单项 / chatpushpm 单项）
+   * @param {object} msg socket 推来的原始对象（chatpush 单项 / chatpushpm 单项）
    * @param {string} [kind] 'push'（频道）| 'pm'（私聊）；缺省自动
    * @returns {object|null} {kind, channel, seq, time, isSelf, from:{uid,name,face,server,lang,fUid}, to:{uid,name}|null,
    *     text, isLink, linkType, llm, emotionId, raw}；msg 非对象时返回 null
@@ -862,7 +906,7 @@ import { getUid } from './player.js';
         face: tu.f != null ? tu.f : null,
       };
     } else {
-      // 联盟/群聊等频道的 newChatPush 实推项里没有 f 对象（实证报文）：发件人在顶层
+      // 联盟/群聊等频道的 chatpush 实推项里没有 f 对象（实证报文）：发件人在顶层
       // uid/fu（字符串 UID），昵称在 fp（JSON 串的 username），需逐级兜底才能拿到 from.uid
       var f = asObj(msg.f);
       var fp = asObj(msg.fp);
@@ -924,23 +968,28 @@ import { getUid } from './player.js';
   }
 
   /**
-   * 订阅聊天推送
+   * 订阅聊天推送（直连 socket，自带实例更替自愈：登录重连/故障转移/PAB 心跳重建后自动重挂）
    * @param {string} type 语义类型：push 频道消息 | pm 私聊 | update 消息更新 | del 消息删除 | reconnect 重连成功
    * @param {function(payload)} fn 回调，实参为 socket 推来的原始对象（非池化，可持有）；reconnect 无载荷
-   * @returns {function} unsubscribe；type/fn 非法时为空操作函数
+   * @returns {function} unsubscribe；type/fn 非法或底座缺失时为空操作函数
    */
   function on(type, fn) {
-    var name = EVENT_MAP[type];
-    if (!name || typeof fn !== 'function') {
+    if (!SOCKET_MAP[type] || typeof fn !== 'function') {
       log.warn('on: invalid args (type=%s, fn=%s)', type, typeof fn);
       return function () {};
     }
-    var ev = window.pocketcc && window.pocketcc.event;
-    if (!ev) {
-      log.warn('on %s: pocketcc.event unavailable.', type);
+    if (!installed && !install()) {
+      log.warn('on %s: NetChatClient unavailable.', type);
       return function () {};
     }
-    return ev.on(name, fn);
+    var set = subs.get(type);
+    if (!set) subs.set(type, (set = new Set()));
+    set.add(fn);
+    rebind();
+    startRebindTimer();
+    return function () {
+      offEntry(type, fn);
+    };
   }
 
   /**
@@ -949,10 +998,118 @@ import { getUid } from './player.js';
    * @param {function} fn 注册时的原回调
    */
   function off(type, fn) {
-    var name = EVENT_MAP[type];
-    if (!name || typeof fn !== 'function') return;
-    var ev = window.pocketcc && window.pocketcc.event;
-    if (ev) ev.off(name, fn);
+    if (!SOCKET_MAP[type] || typeof fn !== 'function') return;
+    offEntry(type, fn);
+  }
+
+  /**
+   * 退订一条：从表里摘；该 type 空了才从 socket 上摘 listener；全空则停自检。
+   * 幂等：陈旧句柄（已退订过的）不会误伤后注册的同引用回调。
+   * @param {string} type 语义类型
+   * @param {function} fn 原回调
+   */
+  function offEntry(type, fn) {
+    var set = subs.get(type);
+    if (!set || !set.has(fn)) return;
+    set.delete(fn);
+    if (set.size) return;
+    subs.delete(type);
+    detach(type);
+    if (!subs.size) stopRebindTimer();
+  }
+
+  /**
+   * 把某个 type 的 fan-out listener 挂到当前 socket（幂等）。
+   * 每个 type 只挂一个 listener，回调时快照订阅者集：订阅/退订发生在回调内也不影响本轮派发；
+   * 每个订阅者单独 try/catch——我们的回调抛错既不打断同事件的其余订阅者，也不打断游戏自己的处理。
+   * @param {string} type 语义 type
+   */
+  function attach(type) {
+    if (bound.has(type)) return;
+    var name = SOCKET_MAP[type];
+    var listener = function (payload) {
+      var set = subs.get(type);
+      if (!set) return;
+      var list = Array.from(set);
+      for (var i = 0; i < list.length; i++) {
+        try {
+          list[i](payload);
+        } catch (err) {
+          log.warn('callback %s threw', type, err);
+        }
+      }
+    };
+    try {
+      boundSocket.on(name, listener);
+      bound.set(type, listener);
+    } catch (err) {
+      log.warn('attach %s failed: %s', name, err && err.message);
+    }
+  }
+
+  /**
+   * 从当前 socket 摘掉某个 type 的 listener（socket 可能已被游戏 removeAllListeners，异常忽略）
+   * @param {string} type 语义 type
+   */
+  function detach(type) {
+    var listener = bound.get(type);
+    if (!listener) return;
+    bound.delete(type);
+    try {
+      if (boundSocket && typeof boundSocket.off === 'function') {
+        boundSocket.off(SOCKET_MAP[type], listener);
+      }
+    } catch (e) {}
+  }
+
+  /**
+   * 自愈重挂：以 client.socket() 的实例身份为锚，实例一变就把表里所有 type 重新挂上。
+   * 触发点四处——on() 时、connectSocket 包装返回后、io 工厂包装（每次建 socket 的微任务）、
+   * REBIND_CHECK_MS 身份自检（兜底）。未连接（socket 为 null）时只返回：订阅留在表里，等下一次触发。
+   */
+  function rebind() {
+    var s;
+    try {
+      s = client && typeof client.socket === 'function' ? client.socket() : null;
+    } catch (e) {
+      return; // 取实例抛错（client 已失效等）同“未连接”，订阅留在表里等下次触发
+    }
+    if (!s) return;
+    if (s !== boundSocket) {
+      detachAll();
+      boundSocket = s;
+      log.info('chat socket bound, %d types registered.', subs.size);
+    }
+    Array.from(subs.keys()).forEach(function (type) {
+      attach(type);
+    });
+  }
+
+  /** 摘掉当前 socket 上挂的全部 listener 并放开身份锚（旧实例可能已被游戏整只丢弃） */
+  function detachAll() {
+    Array.from(bound.keys()).forEach(function (type) {
+      detach(type);
+    });
+    boundSocket = null;
+  }
+
+  /** 卸载路径：清订阅表 + 摘 socket（调用方通常已全部退订，这里兜底防漏） */
+  function dropAllSubs() {
+    subs.clear();
+    detachAll();
+  }
+
+  /** 起实例身份自检（仅在有订阅时跑；每拍只做一次引用比较） */
+  function startRebindTimer() {
+    if (rebindTimer) return;
+    rebindTimer = setInterval(rebind, REBIND_CHECK_MS);
+  }
+
+  /** 停实例身份自检 */
+  function stopRebindTimer() {
+    if (!rebindTimer) return;
+    clearInterval(rebindTimer);
+    rebindTimer = null;
   }
 
   /**
@@ -1004,21 +1161,101 @@ import { getUid } from './player.js';
     proxyOrig = proxyMine = null;
   }
 
-  /** 日志期入站订阅：经 pocketcc.event 订 5 个聊天事件并打印，句柄入表备摘 */
-  function startLogSubs() {
-    var ev = window.pocketcc && window.pocketcc.event;
-    if (!ev) return;
-    for (var type in EVENT_MAP) {
-      (function (type, name) {
-        logInboundOffs.push(
-          ev.on(name, function (payload) {
-            try {
-              log.info('push %s (%s)', name, type, payload);
-            } catch (e) {}
-          }),
-        );
-      })(type, EVENT_MAP[type]);
+  /**
+   * 单点包 client.connectSocket（自有属性遮蔽，同 hookProxy 口径，可对称还原）。
+   * 游戏每次建聊天 socket 都走它（首次登录 / CHAT_CONNECT 失败 20s 重试 / PAB 队房心跳重建），
+   * 原函数返回后立刻 rebind()，让订阅跟着新实例走；故障转移不经它，由身份自检兜底。
+   * @returns {boolean} 挂钩成功（失败只告警：登录早于本模块安装时，on() 首订也能直接绑上现成实例）
+   */
+  function hookConnect() {
+    if (connectHooked) return true;
+    connectOwn = Object.prototype.hasOwnProperty.call(client, 'connectSocket');
+    connectOrig = connectOwn
+      ? client.connectSocket
+      : (Object.getPrototypeOf(client) || {}).connectSocket;
+    if (typeof connectOrig !== 'function') {
+      log.warn('connectSocket is missing, rely on identity poll only.');
+      return false;
     }
+    connectMine = function () {
+      var ret = connectOrig.apply(this, arguments);
+      try {
+        hookIo(); // connectSocket 入口会 `_io = window.io` 把包装冲掉，返回后补包一次
+        rebind();
+      } catch (err) {
+        log.warn('rebind after connect failed: %s', err && err.message);
+      }
+      return ret;
+    };
+    client.connectSocket = connectMine;
+    connectHooked = true;
+    return true;
+  }
+
+  /** 摘 connectSocket 包装：仅当最外层还是我们的包装时才还原 */
+  function unhookConnect() {
+    if (!connectHooked) return;
+    if (client && client.connectSocket === connectMine) {
+      if (connectOwn) client.connectSocket = connectOrig;
+      else delete client.connectSocket;
+    }
+    connectHooked = false;
+    connectOrig = connectMine = null;
+  }
+
+  /**
+   * 包 client._io（聊天 socket 工厂）。NetChatClient 的 connectSocket 与它的内部故障转移闭包 T(t+1)
+   * 都只经 `e._io(url, opts)` 建实例，所以包住工厂 = 任何一条路径建出新 socket 都能零延迟感知，
+   * 不用等轮询。不碰全局 window.io：主协议走原生 WebSocket，与此无关；_io 只是聊天通道的私有副本。
+   * 注：connectSocket 入口会 `e._io = window.io` 把包装冲掉，故每次 connectSocket 返回后要补包一次。
+   * @returns {boolean} 是否新包上（未连接/已被包过返回 false，均不致命）
+   */
+  function hookIo() {
+    var f = client && client._io;
+    if (!f || f === ioMine) return false;
+    ioOrig = f;
+    ioMine = function () {
+      var s = ioOrig.apply(this, arguments);
+      scheduleRebind();
+      return s;
+    };
+    client._io = ioMine;
+    log.info('chat io factory hooked.');
+    return true;
+  }
+
+  /** 摘 io 工厂包装：仅当最外层还是我们的包装时才还原 */
+  function unhookIo() {
+    if (!ioMine) return;
+    if (client && client._io === ioMine) client._io = ioOrig;
+    ioOrig = ioMine = null;
+  }
+
+  /**
+   * 微任务重挂：等本次同步块（游戏紧接着执行 `c.on('chatpush', ...)` 与 `_socket = c`）跑完再挂。
+   * 若在工厂里同步挂，我们的 listener 会排在游戏之前，回调时读到未更新的本地数据。
+   */
+  function scheduleRebind() {
+    queueMicrotask(function () {
+      try {
+        rebind();
+      } catch (err) {
+        log.warn('deferred rebind failed: %s', err && err.message);
+      }
+    });
+  }
+
+  /** 日志期入站订阅：订 5 个语义 type 打印原始载荷，句柄入表备摘（与业务订阅同一条重挂管道） */
+  function startLogSubs() {
+    Object.keys(SOCKET_MAP).forEach(function (type) {
+      logInboundOffs.push(
+        on(type, function (payload) {
+          try {
+            log.info('push %s %s', SOCKET_MAP[type], payload);
+          } catch (e) {}
+        }),
+      );
+    });
   }
 
   /** 退订全部日志期入站订阅 */
@@ -1031,7 +1268,7 @@ import { getUid } from './player.js';
   }
 
   /**
-   * 开关聊天日志。开启=包 client.sendProxy（出站+应答打印）并经 pocketcc.event 订阅聊天事件（入站打印）；
+   * 开关聊天日志。开启=包 client.sendProxy（出站+应答打印）并经同一套 socket 订阅打印入站；
    * 关闭即全部摘除，hot path 回到无包装原样。用于真机探测文本消息的 url/参数口径。
    * @param {boolean} on
    * @returns {boolean} 当前开关态
@@ -1102,5 +1339,6 @@ import { getUid } from './player.js';
 
   window.pocketcc = window.pocketcc || {};
   window.pocketcc.chat = api;
+  chatApi = api; // 具名导出：与 window 同源，供 import { chatApi } 使用
   // 扩展内不自启：无场景时机依赖，各 API 首用时懒兜底 install()
 })();

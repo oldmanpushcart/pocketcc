@@ -36,12 +36,14 @@
  *   - 无队且不该自己开车（仅 helper）→ 逐个玩家池成员用 630 PLAYER_INFO 取名 → 7530 按名（likeName）搜该玩家创建的未满队 → 7522 申请入队（不再扫 7526）；main 一律自己建队开车；
  *   - 次数不足且勾了 useBeaconWhenShort → 走通用使用物品 815 消耗定位信标(47001001) 补次数（§7-6 已报文关闭）。
  */
+import { CODE_NOT_SENT } from '../../../core/util.js';
 import { Battle } from '../../../core/battle.js';
 import { march } from '../../../core/march.js';
 import { CMD_GET_WORLD_INFO } from '../../../core/map.js';
 import { bits, csHunt, gameData } from '../../../core/game-api.js';
 import { createLog } from '../../../core/log.js';
 import { storage } from '../../../core/storage.js';
+import { chatApi } from '../../../core/chat.js';
 import { FlowEngine } from './engine-flow.js';
 import {
   ACK_APPLY_LIST,
@@ -77,9 +79,6 @@ import {
 
 /** @type {ReturnType<createLog>} feat 日志器（tag=CSHUNT） */
 const log = createLog('CSHUNT');
-
-/** @type {number} 未真正发出的哨兵码（与 core/march.js / alliance-behemoth.js 同义） */
-const CODE_NOT_SENT = -1;
 
 /** @type {number} 建队 cfg（= 控制器 specId；真机 dump 与四趟报文恒 1，见 §9/§9.4） */
 const TEAM_CFG = 1;
@@ -419,13 +418,13 @@ export class TeamEngine {
       playerPower: (uidStr) => this.#playerPower(uidStr),
       chat: {
         send: (text, opts) => {
-          var c = window.pocketcc && window.pocketcc.chat;
+          var c = chatApi;
           if (!c || typeof c.send !== 'function')
             return Promise.reject(new Error('chat unavailable'));
           return c.send(text, opts);
         },
         normalize: (raw) => {
-          var c = window.pocketcc && window.pocketcc.chat;
+          var c = chatApi;
           return c && typeof c.normalize === 'function' ? c.normalize(raw) : null;
         },
       },
@@ -478,7 +477,6 @@ export class TeamEngine {
     ctx.on.resp(REQ_HUNT_INFO, (ev) => this.#onHuntInfo(this.#ack(ev, ACK_HUNT_INFO)));
     ctx.on.resp(REQ_TEAM_APPLY_LIST, (ev) => this.#onApplyList(this.#ack(ev, ACK_APPLY_LIST)));
     // 频道 17 聊天入站（codeBox 队友视图汇总）：chat 是 socket.io 独立通道、非 net bus，退订自持（stop 摘除）
-    var chatApi = window.pocketcc && window.pocketcc.chat;
     if (chatApi && typeof chatApi.on === 'function') {
       this.#chatUnsub = chatApi.on('push', (payload) => {
         var items = Array.isArray(payload) ? payload : [payload];

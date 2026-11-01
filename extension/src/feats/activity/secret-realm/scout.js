@@ -2,7 +2,7 @@
  * 侦察囤情报引擎（异能秘境：花 41001 全地形勘察车把野怪点（172）的异能兽品质探明并就地囤积）。
  *
  * 定位（用户拍板）：**只侦察囤情报、不派兵**——本 feat 现下不会主动开车去野怪点（拍宠仍由玩家带到，见 index.js 第 3 条
- *   与 drive.js 文件头「172 不在巡航档」），故本引擎不改变任何行车/攻打行为，只把「哪个野怪点是哪只兽、什么品质」这份
+ *   与 pilot.js 文件头「172 不在巡航档」），故本引擎不改变任何行车/攻打行为，只把「哪个野怪点是哪只兽、什么品质」这份
  *   情报攒进内存缓存（供面板展示与后续择点派兵复用）。面板开关 `scoutEnabled` **默认关**：侦察会真消耗背包勘察车道具。
  *
  * 借鉴竞品B enigmaSecret.scoutBeast（verbatim），但**只取其侦察链路、不接它的派兵择点**：
@@ -36,7 +36,7 @@ import {
 } from './constants.js';
 
 /**
- * 点位键（与 warn.js/drive.js 同口径的本地小工具；非法坐标回 ''）。
+ * 点位键（与 warn.js/pilot.js 同口径的本地小工具；非法坐标回 ''）。
  * @param {number} x 横号
  * @param {number} y 纵号
  * @returns {string}
@@ -124,7 +124,7 @@ export class ScoutEngine {
 
   /**
    * push 10018 落地：只收 172 野怪点里「空闲无驻军」的野生候选（state≠0 的正在被拍/交战的点、以及已在本缓存的点都不进快照）。
-   *   **不 kick**——10018 是视口增量、3 条/秒，kick 会把兜底拍打成 3Hz（与 warn.js/drive.js 同手法）。
+   *   **不 kick**——10018 是视口增量、3 条/秒，kick 会把兜底拍打成 3Hz（与 warn.js/pilot.js 同手法）。
    * @param {object} ev bus `net.10018` 事件（`ev.data = {pointInfos:[{x,y,pointType,m}]}`，平铺）
    */
   onTilePush(ev) {
@@ -337,6 +337,22 @@ export class ScoutEngine {
     const row = this.#env.l10n.tableRow(TABLE_BEAST, beastId);
     const q = row ? Number(row.quality) : NaN;
     return Number.isFinite(q) ? q : null;
+  }
+
+  /**
+   * 对外只读口：某个 172 点位的**已侦察宠物品质**（供 pilot 的打野档按品质择目标，
+   *   竞品B `marchBeast` 读 `EnigmaBeastController.getScoutInfo(x,y).beastId → enigma_beast.quality` 同一口径）。
+   *   没囤过情报/未侦察成功 → 回 null（调用方按「未知 = 不去」处置，与竞品把未知品质当 2 看待选 4 一致）。
+   * @param {number} x 横号
+   * @param {number} y 纵号
+   * @returns {number|null} 品质
+   */
+  qualityAt(x, y) {
+    const k = tileKey(x, y);
+    if (!k) return null;
+    const rec = this.#scout.get(k);
+    if (!rec || !rec.scouted) return null;
+    return Number.isFinite(rec.quality) ? rec.quality : null;
   }
 
   /**

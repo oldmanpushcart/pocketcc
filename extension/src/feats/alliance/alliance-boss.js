@@ -52,6 +52,7 @@
  *   单飞闸门 / 触发合并 / 择时重排收口到 core/cycle；pause 后 alive()=false 让 cycle 自然停摆，resume 重新 kick。
  *   合规：全程只读游戏数据 + 直发协议，不调用游戏的 Update* 改写本地态。
  */
+import { CODE_NOT_SENT, sleep } from '../../core/util.js';
 import { createLog } from '../../core/log.js';
 import { bus } from '../../core/bus.js';
 import { game } from '../../core/game.js';
@@ -111,9 +112,6 @@ const STATE_FLIP_BUFFER_MS = 1000 * 30;
 /** @type {number} 冷启动连续查不到时的退避间隔（毫秒）：本服/本联盟没玩这套时不每 15 分钟空发一次 1160 */
 const COLD_BACKOFF_MS = 1000 * 60 * 60;
 
-/** @type {number} 非服务器返回的哨兵 code（发送异常/在途频控用，与真实 s 码区分） */
-const CODE_NOT_SENT = -1;
-
 /** @type {string} storage.data 分片名：当日代捐计数与本轮攻打记账 */
 const DAILY_STATE_NAME = 'allianceBoss.daily';
 
@@ -157,17 +155,6 @@ var installed = false;
  */
 function aliveFn() {
   return ctxRef ? ctxRef.alive() : false;
-}
-
-/**
- * 延时，并让延时本身可被 pause 打断（到点即返回，调用方随后判 alive 退出）
- * @param {number} ms 毫秒
- * @returns {Promise<void>}
- */
-function sleep(ms) {
-  return new Promise(function (r) {
-    setTimeout(r, ms);
-  });
 }
 
 // ── 当日记账 ──────────────────────────────────────────────────────────

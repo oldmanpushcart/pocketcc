@@ -190,15 +190,39 @@ export const PANEL_CSS = `
     .pc-smove:hover{background:rgba(255,255,255,.1);}
     .pc-smove:disabled{opacity:.3;cursor:default;}
     .pc-row input[type=checkbox]{width:16px;height:16px;cursor:pointer;flex:0 0 auto;}
+    /* 联盟集结目标紧凑表（type:'rallygrid'）：三行合一表 [目标名][延迟入队(秒)输入][每日上限输入][今日已打文本][启用checkbox]，
+       列头与数据行共用同一 5 列 CSS Grid（行包 div 靠 display:contents 将子格直接挂到父栅格），窄面板下输入框弹性收缩、标签只占必要宽度 */
+    .pc-rg{display:grid;grid-template-columns:40px 1fr 1fr 62px 20px;gap:6px;align-items:center;
+      width:100%;margin:6px 0 10px;font-size:12px;}
+    .pc-rghead{display:contents;}
+    .pc-rghead > .pc-rgcell{color:#9ecbff;font-size:11px;opacity:.85;text-align:center;white-space:nowrap;
+      overflow:hidden;text-overflow:ellipsis;}
+    .pc-rghead > .pc-rgc-0{text-align:left;}
+    .pc-rgrow{display:contents;}
+    .pc-rgrow > .pc-rgcell{display:flex;align-items:center;justify-content:center;gap:2px;min-width:0;}
+    .pc-rgrow > .pc-rgc-0{justify-content:flex-start;color:#e8eef7;}
+    .pc-rgrow > .pc-rgcell input[type=number].pc-rgin{width:100%;min-width:0;padding:2px 4px;border-radius:5px;
+      box-sizing:border-box;border:1px solid rgba(255,255,255,.14);background:rgba(255,255,255,.06);
+      color:#e8eef7;font:inherit;font-variant-numeric:tabular-nums;}
+    .pc-rgrow > .pc-rgcell input[type=number].pc-rgin:focus{outline:none;border-color:rgba(120,180,255,.55);
+      background:rgba(120,180,255,.10);}
+    .pc-rgrow > .pc-rgcell input[type=number].pc-rgin::placeholder{color:#cfe3ff;opacity:1;}
+    .pc-rgrow > .pc-rgcell input[type=number].pc-rgin:focus::placeholder{color:transparent;}
+    .pc-rgrow > .pc-rgcount{width:100%;text-align:center;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+    .pc-rgchk{width:15px;height:15px;cursor:pointer;flex:0 0 auto;}
     .pc-row select.pc-fsel{max-width:150px;flex:0 0 auto;padding:3px 6px;border-radius:6px;
       border:1px solid rgba(255,255,255,.25);background:rgba(20,26,38,.9);color:#e8eef7;font:inherit;}
-    /* 行内多下拉（type:'tripick'，如异能兽培育属相/品种/品质同一行）：标签只占文字宽，三个下拉在剩余空间里等分收缩。
-       用 .pc-row > 提升特异度，压过通用的 .pc-row > span{flex:1}（否则两个 span 各占一半、三下拉会撑破右边界） */
+    /* 行内多下拉（type:'tripick'，如异能兽培育属相/品种/品质同一行）与一行多控件（type:'ctrlrow'，
+       如惧星集结「等级/方式/预设队伍/今日已打」）共用：标签只占文字宽，控件在剩余空间里等分收缩。
+       用 .pc-row > 提升特异度，压过通用的 .pc-row > span{flex:1}（否则两个 span 各占一半、控件会撑破右边界） */
     .pc-row > .pc-triolab{flex:0 0 auto;}
     .pc-row > .pc-trio{display:flex;gap:4px;flex:1 1 auto;min-width:0;}
     .pc-trio select.pc-fsel{flex:1 1 0;min-width:0;width:auto;max-width:none;padding:3px 4px;font-size:12px;}
+    /* ctrlrow 里的只读格（.pc-fval）：同样等分收缩，靠右对齐与其他只读值一致。
+       必须写在下方 .pc-fval 之后：两条同为 (0-2-1) 特异度，靠源码顺序决胜，否则 .pc-fval 的 flex:0 0 auto 会赢 */
     .pc-fval{font-variant-numeric:tabular-nums;color:#9ecbff;opacity:.9;flex:0 0 auto;
       text-align:right;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+    .pc-trio span.pc-ftri{flex:1 1 0;min-width:0;width:auto;text-align:right;}
     /* 只读 text 字段的多行变体（fd.multiline，如次元矿洞今日进度）：标签在上、值整行，pre-line 保留换行不截断 */
     .pc-rowcol{flex-direction:column;align-items:flex-start;gap:2px;}
     .pc-fvalml{white-space:pre-line;overflow:visible;text-overflow:clip;text-align:left;flex:0 0 auto;width:100%;line-height:1.6;}
@@ -306,7 +330,7 @@ export const PANEL_CSS = `
     .pc-mrstar{font-size:15px;line-height:1;cursor:pointer;color:rgba(255,255,255,.3);transition:transform .1s,color .1s;}
     .pc-mrstar.on{color:#ffcf4d;text-shadow:0 0 6px rgba(255,207,77,.5);}
     .pc-mrstar:hover{transform:scale(1.18);}
-    /* 下田规则字段（type:'farmrules'，自动下田：每行=一个田位；田类型/种类/等级/预设下拉 + 删除，行存在即生效）。
+    /* 下田规则字段（type:'farmrules'，自动下田：每行=一个田位；资源类型/种类多选/预设部队 三个下拉 + 删除，行存在即生效）。
        行盒可换行（窄卡尽量单行），× 与标题行＋右对齐；骨架同 minerules，交互走面板级事件委托（见 wirePanel）。 */
     .pc-frule{display:flex;flex-direction:column;gap:6px;width:100%;margin:2px 0 6px;}
     .pc-fruletop{display:flex;align-items:center;justify-content:space-between;gap:8px;}
@@ -321,9 +345,35 @@ export const PANEL_CSS = `
     .pc-frdiv{flex:0 0 auto;width:1px;align-self:stretch;margin:1px 2px;background:rgba(255,255,255,.22);}
     .pc-frsel{padding:3px 5px;border-radius:6px;border:1px solid rgba(255,255,255,.25);
       background:rgba(20,26,38,.9);color:#e8eef7;font:inherit;min-width:0;}
-    .pc-frmech{display:inline-flex;align-items:center;gap:3px;cursor:pointer;font-size:12px;color:#cfe3ff;}
-    .pc-frmechdis{opacity:.4;cursor:not-allowed;}
-    .pc-frmechin{width:14px;height:14px;margin:0;cursor:pointer;accent-color:#4a9eff;}
+    /* 资源种类多选下拉（type:'farmrules'：遗迹/机械/普通）——按钮就是下拉触发器（观感对齐 .pc-frsel，只显示已选摘要），
+       选项列表每项一个 checkbox。主路径（面板带 .pc-kindpop = 浏览器有 Popover API）：列表进 top layer 浮在按钮下方，
+       不撑高卡片，也不被 .pc-panel/.pc-pane 的 overflow:auto、.pc-sec 的 overflow:hidden 和面板的 backdrop-filter 裁切
+       （fixed 子元素会被这些困住）；位置由 wire.js 按按钮 rect 写行内 style，light dismiss 交给浏览器。
+       降级（老 Chrome 无 popover 属性）：同一条列表改走流内撑开，独占一行。全不勾 = 该行不下田。 */
+    .pc-frkinds{display:inline-flex;flex-direction:column;align-items:flex-start;gap:3px;flex:0 1 auto;min-width:0;}
+    .pc-frkinds.pc-open{flex:1 0 100%;align-items:flex-start;}
+    .pc-frkbtn{display:inline-flex;align-items:center;gap:5px;max-width:150px;padding:3px 6px;border-radius:6px;cursor:pointer;
+      border:1px solid rgba(255,255,255,.25);background:rgba(20,26,38,.9);color:#e8eef7;font:inherit;font-size:12px;}
+    .pc-frkbtn:hover{border-color:rgba(74,158,255,.6);}
+    .pc-frksum{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+    .pc-frkcaret{flex:0 0 auto;font-size:10px;line-height:1;opacity:.7;transition:transform .12s;}
+    .pc-frkinds.pc-open .pc-frkcaret{transform:rotate(180deg);}
+    .pc-frkpop{display:none;flex-wrap:wrap;align-items:center;gap:3px 14px;width:100%;padding:4px 7px;
+      border:1px solid rgba(255,255,255,.14);border-radius:7px;background:rgba(255,255,255,.05);}
+    .pc-frkinds.pc-open .pc-frkpop{display:flex;}
+    /* popover 模式：收起时由 UA 的 :not(:popover-open) 隐藏，声明顺序要压过上面那条「展开才 flex」；
+       .pc-kindpopfail = showPopover 报错后常驻退回流内撑开（wire.js），两类名不同时存在所以不冲突 */
+    .pc-panel.pc-kindpop .pc-frkpop{display:none;}
+    .pc-panel.pc-kindpop .pc-frkinds.pc-open{flex:0 1 auto;}
+    .pc-panel.pc-kindpopfail .pc-frkinds.pc-open{flex:1 0 100%;}
+    .pc-panel.pc-kindpopfail .pc-frkinds.pc-open .pc-frkpop{display:flex;}
+    .pc-panel.pc-kindpop .pc-frkpop:popover-open{display:flex;flex-direction:column;align-items:stretch;gap:2px;
+      width:max-content;max-width:240px;padding:5px 7px;border:1px solid rgba(255,255,255,.22);border-radius:8px;
+      background:rgba(24,30,42,.985);box-shadow:0 8px 22px rgba(0,0,0,.5);}
+    .pc-frkopt{display:inline-flex;align-items:center;gap:5px;font-size:12px;color:#cfe3ff;cursor:pointer;white-space:nowrap;}
+    .pc-frkoptdis{opacity:.35;cursor:not-allowed;}
+    .pc-frkin{width:13px;height:13px;margin:0;cursor:pointer;accent-color:#4a9eff;flex:0 0 auto;}
+    .pc-frkopt input[type=checkbox]:disabled{cursor:not-allowed;}
     .pc-frdel{flex:0 0 auto;width:22px;height:24px;padding:0;border:none;background:transparent;
       color:#ff9c9c;font:inherit;font-size:16px;line-height:24px;cursor:pointer;text-align:center;}
     .pc-frdel:hover{color:#ff6b6b;}
@@ -347,10 +397,14 @@ export const PANEL_CSS = `
     .pc-hl{display:flex;flex-direction:column;width:100%;margin:2px 0 6px;}
     .pc-hltop{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:2px;}
     .pc-hlrow{display:grid;grid-template-columns:minmax(0,1fr) 84px 64px 52px 26px;align-items:center;gap:8px;
-      padding:6px 2px;border-bottom:1px solid rgba(255,255,255,.07);}
-    .pc-hlrow:last-child{border-bottom:none;}
+      padding:6px 2px;}
     .pc-hlhead{padding:2px 2px 4px;border-bottom:1px solid rgba(255,255,255,.16);font-size:11px;opacity:.62;}
     .pc-hlhead .pc-hlmode,.pc-hlhead .pc-hlcnt,.pc-hlhead .pc-hldone,.pc-hlhead .pc-hlon{text-align:center;}
+    /* ctrlrow 表格式变体（fd.table，惧星集结）：与怪物清单同一套 .pc-hl/.pc-hlrow/.pc-hlhead 外观（表头小字 + 表头/表身分隔线，数据行无分隔线），
+       列数由内联 grid-template-columns 决定（等分），故不沿用 .pc-hlrow 的 5 列固定模板 */
+    .pc-cthd{text-align:center;}
+    .pc-ct select.pc-hlmode{max-width:none;}
+    .pc-ct .pc-hlstat{font-size:12px;}
     .pc-hlname{display:flex;align-items:center;gap:5px;min-width:0;font-size:12px;text-align:left;}
     .pc-hllabel{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
     .pc-hln{width:100%;min-width:0;box-sizing:border-box;padding:3px 2px;border-radius:5px;
@@ -379,8 +433,8 @@ export const PANEL_CSS = `
     .pc-ppdel{flex:0 0 auto;width:22px;height:22px;padding:0;border:none;background:transparent;
       color:#ff9c9c;font:inherit;font-size:16px;line-height:22px;cursor:pointer;text-align:center;}
     .pc-ppdel:hover{color:#ff6b6b;}
-    /* 下田清单/预设池下拉共用外观 */
-    .pc-hlmode,.pc-ppsel{padding:2px 4px;border-radius:6px;border:1px solid rgba(255,255,255,.25);
+    /* 下田清单/预设池下拉共用外观（限定 select.：表头同名 span 不能继承下拉的边框/背景，否则表头「方式」格会与其他表头不一致） */
+    select.pc-hlmode,.pc-ppsel{padding:2px 4px;border-radius:6px;border:1px solid rgba(255,255,255,.25);
       background:rgba(20,26,38,.9);color:#e8eef7;font:inherit;font-size:12px;min-width:0;width:100%;box-sizing:border-box;}
     .pc-ppsel{flex:1 1 auto;}
   `;

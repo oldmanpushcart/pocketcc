@@ -120,41 +120,164 @@ export function mineRulesInnerHTML(list, fd, cfg) {
 }
 
 /**
- * 下田规则字段（type:'farmrules'，自动下田）内层 HTML：标题行（含右上＋）+ 若干田位行。
- * 每行一个盒子：田类型▾(金/粮/油/雷神) + 田等级▾(雷神上限 3 级、其余 1~6) + ☑只下机械 + 预设部队▾(1~16：1~8 战斗预设 / 9~16 采集预设) + × 删除。
- * 行存在即生效（已无行级开关）；family/level 会联动其它控件（雷神封顶 3 级、选 6 级田则禁用机械田），改动后整行重刷。
- * 选项均由 fd 提供（familyOptions/levelOptions/presetOptions）；行增删/改值由 wirePanel 事件委托接。
- * @param {Array<{family:number,level:number,mechOnly:boolean,preset:number}>} list 当前田位规则表
- * @param {object} fd 字段描述符（label / 各 Options / hint）
+ * 资源种类定义（值 → 下拉摘要短名 / 展开后的全名 / 说明）。雷神(family16) 无遗迹田，渲染时单独禁用。
+ * 数组顺序就是下田优先级（遗迹 > 机械 > 普通），摘要拼接与展开列表都按此序，不随勾选先后变化。
+ * @type {Array<{value:string,label:string,short:string,title:string}>}
+ */
+const FARM_KIND_DEFS = [
+  {
+    value: 'relic',
+    short: '遗迹',
+    long: '遗迹(6级)',
+    title: '遗迹田：只能由「遗迹区域刷新」邮件开出，刷新后 4 小时内可采',
+  },
+  {
+    value: 'tower',
+    short: '机械',
+    long: '机械田',
+    title: '机械田：联盟成员建造的资源塔，需有余量（派前查驻军容量）',
+  },
+  {
+    value: 'normal',
+    short: '普通',
+    long: '普通田',
+    title: '普通田：1~5 级，走 906 服务端搜索，等级从高到低试',
+  },
+];
+
+/**
+ * 种类多选 → 下拉按钮上的摘要文案（按优先级序拼短名，一项未选回「未选」= 该行不下田）。
+ * 首次渲染与勾选后就地刷新共用此函数，避免两处文案口径漂移。
+ * @param {string[]} kinds 已选种类
+ * @returns {string} 形如 "遗迹·机械"
+ */
+export function farmKindSummary(kinds) {
+  const arr = Array.isArray(kinds) ? kinds : [];
+  const picked = FARM_KIND_DEFS.filter((d) => arr.indexOf(d.value) >= 0);
+  return picked.length ? picked.map((d) => d.short).join('·') : '未选';
+}
+
+/**
+ * 资源类型多选 → 下拉按钮上的摘要文案（按 familyOptions 的**展示序**拼短名，一项未选回「未选」= 该队不下田）。
+ * 摘要顺序不表达优先级：同分时的家族优先级（雷神 > 石油 = 粮食 > 金矿）真相在 priority.FAMILY_RANK，
+ * 与面板展示序故意解耦，改下拉选项顺序不会偷偷改掉取田优先级。
+ * @param {number[]} families 已选家族编码
+ * @param {Array<{value:number,label:string,short?:string}>} options 家族下拉数据源
+ * @returns {string} 形如 "金·粮·油"
+ */
+export function farmFamilySummary(families, options) {
+  const arr = (Array.isArray(families) ? families : []).map((f) => Number(f) || 0);
+  const picked = (options || []).filter((o) => arr.indexOf(Number(o.value)) >= 0);
+  return picked.length ? picked.map((o) => o.short || String(o.label)).join('·') : '未选';
+}
+
+/**
+ * 下田规则字段（type:'farmrules'，自动下田）内层 HTML：标题行（含右上＋）+ 若干「队伍行」。
+ * **一行 = 一支队伍去匹配资源**：预设编队▾(1~16，单选、整表互斥) + 资源类型▾多选(金/粮/油/雷神)
+ * + 资源种类▾多选(遗迹/机械/普通) + × 删除。
+ * 两个多选控件是**下拉样式的多选**（原生 select 做不到“展开后不收起、每项带勾选框”，故自研）：
+ * 按钮显示已选摘要，点开是一份浮在下方的选项列表（每项 checkbox + 文案），勾完可连着勾下一项、点列表外即收起。
+ * 两处共用同一套类名与结构（.pc-frkinds[data-grp] / .pc-frkbtn / .pc-frkpop / .pc-frkin），
+ * wire.js 的委托只认这套类名、靠 data-grp 分流，所以新增一个多选组不用动浮层那套管子。
+ * 浮层用 Popover API（`popover` 属性）挂上去——面板/卡片/内容区都有 overflow 裁切，面板自身还带 backdrop-filter
+ * （会给 fixed 子元素建 containing block），只有 top layer 能同时躲过这两层裁切；老 Chrome 不支持时自动退回
+ * 流内撑开成一行（见 wire.js 的降级分支与 panel-css 的 .pc-frkinds.pc-open 撑开规则）。
+ * 预设编队在整表内互斥：其它行已选用的值渲染成 disabled（本行自身仍可选），与 feat 侧 normalizeRules 的
+ * 全局唯一口径对齐。雷神没有 6 级田，故**本行勾选的家族全都开不出遗迹**（只剩雷神）时遗迹选项置 disabled。
+ * 行存在即生效；preset 改动与行增删整块重绘（disabled 要随之联动），family/kind 勾选只就地刷摘要
+ *（两者都不影响其它行，重绘反而会把展开中的浮层关掉）。
+ * @param {Array<{preset:number,families?:number[],kinds?:string[]}>} list 当前队伍规则表
+ * @param {object} fd 字段描述符（label / familyOptions / presetOptions / hint）
  * @returns {string}
  */
 export function farmRulesInnerHTML(list, fd) {
-  const optsHTML = (opts, sel) =>
+  const optsHTML = (opts, sel, disabled) =>
     (opts || [])
-      .map(
-        (o) =>
-          `<option value="${o.value}"${Number(o.value) === sel ? ' selected' : ''}>${escAttr(String(o.label))}</option>`,
-      )
+      .map((o) => {
+        const v = Number(o.value);
+        const dis = disabled && disabled.has(v) && v !== sel ? ' disabled' : '';
+        return `<option value="${o.value}"${v === sel ? ' selected' : ''}${dis}>${escAttr(String(o.label))}</option>`;
+      })
       .join('');
-  const rows = (Array.isArray(list) ? list : [])
+  /**
+   * 一个多选下拉控件（资源类型 / 资源种类共用）。
+   * @param {string} grp 组名（family | kind）：进容器 data-grp 与选项的 data-part，wire 靠它分流
+   * @param {string} btnTitle 按钮 title（说明这组是什么、全不勾的含义）
+   * @param {Array<{value:string|number,long:string,title?:string,dis?:boolean}>} defs 选项定义
+   * @param {Array<string|number>} picked 该行已选值（数字/字符串混用，比较统一走 String）
+   * @param {string} sum 按钮上的已选摘要
+   * @returns {string}
+   */
+  const optCell = (grp, btnTitle, defs, picked, sum) => {
+    const has = (v) => picked.map(String).indexOf(String(v)) >= 0;
+    const optRows = defs
+      .map((d) => {
+        // 已选中的不因置灰条件被锁死（勾不动 = 取消不了），避免数据与控件打架
+        const dis = !!d.dis && !has(d.value);
+        return (
+          `<label class="pc-frkopt${dis ? ' pc-frkoptdis' : ''}" title="${escAttr(d.title || '')}">` +
+          `<input type="checkbox" class="pc-frkin" data-part="${grp}" value="${d.value}"${has(d.value) ? ' checked' : ''}${dis ? ' disabled' : ''}>` +
+          `<span>${escAttr(d.long)}</span></label>`
+        );
+      })
+      .join('');
+    return (
+      `<span class="pc-frkinds" data-grp="${grp}">` +
+      `<button class="pc-frkbtn" type="button" title="${escAttr(btnTitle)}">` +
+      `<span class="pc-frksum">${escAttr(sum)}</span>` +
+      `<span class="pc-frkcaret" aria-hidden="true">▾</span></button>` +
+      `<span class="pc-frkpop" popover="manual">${optRows}</span></span>`
+    );
+  };
+  const rowsArr = Array.isArray(list) ? list : [];
+  const usedPresets = new Set(rowsArr.map((r) => Number(r && r.preset) || 1));
+  const famDefs = (fd.familyOptions || []).map((o) => ({
+    value: Number(o.value),
+    long: String(o.label),
+    title: '资源类型：这支队愿意去采的家族（多选，同分时按 雷神 > 石油 = 粮食 > 金矿 挑）',
+  }));
+  const rows = rowsArr
     .map((r, i) => {
-      const fam = Number(r.family) || 7;
-      const maxLv = fam === 16 ? 3 : 6; // 雷神矿田等级上限 3 级
-      const lv = Math.min(maxLv, Math.max(1, Number(r.level) || 5));
-      const levelOpts = (fd.levelOptions || []).filter((o) => Number(o.value) <= maxLv);
-      const mechApplicable = lv < 6; // 6 级田没有机械田
-      const mech = !!r.mechOnly && mechApplicable;
+      const preset = Number(r && r.preset) || 1;
+      const families = (Array.isArray(r && r.families) ? r.families : [])
+        .map((f) => Number(f) || 0)
+        .filter((f) => f > 0);
+      const kinds = Array.isArray(r && r.kinds) ? r.kinds : [];
+      // 雷神没有 6 级田（遗迹邮件只开得出金/粮/油）：只剩雷神时遗迹不可下，与 normalizeRules 同口径
+      const relicDis = families.length > 0 && families.every((f) => f === 16);
+      const kindDefs = FARM_KIND_DEFS.map((k) => ({
+        value: k.value,
+        long: k.long,
+        title: k.title,
+        dis: k.value === 'relic' && relicDis,
+      }));
       return (
         `<div class="pc-frrow" data-fidx="${i}">` +
         `<div class="pc-frmain">` +
         `<div class="pc-frbox">` +
-        `<select class="pc-frsel" data-part="family" title="田类型">${optsHTML(fd.familyOptions, fam)}</select>` +
-        `<select class="pc-frsel" data-part="level" title="田等级（雷神上限 3 级；6 级田无机械田）">${optsHTML(levelOpts, lv)}</select>` +
-        `<label class="pc-frmech${mechApplicable ? '' : ' pc-frmechdis'}" title="只下机械：勾选=只看机械田（没有则本行不下、不回退普通田）；不勾选=优先机械田、机械田没有才下普通田。6 级田没有机械田"><input type="checkbox" class="pc-frmechin" data-part="mechOnly"${mech ? ' checked' : ''}${mechApplicable ? '' : ' disabled'}><span>只下机械</span></label>` +
+        `<select class="pc-frsel" data-part="preset" title="预设编队（1~8 战斗 / 9~16 采集；整表内不可重复）">${optsHTML(
+          fd.presetOptions,
+          preset,
+          usedPresets,
+        )}</select>` +
         `<span class="pc-frdiv" aria-hidden="true"></span>` +
-        `<select class="pc-frsel" data-part="preset" title="预设部队（1~8 战斗 / 9~16 采集）">${optsHTML(fd.presetOptions, Number(r.preset) || 1)}</select>` +
+        optCell(
+          'family',
+          '资源类型（多选；全不勾 = 该队不下田）',
+          famDefs,
+          families,
+          farmFamilySummary(families, fd.familyOptions),
+        ) +
+        `<span class="pc-frdiv" aria-hidden="true"></span>` +
+        optCell(
+          'kind',
+          '资源种类（多选；全不勾 = 该队不下田）',
+          kindDefs,
+          kinds,
+          farmKindSummary(kinds),
+        ) +
         `</div>` +
-        `<button class="pc-frdel" type="button" title="删除此田位">×</button>` +
+        `<button class="pc-frdel" type="button" title="删除这支队伍">×</button>` +
         `</div></div>`
       );
     })
@@ -162,10 +285,10 @@ export function farmRulesInnerHTML(list, fd) {
   return (
     `<div class="pc-fruletop">` +
     `<span class="pc-rngtitle">${escAttr(fd.label || '下田规则')}</span>` +
-    `<button class="pc-fradd" type="button" title="添加一个田位">＋</button>` +
+    `<button class="pc-fradd" type="button" title="添加一支队伍">＋</button>` +
     `</div>` +
     (rows ||
-      '<div class="pc-rnghint">未添加行 = 不下田；点＋添加的行即生效，同时会暂停总开关，配好后手动重新打开</div>') +
+      '<div class="pc-rnghint">未添加队伍 = 不下田；点＋添加的行即生效，同时会暂停总开关，配好后手动重新打开</div>') +
     (fd.hint ? `<div class="pc-rnghint">${escAttr(fd.hint)}</div>` : '')
   );
 }
@@ -569,7 +692,52 @@ export function presetPoolInnerHTML(list, fd) {
 }
 
 /**
- * descriptor fields -> 行 HTML（checkbox / text 只读惰性求值 / 数字输入 / 下拉 / 区间规则）。
+ * 联盟集结目标紧凑表（type:'rallygrid'）内层 HTML：三行合一表 [目标名][延迟入队(秒)输入][每日上限输入][今日已打文本][启用checkbox]，
+ * 替代旧的「按 section 分段 + 一字段一行」布局（旧版每个目标占 4 行 × 3 段 = 12 行，压成 3 行+1 列表头）。
+ * 列头与数据行共用同一 5 列 CSS Grid（`.pc-rghead/.pc-rgrow` 用 display:contents 让子格直挂父栅格），列宽严格对齐。
+ * 行内 delay/limit 子格的 min/step/zeroUnlimited/float 元数据挂在 r.delay / r.limit 上，wire.js 数字委托须按 rows 下探（同 tripick.parts 口径）。
+ * count 只读格通过 data-fkey + r.count.get(cfg) 输出，refreshTexts 亦按此路径下探。
+ * @param {object} fd 字段描述符 { key, cols: string[], rows: [{ name, enableKey, delay, limit, count }] }
+ * @param {object} cfg 该功能当前配置
+ * @param {string} fid 功能 id
+ * @returns {string}
+ */
+export function rallyGridInnerHTML(fd, cfg, fid) {
+  const cols = fd.cols || ['', '延迟入队(秒)', '每日上限', '今日已打', ''];
+  const header =
+    `<div class="pc-rghead">` +
+    cols
+      .map(
+        (c, i) =>
+          `<span class="pc-rgcell pc-rgc-${i}"${c ? '' : ' aria-hidden="true"'}>${c ? escAttr(c) : '&nbsp;'}</span>`,
+      )
+      .join('') +
+    `</div>`;
+  const rows = (fd.rows || [])
+    .map((r) => {
+      const delay = r.delay || {};
+      const limit = r.limit || {};
+      const count = r.count || {};
+      const delayVal = cfg[delay.key];
+      const limitVal = cfg[limit.key];
+      const limitEmpty = limit.zeroUnlimited && (limitVal == null || Number(limitVal) === 0);
+      const countText = count.get ? String(count.get(cfg) || '') : '';
+      return (
+        `<div class="pc-rgrow">` +
+        `<span class="pc-rgcell pc-rgc-0">${escAttr(r.name || '')}</span>` +
+        `<span class="pc-rgcell pc-rgc-1"><input type="number" class="pc-rgin" data-id="${fid}" data-key="${escAttr(delay.key)}" min="${delay.min != null ? delay.min : 0}" step="${delay.step != null ? delay.step : 1}" placeholder="${escAttr(delay.placeholder || '')}" value="${delayVal == null ? '' : delayVal}" title="${escAttr(delay.title || '延迟入队(秒)')}"></span>` +
+        `<span class="pc-rgcell pc-rgc-2"><input type="number" class="pc-rgin" data-id="${fid}" data-key="${escAttr(limit.key)}" min="${limit.min != null ? limit.min : 0}" step="${limit.step != null ? limit.step : 1}" placeholder="${escAttr(limit.placeholder || (limit.zeroUnlimited ? '不限' : ''))}" value="${limitEmpty ? '' : limitVal}" title="${escAttr(limit.title || (limit.zeroUnlimited ? '留空 = 不限' : '每日上限'))}"></span>` +
+        `<span class="pc-rgcell pc-rgc-3"><span class="pc-fval pc-rgcount" data-fid="${fid}" data-fkey="${escAttr(count.key)}">${countText}</span></span>` +
+        `<span class="pc-rgcell pc-rgc-4"><input type="checkbox" class="pc-fchk pc-rgchk" data-id="${fid}" data-key="${escAttr(r.enableKey)}"${cfg[r.enableKey] ? ' checked' : ''} title="勾选=自动加入${escAttr(r.name || '')}集结"></span>` +
+        `</div>`
+      );
+    })
+    .join('');
+  return `<div class="pc-rg" data-rgkey="${escAttr(fd.key)}">${header}${rows}</div>`;
+}
+
+/**
+ * descriptor fields -> 行 HTML（checkbox / text 只读惰性求值 / 数字输入 / 下拉 / 一行多控件 / 区间规则）。
  * fd.section 变化时插入分组小标题（如联盟集结按战锤/惧星/难民营分段），容器带 data-id=功能 id。
  * fd.showIf(cfg) 为假时该行不占位（只在行根打 data-dep，真实显隐由 refreshFieldVisibility 切 hidden）。
  * @param {string} fid 功能 id
@@ -648,6 +816,60 @@ export function buildFieldsHTML(fid, f) {
         .join('');
       return (
         `<label class="pc-row"><span class="pc-triolab">${fd.label}</span>` +
+        `<span class="pc-trio">${cells}</span></label>`
+      );
+    }
+    if (fd.type === 'ctrlrow') {
+      // 一行多控件（如惧星集结「等级▾ | 方式▾ | 预设队伍▾ | 今日已打」）：一个标签接 N 个控件，
+      //   每个 cell 自己一个 data-key（= 存档键，与 field.key 不同，同 tripick.parts 口径）。
+      //   cell.type 只区分 'text'（只读值 .pc-fval，随 refreshTexts 重算）与否（下拉 .pc-fsel）；
+      //   下拉选项支持数组与函数（同 select 口径），只读值取 cell.get(cfg)。
+      // fd.table=true 时走表格式排版（与自动打野怪物清单同外观：表头行说明各列 + 表头/表身分隔线），
+      //   控件类改用 .pc-hlmode/.pc-hlstat 与怪物清单对齐，但 data-key/data-fkey 不变→ wire/refreshTexts 同一条 ctrlrow.cells 通路。
+      const table = !!fd.table;
+      const cells = (fd.cells || [])
+        .map((p) => {
+          const title = p.title ? ` title="${escAttr(p.title)}"` : '';
+          if (p.type === 'text') {
+            const v = p.get ? String(p.get(c) || '') : '';
+            const cls = table ? 'pc-fval pc-hlstat' : 'pc-fval pc-ftri';
+            return `<span class="${cls}"${title} data-fid="${fid}" data-fkey="${escAttr(p.key)}">${v}</span>`;
+          }
+          const cur = String(c[p.key]);
+          const opts = (typeof p.options === 'function' ? p.options(c) : p.options) || [];
+          const inner = opts
+            .map(
+              (o) =>
+                `<option value="${o.value}"${String(o.value) === cur ? ' selected' : ''}>${o.label}</option>`,
+            )
+            .join('');
+          const cls = table ? 'pc-fsel pc-hlmode' : 'pc-fsel pc-ftri';
+          return `<select class="${cls}" data-id="${fid}" data-key="${escAttr(p.key)}"${title}>${inner}</select>`;
+        })
+        .join('');
+      if (table) {
+        const n = (fd.cells || []).length;
+        const cols = `style="grid-template-columns:repeat(${n},minmax(0,1fr))"`;
+        const head =
+          `<div class="pc-hlrow pc-hlhead" ${cols}>` +
+          (fd.cells || [])
+            .map((p) => `<span class="pc-cthd">${escAttr(String(p.label || ''))}</span>`)
+            .join('') +
+          `</div>`;
+        return (
+          `<div class="pc-hl pc-ct" data-id="${fid}" data-ctkey="${escAttr(fd.key)}">` +
+          (fd.label
+            ? `<div class="pc-hltop"><span class="pc-rngtitle">${escAttr(fd.label)}</span></div>`
+            : '') +
+          head +
+          `<div class="pc-hlrow" ${cols}>${cells}</div>` +
+          `</div>`
+        );
+      }
+      // fd.label 缺位时不出标签格（整行宽度给控件），行名交 section 小标题承担
+      return (
+        `<label class="pc-row">` +
+        (fd.label ? `<span class="pc-triolab">${fd.label}</span>` : '') +
         `<span class="pc-trio">${cells}</span></label>`
       );
     }
@@ -755,6 +977,10 @@ export function buildFieldsHTML(fid, f) {
     if (fd.type === 'button') {
       // 动作按钮（如卡车拦截「刷新我方战力」）：整行一个 .pc-btn，点击回调 fd.onClick(cfg)，不写配置不触发折叠
       return `<button class="pc-btn pc-fbtn" type="button" data-id="${fid}" data-bkey="${fd.key}">${fd.label}</button>`;
+    }
+    if (fd.type === 'rallygrid') {
+      // 联盟集结目标紧凑表：一行五列（目标名/延迟/上限/今日/开关），列头行共享同一 5 列栅格保证对齐
+      return rallyGridInnerHTML(fd, c, fid);
     }
     // 数字字段（默认兜底分支）：fd.zeroUnlimited 时把「0=无限」做成与自动打野攻打数量同款的交互——
     // 值为 0 渲染成空输入 + placeholder「不限」，靠 wire.js 数字委托在改值时对称回写（留空↔0）。

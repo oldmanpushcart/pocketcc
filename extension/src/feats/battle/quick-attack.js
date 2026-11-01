@@ -22,6 +22,7 @@
  * core/game-api.js 的 march.resolve() 按当前战场换算（游戏原生 WorldUtils.dealMarchTypeWithSpecialMarch
  * 优先，符号漂移时降级本地兜底表 MARCH_FALLBACK）——跨服服下直接拿 13 打玩家城会被服务器拒。
  */
+import { sleep } from '../../core/util.js';
 import { createLog } from '../../core/log.js';
 import { game } from '../../core/game.js';
 import { march as marchApi } from '../../core/game-api.js';
@@ -448,17 +449,6 @@ function resolveMarchType(spec, target) {
       JSON.stringify(marchApi.flags()),
     );
   return resolved;
-}
-
-/**
- * 等待毫秒（负值钳到 0）
- * @param {number} ms 时长
- * @returns {Promise<void>}
- */
-function sleep(ms) {
-  return new Promise(function (resolve) {
-    setTimeout(resolve, Math.max(0, ms | 0));
-  });
 }
 
 /**

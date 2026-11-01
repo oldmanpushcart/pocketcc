@@ -30,6 +30,7 @@
  * 配置链路（防「激活不打野」）：registry 把 {enabled, ...toModuleCfg(c)} 推给 reactor.setConfig → configure。故 toModuleCfg 产出的就是归一化运行时配置，
  *   configure 只整体赋值、绝不二次归一（曾在此踩坑：configure 再 normalize 一次读不到已归一结构里的扁平键，导致全部段判未启用而静默停摆）。
  */
+import { parseData, sleep } from '../../core/util.js';
 import { createLog } from '../../core/log.js';
 import { reactor } from '../../core/reactor.js';
 import { storage } from '../../core/storage.js';
@@ -38,13 +39,12 @@ import { gameData, nav } from '../../core/game-api.js';
 import { Battle } from '../../core/battle.js';
 import { march } from '../../core/march.js';
 import { item } from '../../core/item.js';
+import { map } from '../../core/map.js';
 import { createCycle } from '../../core/cycle.js';
 
 /** @type {ReturnType<createLog>} 模块日志器（tag=AUTO-HUNT） */
 const log = createLog('AUTO-HUNT');
 
-/** @type {number} RequestId.WORLD_SEARCH_MONSTER：服务端按 (species,等级区间,tab) 搜一个可打点 */
-const CMD_WORLD_SEARCH_MONSTER = 906;
 /** @type {number} RequestId.MARCH_WORLD_POINT：世界地图行军（打野/5连，经 march.attack） */
 const CMD_MARCH_WORLD_POINT = 902;
 /** @type {number} RequestId.ALLIANCE_Assembly_Create：创建集结（战锤集结，feat 直发） */
@@ -242,35 +242,6 @@ var saveSeq = 0;
  */
 function aliveFn() {
   return ctxRef ? ctxRef.alive() : false;
-}
-
-/**
- * 等待毫秒（负值钳到 0）
- * @param {number} ms 时长
- * @returns {Promise<void>}
- */
-function sleep(ms) {
-  return new Promise(function (resolve) {
-    setTimeout(resolve, Math.max(0, ms | 0));
-  });
-}
-
-/**
- * 应答 data 归一化：旧 JSON 链路 data 常为字符串，兜底已解析对象。
- * @param {*} d net.Ret.data
- * @returns {object|null}
- */
-function parseData(d) {
-  if (d == null) return null;
-  if (typeof d === 'object') return d;
-  if (typeof d === 'string') {
-    try {
-      return JSON.parse(d);
-    } catch (err) {
-      return null;
-    }
-  }
-  return null;
 }
 
 /**
@@ -477,23 +448,15 @@ function dailyDone(key) {
  * @returns {Promise<{x:number,y:number}|null>}
  */
 async function searchPoint(seg, taken) {
-  if (net.isSending(CMD_WORLD_SEARCH_MONSTER)) return null;
-  var ret;
-  try {
-    ret = await net.send(CMD_WORLD_SEARCH_MONSTER, {
-      minLevel: seg.minLevel,
-      maxLevel: seg.maxLevel,
-      groupType: seg.groupType,
-      pointType: seg.pointType,
-    });
-  } catch (err) {
-    log.debug('906 search send failed. %s', err && err.message);
-    return null;
-  }
-  if (!ret || !ret.ok) return null;
-  var d = parseData(ret.data) || {};
-  var pt = d.point || (Array.isArray(d.pointList) ? d.pointList[0] : null);
-  if (!pt || pt.x == null || pt.y == null) return null;
+  // 906 只读骨架（isSending 门/异常吞掉/取点）下沉 map.searchPoint；黑名单/taken 业务谓词留本 feat
+  var r = await map.searchPoint(net, {
+    minLevel: seg.minLevel,
+    maxLevel: seg.maxLevel,
+    groupType: seg.groupType,
+    pointType: seg.pointType,
+  });
+  var pt = r.point;
+  if (!pt) return null;
   var key = (pt.x | 0) + ',' + (pt.y | 0);
   if (blacklist.has(key)) return null;
   if (taken.has(key)) return null;

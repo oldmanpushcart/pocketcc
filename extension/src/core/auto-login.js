@@ -10,6 +10,49 @@ import { game } from './game.js';
 /** @type {ReturnType<createLog>} 免扫码登录日志器（tag=AUTO-LOGIN） */
 const log = createLog('AUTO-LOGIN');
 
+/** @type {string} 回放源逻辑键（真键 topwar_app_serverToken，前缀由 LocalStorageUtils 补） */
+const REPLAY_KEY = 'app_serverToken';
+
+/** @type {string} LocalStorageUtils 的默认前缀 */
+const LS_PREFIX = 'topwar_';
+
+/**
+ * 形态校验：Base64 解得 UTF-8、逗号字段 ≥2 且索引 1（平台名）非空（与 popup 的 inspectToken 同口径）
+ * @param {string} token
+ * @returns {boolean}
+ */
+function isTokenShaped(token) {
+  try {
+    const fields = CryptoJS.enc.Utf8.stringify(CryptoJS.enc.Base64.parse(token)).split(',');
+    return fields.length >= 2 && !!fields[1];
+  } catch (e) {
+    return false;
+  }
+}
+
+/**
+ * 收养落在别名键上的凭证：重放只认 app_serverToken，而外部导入/旧版文件可能写成
+ * topwar_web_serverToken 之类的键（游戏本体从不写 serverToken 这层键，此类键无任何读者），
+ * 表现为「导入成功但不自动登录」。只收养形态合法的值，避免把脏数据带进登录链路。
+ * @param {object} localStore LocalStorageUtils
+ * @returns {{key: string, token: string}|null} 命中时的真键名与裸 token
+ */
+function adoptOrphanToken(localStore) {
+  for (let i = 0; i < localStorage.length; i++) {
+    const key = localStorage.key(i);
+    if (!key || !key.startsWith(LS_PREFIX) || !/serverToken$/i.test(key)) continue;
+    if (key === LS_PREFIX + REPLAY_KEY) continue;
+    let token;
+    try {
+      token = localStore.get(key.slice(LS_PREFIX.length));
+    } catch (e) {
+      continue;
+    }
+    if (typeof token === 'string' && isTokenShaped(token)) return { key, token };
+  }
+  return null;
+}
+
 /**
  * 安装免扫码登录：接管 PlatformCore 的 token/登录参数入口，重放上次缓存的 serverToken。
  * 需在进登录流程前调用（一次挂载即覆盖后续所有登录参数）。
@@ -87,8 +130,16 @@ export function installAutoLogin() {
   // 【无凭证时一律不动游戏】saveServerToken 的原始实现里有无条件的 `del("app_code")`，
   // 而 app_code 正是手机/微信登录流程存放凭证的键；cachedToken 为空时预热本身没有意义（不会写 U），
   // 只剩下这个破坏性副作用，故只有拿到缓存 token 才预热 + 清干扰键。
-  const cachedToken =
-    localStore.get('app_serverToken') ?? localStore.get('app_loginFlowArgs')?.serverInfoToken;
+  let cachedToken =
+    localStore.get(REPLAY_KEY) ?? localStore.get('app_loginFlowArgs')?.serverInfoToken;
+  if (!cachedToken) {
+    const orphan = adoptOrphanToken(localStore);
+    if (orphan) {
+      cachedToken = orphan.token;
+      // 只记键名不记原文：用于定位「导入落到别名键」这类静默失效；预热会把它补写回规范键
+      log.info('auto-login: adopted serverToken from %s (canonical key missing)', orphan.key);
+    }
+  }
   if (cachedToken) {
     platformCore.saveServerToken(cachedToken);
     localStore.del('app_gameServer');

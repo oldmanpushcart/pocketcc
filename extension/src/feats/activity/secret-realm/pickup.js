@@ -2,9 +2,10 @@
  * 物品自动拾取引擎（异能秘境：掉落箱 + 资源点 + 增益井，仅当前到达点）。
  *
  * 触发模型（**三触发源，同一套闸门**）：
- *   ① EventCenter 事件（由 **CHANGE 推送** emit，载荷自带 x,y 与完整明细）：
- *     - 21532 ENIGMA_SECRET_ROOM_DROP_CHANGE → PabRoomRewardBoxDataUpdate，载荷 {x,y,dropInfo,dropBeastInfo,bagGetNum,beastGetNum}
- *     - 21522 ENIGMA_SECRET_ROOM_RESOURCE_CHANGE → PabRoomResLibraryDataUpdate，载荷 {x,y,bagInfo,buffInfo,bagGetNum,buffGetNum,refreshTime}
+ *   ① CHANGE 推送（直连 `ctx.on.push`，载荷自带 x,y 与完整明细；游戏侧只是 PushResponse 对同一包体的
+ *      EventCenter emit 转译，现已不经事件层）：
+ *     - 21532 ENIGMA_SECRET_ROOM_DROP_CHANGE（原事件 PabRoomRewardBoxDataUpdate），载荷 {x,y,dropInfo,dropBeastInfo,bagGetNum,beastGetNum}
+ *     - 21522 ENIGMA_SECRET_ROOM_RESOURCE_CHANGE（原事件 PabRoomResLibraryDataUpdate），载荷 {x,y,bagInfo,buffInfo,bagGetNum,buffGetNum,refreshTime}
  *   ② 资源点：**8526 RESOURCE_INFO 应答**（`ctx.on.resp(8526)`；core/net.js 原先只把推送派到 bus
  *     （`dispatch` 仅在 t===undefined 时跑，应答的 t=_.reqTime），现已按 dir 分命名空间补上 `net.resp.<cmd>`）：
  *     载荷 inner = {bagInfo,buffInfo,refreshTime,bagGetNum,buffGetNum}，**无 x,y**——但 RESOURCE_GET 只需 {rId}、
@@ -99,6 +100,7 @@
  * 共同约束：rId=dropId 原值透传（Int64 不 Number 化，仅拉黑 key 用字符串）；被拒（header.s≠0，非「未发出」）6h 拉黑该 dropId
  *   防逐拍重发刷屏；被拒走 info 日志不打 warn，且把 header.d（拒绝原因 loc 键，经 net.js Ret.reason 透传）的译文一并打出。只读+发包红线：全程 sendSecret 发 GET，不碰游戏 Update/Delete、不改本地态。
  */
+import { sleep } from '../../../core/util.js';
 import {
   CMD_DROP_GET,
   CMD_DROP_INFO,
@@ -108,8 +110,8 @@ import {
   CFG_DROP_ITEM_MAX,
   CFG_DROP_PET_MAX,
   CFG_RES_LIMITS,
-  EVT_REWARD_BOX_UPDATE,
-  EVT_RES_LIBRARY_UPDATE,
+  PUSH_DROP_CHANGE,
+  PUSH_RESOURCE_CHANGE,
   TABLE_RSS_STATION,
   TABLE_BEAST,
   BUFF_SLOT_MIN,
@@ -119,17 +121,6 @@ import {
   REJ_NOT_ARRIVED,
   tuning,
 } from './constants.js';
-
-/**
- * 流水线节拍用的一次性睡眠（不引周期原语：只在发完一条后让出 #gapMs 毫秒）。
- * @param {number} ms 毫秒
- * @returns {Promise<void>}
- */
-function sleep(ms) {
-  return new Promise(function (r) {
-    setTimeout(r, ms);
-  });
-}
 
 /**
  * Int64 感知的稳定字符串键（dropId 可能是 Int64 对象或数字串）：优先 .toString()，退 String()。
@@ -166,6 +157,24 @@ function pickRank(cfg, key) {
   const r = cfg && cfg.pickRank;
   const v = r && r[key];
   return Number.isFinite(v) ? v : Infinity;
+}
+
+/**
+ * 从 21522/21532 推送事件里取出**业务体**（等价于旧 EventCenter 事件载荷）。
+ * 两道状态守卫缺一不可：`ev.status` 是报文顶层 s（net.js 已归一化，可能为 null），
+ *   而 `header.s` 是游戏 Handler 自己判的那一层——verbatim `if (o && o.header.s === 0) EVENT.emit(...)`，
+ *   非 0 时游戏根本不发事件，我们也不能补发拍。
+ * PBV2 通道的 `ev.data` 是 `{header,data}` 包装（业务体在内层）；JSON 通道是平铺的，故内层缺失时回落到外层。
+ * @param {object} ev `net.<cmd>` 事件（Event 实例：{cmd,status,data,raw}）
+ * @returns {object|null} 业务体；非成功包/形态异常回 null
+ */
+function changeBody(ev) {
+  if (!ev) return null;
+  const outer = ev.data;
+  if (!outer) return null;
+  if (ev.status != null && Number(ev.status) !== 0) return null;
+  if (outer.header && Number(outer.header.s) !== 0) return null;
+  return outer.data || outer;
 }
 
 /**
@@ -274,16 +283,18 @@ export class PickupEngine {
   }
 
   /**
-   * 启动：登记两个点位刷新事件订阅 + 两类 INFO 的应答订阅 + 两类 INFO 的请求坐标订阅（退订均由 reactor 托管）。
-   * @param {object} ctx reactor 上下文（提供 on.event / on.resp / on.req）
+   * 启动：登记两条 CHANGE 推送订阅（21522/21532） + 两类 INFO 的应答订阅 + 两类 INFO 的请求坐标订阅（退订均由 reactor 托管）。
+   * @param {object} ctx reactor 上下文（提供 on.push / on.resp / on.req）
    */
   start(ctx) {
     const self = this;
-    ctx.on.event(EVT_REWARD_BOX_UPDATE, function (e) {
-      self.#onEvent('reward', e);
+    ctx.on.push(PUSH_DROP_CHANGE, function (ev) {
+      const body = changeBody(ev);
+      if (body) self.#onEvent('reward', body);
     });
-    ctx.on.event(EVT_RES_LIBRARY_UPDATE, function (e) {
-      self.onEventRes(e);
+    ctx.on.push(PUSH_RESOURCE_CHANGE, function (ev) {
+      const body = changeBody(ev);
+      if (body) self.onEventRes(body);
     });
     // 触发源②：到点后玩家（或游戏自动）打开资源点面板时游戏自己发的 INFO 应答——CHANGE 推送缺位时唯一的唤醒源
     ctx.on.req(CMD_RESOURCE_INFO, function (ev) {
@@ -412,7 +423,7 @@ export class PickupEngine {
    * 事件总入口：门控通过后先吸收载荷里「uid==我」的条目进点位账，再缓存最新载荷并按去抖窗口安排一次消费。
    * 门控不过去时打一行 debug（区分 feat 未激活 / 不在秘境地图），免得下次只能靠「一个包都没发」倒推。
    * @param {'reward'|'res'} kind 点位类别
-   * @param {object} e 事件载荷
+   * @param {object} e 点位业务体（21522/21532 推送的 `ev.data.data`，或 INFO 应答快照）
    */
   #onEvent(kind, e) {
     const env = this.#env;

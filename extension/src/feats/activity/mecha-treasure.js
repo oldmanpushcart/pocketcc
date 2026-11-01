@@ -41,6 +41,7 @@
  *   兜底定时器（active/idle 两档）由 cycle 承载，pause 后 alive()=false 自然停摆，resume 时 run 复位状态并重新点火
  *   （dispatched/rejected 不随 run 清空，防 resume 后重复攻打同一使徒）。
  */
+import { CODE_NOT_SENT, sleep } from '../../core/util.js';
 import { createLog } from '../../core/log.js';
 import { game } from '../../core/game.js';
 import { gameData } from '../../core/game-api.js';
@@ -79,12 +80,6 @@ const MONSTER_LIST_TYPE_WORLD = 2;
  * @type {number}
  */
 const MARCH_TYPE = 189;
-
-/**
- * 非服务器返回的哨兵 code：闸门未放开 / 发送异常时用，与真实 s 码区分开
- * @type {number}
- */
-const CODE_NOT_SENT = -1;
 
 /**
  * 内置调优常量（面板仅出启用开关，不暴露这些间隔）
@@ -142,17 +137,6 @@ var installed = false;
  */
 function aliveFn() {
   return ctxRef ? ctxRef.alive() : false;
-}
-
-/**
- * 等待毫秒
- * @param {number} ms 时长
- * @returns {Promise<void>}
- */
-function sleep(ms) {
-  return new Promise(function (resolve) {
-    setTimeout(resolve, ms);
-  });
 }
 
 /**

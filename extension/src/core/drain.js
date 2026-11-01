@@ -19,7 +19,8 @@ export function createDrain(o) {
   let consuming = false;
 
   /**
-   * 休眠
+   * 休眠（本地裸版）：调度原语 drain.js 按 arch 规则 schedule-primitives-thin 刻意除 log.js 外零 core 依赖，
+   * 故不复用 core/util.js 的 sleep（与 cycle.js 同侧的薄契约约束）。
    * @param {number} ms 毫秒
    * @returns {Promise<void>}
    */

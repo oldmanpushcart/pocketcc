@@ -6,8 +6,8 @@
  * 收到旨令即向 (X,Y) 用预设 N 发 902 行军，并在原频道 @执政官复旨：
  *   成功 → 「得令」；失败 → 服务器拒因经游戏 l10n（getNetMsgText 同源）翻译成中文后回复。
  *
- * 收令通道：聊天 socket 事件 newChatPush（频道）/ chatpushpm（私聊），经 ctx.on.event 订阅、
- * pause 由 reactor 统一摘除（EventCenter 退订架构）。判定链：
+ * 收令通道：聊天 socket 事件 chatpush（频道）/ chatpushpm（私聊），经 ctx.on.chat 订阅、
+ * pause 由 reactor 统一摘除（chat 底座直连 socket 并自愈重挂）。判定链：
  *   发送者 ∈ 执政官名单（String UID 比对，防 14 位截断）→ atData 点名本人（口径同聊天浮层
  *   mention 判据：atData.uid 含本人 UID 或 StrUid）→ 正则解 X:Y #N → uuid 幂等去重。
  *
@@ -30,6 +30,7 @@ import { game } from '../../core/game.js';
 import { gameData, l10n, march as marchApi } from '../../core/game-api.js';
 import { getUid } from '../../core/player.js';
 import { reactor } from '../../core/reactor.js';
+import { chatApi } from '../../core/chat.js';
 import { Battle } from '../../core/battle.js';
 import { march } from '../../core/march.js';
 import { map, SERVER } from '../../core/map.js';
@@ -177,7 +178,7 @@ function firstSeen(id) {
  */
 function onMessages(kind, payload) {
   if (!aliveFn()) return;
-  var chat = window.pocketcc && window.pocketcc.chat;
+  var chat = chatApi;
   if (!chat) return;
   var items = Array.isArray(payload) ? payload : [payload];
   for (var raw of items) {
@@ -290,7 +291,7 @@ function handleMsg(chat, raw, kind) {
  * @param {object} order 旨令 {x,y,preset,channel,roomId,fromUid,fromName}
  */
 async function execFlow(order) {
-  var chat = window.pocketcc && window.pocketcc.chat;
+  var chat = chatApi;
   if (!chat) return;
   if (busy) {
     reply(chat, order, '旨令已收到，前令行军中请稍候');
@@ -491,15 +492,15 @@ function install(ctx) {
 }
 
 /**
- * 激活：订阅聊天收信事件（pause 由 ctx.on.event 统一摘除）。
+ * 激活：订阅聊天推送（pause 由 ctx.on.chat 统一摘除）。
  * @param {object} ctx reactor 上下文
  */
 function run(ctx) {
   ctxRef = ctx;
-  ctx.on.event('newChatPush', function (p) {
+  ctx.on.chat('push', function (p) {
     onMessages('push', p);
   });
-  ctx.on.event('chatpushpm', function (p) {
+  ctx.on.chat('pm', function (p) {
     onMessages('pm', p);
   });
   log.info('started, consuls=%d', (cfg.consuls || []).length);

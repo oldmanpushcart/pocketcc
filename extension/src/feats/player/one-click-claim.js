@@ -49,6 +49,7 @@
  *   日常任务形态：面板只出启用开关，无字段无配置（fields=[]，toModuleCfg 返回空）。
  *   不行军不参战，offInCombat:false。生命周期由 reactor 托管，pause 后 alive()=false 自然停摆。
  */
+import { CODE_NOT_SENT } from '../../core/util.js';
 import { createLog } from '../../core/log.js';
 import { gameData } from '../../core/game-api.js';
 import { reactor } from '../../core/reactor.js';
@@ -81,9 +82,6 @@ const CLAIM_GAP_MS = 1000 * 60 * 120;
 
 /** @type {number} 瞬态未发出（CODE_NOT_SENT：在途频控/发送超时）的短重试（毫秒）：与服务器真拒绝区分，不把已到点的领取拖进 15min 退避 */
 const TRANSIENT_RETRY_MS = 1000 * 20;
-
-/** @type {number} 非服务器返回的哨兵 code（发送异常/在途频控用，与真实 s 码区分） */
-const CODE_NOT_SENT = -1;
 
 /** @type {object|null} 网络底座（promise 封装 pocketcc.net） */
 var net;

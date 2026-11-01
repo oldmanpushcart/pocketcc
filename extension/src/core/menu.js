@@ -53,6 +53,7 @@ export const MENU = [
         storageKey: 'pocketcc.group.playerBasics',
         children: [
           { id: 'dailySupply', kind: 'feature', label: '每日补给' },
+          { id: 'adDiamond', kind: 'feature', label: '广告领钻石' },
           { id: 'autoCoinCollect', kind: 'feature', label: '自动收取金币' },
           { id: 'armoryMaterial', kind: 'feature', label: '军火库生产材料' },
           { id: 'secretWeaponDrop', kind: 'feature', label: '秘密武器空投' },
@@ -111,6 +112,7 @@ export const MENU = [
           { id: 'seaTreasure', kind: 'feature', label: '海上夺宝' },
           { id: 'mechaTreasure', kind: 'feature', label: '重装母舰' },
           { id: 'domainTreasure', kind: 'feature', label: '领域寻宝' },
+          { id: 'maskDance', kind: 'feature', label: '假面舞会' },
         ],
       },
       { id: 'titanBlessing', kind: 'feature', label: '泰坦祝福', showFields: true },

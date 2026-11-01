@@ -71,11 +71,11 @@ const friend = String(info.friend || '');
 const uidSlug = String(licUid).replace(/[\\/:*?"<>|\x00-\x1f]/g, '');
 const outDir = `${root}release/pocketcc-extension-for-${uidSlug}`;
 
-// 3. 清旧重建；dist 仅拷 *.js——显式排除 .map 与 sidecar（发布包绝不带 sourcemap/授权标记）
+// 3. 清旧重建；dist 拷 *.js 与 popup.html——显式排除 .map 与 sidecar（发布包绝不带 sourcemap/授权标记）
 await rm(outDir, { recursive: true, force: true });
 await mkdir(`${outDir}/dist`, { recursive: true });
 for (const f of await readdir(distDir)) {
-  if (!f.endsWith('.js')) continue;
+  if (!f.endsWith('.js') && f !== 'popup.html') continue;
   await cp(`${distDir}/${f}`, `${outDir}/dist/${f}`);
 }
 

@@ -49,6 +49,7 @@
  * 生命周期由 reactor 托管：install/run 两钩子（日常任务无配置可推），places 限 base/world（Home/NWorldMap），战斗模式暂停；
  *   调度交给 core/cycle.js：单飞闸门、推触合并、异常 fallback 重排均内置；pause 后 alive()=false 让 cycle 自然停摆。
  */
+import { CODE_NOT_SENT, sleep } from '../../core/util.js';
 import { createLog } from '../../core/log.js';
 import { l10n, gameData } from '../../core/game-api.js';
 import { reactor } from '../../core/reactor.js';
@@ -105,9 +106,6 @@ const IDLE_TICK_MS = 1000 * 60 * 15;
 
 /** @type {number} 回点唤醒的抖动余量（毫秒），避开服务器结算时序 */
 const RECOVER_BUFFER_MS = 1000 * 10;
-
-/** @type {number} 非服务器返回的哨兵 code（发送异常/在途频控用，与真实 s 码区分） */
-const CODE_NOT_SENT = -1;
 
 /** @type {object|null} 网络底座（promise 封装 pocketcc.net） */
 var net;
@@ -214,17 +212,6 @@ function payloadOf(ret) {
     }
   }
   return d && typeof d === 'object' ? d : null;
-}
-
-/**
- * 等待毫秒（与同目录 feat 一致的裸 sleep；pause 语义由循环内 aliveFn() 检查承担）
- * @param {number} ms 毫秒
- * @returns {Promise<void>}
- */
-function sleep(ms) {
-  return new Promise(function (resolve) {
-    setTimeout(resolve, Math.max(0, ms | 0));
-  });
 }
 
 /**

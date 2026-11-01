@@ -6,6 +6,9 @@
 // 启用勾选即 configs[id].enabled（组闸门级联出的 enabled 变化也走同一真相字段，reactor 无感知）。
 // configs 是 id→合并后配置对象（identity 稳定，session hook / 面板实时读它），在 loadAllConfigs() 里填充——
 // 那时所有模块已求值、reactor.list() 完整；所有消费者（session hook / ui / startFeatures）都在 loadAllConfigs 之后才读 configs。
+// 配置字段演化契约（descriptor 可选字段）：version（当前配置版本号，落盘写进 _v）、
+//   migrate(cfg, fromVersion)=>cfg（saved._v 落后时逐版迁移的纯函数）、strictConfig（true 时读盘剔除未声明的历史残留键）。
+//   三者均缺省不改变既有行为，按功能增量启用。
 // 配置按 UID 隔离（player.js 设存储前缀）；换号（UID 变化）由 player.js 触发整页 reload 重建，本模块不再做 in-place 切号重载。
 import { createLog } from './log.js';
 import { storage } from './storage.js';
@@ -67,7 +70,7 @@ const INTERNAL_FEATURES = [
   },
   {
     // 事件日志：与网络日志平行的独立开关（不同存储键、不同模块），开一个不影响另一个。
-    // enabled → event.setLog：开启期间包 EVENT.emit 打印全量游戏事件（黑名单过滤），关闭即摘。
+    // enabled → event.setLog：开启期间包 EVENT.emit 打印全量游戏事件，关闭即摘。
     // 句柄由 event.js 自挂 window.pocketcc.event。
     id: 'eventLog',
     label: '事件日志',
@@ -198,7 +201,35 @@ export async function loadAllConfigs(opts) {
         if ('intentEnabled' in saved) c.intentEnabled = saved.intentEnabled;
       }
     } else {
-      Object.assign(c, f.defaults, saved || {});
+      // 版本化读盘：saved._v 落后于 descriptor.version 且声明了 migrate 钩子时，先按默认+存量合并再逐版迁移。
+      // migrate 是纯函数 (cfg, fromVersion) => cfg，缺省不改动；旧数据没有 _v 视为 0。
+      const savedV = saved && typeof saved._v === 'number' ? saved._v : 0;
+      if (f.strictConfig) {
+        // 收敛模式：只保留已声明键（defaults ∪ fields.key ∪ 元键），剔除改名/删除后残留的历史键，
+        // 避免旧 Object.assign(defaults, saved) 把已废弃字段原样透传给 toModuleCfg。
+        const known = knownConfigKeys(f);
+        for (const k of Object.keys(f.defaults || {})) c[k] = f.defaults[k];
+        if (saved) {
+          for (const k of Object.keys(saved)) {
+            if (k === '_v') continue;
+            if (known.has(k)) c[k] = saved[k];
+          }
+        }
+      } else {
+        Object.assign(c, f.defaults, saved || {});
+        delete c._v; // 元键不入内存 config，只落盘时补写
+      }
+      if (f.version && savedV < f.version && typeof f.migrate === 'function') {
+        try {
+          const next = f.migrate(c, savedV);
+          if (next && typeof next === 'object') {
+            for (const k of Object.keys(c)) delete c[k];
+            Object.assign(c, next);
+          }
+        } catch (e) {
+          log.warn('config migrate failed: %s (from v%d)', f.id, savedV, e);
+        }
+      }
     }
   }
   backfillIntents();
@@ -258,6 +289,22 @@ export async function migrateLegacyKeys(uid) {
 }
 
 /**
+ * 已声明的配置键集合：defaults 键 ∪ 面板 fields[].key ∪ 元键（enabled/intentEnabled）。
+ * strictConfig 功能读盘时用于剔除历史残留键。_v 是版本元键，单独处理不入内存 config。
+ * @param {object} f descriptor
+ * @returns {Set<string>}
+ */
+function knownConfigKeys(f) {
+  const s = new Set(Object.keys(f.defaults || {}));
+  if (Array.isArray(f.fields)) {
+    for (const fd of f.fields) if (fd && typeof fd.key === 'string') s.add(fd.key);
+  }
+  s.add('enabled');
+  s.add('intentEnabled');
+  return s;
+}
+
+/**
  * 落盘一个功能的配置
  * @param {object} f descriptor
  * @returns {Promise<*>}
@@ -267,15 +314,20 @@ export function saveFeature(f) {
 }
 
 /**
- * 落盘视图：详细参数不展示的功能只存开关态，其余全量存。
+ * 落盘视图：详细参数不展示的功能只存开关态，其余全量存并补写版本元键 _v（供下次读盘判定 migrate）。
  * @param {object} f descriptor
  * @param {object} c 内存配置
  * @returns {object} 待写入的配置对象
  */
 function persistable(f, c) {
   if (!c) return c;
-  if (!isDetailHiddenFeature(f)) return c;
-  const out = { enabled: !!c.enabled };
+  if (!isDetailHiddenFeature(f)) {
+    const out = Object.assign({}, c);
+    delete out._v; // 内存 config 不带 _v，统一在此补写当前版本
+    out._v = f.version || 1;
+    return out;
+  }
+  const out = { enabled: !!c.enabled, _v: f.version || 1 };
   if ('intentEnabled' in c) out.intentEnabled = !!c.intentEnabled;
   return out;
 }

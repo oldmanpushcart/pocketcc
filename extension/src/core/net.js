@@ -5,6 +5,14 @@ import { createLog } from './log.js';
 import { game } from './game.js';
 import { bus } from './bus.js';
 
+/**
+ * net 底座具名导出（供 reactor/feat 走 ESM import，替代 window.pocketcc.net 全局摸取）。
+ * IIFE 内在 api 构造完成后回赋值；bundle 同步求值，importer 读取时必已就绪。
+ * 命名用 netApi 而非 net：IIFE 内部已有局部 `var net`（NetMgr.NET 实例）会遮蔽同名导出。
+ * @type {object|null}
+ */
+export let netApi = null;
+
 (function () {
   'use strict';
 
@@ -181,11 +189,15 @@ import { bus } from './bus.js';
    *   所以订阅者必须同拍读完（bus 恒同步派发）或自行快照字段。
    * @param {object} e 原始报文
    * @param {number|undefined} reqTime 应答的发包时刻（NetMgr 递入的 t；推送为 undefined 即非应答）
+   * @param {object|null} [ev] 同一拍已构造好的 Event（日志/录制侧给的）；有则复用，省掉重复 JSON.parse
+   * @returns {object|null} 本拍用于派发的 Event（供录制侧接着复用）；无人订阅该 type 时为 null
    */
-  function dispatch(e, reqTime) {
+  function dispatch(e, reqTime, ev) {
     var type = (typeof reqTime === 'number' ? 'net.resp.' : 'net.') + e.c;
-    if (!bus.has(type)) return;
-    bus.emit(type, new Event(e, reqTime));
+    if (!bus.has(type)) return null;
+    var out = ev || new Event(e, reqTime);
+    bus.emit(type, out);
+    return out;
   }
 
   /**
@@ -402,13 +414,12 @@ import { bus } from './bus.js';
   }
 
   /**
-   * 入站：t===undefined 为推送，t 为数字（reqTime）为应答（NetMgr.js:578）
-   * @param {object} e 原始报文
+   * 入站：t===undefined 为推送，t 为数字（reqTime）为应答（NetMgr.js:578）。
+   * 心跳剪除与 Event 构造都在调用方（recvMine）做完，这里只负责打印。
    * @param {number|undefined} t 应答时刻；推送为 undefined
+   * @param {object} ev 本拍共享的 Event
    */
-  function logInbound(e, t) {
-    if (hbCodes.has(e.c)) return;
-    var ev = new Event(e);
+  function logInbound(t, ev) {
     var name = nameOf(ev.cmd) || '<unknown>';
     if (t === undefined) {
       log.info(
@@ -457,6 +468,24 @@ import { bus } from './bus.js';
     } catch (e) {
       return v;
     }
+  }
+
+  /**
+   * 原始报文 → 可长期持有的快照（raw 是池化复用对象，必须拷）。
+   * 与 snapshot 的差别：只对**对象值**字段做深拷（pbAck/pbAckV2 这类会被池化改写的载体），
+   *   c/o/s 与 d/p（不可变原始值/字符串）直接留引用——省掉整包 stringify+parse 的往返。
+   * 实测 13.5 KB 包：往返 82.6 µs → 浅拷 ~1 µs；446 KB 的地图包省掉 2.4 ms。
+   * @param {object} e 原始报文
+   * @returns {object} 快照（键序、字符串原文均保持）
+   */
+  function snapshotPacket(e) {
+    var o = {};
+    for (var k in e) {
+      if (!has(e, k)) continue;
+      var v = e[k];
+      o[k] = v && typeof v === 'object' ? snapshot(v) : v;
+    }
+    return o;
   }
 
   /** @type {Object<string, Array>} tapLog 方向样式：[箭头, 主色]，键按 dir 大类取 */
@@ -517,16 +546,17 @@ import { bus } from './bus.js';
    * 采集一条入站（recvMine 内调用）；口径与日志一致：t===undefined 推送，t 为数字（reqTime）应答；滤心跳（两条通道都滤，见 hbCodes）
    * @param {object} e 原始报文
    * @param {number|undefined} t 应答时刻；推送为 undefined
+   * @param {object|null} [ev] 同一拍已构造好的 Event（日志/派发侧付过那次 JSON.parse），有则复用
    */
-  function recordInbound(e, t) {
+  function recordInbound(e, t, ev) {
     if (hbCodes.has(e.c)) return;
     var dir = t === undefined ? 'push' : 'resp';
     var matched = matchAny(collectors, dir, e.c);
     var smatched = matchAny(streams, dir, e.c);
     if (!matched.length && !smatched.length) return;
     // 归一化口径与 dispatch/logInbound 一致：data 取 d/pbAck/pbAckV2/p；raw 存报文快照（池化对象不可直存）
-    var ev = new Event(e);
-    var entry = makeEntry(dir, ev.cmd, ev.data, snapshot(e), t);
+    var event = ev || new Event(e, t);
+    var entry = makeEntry(dir, event.cmd, event.data, snapshotPacket(e), t);
     for (var i = 0; i < matched.length; i++) pushTo(matched[i], entry);
     fireTaps(matched, entry);
     fireTaps(smatched, entry);
@@ -876,23 +906,29 @@ import { bus } from './bus.js';
       // 先调 orig 让游戏自己的推送处理器跑完（NetReciver.js:34-44），再派发给我们的 listener
       var ret = recvOrig.apply(this, arguments);
       if (installed && e) {
-        if (logEnabled) {
+        // 单拍共享：日志 / bus 派发 / 采集三处消费者共用同一个 Event——e.d 的 JSON.parse 每包只付一次
+        //   （实测 13.5 KB 包每次 41.5 µs；地图 901 既被 defense 订阅又被录制时原本要 parse 两遍）。
+        //   用局部变量而非模块级槽位：handler 里若同步引发嵌套入站，各自持有自己的 ev，不会串包。
+        var ev = null;
+        // 心跳在 log 支路剪掉（hbCodes 见文件头），不必为它构造 Event
+        if (logEnabled && !hbCodes.has(e.c)) {
           try {
-            logInbound(e, t);
+            ev = new Event(e, t);
+            logInbound(t, ev);
           } catch (err) {
             log.warn('log inbound cmd[%d] occur error!', e.c, err);
           }
         }
         // 推送走 net.<cmd>，应答走 net.resp.<cmd>（t 由 NetMgr.js:578 传入：推送=void 0，应答=_.reqTime）
         try {
-          dispatch(e, t);
+          ev = dispatch(e, t, ev) || ev;
         } catch (err) {
           log.warn('dispatch cmd[%d] occur error!', e.c, err);
         }
         // 采集闸门须与发送侧 wrapSend 对称：collectors（一次性环采）或 streams（常开黑匣子）任一非空都要落入站
         if ((collectors && collectors.length) || (streams && streams.length)) {
           try {
-            recordInbound(e, t);
+            recordInbound(e, t, ev);
           } catch (err) {}
         }
       }
@@ -1302,5 +1338,6 @@ import { bus } from './bus.js';
 
   window.pocketcc = window.pocketcc || {};
   window.pocketcc.net = api;
+  netApi = api; // 具名导出：与 window 同源，供 import { netApi } 使用
   // 扩展内不自启：由 boot.js 在登录成功、场景就绪后调用 install()
 })();

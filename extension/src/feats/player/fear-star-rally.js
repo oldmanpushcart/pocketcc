@@ -2,10 +2,11 @@
  * 惧星集结（fearStarRally）- 日常 feat：从「自动打野」拆出的惧星专项玩法，维持「我发起的」惧星行军，一只打完再派下一只。
  *
  * 用户口径（面板）：
- *   等级范围 —— minLevel ~ maxLevel（906 搜点的等级区间，用户自填）。
- *   方式 —— 「单打」(902 marchType 5) 或「集结」(1201 marchType 8 创建集结)。
+ *   等级 —— 单选一个档位 level（1~5）；搜点时把它展开成区间 [level, level]（906 minLevel/maxLevel 同值）。
+ *   方式 —— 「单打」(902 marchType 79) 或「集结」(1201 marchType 8 创建集结)。
  *   今日已打 —— 只读，取游戏侧 thorSearchNum（1026 GET_JION_ALL_RCTIME 应答，见下）。
  *   预设队伍 —— 单选一个出兵预设 preset（1~8，下拉单选；内部归一化为 0/1 长度池）；该预设本轮无兵则不出兵、等其回城再派。
+ *   面板排版 —— 上述四项排成一张表（type:'ctrlrow' + table），与自动打野怪物清单同外观：表头行说明各列含义 + 一行数据（无逐行 checkbox）。
  *
  * 惧星隐性规则（用户口径）：
  *   ① 每日攻打上限 —— 1026 req {} → resp d 含 {thorSearchNum}（今日已搜惧星次数，报文实证 dashcam 20261003T023731）；
@@ -19,8 +20,13 @@
  *
  * 打法与协议（报文实证 dashcam 20261011T183821-发起攻打野怪 / 20261011T183114-发起攻打黑暗军团据点集结 / 20261003T023731）：
  *   搜惧星 906 WORLD_SEARCH_MONSTER —— req {minLevel,maxLevel,groupType:9100,pointType:9}；resp {point:{x,y,...}}，服务端直接回一个可打点（视口无关，Home 可跑）。
- *   单打 902 MARCH_WORLD_POINT —— 走 core/march.attack() 组 canonical body；marchType 5。应答带 marchInfo.marchId（183821 实证）。
+ *   单打 902 MARCH_WORLD_POINT —— 走 core/march.attack() 组 canonical body（逐键同 183821）；marchType 79。应答带 marchInfo.marchId。
+ *     注意：惧星点（906 回的 pointType 86 = THOR_BUFF_RALLY_MIX_BOSS）不是普通野怪，**不能**沿用普通打野的 marchType 5：
+ *     5(ATTACK_MONSTER) 会被服务端按普通怪物表查点 → 拒 world_130509「point error, monster not find」（20261031T190920 实证）。
+ *     游戏侧 NWorldMapAssemblyEnemyComponent.onAttackNormalMonster 对 THOR_BUFF_RALLY_MIX_BOSS 特判 79 THOR_SCIENCE_BUFF，
+ *     同报文实证 902 受理后 marchInfo.marchType=79、10019/10163 亦为 79（10163 pveId=9101005 = 9100+level5）。
  *   集结 1201 ALLIANCE_Assembly_Create —— 直发 req {marchType:8,x,y,time:60,armyList,armyListNew,heroList,trapList,formation:0,formationV2}（无 break/extraArmy，183114 实证）。应答带 marchInfo.marchId。
+ *     惧星集结不特判类型（游戏侧 startAssemblyByUserLevel 对 THOR 仍取 ALLIANCE_RALLY_BATTLE=8）。
  *   体力 —— gameData.energy(1)→{point,pointMax}（push 10021）；仅作「体力>0 才搜」的粗闸防零体白烧配额，具体扣减交由服务器拒 + 退避收敛。
  *
  * 生命周期由 reactor 托管：places 限定 base/world、kinds homeland、战斗模式暂停（offInCombat，同 auto-hunt）；
@@ -30,19 +36,19 @@
  * 配置链路（防「激活不打」，同 auto-hunt）：registry 把 {enabled, ...toModuleCfg(c)} 推给 reactor.setConfig → configure。
  *   故 toModuleCfg 产出的就是归一化运行时配置，configure 只整体赋值、绝不二次归一。
  */
+import { parseData } from '../../core/util.js';
 import { createLog } from '../../core/log.js';
 import { reactor } from '../../core/reactor.js';
 import { bus } from '../../core/bus.js';
 import { gameData, gameConf } from '../../core/game-api.js';
 import { Battle } from '../../core/battle.js';
 import { march } from '../../core/march.js';
+import { map } from '../../core/map.js';
 import { createCycle } from '../../core/cycle.js';
 
 /** @type {ReturnType<createLog>} 模块日志器（tag=FEAR-STAR） */
 const log = createLog('FEAR-STAR');
 
-/** @type {number} RequestId.WORLD_SEARCH_MONSTER：服务端按 (species,等级区间,tab) 搜一个可打点 */
-const CMD_WORLD_SEARCH_MONSTER = 906;
 /** @type {number} RequestId.ALLIANCE_Assembly_Create：创建集结（惧星集结，feat 直发） */
 const CMD_CREATE_RALLY = 1201;
 /**
@@ -60,9 +66,13 @@ const GROUP_TYPE = 9100;
 /** @type {number} 惧星搜点 tab（pointType），906 搜点用 */
 const POINT_TYPE = 9;
 
-/** @type {number} 行军类型：单打（ATTACK_MONSTER，183821 实证） */
-const MT_ATTACK = 5;
-/** @type {number} 行军类型：创建集结主行军（MarchType.ALLIANCE_RALLY_BATTLE，183114 实证） */
+/**
+ * @type {number} 行军类型：惧星单打（NMarchType.THOR_SCIENCE_BUFF=79）。
+ * 惧星点（906 回 pointType 86 / itemId 9100）走雷神专属类型，游戏侧 NWorldMapAssemblyEnemyComponent.onAttackNormalMonster
+ * 对 THOR_BUFF_RALLY_MIX_BOSS 特判 79；沿用普通野怪的 5 会被拒 world_130509（20261031T190920 实证）。
+ */
+const MT_ATTACK = 79;
+/** @type {number} 行军类型：创建集结主行军（NMarchType.ALLIANCE_RALLY_BATTLE=8，惧星不特判；183114 实证） */
 const MT_RALLY = 8;
 /** @type {number} 1201 集结等待时长（秒，报文实证固定 60） */
 const RALLY_WAIT_TIME = 60;
@@ -83,10 +93,10 @@ const ERR_RATE_LIMIT = 'march_time_control_info001';
  */
 const FEAR_STAR_SYNC_TIMEOUT = 30000;
 
-/** @type {number} 面板预填的等级下界（区间由用户自填，本 feat 不猜具体档位） */
-const DEFAULT_MIN = 5;
-/** @type {number} 面板预填的等级上界 */
-const DEFAULT_MAX = 5;
+/** @type {number} 等级下拉的最高档（惧星只有 1~5 级，选项 = 1..LEVEL_MAX） */
+const LEVEL_MAX = 5;
+/** @type {number} 面板预填的等级档（区间上下界同值，即“只搜这一级”） */
+const DEFAULT_LEVEL = 5;
 
 /**
  * 攻打方式枚举 → 面板标签、派发所需 marchType、是否集结（集结走 1201、单打走 902）。
@@ -157,24 +167,6 @@ function aliveFn() {
 }
 
 /**
- * 应答 data 归一化：旧 JSON 链路 data 常为字符串，兜底已解析对象。
- * @param {*} d net.Ret.data
- * @returns {object|null}
- */
-function parseData(d) {
-  if (d == null) return null;
-  if (typeof d === 'object') return d;
-  if (typeof d === 'string') {
-    try {
-      return JSON.parse(d);
-    } catch (err) {
-      return null;
-    }
-  }
-  return null;
-}
-
-/**
  * 902/1201 被拒裸串 → 语言键：被拒时 data 常是 "语言键,参数" 形式的裸串（受理才是整包 JSON），取首个逗号前作为键。
  * @param {*} data net.Ret.data
  * @returns {string|null}
@@ -193,8 +185,8 @@ function pokePanel() {
 // ── 配置归一 ────────────────────────────────────────────────────────
 /**
  * 面板原始配置 → 归一化运行时配置（toModuleCfg 产出；configure 只整体赋值、不再调本函数）。
- * 出兵池去重剔非法按序保留；等级逐行钳值（max<min 抬到 min）；方式非法回落单打。
- * @param {object} raw 面板 configs 快照（{minLevel,maxLevel,mode,presets:number[]}）
+ * 出兵池去重剔非法按序保留；等级单档取整并钳到 [1, LEVEL_MAX]；方式非法回落单打。
+ * @param {object} raw 面板 configs 快照（{level,mode,preset}，level 为历史存档可能缺位）
  * @returns {object} { minLevel, maxLevel, mode, presets:number[] }
  */
 function normalize(raw) {
@@ -202,11 +194,13 @@ function normalize(raw) {
   // 单选一个出兵预设（1~8）→ 归一化为 0/1 长度池（非法/未选=空池，本 feat 空池即 idle）
   var preset = Number(raw.preset) | 0;
   var presets = preset >= 1 && preset <= 8 ? [preset] : [];
-  var min = Number.isFinite(+raw.minLevel) && +raw.minLevel > 0 ? +raw.minLevel | 0 : DEFAULT_MIN;
-  var max = Number.isFinite(+raw.maxLevel) && +raw.maxLevel > 0 ? +raw.maxLevel | 0 : DEFAULT_MAX;
-  if (max < min) max = min;
+  // 等级单档选择：面板只给一个 level，搜点区间就是 [level, level]；
+  //   旧存档无 level 但有 minLevel 时沿用它作档，保证改版前配的用户不会静默变档。
+  var lv =
+    Number.isFinite(+raw.level) && +raw.level > 0 ? +raw.level | 0 : Number(raw.minLevel) | 0;
+  if (!(lv >= 1 && lv <= LEVEL_MAX)) lv = DEFAULT_LEVEL;
   var mode = MODES[raw.mode] ? raw.mode : 'single';
-  return { minLevel: min, maxLevel: max, mode: mode, presets: presets };
+  return { minLevel: lv, maxLevel: lv, mode: mode, presets: presets };
 }
 
 /**
@@ -322,23 +316,15 @@ function msToNextMidnight() {
  * @returns {Promise<{x:number,y:number}|null>}
  */
 async function searchPoint(minLevel, maxLevel) {
-  if (net.isSending(CMD_WORLD_SEARCH_MONSTER)) return null;
-  var ret;
-  try {
-    ret = await net.send(CMD_WORLD_SEARCH_MONSTER, {
-      minLevel: minLevel,
-      maxLevel: maxLevel,
-      groupType: GROUP_TYPE,
-      pointType: POINT_TYPE,
-    });
-  } catch (err) {
-    log.debug('906 search send failed. %s', err && err.message);
-    return null;
-  }
-  if (!ret || !ret.ok) return null;
-  var d = parseData(ret.data) || {};
-  var pt = d.point || (Array.isArray(d.pointList) ? d.pointList[0] : null);
-  if (!pt || pt.x == null || pt.y == null) return null;
+  // 906 只读骨架（isSending 门/异常吞掉/取点）下沉 map.searchPoint
+  var r = await map.searchPoint(net, {
+    minLevel: minLevel,
+    maxLevel: maxLevel,
+    groupType: GROUP_TYPE,
+    pointType: POINT_TYPE,
+  });
+  var pt = r.point;
+  if (!pt) return null;
   return { x: pt.x | 0, y: pt.y | 0 };
 }
 
@@ -540,7 +526,7 @@ var offMarchEdge = null;
  * 10019 状态边沿（march.js 全局单点复播）：一峰二用。
  * ① 单飞锁确认：只要见到「我发起的那条」（id 完全匹配）就置 confirmed，令后续从列表消失走「静默定稿」而非 30s 兑底告警；
  *   不做提前解锁（释放仍由 syncSelfFearStar 统一判，保持单一释放口径）。
- * ② 到家唤醒：只认惧星类行军（marchType 5 单打 / 8 集结主）回城 → 名额释放 → 延迟 1.5s 给英雄释放推送落地后唤醒补派（同 auto-hunt）。
+ * ② 到家唤醒：只认惧星类行军（marchType 79 单打 / 8 集结主）回城 → 名额释放 → 延迟 1.5s 给英雄释放推送落地后唤醒补派（同 auto-hunt）。
  * @param {object} m 归一化 March
  */
 function onFearStarMarchEdge(m) {
@@ -632,67 +618,63 @@ function pause() {
 function buildDefaults() {
   return {
     enabled: false,
-    minLevel: DEFAULT_MIN,
-    maxLevel: DEFAULT_MAX,
+    level: DEFAULT_LEVEL,
     mode: 'single',
     preset: 0,
   };
 }
 
 /**
- * 生成 fields：等级范围 + 方式（单打/集结）+ 预设队伍（单选一个）+ 今日已打（只读，游戏侧 thorSearchNum）。
+ * 生成 fields：整卡一张表（ctrlrow + table），与自动打野怪物清单同外观——表头行说明各列（等级 | 方式 | 预设队伍 | 今日已打）。
+ * 一行数据：等级/方式/预设队伍 为下拉、今日已打为只读（惧星只一种怪，无需逐行 checkbox）。
+ * 行内控件各自持存档键（level/mode/preset），todayCount 只读不入库；key 'fearStarRow' 只是行级标识。
  * @returns {object[]}
  */
 function buildFields() {
   return [
     {
-      key: 'minLevel',
-      label: '等级下限',
-      type: 'number',
-      min: 1,
-      step: 1,
-      section: '惧星集结',
-      hint: '搜点等级区间下界（906 minLevel）',
-    },
-    {
-      key: 'maxLevel',
-      label: '等级上限',
-      type: 'number',
-      min: 1,
-      step: 1,
-      section: '惧星集结',
-      hint: '搜点等级区间上界（906 maxLevel）',
-    },
-    {
-      key: 'mode',
-      label: '方式',
-      type: 'select',
-      section: '惧星集结',
-      options: [
-        { value: 'single', label: MODES.single.label },
-        { value: 'rally', label: MODES.rally.label },
+      key: 'fearStarRow',
+      label: '惧星打野',
+      type: 'ctrlrow',
+      table: true,
+      cells: [
+        {
+          key: 'level',
+          label: '等级',
+          title: '攻打等级（1~5）：906 按这一级搜点',
+          options: Array.apply(null, { length: LEVEL_MAX }).map(function (_, i) {
+            return { value: i + 1, label: String(i + 1) };
+          }),
+        },
+        {
+          key: 'mode',
+          label: '方式',
+          title: '单打走 902、集结走 1201',
+          options: [
+            { value: 'rally', label: MODES.rally.label },
+            { value: 'single', label: MODES.single.label },
+          ],
+        },
+        {
+          key: 'preset',
+          label: '预设队伍',
+          title: '单选一个出兵预设（战斗 1~8）；该预设本轮无兵则不出兵，等其回城再派',
+          options: [{ value: 0, label: '未设置' }].concat(
+            Array.apply(null, { length: 8 }).map(function (_, i) {
+              return { value: i + 1, label: '战斗' + (i + 1) };
+            }),
+          ),
+        },
+        {
+          key: 'todayCount',
+          label: '今日已打',
+          type: 'text',
+          title: '今日已搜惧星次数（游戏侧 thorSearchNum）',
+          get: function () {
+            return fearStar.loaded ? String(fearStar.searchNum) : '-';
+          },
+        },
       ],
-    },
-    {
-      key: 'preset',
-      label: '预设队伍',
-      type: 'select',
-      section: '惧星集结',
-      options: [{ value: 0, label: '未设置' }].concat(
-        Array.apply(null, { length: 8 }).map(function (_, i) {
-          return { value: i + 1, label: '预设' + (i + 1) };
-        }),
-      ),
-      hint: '单选一个出兵预设；该预设本轮无兵则不出兵，等其回城再派',
-    },
-    {
-      key: 'todayCount',
-      label: '今日已打',
-      type: 'text',
-      section: '惧星集结',
-      get: function () {
-        return fearStar.loaded ? String(fearStar.searchNum) : '-';
-      },
     },
   ];
 }

@@ -29,9 +29,11 @@
  *   多条时逐条发送、每条间隔 1s（世界频道按等级有发送 CD，
  *   data_config 20210613，真机 500ms 已被流控）；发送期间由 overlay.setSharing 锁按钮，pause 钩子置 shareAbort 中断在飞循环。
  */
+import { sleep } from '../../../core/util.js';
 import { createLog } from '../../../core/log.js';
 import { reactor } from '../../../core/reactor.js';
 import { storage } from '../../../core/storage.js';
+import { chatApi } from '../../../core/chat.js';
 import { nav, worldMap } from '../../../core/game-api.js';
 import { JumpOverlay } from './jump-overlay.js';
 
@@ -255,17 +257,6 @@ function doJump(item) {
 }
 
 /**
- * 定时睡眠（批量分享逐条间隔）。
- * @param {number} ms 毫秒
- * @returns {Promise<void>}
- */
-function sleep(ms) {
-  return new Promise(function (r) {
-    setTimeout(r, ms);
-  });
-}
-
-/**
  * 判定一条 chat 发送（PostChatMsg 670）是否业务成功。口径同 chat.send 文档：
  *   ret.ok && JSON.parse(ret.data).success===1；业务拒时 data 为 '<文案键,参数>' 裸串，parse 得 null → 假。
  * @param {?{ok:boolean,data:*}} ret net.Ret
@@ -306,7 +297,7 @@ function channelOpts(key) {
  * @returns {Array<{key:string,label:string}>}
  */
 function dynChannels() {
-  var chat = window.pocketcc && window.pocketcc.chat;
+  var chat = chatApi;
   if (!chat || typeof chat.chatHeads !== 'function') return [];
   var out = [];
   var seen = Object.create(null);
@@ -342,7 +333,7 @@ function refreshDynChannels() {
  */
 async function doShare(channelKey, items) {
   if (sharing) return;
-  var chat = window.pocketcc && window.pocketcc.chat;
+  var chat = chatApi;
   if (!chat || typeof chat.sharePos !== 'function') {
     if (overlay) overlay.toast('聊天通道不可用');
     return;

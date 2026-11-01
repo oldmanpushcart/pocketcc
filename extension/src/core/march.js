@@ -17,6 +17,7 @@
 import { createLog } from './log.js';
 import { bus } from './bus.js';
 import { gameData } from './game-api.js';
+import { parseData } from './util.js';
 
 /** @type {ReturnType<createLog>} 模块日志器（tag=MARCH） */
 const log = createLog('MARCH');
@@ -66,23 +67,7 @@ function net() {
   return window.pocketcc && window.pocketcc.net;
 }
 
-/**
- * 应答 data 归一化：旧 JSON 链路 data 常为字符串（game 侧 JSON_PARSE(t.d)），兜底已解析对象。
- * @param {*} d net.Ret.data / 推送 ev.data
- * @returns {object|null} 解析后的对象；空/解析失败返回 null
- */
-function parseData(d) {
-  if (d == null) return null;
-  if (typeof d === 'object') return d;
-  if (typeof d === 'string') {
-    try {
-      return JSON.parse(d);
-    } catch (err) {
-      return null;
-    }
-  }
-  return null;
-}
+/** 应答 data 归一的 parse 兜底已上收 core/util.js（单一真相），本模块经文件头 import { parseData }。 */
 
 /** 取第一个「非 null/undefined」数值（|0），全空回 def */
 function firstNum() {
@@ -131,11 +116,13 @@ function isOccupying(m) {
  *   - id：marchInfo.marchId → marchId（一律 String()，>2^53 安全）；
  *   - target.x/y：摊平 target_tx/ty 优先 → 嵌套 marchInfo.target.tx/ty → entry.target.tx/ty（修历史「恒 undefined」坑）；
  *   - target.itemId：摊平 itemId 优先 → 嵌套 target.itemId → marchInfo.itemId；
+ *   - target.targetType：嵌套 target.targetType（与 901 pointList[].pointType 同轴，报文实证 856 条目恒带：
+ *     普通资源田 4 / 要塞遗迹 6 级田 38）。采集行军「是不是遗迹田」的硬判据，不依赖 RESOURCE 表是否就绪；
  *   - 时刻：marchStartTime/marchArrive/returnArriveTime（服务器 epoch 秒）嵌套 marchInfo.* 优先 → 摊平顶层，
  *     供「剩余行军时间/加速后到达点/腾位打点」直接读，无需再各自摸 raw 的两条路径（856/10019 均嵌在 marchInfo 下）。
  * type 仅透传展示，march.js 不解读、不做漂移。永不抛异常，非法输入回 null。
  * @param {object} rawEntry 856 条目 / 10019 推送体 / mapData.marches 摊平条目
- * @returns {object|null} March = {id:str,type,state,stateName,isOccupying,target:{x,y,itemId},marchStartTime,marchArrive,returnArriveTime,raw}
+ * @returns {object|null} March = {id:str,type,state,stateName,isOccupying,target:{x,y,itemId,targetType},marchStartTime,marchArrive,returnArriveTime,raw}
  */
 function decode(rawEntry) {
   if (!rawEntry || typeof rawEntry !== 'object') return null;
@@ -165,25 +152,25 @@ function decode(rawEntry) {
   var x = firstNum(rawEntry.target_tx, mt && mt.tx, et && et.tx, mi && mi.tx);
   var y = firstNum(rawEntry.target_ty, mt && mt.ty, et && et.ty, mi && mi.ty);
   var itemId = firstNum(rawEntry.itemId, mt && mt.itemId, et && et.itemId, mi && mi.itemId);
+  var targetType = firstNum(mt && mt.targetType, et && et.targetType);
   // 行军时刻（服务器 epoch 秒）：嵌套 marchInfo.* 优先，回落摊平顶层；缺省 0（不代表返程未发生，交由调用方 >0 判）。
   //   加速(920)后到达点由 10019 边沿更新到 marchInfo.marchArrive（state 不变），归一化后快照读它即拿到加速后的新到达。
   var timeSrc = mi || rawEntry;
   var marchStartTime = firstTime(timeSrc.marchStartTime, rawEntry.marchStartTime);
   var marchArrive = firstTime(timeSrc.marchArrive, rawEntry.marchArrive);
   var returnArriveTime = firstTime(timeSrc.returnArriveTime, rawEntry.returnArriveTime);
-  var m = {
+  return {
     id: id,
     type: type,
     state: state,
     stateName: STATE_NAME[state] || '',
     isOccupying: state !== State.RETURNING && state !== State.ARRIVED_HOME,
-    target: { x: x, y: y, itemId: itemId },
+    target: { x: x, y: y, itemId: itemId, targetType: targetType },
     marchStartTime: marchStartTime,
     marchArrive: marchArrive,
     returnArriveTime: returnArriveTime,
     raw: rawEntry,
   };
-  return m;
 }
 
 // ── 列表（856 权威读，区分「读不到」与「确实 0 条」） ────────────────────

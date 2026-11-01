@@ -6,6 +6,9 @@ import { createLog } from './log.js';
 import { bus } from './bus.js';
 import { game } from './game.js';
 import { checkCap } from './game-api.js';
+import { netApi } from './net.js';
+import { eventApi } from './event.js';
+import { chatApi } from './chat.js';
 
 /** @type {ReturnType<createLog>} 模块日志器（tag=REACTOR） */
 const log = createLog('REACTOR');
@@ -41,21 +44,21 @@ function shouldRun(entry) {
 
 /**
  * 功能上下文：注入给 spec.install/run 的唯一外部接触面。
- * net/event 懒取（install 时机可能早于底座安装）；alive 反映 entry.running，
- * on.push/on.event 订阅自动登记到 entry.triggers，pause 时统一摘除（feat 卸载不靠自己记 off）。
+ * net/event/chat 懒取（install 时机可能早于底座安装）；alive 反映 entry.running，
+ * on.push/on.chat/on.event 订阅自动登记到 entry.triggers，pause 时统一摘除（feat 卸载不靠自己记 off）。
  * @param {Entry} entry 功能条目
  * @returns {object} 上下文对象
  */
 function makeCtx(entry) {
   return {
     id: entry.spec.id,
-    /** @returns {object|undefined} pocketcc.net 底座（懒取） */
+    /** @returns {object|null} pocketcc.net 底座（ESM 导入，无 window 依赖） */
     get net() {
-      return window.pocketcc && window.pocketcc.net;
+      return netApi;
     },
-    /** @returns {object|undefined} pocketcc.event 底座（懒取） */
-    get event() {
-      return window.pocketcc && window.pocketcc.event;
+    /** @returns {object|null} pocketcc.chat 底座（ESM 导入，无 window 依赖） */
+    get chat() {
+      return chatApi;
     },
     game: game,
     bus: bus,
@@ -100,7 +103,7 @@ function makeCtx(entry) {
        * @returns {function():void} 退订函数
        */
       req: function (cmd, handler) {
-        const api = window.pocketcc && window.pocketcc.net;
+        const api = netApi;
         if (!api || !api.onReq) {
           log.warn('net base unavailable, req subscribe for cmd %s is a no-op', cmd);
           return function () {};
@@ -116,12 +119,29 @@ function makeCtx(entry) {
        * @returns {function():void} 退订函数
        */
       event: function (name, handler) {
-        const event = window.pocketcc && window.pocketcc.event;
+        const event = eventApi;
         if (!event || !event.install()) {
           log.warn('event base unavailable, skip subscribe %s', name);
           return function () {};
         }
         const unsub = event.on(name, handler);
+        entry.triggers.add(unsub);
+        return unsub;
+      },
+      /**
+       * 订阅一条聊天推送（chat 底座直连聊天 socket，自带实例更替重挂），退订自动登记。
+       * 语义 type 与 socket 事件的映射见 core/chat.js SOCKET_MAP；载荷即 socket 实参（非池化，跨拍需自行快照）。
+       * @param {string} type 语义类型：push 频道消息 | pm 私聊 | update 消息更新 | del 消息删除 | reconnect 重连成功
+       * @param {function(object):void} handler 处理器（reconnect 无载荷）
+       * @returns {function():void} 退订函数
+       */
+      chat: function (type, handler) {
+        const api = chatApi;
+        if (!api || !api.on) {
+          log.warn('chat base unavailable, skip subscribe %s', type);
+          return function () {};
+        }
+        const unsub = api.on(type, handler);
         entry.triggers.add(unsub);
         return unsub;
       },
@@ -216,6 +236,8 @@ bus.on('world.change', recomputeAll);
  * symbols：本功能依赖的游戏 bundle 符号（能力语义名，解析表见 core/game-api.js CAPS；'?' 后缀=软依赖），
  * setConfig 首次 install 前由框架统一校验，缺则不跑 install 直接记安装失败。
  * @param {object} spec { id, label, storageKey, defaults, fields?, toModuleCfg?, kinds?, places?, symbols?, install?(ctx), configure?(cfg), run?(ctx), pause?(ctx) }
+ *   // 配置字段演化（由 core/registry.js 消费，均可缺省）：version?:number 当前配置版本号；
+ *   // migrate?:(cfg,fromVersion)=>cfg 旧版落后时的迁移纯函数；strictConfig?:boolean 读盘剔除未声明的历史残留键。
  */
 function register(spec) {
   if (!spec || typeof spec.id !== 'string') {

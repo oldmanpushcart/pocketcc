@@ -34,6 +34,7 @@
  *   日常任务形态：面板只出启用开关，无字段无配置（fields=[]，toModuleCfg 返回空）。
  *   不行军不参战，offInCombat:false。生命周期由 reactor 托管，pause 后 alive()=false 自然停摆。
  */
+import { CODE_NOT_SENT } from '../../core/util.js';
 import { createLog } from '../../core/log.js';
 import { l10n, gameData } from '../../core/game-api.js';
 import { reactor } from '../../core/reactor.js';
@@ -62,9 +63,6 @@ const DAY_ROLL_BUFFER_MS = 1000 * 60 * 5;
 
 /** @type {number} 日界后宽限窗（毫秒）：窗内 capped 判据不可信（重置回写常晚于本端醒来），降为 IDLE 巡检 */
 const DAY_ROLL_GRACE_MS = 1000 * 60 * 60;
-
-/** @type {number} 非服务器返回的哨兵 code（发送异常/在途频控用，与真实 s 码区分） */
-const CODE_NOT_SENT = -1;
 
 /** @type {object|null} 网络底座（promise 封装 pocketcc.net） */
 var net;

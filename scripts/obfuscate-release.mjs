@@ -47,7 +47,7 @@ const options = {
   target: 'browser',
 };
 
-const files = ['content.js', 'bridge.js', 'background.js'];
+const files = ['content.js', 'bridge.js', 'background.js', 'popup.js'];
 for (const f of files) {
   const p = `${distDir}/${f}`;
   const src = await readFile(p, 'utf8');

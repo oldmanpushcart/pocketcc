@@ -1,7 +1,8 @@
 /**
  * pocketcc.event
  * 游戏 EventCenter（cc.EventTarget 单例，EventCenter.js:111 导出为 EVENT）的薄封装：
- * 订阅按需挂（不常驻包 EVENT.on）；日志才包 EVENT.emit，且只在“事件日志”开启期间存在，关闭即摘。
+ * 订阅按需挂（不常驻包 EVENT.on）；每个订阅包一层只做异常隔离的 wrapper（回调抛错不打断游戏侧其余监听）；
+ * 日志才包 EVENT.emit，且只在“事件日志”开启期间存在，关闭即摘。
  * 口径参照 net.js：单点 hook、先跑原函数再打印、只当最外层还是自己时才还原。
  *
  * 生命周期约定（feat 侧）：
@@ -11,11 +12,17 @@
  *   event.uninstall() 是"拆卸整个封装层"的最后防线（reload/换号路径），不是 feat 卸载的常规路径。
  *
  * 池化对象告诫（同 net.js Event.raw）：部分游戏事件载荷是复用的 model 引用，
- * 信号/队列里只取纯值，别长期持有 ev.arguments 里的对象。
+ * 信号/队列里只取纯值，别长期持有回调参数里的对象。
  */
 import { createLog } from './log.js';
 import { game } from './game.js';
-import { bus } from './bus.js';
+
+/**
+ * event 底座具名导出（供 reactor/feat 走 ESM import，替代 window.pocketcc.event 全局摸取）。
+ * IIFE 内在 api 构造完成后回赋值；bundle 同步求值，importer 读取时必已就绪。
+ * @type {object|null}
+ */
+export let eventApi = null;
 
 (function () {
   'use strict';
@@ -28,14 +35,11 @@ import { bus } from './bus.js';
   /** @type {boolean} 封装层是否已安装 */
   var installed = false;
 
-  // 两级 Map：subs: name -> Map<fn, wrapper> 正向表（去重、uninstall 遍历）；
-  // byWrapper: name -> Map<wrapper, fn> 反查表（退订时由 wrapper 找回配对）。
+  // 单表：subs: name -> Map<fn, wrapper>（去重、退订配对、uninstall 遍历都走它）。
   // EventCenter.off 按 callback 引用严格匹配，我们注册时从不传 target，
   // 故 off(name, wrapper) 省略 target 也不会误删游戏自己的监听。
-  /** @type {Map<string, Map<Function, Function>>} 正向表：name -> Map<fn, wrapper> */
+  /** @type {Map<string, Map<Function, Function>>} name -> Map<fn, wrapper> */
   var subs = new Map();
-  /** @type {Map<string, Map<Function, Function>>} 反查表：name -> Map<wrapper, fn> */
-  var byWrapper = new Map();
 
   // ── 事件日志 hook（net.js 同款口径）：只在 logEnabled 期间包上 EVENT.emit，关闭即摘 ──
   /** @type {Function|null} 原 emit（实例自有属性或原型方法） */
@@ -59,13 +63,8 @@ import { bus } from './bus.js';
     install: install,
     uninstall: uninstall,
     on: on,
-    once: once,
     off: off,
-    emit: emit,
-    stat: stat,
     setLog: setLog,
-    isLogging: isLogging,
-    nameOf: nameOf,
   };
 
   // ── EventId 反查表（值 -> 常量名），口径同 net.js 的 scanConsts，但事件值是字符串 ──
@@ -99,37 +98,18 @@ import { bus } from './bus.js';
   }
 
   /**
-   * 事件名反查 EventId 常量名（名与值可能不同，如 Power_UPDATE="STAR_UPDATE"）
-   * @param {string} name 事件名（= EventId 的值）
-   * @returns {string|null} 常量名；未知返回 null
-   */
-  function nameOf(name) {
-    if (typeof name !== 'string' || !name) return null;
-    if (!names) buildNames();
-    return names[name] || null;
-  }
-
-  // bus 载荷约定：'event.<name>'，payload = 实参数组（EVENT.emit 最多透传 5 个业务参数）
-  // 热路径纪律：事件名/总线 type 在订阅期算一次，emit 回调内不拼串、不反查名字、不建表。
-  /**
-   * 生成登记到游戏上的转发包装：只做两件事——调原回调 fn、按需桥接到 bus（各独立 try/catch）
+   * 生成登记到游戏上的保护包装：只做一件事——调原回调；异常吞掉只记 warn，
+   * 保证我们的回调抛错不会打断游戏在同一事件上的其余监听。
    * @param {string} name 事件名
    * @param {Function} fn 用户原回调
    * @returns {Function} wrapper
    */
   function makeWrapper(name, fn) {
-    var type = 'event.' + name;
     return function () {
       try {
         fn.apply(this, arguments);
       } catch (err) {
         log.warn('callback %s threw', name, err);
-      }
-      try {
-        // 有 bus 订阅才复制成数组（省掉无订阅事件的分配）；载荷里的对象可能是池化引用，只取值不长期持有
-        if (bus.has(type)) bus.emit(type, Array.prototype.slice.call(arguments));
-      } catch (err) {
-        log.warn('forward %s occur error!', name, err);
       }
     };
   }
@@ -191,12 +171,9 @@ import { bus } from './bus.js';
     return !!(m && m.size);
   }
 
-  /** 订阅清空后删掉该事件名的两张表项，防泄漏 */
+  /** 订阅清空后删掉该事件名的表项，防泄漏 */
   function pruneName(name) {
-    if (!hasSubs(name)) {
-      subs.delete(name);
-      byWrapper.delete(name);
-    }
+    if (!hasSubs(name)) subs.delete(name);
   }
 
   /**
@@ -218,17 +195,12 @@ import { bus } from './bus.js';
     if (names && names[name] === undefined) {
       log.warn('on %s: not an EventId value, subscribing anyway.', name);
     }
-    var fwd = byWrapper.get(name);
-    if (!fwd) {
-      subs.set(name, new Map());
-      byWrapper.set(name, (fwd = new Map()));
-    }
-    var existing = subs.get(name).get(fn);
-    var wrapper = existing;
+    var m = subs.get(name);
+    if (!m) subs.set(name, (m = new Map()));
+    var wrapper = m.get(fn);
     if (!wrapper) {
       wrapper = makeWrapper(name, fn);
-      subs.get(name).set(fn, wrapper);
-      fwd.set(wrapper, fn);
+      m.set(fn, wrapper);
       EVENT.on(name, wrapper);
     }
     return function () {
@@ -237,38 +209,16 @@ import { bus } from './bus.js';
   }
 
   /**
-   * 一次性订阅：触发一次后自动退订（回调仍收全参）
+   * 真正的退订执行：游戏 off + 表项剔除 + 空名清理。幂等：表里已无此配对时静默返回。
    * @param {string} name 事件名
-   * @param {function} fn 回调
-   * @returns {function} unsubscribe（未触发前手动退订用）
-   */
-  function once(name, fn) {
-    if (typeof fn !== 'function') return function () {};
-    var offFn = on(name, function () {
-      offFn();
-      try {
-        fn.apply(null, arguments);
-      } catch (err) {
-        log.warn('once %s callback threw', name, err);
-      }
-    });
-    return offFn;
-  }
-
-  /**
-   * 真正的退订执行：游戏 off + 两张表同步剔除 + 空名清理
-   * @param {string} name 事件名
-   * @param {Function} wrapper 登记时的转发包装
+   * @param {Function} wrapper 登记时的保护包装
    * @param {Function} fn 用户原回调
    */
   function offWrapper(name, wrapper, fn) {
-    if (!EVENT) return;
-    var fwd = byWrapper.get(name);
-    if (!fwd || !fwd.has(wrapper)) return;
-    EVENT.off(name, wrapper);
-    fwd.delete(wrapper);
     var m = subs.get(name);
-    if (m && m.get(fn) === wrapper) m.delete(fn);
+    if (!m || m.get(fn) !== wrapper) return;
+    if (EVENT) EVENT.off(name, wrapper);
+    m.delete(fn);
     pruneName(name);
   }
 
@@ -286,42 +236,8 @@ import { bus } from './bus.js';
   }
 
   /**
-   * 代理 EVENT.emit（调试面 / 主动通知游戏）
-   * @param {string} name 事件名
-   * @param {...*} args 实参（≤5）
-   */
-  function emit(name, ...args) {
-    if (!installed) return;
-    EVENT.emit(name, ...args);
-  }
-
-  /**
-   * 诊断面（DevTools）：列出我们登记的订阅，并只读核对游戏侧是否真的挂上。
-   * onEvent 读的是 EventCenter._eventList[name].size（该事件名下不同 callback 数）；
-   * subs>=1 而 onEvent=0 说明注册没落到游戏实例（取错单例 / 已被别处 off）。
-   * @returns {object[]} 每行 {name, const, subs, onEvent}
-   */
-  function stat() {
-    var rows = [];
-    for (const [name, m] of subs) {
-      var gameCount = 0;
-      try {
-        var lm = EVENT && EVENT._eventList && EVENT._eventList[name];
-        if (lm) gameCount = lm.size;
-      } catch (err) {}
-      rows.push({
-        name: name,
-        const: (names && names[name]) || null,
-        subs: m.size,
-        onEvent: gameCount,
-      });
-    }
-    return rows;
-  }
-
-  /**
    * 开关事件日志（面板“事件日志”开关驱动，与“网络日志”互相独立）。
-   * 开启=建 EventId 名表 + 包 EVENT.emit（全量打印，黑名单过滤）；关闭即摘除包装。
+   * 开启=建 EventId 名表 + 包 EVENT.emit（全量打印）；关闭即摘除包装。
    * @param {boolean} on
    * @returns {boolean} 当前开关态
    */
@@ -341,14 +257,6 @@ import { bus } from './bus.js';
       unhookEmit();
     }
     log.info('event log %s.', logEnabled ? 'enabled' : 'disabled');
-    return logEnabled;
-  }
-
-  /**
-   * 事件日志是否开启
-   * @returns {boolean}
-   */
-  function isLogging() {
     return logEnabled;
   }
 
@@ -382,7 +290,6 @@ import { bus } from './bus.js';
       for (const fn of [...m.keys()]) off(name, fn);
     }
     subs.clear();
-    byWrapper.clear();
     installed = false;
     EVENT = null;
     log.info('uninstalled.');
@@ -391,5 +298,6 @@ import { bus } from './bus.js';
 
   window.pocketcc = window.pocketcc || {};
   window.pocketcc.event = api;
+  eventApi = api; // 具名导出：与 window 同源，供 import { eventApi } 使用
   // 扩展内不自启：由 boot.js 在场景就绪后调用 install()（与 net.install 同一时机）
 })();

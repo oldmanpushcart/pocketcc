@@ -13,6 +13,8 @@ import {
   multiOptsInnerHTML,
   mineRulesInnerHTML,
   farmRulesInnerHTML,
+  farmKindSummary,
+  farmFamilySummary,
   timeRangesInnerHTML,
   presetPoolInnerHTML,
 } from './fields.js';
@@ -127,19 +129,38 @@ export function wirePanel(panel) {
   });
 
   // 数字字段：钳制到 min，存档 + 运行中热更（区间规则行内的数字格无 data-id，归 wirePanel 末尾的委托处理）
+  // rallygrid（联盟集结目标紧凑表）行内的延迟/上限格：顶层 fd.key ≠ input.dataset.key，需下探 rows（同 tripick.parts 口径）。
   panel.querySelectorAll('input[type=number]').forEach((input) => {
     if (!input.dataset.id) return;
     input.addEventListener('change', () => {
       const f = findFeature(input.dataset.id);
       if (!f) return;
-      const fd = f.fields.find((x) => x.key === input.dataset.key);
-      let v = fd.float ? parseFloat(input.value) : parseInt(input.value, 10);
-      if (fd.zeroUnlimited && (isNaN(v) || input.value === ''))
+      let src = f.fields.find((x) => x.key === input.dataset.key);
+      if (!src) {
+        for (const x of f.fields) {
+          if (x.type !== 'rallygrid') continue;
+          for (const r of x.rows || []) {
+            if (r.delay && r.delay.key === input.dataset.key) {
+              src = r.delay;
+              break;
+            }
+            if (r.limit && r.limit.key === input.dataset.key) {
+              src = r.limit;
+              break;
+            }
+          }
+          if (src) break;
+        }
+      }
+      if (!src) return;
+      const key = src.key;
+      let v = src.float ? parseFloat(input.value) : parseInt(input.value, 10);
+      if (src.zeroUnlimited && (isNaN(v) || input.value === ''))
         v = 0; // 留空 = 不限（0），与渲染对称
-      else if (isNaN(v)) v = f.defaults[fd.key];
-      v = Math.max(fd.min, v);
-      input.value = fd.zeroUnlimited && v === 0 ? '' : v; // 0 → 留空，placeholder「不限」
-      configs[f.id][fd.key] = v;
+      else if (isNaN(v)) v = f.defaults[key];
+      v = Math.max(src.min != null ? src.min : 0, v);
+      input.value = src.zeroUnlimited && v === 0 ? '' : v; // 0 → 留空，placeholder「不限」
+      configs[f.id][key] = v;
       saveFeature(f);
       applyFeature(f);
     });
@@ -149,7 +170,8 @@ export function wirePanel(panel) {
   // 值按 descriptor 的 option **原类型**回写：字符串档（如卡车「时段模板」、目标模式 random/specify）过去被 parseInt
   // 成 NaN → 静默回落 defaults，用户选完像没生效；没命中 option 才走旧的整数解析（保留非法值兜底）。
   // tripick（行内多下拉，如异能兽培育「派出的兽 [属相][品种][品质]」）的 select data-key 是 part.key（applyFactions…），
-  //   不等于 field.key（applyAttrTrio），故 descriptor 查找须同时下探 parts，选项取该 part 自己的口径。
+  //   ctrlrow（一行多控件，如惧星集结「等级/方式/预设队伍」）的是 cell.key，都不等于 field.key（applyAttrTrio / fearStarRow），
+  //   故 descriptor 查找须同时下探 parts / cells，选项取该子控件自己的口径。
   panel.querySelectorAll('select.pc-fsel').forEach((sel) => {
     sel.addEventListener('change', () => {
       const f = findFeature(sel.dataset.id);
@@ -157,11 +179,16 @@ export function wirePanel(panel) {
       const fd = f.fields.find(
         (x) =>
           x.key === sel.dataset.key ||
-          (x.type === 'tripick' && (x.parts || []).some((p) => p.key === sel.dataset.key)),
+          (x.type === 'tripick' && (x.parts || []).some((p) => p.key === sel.dataset.key)) ||
+          (x.type === 'ctrlrow' && (x.cells || []).some((p) => p.key === sel.dataset.key)),
       );
       if (!fd) return;
       const part =
-        fd.type === 'tripick' ? (fd.parts || []).find((p) => p.key === sel.dataset.key) : null;
+        fd.type === 'tripick'
+          ? (fd.parts || []).find((p) => p.key === sel.dataset.key)
+          : fd.type === 'ctrlrow'
+            ? (fd.cells || []).find((p) => p.key === sel.dataset.key)
+            : null;
       const src = part ? part : fd;
       const key = part ? part.key : fd.key;
       const opts =
@@ -436,8 +463,9 @@ export function wirePanel(panel) {
     applyFeature(t.f);
   });
 
-  // 下田规则字段（type:'farmrules'，自动下田）：田类型/田等级/预设部队下拉 + ☑只下机械田开关，行可增删，
-  // 同 minerules 走面板级事件委托；family/level 改动会联动其它控件（雷神封顶 3 级、选 6 级田禁用机械田）需整行重刷，preset 行形状不变。
+  // 下田规则字段（type:'farmrules'，自动下田）：预设编队单选 / 资源类型多选 / 资源种类多选，行可增删。
+  // 同 minerules 走面板级事件委托；两个多选组（family / kind）勾选**就地更新**（不重建下拉 DOM，展开态得以保持），
+  // preset 互斥的 disabled 状态跨行联动、行增删则整块重绘。
   const frTarget = (el) => {
     const box = el && el.closest ? el.closest('.pc-frule') : null;
     if (!box) return null;
@@ -455,38 +483,168 @@ export function wirePanel(panel) {
     const row = el && el.closest ? el.closest('.pc-frrow[data-fidx]') : null;
     return row ? +row.dataset.fidx : -1;
   };
+  // 资源种类多选的展开/收起。主路径用 Popover API（top layer）：面板/卡片/内容区的 overflow 裁切与面板的
+  // backdrop-filter（会给 fixed 子元素建 containing block）都困不住它，所以选项列表能像原生下拉那样浮在行下方、
+  // 不撑高卡片；light dismiss（点浮层外/Esc）由浏览器代劳，这里只补两件浏览器不管的：定位 + 箭头态类名同步。
+  // 老 Chrome（<114）无 popover 属性 → 降级为流内撑开独占一行（样式在 panel-css 的 .pc-frkinds.pc-open 分支）。
+  const kindPopSupported = (() => {
+    const probe = document.createElement('div');
+    return typeof probe.showPopover === 'function' && typeof probe.hidePopover === 'function';
+  })();
+  if (kindPopSupported)
+    panel.classList.add('pc-kindpop'); // 把浮层样式打开（否则默认规则把 .pc-frkpop 当流内展开用）
+  else logCore.debug('popover API unavailable, kind multiselect falls back to in-flow expand.');
+  const KIND_OPEN_SEL = '.pc-frkinds.pc-open'; // 展开中的种类行容器（收起与类名同步共用一个口径）
+  const KIND_POP_SEL = '.pc-frkpop'; // 容器内的选项浮层
+  const hideKindPops = () => {
+    panel.querySelectorAll(KIND_OPEN_SEL).forEach((x) => {
+      const p = x.querySelector(KIND_POP_SEL);
+      if (kindPopSupported && p && p.hidePopover) {
+        try {
+          p.hidePopover();
+        } catch {
+          /* 已经收起：类名照删 */
+        }
+      }
+      x.classList.remove('pc-open');
+    });
+  };
+  /**
+   * 只把“浏览器已经自己关掉”的浮层类名补齐（箭头不能一直翻着）；
+   * 本拍刚 hide 又立刻 reopen 的（getPopover 仍为 shown）不动，否则会误关刚展开的列表。
+   */
+  const syncKindPopClass = () => {
+    if (!kindPopSupported) return;
+    panel.querySelectorAll(KIND_OPEN_SEL).forEach((x) => {
+      const p = x.querySelector(KIND_POP_SEL);
+      if (p && p.getPopover && p.getPopover() === 'hidden') x.classList.remove('pc-open');
+    });
+  };
+  /** 浮层左上角对齐按钮左下角（top layer 里的 fixed 坐标就是视口坐标） */
+  const placeKindPop = (box, pop) => {
+    const btn = box.querySelector('.pc-frkbtn');
+    if (!btn || !btn.getBoundingClientRect) return;
+    const r = btn.getBoundingClientRect();
+    const vw = window.innerWidth || document.documentElement.clientWidth || 0;
+    const w = Math.max(r.width, Math.min(190, vw - 16));
+    const left = Math.max(8, Math.min(Math.round(r.left), vw - w - 8));
+    pop.style.cssText =
+      'position:fixed;margin:0;left:' +
+      left +
+      'px;top:' +
+      Math.round(r.bottom + 3) +
+      'px;' +
+      'min-width:' +
+      w +
+      'px;';
+  };
+  /**
+   * 行内两个多选组（family 资源类型 / kind 资源种类）的就地刷新：摘要文案 + 各项勾选态 + 遗迹置灰联动。
+   * 不整块重绘，否则展开中的浮层会被自己关掉（连着勾第二项就断）；两个组都不影响别行的 preset
+   * disabled 联动（那是 preset 之间的事），所以都不需要跟着重绘。
+   * @param {Element} rowEl .pc-frrow
+   * @param {{families?:number[], kinds?:string[]}} row 该行当前值
+   * @param {object} fd 字段描述符（家族摘要要用它的下拉数据源）
+   */
+  const syncRowGroupsUi = (rowEl, row, fd) => {
+    if (!rowEl || !rowEl.querySelectorAll) return;
+    const fams = (Array.isArray(row.families) ? row.families : []).map((f) => String(f));
+    const kinds = Array.isArray(row.kinds) ? row.kinds : [];
+    // 雷神(family 16) 没有 6 级田：本行勾选的家族全都开不出遗迹 → 遗迹置灰（与 feat 侧 normalizeRules 同口径）
+    const thunder = fams.length > 0 && fams.every((f) => f === '16');
+    rowEl.querySelectorAll('.pc-frkinds').forEach((holder) => {
+      const isFam = holder.dataset.grp === 'family';
+      const want = isFam ? fams : kinds;
+      holder.querySelectorAll('.pc-frkin').forEach((cb) => {
+        cb.checked = want.indexOf(cb.value) >= 0;
+        if (isFam || cb.value !== 'relic') return;
+        cb.disabled = thunder;
+        const opt = cb.closest('.pc-frkopt');
+        if (opt) opt.classList.toggle('pc-frkoptdis', thunder);
+      });
+      const sum = holder.querySelector('.pc-frksum');
+      if (!sum) return;
+      sum.textContent = isFam
+        ? farmFamilySummary(row.families || [], fd.familyOptions)
+        : farmKindSummary(kinds);
+    });
+  };
+  panel.addEventListener('click', (e) => {
+    const el = e.target;
+    if (!el || !el.classList) return;
+    const btn = el.closest ? el.closest('.pc-frkbtn') : null;
+    if (btn) {
+      const box = btn.closest('.pc-frkinds');
+      const pop = box.querySelector(KIND_POP_SEL);
+      const wasOpen = box.classList.contains('pc-open');
+      hideKindPops();
+      if (wasOpen) return; // 再点一次按钮 = 收起
+      box.classList.add('pc-open');
+      if (kindPopSupported && pop && pop.showPopover) {
+        try {
+          placeKindPop(box, pop);
+          pop.showPopover();
+        } catch (err) {
+          // showPopover 报错（元素已脱离文档等）：本会话常驻退回流内撑开那一档，
+          // 不能让列表既不弹也不撑（两头落空 = 点了没反应）
+          panel.classList.add('pc-kindpopfail');
+          logCore.debug(
+            'kind popover open failed, fallback to in-flow expand: %s',
+            err && err.message,
+          );
+        }
+      }
+      return;
+    }
+    if (el.closest && el.closest(KIND_POP_SEL)) return; // 展开列表内操作（勾选/改文案）：保持展开
+    hideKindPops();
+    syncKindPopClass();
+  });
+  // 浮层位置按打开那一刻的按钮 rect 定死（top layer 里的 fixed 不跟着重排），所以任何一层滚动都把列表收起：
+  // 跟原生下拉一致，也免得选项飘到别的行下面被误勾。scroll 不冒泡，用捕获抓外层面板与内层 pane 两级。
+  panel.addEventListener('scroll', hideKindPops, { capture: true, passive: true });
   panel.addEventListener('change', (e) => {
     const el = e.target;
     if (!el.classList) return;
-    // ☑只下机械开关：勾选后本行只看机械田（没有则不下、不回退普通田）；行形状不变，无需重刷
-    if (el.classList.contains('pc-frmechin')) {
+    // 多选组（资源类型 family / 资源种类 kind）内的勾选：按 data-part 分流进本行的 families / kinds，
+    // 然后**只就地刷控件**（摘要/勾选态/遗迹置灰），不整块重绘：重绘会把展开的选项列表关掉，
+    // 勾第二个选项就断（两个组都只影响本行，不必联动别行）。
+    if (el.classList.contains('pc-frkin')) {
       const t = frTarget(el);
       if (!t) return;
       const idx = frIdx(el);
       if (idx < 0 || idx >= t.list.length) return;
-      t.list[idx].mechOnly = !!el.checked;
+      const row = t.list[idx];
+      const isFam = el.dataset.part === 'family';
+      const key = isFam ? 'families' : 'kinds';
+      const cur = Array.isArray(row[key]) ? row[key].slice() : [];
+      // 家族存数字、种类存字符串（与 normalizeRules / 账本的字段形状一致）
+      const val = isFam ? Number(el.value) : el.value;
+      const pos = cur.findIndex((x) => String(x) === String(val));
+      if (el.checked && pos < 0) cur.push(val);
+      else if (!el.checked && pos >= 0) cur.splice(pos, 1);
+      row[key] = cur;
+      // 只剩雷神（本行勾的家族全开不出 6 级田）→ 同步剔除已勾的遗迹，不留数据与控件的矛盾态
+      if (isFam && cur.length && cur.every((f) => Number(f) === 16) && Array.isArray(row.kinds))
+        row.kinds = row.kinds.filter((k) => k !== 'relic');
+      syncRowGroupsUi(el.closest('.pc-frrow'), row, t.fd);
       saveFeature(t.f);
       applyFeature(t.f);
       return;
     }
+    // 剩下的单选只有一件：预设编队（改动要整块重绘同步其它行的 disabled）
     if (!el.classList.contains('pc-frsel')) return;
     const t = frTarget(el);
     if (!t) return;
     const idx = frIdx(el);
     if (idx < 0 || idx >= t.list.length) return;
-    const part = el.dataset.part;
-    t.list[idx][part] = parseInt(el.value, 10) || 0;
-    // family/level 联动其它控件（雷神等级封顶 3、选 6 级田禁用机械田）→ 就地归一后整行重刷；preset 行形状不变无需重刷
-    if (part === 'family' || part === 'level') {
-      const row = t.list[idx];
-      if ((Number(row.family) || 7) === 16 && (Number(row.level) || 0) > 3) row.level = 3;
-      if ((Number(row.level) || 0) >= 6) row.mechOnly = false;
-      t.box.innerHTML = farmRulesInnerHTML(t.list, t.fd);
-    }
+    const row = t.list[idx];
+    row[el.dataset.part] = parseInt(el.value, 10) || 0;
+    t.box.innerHTML = farmRulesInnerHTML(t.list, t.fd); // 其它行的 preset disabled 状态要同步（重绘会把展开中的多选列表收起）
     saveFeature(t.f);
     applyFeature(t.f);
   });
-  // 增删行：行存在即生效（已无行级开关）。新行默认金矿 5 级、不勾「只下机械」、预设 1（战斗预设）。
+  // 增删行：行存在即生效。新行默认第一支空闲预设 + 金矿 + 机械/普通田。
   // 添加行会把「自动下田」总开关关闭（新行未配好即生效会派错兵），配好后由用户手动重新打开。
   panel.addEventListener('click', (e) => {
     const del = e.target.closest ? e.target.closest('.pc-frdel') : null;
@@ -498,7 +656,10 @@ export function wirePanel(panel) {
       const idx = frIdx(del);
       if (idx >= 0 && idx < t.list.length) t.list.splice(idx, 1);
     } else {
-      t.list.push({ family: 7, level: 5, mechOnly: false, preset: 1 });
+      const used = new Set(t.list.map((r) => Number(r && r.preset) || 1));
+      let free = 1;
+      while (free <= 16 && used.has(free)) free++;
+      t.list.push({ preset: free, families: [7], kinds: ['tower', 'normal'] });
       // 加行即暂停总开关：清 enabled/intentEnabled，回写卡片勾选与组级联（新行未配好即生效会派错兵）
       const c = configs[t.f.id];
       if (c) {

@@ -58,10 +58,12 @@
  *   轮首另有一道玩法开启闸（gameData.beastBreedOpen，镜像游戏 isOpenFunc(BREED)）：培育玩法未开放/未开始时
  *   服务器对 15xx 干脆不回包（每条白等 15s 超时，随后连刷读失败 warn），闸关则整轮闭嘴只按 IDLE 档重检。
  */
+import { CODE_NOT_SENT, sleep } from '../../core/util.js';
 import { createLog } from '../../core/log.js';
 import { storage } from '../../core/storage.js';
 import { game } from '../../core/game.js';
 import { reactor } from '../../core/reactor.js';
+import { chatApi } from '../../core/chat.js';
 import { createCycle } from '../../core/cycle.js';
 import { l10n, gameData, gameConf, bits } from '../../core/game-api.js';
 
@@ -98,9 +100,6 @@ const PUSH_BEAST_CHANGE = 10130;
 const PUSH_BREEDING_CHANGE = 10132;
 /** @type {number} ResponseId.ENIGMA_BEAST_OTHER_BREEDING_CHANGE：别人家培育变更推送（仅作唤醒） */
 const PUSH_OTHER_BREEDING = 10133;
-
-/** @type {number} 非服务器返回的哨兵 code：闸门未放开 / 在途 / 发送异常，与真实 s 码区分，不当拒绝处理 */
-const CODE_NOT_SENT = -1;
 
 /** BeastBreedType（游戏 EnigmaBeastController 枚举）：培育状态机三值 */
 const BREED_WAIT = 0;
@@ -231,16 +230,6 @@ function aliveFn() {
 }
 
 // ─────────────────────────── 小工具 ───────────────────────────
-/**
- * 休眠
- * @param {number} ms 毫秒
- * @returns {Promise<void>}
- */
-function sleep(ms) {
-  return new Promise(function (resolve) {
-    setTimeout(resolve, Math.max(0, ms | 0));
-  });
-}
 
 /**
  * 今日日期串 YYYY-MM-DD（以服务器时钟为准，缺 DataCenter 时回落本地时间）
@@ -844,7 +833,7 @@ async function shareForHelp(myUid, nowMs) {
   var mainId = idStr(inf.main.id);
   var otherId = idStr(inf.other.id);
   if (!mainId || !otherId) return false;
-  var chat = window.pocketcc && window.pocketcc.chat;
+  var chat = chatApi;
   if (!chat) {
     log.warn('skip share: pocketcc.chat unavailable.');
     return false;

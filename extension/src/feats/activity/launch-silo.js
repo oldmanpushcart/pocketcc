@@ -27,18 +27,22 @@
  *   撤回不立即释放名额，须返程 state=4 到家才释放；该田到家的瞬间名额空出，存在 auto-farm 尚未回填的「空窗期」——
  *   本 feat 在 march.onHomeReturn 里认出「自己为腾位撤的那条田」到家，走快路径直接补驻一口井（一跳 902，跳过 1055/856），抢在 auto-farm 前占位。
  *   若抢输（名额被 auto-farm 抢先 / 902 被拒），该井留待驻队列、下轮再撤 1 条田重试，直至驻满。
- *   "田"＝资源采集行军：判据以 marchType 3/26 为准（普通田 3 / 机械田 26），显式排除驻井 35 与领域寻宝挖矿 180。
+ *   "田"＝资源采集行军：判据以 marchType 3/26 为准（普通田 3 / 机械田 26），显式排除驻井 35、领域寻宝挖矿 180 与**遗迹田（6 级田）**。
+ *   遗迹田永不撤是与 auto-farm 同口径的全局不变量（判据走 core/resource.isRelicTarget，不依赖对方候选池是否已扫过）：
+ *   6 级田只由遗迹刷新邮件批量开出、4 小时即到期，撤一趟往返就赶不上本期剩下的采集窗。
  *
  * 生命周期由 reactor 托管：install/run 两个钩子，places 门控限定 base/world（Home/NWorldMap），战斗模式暂停（offInCombat）。
  *   驻军/领积分为内置默认行为；撤田腾队列为面板可选项（recallFarm，默认勾选）。
  *   驻军/撤田读本人行军走 core/march.list()（封装 856 GET_ALL_MY_MARCH_INFO，视口无关、Home 亦有全量；不再依赖 mapData.marches）。
  */
+import { CODE_NOT_SENT, parseData, sleep } from '../../core/util.js';
 import { createLog } from '../../core/log.js';
 import { game } from '../../core/game.js';
 import { l10n, gameConf, gameData } from '../../core/game-api.js';
 import { reactor } from '../../core/reactor.js';
 import { Battle } from '../../core/battle.js';
 import { march } from '../../core/march.js';
+import { isRelicTarget } from '../../core/resource.js';
 import { createCycle } from '../../core/cycle.js';
 
 /** @type {ReturnType<createLog>} 模块日志器（tag=LAUNCH-SILO） */
@@ -72,9 +76,6 @@ const CFG_TIERS_KEY = 130118;
 /** @type {string} 档位兜底串：DATACONFIG 取不到时用面板内联值（实证门槛集） */
 const TIERS_FALLBACK =
   '10,9018101|50,9018102|100,9018103|200,9018104|400,9018105|700,9018106|1200,9018107';
-
-/** @type {number} 非服务器返回的哨兵 code：发送异常时用，与真实 s 码区分开 */
-const CODE_NOT_SENT = -1;
 
 /**
  * 内置调优常量（面板仅出功能开关，不暴露这些间隔）
@@ -178,35 +179,6 @@ function aliveFn() {
   return ctxRef ? ctxRef.alive() : false;
 }
 
-/**
- * 等待毫秒（负值钳到 0）
- * @param {number} ms 时长
- * @returns {Promise<void>}
- */
-function sleep(ms) {
-  return new Promise(function (resolve) {
-    setTimeout(resolve, Math.max(0, ms | 0));
-  });
-}
-
-/**
- * 应答 data 归一化：旧 JSON 链路 data 常为字符串（game 侧 JSON_PARSE(t.d)），兜底已解析对象。
- * @param {*} d net.Ret.data
- * @returns {object|null} 解析后的对象；空/解析失败返回 null
- */
-function parseData(d) {
-  if (d == null) return null;
-  if (typeof d === 'object') return d;
-  if (typeof d === 'string') {
-    try {
-      return JSON.parse(d);
-    } catch (err) {
-      return null;
-    }
-  }
-  return null;
-}
-
 /** @returns {number} 服务器当前时间（秒） */
 function serverNow() {
   return +(dataCenter && dataCenter.ServerTime) || 0;
@@ -214,7 +186,7 @@ function serverNow() {
 
 // ── 行军表读取（本人 marches）────────────────────────────────────────
 // 本人行军统一走 core/march.list()（856 权威源，返回归一化 March[]，视口无关、Home 亦有全量）：
-//   March = { id:str, type, state, isOccupying, target:{x,y,itemId}, raw }。摊平/嵌套/Int64 三坑已由 march.js 抹平。
+//   March = { id:str, type, state, isOccupying, target:{x,y,itemId,targetType}, raw }。摊平/嵌套/Int64 三坑已由 march.js 抹平。
 /**
  * 是否已有一条驻本井的行军（marchType=35 且目标命中该井）：命中 itemId 或坐标。
  * @param {number} siloId 井配置 id（4001~4004）
@@ -233,14 +205,18 @@ function hasGarrisonMarchFor(siloId, coord, myMarches) {
 }
 
 /**
- * 是否"资源采集田"行军（撤田候选）：以 marchType 3/26 为主判据（普通田 3 / 机械田 26）；
- * 显式排除驻井(35)与领域寻宝挖矿(180)；已在待撤集合(pendingRecall)的跳过。
+ * 是否"可撤的资源采集田"行军（撤田候选）：以 marchType 3/26 为主判据（普通田 3 / 机械田 26）；
+ * 显式排除驻井(35)与领域寻宝挖矿(180)，并排除**遗迹田**（marchType 3 但目标是 6 级田，全局不可撤不变量）；
+ * 已在待撤集合(pendingRecall)的跳过。遗迹识别走 core/resource.isRelicTarget（跨 feat 不得 import auto-farm
+ * 的遗迹池，且对方池靠邮件驱动扫图、可能根本没加载）：targetType=38 优先、itemId 组 15 兜底，
+ * 两者都缺时回「非遗迹」放行撤回（宁可误撤，也不把普通田误锁成永不撤回）。
  * @param {object} m 归一化 March
  * @returns {boolean}
  */
 function isRecallableFarmMarch(m) {
   var mt = m.type | 0;
   if (mt === MARCH_TYPE_GUN_FIGHT || mt === MARCH_TYPE_DOMAIN_TREASURE) return false;
+  if (mt === 3 && isRelicTarget(m.target)) return false; // 遗迹田（6 级田）永不撤
   if (pendingRecall.has(m.id)) return false;
   return mt === 3 || mt === 26;
 }
@@ -842,7 +818,7 @@ reactor.register({
       key: 'recallFarm',
       type: 'checkbox',
       label: '撤田腾队列',
-      hint: '行军队列不足时，撤回一条下田采集行军腾出名额驻井；关闭则只在有空闲队列时驻军，不主动撤田',
+      hint: '行军队列不足时，撤回一条下田采集行军（普通/机械田）腾出名额驻井；遗迹田永不撤回。关闭则只在有空闲队列时驻军，不主动撤田',
     },
   ],
   toModuleCfg: function (c) {
