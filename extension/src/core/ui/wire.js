@@ -9,14 +9,10 @@ import { isCombat, setCombatMode } from '../mode.js';
 import { findMenuNode, syncFeatureChecks, refreshTexts, refreshFieldVisibility } from './panel.js';
 import { setupUidField, mountUidList, mountSortList, mountItemList } from './widgets.js';
 import {
-  rangesInnerHTML,
-  multiOptsInnerHTML,
-  mineRulesInnerHTML,
-  farmRulesInnerHTML,
+  findFieldDescriptor,
+  refreshFieldBox,
   farmKindSummary,
   farmFamilySummary,
-  timeRangesInnerHTML,
-  presetPoolInnerHTML,
 } from './fields.js';
 
 /** @type {ReturnType<createLog>} 模块日志器（tag=CORE，与原 ui.js 一致） */
@@ -135,23 +131,8 @@ export function wirePanel(panel) {
     input.addEventListener('change', () => {
       const f = findFeature(input.dataset.id);
       if (!f) return;
-      let src = f.fields.find((x) => x.key === input.dataset.key);
-      if (!src) {
-        for (const x of f.fields) {
-          if (x.type !== 'rallygrid') continue;
-          for (const r of x.rows || []) {
-            if (r.delay && r.delay.key === input.dataset.key) {
-              src = r.delay;
-              break;
-            }
-            if (r.limit && r.limit.key === input.dataset.key) {
-              src = r.limit;
-              break;
-            }
-          }
-          if (src) break;
-        }
-      }
+      // data-key 可能是顶层 fd.key，也可能是 rallygrid 行内格的 key（子描述符才是存档键），下探口径见 findFieldDescriptor
+      const src = findFieldDescriptor(f, input.dataset.key);
       if (!src) return;
       const key = src.key;
       let v = src.float ? parseFloat(input.value) : parseInt(input.value, 10);
@@ -171,26 +152,14 @@ export function wirePanel(panel) {
   // 成 NaN → 静默回落 defaults，用户选完像没生效；没命中 option 才走旧的整数解析（保留非法值兜底）。
   // tripick（行内多下拉，如异能兽培育「派出的兽 [属相][品种][品质]」）的 select data-key 是 part.key（applyFactions…），
   //   ctrlrow（一行多控件，如惧星集结「等级/方式/预设队伍」）的是 cell.key，都不等于 field.key（applyAttrTrio / fearStarRow），
-  //   故 descriptor 查找须同时下探 parts / cells，选项取该子控件自己的口径。
+  //   故 descriptor 查找须同时下探 parts / cells（口径见 findFieldDescriptor），选项取该子控件自己的口径。
   panel.querySelectorAll('select.pc-fsel').forEach((sel) => {
     sel.addEventListener('change', () => {
       const f = findFeature(sel.dataset.id);
       if (!f) return;
-      const fd = f.fields.find(
-        (x) =>
-          x.key === sel.dataset.key ||
-          (x.type === 'tripick' && (x.parts || []).some((p) => p.key === sel.dataset.key)) ||
-          (x.type === 'ctrlrow' && (x.cells || []).some((p) => p.key === sel.dataset.key)),
-      );
-      if (!fd) return;
-      const part =
-        fd.type === 'tripick'
-          ? (fd.parts || []).find((p) => p.key === sel.dataset.key)
-          : fd.type === 'ctrlrow'
-            ? (fd.cells || []).find((p) => p.key === sel.dataset.key)
-            : null;
-      const src = part ? part : fd;
-      const key = part ? part.key : fd.key;
+      const src = findFieldDescriptor(f, sel.dataset.key);
+      if (!src) return;
+      const key = src.key;
       const opts =
         (typeof src.options === 'function' ? src.options(configs[f.id]) : src.options) || [];
       const hit = opts.find((o) => String(o.value) === sel.value);
@@ -262,26 +231,41 @@ export function wirePanel(panel) {
     session.logout(); // 游戏登出（PlatformCore 符号收口于 core/game-api.js 防腐层）
   });
 
-  // 区间规则字段（如联盟机甲按召唤所需碎片数分段）：行可动态增删，故用面板级事件委托而非逐控件绑定。
-  // 行号只取自行上的 data-ridx（列头行没这个属性）：按 .pc-rngrow 的下标数会把列头算进去，整体偏一位。
-  const rngIdx = (el) => {
-    const row = el && el.closest ? el.closest('.pc-rngrow[data-ridx]') : null;
-    return row ? +row.dataset.ridx : -1;
-  };
-  const rangesTarget = (el) => {
-    const box = el && el.closest ? el.closest('.pc-rng') : null;
+  // ── 容器型字段（ranges / multiopts / minerules / farmrules / timeranges / huntlist / presetpool）的公共解析 ──
+  // fields.js 的 fieldBox 给这类容器统一打了 data-id（功能 id）+ data-fkey（字段 key），行统一打 data-idx，
+  // 于是「上浮容器→反查 descriptor→取配置数组」与「取行下标」各只需一份实现。
+  // 以前每种字段自带一对手写解析器（7+6 份同形拷贝，属性名还各取一套），新增一类字段就得再抄一份，
+  // 且属性名漏改是静默失效：控件照常可点、值不落盘。
+  /**
+   * @param {Element} el 事件目标
+   * @param {string} sel 容器类选择器（.pc-rng / .pc-mopts / …）
+   * @param {(c:object, fd:object)=>void} [align] 取数组前的对齐钩子（huntlist 需按 catalog 重建行序）
+   * @returns {{f:object, fd:object, box:Element, list:Array, cfg:object}|null}
+   */
+  const boxTarget = (el, sel, align) => {
+    const box = el && el.closest ? el.closest(sel) : null;
     if (!box) return null;
     const f = findFeature(box.dataset.id);
     if (!f) return null;
-    const fd = f.fields.find((x) => x.key === box.dataset.rkey);
+    const fd = findFieldDescriptor(f, box.dataset.fkey);
     if (!fd) return null;
     const c = configs[f.id];
+    if (!c) return null;
+    if (align) align(c, fd);
+    // 数组字段与 descriptor defaults 的引用隔离已在 registry.loadAllConfigs 单点处理（assignDefaults），
+    // 此处与下面各委托一律就地增删，不必再判「是否 defaults 本体」
     if (!Array.isArray(c[fd.key])) c[fd.key] = [];
-    // 读到的是 descriptor defaults 本体（loadAllConfigs 的 Object.assign 不深拷）：
-    // 先换一份浅拷，否则增删行会就地污染 defaults，连带影响无存档时的默认规则
-    if (c[fd.key] === f.defaults[fd.key]) c[fd.key] = c[fd.key].map((r) => ({ ...r }));
-    return { f, fd, box, list: c[fd.key] };
+    return { f, fd, box, list: c[fd.key], cfg: c };
   };
+  /** 行下标：只取自行上的 data-idx（列头行没这个属性，按行类名的 querySelectorAll 下标数会把列头算进去，整体偏一位） */
+  const idxOf = (el, rowSel) => {
+    const row = el && el.closest ? el.closest(rowSel + '[data-idx]') : null;
+    return row ? +row.dataset.idx : -1;
+  };
+
+  // 区间规则字段（如联盟机甲按召唤所需碎片数分段）：行可动态增删，故用面板级事件委托而非逐控件绑定。
+  const rangesTarget = (el) => boxTarget(el, '.pc-rng');
+  const rngIdx = (el) => idxOf(el, '.pc-rngrow');
   // 敲一个字就同步进内存（不落盘、不重刷 DOM）：否则未 blur 的编辑会被增删行的整块重刷吞掉，看着像“清空已填”
   panel.addEventListener('input', (e) => {
     const inp = e.target;
@@ -323,7 +307,7 @@ export function wirePanel(panel) {
       // 新档默认接在上一档上界（首档从 0 起），不封顶且枚数 0 = 先占位不捐，避免误发
       t.list.push({ from: last ? last.to | 0 : 0, to: 0, count: 0 });
     }
-    t.box.innerHTML = rangesInnerHTML(t.list, t.fd);
+    refreshFieldBox(t.box);
     saveFeature(t.f);
     applyFeature(t.f);
   });
@@ -331,19 +315,7 @@ export function wirePanel(panel) {
   // 多选开关组字段（type:'multiopts'，次元矿洞矿种）：勾选/取消与全选/清空均整批重存 number[]。
   // 与区间规则一样用面板级事件委托（选项由配置表运行时枚举，不逐个绑控件）。
   // fd.maxSelect>0 时限最多勾选数：已满再点→回弹不入库；满额后整块重刷以把其余项置 disabled。
-  const moptsTarget = (el) => {
-    const box = el && el.closest ? el.closest('.pc-mopts') : null;
-    if (!box) return null;
-    const f = findFeature(box.dataset.id);
-    if (!f) return null;
-    const fd = f.fields.find((x) => x.key === box.dataset.mkey);
-    if (!fd) return null;
-    const c = configs[f.id];
-    // defaults 数组可能被多处共享（loadAllConfigs 不深拷）：首次改动先浅拷一份，避免污染 descriptor
-    if (!Array.isArray(c[fd.key])) c[fd.key] = [];
-    else if (c[fd.key] === f.defaults[fd.key]) c[fd.key] = c[fd.key].slice();
-    return { f, fd, box, list: c[fd.key], cfg: c };
-  };
+  const moptsTarget = (el) => boxTarget(el, '.pc-mopts');
   panel.addEventListener('change', (e) => {
     const inp = e.target;
     if (!inp.classList || !inp.classList.contains('pc-moptchk')) return;
@@ -355,12 +327,12 @@ export function wirePanel(panel) {
     if (inp.checked && i < 0) {
       if (cap > 0 && t.list.length >= cap) {
         // 已达上限：回弹该框并重刷（恢复 disabled 口径），不静默改配置
-        t.box.innerHTML = multiOptsInnerHTML(t.list, t.fd, t.cfg);
+        refreshFieldBox(t.box);
         return;
       }
       t.list.push(val);
     } else if (!inp.checked && i >= 0) t.list.splice(i, 1);
-    if (cap > 0) t.box.innerHTML = multiOptsInnerHTML(t.list, t.fd, t.cfg);
+    if (cap > 0) refreshFieldBox(t.box);
     saveFeature(t.f);
     applyFeature(t.f);
   });
@@ -379,29 +351,14 @@ export function wirePanel(panel) {
     } else {
       t.list.length = 0;
     }
-    t.box.innerHTML = multiOptsInnerHTML(t.list, t.fd, t.cfg);
+    refreshFieldBox(t.box);
     saveFeature(t.f);
     applyFeature(t.f);
   });
 
   // 采集规则字段（type:'minerules'，次元矿洞）：矿种/等级下拉 + 星级★点选，行可增删，走面板级事件委托。
-  const mrTarget = (el) => {
-    const box = el && el.closest ? el.closest('.pc-mrule') : null;
-    if (!box) return null;
-    const f = findFeature(box.dataset.id);
-    if (!f) return null;
-    const fd = f.fields.find((x) => x.key === box.dataset.mrkey);
-    if (!fd) return null;
-    const c = configs[f.id];
-    if (!Array.isArray(c[fd.key])) c[fd.key] = [];
-    // 首次改动先浅拷一份，避免就地 push/splice 污染 descriptor defaults
-    if (c[fd.key] === f.defaults[fd.key]) c[fd.key] = c[fd.key].map((r) => ({ ...r }));
-    return { f, fd, box, list: c[fd.key], cfg: c };
-  };
-  const mrIdx = (el) => {
-    const row = el && el.closest ? el.closest('.pc-mrrow[data-midx]') : null;
-    return row ? +row.dataset.midx : -1;
-  };
+  const mrTarget = (el) => boxTarget(el, '.pc-mrule');
+  const mrIdx = (el) => idxOf(el, '.pc-mrrow');
   // 矿种/等级下拉：按 data-part 写入对应维度（0=不限），change 即落盘生效
   panel.addEventListener('change', (e) => {
     const el = e.target;
@@ -458,7 +415,7 @@ export function wirePanel(panel) {
         if (sec) syncFeatureChecks(sec);
       }
     }
-    t.box.innerHTML = mineRulesInnerHTML(t.list, t.fd, t.cfg);
+    refreshFieldBox(t.box);
     saveFeature(t.f);
     applyFeature(t.f);
   });
@@ -466,23 +423,8 @@ export function wirePanel(panel) {
   // 下田规则字段（type:'farmrules'，自动下田）：预设编队单选 / 资源类型多选 / 资源种类多选，行可增删。
   // 同 minerules 走面板级事件委托；两个多选组（family / kind）勾选**就地更新**（不重建下拉 DOM，展开态得以保持），
   // preset 互斥的 disabled 状态跨行联动、行增删则整块重绘。
-  const frTarget = (el) => {
-    const box = el && el.closest ? el.closest('.pc-frule') : null;
-    if (!box) return null;
-    const f = findFeature(box.dataset.id);
-    if (!f) return null;
-    const fd = f.fields.find((x) => x.key === box.dataset.frkey);
-    if (!fd) return null;
-    const c = configs[f.id];
-    if (!Array.isArray(c[fd.key])) c[fd.key] = [];
-    // 首次改动先浅拷一份，避免就地 push/splice 污染 descriptor defaults（同 minerules）
-    if (c[fd.key] === f.defaults[fd.key]) c[fd.key] = c[fd.key].map((r) => ({ ...r }));
-    return { f, fd, box, list: c[fd.key] };
-  };
-  const frIdx = (el) => {
-    const row = el && el.closest ? el.closest('.pc-frrow[data-fidx]') : null;
-    return row ? +row.dataset.fidx : -1;
-  };
+  const frTarget = (el) => boxTarget(el, '.pc-frule');
+  const frIdx = (el) => idxOf(el, '.pc-frrow');
   // 资源种类多选的展开/收起。主路径用 Popover API（top layer）：面板/卡片/内容区的 overflow 裁切与面板的
   // backdrop-filter（会给 fixed 子元素建 containing block）都困不住它，所以选项列表能像原生下拉那样浮在行下方、
   // 不撑高卡片；light dismiss（点浮层外/Esc）由浏览器代劳，这里只补两件浏览器不管的：定位 + 箭头态类名同步。
@@ -640,7 +582,7 @@ export function wirePanel(panel) {
     if (idx < 0 || idx >= t.list.length) return;
     const row = t.list[idx];
     row[el.dataset.part] = parseInt(el.value, 10) || 0;
-    t.box.innerHTML = farmRulesInnerHTML(t.list, t.fd); // 其它行的 preset disabled 状态要同步（重绘会把展开中的多选列表收起）
+    refreshFieldBox(t.box); // 其它行的 preset disabled 状态要同步（重绘会把展开中的多选列表收起）
     saveFeature(t.f);
     applyFeature(t.f);
   });
@@ -671,30 +613,15 @@ export function wirePanel(panel) {
         if (sec) syncFeatureChecks(sec);
       }
     }
-    t.box.innerHTML = farmRulesInnerHTML(t.list, t.fd);
+    refreshFieldBox(t.box);
     saveFeature(t.f);
     applyFeature(t.f);
   });
 
   // 下田时段字段（type:'timeranges'，自动下田）：每行两个原生 <input type=time>（起始~结束），行可增删。
   // 同 ranges/farmrules 走面板级事件委托；time 控件无 data-id，靠专属类 .pc-tinp 命中（通用 number/select/fstr 处理器会自动跳过）。
-  const trTarget = (el) => {
-    const box = el && el.closest ? el.closest('.pc-trule') : null;
-    if (!box) return null;
-    const f = findFeature(box.dataset.id);
-    if (!f) return null;
-    const fd = f.fields.find((x) => x.key === box.dataset.trkey);
-    if (!fd) return null;
-    const c = configs[f.id];
-    if (!Array.isArray(c[fd.key])) c[fd.key] = [];
-    // 首次改动先浅拷一份，避免就地 push/splice 污染 descriptor defaults（同 minerules/farmrules）
-    if (c[fd.key] === f.defaults[fd.key]) c[fd.key] = c[fd.key].map((r) => ({ ...r }));
-    return { f, fd, box, list: c[fd.key] };
-  };
-  const trIdx = (el) => {
-    const row = el && el.closest ? el.closest('.pc-trow[data-tidx]') : null;
-    return row ? +row.dataset.tidx : -1;
-  };
+  const trTarget = (el) => boxTarget(el, '.pc-trule');
+  const trIdx = (el) => idxOf(el, '.pc-trow');
   // 敲字实时同步进内存（不落盘不重刷）：防止未 blur 的编辑被增删行的整块重绘吞掉（同 ranges 踩过的坑）。
   panel.addEventListener('input', (e) => {
     const el = e.target;
@@ -730,41 +657,34 @@ export function wirePanel(panel) {
     } else {
       t.list.push({ start: '09:00', end: '18:00' });
     }
-    t.box.innerHTML = timeRangesInnerHTML(t.list, t.fd);
+    refreshFieldBox(t.box);
     saveFeature(t.f);
     applyFeature(t.f);
   });
 
   // 怪物清单字段（type:'huntlist'，自动打野）：固定行不可增删，逐行改值（数量、攻打方式、参与；等级不入清单，固定搜最高档）。
-  // 行序恒等于 fd.catalog 下标；数字/勾选/下拉均就地写回 list[hidx]，无结构性变化不重刷（攻打方式选项随该行 catalog 固定）。
-  const hlTarget = (el) => {
-    const box = el && el.closest ? el.closest('.pc-hl') : null;
-    if (!box) return null;
-    const f = findFeature(box.dataset.id);
-    if (!f) return null;
-    const fd = f.fields.find((x) => x.key === box.dataset.hlkey);
-    if (!fd) return null;
-    const c = configs[f.id];
-    // 面板按 catalog 渲染（行序=catalog 下标、每行带 key），写回却按 data-hidx 落到存档数组的下标行上。
-    // 存档可能早于目录新增行（如后来加的难民营）或顺序错位：直接按下标写会勾到别的怪行、新 key 行永不落盘，
-    // 而 feat 用 normalizeHunt 按 key 归一，读不到该行 → 该玩法勾了也静默不激活（曾卡死难民营）。
-    // 故每次取目标先按 catalog 全量对齐 huntlist：逐 key 保留已存值、补齐缺失行、剔除目录已删行，令「下标==catalog 下标==该行 key」；顺带浅拷避免污染 defaults。
-    const cat = Array.isArray(fd.catalog) ? fd.catalog : [];
-    const prev = Array.isArray(c[fd.key]) ? c[fd.key] : [];
-    const stored = {};
-    for (const r of prev) if (r && r.key) stored[r.key] = r;
-    c[fd.key] = cat.map((mo) => {
-      const old = stored[mo.key];
-      return old
-        ? { ...old }
-        : { key: mo.key, count: mo.defaultCount | 0, mode: mo.defaultMode, on: !!mo.defaultOn };
+  // 行序恒等于 fd.catalog 下标；数字/勾选/下拉均就地写回 list[idx]，无结构性变化不重刷（攻打方式选项随该行 catalog 固定）。
+  const hlTarget = (el) =>
+    // 选择器排除 `.pc-ct`：表格型 ctrlrow 容器的 class 就是 "pc-hl pc-ct"，与本字段容器同类名；
+    //   data-attr schema 统一后两者都带 data-id + data-fkey，靠属性反查已分不开，只能在选择器上挡。
+    boxTarget(el, '.pc-hl:not(.pc-ct)', (c, fd) => {
+      if (!Array.isArray(fd.catalog)) return; // 非 huntlist 字段不对齐：否则下面会把该字段 config 清成 [] 并落盘
+      // 面板按 catalog 渲染（行序=catalog 下标、每行带 key），写回却按行下标落到存档数组上。
+      // 存档可能早于目录新增行（如后来加的难民营）或顺序错位：直接按下标写会勾到别的怪行、新 key 行永不落盘，
+      // 而 feat 用 normalizeHunt 按 key 归一，读不到该行 → 该玩法勾了也静默不激活（曾卡死难民营）。
+      // 故每次取目标先按 catalog 全量对齐 huntlist：逐 key 保留已存值、补齐缺失行、剔除目录已删行，令「下标==catalog 下标==该行 key」。
+      const cat = Array.isArray(fd.catalog) ? fd.catalog : [];
+      const prev = Array.isArray(c[fd.key]) ? c[fd.key] : [];
+      const stored = {};
+      for (const r of prev) if (r && r.key) stored[r.key] = r;
+      c[fd.key] = cat.map((mo) => {
+        const old = stored[mo.key];
+        return old
+          ? { ...old }
+          : { key: mo.key, count: mo.defaultCount | 0, mode: mo.defaultMode, on: !!mo.defaultOn };
+      });
     });
-    return { f, fd, box, list: c[fd.key] };
-  };
-  const hlIdx = (el) => {
-    const row = el && el.closest ? el.closest('.pc-hlrow[data-hidx]') : null;
-    return row ? +row.dataset.hidx : -1;
-  };
+  const hlIdx = (el) => idxOf(el, '.pc-hlrow');
   panel.addEventListener('change', (e) => {
     const el = e.target;
     if (!el.classList) return;
@@ -798,22 +718,8 @@ export function wirePanel(panel) {
 
   // 打野预设池字段（type:'presetpool'，自动打野）：动态增删单选行，每个预设只能进一次（跨行去重）。
   // 改选/增删都要整块重刷以重算其它行可选项；值落 configs[fid][fd.key]=number[]（有序、去重）。
-  const ppTarget = (el) => {
-    const box = el && el.closest ? el.closest('.pc-pp') : null;
-    if (!box) return null;
-    const f = findFeature(box.dataset.id);
-    if (!f) return null;
-    const fd = f.fields.find((x) => x.key === box.dataset.ppkey);
-    if (!fd) return null;
-    const c = configs[f.id];
-    if (!Array.isArray(c[fd.key])) c[fd.key] = [];
-    else if (c[fd.key] === f.defaults[fd.key]) c[fd.key] = c[fd.key].slice(); // defaults 是数字数组，slice 即可
-    return { f, fd, box, list: c[fd.key] };
-  };
-  const ppIdx = (el) => {
-    const row = el && el.closest ? el.closest('.pc-pprow[data-pidx]') : null;
-    return row ? +row.dataset.pidx : -1;
-  };
+  const ppTarget = (el) => boxTarget(el, '.pc-pp');
+  const ppIdx = (el) => idxOf(el, '.pc-pprow');
   panel.addEventListener('change', (e) => {
     const el = e.target;
     if (!el.classList || !el.classList.contains('pc-ppsel')) return;
@@ -824,11 +730,11 @@ export function wirePanel(panel) {
     const v = parseInt(el.value, 10) || 0;
     // 兜底：若该值已被别的行占用（理论上选项已剔除，防陈旧 DOM），忽略并不入库，重刷回正
     if (t.list.indexOf(v) >= 0 && t.list[idx] !== v) {
-      t.box.innerHTML = presetPoolInnerHTML(t.list, t.fd);
+      refreshFieldBox(t.box);
       return;
     }
     t.list[idx] = v;
-    t.box.innerHTML = presetPoolInnerHTML(t.list, t.fd);
+    refreshFieldBox(t.box);
     saveFeature(t.f);
     applyFeature(t.f);
   });
@@ -853,7 +759,7 @@ export function wirePanel(panel) {
       }
       if (free) t.list.push(free);
     }
-    t.box.innerHTML = presetPoolInnerHTML(t.list, t.fd);
+    refreshFieldBox(t.box);
     saveFeature(t.f);
     applyFeature(t.f);
   });

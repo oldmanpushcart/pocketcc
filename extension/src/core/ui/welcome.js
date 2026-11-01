@@ -3,8 +3,13 @@
 // 两态：'ok' 绿色核验通过 + 「进入使用」按钮（按钮 resolve 启动编排等待的 promise）；
 //       'fail' 红色核验失败（不回显账号），模态不可关闭——此时功能链未被拉起，界面仅作明确告知。
 import { peerName, revision } from '../net-guard.js';
+import { escAttr } from './dom.js';
 
-/** @type {string} 浮层容器样式（精简自成一体，不依赖 PANEL_CSS） */
+/**
+ * 浮层样式（自成一体，不依赖 PANEL_CSS）。
+ * 注：以模板字符串内联是 MV3 + Shadow DOM 场景的常规做法（外部 .css 需走 web_accessible_resources，
+ *   反而把文件对外暴露）；代价是 Prettier/stylelint 不覆盖此段，改动时靠人工核对类名唯一性。
+ */
 const CSS = `
 :host { all: initial; }
 .pcw-mask {
@@ -57,10 +62,14 @@ function maskUid(uid) {
  * @returns {string} 卡片 HTML
  */
 function cardHTML(pass, uid) {
-  const name = peerName();
+  // 昵称来自打包参数 --friend（scripts/package-friend.mjs 可外部调用），与 UID 一样按不可信输入处理：
+  //   本函数结果直接进 innerHTML，不转义则带 `<` 的名字会破版，被有意构造即成 MAIN world 注入点。
+  const name = escAttr(peerName());
+  // 打码后的 UID 与昵称同口径处理：maskUid 对短账号（≤6 位）是原样返回的，不能假定它一定是数字
+  const uidShown = escAttr(maskUid(uid));
   const gift = pass
     ? `万恶秃为首的晚风赠予他风情万种的朋友` +
-      `<span class="pcw-name">「${name}」</span><span class="pcw-uid">（UID：${maskUid(uid)}）</span>使用`
+      `<span class="pcw-name">「${name}」</span><span class="pcw-uid">（UID：${uidShown}）</span>使用`
     : '万恶秃为首的晚风的心意已送达，但来客身份与这份馈赠不相符';
   const verdict = pass
     ? '<div class="pcw-verdict ok">核验通过</div>'

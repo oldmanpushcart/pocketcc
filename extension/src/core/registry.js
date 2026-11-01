@@ -16,6 +16,9 @@ import { bus } from './bus.js';
 import { reactor } from './reactor.js';
 import { hasNamespace, getUid as playerGetUid } from './player.js';
 import { groupConfigs, allMenuItemIds, fieldVisibleFeatureIds } from './menu.js';
+import { netApi } from './net.js';
+import { eventApi } from './event.js';
+import { netCollectApi } from './net-collect.js';
 
 /** @type {ReturnType<createLog>} 模块日志器（tag=REGISTRY） */
 const log = createLog('REGISTRY');
@@ -56,7 +59,7 @@ const INTERNAL_FEATURES = [
   },
   {
     // 网络日志：internal 功能，enabled 即 net 模块的 log 开关。无独立模块/无可调参数，
-    // 翻动启用勾选 → applyFeature 调 apply → net.setLog。net 句柄由 net.js 自挂 window.pocketcc.net。
+    // 翻动启用勾选 → applyFeature 调 apply → net.setLog。net 句柄走 net.js 具名导出 netApi（与总线同源）。
     id: 'netLog',
     label: '网络日志',
     storageKey: 'pocketcc.netLog.config',
@@ -64,14 +67,14 @@ const INTERNAL_FEATURES = [
     defaults: { enabled: false },
     fields: [],
     apply: (cfg) => {
-      const net = window.pocketcc && window.pocketcc.net;
+      const net = netApi;
       if (net && net.setLog) net.setLog(!!(cfg && cfg.enabled));
     },
   },
   {
     // 事件日志：与网络日志平行的独立开关（不同存储键、不同模块），开一个不影响另一个。
     // enabled → event.setLog：开启期间包 EVENT.emit 打印全量游戏事件，关闭即摘。
-    // 句柄由 event.js 自挂 window.pocketcc.event。
+    // 句柄走 event.js 具名导出 eventApi（与总线同源）。
     id: 'eventLog',
     label: '事件日志',
     storageKey: 'pocketcc.eventLog.config',
@@ -79,14 +82,14 @@ const INTERNAL_FEATURES = [
     defaults: { enabled: false },
     fields: [],
     apply: (cfg) => {
-      const event = window.pocketcc && window.pocketcc.event;
+      const event = eventApi;
       if (event && event.setLog) event.setLog(!!(cfg && cfg.enabled));
     },
   },
   {
     // 报文录制（黑匣子）：internal 功能，enabled 即 net-collect 录制器的开关。开启→start(cfg) 注册
     // net.stream 全量录制并按 flushSec 落盘；关闭→stop() 解除采集（hot path 回到零开销）。
-    // 转发地址/落盘间隔随 UID 持久化；句柄由 net-collect.js 自挂 window.pocketcc.netCollect。
+    // 转发地址/落盘间隔随 UID 持久化；句柄走 net-collect.js 具名导出 netCollectApi（与总线同源）。
     id: 'netRecord',
     label: '报文录制',
     storageKey: 'pocketcc.netRecord.config',
@@ -103,7 +106,7 @@ const INTERNAL_FEATURES = [
       { key: 'note', type: 'string', label: '本次标签', placeholder: '如：芯片祝福STEP2（可空）' },
     ],
     apply: (cfg) => {
-      const rc = window.pocketcc && window.pocketcc.netCollect;
+      const rc = netCollectApi;
       if (!rc) return;
       if (cfg && cfg.enabled) rc.start(cfg);
       else rc.stop();
@@ -155,6 +158,40 @@ function isDetailHiddenFeature(f) {
   return MENU_IDS.has(f.id) && !FIELD_VISIBLE.has(f.id);
 }
 
+/**
+ * 把 descriptor defaults 里的数组/对象字段换成等价副本再并入 configs。
+ *
+ * 背景：`Object.assign(c, f.defaults)` 是浅拷，数组/对象字段（rules、huntlist、itemlist 状态表…）
+ * 于是与 `f.defaults[key]` **共享同一引用**。面板每个写这类字段的地方都得自己记着先 detached 一份，
+ * 历史上同类防御在 core/ui 里散落 11 处、形态还不统一（.slice / 一层 map 浅拷 / 两层手工拷），漏一处
+ * 就是「就地 push/splice 写穿 defaults」——污染是全局的，同一次运行里所有取默认值的分支一起跟着变。
+ * 收口到读盘这一处单点后，消费侧不再需要任何 defaults 同引用判断。
+ *
+ * 口径：数组字段拷到**两层**（外层数组 + 数组内的纯对象行），对象字段拷一层。
+ *   两层是必要的：面板的区间/采集/下田/时段规则都是「行对象数组」，消费侧就地写 `list[idx][part] = v`
+ *   与 `row.kinds = [...]`，只拷外层会让这些写入仍落在 defaults 的行对象上。
+ *   不用 structuredClone 是为了兼容 defaults 里可能带的函数字段，且只做两层不至失真。
+ *   **第三层不在口径内**：行对象内部的数组字段（如下田规则行的 families/kinds）仍与 defaults 共享，
+ *   消费侧必须整体赋值 `row.kinds = [...]`，不得就地 `row.kinds.push/splice`。现网所有 rules 类
+ *   defaults 都是 `[]`（新行由面板现场构造），故未触发；新增带非空 rules defaults 的 descriptor 时先补这里。
+ * @param {object} f descriptor
+ * @param {object} c 目标 config（原地改）
+ */
+function assignDefaults(f, c) {
+  Object.assign(c, f.defaults);
+  const d = f.defaults || {};
+  for (const k of Object.keys(d)) {
+    const v = d[k];
+    if (Array.isArray(v)) {
+      c[k] = v.map((it) =>
+        it && typeof it === 'object' && !Array.isArray(it) ? Object.assign({}, it) : it,
+      );
+    } else if (v && typeof v === 'object') {
+      c[k] = Object.assign({}, v);
+    }
+  }
+}
+
 /** @type {boolean} 本次读盘是否因 UID 未到位而走了降级（后续 player.ready 需补载） */
 let loadedDegraded = false;
 
@@ -179,7 +216,7 @@ export async function loadAllConfigs(opts) {
     for (const f of features().concat(GROUPS)) {
       const c = configs[f.id] || (configs[f.id] = {});
       for (const k of Object.keys(c)) delete c[k];
-      Object.assign(c, f.defaults);
+      assignDefaults(f, c);
     }
     backfillIntents();
     return;
@@ -195,7 +232,7 @@ export async function loadAllConfigs(opts) {
     for (const k of Object.keys(c)) delete c[k]; // 原地覆写：新旧键集可能不同
     if (isDetailHiddenFeature(f)) {
       // 只认开关态，详细参数一律回默认（同时清掉重构前遗留的历史存量详细值）。
-      Object.assign(c, f.defaults);
+      assignDefaults(f, c);
       if (saved) {
         if ('enabled' in saved) c.enabled = saved.enabled;
         if ('intentEnabled' in saved) c.intentEnabled = saved.intentEnabled;
@@ -208,7 +245,7 @@ export async function loadAllConfigs(opts) {
         // 收敛模式：只保留已声明键（defaults ∪ fields.key ∪ 元键），剔除改名/删除后残留的历史键，
         // 避免旧 Object.assign(defaults, saved) 把已废弃字段原样透传给 toModuleCfg。
         const known = knownConfigKeys(f);
-        for (const k of Object.keys(f.defaults || {})) c[k] = f.defaults[k];
+        assignDefaults(f, c); // 先取克隆后的默认值，再按已声明键覆写存量（保持 strictConfig 收敛语义）
         if (saved) {
           for (const k of Object.keys(saved)) {
             if (k === '_v') continue;
@@ -216,7 +253,8 @@ export async function loadAllConfigs(opts) {
           }
         }
       } else {
-        Object.assign(c, f.defaults, saved || {});
+        assignDefaults(f, c); // 克隆后的 defaults 先入，saved 覆盖其上的存量键（浅拷语义与原 Object.assign 一致）
+        Object.assign(c, saved || {});
         delete c._v; // 元键不入内存 config，只落盘时补写
       }
       if (f.version && savedV < f.version && typeof f.migrate === 'function') {
@@ -361,9 +399,9 @@ export function applyFeature(f) {
  * 场景就绪后：装网络/事件底座，再按配置启动各功能
  */
 export function startFeatures() {
-  const net = window.pocketcc && window.pocketcc.net;
+  const net = netApi;
   if (net && net.install) net.install();
-  const event = window.pocketcc && window.pocketcc.event;
+  const event = eventApi;
   if (event && event.install) event.install();
   for (const f of features()) {
     // internal 有 apply 的执行一次以恢复持久化态（如网络/事件日志开关），须在两个底座 install 之后；

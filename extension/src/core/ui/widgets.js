@@ -2,11 +2,37 @@
 // 从 core/ui.js 迁出。这些函数直接操作 DOM、读写 configs 并触发 saveFeature/applyFeature，
 // 由 panel.syncControls 与 wire.wirePanel 复用；纯 HTML 构建部分留在 fields.js。
 import { configs, findFeature, saveFeature, applyFeature } from '../registry.js';
+import { netApi } from '../net.js';
 import { parseMaybe, nickFrom630 } from './dom.js';
-import { uidListInnerHTML, sortListInnerHTML, itemListInnerHTML } from './fields.js';
+import {
+  uidListInnerHTML,
+  sortListInnerHTML,
+  itemListInnerHTML,
+  findFieldDescriptor,
+} from './fields.js';
 
 /** @type {number} RequestId.PLAYER_INFO（同 chat-window 口径），按 uid 查玩家基础信息，应答 d.playerInfo 为内层 JSON 串 */
 const CMD_PLAYER_INFO = 630;
+
+/** @type {string} 查无此人的统一口径（文案单点，改文案不再需要全文件 grep） */
+const UID_NOT_FOUND = '玩家不存在，请检查 UID';
+
+/**
+ * 拼查无此人的提示：主文案不变，但把服务器 code / PBV2 reason key 附在后面。
+ * 不能只留一句统一文案：「服务器明确拒绝」（会话失效/风控/跨服无此号）与「UID 真不存在」
+ * 在面板上看起来一模一样，而 code 是把它们分开的唯一线索（也是日志分级里 info/warn 的分界）。
+ * @param {number} [code] 应答码（0=服务器说查不到人，非 0=业务拒绝对应码）
+ * @param {string|null} [reason] PBV2 拒绝原因的多语言 key（Ret.reason）
+ * @param {string} [note] 本地可判读的补充（如「应答无法解析」）
+ * @returns {string}
+ */
+function notFoundMsg(code, reason, note) {
+  const parts = [];
+  if (code !== undefined && code !== null) parts.push('code ' + code);
+  if (reason) parts.push(String(reason).slice(0, 24)); // PBV2 的 l10n key 可以很长，hint 只占一行，截断保排版
+  if (note) parts.push(note);
+  return parts.length ? `${UID_NOT_FOUND}（${parts.join(' · ')}）` : UID_NOT_FOUND;
+}
 
 /**
  * 用 UID 查玩家名（PLAYER_INFO 630）。永不 reject；失败回 {ok:false,msg}（含格式预校，避免无谓请求）
@@ -14,7 +40,9 @@ const CMD_PLAYER_INFO = 630;
  * @returns {Promise<{ok:boolean, name?:string, msg?:string}>}
  */
 async function lookupPlayerName(uid) {
-  const net = window.pocketcc && window.pocketcc.net;
+  // netApi 是 net.js 的具名导出（模块级 let，装配时赋值）：比摸 window.pocketcc.net 的影子总线少一层
+  // 隐式契约（core/devtools.js 已把「调试面句柄」收口到 core 代挂，生产链路不该再依赖 window 上的键）。
+  const net = netApi;
   if (!net || !net.send) return { ok: false, msg: '网络未就绪' };
   if (!/^\d{4,20}$/.test(uid)) return { ok: false, msg: 'UID 格式不正确' };
   let ret;
@@ -23,27 +51,28 @@ async function lookupPlayerName(uid) {
   } catch (e) {
     return { ok: false, msg: '查询失败，请重试' };
   }
-  if (!ret || !ret.ok) return { ok: false, msg: '玩家不存在（查询被拒）' };
+  if (!ret) return { ok: false, msg: notFoundMsg(undefined, null, '无应答') };
+  if (!ret.ok) return { ok: false, msg: notFoundMsg(ret.code, ret.reason) }; // 业务拒绝：把码挂上去供区分风控/会话失效
   const d = parseMaybe(ret.data);
-  if (!d || typeof d !== 'object') return { ok: false, msg: '玩家不存在' };
+  // code=0 但 data 解不出对象：服务器说没人（或形状改了），不是拒绝，故只挂 code
+  if (!d || typeof d !== 'object')
+    return { ok: false, msg: notFoundMsg(ret.code, null, '应答无法解析') };
   return { ok: true, name: nickFrom630(d) };
 }
 
 /**
  * 装配好友清单容器（.pc-ulist）：为每个 UID 行绑显示态↔输入态状态机（失焦反查名字，写入 friends[idx]），
- * 并接＋/×（结构性改动 → 整块重刷 + 重绑）。configs[fid][key] 若仍是 descriptor defaults 本体先浅拷，
- * 避免就地 push/splice 污染 defaults（同 ranges 的坑）。
+ * 并接＋/×（结构性改动 → 整块重刷 + 重绑）。
  * @param {HTMLElement} box .pc-ulist 容器
  */
 export function mountUidList(box) {
   const fid = box.dataset.id;
   const f = findFeature(fid);
   if (!f) return;
-  const fd = f.fields.find((x) => x.key === box.dataset.akey);
+  const fd = findFieldDescriptor(f, box.dataset.fkey);
   if (!fd) return;
   const c = configs[fid];
   if (!Array.isArray(c[fd.key])) c[fd.key] = [];
-  if (c[fd.key] === f.defaults[fd.key]) c[fd.key] = c[fd.key].map((it) => ({ ...it }));
   const arr = c[fd.key];
   const max = fd.max || 10;
 
@@ -53,7 +82,7 @@ export function mountUidList(box) {
   };
 
   // ＋ / ×：结构性改动后整块重刷（索引会变，故重绑而非逐控件）
-  // 结构性改动前浅拷单行，避免污染 defaults 共享引用（＋新行带 on：itemCheck 字段缺省勾选=入池）
+  // ＋新行带 on：itemCheck 字段缺省勾选=入池
   const newRow = () => (fd.itemCheck ? { uid: '', name: '', on: true } : { uid: '', name: '' });
   const add = box.querySelector('.pc-ulistadd');
   if (add)
@@ -71,7 +100,7 @@ export function mountUidList(box) {
   box.querySelectorAll('.pc-udel').forEach((btn) => {
     btn.addEventListener('click', (e) => {
       e.stopPropagation();
-      const i = +btn.closest('.pc-uli').dataset.uidx;
+      const i = +btn.closest('.pc-uli').dataset.idx;
       if (i >= 0 && i < arr.length) arr.splice(i, 1);
       rerender();
       saveFeature(f);
@@ -84,39 +113,44 @@ export function mountUidList(box) {
     box.querySelectorAll('.pc-ulichk').forEach((chk) => {
       chk.addEventListener('change', (e) => {
         e.stopPropagation();
-        const i = +chk.dataset.uidx;
-        if (i >= 0 && i < arr.length) {
-          if (arr[i] === (f.defaults[fd.key] || [])[i]) arr[i] = { ...arr[i] }; // 防改 on 时写穿 defaults 共享引用
-          arr[i].on = chk.checked;
-        }
+        const i = +chk.dataset.idx;
+        if (i >= 0 && i < arr.length) arr[i].on = chk.checked;
         saveFeature(f);
         applyFeature(f);
       });
     });
 
-  // 每行 UID 控件：复用 setupUidField 的状态机，但读写 friends[idx].{uid,name}
+  // 每行 UID 控件：走 bindUidRow 共用的状态机，只是值的落点在 friends[idx].{uid,name}
   box.querySelectorAll('.pc-uli').forEach((wrap) => setupUidListRow(wrap, f, arr));
 }
 
 /**
- * 装配一个 UID 复合行（.pc-uidwrap）：显示态↔输入态切换 + 失焦反查名字 + 成功才提交。
- * 名字随 UID 写入 configs[fd.nameKey]（持久化），下次开面板直接显缓存名、零查询。
- * @param {HTMLElement} wrap .pc-uidwrap 容器
+ * UID 复合行的「显示态 ↔ 输入态」状态机（标量字段与好友清单行同源，此前是两份逐字拷贝）。
+ * 两者唯一差别是值的落点：前者 configs[fid] 的 ukey/nkey 标量键，后者清单第 idx 项的 {uid,name}，
+ * 故把落点抽成 read/write/commit 三个回调，其余（失焦反查、置错回弹、Esc 回退、存档热更）只留一份实现。
+ * @param {HTMLElement} wrap .pc-uidwrap / .pc-uli 行容器
+ * @param {{read:function():{uid:string,name:string}, write:function(string,string):void, commit:function():void}} store
+ *   值的读（含缓存名）/ 写 / 落盘（commit 内自带 saveFeature+applyFeature）
  */
-export function setupUidField(wrap) {
-  const fid = wrap.dataset.id;
-  const ukey = wrap.dataset.ukey;
-  const nkey = wrap.dataset.nkey;
+function bindUidRow(wrap, store) {
   const disp = wrap.querySelector('.pc-udisp');
   const nameEl = wrap.querySelector('.pc-uname');
   const input = wrap.querySelector('.pc-uinput');
   const hint = wrap.querySelector('.pc-uhint');
-  const cur = () => configs[fid] || {};
   let lastBad = null; // 同一无效值不重复查
+  let editing = false; // 输入态：显示态的刷新不能把正在编辑的框收回去
 
-  function renderDisplay() {
-    const c = cur();
-    const v = String(c[nkey] || c[ukey] || '');
+  /**
+   * 回显示态并按最新值重画。
+   * @param {boolean} [force] 无条件回显示态（Esc 取消、blur 收尾等「用户已离开输入框」的场合）；
+   *   不带 force 时若仍在输入态则短路——syncControls 经 __pcUidRefresh 走到这里，
+   *   正打字的 UID 被打断会静默丢掉未失焦的输入。
+   */
+  function renderDisplay(force) {
+    if (!force && editing && document.activeElement === input) return;
+    editing = false;
+    const it = store.read();
+    const v = String(it.name || it.uid || '');
     nameEl.textContent = v || input.placeholder || '未设置';
     nameEl.classList.toggle('pc-uempty', !v); // 空值显占位提示（弱化），非空显玩家名/UID
     disp.hidden = false;
@@ -126,8 +160,9 @@ export function setupUidField(wrap) {
     hint.hidden = true;
   }
   function enterEdit() {
+    editing = true;
     hint.hidden = true;
-    input.value = String(cur()[ukey] || '');
+    input.value = String(store.read().uid || '');
     input.classList.remove('pc-uerr');
     disp.hidden = true;
     input.hidden = false;
@@ -135,6 +170,7 @@ export function setupUidField(wrap) {
     input.select();
   }
   function failEdit(msg) {
+    editing = true; // 报错不离开输入态：否则 syncControls 会连带把 hint/红框抹掉，用户看不出自己刚输了什么
     input.disabled = false;
     input.classList.add('pc-uerr');
     hint.textContent = msg;
@@ -154,24 +190,21 @@ export function setupUidField(wrap) {
     } else if (e.key === 'Escape') {
       e.preventDefault();
       lastBad = null;
-      renderDisplay();
+      renderDisplay(true); // Esc = 主动取消，强制回显示态
     }
   });
   input.addEventListener('blur', async () => {
-    const c = cur();
-    const f = findFeature(fid);
-    const oldUid = String(c[ukey] || '');
+    editing = false; // 已离开输入框：后续 renderDisplay 不再受输入态短路保护
+    if (!wrap.isConnected) return; // 容器已重建，丢弃本次回写
+    const it = store.read();
+    const oldUid = String(it.uid || '');
     const val = input.value.trim();
     if (val === '') {
       // 清空：提交空 UID/名字，不查
       lastBad = null;
-      if (oldUid || c[nkey]) {
-        c[ukey] = '';
-        c[nkey] = '';
-        if (f) {
-          saveFeature(f);
-          applyFeature(f);
-        }
+      if (oldUid || it.name) {
+        store.write('', '');
+        store.commit();
       }
       renderDisplay();
       return;
@@ -182,7 +215,7 @@ export function setupUidField(wrap) {
       return;
     } // 未变，不查
     if (val === lastBad) {
-      failEdit(hint.textContent || '玩家不存在，请检查 UID');
+      failEdit(hint.textContent || UID_NOT_FOUND);
       return;
     } // 同一无效值不重查
     input.disabled = true;
@@ -191,128 +224,72 @@ export function setupUidField(wrap) {
     if (!wrap.isConnected) return; // 面板已重建，丢弃回写
     if (res.ok) {
       lastBad = null;
-      c[ukey] = val;
-      c[nkey] = res.name || '';
-      if (f) {
-        saveFeature(f);
-        applyFeature(f);
-      }
+      store.write(val, res.name || '');
+      store.commit();
       renderDisplay();
     } else {
       lastBad = val;
-      failEdit(res.msg || '玩家不存在，请检查 UID');
+      failEdit(res.msg || UID_NOT_FOUND);
     }
   });
 
-  wrap.__pcUidRefresh = renderDisplay();
+  // 注意：这里必须挂**函数引用**而非调用结果（曾误写成 renderDisplay() → 句柄变 undefined，
+  //   panel.syncControls 的 __pcUidRefresh 回写分支被静默短路，配置补载后标量 UID 行不刷新）。
+  wrap.__pcUidRefresh = renderDisplay;
+  wrap.__pcEnterEdit = enterEdit; // 清单加行后自动进编辑态（mountUidList 用）
   renderDisplay();
 }
 
 /**
- * 好友清单里的一行（.pc-uli）：显示态↔输入态 + 失焦用 PLAYER_INFO(630) 反查名字，成功才提交。
- * 与 setupUidField 同逻辑，差别只在值落在数组项 item.uid/item.name（而非 configs 的标量键）。
+ * 装配一个 UID 复合行（type:'uid' 的 .pc-uidwrap）：值落在 configs[fid] 的标量键上，
+ * 名字随 UID 一起持久化（fd.nameKey），下次开面板直接显缓存名、零查询。状态机见 bindUidRow。
+ * @param {HTMLElement} wrap .pc-uidwrap 容器
+ */
+export function setupUidField(wrap) {
+  const fid = wrap.dataset.id;
+  const ukey = wrap.dataset.ukey;
+  const nkey = wrap.dataset.nkey;
+  bindUidRow(wrap, {
+    read: () => {
+      const c = configs[fid] || {};
+      return { uid: String(c[ukey] || ''), name: String(c[nkey] || '') };
+    },
+    write: (uid, name) => {
+      if (!configs[fid]) return;
+      configs[fid][ukey] = uid;
+      configs[fid][nkey] = name;
+    },
+    commit: () => {
+      const f = findFeature(fid);
+      if (!f) return;
+      saveFeature(f);
+      applyFeature(f);
+    },
+  });
+}
+
+/**
+ * 好友清单里的一行（.pc-uli）：值落清单第 idx 项的 {uid,name}（原地改），状态机见 bindUidRow。
  * @param {HTMLElement} wrap .pc-uli 行容器
  * @param {object} f descriptor（saveFeature/applyFeature 用）
  * @param {Array<{uid:string, name:string}>} arr 当前好友清单（原地改）
  */
 function setupUidListRow(wrap, f, arr) {
-  const idx = +wrap.dataset.uidx;
-  const disp = wrap.querySelector('.pc-udisp');
-  const nameEl = wrap.querySelector('.pc-uname');
-  const input = wrap.querySelector('.pc-uinput');
-  const hint = wrap.querySelector('.pc-uhint');
+  const idx = +wrap.dataset.idx;
+  // 行可能被整块重刷后下标越界（删行/重排）：读到空行、写到空行，补回空对象保证行始终可编辑
   const item = () => arr[idx] || (arr[idx] = { uid: '', name: '' });
-  let lastBad = null;
-
-  function renderDisplay() {
-    const it = item();
-    const v = String(it.name || it.uid || '');
-    nameEl.textContent = v || input.placeholder || '未设置';
-    nameEl.classList.toggle('pc-uempty', !v);
-    disp.hidden = false;
-    input.hidden = true;
-    input.disabled = false;
-    input.classList.remove('pc-uerr');
-    hint.hidden = true;
-  }
-  function enterEdit() {
-    hint.hidden = true;
-    input.value = String(item().uid || '');
-    input.classList.remove('pc-uerr');
-    disp.hidden = true;
-    input.hidden = false;
-    input.focus();
-    input.select();
-  }
-  function failEdit(msg) {
-    input.disabled = false;
-    input.classList.add('pc-uerr');
-    hint.textContent = msg;
-    hint.hidden = false;
-    input.focus();
-  }
-
-  disp.addEventListener('click', (e) => {
-    e.stopPropagation();
-    enterEdit();
-  });
-  input.addEventListener('click', (e) => e.stopPropagation());
-  input.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') {
-      e.preventDefault();
-      input.blur();
-    } else if (e.key === 'Escape') {
-      e.preventDefault();
-      lastBad = null;
-      renderDisplay();
-    }
-  });
-  input.addEventListener('blur', async () => {
-    if (!wrap.isConnected) return; // 容器已重刷，丢弃
-    const it = item();
-    const oldUid = String(it.uid || '');
-    const val = input.value.trim();
-    if (val === '') {
-      // 清空：提交空 UID/名字，不查
-      lastBad = null;
-      if (oldUid || it.name) {
-        it.uid = '';
-        it.name = '';
-        saveFeature(f);
-        applyFeature(f);
-      }
-      renderDisplay();
-      return;
-    }
-    if (val === oldUid) {
-      lastBad = null;
-      renderDisplay();
-      return;
-    } // 未变，不查
-    if (val === lastBad) {
-      failEdit(hint.textContent || '玩家不存在，请检查 UID');
-      return;
-    }
-    input.disabled = true;
-    nameEl.textContent = '查询中…';
-    const res = await lookupPlayerName(val);
-    if (!wrap.isConnected) return; // 面板已重刷，丢弃回写
-    if (res.ok) {
-      lastBad = null;
-      it.uid = val;
-      it.name = res.name || '';
+  bindUidRow(wrap, {
+    read: item,
+    write: (uid, name) => {
+      const it = item();
+      it.uid = uid;
+      it.name = name;
+    },
+    commit: () => {
       saveFeature(f);
       applyFeature(f);
-      renderDisplay();
-    } else {
-      lastBad = val;
-      failEdit(res.msg || '玩家不存在，请检查 UID');
-    }
+    },
   });
-
-  wrap.__pcUidRefresh = renderDisplay;
-  wrap.__pcEnterEdit = enterEdit;
-  renderDisplay();
 }
 
 /** @type {string} 拖拽中被拖走的行上的视觉类（panel-css：半透明，提示「这行正跟着指针走」） */
@@ -417,20 +394,23 @@ function attachRowDrag(opt) {
 /**
  * 装配领取优先级清单容器（.pc-slist）：整行 pointer 拖拽交换 order 位（已去掉 ↑/↓ 按钮）。
  * 拖拽与松手收尾的机制见 attachRowDrag；松手按 DOM 顺序回写 arr（数字 id 回写原类型，不统一转字符串）。
- * configs[fid][key] 若仍是 descriptor defaults 本体先浅拷，避免就地交换污染 defaults。
  * @param {HTMLElement} box .pc-slist 容器
  */
 export function mountSortList(box) {
   const fid = box.dataset.id;
   const f = findFeature(fid);
   if (!f) return;
-  const fd = f.fields.find((x) => x.key === box.dataset.skey);
+  const fd = findFieldDescriptor(f, box.dataset.fkey);
   if (!fd) return;
   if (box.__pcRowDrag) return; // 拖拽进行中：跳过重刷，避免 ui.refresh 摧毁被拖行
   const c = configs[fid];
-  if (!Array.isArray(c[fd.key]))
+  // 缺失/脏数据时退回 defaults 副本（旧存档把该键存成非数组时的自愈；不带 fd.all 的清单
+  //   如遗迹奖励/卡车目标会因此整块空白且无从自助恢复）。必须 .slice()：registry 只在键
+  //   缺失时克隆 defaults，此处键存在但形状脏，直接取 f.defaults[key] 会把共享引用交给下面
+  //   fd.all 的 arr.push()，反过来写穿 defaults。
+  if (!Array.isArray(c[fd.key])) {
     c[fd.key] = Array.isArray(f.defaults[fd.key]) ? f.defaults[fd.key].slice() : [];
-  else if (c[fd.key] === f.defaults[fd.key]) c[fd.key] = c[fd.key].slice();
+  }
   const arr = c[fd.key];
   // 可选迁移 fd.migrate(arr, cfg) → number[]：把历史 order 收敛到当前口径（如科技同类归并 specId→族代表 id）。
   //   放在 all 追加之前：先收敛旧项、再补新增项。就地改 arr（=c[fd.key] 同一引用），发生变化才落盘热更；
@@ -458,7 +438,7 @@ export function mountSortList(box) {
       }
     }
   }
-  if (fd.checkable && (!Array.isArray(c[fd.offKey]) || c[fd.offKey] === f.defaults[fd.offKey])) {
+  if (fd.checkable && !Array.isArray(c[fd.offKey])) {
     c[fd.offKey] = Array.isArray(f.defaults[fd.offKey]) ? f.defaults[fd.offKey].slice() : [];
   }
   const offArr = () => (fd.checkable ? c[fd.offKey] : undefined);
@@ -522,7 +502,7 @@ export function mountSortList(box) {
  * 拖拽序：`cfg[fd.orderKey] = string[]`（池 key 的优先级序，下标即优先级），只由拖拽写入（写全量 DOM 序）；
  *   旧存档无此数组 = 未排过序，面板按池原序展示，引擎也不按序优先（见 feats/activity/secret-realm/pickup.js）。
  * 池项带 `cap`（游戏自身硬上限）时，输入超出 cap 会被自动修正为 cap 并回写框内值。
- * 首次写入前浅拷一层，避免就地 push 污染 descriptor defaults。checkbox 改动重刷整块（行高量可取）；
+ * 首次写入前浅拷两层（见下）：内层条目仍与 defaults 共享，registry 的一层克隆到这里不够。checkbox 改动重刷整块（行高量可取）；
  * number 改动不重刷，避免抢用户正在输入的框。两者都走 saveFeature + applyFeature 热更。
  * @param {HTMLElement} box .pc-ilist 容器
  */
@@ -530,25 +510,24 @@ export function mountItemList(box) {
   const fid = box.dataset.id;
   const f = findFeature(fid);
   if (!f) return;
-  const fd = f.fields.find((x) => x.key === box.dataset.ikey);
+  const fd = findFieldDescriptor(f, box.dataset.fkey);
   if (!fd) return;
   if (box.__pcRowDrag) return; // 拖拽进行中：跳过重刷，避免 ui.refresh 摧毁被拖行
   const c = configs[fid];
+  // 状态形状是两层（{[idStr]:{on,max,…}}）：registry 读盘只克隆**一层**（内层条目仍与 defaults 同引用），
+  //   故此处自己做两层拷贝。不再用「与 defaults 同引用」作判据——那个判据在 defaults 为空 {} 时正好失效，
+  //   而空 defaults + 有内层结构的 descriptor 恰恰是本分支要防的形状。容器每次重建都重拷一次，代价可忽。
   if (!c[fd.key] || typeof c[fd.key] !== 'object' || Array.isArray(c[fd.key])) {
     c[fd.key] = Object.assign({}, (f.defaults && f.defaults[fd.key]) || {});
-  } else if (c[fd.key] === f.defaults[fd.key]) {
-    // 首次改动先一层浅拷（内层条目也拷），避免就地写污染 defaults
-    const copy = {};
-    for (const k of Object.keys(c[fd.key])) copy[k] = Object.assign({}, c[fd.key][k]);
-    c[fd.key] = copy;
   }
+  const copy = {};
+  for (const k of Object.keys(c[fd.key])) copy[k] = Object.assign({}, c[fd.key][k]);
+  c[fd.key] = copy;
   const state = c[fd.key];
   const items = typeof fd.items === 'function' ? fd.items(c) : fd.items || [];
   const okey = fd.orderKey;
   if (okey && !Array.isArray(c[okey])) {
     c[okey] = Array.isArray(f.defaults && f.defaults[okey]) ? f.defaults[okey].slice() : [];
-  } else if (okey && c[okey] === f.defaults[okey]) {
-    c[okey] = c[okey].slice(); // 不让就地交换污染 defaults 本体
   }
   const order = okey ? c[okey] : null;
 

@@ -4,15 +4,7 @@ import { configs, findFeature } from '../registry.js';
 import { MENU } from '../menu.js';
 import { list as hotkeyList } from '../hotkeys.js';
 import { escAttr } from './dom.js';
-import {
-  cardHead,
-  buildFieldsHTML,
-  rangesInnerHTML,
-  multiOptsInnerHTML,
-  mineRulesInnerHTML,
-  farmRulesInnerHTML,
-  timeRangesInnerHTML,
-} from './fields.js';
+import { cardHead, buildFieldsHTML, findFieldDescriptor, refreshFieldBox } from './fields.js';
 import { mountUidList, mountSortList, mountItemList } from './widgets.js';
 
 /**
@@ -240,23 +232,8 @@ export function refreshTexts(root) {
   root.querySelectorAll('.pc-fval').forEach((span) => {
     const f = findFeature(span.dataset.fid);
     if (!f) return;
-    let fd = f.fields.find((x) => x.key === span.dataset.fkey);
-    if (!fd) {
-      // 行内只读格的 data-fkey ≠ 顶层 fd.key，需下探子描述符（同 wire.js 委托口径）：
-      //   rallygrid（联盟集结目标紧凑表）行内的计数格 r.count.key / ctrlrow（惧星集结一行多控件）的 cell.key
-      for (const x of f.fields) {
-        const sub =
-          x.type === 'rallygrid'
-            ? (x.rows || []).find((r) => r.count && r.count.key === span.dataset.fkey)?.count
-            : x.type === 'ctrlrow'
-              ? (x.cells || []).find((p) => p.key === span.dataset.fkey)
-              : null;
-        if (sub) {
-          fd = sub;
-          break;
-        }
-      }
-    }
+    // 行内只读格的 data-fkey 未必是顶层 fd.key，需下探子描述符（rallygrid 行内计数格 / ctrlrow 的 cell，口径见 findFieldDescriptor）
+    const fd = findFieldDescriptor(f, span.dataset.fkey);
     if (!fd) return;
     let next;
     if (span.dataset.hlstat != null) {
@@ -305,13 +282,12 @@ export function syncControls(panel) {
   panel.querySelectorAll('.pc-uidwrap').forEach((w) => {
     if (!w.classList.contains('pc-uli') && w.__pcUidRefresh) w.__pcUidRefresh();
   });
-  // 区间规则：整块重刷内层（行数可增可减，不能只回写值）
-  panel.querySelectorAll('.pc-rng').forEach((box) => {
-    const f = findFeature(box.dataset.id);
-    if (!f) return;
-    const fd = f.fields.find((x) => x.key === box.dataset.rkey);
-    if (!fd) return;
-    box.innerHTML = rangesInnerHTML(configs[f.id][fd.key], fd);
+  // 容器型字段（区间规则 / 多选开关组 / 采集规则 / 下田规则 / 下田时段）：整块重刷内层。
+  // 这类字段行数可增可减、选项由配置表运行时枚举，不能只回写单个值；重刷与首次渲染走同一张 FIELD_BOXES
+  // 渲染表（refreshFieldBox 靠容器上的 data-id + data-fkey 反查 descriptor），不再逐类抄一份同形块。
+  // 注意：重刷会重建种类多选下拉的 DOM，展开态随之收起（只在配置补载后发生，可接受）
+  panel.querySelectorAll('.pc-rng, .pc-mopts, .pc-mrule, .pc-frule, .pc-trule').forEach((box) => {
+    refreshFieldBox(box);
   });
   // 好友清单：整块重刷 + 重绑（同 ranges，行数可增删）
   panel.querySelectorAll('.pc-ulist').forEach(mountUidList);
@@ -319,39 +295,6 @@ export function syncControls(panel) {
   panel.querySelectorAll('.pc-slist').forEach(mountSortList);
   // 物品清单（type:'itemlist'）：整块重刷 + 重绑（行不可增删，池由 fd.items 动态枚举）
   panel.querySelectorAll('.pc-ilist').forEach(mountItemList);
-  // 多选开关组：整块重刷内层（选项动态枚举、选中态为 number[]，不能只回写单个值）
-  panel.querySelectorAll('.pc-mopts').forEach((box) => {
-    const f = findFeature(box.dataset.id);
-    if (!f) return;
-    const fd = f.fields.find((x) => x.key === box.dataset.mkey);
-    if (!fd) return;
-    box.innerHTML = multiOptsInnerHTML(configs[f.id][fd.key], fd, configs[f.id]);
-  });
-  // 采集规则：整块重刷内层（行可增删，同 ranges）
-  panel.querySelectorAll('.pc-mrule').forEach((box) => {
-    const f = findFeature(box.dataset.id);
-    if (!f) return;
-    const fd = f.fields.find((x) => x.key === box.dataset.mrkey);
-    if (!fd) return;
-    box.innerHTML = mineRulesInnerHTML(configs[f.id][fd.key], fd, configs[f.id]);
-  });
-  // 下田规则：整块重刷内层（行可增删且行形状随田类型变，同 minerules）
-  // 注意：重刷会重建种类多选下拉的 DOM，展开态随之收起（只在配置补载后发生，可接受）
-  panel.querySelectorAll('.pc-frule').forEach((box) => {
-    const f = findFeature(box.dataset.id);
-    if (!f) return;
-    const fd = f.fields.find((x) => x.key === box.dataset.frkey);
-    if (!fd) return;
-    box.innerHTML = farmRulesInnerHTML(configs[f.id][fd.key], fd);
-  });
-  // 下田时段：整块重刷内层（行可增删，同 ranges/farmrules）
-  panel.querySelectorAll('.pc-trule').forEach((box) => {
-    const f = findFeature(box.dataset.id);
-    if (!f) return;
-    const fd = f.fields.find((x) => x.key === box.dataset.trkey);
-    if (!fd) return;
-    box.innerHTML = timeRangesInnerHTML(configs[f.id][fd.key], fd);
-  });
   refreshTexts(panel);
 }
 

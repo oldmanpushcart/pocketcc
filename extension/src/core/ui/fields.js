@@ -1,7 +1,10 @@
 // descriptor.fields[] → 面板行 HTML 的纯构建器族（无 DOM 绑定，只返回字符串）。
 // 从 core/ui.js 迁出：cardHead / 各 *InnerHTML / buildFieldsHTML。值来自 registry.configs，转义走 dom.escAttr。
-import { configs } from '../registry.js';
+import { configs, findFeature } from '../registry.js';
 import { escAttr } from './dom.js';
+
+/** @type {string} 「0 = 无限」类数字框的占位文案（此前 3 处各写一份字面量，改文案要三处对齐） */
+const PLACEHOLDER_UNLIMITED = '不限';
 
 /**
  * 卡片标题行 HTML：折叠箭头 + 标题 + 启用 checkbox（组用 pc-gen[data-gid]，功能用 pc-en[data-id]）
@@ -96,11 +99,11 @@ export function mineRulesInnerHTML(list, fd, cfg) {
         stars += `<span class="pc-mrstar${on ? ' on' : ''}" data-part="star" data-star="${s}" title="${s} 星；再点当前星=不限">${on ? '★' : '☆'}</span>`;
       }
       return (
-        `<div class="pc-mrrow" data-midx="${i}">` +
+        `<div class="pc-mrrow" data-idx="${i}">` +
         `<div class="pc-mrbox">` +
         `<select class="pc-mrsel pc-mrtype" data-part="type" title="矿种">${optsHTML(typeOpts, type)}</select>` +
         `<select class="pc-mrsel pc-mrlv" data-part="level" title="等级">${optsHTML(lvOpts, lv)}</select>` +
-        `<span class="">星级</span>` +
+        `<span>星级</span>` +
         `<span class="pc-mrstars" title="星级；再点当前星=不限">${stars}</span>` +
         `</div>` +
         `<button class="pc-mrdel" type="button" title="删除此规则">×</button>` +
@@ -252,7 +255,7 @@ export function farmRulesInnerHTML(list, fd) {
         dis: k.value === 'relic' && relicDis,
       }));
       return (
-        `<div class="pc-frrow" data-fidx="${i}">` +
+        `<div class="pc-frrow" data-idx="${i}">` +
         `<div class="pc-frmain">` +
         `<div class="pc-frbox">` +
         `<select class="pc-frsel" data-part="preset" title="预设编队（1~8 战斗 / 9~16 采集；整表内不可重复）">${optsHTML(
@@ -307,7 +310,7 @@ export function timeRangesInnerHTML(list, fd) {
       const s = String((r && r.start) || '');
       const e = String((r && r.end) || '');
       return (
-        `<div class="pc-trow" data-tidx="${i}">` +
+        `<div class="pc-trow" data-idx="${i}">` +
         `<input type="time" class="pc-tinp" data-part="start" value="${escAttr(s)}" title="下田时段开始时刻">` +
         `<span class="pc-tdash">~</span>` +
         `<input type="time" class="pc-tinp" data-part="end" value="${escAttr(e)}" title="下田时段结束时刻（开始>结束=跨午夜）">` +
@@ -328,7 +331,7 @@ export function timeRangesInnerHTML(list, fd) {
 
 /**
  * 区间规则字段（type:'ranges'）内层 HTML：列头 + 若干 `[ from ~ to ) → count ×` 行 + 标题行右侧的「＋」。
- * 列头与数据行共用 rngRow 模板（括号类格子在列头只隐藏），否则三列无法逐列对齐；行号挂在 .pc-rngrow[data-ridx]，
+ * 列头与数据行共用 rngRow 模板（括号类格子在列头只隐藏），否则三列无法逐列对齐；行号挂在 .pc-rngrow[data-idx]，
  * 委托时靠它定位，不能用 querySelectorAll('.pc-rngrow') 的下标（会把列头行算进去，整体偏一位）。
  * @param {Array<{from:number,to:number,count:number}>} list 当前规则表
  * @param {object} fd 字段描述符（label / cols / hint 可选）
@@ -336,9 +339,9 @@ export function timeRangesInnerHTML(list, fd) {
  */
 export function rangesInnerHTML(list, fd) {
   const cols = fd.cols || ['大于等于', '小于', '数值'];
-  const rngRow = (cells, ridx) =>
-    `<div class="pc-rngrow${ridx === undefined ? ' pc-rnghead' : ''}"` +
-    (ridx === undefined ? '' : ` data-ridx="${ridx}"`) +
+  const rngRow = (cells, rowIdx) =>
+    `<div class="pc-rngrow${rowIdx === undefined ? ' pc-rnghead' : ''}"` +
+    (rowIdx === undefined ? '' : ` data-idx="${rowIdx}"`) +
     `>` +
     `<span class="pc-rngop">[</span>${cells[0]}` +
     `<span class="pc-rngop">~</span>${cells[1]}` +
@@ -375,8 +378,8 @@ export function rangesInnerHTML(list, fd) {
 
 /**
  * 好友清单字段（type:'uidlist'）内层 HTML：标题行（含右上＋，达上限置 disabled）+ 若干 UID 行 + 上限 hint。
- * 每行是一个 .pc-uidwrap.pc-uli[data-uidx=i]（复用城市技能 UID 控件的视觉与显示↔输入态），行尾带 × 删除；
- * 与标量 UID 行的区别：值落在 configs[fid].friends[i].{uid,name}，故行不带 data-ukey/nkey，靠 data-uidx 定位。
+ * 每行是一个 .pc-uidwrap.pc-uli[data-idx=i]（复用城市技能 UID 控件的视觉与显示↔输入态），行尾带 × 删除；
+ * 与标量 UID 行的区别：值落在 configs[fid].friends[i].{uid,name}，故行不带 data-ukey/nkey，靠 data-idx 定位。
  * 行的称呼名词由 fd.itemLabel 定制（玩家点赞缺省「好友」，奉旨出征为「执政官」）。
  * fd.itemCheck=true 时每行前置勾选框（.pc-ulichk，写回行对象 .on）：未勾行由 feat 侧自行排除，
  *   存量行无 on 视为已勾（向后兼容，缺省不改变既有行为）。
@@ -394,10 +397,10 @@ export function uidListInnerHTML(list, fd) {
       const uidV = String((it && it.uid) || '');
       const nmV = String((it && it.name) || '');
       const chk = fd.itemCheck
-        ? `<input type="checkbox" class="pc-ulichk" data-uidx="${i}" title="勾选才入池"${it && it.on === false ? '' : ' checked'}>`
+        ? `<input type="checkbox" class="pc-ulichk" data-idx="${i}" title="勾选才入池"${it && it.on === false ? '' : ' checked'}>`
         : '';
       return (
-        `<div class="pc-uidwrap pc-uli" data-uidx="${i}">` +
+        `<div class="pc-uidwrap pc-uli" data-idx="${i}">` +
         `<div class="pc-row">${chk}<span>${item} ${i + 1}</span>` +
         `<span class="pc-udisp" title="点击编辑 UID"><span class="pc-uedit">✎</span><span class="pc-uname">${escAttr(nmV || uidV)}</span></span>` +
         `<input type="text" class="pc-uinput" inputmode="numeric" hidden placeholder="${ph}">` +
@@ -460,7 +463,7 @@ export function sortListInnerHTML(list, fd, offArr) {
         ? `<input type="checkbox" class="pc-scheck" data-sc="${escAttr(String(id))}"${isOff ? '' : ' checked'}>`
         : '';
       return (
-        `<div class="pc-srow${isOff ? ' pc-srowoff' : ''}" data-sidx="${i}" data-skey="${escAttr(String(id))}">` +
+        `<div class="pc-srow${isOff ? ' pc-srowoff' : ''}" data-skey="${escAttr(String(id))}">` +
         `<span class="pc-shandle" title="按住拖拽调整顺序">⣿</span>` +
         chk +
         `<span class="pc-srank">${i + 1}</span>` +
@@ -584,7 +587,7 @@ export function itemListInnerHTML(items, state, fd, order) {
  * 怪物清单字段（type:'huntlist'，自动打野）内层 HTML：固定行（每种怪一行、不可增删），逐行可编辑。
  * 列：怪物类型（来自 fd.catalog；906 搜怪行把 groupType/pointType/搜索等级 落 title 供校对，道具开营行（openItem）标「用求救信开营」）| 方式（select，选项随该行怪而变）|
  *     攻打数量（0=不限）| 已打（今日已打数量，只读，值由 fd.todayText(key) 提供）| ☑ 参与猎杀。行序恒等于 fd.catalog 下标，
- *     委托靠 data-hidx 定位回写 configs[fid][fd.key][hidx]。等级不入清单（固定搜该怪最高档），故无等级列。
+ *     委托靠 data-idx 定位回写 configs[fid][fd.key][idx]。等级不入清单（固定搜该怪最高档），故无等级列。
  * 值以 list（按 key 匹配）为准，缺项回落该 catalog 行默认；list 与 catalog 顺序对齐由功能侧 defaults/归一保证（行不增删故下标稳定）。
  * 改值（数字/下拉/勾选）由 wirePanel 面板级委托接，无结构性变化不整块重刷；「已打」随 ui.refresh 走 refreshTexts 重算（见 panel.js）。
  * @param {Array<object>} list 当前清单（configs[fid][fd.key]，行序对齐 catalog）
@@ -623,10 +626,10 @@ export function huntListInnerHTML(list, fd, fid) {
         ? `用求救信(${mo.openItem})开营 · 无每日上限`
         : `groupType ${mo.groupType} / pointType ${mo.pointType} / 搜索等级 ${mo.level}`;
       return (
-        `<div class="pc-hlrow" data-hidx="${i}" data-hkey="${escAttr(String(mo.key))}">` +
+        `<div class="pc-hlrow" data-idx="${i}" data-hkey="${escAttr(String(mo.key))}">` +
         `<span class="pc-hlname" title="${escAttr(title)}"><span class="pc-hllabel">${escAttr(String(mo.label))}</span></span>` +
         `<select class="pc-hlmode pc-hlsel" data-part="mode" title="攻打方式">${optsHTML(mo.modes, mode)}</select>` +
-        `<input type="number" class="pc-hlcnt pc-hln" data-part="count" min="0"${countCap > 0 ? ` max="${countCap}"` : ''} step="1" value="${count > 0 ? count : ''}" placeholder="不限" title="攻打数量；留空 = 不限${countCap > 0 ? `（上限 ${countCap}）` : ''}">` +
+        `<input type="number" class="pc-hlcnt pc-hln" data-part="count" min="0"${countCap > 0 ? ` max="${countCap}"` : ''} step="1" value="${count > 0 ? count : ''}" placeholder="${PLACEHOLDER_UNLIMITED}" title="攻打数量；留空 = 不限${countCap > 0 ? `（上限 ${countCap}）` : ''}">` +
         `<span class="pc-fval pc-hlstat" data-fid="${fid}" data-fkey="${fd.key}" data-hlstat="${escAttr(String(mo.key))}" title="今日已打数量">${escAttr(String(today(mo.key) || ''))}</span>` +
         `<input type="checkbox" class="pc-hlon pc-hlchk" data-part="on"${on ? ' checked' : ''} title="勾选=纳入猎杀范围">` +
         `</div>`
@@ -672,7 +675,7 @@ export function presetPoolInnerHTML(list, fd) {
       }
       if (!opts) opts = `<option value="${v}" selected>战斗预设 ${v}</option>`; // 全占用的兜底（不该发生）
       return (
-        `<div class="pc-pprow" data-pidx="${i}">` +
+        `<div class="pc-pprow" data-idx="${i}">` +
         `<span class="pc-ppslot" title="出兵顺序">#${i + 1}</span>` +
         `<select class="pc-ppsel" title="该位的战斗预设">${opts}</select>` +
         `<button class="pc-ppdel" type="button" title="移出预设池">×</button>` +
@@ -726,14 +729,110 @@ export function rallyGridInnerHTML(fd, cfg, fid) {
         `<div class="pc-rgrow">` +
         `<span class="pc-rgcell pc-rgc-0">${escAttr(r.name || '')}</span>` +
         `<span class="pc-rgcell pc-rgc-1"><input type="number" class="pc-rgin" data-id="${fid}" data-key="${escAttr(delay.key)}" min="${delay.min != null ? delay.min : 0}" step="${delay.step != null ? delay.step : 1}" placeholder="${escAttr(delay.placeholder || '')}" value="${delayVal == null ? '' : delayVal}" title="${escAttr(delay.title || '延迟入队(秒)')}"></span>` +
-        `<span class="pc-rgcell pc-rgc-2"><input type="number" class="pc-rgin" data-id="${fid}" data-key="${escAttr(limit.key)}" min="${limit.min != null ? limit.min : 0}" step="${limit.step != null ? limit.step : 1}" placeholder="${escAttr(limit.placeholder || (limit.zeroUnlimited ? '不限' : ''))}" value="${limitEmpty ? '' : limitVal}" title="${escAttr(limit.title || (limit.zeroUnlimited ? '留空 = 不限' : '每日上限'))}"></span>` +
+        `<span class="pc-rgcell pc-rgc-2"><input type="number" class="pc-rgin" data-id="${fid}" data-key="${escAttr(limit.key)}" min="${limit.min != null ? limit.min : 0}" step="${limit.step != null ? limit.step : 1}" placeholder="${escAttr(limit.placeholder || (limit.zeroUnlimited ? PLACEHOLDER_UNLIMITED : ''))}" value="${limitEmpty ? '' : limitVal}" title="${escAttr(limit.title || (limit.zeroUnlimited ? '留空 = 不限' : '每日上限'))}"></span>` +
         `<span class="pc-rgcell pc-rgc-3"><span class="pc-fval pc-rgcount" data-fid="${fid}" data-fkey="${escAttr(count.key)}">${countText}</span></span>` +
         `<span class="pc-rgcell pc-rgc-4"><input type="checkbox" class="pc-fchk pc-rgchk" data-id="${fid}" data-key="${escAttr(r.enableKey)}"${cfg[r.enableKey] ? ' checked' : ''} title="勾选=自动加入${escAttr(r.name || '')}集结"></span>` +
         `</div>`
       );
     })
     .join('');
-  return `<div class="pc-rg" data-rgkey="${escAttr(fd.key)}">${header}${rows}</div>`;
+  return `<div class="pc-rg" data-id="${fid}" data-fkey="${escAttr(fd.key)}">${header}${rows}</div>`;
+}
+
+/**
+ * 整行容器型字段（自带卡片内一层 div + 内层 HTML）的渲染表：type → { cls 容器类, render 内层生成器 }。
+ *
+ * 此前这 10 个分支逐字同形（`<div class="pc-xxx" data-id data-?key>` + `?InnerHTML(c[fd.key], fd, …)`），
+ * 但容器属性名各取一套（data-rkey/mkey/mrkey/frkey/trkey/hlkey/ppkey/akey/skey/ikey），导致消费侧
+ * 每接一种字段就要再抄一份「找容器→找 fd→重刷」的解析器（wire.js 曾经有 7 份）。
+ * 内层 HTML 统一签名 `(val, fd, c, fid)`（各自只用得上前几个），新增一类容器只加一行。
+ * 属性 schema（消费侧只认这两个名字，不要再为新字段发明 data-xxxkey）：
+ *   容器 = `data-id`（功能 id）+ `data-fkey`（字段 key），所以下面各委托一律走 boxTarget + findFieldDescriptor；
+ *   行 = `data-idx`（数组下标，见 idxOf）。
+ *   行上的例外：按 key 而非下标索引的清单（sortlist 行 data-skey / itemlist 行 data-ikey）带的是**项 key**，
+ *   因为其配置形状是 map（且拖拽序以 DOM 序为准），不强行套 data-idx。行下标可由 DOM 序推导，
+ *   故 sortlist 行原先只写不读的 data-sidx 已删除（schema 里不留没有消费方的第三个口径）。
+ * @type {Record<string, {cls:string, render:function}>}
+ */
+const FIELD_BOXES = {
+  ranges: { cls: 'pc-rng', render: rangesInnerHTML },
+  uidlist: { cls: 'pc-ulist', render: uidListInnerHTML },
+  sortlist: {
+    cls: 'pc-slist',
+    render: (val, fd, c) => sortListInnerHTML(val, fd, fd.checkable ? c[fd.offKey] : undefined),
+  },
+  multiopts: { cls: 'pc-mopts', render: multiOptsInnerHTML },
+  itemlist: {
+    cls: 'pc-ilist',
+    render: (val, fd, c) =>
+      itemListInnerHTML(fd.items, val, fd, fd.orderKey ? c[fd.orderKey] : null),
+  },
+  minerules: { cls: 'pc-mrule', render: mineRulesInnerHTML },
+  farmrules: { cls: 'pc-frule', render: farmRulesInnerHTML },
+  timeranges: { cls: 'pc-trule', render: timeRangesInnerHTML },
+  huntlist: { cls: 'pc-hl', render: (val, fd, c, fid) => huntListInnerHTML(val, fd, fid) },
+  presetpool: { cls: 'pc-pp', render: presetPoolInnerHTML },
+};
+
+/**
+ * 整行容器字段的外壳：统一带 data-id（功能 id）与 data-fkey（字段 key），供 fieldBoxTarget 反查。
+ * @param {string} cls 容器类
+ * @param {string} fid 功能 id
+ * @param {string} key 字段 key
+ * @param {string} inner 内层 HTML
+ * @returns {string}
+ */
+function fieldBox(cls, fid, key, inner) {
+  return `<div class="${cls}" data-id="${fid}" data-fkey="${escAttr(key)}">${inner}</div>`;
+}
+
+/**
+ * 按 DOM 上的控件 key（data-key / data-fkey）反查 descriptor，单点口径。
+ * 顶层 fd.key 命中即返回；否则按类型下探行内子控件（子控件的 key 才是存档键，与 fd.key 不同）：
+ *   tripick → parts、ctrlrow → cells、rallygrid → rows 的 delay/limit/count。
+ * 此前 wire.js（数字/下拉两处）与 panel.js（refreshTexts）各抄了一份下探逻辑，新增一类子控件就要三处跟改。
+ * @param {object} f descriptor（含 fields）
+ * @param {string|undefined} key DOM 上带的控件 key
+ * @returns {object|null} 命中的（子）描述符，未命中 null
+ */
+export function findFieldDescriptor(f, key) {
+  if (!f || !Array.isArray(f.fields) || key == null) return null;
+  const top = f.fields.find((x) => x.key === key);
+  if (top) return top;
+  for (const x of f.fields) {
+    if (x.type === 'tripick' || x.type === 'ctrlrow') {
+      const sub = (x.parts || x.cells || []).find((p) => p.key === key);
+      if (sub) return sub;
+    } else if (x.type === 'rallygrid') {
+      for (const r of x.rows || []) {
+        for (const cell of [r.delay, r.limit, r.count]) {
+          if (cell && cell.key === key) return cell;
+        }
+      }
+    }
+  }
+  return null;
+}
+
+/**
+ * 就地重刷一个容器型字段（.pc-rng / .pc-mopts / .pc-mrule / .pc-frule / .pc-trule …）的内层 HTML：
+ * 靠外壳上的 data-id + data-fkey 反查 descriptor，再按 type 走 FIELD_BOXES 渲染表，
+ * 与 buildFieldsHTML 首次渲染严格同源（同一 render、同一参数顺序）。
+ * 有状态的清单（uidlist/sortlist/itemlist）不走这里，由 widgets.js 的 mount* 重刷并重绑。
+ * @param {Element} box 带 data-id/data-fkey 的字段容器
+ * @returns {boolean} 是否刷了（功能/字段查不到、类型不在渲染表时 false）
+ */
+export function refreshFieldBox(box) {
+  if (!box || !box.dataset) return false;
+  const f = findFeature(box.dataset.id);
+  if (!f) return false;
+  const fd = findFieldDescriptor(f, box.dataset.fkey);
+  if (!fd) return false;
+  const c = configs[f.id];
+  const entry = FIELD_BOXES[fd.type];
+  if (!c || !entry) return false;
+  box.innerHTML = entry.render(c[fd.key], fd, c, f.id);
+  return true;
 }
 
 /**
@@ -748,6 +847,8 @@ export function buildFieldsHTML(fid, f) {
   const c = configs[fid];
   // 单字段 → HTML（不含分组标题）；分组标题与可折叠包裹由下方循环统一处理
   const fieldHTML = (fd) => {
+    const box = FIELD_BOXES[fd.type];
+    if (box) return fieldBox(box.cls, fid, fd.key, box.render(c[fd.key], fd, c, fid));
     if (fd.type === 'checkbox') {
       return (
         `<label class="pc-row"><span>${fd.label}</span>` +
@@ -857,7 +958,7 @@ export function buildFieldsHTML(fid, f) {
             .join('') +
           `</div>`;
         return (
-          `<div class="pc-hl pc-ct" data-id="${fid}" data-ctkey="${escAttr(fd.key)}">` +
+          `<div class="pc-hl pc-ct" data-id="${fid}" data-fkey="${escAttr(fd.key)}">` +
           (fd.label
             ? `<div class="pc-hltop"><span class="pc-rngtitle">${escAttr(fd.label)}</span></div>`
             : '') +
@@ -894,86 +995,6 @@ export function buildFieldsHTML(fid, f) {
         `</div><div class="pc-uhint" hidden></div></div>`
       );
     }
-    if (fd.type === 'ranges') {
-      // 区间规则占整行（不套 pc-row）：容器带 fid/key，行内控件靠 closest('.pc-rng') 回属
-      return (
-        `<div class="pc-rng" data-id="${fid}" data-rkey="${fd.key}">` +
-        rangesInnerHTML(c[fd.key], fd) +
-        `</div>`
-      );
-    }
-    if (fd.type === 'uidlist') {
-      // 好友清单（玩家点赞）：动态增删的 UID 行，整行返回（不套 pc-row），容器带 fid/key 供 mountUidList 重绑
-      return (
-        `<div class="pc-ulist" data-id="${fid}" data-akey="${fd.key}">` +
-        uidListInnerHTML(c[fd.key], fd) +
-        `</div>`
-      );
-    }
-    if (fd.type === 'sortlist') {
-      // 领取优先级清单（遗迹奖励/卡车目标物品）：整池奖励行不可增删只能拖拽调序，容器带 fid/key 供 mountSortList 重刷+重绑
-      return (
-        `<div class="pc-slist" data-id="${fid}" data-skey="${fd.key}">` +
-        sortListInnerHTML(c[fd.key], fd, fd.checkable ? c[fd.offKey] : undefined) +
-        `</div>`
-      );
-    }
-    if (fd.type === 'multiopts') {
-      // 多选开关组（次元矿洞矿种/卡车品级）：整行返回，选项由 fd.options(cfg) 动态求值
-      return (
-        `<div class="pc-mopts" data-id="${fid}" data-mkey="${fd.key}">` +
-        multiOptsInnerHTML(c[fd.key], fd, c) +
-        `</div>`
-      );
-    }
-    if (fd.type === 'itemlist') {
-      // 物品清单（秘境拾取等）：整池行不可增删，每行 `[☑] 名称 [max]`，容器带 fid/key 供 mountItemList 重刷+重绑
-      return (
-        `<div class="pc-ilist" data-id="${fid}" data-ikey="${fd.key}">` +
-        itemListInnerHTML(fd.items, c[fd.key], fd, fd.orderKey ? c[fd.orderKey] : null) +
-        `</div>`
-      );
-    }
-    if (fd.type === 'minerules') {
-      // 采集规则（次元矿洞）：整行返回（不套 pc-row），行可增删，容器带 fid/key 供委托与重刷
-      return (
-        `<div class="pc-mrule" data-id="${fid}" data-mrkey="${fd.key}">` +
-        mineRulesInnerHTML(c[fd.key], fd, c) +
-        `</div>`
-      );
-    }
-    if (fd.type === 'farmrules') {
-      // 下田规则（自动下田）：整行返回，田位行可增删，容器带 fid/key 供委托与重刷（同 minerules）
-      return (
-        `<div class="pc-frule" data-id="${fid}" data-frkey="${fd.key}">` +
-        farmRulesInnerHTML(c[fd.key], fd) +
-        `</div>`
-      );
-    }
-    if (fd.type === 'timeranges') {
-      // 下田时段（自动下田）：整行返回，时段行可增删（原生 time 控件），容器带 fid/key 供委托与重刷（同 ranges/farmrules）
-      return (
-        `<div class="pc-trule" data-id="${fid}" data-trkey="${fd.key}">` +
-        timeRangesInnerHTML(c[fd.key], fd) +
-        `</div>`
-      );
-    }
-    if (fd.type === 'huntlist') {
-      // 怪物清单（自动打野）：固定行不可增删、逐行可编辑，容器带 fid/key 供面板级委托回写
-      return (
-        `<div class="pc-hl" data-id="${fid}" data-hlkey="${fd.key}">` +
-        huntListInnerHTML(c[fd.key], fd, fid) +
-        `</div>`
-      );
-    }
-    if (fd.type === 'presetpool') {
-      // 打野预设池（自动打野）：动态增删的单选行（跨行去重），容器带 fid/key 供委托与整块重刷
-      return (
-        `<div class="pc-pp" data-id="${fid}" data-ppkey="${fd.key}">` +
-        presetPoolInnerHTML(c[fd.key], fd) +
-        `</div>`
-      );
-    }
     if (fd.type === 'button') {
       // 动作按钮（如卡车拦截「刷新我方战力」）：整行一个 .pc-btn，点击回调 fd.onClick(cfg)，不写配置不触发折叠
       return `<button class="pc-btn pc-fbtn" type="button" data-id="${fid}" data-bkey="${fd.key}">${fd.label}</button>`;
@@ -989,7 +1010,7 @@ export function buildFieldsHTML(fid, f) {
       const isZero = raw == null || Number(raw) === 0;
       return (
         `<label class="pc-row"><span>${fd.label}</span>` +
-        `<input type="number" data-id="${fid}" data-key="${fd.key}" min="${fd.min}" step="${fd.step}" placeholder="${escAttr(fd.placeholder || '不限')}" value="${isZero ? '' : raw}" title="留空 = 不限"></label>`
+        `<input type="number" data-id="${fid}" data-key="${fd.key}" min="${fd.min}" step="${fd.step}" placeholder="${escAttr(fd.placeholder || PLACEHOLDER_UNLIMITED)}" value="${isZero ? '' : raw}" title="留空 = 不限"></label>`
       );
     }
     return (
