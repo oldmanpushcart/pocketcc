@@ -21,17 +21,17 @@
 
 ```js
 March = {
-  id: string,          // marchId，一律 String()（>2^53 安全，Int64 不丢精度）
-  type: number,        // 原始 marchType，仅透传展示，march.js 不解读、不做漂移
-  state: number,       // NMarchState 数值（见 State）
-  stateName: string,   // 'INIT'|'MARCHING'|'ARRIVED'|'RETURNING'|'ARRIVED_HOME'|'GATHERING'
-  isOccupying: boolean,// state ∉ {RETURNING, ARRIVED_HOME}（去程/到达/采集中都算占位）
-  target: { x, y, itemId },  // 摊平/嵌套差异已抹平；itemId = 目标地块实体 id
-  marchStartTime: number,    // 出发时刻（服务器 epoch 秒；marchInfo.* 优先→摊平顶层；缺省 0）
-  marchArrive: number,       // 当前段到达时刻（epoch 秒）；加速(920)后由 10019 边沿更新为更早值
-  returnArriveTime: number,  // 返程到家时刻（epoch 秒）；出发段必为 0，回城/返程 push 合并后才有值
-  raw: object,         // 原始条目留档
-}
+  id: string, // marchId，一律 String()（>2^53 安全，Int64 不丢精度）
+  type: number, // 原始 marchType，仅透传展示，march.js 不解读、不做漂移
+  state: number, // NMarchState 数值（见 State）
+  stateName: string, // 'INIT'|'MARCHING'|'ARRIVED'|'RETURNING'|'ARRIVED_HOME'|'GATHERING'
+  isOccupying: boolean, // state ∉ {RETURNING, ARRIVED_HOME}（去程/到达/采集中都算占位）
+  target: { x, y, itemId, targetType }, // 摊平/嵌套差异已抹平；itemId = 目标地块实体 id；targetType = 与 901 pointType 同轴（报文实证 856 采集条目恒带：普通田 4 / 遗迹 6 级田 38）
+  marchStartTime: number, // 出发时刻（服务器 epoch 秒；marchInfo.* 优先→摊平顶层；缺省 0）
+  marchArrive: number, // 当前段到达时刻（epoch 秒）；加速(920)后由 10019 边沿更新为更早值
+  returnArriveTime: number, // 返程到家时刻（epoch 秒）；出发段必为 0，回城/返程 push 合并后才有值
+  raw: object, // 原始条目留档
+};
 ```
 
 ### ACL 边界
@@ -110,15 +110,17 @@ march.onHomeReturn(cb) → off             // onStateChange(cb, {to:ARRIVED_HOME
 
 ```js
 const plan = new Battle().plan().preset(1).adjust().build();
-if (!plan.armyListNew.length) return;              // 空兵不派
+if (!plan.armyListNew.length) return; // 空兵不派
 const ret = await march.attack({ marchType: 298, target: { x, y }, data: plan });
-if (ret.ok) { /* 记账 */ }
+if (ret.ok) {
+  /* 记账 */
+}
 ```
 
 **跨服漂移（quick-attack / imperial-decree）**：marchType 先在 feat 内换算再传入，march.js 不介入：
 
 ```js
-import { march as marchApi } from './core/game-api.js';   // 漂移 resolver（异名，勿与 core/march 冲突）
+import { march as marchApi } from './core/game-api.js'; // 漂移 resolver（异名，勿与 core/march 冲突）
 const marchType = marchApi.resolve(base, MARCH_FALLBACK); // feat 自理漂移
 await march.attack({ marchType, target, data });
 ```
@@ -127,8 +129,8 @@ await march.attack({ marchType, target, data });
 
 ```js
 let off = march.onHomeReturn((m) => {
-  if (!aliveFn()) return;          // 硬约束：回调自判 alive
-  if (m.type !== 298) return;      // feat 自持：按本玩法 marchType 过滤
+  if (!aliveFn()) return; // 硬约束：回调自判 alive
+  if (m.type !== 298) return; // feat 自持：按本玩法 marchType 过滤
   // feat 自持节流 + 触发下一轮
 });
 // 重激活/卸载路径先 off()，防重复注册
@@ -139,8 +141,8 @@ let off = march.onHomeReturn((m) => {
 **在途行军计数（活动名额判据，如领域寻宝）**：
 
 ```js
-const marches = await march.list();                 // 856 全量本人行军
-const inFlight = marches.filter(m => m.type === 180).length;
+const marches = await march.list(); // 856 全量本人行军
+const inFlight = marches.filter((m) => m.type === 180).length;
 ```
 
 ## 5. 数据流与降级
@@ -163,7 +165,7 @@ net.10019 推送 ──▶ bus('net.10019') ──▶ _onPush: decode → 与 _k
                                        └  m.state===ARRIVED_HOME → _known.delete(id)（防内存涨）
 ```
 
-- `decode`：state 优先 `marchInfo.state` → 摊平 `marchState` → `state`；target.x/y 优先摊平 `target_tx/ty` → 嵌套 `marchInfo.target.tx/ty` → `entry.target.tx/ty`（修历史「`march.target` 恒 undefined」坑）；itemId 同理。永不抛异常。
+- `decode`：state 优先 `marchInfo.state` → 摊平 `marchState` → `state`；target.x/y 优先摊平 `target_tx/ty` → 嵌套 `marchInfo.target.tx/ty` → `entry.target.tx/ty`（修历史「`march.target` 恒 undefined」坑）；itemId 同理。targetType 只取嵌套两条路径 `marchInfo.target.targetType` → `entry.target.targetType`（摊平形状未见于报文，不臆造键名，缺省 0）。永不抛异常。
 - `State` 为本地权威副本（真机符号漂移时不至全线瘫痪）。
 - `freeSlots()` 数据源（`gameData.marchCount()`）缺失回 `{0,0}` → `canMarch()` 恒 false，写决策类 feat 据此保守不派。
 
@@ -188,6 +190,8 @@ net.10019 推送 ──▶ bus('net.10019') ──▶ _onPush: decode → 与 _k
 - 排查「列表读空」：确认走的是 `march.list()`（856）而非残留的 `mapData.marches`；grep 校验残留见变更记录。
 
 ## 8. 变更记录
+
+- **2026-11-01（`target.targetType` 透传）**：`decode` 归一化 `March.target` 新增 `targetType`（与 901 `pointList[].pointType` 同轴）。据 dashcam 报文（`14179309129759/20261016T190507-夺宝奇兵-我是陪跑` 等，856 应答）实证：采集行军 `target={itemId,tx,ty,march_s,tk,targetType,tr}`，普通资源田 `targetType=4`、遗迹 6 级田 `targetType=38`。目的是给「遗迹田永不撤回」全局不变量（见 [`core/resource.js`](resource.md) `isRelicTarget`）提供一条**不依赖 RESOURCE 表**的硬判据；march.js 仍只透传不解读。
 
 - **2026-10-07（加速 push 归一化 + floatcar 行军加速）**：`decode` 新增归一化 `marchStartTime/marchArrive/returnArriveTime`（服务器 epoch 秒，`marchInfo.*` 优先→摊平顶层），供 feat 直接算剩余时间/腾位打点，无需再摸 `raw`（旧 floatcar `nextReleaseAt` 读 `raw.marchArrive` 恒 undefined、静默退化轮询）；`_cacheApply` 对时刻做「新值 >0 才采用、否则保留旧值」的防御合并，确保 920 加速后的 10019 边沿（state 不变）把更早到达并进快照。`speedUp` 文档补充削减比（普通 25%/高级 50%）与「加速后到达经 10019 更新、不触发 onStateChange」的口径。floatcar 新增面板字段 `accelTargetSec`（加速至剩余≤N 秒，0=不加速）：拾取 902 受理后按当前去程到达点判一次，决策前先 `item.amount` 核对背包数量，普通能达标优先普通、否则高级，缺货回退另一支。
 
