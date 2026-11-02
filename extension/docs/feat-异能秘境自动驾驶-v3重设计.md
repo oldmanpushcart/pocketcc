@@ -222,7 +222,7 @@ pilot.js
 
 **关键：v3 不再有「TO 相位睡 90s」。** 到点判定只认 `roomBaseInfo.startPoint == 目标 && marchState==ARRIVED`，每 300ms 复核一次；超时阈值只用来「记账走人」，不再决定睡眠时长。
 
-### 3.3 必须补的 ACL（`core/game-api.js` → `secretRealm`）
+### 3.3 必须补的 ACL（`core/game-api.js` → `secretRealm`；解耦试点后已迁至 `feats/activity/secret-realm/api.js`，旧 `core/game-api.js` 路径不再持有实现）
 
 | 方法 | 用途 | 实现要点 |
 |---|---|---|

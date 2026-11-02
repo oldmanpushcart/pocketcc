@@ -74,7 +74,8 @@
 import { reactor } from '../../../core/reactor.js';
 import { createLog } from '../../../core/log.js';
 import { exposeDebug } from '../../../core/devtools.js';
-import { scene, gameData, gameConf, l10n, secretRealm, ui } from '../../../core/game-api.js';
+import { scene, gameData, gameConf, l10n, ui } from '../../../core/game-api.js';
+import { secretRealm } from './api.js';
 import { CaptureEngine } from './capture.js';
 import { PickupEngine } from './pickup.js';
 import { HealEngine, parseHealWhitelist } from './heal.js';

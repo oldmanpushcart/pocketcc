@@ -1,8 +1,8 @@
 /**
  * 世界态采集驱动 + 场景门控安装器。
  *
- * 职责边界：本文件只负责「什么时候重算」与「门控怎么放行」，归类算法在 core/world-state.js，
- * 原始判据在 core/game-api.js（worldSignals）。三层分开后，游戏改版时符号只在一处漂移。
+ * 职责边界：本文件只负责「什么时候重算」与「门控怎么放行」，归类算法在 core/world/state.js，
+ * 原始判据在 core/acl/world.js（worldSignals）。三层分开后，游戏改版时符号只在一处漂移。
  *
  * 采集时机（事件驱动为主、轮询兜底，翻转才广播 world.change）：
  *   1) cc 场景启动（EVENT_AFTER_SCENE_LAUNCH）——第二层 Place 的唯一即时源；
@@ -15,8 +15,8 @@
 import { createLog } from './log.js';
 import { bus } from './bus.js';
 import { reactor } from './reactor.js';
-import { worldSignals } from './game-api.js';
-import { worldState } from './world-state.js';
+import { worldSignals } from './acl/world.js';
+import { worldState } from './world/state.js';
 import { eventApi } from './event.js';
 
 /** @type {ReturnType<createLog>} 模块日志器（tag=SCENE） */

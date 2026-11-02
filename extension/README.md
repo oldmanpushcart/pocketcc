@@ -91,7 +91,8 @@ extension/
    │  ├─ registry.js        descriptor 驱动配置单一真相（组配置读盘/存档、intent 补全）
    │  ├─ menu.js            面板菜单树（类别→组/功能）单一真相，组闸门语义在此声明
    │  ├─ game.js            游戏模块 hub（__require 集中；缺失软失败返回 null）
-   │  ├─ game-api.js        ACL 防腐层（l10n / gameData / worldMap / march 等游戏符号收口）
+   │  ├─ game-api.js        ACL 防腐层共享区段（l10n / gameData / worldMap / march 等；活动适配器已下沉各 feat 的 api.js）
+   │  ├─ acl-engine.js      ACL 引擎核（SYM 共享表 / probe 惰性探测 / CAPS 自检 / createAcl 工厂，feat api.js 经它共用单例）
    │  ├─ player.js          UID 与玩家态
    │  ├─ storage.js         MAIN 侧 chrome.storage 代理客户端（UID 前缀下 config/data 两个 blob）
    │  ├─ session.js         会话健康广播 + 自动重连

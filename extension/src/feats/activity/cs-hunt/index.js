@@ -15,7 +15,7 @@
  *      **P4 全自动默认开**（无 UI 开关）：来袭保命盾/隐身/闪现、末回合清空背包、转场复制/转换/先知串联。
  *
  * 分层：index.js 只做装配（spec + createCycle + env 注入），协议常量在 constants.js，编排在 engine-team.js；
- *   游戏符号（CSHuntController / DataCenter.UID）一律经 core/game-api.js ACL（csHunt / gameData），此处不摸 game.get。
+ *   游戏符号（CSHuntController / DataCenter.UID）一律经本目录 api.js（ACL 下沉试点），此处不摸 game.get。
  *
  * 生命周期：install 取网络底座并自检符号；run 起引擎 + 首发 7501 + 武装 createCycle；
  *   pause 显式收引擎（reactor 的触发器摘除管不到引擎自建的在飞 await 与配对状态，陈旧快照会在 resume 后发错写请求）。
@@ -28,7 +28,8 @@
 import { reactor } from '../../../core/reactor.js';
 import { createCycle } from '../../../core/cycle.js';
 import { createLog } from '../../../core/log.js';
-import { bits, csHunt } from '../../../core/game-api.js';
+import { bits } from '../../../core/game-api.js';
+import { csHunt } from './api.js';
 import { TeamEngine, getDailyRuns, DEFAULT_WAIT_MIN } from './engine-team.js';
 import { SKILL_GROUP_IDS, groupName, skillGroupRep } from './skills.js';
 import { EVENT_TYPE, LUCKY_GIFTS } from './constants.js';

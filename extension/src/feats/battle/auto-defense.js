@@ -37,7 +37,7 @@ import { reactor } from '../../core/reactor.js';
 import { Battle } from '../../core/battle.js';
 import { march } from '../../core/march.js';
 import { defense } from '../../core/defense.js';
-import { worldState } from '../../core/world-state.js';
+import { worldState } from '../../core/world/state.js';
 
 /** @type {ReturnType<createLog>} 模块日志器（tag=AUTO_DEFENSE） */
 const log = createLog('AUTO_DEFENSE');

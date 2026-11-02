@@ -12,15 +12,33 @@
  * 消费约定：handler 返回 false = 本次不消费（不拦截默认、不阻断冒泡，按键透传给游戏与后续绑定，
  * 如战斗面板快捷键「面板不在场」时让位于快捷战斗的 1-8）；其余（含无返回）= 已消费，注册表统一
  * preventDefault + stopPropagation 并停止遍历。场景门控走双层口径：scenes（scene-watcher 的 cc 场景名，
- * 旧口径，保留为兼容必要条件）× kinds/places（core/world-state.js，新口径），与 reactor 的 scene/world
+ * 旧口径，保留为兼容必要条件）× kinds/places（新口径：经 core/world/contracts.js 纯词表判定，实时态由 bus
+ * world.change 镜像供给），与 reactor 的 scene/world
  * 两道门同一套判据（离开白名单场景即不触发，等价旧 feat 的 ctx.alive() 早退）。
  */
 import { createLog } from './log.js';
+import { bus } from './bus.js';
 import { getCurrentScene } from './scene-watcher.js';
-import { worldState } from './world-state.js';
+import { KIND, PLACE, kindInList, placeInList } from './world/contracts.js';
 
 /** @type {ReturnType<createLog>} 模块日志器（tag=HOTKEY） */
 const log = createLog('HOTKEY');
+
+/**
+ * 世界态本地镜像：阶段四 Tier0 隔离后，热键层不再 import 领域归一层 core/world/state.js，
+ * 而是订阅 bus 的 world.change（仅四维翻转时广播）缓存最新快照，门控同步读这份镜像。
+ * 镜像只持有已广播的快照对象（world-state 每次 collect 产新对象，无别名篡改风险）；门控仅读
+ * kind/place，而 world.change 恰在 kind/place 翻转时必发，故镜像就绪后的 kind/place 恒与实时快照一致。
+ * 注意首帧差异：镜像未就绪（null）时 fail-open，而旧实现 worldState.current() 首帧会同步现采出
+ * homeland/boot 进真判定——方向不同。现网掩蔽：boot 期 getCurrentScene() 为 null，带 kinds/places
+ * 的绑定均同声明 scenes 先一步拦截；若新增只声明 kinds/places 不声明 scenes 的绑定，启动早期窗口
+ * 会无条件放行（bind() 已就此 warn）。
+ * @type {object|null}
+ */
+let worldMirror = null;
+bus.on('world.change', function (snap) {
+  worldMirror = snap;
+});
 
 // ─────────────────────── 输入焦点守卫 ───────────────────────
 
@@ -115,10 +133,12 @@ function matchKey(binding, e) {
 }
 
 /**
- * 场景门控：scenes 与 kinds/places 都是必要条件（未声明的那项放行）。与 reactor 的 scene/world 双门同判据，
- * 差别在兜底方向：本层是**按键级**判定，世界态拿不到（kind=unknown / place=off）时对新口径直接放行、
- * 退回旧 scenes 口径——热键没有 pause/resume 补偿，误判一刀就是功能凭空消失且不会自愈；
- * reactor 侧同样判据可以放心拦（回到白名单档会自动 resume）。
+ * 场景门控：scenes 与 kinds/places 都是必要条件（未声明的那项放行）。与 reactor 的 scene/world 双门同判据
+ * （谓词走 core/world/contracts.js 纯词表层），差别在兜底方向：本层是**按键级**判定，世界态拿不到
+ * （镜像未就绪 / kind=unknown / place=off）时对新口径直接放行、退回旧 scenes 口径——热键没有
+ * pause/resume 补偿，误判一刀就是功能凭空消失且不会自愈；reactor 侧同样判据可以放心拦（回到白名单档会自动 resume）。
+ * 隐含不变量：声明 kinds/places 的绑定应同时声明 scenes（镜像就绪前的 null 窗口靠 scenes 门掩蔽，
+ * 见 worldMirror 注释）；违反时启动早期对本门控无条件放行，bind() 会 warn。
  * @param {HotkeyBinding} binding 绑定
  * @returns {boolean}
  */
@@ -126,12 +146,10 @@ function bindingAllow(binding) {
   var sc = binding.scenes;
   if (sc && sc.length && sc.indexOf(getCurrentScene()) === -1) return false;
   if (!binding.kinds && !binding.places) return true;
-  var st = worldState.current();
-  if (st.kind === worldState.KIND.unknown || st.place === worldState.PLACE.off) return true;
-  return (
-    worldState.matchesKind(binding.kinds, st.kind) &&
-    worldState.matchesPlace(binding.places, st.place)
-  );
+  var st = worldMirror;
+  if (!st) return true; // 镜像未就绪：fail-open（与旧首帧现采不同向，靠 scenes 门掩蔽，见 worldMirror 注释与 bind 校验）
+  if (st.kind === KIND.unknown || st.place === PLACE.off) return true;
+  return kindInList(binding.kinds, st.kind) && placeInList(binding.places, st.place);
 }
 
 /**
@@ -201,6 +219,12 @@ export function bind(binding) {
   if (bindings.has(binding.id)) {
     log.warn('bind: duplicate id %s', binding.id);
     return;
+  }
+  if ((binding.kinds || binding.places) && !(binding.scenes && binding.scenes.length)) {
+    log.warn(
+      'bind: %s 声明了 kinds/places 但未声明 scenes，世界态镜像就绪前将无条件放行',
+      binding.id,
+    );
   }
   var iter = bindings.values();
   for (var step = iter.next(); !step.done; step = iter.next()) {

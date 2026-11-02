@@ -19,117 +19,20 @@
  * 因此既能被门控用，也能被 feat 自查用（如 autoDefense 在峡谷图跳过开盾）。
  * 合规：全部只读 getter，绝不写游戏任何字段（只读 + 发包红线）。
  */
-import { createLog } from './log.js';
-import { bus } from './bus.js';
-import { worldSignals } from './game-api.js';
+import { createLog } from '../log.js';
+import { bus } from '../bus.js';
+import { worldSignals } from '../game-api.js';
+import { KIND, KIND_GROUPS, PLACE, PHASE, GEN, kindInList, placeInList } from './contracts.js';
+
+// 世界态词表与纯谓词下沉至 core/world/contracts.js（阶段四 Tier0/1 隔离）：本文件 import 后经
+// worldState 接口面重导出（对外表面零变化）；有状态归一（读信号→归类→缓存→广播 world.change）仍留此处。
+export { KIND, KIND_GROUPS, PLACE, PHASE, GEN };
 
 /** @type {ReturnType<createLog>} 模块日志器（tag=WORLD） */
 const log = createLog('WORLD');
 
-/**
- * 场景枚举：玩家同一时刻只会有一种 Kind（单值标量）。
- * @type {Object<string, string>}
- */
-export const KIND = {
-  /** 本服常态：既不在任何跨服战场，也没有跨服形态位（日常图的默认档） */
-  homeland: 'homeland',
-  /** 异能秘境（独立世界体系：场景名沿用 NWorldMap，真相在 watchingType===PAB） */
-  pab: 'pab',
-  /** 无双峡谷：AVA / TM / 大师赛 / 传奇小队 四代实现共用一族战场 */
-  wushuang: 'wushuang',
-  /** 四国（跨战区天梯赛·四国形态，mapType=c4） */
-  kvk_c4: 'kvk_c4',
-  /** 八国（跨战区天梯赛·八国形态，mapType=kvk——名字反直觉，源码 isC8()→mapType=kvk） */
-  kvk_c8: 'kvk_c8',
-  /** 八国 S2（跨战区天梯赛·八国第二季，mapType=kvk_s2） */
-  kvk_c8s2: 'kvk_c8s2',
-  /** 征服者·异能（EniConqueror，mapType=cnc/cnc_high） */
-  cnc: 'cnc',
-  /** 征服者·CQ25（mapType=cnc_25/cnc_high_25） */
-  cnc25: 'cnc25',
-  /** 盟决战场（mapType=adp_war；写入点未在静态源码定位，靠 mapType 反查兜住） */
-  adp_war: 'adp_war',
-  /** 信号在场但落不进任何已知档（版本漂移警报位） */
-  unknown: 'unknown',
-};
-
-/**
- * Kind 分组名：门控可按组声明（kinds:['kvk'] 覆盖三国形态），避免同族枚举抄三遍。
- * @type {Object<string, string[]>}
- */
-export const KIND_GROUPS = {
-  kvk: [KIND.kvk_c4, KIND.kvk_c8, KIND.kvk_c8s2],
-  sphere: [KIND.cnc, KIND.cnc25],
-  cross: [
-    KIND.wushuang,
-    KIND.pab,
-    KIND.kvk_c4,
-    KIND.kvk_c8,
-    KIND.kvk_c8s2,
-    KIND.cnc,
-    KIND.cnc25,
-    KIND.adp_war,
-  ],
-};
-
-/**
- * 地图枚举（第二层）：同一种 Kind 下玩家可处的地图。Home/NWorldMap 属此层，不是场景。
- * @type {Object<string, string>}
- */
-export const PLACE = {
-  /** 大本营（自己的基地内景） */
-  base: 'base',
-  /** 大本营（别人家，访客） */
-  base_other: 'base_other',
-  /** 世界大地图（本服图与各类跨服战场图共用同一 cc 场景，靠 Kind 分） */
-  world: 'world',
-  /** 旧世界大地图（SceneName.WORLD='WorldMap'，已边缘化，留位） */
-  world_old: 'world_old',
-  /** 战斗演出场景（机甲/RTS） */
-  battle: 'battle',
-  /** 征服者球体场景 */
-  sphere: 'sphere',
-  /** 转场Loading */
-  transition: 'transition',
-  /** 登录/启动 */
-  boot: 'boot',
-  /** 其它已知场景（面板预览等） */
-  other: 'other',
-  /** 引擎未就绪，拿不到场景名 */
-  off: 'off',
-};
-
-/**
- * 阶段枚举：取自游戏 ServerState 语义（跨战区天梯赛的进程位），与 Kind 正交。
- * @type {Object<string, string>}
- */
-export const PHASE = {
-  normal: 'normal',
-  donate: 'donate',
-  ready: 'ready',
-  fight: 'fight',
-  reward: 'reward',
-  matching: 'matching',
-  unknown: 'unknown',
-};
-
-/**
- * 无双峡谷代际：不进 Kind（同族能力一致），但决定 marchType 换算与 UI 归属，供 feat 细分。
- * @type {Object<string, string>}
- */
-export const GEN = {
-  none: 'none',
-  /** AVA / NewCAB 代（marchType 110） */
-  ava: 'ava',
-  /** TeamMatch 代（marchType 150） */
-  tm: 'tm',
-  /** 大师赛/王者赛（marchType 170） */
-  master: 'master',
-  /** 传奇小队·小队赛/传奇赛（marchType 181） */
-  legend: 'legend',
-  /** 旧雷神峡谷 CAB（mapType=cab，CrossUtils.isCAB() 已恒 false） */
-  thunder: 'thunder',
-};
+// KIND / KIND_GROUPS / PLACE / PHASE / GEN 词表定义已迁至 core/world/contracts.js（见顶部 import+重导出）；
+// 下方归一映射表 PLACE_OF_SCENE / KIND_OF_MAPTYPE 直接复用导入的常量值。
 
 /** 场景名语义键 → Place（语义键由 game-api 给出，本表不含游戏符号） */
 const PLACE_OF_SCENE = {
@@ -419,14 +322,7 @@ export function crossMap() {
  */
 export function matchesKind(list, at) {
   if (!Array.isArray(list) || !list.length) return true;
-  var cur = at || kind();
-  for (var i = 0; i < list.length; i++) {
-    var want = list[i];
-    if (want === cur) return true;
-    var group = KIND_GROUPS[want];
-    if (group && group.indexOf(cur) !== -1) return true;
-  }
-  return false;
+  return kindInList(list, at || kind());
 }
 
 /**
@@ -440,7 +336,7 @@ export function matchesKind(list, at) {
  */
 export function matchesPlace(list, at) {
   if (!Array.isArray(list) || !list.length) return true;
-  return list.indexOf(at || place()) !== -1;
+  return placeInList(list, at || place());
 }
 
 /**

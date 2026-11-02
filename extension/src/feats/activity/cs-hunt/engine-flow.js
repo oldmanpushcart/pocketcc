@@ -47,7 +47,8 @@
  *   - 7537/7538/7551 全员发（陪跑 uidWinMap 也能置 true）。
  * 幂等：每轮每动作一次性（#done 记 `${round}:${kind}`）；treasureId 变更（新一跑）整体重置。
  */
-import { bits, csHunt, gameData } from '../../../core/game-api.js';
+import { bits, gameData } from '../../../core/game-api.js';
+import { csHunt } from './api.js';
 import { createLog } from '../../../core/log.js';
 import {
   CHAT_CHANNEL_CS_HUNT,

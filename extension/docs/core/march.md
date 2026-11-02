@@ -36,7 +36,7 @@ March = {
 
 ### ACL 边界
 
-本模块只含**线协议常量**（cmd 号 856/902/904/10019 与 `State` 语义数值）——这些是稳定的服务器契约常量、非游戏 bundle 符号名，故就近定义。**游戏 bundle 符号名**（`march.resolve` 等）仍收口在 [`game-api.js`](../../src/core/game-api.js) 的 SYM/防腐层。
+本模块只含**线协议常量**（cmd 号 856/902/904/10019 与 `State` 语义数值）——这些是稳定的服务器契约常量、非游戏 bundle 符号名，故就近定义。**游戏 bundle 符号名**（`march.resolve` 等）仍收口在 ACL 防腐层（引擎核 [`acl-engine.js`](../../src/core/acl-engine.js) 的 SYM + [`game-api.js`](../../src/core/game-api.js) 共享区段）。
 
 ## 2. 设计思路与取舍
 

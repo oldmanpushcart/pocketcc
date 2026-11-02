@@ -8,7 +8,7 @@ import { createLog } from './log.js';
 import { game } from './game.js';
 import { bus } from './bus.js';
 import { configs } from './registry.js';
-import { worldSignals } from './game-api.js';
+import { worldSignals } from './acl/world.js';
 
 /** @type {ReturnType<createLog>} 模块日志器（tag=NET，与网络层共用一个面） */
 const logNet = createLog('NET');

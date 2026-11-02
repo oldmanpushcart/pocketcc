@@ -9,7 +9,7 @@ import { mountUidList, mountSortList, mountItemList } from './widgets.js';
 
 /**
  * 世界态展示中文名（Kind 场景档 / Place 地图）：仅供面板头部状态胶囊展示，口径对齐
- * core/world-state.js 枚举注释与逆向报告 §2.2 定谳表。展示文案归 UI 层（world-state 只输出事实维度）。
+ * core/world/state.js 枚举注释与逆向报告 §2.2 定谳表。展示文案归 UI 层（world/state 只输出事实维度）。
  * 未知枚举回退原值（宁可显英文符号也不要空白，便于版本漂移肉眼可察）。
  */
 const KIND_ZH = {

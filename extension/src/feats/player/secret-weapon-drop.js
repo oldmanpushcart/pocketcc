@@ -7,7 +7,7 @@
  *
  * 落点必须动态、且空地不足会失败（airdrop_002「缺少足够的3*3空地，无法使用空投支援道具」、airdrop_001「受空地数量不足影响」）：
  *   空投建筑占 3×3 格，param[x,y] 是其锚点，且每次落点随当前主城占用情况变化——**绝不能硬编码固定坐标**。
- *   落点由 gameData.homeAirDropSpot(9001001)（game-api ACL）提供，**场景无关**：不依赖游戏 HomeMap 组件（它离开 Home 即被
+ *   落点由 airDropDomain.homeAirDropSpot(9001001)（本目录 api.js，领域 ACL 下沉）提供，**场景无关**：不依赖游戏 HomeMap 组件（它离开 Home 即被
  *   cpnDestroy 置 null），而是用三份常驻/静态数据复刻 findValidAirDropBoxArea 的判定——
  *     占用：DataCenter.UserData.Buildings（HomeMap.InitBuildings 的同一数据源）footprint，等距格由游戏自身 getMapPosList 生成；
  *     合法性：HomeMapUtils.checkHomeBoxLegal（静态表 HomeMapTileBlockTypeTable）；空投尺寸：BUILDING 表 9001001 行。
@@ -25,7 +25,7 @@
  *     建筑实例 id（seq 7：{buildingId:9001001, x:4, y:66, id:"4874128440122531841"}）；收取后 seq 21 push 10107 建筑消失。
  *     → 本 feat 必须订阅 ctx.on.push(10101) 捕获它，作为待收 targetId。
  *     → 开机播种（默认逻辑）：开启前地面上已存的空投不会重推 10101，故 run() 直接从 UserData.Buildings（BuildingId==9001001）
- *       扫描其实例 id（gameData.airDropInstances）灌入待收队，首个 cycleRun 的 collectPending 即领取，collected 按 id 去重。
+ *       扫描其实例 id（airDropDomain.airDropInstances）灌入待收队，首个 cycleRun 的 collectPending 即领取，collected 按 id 去重。
  *   发 4170 前先查 CD_SKILL_INFO(4169) 拿服务器权威次数/冷却：可用次数 available = min(cnt + 自 start 起按 cd 分钟累计的整数枚, max)（复刻
  *     PlayerSkillController.getSkillUseEnableNum）。available>0 才发 4170；available<=0（冷却中/无次数）**直接睡到下一枚恢复点、不发**，
  *     从源头杜绝服务器回 code=3（「技能未就绪」拒绝）；不再靠盲发试错。
@@ -49,6 +49,7 @@ import { CODE_NOT_SENT, sleep } from '../../core/util.js';
 import { createLog } from '../../core/log.js';
 import { bus } from '../../core/bus.js';
 import { gameData } from '../../core/game-api.js';
+import { airDropDomain } from './secret-weapon-drop/api.js';
 import { item } from '../../core/item.js';
 import { reactor } from '../../core/reactor.js';
 import { createCycle } from '../../core/cycle.js';
@@ -179,7 +180,7 @@ async function queryCharges() {
       }
     }
   }
-  var st = gameData.cdSkillAvailability(SKILL_ID_AIRDROP, skill);
+  var st = airDropDomain.cdSkillAvailability(SKILL_ID_AIRDROP, skill);
   if (!st) return { ok: false, code: 0, drift: true, available: -1, nextMs: 0, cnt: null, max: 0 }; // cd_skill 表不可用（符号漂移）
   return {
     ok: true,
@@ -197,7 +198,7 @@ async function queryCharges() {
  * @returns {Promise<{ok:boolean, noSpace?:boolean, code:number, cnt:number, recoverMs:number}>}
  */
 async function useCharge() {
-  var spot = gameData.homeAirDropSpot(BUILDING_ID_AIRDROP);
+  var spot = airDropDomain.homeAirDropSpot(BUILDING_ID_AIRDROP);
   if (!spot) return { ok: false, noSpace: true, code: 0, cnt: 0, recoverMs: 0 };
   lastSpot = spot.x + ',' + spot.y;
   if (net.isSending(CMD_USE_SKILL)) return { ok: false, code: CODE_NOT_SENT, cnt: 0, recoverMs: 0 };
@@ -429,7 +430,7 @@ function run(ctx) {
   // 开机播种（默认逻辑，无需开关）：开启前地面上已存在的空投不会重推 10101，故直接从 UserData.Buildings 扫描入待收队，
   // 随后首个 cycleRun 的 collectPending 逐个发 4168 领取（collected 内存表跨 run 保留，按实例 id 天然去重）。
   try {
-    var existing = gameData.airDropInstances(BUILDING_ID_AIRDROP);
+    var existing = airDropDomain.airDropInstances(BUILDING_ID_AIRDROP);
     for (var i = 0; i < existing.length; i++) {
       var iid = existing[i];
       if (!iid || collected[iid]) continue;

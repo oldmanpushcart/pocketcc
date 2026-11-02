@@ -15,7 +15,7 @@
  *   收割机（buildingId 1801）可收量 = ProCount + UserData.CacheResource（矿折进缓存池的那笔），
  *   游戏 gotoCollectMachine 的免费分支门槛 = 可收量 > PLAYER_LEVEL.gold_mine_reaper_store_max × 0.2
  *   或 距上次收取 > 14400s；未达门槛游戏弹 CollectionMachine 走钻石「立即收取」，本功能一律不碰。
- *   判据与快照全在 ACL（gameData.coinState）合成，feat 只消费结果、不感知游戏符号；
+ *   判据与快照全在本目录 api.js（coinDomain，领域 ACL 下沉）合成，feat 只消费结果、不感知游戏符号；
  *   收取动作只发 {id}，绝不调用游戏的建筑改写接口（只读+发包红线）。
  *
  * 直发不回写 → 本地镜像：脚本发 102 不经游戏 GetProductCallBack/UpdateData，收割机侧权威态（ProCount/产品时刻）
@@ -36,6 +36,7 @@
 import { CODE_NOT_SENT } from '../../core/util.js';
 import { createLog } from '../../core/log.js';
 import { gameData } from '../../core/game-api.js';
+import { coinDomain } from './auto-coin-collect/api.js';
 import { reactor } from '../../core/reactor.js';
 import { createCycle } from '../../core/cycle.js';
 
@@ -89,10 +90,10 @@ function aliveFn() {
 // ── 状态判定 ──────────────────────────────────────────────────────────
 /**
  * 读一份金币产出态快照（注入本端镜像，让刚收过、游戏本地态还没追平的建筑不被误判为仍可收）。
- * @returns {object} gameData.coinState 形态
+ * @returns {object} coinDomain.read 形态
  */
 function readState() {
-  return gameData.coinState({ mirrors: mirrors });
+  return coinDomain.read({ mirrors: mirrors });
 }
 
 /**

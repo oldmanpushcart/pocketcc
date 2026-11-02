@@ -430,7 +430,7 @@ net.send(RequestId.CROSS_TREASURE_TEAM_MARCH=7519, {
 
 ## 10. P0+P1 落地实况（编码回填）
 
-**代码位置**：`feats/activity/cs-hunt/{constants.js, engine-team.js, index.js}`；ACL 新增 `core/game-api.js` 的 `csHunt` 能力组（`present/openFlag/canHunt/readState/readTeam`）与读侧归一 `bits.int64Str`（协议层 Long 对象 → 十进制字符串），符号 `SYM.modules.csHuntCtrl='CSHuntController'` + `CAPS.csHuntController`（只验类/静态 `getInstance`，实例由 subpack2 Real 接管后才可取）。面板挂在活动设置组（`menu.js` → `csHunt`）。
+**代码位置**：`feats/activity/cs-hunt/{constants.js, engine-team.js, index.js}`；ACL `csHunt` 能力组（`present/openFlag/canHunt/readState/readTeam`）——原住 `core/game-api.js`，解耦试点已迁至 `feats/activity/cs-hunt/api.js`（符号 `SYM_LOCAL.csHuntCtrl='CSHuntController'` 本地收纳，`CAPS.csHuntController` 经 `registerCaps` 自注册；只验类/静态 `getInstance`，实例由 subpack2 Real 接管后才可取）；读侧归一 `bits.int64Str`（协议层 Long 对象 → 十进制字符串）经引擎 `sharedValue('bits')` 现取。面板挂在活动设置组（`menu.js` → `csHunt`）。
 
 **已落地（P0 只读 + P1 组队闭环）**：
 

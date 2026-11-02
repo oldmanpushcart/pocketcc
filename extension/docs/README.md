@@ -16,7 +16,7 @@
 | [core/item.md](core/item.md) | `src/core/item.js` | 物品查询/标识薄工具层（持有量/中文名/奖励解析），收口 4 个 feat |
 | [core/map.md](core/map.md) | `src/core/map.js` | 世界地图常量真相+三系坐标转换+单窗 901 只读查询底座，收口 map-meta/coord 与 3 处 901 探针 |
 | [core/cycle.md](core/cycle.md) | `src/core/cycle.js` | A 原语：电平调和循环驱动器（单飞/合并/绝不停摆），已收口 P0 四 feat |
-| [core/world-state.md](core/world-state.md) | `src/core/world-state.js` | 世界态归一层（Kind/Place/Phase/Gen），为 `world` 门控与跨服图降级提供单一真相 |
+| [core/world-state.md](core/world-state.md) | `src/core/world/state.js` | 世界态归一层（Kind/Place/Phase/Gen），为 `world` 门控与跨服图降级提供单一真相 |
 | [core/reactor.md](core/reactor.md) | `src/core/reactor.js` | 功能调度中枢：spec 说明书驱动的生命周期装配、门控重算、`ctx.on.*` 退订托管 |
 | [core/net.md](core/net.md) | `src/core/net.js` | 网络底座：双通道 hook + 三 bus 命名空间 + promise 发包 + req↔resp reqTime 配对 |
 | [core/registry.md](core/registry.md) | `src/core/registry.js` | 特征存储与运行时编排：descriptor 聚合 + 配置版本化（version/migrate/strictConfig） |

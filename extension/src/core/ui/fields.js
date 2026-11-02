@@ -835,6 +835,218 @@ export function refreshFieldBox(box) {
   return true;
 }
 
+// ───────────── 内联型控件族（type → 行 HTML 生成器，无外层 fieldBox 容器） ─────────────
+// 阶段六注册表化：此前这些分支逐字硬编在 buildFieldsHTML 的 fieldHTML if 阶梯里，
+// 新增一类内联字段就要改中央分发。现抽成同名 *render* 模块级函数并汇入 FIELD_INLINE 注册表，
+// fieldHTML 只做「先查 FIELD_BOXES（容器型）→ 再查 FIELD_INLINE（内联型）→ 未命中落数字兜底」。
+// 各函数体严格继承拆分前对应分支的输出与注释口径，签名统一 (fd, c, fid)（c=configs[fid]），零行为变化。
+
+/** 开关行（type:'checkbox'）：label 接一枚 .pc-fchk，改动即存档由 wire 事件委托接 */
+function renderCheckbox(fd, c, fid) {
+  return (
+    `<label class="pc-row"><span>${fd.label}</span>` +
+    `<input type="checkbox" class="pc-fchk" data-id="${fid}" data-key="${fd.key}" ${c[fd.key] ? 'checked' : ''}></label>`
+  );
+}
+
+/** 纯说明横幅（type:'note'）：无控件、不写配置、可无 key，靠 fd.section 出分组标题作分隔，正文渲染一行 muted 说明 */
+function renderNote(fd) {
+  return `<div class="pc-fnote">${fd.text ? escAttr(fd.text) : ''}</div>`;
+}
+
+/** 只读惰性求值文本（type:'text'）：值来自 fd.get(cfg)，随 refreshTexts 重算；三种排版变体（inline 双列 / 多行整列 / 单行） */
+function renderText(fd, c, fid) {
+  const v = fd.get ? String(fd.get(c)) : '';
+  if (fd.multiline && fd.inline) {
+    // 同行多行变体（如卡车「今日刷新 / 今日攻击」）：标签与值同一行、值靠右 pre-line 换行，顶对齐使首行与标签齐平
+    return (
+      `<div class="pc-row pc-rowtop"><span>${fd.label}</span>` +
+      `<span class="pc-fval pc-fvalhl" data-fid="${fid}" data-fkey="${fd.key}">${v}</span></div>`
+    );
+  }
+  if (fd.multiline) {
+    // 多行只读值（如「今日进度」一长串统计）：标签在上、值整行，pre-line 保留 \n 换行不截断
+    return (
+      `<div class="pc-row pc-rowcol"><span>${fd.label}</span>` +
+      `<span class="pc-fval pc-fvalml" data-fid="${fid}" data-fkey="${fd.key}">${v}</span></div>`
+    );
+  }
+  return (
+    `<label class="pc-row"><span>${fd.label}</span>` +
+    `<span class="pc-fval" data-fid="${fid}" data-fkey="${fd.key}">${v}</span></label>`
+  );
+}
+
+/** 单下拉（type:'select'）：fd.options 支持数组与函数（开面板时现形现扫配置表），选项现值 = String(c[fd.key]) */
+function renderSelect(fd, c, fid) {
+  const cur = String(c[fd.key]);
+  // 与 multiOptsInnerHTML 同源口径：fd.options 既可以是数组也可以是函数（开面板时现形现扫配置表）。
+  //   不先判类型直接 .map 会在游戏表未就绪时抛「(fd.options || []).map is not a function」。
+  const opts = (typeof fd.options === 'function' ? fd.options(c) : fd.options) || [];
+  const html = opts
+    .map(
+      (o) =>
+        `<option value="${o.value}"${String(o.value) === cur ? ' selected' : ''}>${o.label}</option>`,
+    )
+    .join('');
+  return (
+    `<label class="pc-row"><span>${fd.label}</span>` +
+    `<select class="pc-fsel" data-id="${fid}" data-key="${fd.key}">${html}</select></label>`
+  );
+}
+
+/** 行内多下拉（type:'tripick'，如异能兽培育「派出的兽 [属相][品种][品质]」）：一个 label 接 N 个 select，每 part 自己一个 data-key */
+function renderTriPick(fd, c, fid) {
+  // 行内多下拉（如异能兽培育「派出的兽 [属相][品种][品质]」）：一个 label 接 N 个 select，
+  //   每个 part 自己一个 data-key（= 存档键，与 field.key 不同）；渲染走本分支，change 与 syncControls
+  //   虽复用 select.pc-fsel 的同一条 DOM 陆径，但 wire.js 侧查 descriptor 须按 part.key 下探 parts。
+  //   选项支持数组与函数两种形式（同 select 口径，函数在装配时求值一次）。
+  const cells = (fd.parts || [])
+    .map((p) => {
+      const cur = String(c[p.key]);
+      const opts = (typeof p.options === 'function' ? p.options(c) : p.options) || [];
+      const inner = opts
+        .map(
+          (o) =>
+            `<option value="${o.value}"${String(o.value) === cur ? ' selected' : ''}>${o.label}</option>`,
+        )
+        .join('');
+      const title = p.title ? ` title="${escAttr(p.title)}"` : '';
+      return `<select class="pc-fsel pc-ftri" data-id="${fid}" data-key="${escAttr(p.key)}"${title}>${inner}</select>`;
+    })
+    .join('');
+  return (
+    `<label class="pc-row"><span class="pc-triolab">${fd.label}</span>` +
+    `<span class="pc-trio">${cells}</span></label>`
+  );
+}
+
+/** 一行多控件（type:'ctrlrow'，如惧星集结「等级▾ | 方式▾ | 预设队伍▾ | 今日已打」）：一个标签接 N 个控件；fd.table=true 走表格式排版 */
+function renderCtrlRow(fd, c, fid) {
+  // 一行多控件（如惧星集结「等级▾ | 方式▾ | 预设队伍▾ | 今日已打」）：一个标签接 N 个控件，
+  //   每个 cell 自己一个 data-key（= 存档键，与 field.key 不同，同 tripick.parts 口径）。
+  //   cell.type 只区分 'text'（只读值 .pc-fval，随 refreshTexts 重算）与否（下拉 .pc-fsel）；
+  //   下拉选项支持数组与函数（同 select 口径），只读值取 cell.get(cfg)。
+  // fd.table=true 时走表格式排版（与自动打野怪物清单同外观：表头行说明各列 + 表头/表身分隔线），
+  //   控件类改用 .pc-hlmode/.pc-hlstat 与怪物清单对齐，但 data-key/data-fkey 不变→ wire/refreshTexts 同一条 ctrlrow.cells 通路。
+  const table = !!fd.table;
+  const cells = (fd.cells || [])
+    .map((p) => {
+      const title = p.title ? ` title="${escAttr(p.title)}"` : '';
+      if (p.type === 'text') {
+        const v = p.get ? String(p.get(c) || '') : '';
+        const cls = table ? 'pc-fval pc-hlstat' : 'pc-fval pc-ftri';
+        return `<span class="${cls}"${title} data-fid="${fid}" data-fkey="${escAttr(p.key)}">${v}</span>`;
+      }
+      const cur = String(c[p.key]);
+      const opts = (typeof p.options === 'function' ? p.options(c) : p.options) || [];
+      const inner = opts
+        .map(
+          (o) =>
+            `<option value="${o.value}"${String(o.value) === cur ? ' selected' : ''}>${o.label}</option>`,
+        )
+        .join('');
+      const cls = table ? 'pc-fsel pc-hlmode' : 'pc-fsel pc-ftri';
+      return `<select class="${cls}" data-id="${fid}" data-key="${escAttr(p.key)}"${title}>${inner}</select>`;
+    })
+    .join('');
+  if (table) {
+    const n = (fd.cells || []).length;
+    const cols = `style="grid-template-columns:repeat(${n},minmax(0,1fr))"`;
+    const head =
+      `<div class="pc-hlrow pc-hlhead" ${cols}>` +
+      (fd.cells || [])
+        .map((p) => `<span class="pc-cthd">${escAttr(String(p.label || ''))}</span>`)
+        .join('') +
+      `</div>`;
+    return (
+      `<div class="pc-hl pc-ct" data-id="${fid}" data-fkey="${escAttr(fd.key)}">` +
+      (fd.label
+        ? `<div class="pc-hltop"><span class="pc-rngtitle">${escAttr(fd.label)}</span></div>`
+        : '') +
+      head +
+      `<div class="pc-hlrow" ${cols}>${cells}</div>` +
+      `</div>`
+    );
+  }
+  // fd.label 缺位时不出标签格（整行宽度给控件），行名交 section 小标题承担
+  return (
+    `<label class="pc-row">` +
+    (fd.label ? `<span class="pc-triolab">${fd.label}</span>` : '') +
+    `<span class="pc-trio">${cells}</span></label>`
+  );
+}
+
+/** 可编辑文本（type:'string'，如城市技能目标 UID）：按字符串存档，change 时 trim 落盘 + 热更 */
+function renderString(fd, c, fid) {
+  return (
+    `<label class="pc-row"><span>${fd.label}</span>` +
+    `<input type="text" class="pc-fstr" data-id="${fid}" data-key="${fd.key}" placeholder="${escAttr(fd.placeholder)}" value="${escAttr(c[fd.key])}"></label>`
+  );
+}
+
+/** UID 复合行（type:'uid'，城市技能）：显示态「✎ 玩家名」点击转输入态，失焦用 PLAYER_INFO(630) 反查名字 */
+function renderUid(fd, c, fid) {
+  // UID 复合行（城市技能）：显示态「✎ 玩家名」点击转输入态，失焦用 PLAYER_INFO(630) 反查名字。
+  // 名字随 UID 一起持久化(fd.nameKey)，开面板直接显缓存名、零查询；仅 UID 变了才查。失败留框+红字不提交。
+  const uidV = String(c[fd.key] || '');
+  const nmV = String(c[fd.nameKey] || '');
+  return (
+    `<div class="pc-uidwrap" data-id="${fid}" data-ukey="${fd.key}" data-nkey="${fd.nameKey}" data-ekey="${fd.enableKey}">` +
+    `<div class="pc-row"><span>${fd.label}</span>` +
+    `<span class="pc-udisp" title="点击编辑 UID"><span class="pc-uedit">✎</span><span class="pc-uname">${escAttr(nmV || uidV)}</span></span>` +
+    `<input type="text" class="pc-uinput" inputmode="numeric" hidden placeholder="${escAttr(fd.placeholder)}">` +
+    `<input type="checkbox" class="pc-fchk" data-id="${fid}" data-key="${fd.enableKey}" ${c[fd.enableKey] ? 'checked' : ''}>` +
+    `</div><div class="pc-uhint" hidden></div></div>`
+  );
+}
+
+/** 动作按钮（type:'button'，如卡车拦截「刷新我方战力」）：整行一个 .pc-btn，点击回调 fd.onClick(cfg)，不写配置不触发折叠 */
+function renderButton(fd, c, fid) {
+  return `<button class="pc-btn pc-fbtn" type="button" data-id="${fid}" data-bkey="${fd.key}">${fd.label}</button>`;
+}
+
+/**
+ * 数字字段兜底渲染器（type 未命中 FIELD_BOXES / FIELD_INLINE 任一注册表时走此）：
+ * fd.zeroUnlimited 时把「0=无限」做成与自动打野攻打数量同款的交互——值为 0 渲染成空输入 + placeholder「不限」，
+ * 靠 wire.js 数字委托在改值时对称回写（留空↔0）。此函数同时是「未登记 type」的默认出口，保持拆分前 if 阶梯末尾兜底语义。
+ */
+function renderNumber(fd, c, fid) {
+  // 数字字段（默认兜底分支）：fd.zeroUnlimited 时把「0=无限」做成与自动打野攻打数量同款的交互——
+  // 值为 0 渲染成空输入 + placeholder「不限」，靠 wire.js 数字委托在改值时对称回写（留空↔0）。
+  if (fd.zeroUnlimited) {
+    const raw = c[fd.key];
+    const isZero = raw == null || Number(raw) === 0;
+    return (
+      `<label class="pc-row"><span>${fd.label}</span>` +
+      `<input type="number" data-id="${fid}" data-key="${fd.key}" min="${fd.min}" step="${fd.step}" placeholder="${escAttr(fd.placeholder || PLACEHOLDER_UNLIMITED)}" value="${isZero ? '' : raw}" title="留空 = 不限"></label>`
+    );
+  }
+  return (
+    `<label class="pc-row"><span>${fd.label}</span>` +
+    `<input type="number" data-id="${fid}" data-key="${fd.key}" min="${fd.min}" step="${fd.step}" placeholder="${escAttr(fd.placeholder || '')}" value="${c[fd.key]}"></label>`
+  );
+}
+
+/**
+ * 内联型字段的渲染表：type → render(fd, c, fid)。与 FIELD_BOXES（容器型，带 fieldBox 外壳）互补，
+ * 二者共同构成 buildFieldsHTML 的完整分发面。新增一类内联字段 = 加一个 render* + 本表加一行，不再改中央 if 阶梯。
+ * 未列入本表的 fd.type 一律落 renderNumber 兜底（数字输入即缺省控件），与拆分前 if 阶梯末尾兜底严格一致。
+ * @type {Record<string, function>}
+ */
+const FIELD_INLINE = {
+  checkbox: renderCheckbox,
+  note: renderNote,
+  text: renderText,
+  select: renderSelect,
+  tripick: renderTriPick,
+  ctrlrow: renderCtrlRow,
+  string: renderString,
+  uid: renderUid,
+  button: renderButton,
+  rallygrid: (fd, c, fid) => rallyGridInnerHTML(fd, c, fid),
+};
+
 /**
  * descriptor fields -> 行 HTML（checkbox / text 只读惰性求值 / 数字输入 / 下拉 / 一行多控件 / 区间规则）。
  * fd.section 变化时插入分组小标题（如联盟集结按战锤/惧星/难民营分段），容器带 data-id=功能 id。
@@ -845,178 +1057,14 @@ export function refreshFieldBox(box) {
  */
 export function buildFieldsHTML(fid, f) {
   const c = configs[fid];
-  // 单字段 → HTML（不含分组标题）；分组标题与可折叠包裹由下方循环统一处理
+  // 单字段 → HTML（不含分组标题）；分组标题与可折叠包裹由下方循环统一处理。
+  // 阶段六注册表化：分发不再硬编 if 阶梯，而是「容器型 FIELD_BOXES → 内联型 FIELD_INLINE → 数字兜底 renderNumber」三级查表。
   const fieldHTML = (fd) => {
     const box = FIELD_BOXES[fd.type];
     if (box) return fieldBox(box.cls, fid, fd.key, box.render(c[fd.key], fd, c, fid));
-    if (fd.type === 'checkbox') {
-      return (
-        `<label class="pc-row"><span>${fd.label}</span>` +
-        `<input type="checkbox" class="pc-fchk" data-id="${fid}" data-key="${fd.key}" ${c[fd.key] ? 'checked' : ''}></label>`
-      );
-    }
-    if (fd.type === 'note') {
-      // 纯说明横幅（无控件、不写配置、可无 key）：靠 fd.section 出分组标题作分隔，正文渲染一行 muted 说明，用于切分相邻字段块
-      return `<div class="pc-fnote">${fd.text ? escAttr(fd.text) : ''}</div>`;
-    }
-    if (fd.type === 'text') {
-      const v = fd.get ? String(fd.get(c)) : '';
-      if (fd.multiline && fd.inline) {
-        // 同行多行变体（如卡车「今日刷新 / 今日攻击」）：标签与值同一行、值靠右 pre-line 换行，顶对齐使首行与标签齐平
-        return (
-          `<div class="pc-row pc-rowtop"><span>${fd.label}</span>` +
-          `<span class="pc-fval pc-fvalhl" data-fid="${fid}" data-fkey="${fd.key}">${v}</span></div>`
-        );
-      }
-      if (fd.multiline) {
-        // 多行只读值（如「今日进度」一长串统计）：标签在上、值整行，pre-line 保留 \n 换行不截断
-        return (
-          `<div class="pc-row pc-rowcol"><span>${fd.label}</span>` +
-          `<span class="pc-fval pc-fvalml" data-fid="${fid}" data-fkey="${fd.key}">${v}</span></div>`
-        );
-      }
-      return (
-        `<label class="pc-row"><span>${fd.label}</span>` +
-        `<span class="pc-fval" data-fid="${fid}" data-fkey="${fd.key}">${v}</span></label>`
-      );
-    }
-    if (fd.type === 'select') {
-      const cur = String(c[fd.key]);
-      // 与 multiOptsInnerHTML 同源口径：fd.options 既可以是数组也可以是函数（开面板时现形现扫配置表）。
-      //   不先判类型直接 .map 会在游戏表未就绪时抛「(fd.options || []).map is not a function」。
-      const opts = (typeof fd.options === 'function' ? fd.options(c) : fd.options) || [];
-      const html = opts
-        .map(
-          (o) =>
-            `<option value="${o.value}"${String(o.value) === cur ? ' selected' : ''}>${o.label}</option>`,
-        )
-        .join('');
-      return (
-        `<label class="pc-row"><span>${fd.label}</span>` +
-        `<select class="pc-fsel" data-id="${fid}" data-key="${fd.key}">${html}</select></label>`
-      );
-    }
-    if (fd.type === 'tripick') {
-      // 行内多下拉（如异能兽培育「派出的兽 [属相][品种][品质]」）：一个 label 接 N 个 select，
-      //   每个 part 自己一个 data-key（= 存档键，与 field.key 不同）；渲染走本分支，change 与 syncControls
-      //   虽复用 select.pc-fsel 的同一条 DOM 陆径，但 wire.js 侧查 descriptor 须按 part.key 下探 parts。
-      //   选项支持数组与函数两种形式（同 select 口径，函数在装配时求值一次）。
-      const cells = (fd.parts || [])
-        .map((p) => {
-          const cur = String(c[p.key]);
-          const opts = (typeof p.options === 'function' ? p.options(c) : p.options) || [];
-          const inner = opts
-            .map(
-              (o) =>
-                `<option value="${o.value}"${String(o.value) === cur ? ' selected' : ''}>${o.label}</option>`,
-            )
-            .join('');
-          const title = p.title ? ` title="${escAttr(p.title)}"` : '';
-          return `<select class="pc-fsel pc-ftri" data-id="${fid}" data-key="${escAttr(p.key)}"${title}>${inner}</select>`;
-        })
-        .join('');
-      return (
-        `<label class="pc-row"><span class="pc-triolab">${fd.label}</span>` +
-        `<span class="pc-trio">${cells}</span></label>`
-      );
-    }
-    if (fd.type === 'ctrlrow') {
-      // 一行多控件（如惧星集结「等级▾ | 方式▾ | 预设队伍▾ | 今日已打」）：一个标签接 N 个控件，
-      //   每个 cell 自己一个 data-key（= 存档键，与 field.key 不同，同 tripick.parts 口径）。
-      //   cell.type 只区分 'text'（只读值 .pc-fval，随 refreshTexts 重算）与否（下拉 .pc-fsel）；
-      //   下拉选项支持数组与函数（同 select 口径），只读值取 cell.get(cfg)。
-      // fd.table=true 时走表格式排版（与自动打野怪物清单同外观：表头行说明各列 + 表头/表身分隔线），
-      //   控件类改用 .pc-hlmode/.pc-hlstat 与怪物清单对齐，但 data-key/data-fkey 不变→ wire/refreshTexts 同一条 ctrlrow.cells 通路。
-      const table = !!fd.table;
-      const cells = (fd.cells || [])
-        .map((p) => {
-          const title = p.title ? ` title="${escAttr(p.title)}"` : '';
-          if (p.type === 'text') {
-            const v = p.get ? String(p.get(c) || '') : '';
-            const cls = table ? 'pc-fval pc-hlstat' : 'pc-fval pc-ftri';
-            return `<span class="${cls}"${title} data-fid="${fid}" data-fkey="${escAttr(p.key)}">${v}</span>`;
-          }
-          const cur = String(c[p.key]);
-          const opts = (typeof p.options === 'function' ? p.options(c) : p.options) || [];
-          const inner = opts
-            .map(
-              (o) =>
-                `<option value="${o.value}"${String(o.value) === cur ? ' selected' : ''}>${o.label}</option>`,
-            )
-            .join('');
-          const cls = table ? 'pc-fsel pc-hlmode' : 'pc-fsel pc-ftri';
-          return `<select class="${cls}" data-id="${fid}" data-key="${escAttr(p.key)}"${title}>${inner}</select>`;
-        })
-        .join('');
-      if (table) {
-        const n = (fd.cells || []).length;
-        const cols = `style="grid-template-columns:repeat(${n},minmax(0,1fr))"`;
-        const head =
-          `<div class="pc-hlrow pc-hlhead" ${cols}>` +
-          (fd.cells || [])
-            .map((p) => `<span class="pc-cthd">${escAttr(String(p.label || ''))}</span>`)
-            .join('') +
-          `</div>`;
-        return (
-          `<div class="pc-hl pc-ct" data-id="${fid}" data-fkey="${escAttr(fd.key)}">` +
-          (fd.label
-            ? `<div class="pc-hltop"><span class="pc-rngtitle">${escAttr(fd.label)}</span></div>`
-            : '') +
-          head +
-          `<div class="pc-hlrow" ${cols}>${cells}</div>` +
-          `</div>`
-        );
-      }
-      // fd.label 缺位时不出标签格（整行宽度给控件），行名交 section 小标题承担
-      return (
-        `<label class="pc-row">` +
-        (fd.label ? `<span class="pc-triolab">${fd.label}</span>` : '') +
-        `<span class="pc-trio">${cells}</span></label>`
-      );
-    }
-    if (fd.type === 'string') {
-      // 可编辑文本字段（如城市技能目标 UID）：按字符串存档，change 时 trim 落盘 + 热更
-      return (
-        `<label class="pc-row"><span>${fd.label}</span>` +
-        `<input type="text" class="pc-fstr" data-id="${fid}" data-key="${fd.key}" placeholder="${escAttr(fd.placeholder)}" value="${escAttr(c[fd.key])}"></label>`
-      );
-    }
-    if (fd.type === 'uid') {
-      // UID 复合行（城市技能）：显示态「✎ 玩家名」点击转输入态，失焦用 PLAYER_INFO(630) 反查名字。
-      // 名字随 UID 一起持久化(fd.nameKey)，开面板直接显缓存名、零查询；仅 UID 变了才查。失败留框+红字不提交。
-      const uidV = String(c[fd.key] || '');
-      const nmV = String(c[fd.nameKey] || '');
-      return (
-        `<div class="pc-uidwrap" data-id="${fid}" data-ukey="${fd.key}" data-nkey="${fd.nameKey}" data-ekey="${fd.enableKey}">` +
-        `<div class="pc-row"><span>${fd.label}</span>` +
-        `<span class="pc-udisp" title="点击编辑 UID"><span class="pc-uedit">✎</span><span class="pc-uname">${escAttr(nmV || uidV)}</span></span>` +
-        `<input type="text" class="pc-uinput" inputmode="numeric" hidden placeholder="${escAttr(fd.placeholder)}">` +
-        `<input type="checkbox" class="pc-fchk" data-id="${fid}" data-key="${fd.enableKey}" ${c[fd.enableKey] ? 'checked' : ''}>` +
-        `</div><div class="pc-uhint" hidden></div></div>`
-      );
-    }
-    if (fd.type === 'button') {
-      // 动作按钮（如卡车拦截「刷新我方战力」）：整行一个 .pc-btn，点击回调 fd.onClick(cfg)，不写配置不触发折叠
-      return `<button class="pc-btn pc-fbtn" type="button" data-id="${fid}" data-bkey="${fd.key}">${fd.label}</button>`;
-    }
-    if (fd.type === 'rallygrid') {
-      // 联盟集结目标紧凑表：一行五列（目标名/延迟/上限/今日/开关），列头行共享同一 5 列栅格保证对齐
-      return rallyGridInnerHTML(fd, c, fid);
-    }
-    // 数字字段（默认兜底分支）：fd.zeroUnlimited 时把「0=无限」做成与自动打野攻打数量同款的交互——
-    // 值为 0 渲染成空输入 + placeholder「不限」，靠 wire.js 数字委托在改值时对称回写（留空↔0）。
-    if (fd.zeroUnlimited) {
-      const raw = c[fd.key];
-      const isZero = raw == null || Number(raw) === 0;
-      return (
-        `<label class="pc-row"><span>${fd.label}</span>` +
-        `<input type="number" data-id="${fid}" data-key="${fd.key}" min="${fd.min}" step="${fd.step}" placeholder="${escAttr(fd.placeholder || PLACEHOLDER_UNLIMITED)}" value="${isZero ? '' : raw}" title="留空 = 不限"></label>`
-      );
-    }
-    return (
-      `<label class="pc-row"><span>${fd.label}</span>` +
-      `<input type="number" data-id="${fid}" data-key="${fd.key}" min="${fd.min}" step="${fd.step}" placeholder="${escAttr(fd.placeholder || '')}" value="${c[fd.key]}"></label>`
-    );
+    const inline = FIELD_INLINE[fd.type];
+    if (inline) return inline(fd, c, fid);
+    return renderNumber(fd, c, fid);
   };
   let lastSection;
   let bodyOpen = false; // 当前是否有一个可折叠子分组的 body 处于打开（待闭合）状态

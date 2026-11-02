@@ -18,7 +18,7 @@ import {
   buildWorldStatus,
 } from './panel.js';
 import { wirePanel } from './wire.js';
-import { worldState } from '../world-state.js';
+import { worldState } from '../world/state.js';
 
 /**
  * 挂载浮动图标与面板（Shadow DOM 隔离）。幂等：已挂载则直接返回。

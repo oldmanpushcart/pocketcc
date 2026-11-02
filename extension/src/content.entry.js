@@ -60,7 +60,7 @@ import { debug as gameApi, worldSignals } from './core/game-api.js';
 import { storage } from './core/storage.js';
 import { reactor } from './core/reactor.js';
 import { defense } from './core/defense.js';
-import { worldState } from './core/world-state.js';
+import { worldState } from './core/world/state.js';
 import { installDevtools } from './core/devtools.js';
 
 // 调试面：逆向时在控制台直接戳——pocketcc.game.get('DataCenter')、pocketcc.bus.emit('net.10912', fakeEv) 模拟推送、

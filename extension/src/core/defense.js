@@ -20,7 +20,7 @@
 import { createLog } from './log.js';
 import { item } from './item.js';
 import { gameData, nav, worldMap } from './game-api.js';
-import { worldState } from './world-state.js';
+import { worldState } from './world/state.js';
 import { bus } from './bus.js';
 import { SERVER, pickSub, fetchWindow } from './map.js';
 import { sleep } from './util.js';
