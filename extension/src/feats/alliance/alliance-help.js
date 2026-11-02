@@ -17,7 +17,7 @@
  *
  * 只读 + 发包：本脚本不调用游戏任何 Update、Delete 等改写本地数据的内部方法——
  *   发包后的数据变更全部交给游戏自身的 push 通知维护，下一轮轮询读到的即是新状态。
- * 协议出处与设计台账见同目录《联盟帮助资料整理.md》。
+ * 协议出处与设计台账见本文件行内各源码锚点（早期整理的《联盟帮助资料整理》笔记未入库）。
  *
  * 生命周期由 reactor 托管：install/configure/run 三个钩子。无推送，run 直接点火自重排定时器；
  *   定时器是功能内部的生产逻辑，pause 后 alive()=false，挂着的定时器到点空转一次不再自重排，resume 时 run 重新点火。
@@ -97,7 +97,7 @@ const cfg = {
   /**
    * 申请帮助候选物品：只在这4个石头里选持有数量最少的。
    * id=alliance_help 表行 id；reward=行内 reward_param，用于 getItemAmount 读持有量
-   * （对应关系见《联盟帮助资料整理.md》，已对过游戏面板取值路径 AllianceHelpSelectPanel_New.js:70,177）
+   * （已对过游戏面板取值路径 AllianceHelpSelectPanel_New.js:70,177）
    */
   items: [
     { id: 10005, reward: 3500005, name: '玛瑙石' },

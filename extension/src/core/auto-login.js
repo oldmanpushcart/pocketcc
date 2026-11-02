@@ -1,6 +1,6 @@
 // 免扫码自动登录（token 缓存重放）。hook PlatformCore 的 token/登录参数入口，
 // 复用上次缓存的 serverToken 免去扫码；并补登出能力（自动复用 token 后游戏默认无法主动换号）。
-// 设计依据见 references/免扫码登录技术方案.md。
+// 设计依据见 references/历史文档/免扫码登录技术方案.md。
 // 注意：app_serverToken / app_webgameqqCode / app_loginFlowArgs / app_gameServer 是游戏自身的
 // LocalStorageUtils 键，必须原样不动（不加 pocketcc. 前缀）。另注意 LocalStorageUtils 默认再给键名
 // 拼一层 topwar_ 前缀（get/set/del 第三参缺省即启用），故直查 localStorage 时真键是 topwar_app_serverToken。

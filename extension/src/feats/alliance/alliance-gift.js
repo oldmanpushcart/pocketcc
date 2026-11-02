@@ -4,14 +4,14 @@
  * 网络一律走 promise 封装 window.pocketcc.net：send(cmd, data) → Promise<Ret{code,data,ok}>，isSending(cmd) 查在途。
  * 三条协议铁律（target=null、ensureServerResponse=false、无 clickInfo）由 net 封装内部固定，这里不再关心。
  *
- * 判据（口径同游戏面板 updatePageRedPoint / onReceiveBoxClick，见 references/联盟礼物.md、AllianceGiftPanel.js）：
+ * 判据（口径同游戏面板 updatePageRedPoint / onReceiveBoxClick，见 references/历史文档/联盟礼物.md、AllianceGiftPanel.js）：
  *   读内存模型 DATA.UserData.Alliance.AllianceGiftData 两字段：
  *     - RedPointObj（形如 {1: 普通可领数, 2: 稀有可领数}）→ 某 type>0 即该类 1177 可领；
  *     - AlGiftList（珍藏奖励 id 数组，如 [900122,900122]）→ length>0 即 1178 可领。
  *   两字段都由 5014 应答 / 10442 push 一次刷完（push 同时带 typeNumMap 与 userInfo.alGiftRewards），
  *   脚本不自建 5015 分页解析。
  *
- * 领取（见 references/联盟礼物.md）：
+ * 领取（见 references/历史文档/联盟礼物.md）：
  *   req send Receive_Alliance_Gift_Small_All(1177) {type:1 普通 / 2 稀有} → 一键领完该类全部可领礼物。
  *   req send Receive_Alliance_Gift_Big(1178) {} → 领 1 箱"联盟珍藏礼物"（游戏 onReceiveBoxClick 就是这个语义，
  *   一次一箱），剩余靠下轮 busy 逐箱清完。

@@ -63,7 +63,7 @@ const CMD_PUSH_GIFT_CLEAR = 13228;
 /** @type {number} NRequestIdV2.HERO_EQUIP_WISH_FIND_BOX（NRequestIdV2.js:1374），载荷 {activityId}，应答 data={serverId,x,y}（值已真机验证） */
 const CMD_HERO_EQUIP_WISH_FIND_BOX = 9595;
 
-/** @type {number} 泰坦祝福活动 type；同一 push 载荷 showUiType="ActivityTitanBlessing"（见 泰坦藏宝图资料整理.md），无独立枚举，值已真机验证 */
+/** @type {number} 泰坦祝福活动 type；同一 push 载荷 showUiType="ActivityTitanBlessing"，无独立枚举，值已真机验证 */
 const ACTIVITY_TYPE_TITAN_BLESSING = 271;
 
 /** @type {number} NMarchType.Titan_Blessing_Gift（NWorldMapMarchCommon.js:141），泰坦祝福拾取行军类型，902 派遣用（值已真机验证） */
@@ -494,7 +494,7 @@ function bumpReject(key) {
 }
 
 /**
- * 查可领取的空投箱坐标（兜底链专用；游戏 onClickTitanBlessing 同款请求，见 泰坦藏宝图资料整理.md）。
+ * 查可领取的空投箱坐标（兜底链专用；游戏 onClickTitanBlessing 同款请求）。
  * 永不 reject：发送异常 / 无箱子都返回 null。
  * 无箱子口径：s!=0，或 s=0 但 data={x:0,y:0}
  * @returns {Promise<object|null>} {x,y,serverId} 或 null

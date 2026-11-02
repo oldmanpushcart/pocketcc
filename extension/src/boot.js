@@ -1,6 +1,6 @@
 // 口袋控制中心 — MAIN world 入口 / 编排器。
 // 运行在页面自身 JS 上下文，可访问 cc / __require / CryptoJS 等游戏全局。
-// 设计依据见 references/免扫码登录技术方案.md。
+// 设计依据见 references/历史文档/免扫码登录技术方案.md。
 //
 // 本文件只剩编排：按 cocos 引擎/场景就绪时机，串起各 core 模块。
 //   core/registry.js   特征注册表（面板 UI + 存储 + 运行时编排单一真相）

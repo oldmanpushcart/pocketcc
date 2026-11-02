@@ -12,6 +12,14 @@ nul
 .jscpd/
 .reviewtmp/
 
+# 本地 scratch（探针输出/日志/报文 dump），不入库
+/_*.out
+/_*.log
+/_*.txt
+
+# 一次性终验/迁移脚本（带 .once 后缀，用完即弃），不入库
+*.once.mjs
+
 # 逆向第三方产物：可由游戏包再生、体积大，不入库（保留同目录下的 authored 分析 md）
 references/游戏逆向/raw/
 references/游戏逆向/extracted/
