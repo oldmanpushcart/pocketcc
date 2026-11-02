@@ -1122,7 +1122,25 @@ async function cancelOneBuild(job) {
       log.debug('1032 already in flight, defer tower=%s to next pass', job.towerId);
       return { sent: false, ok: false, via: '1032', ret: null }; // 未发出≠业务拒：不销账本、不计成功
     }
-    var ret = await net.send(CMD_TOWER_REMOVE, { id: String(job.towerId) });
+    // 漏防修复：裸 await net.send 在投递失败/超时/回调异常时会 reject 打穿 cycle 异常路。
+    // 对齐 906 路既定策略「发送异常＝本拍让路、下拍重试、不计业务拒」：sendGuarded 自愈为哨兵，threw 记号转 sent:false。
+    var threw = false;
+    var ret = await net.sendGuarded(
+      CMD_TOWER_REMOVE,
+      { id: String(job.towerId) },
+      {
+        gate: false,
+        onError: function (err) {
+          log.warn(
+            '1032 send error, defer tower=%s to next pass. %s',
+            job.towerId,
+            err && err.message,
+          );
+          threw = true;
+        },
+      },
+    );
+    if (threw) return { sent: false, ok: false, via: '1032', ret: null }; // 未发出≠业务拒：不销账本、不计拒因冷却
     return { sent: true, ok: !!(ret && ret.ok), via: '1032', ret: ret };
   }
   if (job.marchId) {

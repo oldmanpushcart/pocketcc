@@ -8,7 +8,7 @@
  * 有自己的队列/drain/定时器/刷新预算，与 ① 挖矿完全独立。
  * 注：盟友矿「帮忙封存」已按需求取消，封存只发生在裂隙矿场，故 packLeft 名额专属于本引擎。
  */
-import { CODE_NOT_SENT } from '../../../core/util.js';
+import { CODE_NOT_SENT, todayStr } from '../../../core/util.js';
 import { createLog } from '../../../core/log.js';
 import { createDrain } from '../../../core/drain.js';
 import { gameData } from '../../../core/game-api.js';
@@ -20,17 +20,6 @@ const log = createLog('MINE-CAVE/STEAL');
 
 /** @type {string} 当日「偷取线已处理矿」拉黑持久数据键（storage.data blob 内逻辑名，按自然日落盘）*/
 const STEAL_BLOCKED_NAME = 'mineCave.stealBlocked';
-
-/**
- * 今日日期串 YYYY-MM-DD（当地时区，跨日失效判据；与 relic-reward 同口径）
- * @returns {string}
- */
-function todayStr() {
-  var d = new Date();
-  var m = d.getMonth() + 1;
-  var day = d.getDate();
-  return d.getFullYear() + '-' + (m < 10 ? '0' + m : m) + '-' + (day < 10 ? '0' + day : day);
-}
 
 // ── ② 盗窃封存：本引擎独占的协议号（无跨文件复用，故就近私有）──
 const CMD_WORLD_INFO = 7415; // 裂隙矿场（refresh:0 读 / refresh:1 换矿）

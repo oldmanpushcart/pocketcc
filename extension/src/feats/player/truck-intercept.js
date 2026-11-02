@@ -38,14 +38,14 @@
  * 合规：只读游戏数据（经 game-api ACL）+ 直发协议；编队走 core/battle.js 从预设队伍实时重算造数据（不碰游戏本地态、不 OpenUI）。
  *   6476 派真实部队出征战斗、消耗兵力，属派行军类 → 受战斗模式门控 offInCombat:true（战斗态由 reactor 整体 pause，退出即 resume 补扫）。
  */
-import { CODE_NOT_SENT, sleep } from '../../core/util.js';
+import { CODE_NOT_SENT, sleep, todayStr, safeStringify } from '../../core/util.js';
 import { createLog } from '../../core/log.js';
 import { bus } from '../../core/bus.js';
 import { storage } from '../../core/storage.js';
 import { reactor } from '../../core/reactor.js';
 import { netApi } from '../../core/net.js';
 import { Battle } from '../../core/battle.js';
-import { l10n, gameData } from '../../core/game-api.js';
+import { bits, l10n, gameData } from '../../core/game-api.js';
 import { item } from '../../core/item.js';
 import { createCycle } from '../../core/cycle.js';
 
@@ -241,56 +241,7 @@ function aliveFn() {
   return ctxRef ? ctxRef.alive() : false;
 }
 
-// ── 小工具 ──────────────────────────────────────────────────────────────
-/**
- * 今日日期串 YYYY-MM-DD（当地时区，跨日失效判据）
- * @returns {string}
- */
-function todayStr() {
-  var d = new Date();
-  var m = d.getMonth() + 1,
-    day = d.getDate();
-  return d.getFullYear() + '-' + (m < 10 ? '0' + m : m) + '-' + (day < 10 ? '0' + day : day);
-}
-
-/**
- * Int64（{_low,_high} 或数字/串）→ 稳定字符串键（车队 id 拉黑/去重用，雪花 id 不做有损 Number 转换）
- * @param {*} v
- * @returns {string}
- */
-function int64Key(v) {
-  if (v == null) return '';
-  if (typeof v === 'object' && '_low' in v) return v._high + ':' + v._low;
-  return String(v);
-}
-
-/**
- * Int64（{_low,_high} 或数字/串）→ JS number（毫秒/秒时间戳等，值域远小于 2^53 时可安全用）
- * @param {*} v
- * @returns {number}
- */
-function int64ToNum(v) {
-  if (v == null) return 0;
-  if (typeof v === 'number') return v;
-  if (typeof v === 'object' && '_low' in v) return (v._high >>> 0) * 4294967296 + (v._low >>> 0);
-  var n = Number(v);
-  return isNaN(n) ? 0 : n;
-}
-
-/**
- * 安全序列化拒绝载荷（对象 String() 会退化成 [object Object] 丢原因）
- * @param {*} v
- * @returns {string}
- */
-function safeStringify(v) {
-  if (v == null) return String(v);
-  if (typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean') return String(v);
-  try {
-    return JSON.stringify(v);
-  } catch (e) {
-    return String(v);
-  }
-}
+// ── 小工具：int64Key / int64ToNum / int64Decimal(旧 i64Str) 已收口到 core/acl/bits.js（经 game-api 门面取 bits）──
 
 // ── 优先级（configure / rankMap / 匹配） ────────────────────────────────
 /**
@@ -481,14 +432,12 @@ async function rejectToday(key) {
  * @returns {Promise<{ok:boolean, code:number, data:*}>}
  */
 async function send(cmd, body) {
-  if (net.isSending(cmd)) return { ok: false, code: CODE_NOT_SENT, data: null };
-  var ret;
-  try {
-    ret = await net.sendPBV2(cmd, body);
-  } catch (err) {
-    log.debug('cmd %d send failed: %s', cmd, err && err.message);
-    return { ok: false, code: CODE_NOT_SENT, data: null };
-  }
+  var ret = await net.sendGuarded(cmd, body, {
+    protocol: 'sendPBV2',
+    onError: function (err) {
+      log.debug('cmd %d send failed: %s', cmd, err && err.message);
+    },
+  });
   return { ok: ret.ok, code: ret.code, data: ret.data };
 }
 
@@ -513,14 +462,11 @@ function ensureNet() {
 async function sendLegacy(cmd, body) {
   var n = ensureNet();
   if (!n) return { ok: false, code: CODE_NOT_SENT, data: null };
-  if (n.isSending(cmd)) return { ok: false, code: CODE_NOT_SENT, data: null };
-  var r;
-  try {
-    r = await n.send(cmd, body);
-  } catch (err) {
-    log.debug('cmd %d send failed: %s', cmd, err && err.message);
-    return { ok: false, code: CODE_NOT_SENT, data: null };
-  }
+  var r = await n.sendGuarded(cmd, body, {
+    onError: function (err) {
+      log.debug('cmd %d send failed: %s', cmd, err && err.message);
+    },
+  });
   var d = r.data;
   if (typeof d === 'string') {
     try {
@@ -550,7 +496,7 @@ async function fetchRefresh() {
 function applyRefresh(d) {
   if (d.funcType != null && Number(d.funcType) !== FUNC_TYPE) return;
   if (typeof d.lootNum === 'number') daily.used = d.lootNum;
-  if (d.nextRefreshLootNumTime != null) daily.refreshMs = int64ToNum(d.nextRefreshLootNumTime);
+  if (d.nextRefreshLootNumTime != null) daily.refreshMs = bits.int64ToNum(d.nextRefreshLootNumTime);
   // func_type 上限（随版本基本不变，每次刷列表前取一次即可）
   var row = l10n.tableRow('escort_truck_func_type', FUNC_TYPE);
   if (row) {
@@ -592,23 +538,6 @@ function buildTroop() {
 }
 
 // ── 战力/军种探测 + 克制判定 ──────────────────────────────
-/**
- * Int64（{_low,_high} / 数字 / 字符串）→ 十进制字符串（reportId 回发用，BigInt 无精度损失；与 int64Key 的 _high:_low 身份键不同）。
- * @param {*} v
- * @returns {string}
- */
-function i64Str(v) {
-  if (v == null) return '';
-  if (typeof v === 'object' && typeof v._high === 'number' && typeof v._low === 'number') {
-    try {
-      return ((BigInt(v._high) << 32n) | BigInt(v._low >>> 0)).toString();
-    } catch (e) {
-      return '';
-    }
-  }
-  return String(v);
-}
-
 /**
  * 品级是否命中勾选集（空集=不限制；grade=0 表解析不到→ fail-open 不淘汰）。
  * @param {number} grade
@@ -1041,13 +970,13 @@ function buildCandidates(list) {
   for (var i = 0; i < list.length; i++) {
     var view = list[i];
     if (!view) continue;
-    var key = int64Key(view.truckId);
+    var key = bits.int64Key(view.truckId);
     if (!key || blocked.trucks.indexOf(key) !== -1) continue; // 当日被服务器拒绝拉黑
     if (skipRound.has(key)) continue; // 本轮已判“打不过”跳过（内存态，与拒绝拉黑分离）
     var m = matchWanted(view);
     if (m.rank === -1) continue; // 无命中已勾选物品
     var uv = view.userView || {};
-    if (myAid > 0 && int64ToNum(uv.allianceId) === myAid) continue; // ⑥同联盟（dailyEscort 不可打）
+    if (myAid > 0 && bits.int64ToNum(uv.allianceId) === myAid) continue; // ⑥同联盟（dailyEscort 不可打）
     var spec = truckSpec(view.truckSpecId);
     if (!spec) continue;
     if (!gradeOk(spec.grade)) continue; // 品级不在拦截范围
@@ -1090,7 +1019,7 @@ async function refineThreat(cands) {
     var c = cands[i];
     var eb = 0;
     if (looked < MAX_THREAT_LOOK) {
-      var scout = i64Str(c.view.scoutReportId);
+      var scout = bits.int64Decimal(c.view.scoutReportId);
       if (scout) {
         eb = await enemyBranch(scout);
         looked++;

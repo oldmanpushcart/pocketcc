@@ -148,8 +148,9 @@ function ownsSkin(skinId, serverTime) {
  */
 async function refreshSkillData() {
   var map = Object.create(null);
+  // 原 try 同时罩 send 与 JSON.parse：sendGuarded 只收闸门/自愈（本点无闸门，gate 关），解析异常仍由同一 catch 兜
   try {
-    var ret = await net.send(CMD_GET_CITY_SKILL_DATA, {});
+    var ret = await net.sendGuarded(CMD_GET_CITY_SKILL_DATA, {}, { gate: false });
     var d = ret.ok && typeof ret.data === 'string' ? JSON.parse(ret.data) : ret.data || null;
     var list = d && d.skinSkills;
     if (Array.isArray(list)) {
@@ -290,8 +291,23 @@ async function gift(skinId, uid, map) {
     log.debug('skip gift: 1753 in flight. skinId=%d', skinId);
     return 'inflight';
   }
+  var threw = false;
+  var ret = await net.sendGuarded(
+    CMD_USE_CITY_SKILL,
+    { skinId: skinId, targetUid: String(uid) },
+    {
+      gate: false,
+      onError: function () {
+        threw = true;
+      },
+    },
+  );
+  if (threw) {
+    bumpFail(skinId);
+    log.warn('gift city skin error, backoff. skinId=%d;targetUid=%s', skinId, uid, null);
+    return 'error';
+  }
   try {
-    var ret = await net.send(CMD_USE_CITY_SKILL, { skinId: skinId, targetUid: String(uid) });
     if (ret.ok) {
       var d = typeof ret.data === 'string' ? JSON.parse(ret.data) : ret.data || null;
       if (d && d.skinId != null) {

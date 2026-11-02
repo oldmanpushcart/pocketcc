@@ -134,13 +134,15 @@ async function processBlock(b) {
     marchInfo: true,
     viewLevel: cfg.viewLevel | 0,
   };
-  let ret;
-  try {
-    ret = await net.send(CMD_GET_WORLD_INFO, body);
-  } catch (err) {
-    log.warn('block(%d,%d) send failed: %s', b.gx, b.gy, err && err.message);
-    return;
-  }
+  let threw = false;
+  let ret = await net.sendGuarded(CMD_GET_WORLD_INFO, body, {
+    gate: false,
+    onError: function (err) {
+      log.warn('block(%d,%d) send failed: %s', b.gx, b.gy, err && err.message);
+      threw = true;
+    },
+  });
+  if (threw) return;
   if (!ret || !ret.ok) {
     log.warn('block(%d,%d) not ok. code=%s', b.gx, b.gy, ret && ret.code);
     return;

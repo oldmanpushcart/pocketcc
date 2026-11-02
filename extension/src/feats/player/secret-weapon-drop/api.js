@@ -180,24 +180,10 @@ export const airDropDomain = {
       var cd = Number(cfg.cd) || 0; // 每枚次数恢复间隔（分钟）
       var max = Number(cfg.max) || 0; // 次数上限
       var serverSec = gd.serverTime() | 0;
+      var bits = sharedValue('bits');
       var msOf = function (v) {
-        // protobuf Long / {_low,_high} / number → 毫秒
-        if (!v) return 0;
-        if (typeof v === 'number') return v;
-        if (typeof v.toNumber === 'function') {
-          try {
-            return v.toNumber();
-          } catch (e) {
-            return 0;
-          }
-        }
-        var lo = v._low != null ? v._low : v.low,
-          hi = v._high != null ? v._high : v.high;
-        if (lo == null || hi == null) return 0;
-        lo = Number(lo);
-        hi = Number(hi);
-        if (lo < 0) lo += 4294967296;
-        return hi * 4294967296 + lo;
+        // protobuf Long / {_low,_high} / number → 毫秒（已收口到 ACL bits.int64ToNum，此处仅委托）
+        return bits ? bits.int64ToNum(v) : 0;
       };
       if (type === 2) {
         // 次数型（空投支援）：可用 = min(cnt + 自 start 起已恢复的整数枚, max)

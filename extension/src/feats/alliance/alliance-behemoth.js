@@ -136,14 +136,12 @@ const cycle = createCycle({ log: log, alive: aliveFn, run: cycleRun, fallback: I
  * @returns {Promise<{ok:boolean, code:number, payload:object|null}>} 归一化结果
  */
 async function sendRawPB(cmd, body) {
-  if (net.isSending(cmd)) return { ok: false, code: CODE_NOT_SENT, payload: null };
-  var ret;
-  try {
-    ret = await net.sendPB(cmd, body);
-  } catch (err) {
-    log.debug('cmd %d send failed: %s', cmd, err && err.message);
-    return { ok: false, code: CODE_NOT_SENT, payload: null };
-  }
+  var ret = await net.sendGuarded(cmd, body, {
+    protocol: 'sendPB',
+    onError: function (err) {
+      log.debug('cmd %d send failed: %s', cmd, err && err.message);
+    },
+  });
   var d = ret && ret.data;
   return {
     ok: !!(ret && ret.ok),

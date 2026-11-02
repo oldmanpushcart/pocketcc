@@ -27,6 +27,7 @@
  *   **仅队长可发**（8521 驱动全队那一条行军，多人房各发会互抢方向盘）；非秘境/未激活/关闭档一律长睡。Int64 无（8521 载荷是标量 {x,y}）。
  */
 import { createCycle } from '../../../core/cycle.js';
+import { tileKey as utilTileKey, dist as utilDist } from './util.js';
 import {
   PUSH_SELF_ATTACKED,
   PUSH_TILE_INFO,
@@ -48,10 +49,7 @@ import {
  * @returns {string}
  */
 function tileKey(x, y) {
-  const nx = Number(x);
-  const ny = Number(y);
-  if (!Number.isFinite(nx) || !Number.isFinite(ny)) return '';
-  return Math.floor(nx) + ',' + Math.floor(ny);
+  return utilTileKey(x, y);
 }
 
 /**
@@ -63,10 +61,7 @@ function tileKey(x, y) {
  * @returns {number}
  */
 function dist(ax, ay, bx, by) {
-  const dx = Number(ax) - Number(bx);
-  const dy = Number(ay) - Number(by);
-  if (!Number.isFinite(dx) || !Number.isFinite(dy)) return Infinity;
-  return Math.sqrt(dx * dx + dy * dy);
+  return utilDist(ax, ay, bx, by);
 }
 
 /**

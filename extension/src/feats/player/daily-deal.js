@@ -91,15 +91,17 @@ function sleepToTs(untilTs) {
  * @returns {Promise<{ok:boolean, code:number, reason?:string, items:number}>} items=领到的道具条目数
  */
 async function claimOnce() {
-  if (!net || net.isSending(CMD_GET_FREE_REWARD))
-    return { ok: false, code: CODE_NOT_SENT, items: 0 };
-  var ret;
-  try {
-    ret = await net.sendPBV2(CMD_GET_FREE_REWARD, {});
-  } catch (err) {
-    log.debug('cmd 9884 send failed: %s', err && err.message);
-    return { ok: false, code: CODE_NOT_SENT, items: 0 };
-  }
+  if (!net) return { ok: false, code: CODE_NOT_SENT, items: 0 };
+  var ret = await net.sendGuarded(
+    CMD_GET_FREE_REWARD,
+    {},
+    {
+      protocol: 'sendPBV2',
+      onError: function (err) {
+        log.debug('cmd 9884 send failed: %s', err && err.message);
+      },
+    },
+  );
   if (!ret || !ret.ok) {
     return { ok: false, code: ret ? ret.code : CODE_NOT_SENT, reason: ret && ret.reason, items: 0 };
   }

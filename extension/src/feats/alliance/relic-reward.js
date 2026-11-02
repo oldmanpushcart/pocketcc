@@ -30,7 +30,7 @@
  *   纯发包、不派行军，不受战斗模式门控（同联盟帮助口径，不设 offInCombat）；生命周期由 reactor 托管，pause 摘触发器、
  *   resume 补扫一轮。面板：整池奖励摆出，拖拽整行调先后 = 领取优先级（配置只存顺序，全员默认参与）。
  */
-import { CODE_NOT_SENT, sleep } from '../../core/util.js';
+import { CODE_NOT_SENT, sleep, todayStr, safeStringify } from '../../core/util.js';
 import { createLog } from '../../core/log.js';
 import { bus } from '../../core/bus.js';
 import { storage } from '../../core/storage.js';
@@ -100,31 +100,6 @@ function aliveFn() {
 }
 
 // ── 小工具 ──────────────────────────────────────────────────────────────
-/**
- * 今日日期串 YYYY-MM-DD（当地时区，跨日失效判据）
- * @returns {string}
- */
-function todayStr() {
-  var d = new Date();
-  var m = d.getMonth() + 1;
-  var day = d.getDate();
-  return d.getFullYear() + '-' + (m < 10 ? '0' + m : m) + '-' + (day < 10 ? '0' + day : day);
-}
-
-/**
- * 安全序列化拒绝载荷：应答 data 可能是对象，String() 退化成 [object Object] 丢失拒绝原因
- * @param {*} v ret.data
- * @returns {string}
- */
-function safeStringify(v) {
-  if (v == null) return String(v);
-  if (typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean') return String(v);
-  try {
-    return JSON.stringify(v);
-  } catch (e) {
-    return String(v);
-  }
-}
 
 /**
  * 旧 JSON 链路应答归一化：ret.data 通常是 JSON 串（游戏侧 JSON_PARSE(t.d)），兜底已是对象
@@ -205,14 +180,11 @@ function configure(partial) {
  * @returns {Promise<{ok:boolean, code:number, data:*, payload:object|null}>}
  */
 async function sendRaw(cmd, body) {
-  if (net.isSending(cmd)) return { ok: false, code: CODE_NOT_SENT, data: null, payload: null };
-  var ret;
-  try {
-    ret = await net.send(cmd, body);
-  } catch (err) {
-    log.debug('cmd %d send failed: %s', cmd, err && err.message);
-    return { ok: false, code: CODE_NOT_SENT, data: null, payload: null };
-  }
+  var ret = await net.sendGuarded(cmd, body, {
+    onError: function (err) {
+      log.debug('cmd %d send failed: %s', cmd, err && err.message);
+    },
+  });
   return { ok: ret.ok, code: ret.code, data: ret.data, payload: payloadOf(ret) };
 }
 

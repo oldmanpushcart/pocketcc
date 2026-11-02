@@ -116,6 +116,7 @@ export let netApi = null;
     send: send,
     sendPB: sendPB,
     sendPBV2: sendPBV2,
+    sendGuarded: sendGuarded,
     isSending: isSending,
     onReq: onReq,
     onPreInbound: onPreInbound,
@@ -1294,6 +1295,44 @@ export let netApi = null;
       cmd,
       'SendPBV2',
     );
+  }
+
+  /**
+   * 在途哨兵码：与 core/util.js 的 CODE_NOT_SENT（=-1）同值。此处用字面量保持 net.js 零外部依赖
+   * （util 是零 import 叶子、core 内部无相互 import 惯例，不为一个常量引入跨模块依赖）。
+   */
+  const CODE_NOT_SENT = -1;
+
+  /**
+   * 带在途闸门与异常自愈的归一发包。三个 promise 版 send 有「双通道失败」契约：
+   * 业务拒绝走 resolve(Ret{ok:false})，而投递失败(!ok)/超时(withTimeout)/回调异常走 reject。
+   * 这层壳此前被各 feat 逐份手写（truck/relic/science/behemoth/boss/beast/help/mine-cave 等），
+   * 本方法把「闸门 → 协议分派 → catch 回落哨兵 Ret → 永不 reject」的核收回 net 自己手里。
+   * 日志刻意不收回：各 feat 的 tag 与文案不同（零漂移铁律），由 onError 透传异常就地打。
+   * @param {number} cmd 命令号
+   * @param {object} body 载荷
+   * @param {object} [opts] 选项
+   * @param {'send'|'sendPB'|'sendPBV2'} [opts.protocol] 协议通道，默认 send（旧 JSON）
+   * @param {boolean} [opts.gate=true] 是否启用 isSending 在途闸门；无闸门的裸 try/catch 壳传 false
+   * @param {boolean} [opts.defaultBody] 载荷为空时兜底 {}（对齐部分 feat 旧壳的 body||{} 语义）
+   * @param {Ret} [opts.fallback] 闸门命中/异常时的回落值，默认 Ret.from(CODE_NOT_SENT,null)
+   * @param {(err:Error, cmd:number)=>void} [opts.onError] 异常自愈回调（仅 catch 分支触发，闸门分支不调）
+   * @returns {Promise<Ret>} 永不 reject 的归一结果
+   */
+  async function sendGuarded(cmd, body, opts) {
+    opts = opts || {};
+    const fallback = opts.fallback || Ret.from(CODE_NOT_SENT, null);
+    if (opts.gate !== false && net && net.checkRequestIdNoRes(cmd)) return fallback;
+    let p = body;
+    if (opts.defaultBody && (p == null || p === '')) p = {};
+    const api =
+      opts.protocol === 'sendPBV2' ? sendPBV2 : opts.protocol === 'sendPB' ? sendPB : send;
+    try {
+      return await api(cmd, p);
+    } catch (err) {
+      if (opts.onError) opts.onError(err, cmd);
+      return fallback;
+    }
   }
 
   /**

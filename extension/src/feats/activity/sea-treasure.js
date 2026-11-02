@@ -307,38 +307,46 @@ async function loadingBosses(activity) {
     return net.Ret.from(CODE_NOT_SENT, null);
   }
 
-  try {
-    var ret = await net.sendPBV2(CMD_QUERY_WORLD_BOSS, { activityId: activity.id });
+  var threw = false;
+  var ret = await net.sendGuarded(
+    CMD_QUERY_WORLD_BOSS,
+    { activityId: activity.id },
+    {
+      protocol: 'sendPBV2',
+      gate: false,
+      onError: function (err) {
+        log.warn('loading bosses error. activityId=%d', activity && activity.id, err);
+        threw = true;
+      },
+    },
+  );
+  if (threw) return net.Ret.from(CODE_NOT_SENT, null);
 
-    // 请求失败：原样带上 3756 的 code 回传，data=null，供调用方进一步判断
-    if (!ret.ok || !ret.data) {
-      log.info(
-        'loading bosses rejected (activity closed?). activityId=%d;code=%d',
-        activity.id,
-        ret.code,
-      );
-      return net.Ret.from(ret.code, null);
-    }
-
-    /*
-     * bossInfos 每条：{bossId, pointX, pointY, endTime, myLeftAttackTimes, attackNum, ownerUidStr, serverId, uuidStr, ...}
-     * 只取我还能打、且尚未到期的 boss：myLeftAttackTimes>0 且 endTime（秒）> 当前服务器/本地时间
-     */
-    var nowSec = Date.now() / 1000;
-    var list = ret.data.bossInfos || [];
-    var bosses = list
-      .filter(function (b) {
-        return b && (b.myLeftAttackTimes | 0) > 0 && (!b.endTime || b.endTime > nowSec);
-      })
-      .map(function (b) {
-        return { x: b.pointX, y: b.pointY, bossId: b.bossId, left: b.myLeftAttackTimes | 0 };
-      });
-
-    return net.Ret.from(ret.code, bosses);
-  } catch (err) {
-    log.warn('loading bosses error. activityId=%d', activity && activity.id, err);
-    return net.Ret.from(CODE_NOT_SENT, null);
+  // 请求失败：原样带上 3756 的 code 回传，data=null，供调用方进一步判断
+  if (!ret.ok || !ret.data) {
+    log.info(
+      'loading bosses rejected (activity closed?). activityId=%d;code=%d',
+      activity.id,
+      ret.code,
+    );
+    return net.Ret.from(ret.code, null);
   }
+
+  /*
+   * bossInfos 每条：{bossId, pointX, pointY, endTime, myLeftAttackTimes, attackNum, ownerUidStr, serverId, uuidStr, ...}
+   * 只取我还能打、且尚未到期的 boss：myLeftAttackTimes>0 且 endTime（秒）> 当前服务器/本地时间
+   */
+  var nowSec = Date.now() / 1000;
+  var list = ret.data.bossInfos || [];
+  var bosses = list
+    .filter(function (b) {
+      return b && (b.myLeftAttackTimes | 0) > 0 && (!b.endTime || b.endTime > nowSec);
+    })
+    .map(function (b) {
+      return { x: b.pointX, y: b.pointY, bossId: b.bossId, left: b.myLeftAttackTimes | 0 };
+    });
+
+  return net.Ret.from(ret.code, bosses);
 }
 
 /**

@@ -23,7 +23,7 @@
  *   定时器是功能内部的生产逻辑，pause 后 alive()=false，挂着的定时器到点空转一次不再自重排，resume 时 run 重新点火。
  *   未声明 scenes → scene 门控默认放行，任何场景都跑（与重构前一致）。
  */
-import { CODE_NOT_SENT } from '../../core/util.js';
+import { CODE_NOT_SENT, todayStr } from '../../core/util.js';
 import { createLog } from '../../core/log.js';
 import { game } from '../../core/game.js';
 import { createDrain } from '../../core/drain.js';
@@ -405,17 +405,6 @@ function isHelpCountSynced(alliance) {
 }
 
 /**
- * 本地日期（YYYY-MM-DD，口径同联盟集结），仅用于“当日已满”显式标记的跨日失效
- * @returns {string} YYYY-MM-DD
- */
-function todayStr() {
-  var d = new Date();
-  var m = d.getMonth() + 1;
-  var day = d.getDate();
-  return d.getFullYear() + '-' + (m < 10 ? '0' + m : m) + '-' + (day < 10 ? '0' + day : day);
-}
-
-/**
  * 解析拒绝应答的 data（真机口径："<文案键>,<参数,...>"，如 "alliance_120503,10"）取文案键部分。
  * data 不是该形态（空/对象/无逗号键）时返回 null，不猜测。
  * @param {*} data Ret.data（send 通道为字符串原文）
@@ -656,19 +645,16 @@ function dropStale(task) {
  * @returns {Promise<Ret>}
  */
 async function guardedSend(cmd, payload, label) {
-  if (net.isSending(cmd)) {
-    return net.Ret.from(CODE_NOT_SENT, null);
+  var ret = await net.sendGuarded(cmd, payload, {
+    onError: function (err) {
+      log.warn('%s error!', label, err);
+    },
+  });
+  // 业务拒绝补一条 info；闸门/异常哨兵已在 onError 或回落本身计过，不重复打（与原逐路径文案一致）
+  if (!ret.ok && ret.code !== CODE_NOT_SENT) {
+    log.info('%s rejected. code=%d', label, ret.code);
   }
-  try {
-    var ret = await net.send(cmd, payload);
-    if (!ret.ok) {
-      log.info('%s rejected. code=%d', label, ret.code);
-    }
-    return ret;
-  } catch (err) {
-    log.warn('%s error!', label, err);
-    return net.Ret.from(CODE_NOT_SENT, null);
-  }
+  return ret;
 }
 
 /**

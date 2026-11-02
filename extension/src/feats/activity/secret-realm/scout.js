@@ -24,6 +24,8 @@
  *   非秘境 / 未激活 / 关闭档一律长睡。Int64（fightEndTime/fightBeginTime/teamId）以 toNum 读。
  */
 import { createCycle } from '../../../core/cycle.js';
+import { bits } from '../../../core/game-api.js';
+import { tileKey as utilTileKey, dist as utilDist } from './util.js';
 import {
   CMD_BEAST_INFO,
   CMD_BEAST_SCOUT,
@@ -42,10 +44,7 @@ import {
  * @returns {string}
  */
 function tileKey(x, y) {
-  const nx = Number(x);
-  const ny = Number(y);
-  if (!Number.isFinite(nx) || !Number.isFinite(ny)) return '';
-  return Math.floor(nx) + ',' + Math.floor(ny);
+  return utilTileKey(x, y);
 }
 
 /**
@@ -57,10 +56,7 @@ function tileKey(x, y) {
  * @returns {number}
  */
 function dist(ax, ay, bx, by) {
-  const dx = Number(ax) - Number(bx);
-  const dy = Number(ay) - Number(by);
-  if (!Number.isFinite(dx) || !Number.isFinite(dy)) return Infinity;
-  return Math.sqrt(dx * dx + dy * dy);
+  return utilDist(ax, ay, bx, by);
 }
 
 /**
@@ -69,22 +65,7 @@ function dist(ax, ay, bx, by) {
  * @returns {number}
  */
 function toNum(v) {
-  if (v == null) return 0;
-  if (typeof v === 'number') return v;
-  if (typeof v === 'object') {
-    try {
-      if (typeof v.toNumber === 'function') return Number(v.toNumber()) || 0;
-    } catch (e) {
-      /* 降级走 _low/_high 手算 */
-    }
-    const hi = Number(v._high);
-    const lo = Number(v._low);
-    if (Number.isFinite(hi) || Number.isFinite(lo)) {
-      return (Number.isFinite(hi) ? hi : 0) * 4294967296 + (Number.isFinite(lo) ? lo >>> 0 : 0);
-    }
-    return 0;
-  }
-  return Number(v) || 0;
+  return bits.int64ToNum(v);
 }
 
 /**

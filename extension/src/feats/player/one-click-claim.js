@@ -112,14 +112,17 @@ function aliveFn() {
  * @returns {Promise<{ok:boolean, code:number, limitTs:number}>} limitTs=下次可领的绝对服务器秒（0=现在可领）
  */
 async function fetchInfo() {
-  if (!net || net.isSending(CMD_INFO)) return { ok: false, code: CODE_NOT_SENT, limitTs: 0 };
-  var ret;
-  try {
-    ret = await net.sendPBV2(CMD_INFO, {});
-  } catch (err) {
-    log.debug('cmd 5684 send failed: %s', err && err.message);
-    return { ok: false, code: CODE_NOT_SENT, limitTs: 0 };
-  }
+  if (!net) return { ok: false, code: CODE_NOT_SENT, limitTs: 0 };
+  var ret = await net.sendGuarded(
+    CMD_INFO,
+    {},
+    {
+      protocol: 'sendPBV2',
+      onError: function (err) {
+        log.debug('cmd 5684 send failed: %s', err && err.message);
+      },
+    },
+  );
   if (!ret || !ret.ok) return { ok: false, code: ret ? ret.code : CODE_NOT_SENT, limitTs: 0 };
   var d = ret.data || {};
   return { ok: true, code: 0, limitTs: Number(d.limitTimeSec) || 0 };
@@ -131,16 +134,19 @@ async function fetchInfo() {
  * @returns {Promise<{ok:boolean, code:number, success:number, total:number}>}
  */
 async function claimAll(ids) {
-  if (!net || net.isSending(CMD_REWARD)) {
+  if (!net) {
     return { ok: false, code: CODE_NOT_SENT, success: 0, total: 0 };
   }
-  var ret;
-  try {
-    ret = await net.sendPBV2(CMD_REWARD, { id: ids });
-  } catch (err) {
-    log.debug('cmd 5685 send failed: %s', err && err.message);
-    return { ok: false, code: CODE_NOT_SENT, success: 0, total: 0 };
-  }
+  var ret = await net.sendGuarded(
+    CMD_REWARD,
+    { id: ids },
+    {
+      protocol: 'sendPBV2',
+      onError: function (err) {
+        log.debug('cmd 5685 send failed: %s', err && err.message);
+      },
+    },
+  );
   if (!ret || !ret.ok) {
     return { ok: false, code: ret ? ret.code : CODE_NOT_SENT, success: 0, total: 0 };
   }

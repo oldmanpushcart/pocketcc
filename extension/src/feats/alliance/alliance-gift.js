@@ -279,19 +279,28 @@ async function claimType(type, label) {
     return false;
   }
   var pending = countOf(getRedPointObj(), type);
-  try {
-    var ret = await net.send(CMD_RECEIVE_GIFT_ALL, { type: type });
-    if (ret.ok) {
-      lastClaimAt[type] = Date.now();
-      log.info('receive %s gift ok. wasPending=%d', label, pending);
-      return true;
-    }
-    log.info('receive %s gift rejected. code=%d', label, ret.code);
-    return false;
-  } catch (err) {
-    log.warn('receive %s gift error.', label, err);
+  var threw = false;
+  var ret = await net.sendGuarded(
+    CMD_RECEIVE_GIFT_ALL,
+    { type: type },
+    {
+      gate: false,
+      onError: function () {
+        threw = true;
+      },
+    },
+  );
+  if (threw) {
+    log.warn('receive %s gift error.', label, null);
     return false;
   }
+  if (ret.ok) {
+    lastClaimAt[type] = Date.now();
+    log.info('receive %s gift ok. wasPending=%d', label, pending);
+    return true;
+  }
+  log.info('receive %s gift rejected. code=%d', label, ret.code);
+  return false;
 }
 
 /**
@@ -310,19 +319,28 @@ async function claimBig() {
     return false;
   }
   var pending = (getAlGiftList() || []).length;
-  try {
-    var ret = await net.send(CMD_RECEIVE_GIFT_BIG, {});
-    if (ret.ok) {
-      lastClaimAt[GIFT_KEY_BIG] = Date.now();
-      log.info('receive big gift ok. wasPending=%d', pending);
-      return true;
-    }
-    log.info('receive big gift rejected. code=%d', ret.code);
-    return false;
-  } catch (err) {
-    log.warn('receive big gift error.', err);
+  var threw = false;
+  var ret = await net.sendGuarded(
+    CMD_RECEIVE_GIFT_BIG,
+    {},
+    {
+      gate: false,
+      onError: function () {
+        threw = true;
+      },
+    },
+  );
+  if (threw) {
+    log.warn('receive big gift error.', null);
     return false;
   }
+  if (ret.ok) {
+    lastClaimAt[GIFT_KEY_BIG] = Date.now();
+    log.info('receive big gift ok. wasPending=%d', pending);
+    return true;
+  }
+  log.info('receive big gift rejected. code=%d', ret.code);
+  return false;
 }
 
 // ─────────────────────────── 生命周期 ───────────────────────────

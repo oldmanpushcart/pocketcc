@@ -18,6 +18,7 @@
  * 生命周期：无场景/模式门控（浮层是辅助 UI，全场景可用）；面板 enabled 驱动 install/run。
  */
 import { createLog } from '../../../core/log.js';
+import { safeParse } from '../../../core/util.js';
 import { l10n, nav, gameData, gameConf, bits, avatar } from '../../../core/game-api.js';
 import { getUid } from '../../../core/player.js';
 import { storage } from '../../../core/storage.js';
@@ -239,16 +240,7 @@ function syncRoomIds() {
   }
 }
 
-/** JSON.parse 兜底（协议里 custom/fp 都是 JSON 字符串；net 主协议应答 d 也是字符串原文） */
-function safeParse(s) {
-  if (s == null || s === '') return null;
-  if (typeof s === 'object') return s;
-  try {
-    return JSON.parse(s);
-  } catch (e) {
-    return null;
-  }
-}
+// safeParse 已收口至 core/util.js（见顶部 import）
 
 /**
  * 剥离 Cocos 富文本标签（<color=#xxx>…</c>、<b>/<i>/<u>/<font>/<outline>/<shadow>/<link>/<on click…>）

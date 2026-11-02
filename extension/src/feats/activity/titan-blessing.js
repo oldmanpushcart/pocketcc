@@ -37,6 +37,7 @@
  *   run 挂 10904/13226/13227/13228 监听；reactor pause 时摘监听、置 alive=false，队列保留，恢复后续跑。
  */
 import { createLog } from '../../core/log.js';
+import { serverTimeSec as utilServerTimeSec } from '../../core/util.js';
 import { createDrain } from '../../core/drain.js';
 import { reactor } from '../../core/reactor.js';
 import { getUid } from '../../core/player.js';
@@ -500,19 +501,27 @@ function bumpReject(key) {
  * @returns {Promise<object|null>} {x,y,serverId} 或 null
  */
 async function queryBoxPosition() {
-  try {
-    var ret = await net.sendPBV2(CMD_HERO_EQUIP_WISH_FIND_BOX, { activityId: activityId });
-    var pos = ret.data;
-    if (!ret.ok || !pos || (pos.x === 0 && pos.y === 0)) {
-      log.debug('find box empty. reason=no-box; activityId=%d;code=%d', activityId, ret.code);
-      return null;
-    }
-    log.debug('box found. x=%d;y=%d;serverId=%s', pos.x, pos.y, pos.serverId);
-    return pos;
-  } catch (err) {
-    log.warn('query box error!', err);
+  var threw = false;
+  var ret = await net.sendGuarded(
+    CMD_HERO_EQUIP_WISH_FIND_BOX,
+    { activityId: activityId },
+    {
+      gate: false,
+      protocol: 'sendPBV2',
+      onError: function (err) {
+        log.warn('query box error!', err);
+        threw = true;
+      },
+    },
+  );
+  if (threw) return null;
+  var pos = ret.data;
+  if (!ret.ok || !pos || (pos.x === 0 && pos.y === 0)) {
+    log.debug('find box empty. reason=no-box; activityId=%d;code=%d', activityId, ret.code);
     return null;
   }
+  log.debug('box found. x=%d;y=%d;serverId=%s', pos.x, pos.y, pos.serverId);
+  return pos;
 }
 
 /**
@@ -534,9 +543,7 @@ async function marchPickUp(x, y) {
  * @returns {number}
  */
 function serverTimeSec() {
-  var st = dataCenter && dataCenter.ServerTime;
-  if (st != null && +st) return +st;
-  return Date.now() / 1000;
+  return utilServerTimeSec(dataCenter && dataCenter.ServerTime);
 }
 
 /**

@@ -10,7 +10,7 @@
  * 每目标可配每日参与上限（0=无限），跨日自动清零，持久化到 pocketcc.feat.allianceRally.daily。
  * 延迟期内 reactor pause → alive=false → 到点自然放弃；信号包络只存标量。
  */
-import { CODE_NOT_SENT } from '../../core/util.js';
+import { todayStr } from '../../core/util.js';
 import { createLog } from '../../core/log.js';
 import { game } from '../../core/game.js';
 import { reactor } from '../../core/reactor.js';
@@ -202,17 +202,6 @@ function onAssemblyCreated(ev) {
 function isOwnRally(d) {
   var uid = dataCenter.UserData && dataCenter.UserData.UID;
   return uid != null && String(d.leaderUid) === String(uid);
-}
-
-/**
- * 今日日期字符串 YYYY-MM-DD（当地时区，与面板展示一致）
- * @returns {string}
- */
-function todayStr() {
-  var d = new Date();
-  var m = d.getMonth() + 1;
-  var day = d.getDate();
-  return d.getFullYear() + '-' + (m < 10 ? '0' + m : m) + '-' + (day < 10 ? '0' + day : day);
 }
 
 /**
@@ -418,8 +407,9 @@ async function joinFlow(key, teamId, expireTime) {
  * @returns {Promise<Ret>} code=1204 状态码
  */
 async function sendJoin(teamId, marchData) {
-  try {
-    return await net.send(CMD_ASSEMBLY_JOIN, {
+  return net.sendGuarded(
+    CMD_ASSEMBLY_JOIN,
+    {
       marchType: MARCH_TYPE_JOIN,
       teamId: teamId,
       armyList: marchData.armyListNew,
@@ -428,11 +418,13 @@ async function sendJoin(teamId, marchData) {
       trapList: marchData.trapList,
       formation: 0,
       formationV2: marchData.formationV2,
-    });
-  } catch (err) {
-    log.warn('join send error. teamId=%s', teamId, err);
-    return net.Ret.from(CODE_NOT_SENT, null);
-  }
+    },
+    {
+      onError: function (err) {
+        log.warn('join send error. teamId=%s', teamId, err);
+      },
+    },
+  );
 }
 
 /**

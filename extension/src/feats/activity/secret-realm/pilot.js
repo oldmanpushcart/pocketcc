@@ -62,6 +62,7 @@
  * 仅队长发车（8521 驱动队级那一条行军）。触发：单条 createCycle + kick 源 21534/21529/21521/21535/901 应答。
  */
 import { createCycle } from '../../../core/cycle.js';
+import { tileKey as utilTileKey, dist as utilDist } from './util.js';
 import {
   CMD_MARCH_MOVE,
   CMD_REVIVE,
@@ -142,10 +143,7 @@ const TRACKED_PT = {};
  * @returns {string}
  */
 function tileKey(x, y) {
-  const nx = Number(x);
-  const ny = Number(y);
-  if (!Number.isFinite(nx) || !Number.isFinite(ny) || nx <= 0 || ny <= 0) return '';
-  return Math.floor(nx) + ',' + Math.floor(ny);
+  return utilTileKey(x, y, true);
 }
 
 /**
@@ -157,10 +155,7 @@ function tileKey(x, y) {
  * @returns {number}
  */
 function dist(ax, ay, bx, by) {
-  const dx = Number(ax) - Number(bx);
-  const dy = Number(ay) - Number(by);
-  if (!Number.isFinite(dx) || !Number.isFinite(dy)) return Infinity;
-  return Math.sqrt(dx * dx + dy * dy);
+  return utilDist(ax, ay, bx, by);
 }
 
 /**

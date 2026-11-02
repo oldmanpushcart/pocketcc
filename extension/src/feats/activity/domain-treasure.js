@@ -336,43 +336,51 @@ async function loadingDomainTreasureActivityMines(activity) {
     return net.Ret.from(CODE_NOT_SENT, null);
   }
 
-  try {
-    // type:2 见知识文档；ensureServerResponse=false 由 net 封装固定（心跳会重发）
-    var ret = await net.sendPBV2(CMD_GET_KUANG_LIST, { activityId: activity.id, type: 2 });
+  var threw = false;
+  // type:2 见知识文档；ensureServerResponse=false 由 net 封装固定（心跳会重发）
+  var ret = await net.sendGuarded(
+    CMD_GET_KUANG_LIST,
+    { activityId: activity.id, type: 2 },
+    {
+      protocol: 'sendPBV2',
+      gate: false,
+      onError: function (err) {
+        log.warn('loading mines error. activityId=%d', activity && activity.id, err);
+        threw = true;
+      },
+    },
+  );
+  if (threw) return net.Ret.from(CODE_NOT_SENT, null);
 
-    // 请求失败：原样带上 8623 的 code 回传，data=null，供调用方进一步判断
-    if (!ret.ok || !ret.data) {
-      log.info(
-        'loading mines rejected (activity closed?). activityId=%d;code=%d',
-        activity.id,
-        ret.code,
-      );
-      return net.Ret.from(ret.code, null);
-    }
-
-    /*
-     * 只取可挖掘的矿洞：gatherStatus 0=可挖掘、1=挖掘中、2=已挖掘、3=行军中，只有 0 能派
-     * x,y : 矿洞坐标
-     * 黑名单里的矿（剩余时间不足以行军）一并跳过，不再白派 902
-     */
-    var list = ret.data.otherKuangList || [];
-
-    pruneBlacklist(list);
-
-    var mines = list
-      .filter(function (mine) {
-        return mine.gatherStatus === 0 && !blacklist.has(mineKey(mine.x, mine.y));
-      })
-      .map(function (mine) {
-        return { x: mine.x, y: mine.y };
-      });
-
-    // 带上 8623 的 code 一起回传
-    return net.Ret.from(ret.code, mines);
-  } catch (err) {
-    log.warn('loading mines error. activityId=%d', activity && activity.id, err);
-    return net.Ret.from(CODE_NOT_SENT, null);
+  // 请求失败：原样带上 8623 的 code 回传，data=null，供调用方进一步判断
+  if (!ret.ok || !ret.data) {
+    log.info(
+      'loading mines rejected (activity closed?). activityId=%d;code=%d',
+      activity.id,
+      ret.code,
+    );
+    return net.Ret.from(ret.code, null);
   }
+
+  /*
+   * 只取可挖掘的矿洞：gatherStatus 0=可挖掘、1=挖掘中、2=已挖掘、3=行军中，只有 0 能派
+   * x,y : 矿洞坐标
+   * 黑名单里的矿（剩余时间不足以行军）一并跳过，不再白派 902
+   */
+  var list = ret.data.otherKuangList || [];
+
+  pruneBlacklist(list);
+
+  var mines = list
+    .filter(function (mine) {
+      return mine.gatherStatus === 0 && !blacklist.has(mineKey(mine.x, mine.y));
+    })
+    .map(function (mine) {
+      return { x: mine.x, y: mine.y };
+    });
+
+  // 带上 8623 的 code 一起回传
+  return net.Ret.from(ret.code, mines);
 }
 
 /**

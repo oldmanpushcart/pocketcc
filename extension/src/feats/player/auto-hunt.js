@@ -30,7 +30,7 @@
  * 配置链路（防「激活不打野」）：registry 把 {enabled, ...toModuleCfg(c)} 推给 reactor.setConfig → configure。故 toModuleCfg 产出的就是归一化运行时配置，
  *   configure 只整体赋值、绝不二次归一（曾在此踩坑：configure 再 normalize 一次读不到已归一结构里的扁平键，导致全部段判未启用而静默停摆）。
  */
-import { parseData, sleep } from '../../core/util.js';
+import { parseData, sleep, todayStr } from '../../core/util.js';
 import { createLog } from '../../core/log.js';
 import { reactor } from '../../core/reactor.js';
 import { storage } from '../../core/storage.js';
@@ -335,17 +335,6 @@ function pokePanel() {
   bus.emit('ui.refresh');
 }
 
-/**
- * 今日日期字符串 YYYY-MM-DD（当地时区，与面板展示一致）
- * @returns {string}
- */
-function todayStr() {
-  var d = new Date();
-  var m = d.getMonth() + 1;
-  var day = d.getDate();
-  return d.getFullYear() + '-' + (m < 10 ? '0' + m : m) + '-' + (day < 10 ? '0' + day : day);
-}
-
 /** 跳日自动归零：当前日期与持久态不同则重置 counts 并落盘（未读回前不动，防半截态）。 */
 function rollDateIfNeeded() {
   if (!dailyStateLoaded) return;
@@ -586,11 +575,9 @@ async function sendAttack(coord, marchType, plan) {
  * @returns {Promise<object>} net.Ret
  */
 async function createRally(coord, plan) {
-  if (net.isSending(CMD_CREATE_RALLY)) {
-    return net.Ret.from(march.NOT_SENT, null);
-  }
-  try {
-    return await net.send(CMD_CREATE_RALLY, {
+  return net.sendGuarded(
+    CMD_CREATE_RALLY,
+    {
       marchType: MT_RALLY,
       x: coord.x,
       y: coord.y,
@@ -601,11 +588,14 @@ async function createRally(coord, plan) {
       trapList: plan.trapList,
       formation: 0,
       formationV2: plan.formationV2,
-    });
-  } catch (err) {
-    log.warn('1201 send error. x=%s;y=%s', coord.x, coord.y, err);
-    return net.Ret.from(march.NOT_SENT, null);
-  }
+    },
+    {
+      fallback: net.Ret.from(march.NOT_SENT, null),
+      onError: function (err) {
+        log.warn('1201 send error. x=%s;y=%s', coord.x, coord.y, err);
+      },
+    },
+  );
 }
 
 /**
@@ -614,13 +604,16 @@ async function createRally(coord, plan) {
  * @returns {Promise<void>}
  */
 async function useStaminaItem(itemId) {
-  if (net.isSending(CMD_ITEM_USE)) return;
-  try {
-    await net.send(CMD_ITEM_USE, { itemid: itemId, amount: 1 });
-    log.info('used stamina potion. itemId=%d', itemId);
-  } catch (err) {
-    log.debug('815 use failed. %s', err && err.message);
-  }
+  var ret = await net.sendGuarded(
+    CMD_ITEM_USE,
+    { itemid: itemId, amount: 1 },
+    {
+      onError: function (err) {
+        log.debug('815 use failed. %s', err && err.message);
+      },
+    },
+  );
+  if (ret && ret.ok) log.info('used stamina potion. itemId=%d', itemId);
 }
 
 // ── 周期引擎 ────────────────────────────────────────────────────────

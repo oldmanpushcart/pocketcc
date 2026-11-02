@@ -36,7 +36,7 @@
  *   当场收掉同类型全部流程 + 滤掉同类型待派项，后续该类型的发车卡不再建流程（跨类型互不影响，跨日自动失效）。
  * 被拒退避："目标被占/限流"类拒绝按指数退避再试（队满与上限各有专路、不走这里），否则会被拒的坐标每秒重派一遍。
  */
-import { CODE_NOT_SENT } from '../../core/util.js';
+import { CODE_NOT_SENT, todayStr, serverTimeSec as utilServerTimeSec } from '../../core/util.js';
 import { createLog } from '../../core/log.js';
 import { game } from '../../core/game.js';
 import { reactor } from '../../core/reactor.js';
@@ -472,9 +472,7 @@ function dispatch(ev) {
  * @returns {number}
  */
 function serverTimeSec() {
-  var st = dataCenter && dataCenter.ServerTime;
-  if (st != null && +st) return +st;
-  return Date.now() / 1000;
+  return utilServerTimeSec(dataCenter && dataCenter.ServerTime);
 }
 
 /**
@@ -759,17 +757,6 @@ function dropFlow(flow, reason) {
     );
   }
   if (!flows.size && !pendingPickups.length) stopDriver();
-}
-
-/**
- * 今日日期串（口径同 alliance-help：只用它做"跨日自动失效"，不追求服务器日界到小时）
- * @returns {string} "YYYY-MM-DD"
- */
-function todayStr() {
-  var d = new Date();
-  var m = d.getMonth() + 1;
-  var day = d.getDate();
-  return d.getFullYear() + '-' + (m < 10 ? '0' + m : m) + '-' + (day < 10 ? '0' + day : day);
 }
 
 /**
@@ -1421,29 +1408,37 @@ function respText(data) {
  * @returns {Promise<object>} {state:'hit',x,y} | {state:'empty',code,key,resp} | {state:'error',code}
  */
 async function queryBox(dropType, marchIdStr) {
-  try {
-    var ret = await net.sendPBV2(CMD_FLOAT_PARADE_QUERY_CAN_REWARD_BAG, {
+  var threw = false;
+  var ret = await net.sendGuarded(
+    CMD_FLOAT_PARADE_QUERY_CAN_REWARD_BAG,
+    {
       queryType: 1,
       marchType: dropType,
       marchIdStr: marchIdStr,
-    });
-    var pos = ret.data;
-    // 被拒时把原载荷留下来：这是"为什么没箱"的唯一线索（每日上限？被别人领完？箱确实不在）
-    if (!ret.ok)
-      return {
-        state: 'empty',
-        code: ret.code,
-        key: rejectErrKey(pos),
-        resp: respText(pos),
-        why: whyText(pos),
-      };
-    if (!pos) return { state: 'empty', code: ret.code, key: null, resp: '-' };
-    if (!pos.x || !pos.y) return { state: 'empty', code: ret.code, key: null, resp: respText(pos) };
-    return { state: 'hit', x: pos.x, y: pos.y, code: ret.code };
-  } catch (err) {
-    log.warn('query box error! marchId=%s', marchIdStr, err);
-    return { state: 'error', code: CODE_NOT_SENT };
-  }
+    },
+    {
+      protocol: 'sendPBV2',
+      gate: false,
+      onError: function (err) {
+        log.warn('query box error! marchId=%s', marchIdStr, err);
+        threw = true;
+      },
+    },
+  );
+  if (threw) return { state: 'error', code: CODE_NOT_SENT };
+  var pos = ret.data;
+  // 被拒时把原载荷留下来：这是"为什么没箱"的唯一线索（每日上限？被别人领完？箱确实不在）
+  if (!ret.ok)
+    return {
+      state: 'empty',
+      code: ret.code,
+      key: rejectErrKey(pos),
+      resp: respText(pos),
+      why: whyText(pos),
+    };
+  if (!pos) return { state: 'empty', code: ret.code, key: null, resp: '-' };
+  if (!pos.x || !pos.y) return { state: 'empty', code: ret.code, key: null, resp: respText(pos) };
+  return { state: 'hit', x: pos.x, y: pos.y, code: ret.code };
 }
 
 /**

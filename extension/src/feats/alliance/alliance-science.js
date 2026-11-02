@@ -49,7 +49,7 @@
  * 生命周期由 reactor 托管：install/run 两钩子（日常任务无配置可推），places 限 base/world（Home/NWorldMap），战斗模式暂停；
  *   调度交给 core/cycle.js：单飞闸门、推触合并、异常 fallback 重排均内置；pause 后 alive()=false 让 cycle 自然停摆。
  */
-import { CODE_NOT_SENT, sleep } from '../../core/util.js';
+import { sleep } from '../../core/util.js';
 import { createLog } from '../../core/log.js';
 import { l10n, gameData } from '../../core/game-api.js';
 import { reactor } from '../../core/reactor.js';
@@ -240,14 +240,11 @@ async function sendDonateRelic(siteId) {
  * @returns {Promise<{ok:boolean, code:number, data:*, payload:object|null}>}
  */
 async function sendRaw(cmd, body) {
-  if (net.isSending(cmd)) return { ok: false, code: CODE_NOT_SENT, data: null, payload: null };
-  var ret;
-  try {
-    ret = await net.send(cmd, body);
-  } catch (err) {
-    log.debug('cmd %d send failed: %s', cmd, err && err.message);
-    return { ok: false, code: CODE_NOT_SENT, data: null, payload: null };
-  }
+  var ret = await net.sendGuarded(cmd, body, {
+    onError: function (err) {
+      log.debug('cmd %d send failed: %s', cmd, err && err.message);
+    },
+  });
   return { ok: ret.ok, code: ret.code, data: ret.data, payload: payloadOf(ret) };
 }
 

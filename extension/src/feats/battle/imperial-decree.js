@@ -26,6 +26,7 @@
  * 属「战斗设置」：单飞执行（busy 期新旨令直接回「稍候」），队列不足只拒当前令不排队。
  */
 import { createLog } from '../../core/log.js';
+import { safeParse } from '../../core/util.js';
 import { game } from '../../core/game.js';
 import { gameData, l10n, march as marchApi } from '../../core/game-api.js';
 import { getUid } from '../../core/player.js';
@@ -98,20 +99,7 @@ function consulSet() {
   return s;
 }
 
-/**
- * JSON.parse 兜底（custom/应答 data 可能是串也可能已对象化）
- * @param {*} s
- * @returns {object|null}
- */
-function safeParse(s) {
-  if (s == null || s === '') return null;
-  if (typeof s === 'object') return s;
-  try {
-    return JSON.parse(s);
-  } catch (e) {
-    return null;
-  }
-}
+// safeParse 已收口至 core/util.js（见顶部 import）
 
 /**
  * 消息文本是否点名本人（atData.uid 含本人 UID 或 StrUid；元素可能是裸值或 {uid} 对象）。

@@ -43,6 +43,7 @@
  * 只读+发包红线：全程只走 ACL 的只读快照 + sendSecret，不调游戏侧 Update/Delete、不镜像本地态。
  */
 import { createCycle } from '../../../core/cycle.js';
+import { bits } from '../../../core/game-api.js';
 import {
   CMD_MARCH_ARMY_INFO,
   CMD_BAG_USE,
@@ -58,21 +59,7 @@ import {
  * @returns {number}
  */
 function toNum(v) {
-  if (v == null) return 0;
-  if (typeof v === 'object') {
-    try {
-      if (typeof v.toNumber === 'function') return Number(v.toNumber()) || 0;
-    } catch (e) {
-      /* 降级走 _low/_high 手算 */
-    }
-    const hi = Number(v._high);
-    const lo = Number(v._low);
-    if (Number.isFinite(hi) || Number.isFinite(lo)) {
-      return (Number.isFinite(hi) ? hi : 0) * 4294967296 + (Number.isFinite(lo) ? lo >>> 0 : 0);
-    }
-    return 0;
-  }
-  return Number(v) || 0;
+  return bits.int64ToNum(v);
 }
 
 /**

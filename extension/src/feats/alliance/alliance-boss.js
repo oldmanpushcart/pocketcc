@@ -52,7 +52,7 @@
  *   单飞闸门 / 触发合并 / 择时重排收口到 core/cycle；pause 后 alive()=false 让 cycle 自然停摆，resume 重新 kick。
  *   合规：全程只读游戏数据 + 直发协议，不调用游戏的 Update* 改写本地态。
  */
-import { CODE_NOT_SENT, sleep } from '../../core/util.js';
+import { sleep, todayStr } from '../../core/util.js';
 import { createLog } from '../../core/log.js';
 import { bus } from '../../core/bus.js';
 import { game } from '../../core/game.js';
@@ -158,16 +158,6 @@ function aliveFn() {
 }
 
 // ── 当日记账 ──────────────────────────────────────────────────────────
-/**
- * 今日日期字符串 YYYY-MM-DD（当地时区，与面板展示一致）
- * @returns {string}
- */
-function todayStr() {
-  var d = new Date();
-  var m = d.getMonth() + 1;
-  var day = d.getDate();
-  return d.getFullYear() + '-' + (m < 10 ? '0' + m : m) + '-' + (day < 10 ? '0' + day : day);
-}
 
 /**
  * 滚到今日（跨日自动归零）
@@ -462,13 +452,11 @@ function payloadOf(ret) {
  * @returns {Promise<object>} net.Ret
  */
 async function ask(cmd, data) {
-  if (net.isSending(cmd)) return net.Ret.from(CODE_NOT_SENT, null);
-  try {
-    return await net.send(cmd, data);
-  } catch (err) {
-    log.debug('cmd %d send failed: %s', cmd, err && err.message);
-    return net.Ret.from(CODE_NOT_SENT, null);
-  }
+  return net.sendGuarded(cmd, data, {
+    onError: function (err) {
+      log.debug('cmd %d send failed: %s', cmd, err && err.message);
+    },
+  });
 }
 
 /**

@@ -23,6 +23,7 @@
  *   （仅分享态显、两步确认）；业务层发完调 exitShareMode() 退出；发送期间 setSharing(true) 锁按钮。
  */
 import { createLog } from '../../../core/log.js';
+import { esc as utilEsc } from '../../../core/util.js';
 import { OverlayShell, clampGeom as overlayClamp } from '../../../core/overlay.js';
 
 /** @type {ReturnType<createLog>} 模块日志器（tag=JUMPOVERLAY） */
@@ -121,10 +122,7 @@ const CSS = `
  * @returns {string}
  */
 function esc(s) {
-  return String(s == null ? '' : s).replace(
-    /[&<>"]/g,
-    (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c],
-  );
+  return utilEsc(s);
 }
 
 // 视口内几何钳制算法已上收 core/overlay.js（单一真相）；此处按本浮窗尺寸下限绑定为局部便捷名，保留 7 处既有调用点不变。

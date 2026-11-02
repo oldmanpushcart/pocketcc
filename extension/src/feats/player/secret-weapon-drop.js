@@ -48,7 +48,7 @@
 import { CODE_NOT_SENT, sleep } from '../../core/util.js';
 import { createLog } from '../../core/log.js';
 import { bus } from '../../core/bus.js';
-import { gameData } from '../../core/game-api.js';
+import { bits, gameData } from '../../core/game-api.js';
 import { airDropDomain } from './secret-weapon-drop/api.js';
 import { item } from '../../core/item.js';
 import { reactor } from '../../core/reactor.js';
@@ -112,19 +112,7 @@ function aliveFn() {
 }
 
 // ── 小工具 ──────────────────────────────────────────────────────────────
-/**
- * Long64（{_low,_high}）→ 毫秒数值；PB V1 时间戳按无符号高低位拼装（实证 start _high=417/_low=335025395 → ~2.7h 前的 ms 时刻）
- * @param {object} o 可能是 {low,high} 也可能是 {_low,_high}
- * @returns {number} 毫秒；无效返回 0
- */
-function long64Ms(o) {
-  if (!o || typeof o !== 'object') return 0;
-  var lo = Number(o._low != null ? o._low : o.low);
-  var hi = Number(o._high != null ? o._high : o.high);
-  if (!isFinite(lo) || !isFinite(hi)) return 0;
-  if (lo < 0) lo += 4294967296; // _low 若为有符号负值补回无符号
-  return hi * 4294967296 + lo;
-}
+// long64Ms 已收口到 core/acl/bits.js 的 bits.int64ToNum（时间戳量纲，经 game-api 门面取 bits）
 
 /**
  * 旧 JSON 链路应答归一化：ret.data 通常是 JSON 串（游戏侧 JSON_PARSE(t.d)），兜底已是对象
@@ -150,15 +138,16 @@ function payloadOf(ret) {
  * @returns {Promise<{ok:boolean, code:number, drift?:boolean, available:number, nextMs:number, cnt:(number|null), max:number}>}
  */
 async function queryCharges() {
-  if (net.isSending(CMD_SKILL_INFO))
-    return { ok: false, code: CODE_NOT_SENT, available: -1, nextMs: 0, cnt: null, max: 0 };
-  var ret;
-  try {
-    ret = await net.sendPB(CMD_SKILL_INFO, { header: {} });
-  } catch (err) {
-    log.debug('cmd %d send failed: %s', CMD_SKILL_INFO, err && err.message);
-    return { ok: false, code: CODE_NOT_SENT, available: -1, nextMs: 0, cnt: null, max: 0 };
-  }
+  var ret = await net.sendGuarded(
+    CMD_SKILL_INFO,
+    { header: {} },
+    {
+      protocol: 'sendPB',
+      onError: function (err) {
+        log.debug('cmd %d send failed: %s', CMD_SKILL_INFO, err && err.message);
+      },
+    },
+  );
   if (!ret || !ret.ok)
     return {
       ok: false,
@@ -201,23 +190,22 @@ async function useCharge() {
   var spot = airDropDomain.homeAirDropSpot(BUILDING_ID_AIRDROP);
   if (!spot) return { ok: false, noSpace: true, code: 0, cnt: 0, recoverMs: 0 };
   lastSpot = spot.x + ',' + spot.y;
-  if (net.isSending(CMD_USE_SKILL)) return { ok: false, code: CODE_NOT_SENT, cnt: 0, recoverMs: 0 };
-  var ret;
-  try {
-    ret = await net.sendPB(CMD_USE_SKILL, {
-      header: {},
-      cdSkillUse: { id: SKILL_ID_AIRDROP, param: [spot.x, spot.y] },
-    });
-  } catch (err) {
-    log.debug('cmd %d send failed: %s', CMD_USE_SKILL, err && err.message);
-    return { ok: false, code: CODE_NOT_SENT, cnt: 0, recoverMs: 0 };
-  }
+  var ret = await net.sendGuarded(
+    CMD_USE_SKILL,
+    { header: {}, cdSkillUse: { id: SKILL_ID_AIRDROP, param: [spot.x, spot.y] } },
+    {
+      protocol: 'sendPB',
+      onError: function (err) {
+        log.debug('cmd %d send failed: %s', CMD_USE_SKILL, err && err.message);
+      },
+    },
+  );
   if (!ret || !ret.ok)
     return { ok: false, code: ret ? ret.code : CODE_NOT_SENT, cnt: 0, recoverMs: 0 };
   // PB V1 业务数据在 pbAck 命名子字段 cdSkillUse（net.sendPB 整体回 pbAck，无 .data 包装）
   var skill = ret.data && ret.data.cdSkillUse && ret.data.cdSkillUse.skill;
   var cnt = skill ? Number(skill.cnt) || 0 : 0;
-  var recoverMs = skill ? long64Ms(skill.end) : 0;
+  var recoverMs = skill ? bits.int64ToNum(skill.end) : 0;
   lastCnt = cnt;
   return { ok: true, code: 0, cnt: cnt, recoverMs: recoverMs };
 }
@@ -228,14 +216,15 @@ async function useCharge() {
  * @returns {Promise<{ok:boolean, code:number, items:Array}>}
  */
 async function collectOne(targetId) {
-  if (net.isSending(CMD_COLLECT)) return { ok: false, code: CODE_NOT_SENT, items: [] };
-  var ret;
-  try {
-    ret = await net.send(CMD_COLLECT, { targetId: targetId });
-  } catch (err) {
-    log.debug('cmd %d send failed: %s', CMD_COLLECT, err && err.message);
-    return { ok: false, code: CODE_NOT_SENT, items: [] };
-  }
+  var ret = await net.sendGuarded(
+    CMD_COLLECT,
+    { targetId: targetId },
+    {
+      onError: function (err) {
+        log.debug('cmd %d send failed: %s', CMD_COLLECT, err && err.message);
+      },
+    },
+  );
   if (!ret || !ret.ok) return { ok: false, code: ret ? ret.code : CODE_NOT_SENT, items: [] };
   var d = payloadOf(ret);
   var items = d && d.reward && Array.isArray(d.reward.items) ? d.reward.items : [];

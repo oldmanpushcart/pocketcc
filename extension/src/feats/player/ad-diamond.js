@@ -231,14 +231,17 @@ function dayRollDelay() {
  * @returns {Promise<{ok:boolean, code:number}>}
  */
 async function fetchInfo() {
-  if (!net || net.isSending(CMD_WATCH_INFO)) return { ok: false, code: CODE_NOT_SENT };
-  var ret;
-  try {
-    ret = await net.sendPBV2(CMD_WATCH_INFO, {});
-  } catch (err) {
-    log.debug('cmd 9706 send failed: %s', err && err.message);
-    return { ok: false, code: CODE_NOT_SENT };
-  }
+  if (!net) return { ok: false, code: CODE_NOT_SENT };
+  var ret = await net.sendGuarded(
+    CMD_WATCH_INFO,
+    {},
+    {
+      protocol: 'sendPBV2',
+      onError: function (err) {
+        log.debug('cmd 9706 send failed: %s', err && err.message);
+      },
+    },
+  );
   if (!ret || !ret.ok) return { ok: false, code: ret ? ret.code : CODE_NOT_SENT };
   var list = ret.data && ret.data.adMonthCardWatchInfos;
   if (!Array.isArray(list)) {
@@ -265,15 +268,17 @@ async function fetchInfo() {
  * @returns {Promise<{claimed:boolean, code:number, gold:number}>}
  */
 async function claimOnce(id, times) {
-  if (!net || net.isSending(CMD_WATCH_REWARD))
-    return { claimed: false, code: CODE_NOT_SENT, gold: 0 };
-  var ret;
-  try {
-    ret = await net.sendPBV2(CMD_WATCH_REWARD, { adNewId: id, cnt: 1 });
-  } catch (err) {
-    log.debug('cmd 9707 send failed: %s', err && err.message);
-    return { claimed: false, code: CODE_NOT_SENT, gold: 0 };
-  }
+  if (!net) return { claimed: false, code: CODE_NOT_SENT, gold: 0 };
+  var ret = await net.sendGuarded(
+    CMD_WATCH_REWARD,
+    { adNewId: id, cnt: 1 },
+    {
+      protocol: 'sendPBV2',
+      onError: function (err) {
+        log.debug('cmd 9707 send failed: %s', err && err.message);
+      },
+    },
+  );
   if (!ret || !ret.ok) return { claimed: false, code: ret ? ret.code : CODE_NOT_SENT, gold: 0 };
   var info = ret.data && ret.data.adMonthCardInfo;
   if (info && Number(info.adNewId) === id) {

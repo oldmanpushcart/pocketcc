@@ -11,7 +11,6 @@
  * 单一总开关（reactor enabled）驱动两引擎一起起停。
  * 全部「只读+发包」：不改写游戏本地数据、不 OpenUI、不模拟点击。
  */
-import { CODE_NOT_SENT } from '../../../core/util.js';
 import { createLog } from '../../../core/log.js';
 import { game } from '../../../core/game.js';
 import { reactor } from '../../../core/reactor.js';
@@ -56,13 +55,12 @@ function cfgSeg(id, idx) {
 
 // 统一发包壳：同号在途则跳过，异常兜底为 CODE_NOT_SENT。
 async function ask(cmd, payload, label) {
-  if (net.isSending(cmd)) return net.Ret.from(CODE_NOT_SENT, null);
-  try {
-    return await net.sendPBV2(cmd, payload);
-  } catch (err) {
-    log.warn('%s send error.', label, err);
-    return net.Ret.from(CODE_NOT_SENT, null);
-  }
+  return net.sendGuarded(cmd, payload, {
+    protocol: 'sendPBV2',
+    onError: function (err) {
+      log.warn('%s send error.', label, err);
+    },
+  });
 }
 
 // ─────────── 注入两引擎的共享底座 ───────────

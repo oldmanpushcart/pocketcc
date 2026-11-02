@@ -359,13 +359,18 @@ async function harvestDue() {
     var shouldProbe = !haveSt && (blocked || s.wait.length > 0);
     if (!dueByTime && !forceSync && !shouldProbe) return;
     if (net.isSending(CMD_PRODUCE_GET)) return;
-    var ret;
-    try {
-      ret = await net.send(CMD_PRODUCE_GET, {});
-    } catch (e) {
-      log.warn('harvest send threw.', e);
-      return;
-    }
+    var harvestThrew = false;
+    var ret = await net.sendGuarded(
+      CMD_PRODUCE_GET,
+      {},
+      {
+        onError: function (e) {
+          log.warn('harvest send threw.', e);
+          harvestThrew = true;
+        },
+      },
+    );
+    if (harvestThrew) return;
     if (!aliveFn()) return;
     synced = true; // 点火后已完成一次权威读，不再强制；失败则退回 produce 试探（由 blocked 兜底）
     var d = parseData(ret && ret.data);
@@ -404,13 +409,18 @@ async function fillQueue() {
       return;
     }
     if (net.isSending(CMD_PRODUCE)) return;
-    var ret;
-    try {
-      ret = await net.send(CMD_PRODUCE, { itemId: base });
-    } catch (e) {
-      log.warn('produce send threw.', e);
-      return;
-    }
+    var produceThrew = false;
+    var ret = await net.sendGuarded(
+      CMD_PRODUCE,
+      { itemId: base },
+      {
+        onError: function (e) {
+          log.warn('produce send threw.', e);
+          produceThrew = true;
+        },
+      },
+    );
+    if (produceThrew) return;
     if (!aliveFn()) return;
     var d = parseData(ret && ret.data);
     if (ret && ret.ok && d && typeof d === 'object' && Array.isArray(d.wait)) {

@@ -15,6 +15,7 @@
  *   onGeomChange(geom)          拖拽/resize 松手后落盘
  */
 import { createLog } from '../../../core/log.js';
+import { esc as utilEsc } from '../../../core/util.js';
 import { MapView } from './render.js';
 import { CITY_POINT_TYPE, shieldText, fmtLargeNum } from '../../../core/map.js';
 import { FILTER_TREE, SUB_MAP } from './map-meta.js';
@@ -164,10 +165,7 @@ const LIST_ROW_CAP = 250;
  * @returns {string}
  */
 function esc(s) {
-  return String(s == null ? '' : s).replace(
-    /[&<>"]/g,
-    (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c],
-  );
+  return utilEsc(s);
 }
 
 /**

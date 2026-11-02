@@ -35,7 +35,7 @@
  *   驻军/领积分为内置默认行为；撤田腾队列为面板可选项（recallFarm，默认勾选）。
  *   驻军/撤田读本人行军走 core/march.list()（封装 856 GET_ALL_MY_MARCH_INFO，视口无关、Home 亦有全量；不再依赖 mapData.marches）。
  */
-import { CODE_NOT_SENT, parseData, sleep } from '../../core/util.js';
+import { parseData, sleep } from '../../core/util.js';
 import { createLog } from '../../core/log.js';
 import { game } from '../../core/game.js';
 import { l10n, gameConf, gameData } from '../../core/game-api.js';
@@ -293,17 +293,24 @@ function tierThresholds() {
  * @returns {Promise<object|null>} {start,end,cur,list} 或 null
  */
 async function requestInfo() {
-  try {
-    var ret = await net.send(CMD_GET_GUN_FIGHT_INFO, {});
-    if (!ret.ok) {
-      log.debug('1055 not ok. code=%d', ret.code);
-      return null;
-    }
-    return parseData(ret.data);
-  } catch (err) {
-    log.warn('request info error.', err);
+  var threw = false;
+  var ret = await net.sendGuarded(
+    CMD_GET_GUN_FIGHT_INFO,
+    {},
+    {
+      gate: false,
+      onError: function (err) {
+        log.warn('request info error.', err);
+        threw = true;
+      },
+    },
+  );
+  if (threw) return null;
+  if (!ret.ok) {
+    log.debug('1055 not ok. code=%d', ret.code);
     return null;
   }
+  return parseData(ret.data);
 }
 
 /**
@@ -311,14 +318,21 @@ async function requestInfo() {
  * @returns {Promise<object|null>} {total,reward:[]} 或 null
  */
 async function requestUserInfo() {
-  try {
-    var ret = await net.send(CMD_GET_GUN_FIGHT_USER_INFO, {});
-    if (!ret.ok) return null;
-    return parseData(ret.data);
-  } catch (err) {
-    log.warn('request user info error.', err);
-    return null;
-  }
+  var threw = false;
+  var ret = await net.sendGuarded(
+    CMD_GET_GUN_FIGHT_USER_INFO,
+    {},
+    {
+      gate: false,
+      onError: function (err) {
+        log.warn('request user info error.', err);
+        threw = true;
+      },
+    },
+  );
+  if (threw) return null;
+  if (!ret.ok) return null;
+  return parseData(ret.data);
 }
 
 /**
@@ -327,12 +341,16 @@ async function requestUserInfo() {
  * @returns {Promise<object>} net.Ret
  */
 async function sendClaim(num) {
-  try {
-    return await net.send(CMD_GET_GUN_FIGHT_USER_REWARD, { score: Number(num) });
-  } catch (err) {
-    log.warn('claim send error. num=%d', num, err);
-    return net.Ret.from(CODE_NOT_SENT, null);
-  }
+  return net.sendGuarded(
+    CMD_GET_GUN_FIGHT_USER_REWARD,
+    { score: Number(num) },
+    {
+      gate: false,
+      onError: function (err) {
+        log.warn('claim send error. num=%d', num, err);
+      },
+    },
+  );
 }
 
 /**

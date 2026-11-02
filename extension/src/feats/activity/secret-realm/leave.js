@@ -25,6 +25,7 @@
  *   Int64（fightEndTime）以 toNum 读、id 原样透传给 8581（不 Number / 不字符串化，与 protectBeasts 同形态）。
  */
 import { createCycle } from '../../../core/cycle.js';
+import { bits } from '../../../core/game-api.js';
 import {
   CMD_LEAVE_AREA,
   CMD_BAG_GET_SET,
@@ -44,22 +45,7 @@ const QUALITY_MIN = QUALITY_HIGH;
  * @returns {number}
  */
 function toNum(v) {
-  if (v == null) return 0;
-  if (typeof v === 'number') return v;
-  if (typeof v === 'object') {
-    try {
-      if (typeof v.toNumber === 'function') return Number(v.toNumber()) || 0;
-    } catch (e) {
-      /* 降级走 _low/_high 手算 */
-    }
-    const hi = Number(v._high);
-    const lo = Number(v._low);
-    if (Number.isFinite(hi) || Number.isFinite(lo)) {
-      return (Number.isFinite(hi) ? hi : 0) * 4294967296 + (Number.isFinite(lo) ? lo >>> 0 : 0);
-    }
-    return 0;
-  }
-  return Number(v) || 0;
+  return bits.int64ToNum(v);
 }
 
 /**

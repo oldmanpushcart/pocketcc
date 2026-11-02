@@ -27,6 +27,7 @@
  *   onGeomChange(geom)                                      拖拽/resize 松手后落盘
  */
 import { createLog } from '../../../core/log.js';
+import { escStrict as utilEscStrict } from '../../../core/util.js';
 
 /** @type {ReturnType<createLog>} 模块日志器（tag=CHATWIN） */
 const log = createLog('CHATWIN');
@@ -198,12 +199,7 @@ const CSS = `
  * @returns {string}
  */
 function esc(s) {
-  return String(s == null ? '' : s)
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;');
+  return utilEscStrict(s);
 }
 
 /**

@@ -36,6 +36,7 @@ import { reactor } from '../../core/reactor.js';
 import { createCycle } from '../../core/cycle.js';
 import { storage } from '../../core/storage.js';
 import { bus } from '../../core/bus.js';
+import { todayStr as utilTodayStr } from '../../core/util.js';
 
 /** @type {ReturnType<createLog>} 模块日志器（tag=PLAYER_LIKE） */
 const log = createLog('PLAYER_LIKE');
@@ -174,10 +175,7 @@ function configure(partial) {
  * @returns {string}
  */
 function todayStr() {
-  var d = new Date(((data && data.ServerTime) || 0) * 1000);
-  var m = d.getMonth() + 1;
-  var day = d.getDate();
-  return d.getFullYear() + '-' + (m < 10 ? '0' + m : m) + '-' + (day < 10 ? '0' + day : day);
+  return utilTodayStr((data && data.ServerTime) || 0);
 }
 
 /**

@@ -51,7 +51,7 @@
  * 合规：只读游戏数据（经 game-api ACL）+ 发 2503/901，不调任何 Update/Delete、不 OpenUI。
  *   生命周期由 reactor 托管；pause 只清待排空队列（不保留陈旧坐标快照）。
  */
-import { CODE_NOT_SENT } from '../../core/util.js';
+import { CODE_NOT_SENT, todayStr, safeParse } from '../../core/util.js';
 import { createLog } from '../../core/log.js';
 import { gameData, l10n, bits, worldMap } from '../../core/game-api.js';
 import { getUid } from '../../core/player.js';
@@ -164,31 +164,7 @@ function aliveFn() {
   return ctxRef ? ctxRef.alive() : false;
 }
 
-/**
- * JSON 兜底解析（推送/应答载荷可能是串也可能已对象化）
- * @param {*} v
- * @returns {object|null}
- */
-function safeParse(v) {
-  if (v == null || v === '') return null;
-  if (typeof v === 'object') return v;
-  try {
-    return JSON.parse(v);
-  } catch (e) {
-    return null;
-  }
-}
-
-/**
- * 今天（本地日）的日期串 YYYY-MM-DD，镜像跨日复位的锚（口径同联盟集结/卡车争夺）
- * @returns {string}
- */
-function todayStr() {
-  var d = new Date();
-  var m = d.getMonth() + 1;
-  var day = d.getDate();
-  return d.getFullYear() + '-' + (m < 10 ? '0' + m : m) + '-' + (day < 10 ? '0' + day : day);
-}
+// safeParse 已收口至 core/util.js（见顶部 import）
 
 /**
  * 当前生效的宝箱道具 id 集（内置假面迷城族 + 运行期经表核验后学习的值）
@@ -720,13 +696,20 @@ async function claimOne(cand) {
     return;
   }
 
-  var ret;
-  try {
-    ret = await net.sendPBV2(CMD_DANCE_GET_REWARD, { targetUidStr: pid });
-  } catch (err) {
-    log.debug('cmd 2503 send failed: %s', err && err.message);
-    return;
-  }
+  var threw = false;
+  var ret = await net.sendGuarded(
+    CMD_DANCE_GET_REWARD,
+    { targetUidStr: pid },
+    {
+      protocol: 'sendPBV2',
+      gate: false,
+      onError: function (err) {
+        log.debug('cmd 2503 send failed: %s', err && err.message);
+        threw = true;
+      },
+    },
+  );
+  if (threw) return;
   if (!aliveFn()) return;
   if (!ret || !ret.ok) {
     // 可预期的业务拒（射程/名额/次数）走 info，不刷 warn；随即当日拉黑，一个实例只撞一次墙

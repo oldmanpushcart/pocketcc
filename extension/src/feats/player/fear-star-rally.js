@@ -225,14 +225,16 @@ function buildPlanFromPool(presets) {
  * @returns {Promise<void>}
  */
 async function refreshFearStarCount() {
-  if (!net || net.isSending(CMD_GET_JION_ALL_RCTIME)) return;
-  var ret;
-  try {
-    ret = await net.send(CMD_GET_JION_ALL_RCTIME, {});
-  } catch (err) {
-    log.debug('1026 fear-star count fetch failed. %s', err && err.message);
-    return;
-  }
+  if (!net) return;
+  var ret = await net.sendGuarded(
+    CMD_GET_JION_ALL_RCTIME,
+    {},
+    {
+      onError: function (err) {
+        log.debug('1026 fear-star count fetch failed. %s', err && err.message);
+      },
+    },
+  );
   if (!ret || !ret.ok) return;
   var d = parseData(ret.data);
   if (!d || d.thorSearchNum == null) return;
@@ -349,11 +351,9 @@ async function sendAttack(coord, plan) {
  * @returns {Promise<object>} net.Ret
  */
 async function createRally(coord, plan) {
-  if (net.isSending(CMD_CREATE_RALLY)) {
-    return net.Ret.from(march.NOT_SENT, null);
-  }
-  try {
-    return await net.send(CMD_CREATE_RALLY, {
+  return net.sendGuarded(
+    CMD_CREATE_RALLY,
+    {
       marchType: MT_RALLY,
       x: coord.x,
       y: coord.y,
@@ -364,11 +364,14 @@ async function createRally(coord, plan) {
       trapList: plan.trapList,
       formation: 0,
       formationV2: plan.formationV2,
-    });
-  } catch (err) {
-    log.warn('1201 send error. x=%s;y=%s', coord.x, coord.y, err);
-    return net.Ret.from(march.NOT_SENT, null);
-  }
+    },
+    {
+      fallback: net.Ret.from(march.NOT_SENT, null),
+      onError: function (err) {
+        log.warn('1201 send error. x=%s;y=%s', coord.x, coord.y, err);
+      },
+    },
+  );
 }
 
 // ── 调度 ────────────────────────────────────────────────────────────

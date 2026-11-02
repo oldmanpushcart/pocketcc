@@ -145,14 +145,15 @@ function delayFor(info) {
  * @returns {Promise<{claimed:boolean, code:number}>}
  */
 async function claimOnce(times) {
-  if (net.isSending(CMD_GET_TIME_REWARD)) return { claimed: false, code: CODE_NOT_SENT };
-  var ret;
-  try {
-    ret = await net.send(CMD_GET_TIME_REWARD, {});
-  } catch (err) {
-    log.debug('cmd 825 send failed: %s', err && err.message);
-    return { claimed: false, code: CODE_NOT_SENT };
-  }
+  var ret = await net.sendGuarded(
+    CMD_GET_TIME_REWARD,
+    {},
+    {
+      onError: function (err) {
+        log.debug('cmd 825 send failed: %s', err && err.message);
+      },
+    },
+  );
   var code = ret ? ret.code : CODE_NOT_SENT;
   if (!ret || !ret.ok) return { claimed: false, code: code };
   var d;

@@ -60,6 +60,7 @@
  *   它踩改写本地态的红线且改版即碎；我们只拿它的**业务判据**（有道具就投、投首个可用的），发包走协议层。
  */
 import { createCycle } from '../../../core/cycle.js';
+import { bits } from '../../../core/game-api.js';
 import {
   SPEC_TAP,
   SPEC_ENERGY_USE,
@@ -94,21 +95,7 @@ const EMPTY_CAP = {};
  * @returns {number}
  */
 function toNum(v) {
-  if (v == null) return 0;
-  if (typeof v === 'object') {
-    try {
-      if (typeof v.toNumber === 'function') return Number(v.toNumber()) || 0;
-    } catch (e) {
-      /* 降级走 _low/_high 手算 */
-    }
-    const hi = Number(v._high);
-    const lo = Number(v._low);
-    if (Number.isFinite(hi) || Number.isFinite(lo)) {
-      return (Number.isFinite(hi) ? hi : 0) * 4294967296 + (Number.isFinite(lo) ? lo >>> 0 : 0);
-    }
-    return 0;
-  }
-  return Number(v) || 0;
+  return bits.int64ToNum(v);
 }
 
 /**

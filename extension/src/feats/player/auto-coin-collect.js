@@ -155,14 +155,15 @@ function rewardCoin(d) {
  * @returns {Promise<{claimed:boolean, code:number}>}
  */
 async function collectOnce(harvester) {
-  if (net.isSending(CMD_GET_ORDER)) return { claimed: false, code: CODE_NOT_SENT };
-  var ret;
-  try {
-    ret = await net.send(CMD_GET_ORDER, { id: harvester.id });
-  } catch (err) {
-    log.debug('cmd 102 send failed (harvest): %s', err && err.message);
-    return { claimed: false, code: CODE_NOT_SENT };
-  }
+  var ret = await net.sendGuarded(
+    CMD_GET_ORDER,
+    { id: harvester.id },
+    {
+      onError: function (err) {
+        log.debug('cmd 102 send failed (harvest): %s', err && err.message);
+      },
+    },
+  );
   var code = ret ? ret.code : CODE_NOT_SENT;
   if (!ret || !ret.ok) {
     if (code !== CODE_NOT_SENT) rejectStreak++;

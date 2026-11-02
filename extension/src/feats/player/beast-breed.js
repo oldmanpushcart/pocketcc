@@ -58,7 +58,8 @@
  *   轮首另有一道玩法开启闸（gameData.beastBreedOpen，镜像游戏 isOpenFunc(BREED)）：培育玩法未开放/未开始时
  *   服务器对 15xx 干脆不回包（每条白等 15s 超时，随后连刷读失败 warn），闸关则整轮闭嘴只按 IDLE 档重检。
  */
-import { CODE_NOT_SENT, sleep } from '../../core/util.js';
+import { CODE_NOT_SENT, sleep, todayStr as utilTodayStr } from '../../core/util.js';
+import { netApi } from '../../core/net.js';
 import { createLog } from '../../core/log.js';
 import { storage } from '../../core/storage.js';
 import { game } from '../../core/game.js';
@@ -236,10 +237,7 @@ function aliveFn() {
  * @returns {string}
  */
 function todayStr() {
-  var d = new Date((gameData.serverTime() || Math.floor(Date.now() / 1000)) * 1000);
-  var m = d.getMonth() + 1;
-  var day = d.getDate();
-  return d.getFullYear() + '-' + (m < 10 ? '0' + m : m) + '-' + (day < 10 ? '0' + day : day);
+  return utilTodayStr(gameData.serverTime() || Math.floor(Date.now() / 1000));
 }
 
 /**
@@ -429,13 +427,14 @@ function persistLedger() {
  * @returns {Promise<object>} Ret {code,data,ok}
  */
 async function send(cmd, body) {
-  if (!net || net.isSending(cmd)) return net.Ret.from(CODE_NOT_SENT, null);
-  try {
-    return await net.sendPBV2(cmd, body || {});
-  } catch (err) {
-    log.warn('send %d threw: %s', cmd, err && err.message);
-    return net.Ret.from(CODE_NOT_SENT, null);
-  }
+  if (!net) return netApi.Ret.from(CODE_NOT_SENT, null);
+  return net.sendGuarded(cmd, body, {
+    protocol: 'sendPBV2',
+    defaultBody: true,
+    onError: function (err) {
+      log.warn('send %d threw: %s', cmd, err && err.message);
+    },
+  });
 }
 
 // ─────────────────────────── 出访兽匹配 ───────────────────────────

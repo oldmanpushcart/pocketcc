@@ -36,7 +36,7 @@
  *   - 无队且不该自己开车（仅 helper）→ 逐个玩家池成员用 630 PLAYER_INFO 取名 → 7530 按名（likeName）搜该玩家创建的未满队 → 7522 申请入队（不再扫 7526）；main 一律自己建队开车；
  *   - 次数不足且勾了 useBeaconWhenShort → 走通用使用物品 815 消耗定位信标(47001001) 补次数（§7-6 已报文关闭）。
  */
-import { CODE_NOT_SENT } from '../../../core/util.js';
+import { CODE_NOT_SENT, todayStr } from '../../../core/util.js';
 import { Battle } from '../../../core/battle.js';
 import { march } from '../../../core/march.js';
 import { CMD_GET_WORLD_INFO } from '../../../core/map.js';
@@ -140,15 +140,6 @@ const DAILY_RUNS_NAME = 'csHunt.daily';
  *   战斗演出导致的 pause→resume→重建引擎后对同一 treasureId 重复 +1。
  */
 const dailyRuns = { loaded: false, loading: false, date: '', runs: 0, lastId: '' };
-
-/** 今日日期字符串 YYYY-MM-DD（当地时区，与面板展示一致）。
- * @returns {string} */
-function todayStr() {
-  var d = new Date();
-  var m = d.getMonth() + 1;
-  var day = d.getDate();
-  return d.getFullYear() + '-' + (m < 10 ? '0' + m : m) + '-' + (day < 10 ? '0' + day : day);
-}
 
 /** 跳日归零：已读回且日期非今日则重置 runs/lastId 并落盘（未读回不动，避免把内存 0 覆盘上真值）。
  */
@@ -1209,28 +1200,25 @@ export class TeamEngine {
   async #lookupName(net, uidStr) {
     if (this.#uidName.has(uidStr)) return this.#uidName.get(uidStr);
     var name = '';
-    try {
-      var ret = await net.send(CMD_PLAYER_INFO, { uid: String(uidStr) });
-      var d = ret && ret.ok ? ret.data : null;
-      if (typeof d === 'string') {
-        try {
-          d = JSON.parse(d);
-        } catch (e) {
-          d = null;
-        }
+    // 630 异常降级：sendGuarded 永不 reject（投递失败/超时/回调异常自愈为 ok:false），查不到名字即回空串缓存，不阻断找队循环
+    var ret = await net.sendGuarded(CMD_PLAYER_INFO, { uid: String(uidStr) }, { gate: false });
+    var d = ret && ret.ok ? ret.data : null;
+    if (typeof d === 'string') {
+      try {
+        d = JSON.parse(d);
+      } catch (e) {
+        d = null;
       }
-      var pi = d && d.playerInfo;
-      if (typeof pi === 'string') {
-        try {
-          pi = JSON.parse(pi);
-        } catch (e) {
-          pi = null;
-        }
-      }
-      if (pi) name = String(pi.username || pi.nickname || '').trim();
-    } catch (err) {
-      /* 630 异常降级：查不到名字即跳过该玩家，交下一个成员/下一拍，不阻断找队循环 */
     }
+    var pi = d && d.playerInfo;
+    if (typeof pi === 'string') {
+      try {
+        pi = JSON.parse(pi);
+      } catch (e) {
+        pi = null;
+      }
+    }
+    if (pi) name = String(pi.username || pi.nickname || '').trim();
     this.#uidName.set(uidStr, name);
     return name;
   }
@@ -1257,12 +1245,7 @@ export class TeamEngine {
       marchInfo: true,
       viewLevel: 0,
     };
-    var ret;
-    try {
-      ret = await net.send(CMD_GET_WORLD_INFO, body);
-    } catch (err) {
-      return [];
-    }
+    var ret = await net.sendGuarded(CMD_GET_WORLD_INFO, body, { gate: false });
     if (!ret || !ret.ok) return [];
     var d = ret.data;
     if (typeof d === 'string') {
@@ -1287,29 +1270,24 @@ export class TeamEngine {
     if (hit && Date.now() - hit.at < POWER_CACHE_MS) return hit.power;
     var net = this.#env.net();
     if (!net) return 0;
-    var power;
-    try {
-      var ret = await net.send(CMD_PLAYER_INFO, { uid: String(uidStr) });
-      var d = ret && ret.ok ? ret.data : null;
-      if (typeof d === 'string') {
-        try {
-          d = JSON.parse(d);
-        } catch (e) {
-          d = null;
-        }
+    var ret = await net.sendGuarded(CMD_PLAYER_INFO, { uid: String(uidStr) }, { gate: false });
+    var d = ret && ret.ok ? ret.data : null;
+    if (typeof d === 'string') {
+      try {
+        d = JSON.parse(d);
+      } catch (e) {
+        d = null;
       }
-      var pi = d && d.playerInfo;
-      if (typeof pi === 'string') {
-        try {
-          pi = JSON.parse(pi);
-        } catch (e) {
-          pi = null;
-        }
-      }
-      power = pi ? Number(pi.power) || 0 : 0;
-    } catch (err) {
-      power = 0;
     }
+    var pi = d && d.playerInfo;
+    if (typeof pi === 'string') {
+      try {
+        pi = JSON.parse(pi);
+      } catch (e) {
+        pi = null;
+      }
+    }
+    var power = pi ? Number(pi.power) || 0 : 0;
     this.#uidPower.set(uidStr, { at: Date.now(), power: power });
     return power;
   }
@@ -1331,13 +1309,19 @@ export class TeamEngine {
     }
     if (net.isSending(CMD_ITEM_USE)) return false;
     this.#lastBeaconAt = now;
-    var ret;
-    try {
-      ret = await net.send(CMD_ITEM_USE, { itemid: ITEM_BEACON, amount: 1 });
-    } catch (err) {
-      log.warn('%s 信标发包 throw. %s', label, err && err.message);
-      return false;
-    }
+    var threw = false;
+    var ret = await net.sendGuarded(
+      CMD_ITEM_USE,
+      { itemid: ITEM_BEACON, amount: 1 },
+      {
+        gate: false,
+        onError: function (err) {
+          log.warn('%s 信标发包 throw. %s', label, err && err.message);
+          threw = true;
+        },
+      },
+    );
+    if (threw) return false;
     if (ret && ret.ok) {
       var remain = ret.data && ret.data.amount;
       log.info('%s消耗定位信标补次数 ok（剩余 %s）', label, remain == null ? '?' : remain);
@@ -1382,13 +1366,15 @@ export class TeamEngine {
       formationV2: plan.formationV2,
     };
     if (plan.extraArmy && plan.extraArmy.armyId) body.extraArmy = plan.extraArmy;
-    var ret;
-    try {
-      ret = await net.send(REQ_TEAM_MARCH, body);
-    } catch (err) {
-      log.warn('7519 send threw. %s', err && err.message);
-      return false;
-    }
+    var threw = false;
+    var ret = await net.sendGuarded(REQ_TEAM_MARCH, body, {
+      gate: false,
+      onError: function (err) {
+        log.warn('7519 send threw. %s', err && err.message);
+        threw = true;
+      },
+    });
+    if (threw) return false;
     if (ret && ret.ok) {
       this.#marchedTeamId = t.id;
       this.#noArmyLoggedTeamId = '';
@@ -1428,13 +1414,16 @@ export class TeamEngine {
     if (!net || net.isSending(cmd)) return { ok: false, code: CODE_NOT_SENT, payload: null };
     var field = REQ_FIELD[cmd]; // 查不到即「裸 header 请求」（7501 实发 `{header:{}}`），多塞一个空对象会偏离录制形态
     var body = field ? { header: {}, [field]: inner } : { header: {} };
-    var ret;
-    try {
-      ret = await net.sendPB(cmd, body);
-    } catch (err) {
-      log.debug('%s (%d) send failed: %s', label, cmd, err && err.message);
-      return { ok: false, code: CODE_NOT_SENT, payload: null };
-    }
+    var threw = false;
+    var ret = await net.sendGuarded(cmd, body, {
+      protocol: 'sendPB',
+      gate: false,
+      onError: function (err) {
+        log.debug('%s (%d) send failed: %s', label, cmd, err && err.message);
+        threw = true;
+      },
+    });
+    if (threw) return { ok: false, code: CODE_NOT_SENT, payload: null };
     var d = ret && ret.data;
     var payload = d && typeof d === 'object' ? d : null;
     var code = ret ? ret.code : CODE_NOT_SENT;

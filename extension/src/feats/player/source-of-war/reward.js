@@ -217,13 +217,20 @@ export class RewardFlow {
     var changed = false;
     for (var i = 0; i < pend.length; i++) {
       var tier = pend[i];
-      var ret;
-      try {
-        ret = await this.net.sendPBV2(CMD_CLAIM_ATTACK_REWARD, { attackCount: tier });
-      } catch (err) {
-        log.warn('claim send error. tier=%d', tier, err);
-        break; // 链路异常（超时/断线）不再续发，留给下次唤醒/轮询
-      }
+      var threw = false;
+      var ret = await this.net.sendGuarded(
+        CMD_CLAIM_ATTACK_REWARD,
+        { attackCount: tier },
+        {
+          gate: false,
+          protocol: 'sendPBV2',
+          onError: function (err) {
+            log.warn('claim send error. tier=%d', tier, err);
+            threw = true;
+          },
+        },
+      );
+      if (threw) break; // 链路异常（超时/断线）不再续发，留给下次唤醒/轮询
       if (!this.alive()) return;
       if (ret.ok) {
         // 应答 data.attackCount 即所领档位；脚本直发不回写 UserData，并入本地镜像收敛

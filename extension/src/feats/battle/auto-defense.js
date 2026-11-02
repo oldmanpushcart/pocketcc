@@ -31,6 +31,7 @@
  *   高影响（自动耗盾/迁城卡、自动迁走主城）：面板默认关闭 + 逐条策略开关。
  */
 import { createLog } from '../../core/log.js';
+import { safeParse } from '../../core/util.js';
 import { game } from '../../core/game.js';
 import { gameData, l10n, march as marchApi, nav, worldMap } from '../../core/game-api.js';
 import { reactor } from '../../core/reactor.js';
@@ -108,20 +109,7 @@ function aliveFn() {
   return ctxRef ? ctxRef.alive() : false;
 }
 
-/**
- * JSON.parse 兜底（应答 data 可能是串也可能已对象化）。
- * @param {*} s
- * @returns {object|null}
- */
-function safeParse(s) {
-  if (s == null || s === '') return null;
-  if (typeof s === 'object') return s;
-  try {
-    return JSON.parse(s);
-  } catch (e) {
-    return null;
-  }
-}
+// safeParse 已收口至 core/util.js（见顶部 import）
 
 /** 数值 or null（'' / null / 非数 → null，区别于合法的 0） */
 function numOrNull(v) {
@@ -194,13 +182,19 @@ function decision(marchId, name, result, reason, level) {
  */
 async function getPlayerInfoByUid(uid) {
   if (uid == null || uid === '') return null;
-  var ret;
-  try {
-    ret = await net.send(CMD_PLAYER_INFO, { uid: String(uid) });
-  } catch (err) {
-    log.warn('630 send error. uid=%s', uid, err);
-    return null;
-  }
+  var threw = false;
+  var ret = await net.sendGuarded(
+    CMD_PLAYER_INFO,
+    { uid: String(uid) },
+    {
+      gate: false,
+      onError: function (err) {
+        log.warn('630 send error. uid=%s', uid, err);
+        threw = true;
+      },
+    },
+  );
+  if (threw) return null;
   if (!ret || !ret.ok) {
     log.info('630 not ok. uid=%s;code=%s', uid, ret && ret.code);
     return null;
@@ -272,13 +266,15 @@ async function moveCity(x, y) {
     ? { itemId: defense.ITEM_MOVE_CITY, amount: 1, isPurchase: 0, x: x, y: y }
     : { itemId: defense.ITEM_MOVE_CITY, amount: 0, isPurchase: 1, vipShopBuy: 1, x: x, y: y };
   if (!hasItem) log.info('911 迁城卡不足，改用钻石迁城 isPurchase=1');
-  var ret;
-  try {
-    ret = await net.send(CMD_MOVE_CITY_POSITION, body);
-  } catch (err) {
-    log.warn('911 send error. x=%d;y=%d', x, y, err);
-    return { ok: false, why: '迁城发包异常' };
-  }
+  var threw = false;
+  var ret = await net.sendGuarded(CMD_MOVE_CITY_POSITION, body, {
+    gate: false,
+    onError: function (err) {
+      log.warn('911 send error. x=%d;y=%d', x, y, err);
+      threw = true;
+    },
+  });
+  if (threw) return { ok: false, why: '迁城发包异常' };
   if (!ret) return { ok: false, why: '迁城无应答' };
   if (ret.ok) return { ok: true, why: '' };
   return { ok: false, why: '迁城被拒 ' + rejectText(ret) };
@@ -367,13 +363,19 @@ async function strategyShield(snap) {
         return { result: 'skip', reason: '我方战力更高，无需开盾' + powerNote, stop: false };
     }
   }
-  var ret;
-  try {
-    ret = await net.send(CMD_PEACE_SHIELD, { itemId: snap.shieldItem, amount: 1, isPurchase: 0 });
-  } catch (err) {
-    log.warn('910 send error. itemId=%d', snap.shieldItem, err);
-    return { result: 'fail', reason: '开盾发包异常' + powerNote, stop: false };
-  }
+  var threw = false;
+  var ret = await net.sendGuarded(
+    CMD_PEACE_SHIELD,
+    { itemId: snap.shieldItem, amount: 1, isPurchase: 0 },
+    {
+      gate: false,
+      onError: function (err) {
+        log.warn('910 send error. itemId=%d', snap.shieldItem, err);
+        threw = true;
+      },
+    },
+  );
+  if (threw) return { result: 'fail', reason: '开盾发包异常' + powerNote, stop: false };
   if (!aliveFn()) return { result: 'fail', reason: '流程已暂停' + powerNote, stop: false };
   if (ret && ret.ok)
     return { result: 'hit', reason: '开盾成功 itemId=' + snap.shieldItem + powerNote, stop: true };
