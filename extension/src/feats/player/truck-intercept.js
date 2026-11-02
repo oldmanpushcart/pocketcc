@@ -99,6 +99,9 @@ const GRADE_LABELS = { 1: '普通', 2: '高级', 3: '稀有', 4: '史诗', 5: '�
 /** @type {number[]} 全部品级档 */
 const ALL_GRADES = [1, 2, 3, 4, 5];
 
+/** @type {string} bus 事件名：刷新面板只读态览（今日计数/战力快照），多处变更点共用故提取常量 */
+const EVENT_UI_REFRESH = 'ui.refresh';
+
 /** @type {string} 当日拉黑持久数据键（storage.data blob 内逻辑名） */
 const DATA_NAME = 'truckIntercept.blocked';
 
@@ -305,7 +308,7 @@ function configure(partial) {
   for (var i = 0; i < order.length; i++) rankMap.set(order[i], i);
   if (threatOn && (presetIdx !== prevPreset || !my.ready)) cycle.kick(); // 换攻击预设/尚未探到：唤醒一轮刷新展示快照（配额耗尽也能探；缓存作废靠 powerFp 比对，不在此处做）
   prevPreset = presetIdx;
-  bus.emit('ui.refresh'); // 阈值/开关变更后即时重算面板“可打上限”展示
+  bus.emit(EVENT_UI_REFRESH); // 阈值/开关变更后即时重算面板“可打上限”展示
 }
 
 /**
@@ -641,7 +644,7 @@ async function probeSelf(force) {
   if (!raw || !raw.armyListNew.length) {
     my.tried = true;
     log.debug('preset %d raw empty, threat probe skipped.', presetIdx);
-    bus.emit('ui.refresh');
+    bus.emit(EVENT_UI_REFRESH);
     return;
   }
   my.raw = raw;
@@ -674,7 +677,7 @@ async function probeSelf(force) {
       my.branch = 0;
       my.tried = true;
       log.debug('999 answer dropped: preset %d -> %d, re-probe next round.', atPreset, presetIdx);
-      bus.emit('ui.refresh');
+      bus.emit(EVENT_UI_REFRESH);
       return;
     }
     if (pow >= 0) {
@@ -696,7 +699,7 @@ async function probeSelf(force) {
   my.ready = my.power > 0;
   my.tried = true;
   if (my.ready) log.debug('self probe: power=%d branch=%d.', my.power, my.branch);
-  bus.emit('ui.refresh'); // 刷新面板“我方战力/军种 + 三军种可打上限”展示
+  bus.emit(EVENT_UI_REFRESH); // 刷新面板“我方战力/军种 + 三军种可打上限”展示
 }
 
 /**
@@ -708,7 +711,7 @@ function probeForPanel(cfg) {
   presetIdx = Math.max(1, Number(cfg && cfg.preset) || presetIdx);
   if (!ensureNet()) {
     my.tried = true;
-    bus.emit('ui.refresh');
+    bus.emit(EVENT_UI_REFRESH);
     return Promise.resolve();
   }
   return probeSelf(true); // 面板按钮是显式动作：无视缓存强制重查
@@ -851,7 +854,7 @@ async function lootFlow(cand) {
       );
       stats.rejected++;
       saveStats();
-      bus.emit('ui.refresh'); // 服务器硬拒（已在上方排除 CODE_NOT_SENT）：计入拒绝旁路量，不计入 tried
+      bus.emit(EVENT_UI_REFRESH); // 服务器硬拒（已在上方排除 CODE_NOT_SENT）：计入拒绝旁路量，不计入 tried
       await rejectToday(cand.key);
       return 'blacklisted';
     }
@@ -869,7 +872,7 @@ async function lootFlow(cand) {
       if (d.isWin) stats.win++;
       else stats.fail++;
       saveStats();
-      bus.emit('ui.refresh');
+      bus.emit(EVENT_UI_REFRESH);
     } // 真打了一仗：胜/负入注（tried=win+fail 恒成立）
     if (d.isWin) {
       log.info(
@@ -882,7 +885,7 @@ async function lootFlow(cand) {
         daily.used,
         daily.maxDaily,
       );
-      bus.emit('ui.refresh');
+      bus.emit(EVENT_UI_REFRESH);
     } else {
       log.info(
         'loot fail. truck=%s;fail=%d/%d;daily=%d/%d',
@@ -927,7 +930,7 @@ async function doScan() {
         stats.refreshUsed++;
         powerAge++;
         saveStats();
-        bus.emit('ui.refresh');
+        bus.emit(EVENT_UI_REFRESH);
       } // 真实列表往返（含空/拒）计一次刷新预算，同时推战力缓存年龄
       if (!ret.ok || !ret.data || !Array.isArray(ret.data.lootTruckViewList)) {
         log.debug('loot list empty/rejected. cmd=%d;code=%d', cmd, ret.code);
