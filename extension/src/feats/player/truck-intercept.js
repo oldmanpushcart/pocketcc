@@ -426,19 +426,19 @@ async function rejectToday(key) {
 
 // ── 每日配额同步 ─────────────────────────────────────────────────────────
 /**
- * 直发一条 PBV2 请求并归一化，永不 reject；同 cmd 在途回落 CODE_NOT_SENT 哨兵。
+ * 直发一条 PBV2 请求，永不 reject；同 cmd 在途回落 CODE_NOT_SENT 哨兵。
+ * 直接透出 net 的 Ret 实例（ok/code/data/reason）：`ok` 为原型 getter，调用方只按属性读，勿 spread/序列化该返回体（会静默丢 ok）。
  * @param {number} cmd
  * @param {object} body
- * @returns {Promise<{ok:boolean, code:number, data:*}>}
+ * @returns {Promise<object>} net Ret 实例（ok/code/data/reason）
  */
 async function send(cmd, body) {
-  var ret = await net.sendGuarded(cmd, body, {
+  return await net.sendGuarded(cmd, body, {
     protocol: 'sendPBV2',
     onError: function (err) {
       log.debug('cmd %d send failed: %s', cmd, err && err.message);
     },
   });
-  return { ok: ret.ok, code: ret.code, data: ret.data };
 }
 
 /**
