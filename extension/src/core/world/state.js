@@ -20,7 +20,7 @@
  * 合规：全部只读 getter，绝不写游戏任何字段（只读 + 发包红线）。
  */
 import { createLog } from '../log.js';
-import { bus } from '../bus.js';
+import { bus, EVT } from '../bus.js';
 import { worldSignals } from '../game-api.js';
 import { KIND, KIND_GROUPS, PLACE, PHASE, GEN, kindInList, placeInList } from './contracts.js';
 
@@ -269,7 +269,7 @@ export function refresh() {
       next.watching ? ' watching' : '',
       next.reason,
     );
-    bus.emit('world.change', next);
+    bus.emit(EVT.WORLD_CHANGE, next);
   }
   return next;
 }

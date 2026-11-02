@@ -16,7 +16,7 @@
 // 授权被拒/降级这两条不 startFeatures、不 mountUI 的链路上，面板开关无从生效，由 antiThrottleOff() 直接交还原生。
 import { createLog } from './core/log.js';
 import { game } from './core/game.js';
-import { bus } from './core/bus.js';
+import { bus, EVT } from './core/bus.js';
 import { NS } from './core/constants.js';
 import { loadAllConfigs, startFeatures, migrateLegacyKeys } from './core/registry.js';
 import { startPlayerWatch, waitUid } from './core/player.js';
@@ -88,7 +88,7 @@ import { installModeGate } from './core/mode.js';
       logCore.info('ready via scene: %s', name);
       fire();
     };
-    offScene = bus.on('scene.change', onSceneChange);
+    offScene = bus.on(EVT.SCENE_CHANGE, onSceneChange);
     // 兜底自检：start 时可能已身处就绪场景（scene.change 已在订阅前广播过），补判一次当前场景
     onSceneChange({ name: getCurrentScene() });
   }

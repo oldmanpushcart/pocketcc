@@ -3,7 +3,7 @@
 //   install 只做一次（可重复的挂钩），configure 每次推配置，run 只挂触发器；暂停不卸载，
 //   统一摘除 ctx.on.* 登记的触发器，在飞流程靠 ctx.alive() 自行退出。
 import { createLog } from './log.js';
-import { bus } from './bus.js';
+import { bus, EVT } from './bus.js';
 import { game } from './game.js';
 import { checkCap } from './game-api.js';
 import { netApi } from './net.js';
@@ -223,10 +223,10 @@ function recomputeAll() {
 }
 
 // 战斗模式切换 → 重算所有功能门控（mode 门控读最新 combat 态）
-bus.on('mode.change', recomputeAll);
+bus.on(EVT.MODE_CHANGE, recomputeAll);
 // 世界态翻转（Kind/Place/Phase/gen/crossMap 任一）→ 重算所有功能门控（world 门控读 world-state 快照，含秘境 kind===pab 隔离）。
 // P3 第 4 刀起 scene/pab 两条旧门控退役：场景切换会翻 place、秘境进出会翻 kind，两者都由 world.change 统一驱动 recompute。
-bus.on('world.change', recomputeAll);
+bus.on(EVT.WORLD_CHANGE, recomputeAll);
 
 /**
  * 注册一个功能说明书。模块加载时调用（import 副作用），早于任何 setConfig。

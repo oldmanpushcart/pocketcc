@@ -17,7 +17,7 @@
  * 两道门同一套判据（离开白名单场景即不触发，等价旧 feat 的 ctx.alive() 早退）。
  */
 import { createLog } from './log.js';
-import { bus } from './bus.js';
+import { bus, EVT } from './bus.js';
 import { getCurrentScene } from './scene-watcher.js';
 import { KIND, PLACE, kindInList, placeInList } from './world/contracts.js';
 
@@ -36,7 +36,7 @@ const log = createLog('HOTKEY');
  * @type {object|null}
  */
 let worldMirror = null;
-bus.on('world.change', function (snap) {
+bus.on(EVT.WORLD_CHANGE, function (snap) {
   worldMirror = snap;
 });
 

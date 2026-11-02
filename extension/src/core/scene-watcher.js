@@ -13,7 +13,7 @@
  * 事件底座不可用时自动退化为纯轮询（一次 warn，不阻断）。
  */
 import { createLog } from './log.js';
-import { bus } from './bus.js';
+import { bus, EVT } from './bus.js';
 import { reactor } from './reactor.js';
 import { worldSignals } from './acl/world.js';
 import { worldState } from './world/state.js';
@@ -46,7 +46,7 @@ function onLaunch() {
   if (name !== current) {
     current = name || null;
     log.info('scene: %s', name);
-    bus.emit('scene.change', { name: current });
+    bus.emit(EVT.SCENE_CHANGE, { name: current });
   }
   refresh();
 }

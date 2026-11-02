@@ -20,7 +20,7 @@
  * 只读 + 发包：镜像仅内存、不落盘，重启后最坏重复领一次被 code=3 拒且被"视为已领"吞掉、无害。
  */
 import { createLog } from '../../../core/log.js';
-import { bus } from '../../../core/bus.js';
+import { bus, EVT } from '../../../core/bus.js';
 import { gameConf } from '../../../core/game-api.js';
 import { todayStr, safeStringify } from './util.js';
 
@@ -259,7 +259,7 @@ export class RewardFlow {
         );
       }
     }
-    if (changed) bus.emit('ui.refresh');
+    if (changed) bus.emit(EVT.UI_REFRESH);
   }
 
   /**

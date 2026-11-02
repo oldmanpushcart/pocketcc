@@ -36,7 +36,7 @@ import { parseData, sleep, todayStr } from '../../core/util.js';
 import { createLog } from '../../core/log.js';
 import { reactor } from '../../core/reactor.js';
 import { storage } from '../../core/storage.js';
-import { bus } from '../../core/bus.js';
+import { bus, EVT } from '../../core/bus.js';
 import { gameData, gameConf, l10n, nav } from '../../core/game-api.js';
 import { Battle } from '../../core/battle.js';
 import { march } from '../../core/march.js';
@@ -378,7 +378,7 @@ function buildPlanFromPool(presets) {
 // ── 当日计数（面板「已打」列） ──────────────────────────────────────
 /** 推一次面板刷新（open 时 refreshTexts 扫 DOM 重算「已打」格）；收口事件名，多处复用。 */
 function pokePanel() {
-  bus.emit('ui.refresh');
+  bus.emit(EVT.UI_REFRESH);
 }
 
 /** 跳日自动归零：当前日期与持久态不同则重置 counts 并落盘（未读回前不动，防半截态）。 */

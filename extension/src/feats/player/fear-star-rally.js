@@ -39,7 +39,7 @@
 import { parseData } from '../../core/util.js';
 import { createLog } from '../../core/log.js';
 import { reactor } from '../../core/reactor.js';
-import { bus } from '../../core/bus.js';
+import { bus, EVT } from '../../core/bus.js';
 import { gameData, gameConf } from '../../core/game-api.js';
 import { Battle } from '../../core/battle.js';
 import { march } from '../../core/march.js';
@@ -179,7 +179,7 @@ function rejectErrKey(data) {
 
 /** 推一次面板刷新（刷新「今日已打」只读格）；收口事件名。 */
 function pokePanel() {
-  bus.emit('ui.refresh');
+  bus.emit(EVT.UI_REFRESH);
 }
 
 // ── 配置归一 ────────────────────────────────────────────────────────

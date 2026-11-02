@@ -12,7 +12,7 @@
 // 配置按 UID 隔离（player.js 设存储前缀）；换号（UID 变化）由 player.js 触发整页 reload 重建，本模块不再做 in-place 切号重载。
 import { createLog } from './log.js';
 import { storage } from './storage.js';
-import { bus } from './bus.js';
+import { bus, EVT } from './bus.js';
 import { reactor } from './reactor.js';
 import { hasNamespace, getUid as playerGetUid } from './player.js';
 import { groupConfigs, allMenuItemIds, fieldVisibleFeatureIds } from './menu.js';
@@ -432,13 +432,13 @@ async function reloadForPlayer(reason) {
       );
   }
   // configs 已刷新为新 UID 的值后再通知 UI 重同步控件（否则 UI 在 loadAllConfigs 完成前抢跑会读到旧值）。
-  bus.emit('player.configs-reloaded', { uid: playerGetUid() });
-  bus.emit('ui.refresh');
+  bus.emit(EVT.PLAYER_CONFIGS_RELOADED, { uid: playerGetUid() });
+  bus.emit(EVT.UI_REFRESH);
 }
 
 // 降级自愈：启动时 UID 未到位（waitUid 超时）则以默认配置跑着，ready 后补读盘并按真实配置重推。
 // 正常路径不触发（loadAllConfigs 已带盘数据，degraded 为 false）。不跑 migrateLegacyKeys，
 // 接受这种罕见路径下旧全局键不迁移。
-bus.on('player.ready', () => {
+bus.on(EVT.PLAYER_READY, () => {
   if (loadedDegraded) reloadForPlayer('player ready after degraded start');
 });

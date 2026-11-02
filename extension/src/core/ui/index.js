@@ -3,7 +3,7 @@
 // 卡片来自 core/menu.js：组卡片（主闸门 + 展开子项 checkbox）/ 功能卡片（启用 checkbox + 可展开详细字段）。
 // 换号（UID 变化）由 player.js 走整页 reload，无需 in-place 刷新；仅登录卡死降级补载时监听 player.configs-reloaded 回写控件。
 import { storage } from '../storage.js';
-import { bus } from '../bus.js';
+import { bus, EVT } from '../bus.js';
 import { getUid } from '../player.js';
 import { iconSVG } from './icon-svg.js';
 import { isCombat, setCombatMode } from '../mode.js';
@@ -46,7 +46,7 @@ export async function mountUI() {
     icon.innerHTML = '<span class="pc-halo"></span>' + iconSVG(isCombat(), ICON_SIZE);
   }
   renderIcon();
-  bus.on('mode.change', renderIcon);
+  bus.on(EVT.MODE_CHANGE, renderIcon);
 
   const panel = document.createElement('div');
   panel.className = 'pc-panel';
@@ -61,7 +61,7 @@ export async function mountUI() {
   refreshFieldVisibility(panel); // 条件字段（fd.showIf）初始态：按当前配置把不该出现的行收起
 
   // 战斗模式复选框随模式广播同步（含下面的 F8 热键切换，避免图标翻了但面板未跟着变）
-  bus.on('mode.change', () => {
+  bus.on(EVT.MODE_CHANGE, () => {
     const cb = panel.querySelector('#pc-combat');
     if (cb) cb.checked = isCombat();
   });
@@ -77,7 +77,7 @@ export async function mountUI() {
     el.title = s.title;
   }
   renderWorldStatus();
-  bus.on('world.change', renderWorldStatus);
+  bus.on(EVT.WORLD_CHANGE, renderWorldStatus);
   // F8 热键：战斗 / 日常 切换（setCombatMode 广播 mode.change → 图标/复选框/reactor 门控重算自动跟进）。
   // 必须用 window 捕获阶段（capture:true）：游戏自己也会处理 keydown 并在冒泡阶段 stopPropagation，
   // 导致面板收起（焦点在画布）时挂 document 冒泡监听收不到；捕获阶段先于游戏处理且不受焦点/stopPropagation 影响。
@@ -93,7 +93,7 @@ export async function mountUI() {
   );
 
   // 功能侧主动推面板刷新（如联盟集结今日计数 +1）；emit 同步，open 时才扫 DOM
-  bus.on('ui.refresh', function () {
+  bus.on(EVT.UI_REFRESH, function () {
     if (!panel.hidden) refreshTexts(panel);
   });
 
@@ -119,7 +119,7 @@ export async function mountUI() {
   });
 
   // 控件回写只在降级补载后发生（player.configs-reloaded，见 registry）；换号已改为整页 reload，无需 in-place 回写。
-  bus.on('player.configs-reloaded', (e) => {
+  bus.on(EVT.PLAYER_CONFIGS_RELOADED, (e) => {
     if (e && e.uid && getUid() && e.uid !== getUid()) return; // UID 已变，丢弃过期的补载
     syncControls(panel);
   });

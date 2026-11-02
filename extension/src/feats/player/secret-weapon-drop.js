@@ -47,7 +47,7 @@
  */
 import { CODE_NOT_SENT, sleep } from '../../core/util.js';
 import { createLog } from '../../core/log.js';
-import { bus } from '../../core/bus.js';
+import { bus, EVT } from '../../core/bus.js';
 import { bits, gameData } from '../../core/game-api.js';
 import { airDropDomain } from './secret-weapon-drop/api.js';
 import { item } from '../../core/item.js';
@@ -85,9 +85,6 @@ const COLLECT_RETRY_MS = 1000 * 20;
 const NO_SPACE_RETRY_MS = 1000 * 60 * 3;
 /** @type {number} 连续被服务器拒绝次数达此数则加倍退避 */
 const REJECT_STREAK_MAX = 3;
-
-/** @type {string} bus 事件名：刷新面板只读态览（待收数/剩余次数/落点），多处变更点共用故提取常量 */
-const EVENT_UI_REFRESH = 'ui.refresh';
 
 /** @type {object|null} 网络底座（promise 封装 pocketcc.net） */
 var net;
@@ -259,7 +256,7 @@ async function collectPending() {
             .join(', ')
         : '无物品';
       log.info('air drop collected. target=%s; reward=%s', d.id, desc);
-      bus.emit(EVENT_UI_REFRESH);
+      bus.emit(EVT.UI_REFRESH);
     } else if (r.code === CODE_NOT_SENT) {
       i++; // 在途/超时：留队，下次唤醒或重试拍再收
     } else {
@@ -330,14 +327,14 @@ async function cycleRun() {
     delay = charge.code === CODE_NOT_SENT ? COLLECT_RETRY_MS : PROBE_INTERVAL; // 在途/超时短间隔重来；其它异常按盲探
   } else if (charge.available <= 0) {
     lastCnt = 0;
-    bus.emit(EVENT_UI_REFRESH);
+    bus.emit(EVT.UI_REFRESH);
     var rd = recoverDelay(charge.nextMs);
     delay = rd != null ? rd : PROBE_INTERVAL; // 睡到下一枚次数恢复点（无有效恢复点则盲探）
   } else {
     // 有攒着的次数（最多 max 枚）：本拍连续投放直到次数用尽出 CD。
     // 4170 应答里 skill.cnt = 服务器给的本发用掉后剩余次数，据此续投，无需每发都重查 4169。
     lastCnt = charge.available;
-    bus.emit(EVENT_UI_REFRESH);
+    bus.emit(EVT.UI_REFRESH);
     delay = DRAIN_GAP_MS;
     var exhausted = false;
     for (var n = 0; n < DRAIN_MAX_USES && aliveFn(); n++) {
@@ -345,7 +342,7 @@ async function cycleRun() {
       if (use.ok) {
         rejectStreak = 0;
         lastCnt = use.cnt;
-        bus.emit(EVENT_UI_REFRESH);
+        bus.emit(EVT.UI_REFRESH);
         log.info('air drop used. spot=(%s);remaining=%d.', lastSpot, use.cnt);
         await sleep(DROP_SETTLE_MS);
         await collectPending();

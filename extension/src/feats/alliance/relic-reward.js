@@ -32,7 +32,7 @@
  */
 import { CODE_NOT_SENT, sleep, todayStr, safeStringify } from '../../core/util.js';
 import { createLog } from '../../core/log.js';
-import { bus } from '../../core/bus.js';
+import { bus, EVT } from '../../core/bus.js';
 import { storage } from '../../core/storage.js';
 import { reactor } from '../../core/reactor.js';
 import { l10n, gameData } from '../../core/game-api.js';
@@ -341,7 +341,7 @@ async function claimSite(site) {
         have.length,
         chooseNum,
       );
-      bus.emit('ui.refresh');
+      bus.emit(EVT.UI_REFRESH);
     } else if (resp.code === CODE_NOT_SENT) {
       break; // 在途/超时：本轮此遗迹收手，留给下次唤醒/轮询
     } else {
@@ -375,7 +375,7 @@ async function scanOnce() {
     if (rejected.sites.indexOf(sites[i].wonderId) !== -1) continue;
     await claimSite(sites[i]);
   }
-  bus.emit('ui.refresh');
+  bus.emit(EVT.UI_REFRESH);
 }
 
 /**

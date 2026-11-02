@@ -8,7 +8,7 @@
 //   未设时跳过存储读写、直接用默认配置，保证自动重连在登录卡死时仍可用）。
 import { createLog } from './log.js';
 import { game } from './game.js';
-import { bus } from './bus.js';
+import { bus, EVT } from './bus.js';
 import { setNamespace, getNamespace } from './storage.js';
 
 /** @type {ReturnType<createLog>} 模块日志器（tag=PLAYER） */
@@ -63,7 +63,7 @@ function apply(uid) {
     scheduleSwitchReload(prevUid, uid);
   } else {
     log.info('player ready: uid=%s', uid);
-    bus.emit('player.ready', { uid: uid });
+    bus.emit(EVT.PLAYER_READY, { uid: uid });
   }
 }
 
@@ -93,7 +93,7 @@ export function waitUid(timeoutMs = 20000) {
       off();
       resolve(uid);
     };
-    const off = bus.on('player.ready', (e) => finish(e.uid));
+    const off = bus.on(EVT.PLAYER_READY, (e) => finish(e.uid));
     setTimeout(() => finish(null), timeoutMs);
   });
 }

@@ -35,7 +35,7 @@ import { game } from '../../core/game.js';
 import { reactor } from '../../core/reactor.js';
 import { createCycle } from '../../core/cycle.js';
 import { storage } from '../../core/storage.js';
-import { bus } from '../../core/bus.js';
+import { bus, EVT } from '../../core/bus.js';
 import { todayStr as utilTodayStr } from '../../core/util.js';
 
 /** @type {ReturnType<createLog>} 模块日志器（tag=PLAYER_LIKE） */
@@ -234,7 +234,7 @@ function ensureDailyLoaded() {
       }
       rollDateIfNeeded();
       // 读回完成把面板上的 '-' 占位刷成真实计数（ui.refresh 仅在面板打开时扫 DOM，开销可忽略）
-      bus.emit('ui.refresh');
+      bus.emit(EVT.UI_REFRESH);
     })
     .catch(function (err) {
       if (seq !== loadSeq) return;
@@ -295,7 +295,7 @@ function syncUsedFromServer(remaining) {
   if (used <= daily.used) return;
   daily.used = used;
   persistDaily();
-  bus.emit('ui.refresh');
+  bus.emit(EVT.UI_REFRESH);
 }
 
 /**
@@ -308,7 +308,7 @@ function bumpLocalUsed() {
   if (daily.used >= LIKE_DAILY_MAX) return;
   daily.used = (daily.used | 0) + 1;
   persistDaily();
-  bus.emit('ui.refresh');
+  bus.emit(EVT.UI_REFRESH);
 }
 
 /**
@@ -321,7 +321,7 @@ function markUsedUp() {
   if (daily.used >= LIKE_DAILY_MAX) return;
   daily.used = LIKE_DAILY_MAX;
   persistDaily();
-  bus.emit('ui.refresh');
+  bus.emit(EVT.UI_REFRESH);
 }
 
 /**

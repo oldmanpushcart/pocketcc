@@ -15,7 +15,7 @@ import { createLog } from '../../core/log.js';
 import { game } from '../../core/game.js';
 import { reactor } from '../../core/reactor.js';
 import { storage } from '../../core/storage.js';
-import { bus } from '../../core/bus.js';
+import { bus, EVT } from '../../core/bus.js';
 import { Battle } from '../../core/battle.js';
 import { march } from '../../core/march.js';
 
@@ -240,7 +240,7 @@ function ensureDailyLoaded() {
       }
       rollDateIfNeeded();
       // 读回完成把面板上的 '-' 占位刷成真实计数（ui.refresh 仅在面板打开时扫 DOM，开销可忽略）
-      bus.emit('ui.refresh');
+      bus.emit(EVT.UI_REFRESH);
     })
     .catch(function (err) {
       log.warn('daily state load failed, will retry on next run/push. %s', err && err.message);
@@ -285,7 +285,7 @@ function bumpDailyCount(key) {
   rollDateIfNeeded();
   dailyState.counts[key] = (dailyState.counts[key] | 0) + 1;
   persistDaily();
-  bus.emit('ui.refresh');
+  bus.emit(EVT.UI_REFRESH);
 }
 
 /**

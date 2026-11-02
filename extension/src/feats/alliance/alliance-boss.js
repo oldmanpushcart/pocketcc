@@ -54,7 +54,7 @@
  */
 import { sleep, todayStr } from '../../core/util.js';
 import { createLog } from '../../core/log.js';
-import { bus } from '../../core/bus.js';
+import { bus, EVT } from '../../core/bus.js';
 import { game } from '../../core/game.js';
 import { storage } from '../../core/storage.js';
 import { l10n, gameData, gameConf } from '../../core/game-api.js';
@@ -206,7 +206,7 @@ function persistDaily() {
       log.warn('daily state save failed.', err);
     });
   }
-  bus.emit('ui.refresh');
+  bus.emit(EVT.UI_REFRESH);
 }
 
 /**

@@ -3,7 +3,7 @@
 //   纯发包类（联盟帮助）与不经 reactor 的自动重连不受影响。
 // 不持久化，默认日常。setCombatMode 翻态即广播 mode.change，reactor 据此重算门控、ui 据此换图标。
 import { createLog } from './log.js';
-import { bus } from './bus.js';
+import { bus, EVT } from './bus.js';
 import { reactor } from './reactor.js';
 
 /** @type {ReturnType<createLog>} 模块日志器（tag=MODE） */
@@ -31,7 +31,7 @@ export function setCombatMode(on) {
   if (on === combat) return;
   combat = on;
   log.info('mode: %s', combat ? 'combat' : 'daily');
-  bus.emit('mode.change', { combat: combat });
+  bus.emit(EVT.MODE_CHANGE, { combat: combat });
 }
 
 /**

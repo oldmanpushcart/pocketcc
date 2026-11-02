@@ -18,7 +18,7 @@
  * 运行时单例（net/dataCenter/presets/alive）由 index.js 经 env 注入（引擎不反向 import index，避免循环依赖）。
  */
 import { createLog } from '../../../core/log.js';
-import { bus } from '../../../core/bus.js';
+import { bus, EVT } from '../../../core/bus.js';
 import { storage } from '../../../core/storage.js';
 import { l10n, gameConf } from '../../../core/game-api.js';
 import { isCombat } from '../../../core/mode.js';
@@ -193,7 +193,7 @@ export class AttackFlow {
         log.warn('daily state save failed.', err);
       });
     }
-    bus.emit('ui.refresh');
+    bus.emit(EVT.UI_REFRESH);
   }
 
   /**

@@ -6,7 +6,7 @@
 // setWaitStatus 标记连接中；onConnect 为连接成功。纯事件驱动，无 UI 遍历。配置实时读 configs.reconnect。
 import { createLog } from './log.js';
 import { game } from './game.js';
-import { bus } from './bus.js';
+import { bus, EVT } from './bus.js';
 import { configs } from './registry.js';
 import { worldSignals } from './acl/world.js';
 
@@ -25,7 +25,7 @@ function setHealthy(reason) {
   if (healthy) return;
   healthy = true;
   logNet.info('session healthy: %s', reason);
-  bus.emit('session.healthy', { reason: reason });
+  bus.emit(EVT.SESSION_HEALTHY, { reason: reason });
 }
 
 /**
@@ -36,7 +36,7 @@ function setUnhealthy(reason) {
   if (!healthy) return;
   healthy = false;
   logNet.warn('session unhealthy: %s', reason);
-  bus.emit('session.unhealthy', { reason: reason });
+  bus.emit(EVT.SESSION_UNHEALTHY, { reason: reason });
 }
 
 // ─────────────────────────── 自动重连：刷新限流 ───────────────────────────
@@ -254,7 +254,7 @@ function disarmLaunchWatchdog() {
 export function installLaunchWatchdog() {
   if (watchdogTimer || loginConfirmed) return;
   // 订阅场景切换：进入 boot（Launch/Login）起表，离开 boot 归零（scene-watcher 只在真改名时才广播，不会自我重置宽限期）
-  bus.on('scene.change', ({ name }) => {
+  bus.on(EVT.SCENE_CHANGE, ({ name }) => {
     if (loginConfirmed) return;
     const inBoot = worldSignals.sceneSemantic() === 'boot';
     bootSince = inBoot ? Date.now() : 0;
