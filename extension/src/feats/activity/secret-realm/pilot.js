@@ -62,6 +62,7 @@
  * 仅队长发车（8521 驱动队级那一条行军）。触发：单条 createCycle + kick 源 21534/21529/21521/21535/901 应答。
  */
 import { createCycle } from '../../../core/cycle.js';
+import { bits } from '../../../core/game-api.js';
 import { tileKey as utilTileKey, dist as utilDist } from './util.js';
 import {
   CMD_MARCH_MOVE,
@@ -159,19 +160,16 @@ function dist(ax, ay, bx, by) {
 }
 
 /**
- * Int64 / `{_low,_high}` / number / 字符串 → 数值（与 drive.js 同口径）。
+ * Int64 / `{_low,_high}` / number / 字符串 → 数值，统一委托 bits.int64ToNum
+ *   （含裸 {_low,_high} POJO 拼装分支，与 boss/scout/heal/leave/capture 同口径），
+ *   再补一道非有限值归 0（bits 对 number 入参原样返回，可能带 NaN/Infinity）。
+ * 注：主要用于时间戳等 <2^53 量纲；64 位 id（teamId/callTId）也经本函数化整（见 631/1390 行），超过 2^53 会按 double 截断，
+ *   但比较双方同走本函数、同表口径，截断后仍一致（只求同源相等、不求全局唯一）；需逐位严格区分的场景应改走 bits.int64Str/int64Decimal 字符串口径。
  * @param {*} v 原值
  * @returns {number} 取不到回 0
  */
 function toNum(v) {
-  if (v == null) return 0;
-  if (typeof v === 'number') return Number.isFinite(v) ? v : 0;
-  try {
-    if (typeof v.toNumber === 'function') return Number(v.toNumber()) || 0;
-  } catch (e) {
-    /* 池化对象已回收：落到下面的 Number() */
-  }
-  const n = Number(v);
+  const n = bits.int64ToNum(v);
   return Number.isFinite(n) ? n : 0;
 }
 
