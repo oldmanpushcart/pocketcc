@@ -587,11 +587,11 @@ export function itemListInnerHTML(items, state, fd, order) {
  * 怪物清单字段（type:'huntlist'，自动打野）内层 HTML：固定行（每种怪一行、不可增删），逐行可编辑。
  * 列：怪物类型（来自 fd.catalog；906 搜怪行把 groupType/pointType/搜索等级 落 title 供校对，道具开营行（openItem）标「用求救信开营」）| 方式（select，选项随该行怪而变）|
  *     攻打数量（0=不限）| 已打（今日已打数量，只读，值由 fd.todayText(key) 提供）| ☑ 参与猎杀。行序恒等于 fd.catalog 下标，
- *     委托靠 data-idx 定位回写 configs[fid][fd.key][idx]。等级不入清单（固定搜该怪最高档），故无等级列。
+ *     委托靠 data-idx 定位回写 configs[fid][fd.key][idx]。等级不入清单（野怪行派发时从游戏表运行时反查最高档，levelMode='dynamic'；其余行用 catalog.level 回退值），故无等级列。
  * 值以 list（按 key 匹配）为准，缺项回落该 catalog 行默认；list 与 catalog 顺序对齐由功能侧 defaults/归一保证（行不增删故下标稳定）。
  * 改值（数字/下拉/勾选）由 wirePanel 面板级委托接，无结构性变化不整块重刷；「已打」随 ui.refresh 走 refreshTexts 重算（见 panel.js）。
  * @param {Array<object>} list 当前清单（configs[fid][fd.key]，行序对齐 catalog）
- * @param {object} fd 字段描述符（label / hint / todayText:(key)=>string / catalog:Array<{key,label,groupType,pointType,level,openItem,defaultCount,defaultMode,modes:Array<{value,label}>}>）
+ * @param {object} fd 字段描述符（label / hint / todayText:(key)=>string / catalog:Array<{key,label,groupType,pointType,level,levelMode?,openItem,defaultCount,defaultMode,modes:Array<{value,label}>}>）
  * @param {string} fid 功能 id（「已打」只读格挂 data-fid 供 refreshTexts 回查）
  * @returns {string}
  */
@@ -624,7 +624,7 @@ export function huntListInnerHTML(list, fd, fid) {
       const on = r.on === undefined ? !!mo.defaultOn : !!r.on;
       const title = mo.openItem
         ? `用求救信(${mo.openItem})开营 · 无每日上限`
-        : `groupType ${mo.groupType} / pointType ${mo.pointType} / 搜索等级 ${mo.level}`;
+        : `groupType ${mo.groupType} / pointType ${mo.pointType} / 搜索等级 ${mo.levelMode === 'dynamic' ? `动态反查(回退${mo.level})` : mo.level}`;
       return (
         `<div class="pc-hlrow" data-idx="${i}" data-hkey="${escAttr(String(mo.key))}">` +
         `<span class="pc-hlname" title="${escAttr(title)}"><span class="pc-hllabel">${escAttr(String(mo.label))}</span></span>` +

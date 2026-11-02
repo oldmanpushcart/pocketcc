@@ -12,7 +12,9 @@
  * 打法与协议（报文实证 dashcam 20261011T183821-发起攻打野怪 / 20261011T184302-发起攻打野怪-5连 / 20261011T192612-集结5人打锤子 / 20261011T185055-补充体力）：
  *   搜野怪 906 WORLD_SEARCH_MONSTER —— req {minLevel,maxLevel,groupType,pointType}；resp {point:{x,y,id,pointType,m:{itemId,level,expireTime}}}，服务端直接回一个可打点（视口无关，Home 可跑）。
  *        pointType=tab：1 野怪（无需集结）、3 集结（战锤）。groupType=怪物 species（黑雷神陆军 61、黑暗陆军 43、黑暗海军 42、黑暗空军 41、战锤 44，实证于 183821 与游戏内 906 搜索）。
- *        等级：清单不暴露区间，固定搜该怪最高档（min=max=MONSTERS.level）——黑暗军团(41/42/43) 实测不支持区间搜索（1~86 搜空、86~86 才回点），黑雷神陆军虽支持区间但按玩家口径只搜最高档。
+ *        等级：清单不暴露区间，固定搜该怪最高档（min=max）——野怪行（pointType=1）的最高档不再硬编码，派发时由 resolveHuntLevel 从游戏本地表
+ *        运行时反查（= UserData.Level + MONSTER_REFRESH 最大 level_relative，旧野怪再钳 data_config 1120）；反查不可用才回落 MONSTERS.level 常数（曾实证：黑暗军团 86、黑雷神陆军 106）。
+ *        黑暗军团(41/42/43) 实测不支持区间搜索（1~86 搜空、86~86 才回点），故恒取单档。
  *   无集结行军 902 MARCH_WORLD_POINT —— 走 core/march.attack() 组 canonical body；marchType 5 单打（183821 seq280/384/465/549 实证）、42 五连（184302 seq806 实证）。
  *   创建集结 1201 —— 直发 req {marchType:8,x,y,time:60,armyList,armyListNew,heroList,trapList,formation:0,formationV2}（无 break/extraArmy，192612 seq39/183114 实证）。
  *        「5 人 / 10 人」不是请求字段：同一 1201 body、体力扣减不同（据玩家口径 5 人扣 10 体力、10 人扣 20 体力），故按「攻打方式」给每档记一个体力下限 seg.cost，派前若体力不足该档即跳过（不硬发）。
@@ -35,7 +37,7 @@ import { createLog } from '../../core/log.js';
 import { reactor } from '../../core/reactor.js';
 import { storage } from '../../core/storage.js';
 import { bus } from '../../core/bus.js';
-import { gameData, nav } from '../../core/game-api.js';
+import { gameData, gameConf, l10n, nav } from '../../core/game-api.js';
 import { Battle } from '../../core/battle.js';
 import { march } from '../../core/march.js';
 import { item } from '../../core/item.js';
@@ -104,7 +106,9 @@ const MODES = {
 
 /**
  * 怪物目录（数据驱动，可扩展位）。清单固定行来源，每种怪一行；modes 为该行「攻打方式」下拉的候选（引用 MODES 键）。
- * groupType/pointType/level 均实证于 dashcam 183821 与游戏内 906 搜索；level 为该怪固定搜索等级（min=max，清单不暴露区间）。
+ * groupType/pointType 均实证于 dashcam 183821 与游戏内 906 搜索（稳定协议身份，不随版本漂移）。
+ * level 现降级为「搜索等级回退值」：野怪行（pointType=1）派发时改由 resolveHuntLevel 从游戏本地表运行时反查（见该函数），
+ *   仅当表未就绪/读数非法时回落此常数；集结类（战锤，pointType=3）等级由服务端下发、本 feat 无法只读反查，故恒用此常数。
  * openItem 非空者为「道具开营」类（难民营）：不走 906 搜索，改用一张该道具(815)开点 + 10802 落点，故无 groupType/pointType/level。
  * @type {Array<{key:string,label:string,modes:string[],level:number,defaultMode:string,maxCount?:number,groupType?:number,pointType?:number,openItem?:number}>}
  */
@@ -163,6 +167,48 @@ const MONSTERS = [
     openItem: REFUGEE_LETTER,
   },
 ];
+
+/** @type {number} data_config 1110 world_v1_monster_group_id：'|' 分隔的新世界野怪 group 名单，命中者走「不受旧野怪上限钳制」的口径（实证游戏 WorldMonsterModel.isNWorldTransformNMonster 即读此项） */
+const CFG_WORLD_V1_GROUPS = 1110;
+/** @type {number} data_config 1120 world_v1_oldmonster_max_level：旧野怪搜索等级上限（当前 86，即黑暗军团硬编码 86 的真相源） */
+const CFG_OLD_MONSTER_MAX_LEVEL = 1120;
+
+/**
+ * 运行时反查某野怪 group 的「搜索最高等级」（= 插件单档搜索 min=max 的那个 level）。
+ * 复刻游戏 AutoHuntMonsterSettingPop.updateMonsterSearchLevel 的 searchType==1 口径（真相全走 ACL 只读面）：
+ *   旧野怪（group 不在 data_config 1110）：level = min(UserData.Level + maxOffset, data_config 1120)；
+ *   新世界野怪（group 命中 data_config 1110，如黑雷神陆军 61）：level = UserData.Level + maxOffset（不受 1120 钳制）。
+ *   maxOffset = MONSTER_REFRESH 表 level_relative 列最大值（当前 +6；实证黑暗军团某高等级号→86、黑雷神陆军→号级100+6=106，与旧硬编码逐项吻合）。
+ * 任一输入不可得（表未就绪 / 等级为 0 / 读数非法）→ 返回 0，调用方回落 MONSTERS.level 常数，保证刷表当天或异常时行为零变化。
+ * @param {number} groupType 野怪 species（906 groupType）
+ * @returns {number} 反查到的等级；0=不可用（用回退值）
+ */
+function resolveHuntLevel(groupType) {
+  try {
+    var rows = l10n.tableRows('MONSTER_REFRESH');
+    if (!rows || !rows.length) return 0;
+    var maxOff = -Infinity;
+    for (var i = 0; i < rows.length; i++) {
+      var lr = Number(rows[i].level_relative);
+      if (isFinite(lr) && lr > maxOff) maxOff = lr;
+    }
+    if (!isFinite(maxOff)) return 0;
+    // 与游戏 _monsterLevelOffsetList[1] 以 0 为基线、只「更大才覆盖」同构（有效 maxOffset = max(0, max(level_relative))）；当前数据为 +6，若日后该表偏移整体调负也不会误搜低于账号等级的档
+    if (maxOff < 0) maxOff = 0;
+    var lv = gameData.level();
+    if (!(lv > 0)) return 0;
+    var cand = lv + maxOff;
+    var v1 = String(gameConf.dataConfig(CFG_WORLD_V1_GROUPS) || '').split('|');
+    var isWorldV1 = groupType != null && v1.indexOf(String(groupType)) >= 0;
+    if (!isWorldV1) {
+      var cap = Number(gameConf.dataConfig(CFG_OLD_MONSTER_MAX_LEVEL));
+      if (isFinite(cap) && cap > 0 && cand > cap) cand = cap;
+    }
+    return cand > 0 ? cand | 0 : 0;
+  } catch (e) {
+    return 0;
+  }
+}
 
 /**
  * 内置调优常量（面板不暴露；active/idle 两档兜底同 auto-farm 惯例）。
@@ -284,7 +330,7 @@ function normalizeHunt(raw) {
     var row = byKey[mo.key] || {};
     // 攻打方式：必须在该行候选内，非法/缺省回落该怪默认打法
     var mode = MODES[row.mode] && mo.modes.indexOf(row.mode) >= 0 ? row.mode : mo.defaultMode;
-    // 等级：清单不暴露区间，固定搜该怪最高档（min=max=level）——黑暗军团(41/42/43) 实测只有 min=max 才回点，区间搜索无效
+    // 等级：此处只存 MONSTERS.level 作为回退值（min=max）；野怪行（pointType=1）实际搜索等级由 searchPoint 派发时调 resolveHuntLevel 反查覆盖，反查不可用才用此值（黑暗军团实测只 min=max 才回点）
     var lv = mo.level | 0;
     var mm = MODES[mode];
     var count = Math.max(0, Number(row.count) | 0);
@@ -437,10 +483,13 @@ function dailyDone(key) {
  * @returns {Promise<{x:number,y:number}|null>}
  */
 async function searchPoint(seg, taken) {
+  // 等级：野怪行（pointType=1）派发时实时反查游戏本地表（随账号等级/版本闸浮动），反查不可用回落 seg.minLevel（=MONSTERS.level）；
+  //   集结行（战锤 pointType=3）等级由服务端下发、无法只读反查，恒用回退值。min=max 单档（黑暗军团实测不支持区间搜索）。
+  var lv = seg.pointType === 1 ? resolveHuntLevel(seg.groupType) || seg.minLevel : seg.minLevel;
   // 906 只读骨架（isSending 门/异常吞掉/取点）下沉 map.searchPoint；黑名单/taken 业务谓词留本 feat
   var r = await map.searchPoint(net, {
-    minLevel: seg.minLevel,
-    maxLevel: seg.maxLevel,
+    minLevel: lv,
+    maxLevel: lv,
     groupType: seg.groupType,
     pointType: seg.pointType,
   });
@@ -954,6 +1003,8 @@ function buildFields() {
       groupType: mo.groupType,
       pointType: mo.pointType,
       level: mo.level,
+      // 野怪行（pointType=1 且非道具开营）等级运行时反查，title 提示标「动态」；其余（战锤/难民营）为固定回退值
+      levelMode: mo.pointType === 1 && !mo.openItem ? 'dynamic' : 'fixed',
       defaultCount: 1,
       defaultOn: false,
       defaultMode: mo.defaultMode,

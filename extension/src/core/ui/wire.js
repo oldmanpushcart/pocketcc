@@ -662,7 +662,7 @@ export function wirePanel(panel) {
     applyFeature(t.f);
   });
 
-  // 怪物清单字段（type:'huntlist'，自动打野）：固定行不可增删，逐行改值（数量、攻打方式、参与；等级不入清单，固定搜最高档）。
+  // 怪物清单字段（type:'huntlist'，自动打野）：固定行不可增删，逐行改值（数量、攻打方式、参与；等级不入清单，野怪行派发时由功能侧从游戏表运行时反查）。
   // 行序恒等于 fd.catalog 下标；数字/勾选/下拉均就地写回 list[idx]，无结构性变化不重刷（攻打方式选项随该行 catalog 固定）。
   const hlTarget = (el) =>
     // 选择器排除 `.pc-ct`：表格型 ctrlrow 容器的 class 就是 "pc-hl pc-ct"，与本字段容器同类名；
