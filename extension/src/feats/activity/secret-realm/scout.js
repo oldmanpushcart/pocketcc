@@ -1,17 +1,17 @@
 /**
  * 侦察囤情报引擎（异能秘境：花 41001 全地形勘察车把野怪点（172）的异能兽品质探明并就地囤积）。
  *
- * 定位（用户拍板）：**只侦察囤情报、不派兵**——本 feat 现下不会主动开车去野怪点（拍宠仍由玩家带到，见 index.js 第 3 条
+ * 定位：**只侦察囤情报、不派兵**——本 feat 不会主动开车去野怪点（拍宠仍由玩家带到，见 index.js 第 3 条
  *   与 pilot.js 文件头「172 不在巡航档」），故本引擎不改变任何行车/攻打行为，只把「哪个野怪点是哪只兽、什么品质」这份
  *   情报攒进内存缓存（供面板展示与后续择点派兵复用）。面板开关 `scoutEnabled` **默认关**：侦察会真消耗背包勘察车道具。
  *
- * 借鉴竞品B enigmaSecret.scoutBeast（verbatim），但**只取其侦察链路、不接它的派兵择点**：
+ * 侦察链路（只取侦察、不接派兵择点）：
  *   • 链路 = 先 8536 BEAST_INFO **免费预检**（req `{x,y}`），应答带 `beastId` 即「已侦察」→ 直接囤结果、**不花道具**
- *     （报文实证 dashcam 20261017T214415：侦察前 8536 回 `{beastType,pveId}` 无 beastId、侦察后回 `{…,beastId:39}`）；
+ *     （8536 在侦察前回 `{beastType,pveId}` 无 beastId、侦察后回 `{…,beastId:39}`）；
  *     应答无 `beastId` 才 8537 BEAST_SCOUT（req `{x,y}`，扣 1 个 41001，回 `{beastType,pveId,beastId}`）；
  *   • 品质 = `enigma_beast[beastId].quality`（与 leave.js/pickup.js 同一张表同一读法，读不到行则 quality 存 null、仍囤 beastId）；
- *   • 竞品的 esrId 轮次时间闸（enigma_secret_realm_timer.start）我方**不照抄**——本 feat 全库录音里 172 瓦片 esrId 恒 15、
- *     无逐点差异（见 constants PAB 段实测），拿它做闸只会误拦；改用「state=0 空闲 + 无驻军 + 未被别队号召」的点位态判据。
+ *   • 不用 esrId 轮次时间闸（enigma_secret_realm_timer.start）：172 瓦片 esrId 恒 15、无逐点差异
+ *     （见 constants PAB 段），拿它做闸只会误拦；改用「state=0 空闲 + 无驻军 + 未被别队号召」的点位态判据。
  *
  * 消耗护栏（41001 是稀缺品：非商店货、只能从野怪点产出拾取，见 constants ITEM_SCOUT_TOOL 条）：
  *   • **先 8536 后 8537**：能白嫖已侦察结果就绝不动道具；
@@ -322,8 +322,8 @@ export class ScoutEngine {
 
   /**
    * 对外只读口：某个 172 点位的**已侦察宠物品质**（供 pilot 的打野档按品质择目标，
-   *   竞品B `marchBeast` 读 `EnigmaBeastController.getScoutInfo(x,y).beastId → enigma_beast.quality` 同一口径）。
-   *   没囤过情报/未侦察成功 → 回 null（调用方按「未知 = 不去」处置，与竞品把未知品质当 2 看待选 4 一致）。
+   *   口径即 `EnigmaBeastController.getScoutInfo(x,y).beastId → enigma_beast.quality`）。
+   *   没囤过情报/未侦察成功 → 回 null（调用方按「未知 = 不去」处置）。
    * @param {number} x 横号
    * @param {number} y 纵号
    * @returns {number|null} 品质

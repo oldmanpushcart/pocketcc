@@ -1,75 +1,53 @@
 /**
  * 异能秘境 feat（reactor id:'secretRealm'，活动设置分组）装配层。
  *
- * 定位：本期只做「队伍停靠态、无战斗语义」的自动化（除治疗），且**只在异能秘境地图内生效**。
- *   拾取/增益井/拍宠物/BOSS 攻打+投喂+石头诸能力**默认生效、无独立开关**（面板不留存其开关配置，feat 本身 enabled 为总闸）；
- *   唯编队治疗属「会消耗背包道具」一类，保留独立开关且**默认关**：
- *   1. 物品自动拾取：掉落箱物品 / 掉落箱宠物 / 资源点 bag 三类合并，
- *      面板用 itemlist 逐行勾选 + 秘境背包持有上限（全仓统一约定：0=无上限；>0 时另受游戏 para1_v1 夹取）；
- *      **清单按道具 ID 聚合**（实证 dump：rss_station 按点位分行，item=41001 有 44 个 specId、item=41009 有 5 个，
- *      逐点位列行会出大片同名项；而 max 本就按 getItemNumById(itemId) 计）；
- *      **持有清单是两渠道共用的主清单**：每行一个目标持有量 T，行内「拾」「店」两枚勾选是把它推向 T 的两个渠道
- *      （商店补货并入本清单的 shop 标志，不再另列商品清单——物品只有持有上限，没有渠道上限）；
- *      行名来源：`item:` 取 ITEM 表 `.name`（rss_station 行无名字，只 `.item` 指向产出道具），
- *      `pet:` 取 `enigma_beast_type[cfg.type].name1`（enigma_beast 行亦无 name 字段）；
- *      行首可拖拽排序（pickOrder）：**下标即拾取优先级**，同点位配额不够时先给靠前的项（一群人就抢的场景）；
- *   2. 增益井 buff（选项 buffEffects）：仅队长可装；三个槽位按 effect_buff 分类不重复
- *      （实证表内共 6 类，默认只拿三类：全部单位攻击加成 9200001 / 伤害加深 9200004 / 野外行军速度提高 9200006），
- *      同类只在更强时等价替换；面板选项默认已勾这三类，全不勾=不限；
- *   3. 自动拍宠物：已在拍异能兽/**BOSS**（push 21530 置位 capturingPetPos，BOSS 带 boss:1）
- *      后接管整个拍节奏——免费手拍打底、拖拽事件（push 21527 type=2，窗口只有 2.0s）到达即拍、
- *      能量攒满 3 格放高分持续拍（报文实证 390 分/拍）、心动时刻（type=5 投喂弹窗）择优投喂后**立刻关掉弹窗**
- *      （不关则它会倒数归零再替玩家随机投一票）；不负责找怪、不派兵，也不自费投喂道具（**只有大BOSS 窗例外**，见第 6 条）。
- *   4. 编队治疗（healEnabled，默认关）：对受伤军队使用秘境背包里的治疗道具——白名单取 dataConfig(3035)
- *      （实证 41002 急救绷带 / 41003 全科医疗包），受伤判据取 8584 应答的 armyPower/maxArmyPower，
- *      一拍一件、marchId 直接复用应答里的 Int64 对象（报文实证 8584↔8534 严格交替）。
- *   5. BOSS 攻打 + 石头拾取（**无面板开关**，恒生效；用户反馈：次序/轮次/队长都是游戏规则或无意义项）：push 21535 里 `state===21` 且自己停在**同区域** 176 平台时
- *      发 8521 打 BOSS（一轮小BOSS 4.6~5.4s、大BOSS 8~11s，返航由服务器自动派）；石头档读 21539 账本逐点发 8548（恒领）。
- *      大小BOSS 时间错开、不同现，故不设攻打次序、轮次无限（打死为止）；**仅队长可发**（游戏规则，8521 驱动的是全队那一条行军，引擎内 isTeamLeader 已闸）；
- *      攻打目标**先打距当前平台最近的一档**（就近是同区域的强代理，避开 142）；auto-relocate（自动挪台）恒关（风险最高）。
- *      区域配对是**服务器独占判据**（客户端不查 esrId），本地只能靠「试探 + 撞 enigma_realm142 降级该(平台,BOSS) 对」
- *      学习——故被 142 拒时**不拉黑 bossId**（换了平台同一只照样能打），详见 boss.js 文件头。
- *   6. 大BOSS 拍宠投喂（**无面板开关**，恒投；必选环节）：拍宠物引擎在 `capturingPetPos.boss===1` 的窗里投
- *      behave 行 5/6 的道具（8546 `{specId}`，与游戏同一个入口）——大BOSS 要 allFavor=1000000，
- *      光靠免费手拍（实测 6~11 分/拍）拍不满；普通异能兽窗不投，详见 capture.js 文件头。
- *   7. 商店补货（**无独立开关**）：补货项 = 条目 shop=1 的道具，另有两类固定规则（自动驾驶开着时生效）：
- *      type3 跨店限量箱恒优先买（#grabType3）、香肠 41011 恒补到 10（#grabSausage）；
- *      总闸 = 「持有清单任一行勾了店」或「自动驾驶开着」（车会把队开到店，不买白跑一趟）。
- *      **只在队伍已停靠商店点（161、marchState=ARRIVED）时**才补货——买货必须“人在店里”（verbatim NWorldMapTileClickUtils：
- *      本队在驻军列表才开 PabShopPanel；8542 SHOP_BUY 不带坐标），故本引擎绝不主动开车，只负责“人在店里时买”；
- *      到店那一刻由 pilot 踢一脚（kickShop）叫醒本引擎（否则它会睡满 10 分钟轮巡）。到店先 8540 拉货单（**每次到店只 INFO 一次**，因 8540 重查会把本店非 type3 货位 getTime 归零），
- *      再按道具展开货行逐项 8542 买；货行额度买完（`_lastNum=0`）而 T 未达时发 8543 刷新（每次扣 1 个 41010 人造水晶，dataConfig 3029 预检，
- *      余额耗尽即停）；type3 跨店限量不可刷，且**已从面板清单移除**（如「传奇百兽碎片自选箱」，整场活动限购）——
- *      到店由引擎**默认最高优先级自动购买**（先于任何勾选补货项，无需「店」勾选），见 shop.js #grabType3。货表运行时枚举 `enigma_secret_realm_shop`（该表离线无数据），详见 shop.js 文件头。
- *   8. 攻击警告应对（warnEnabled，默认关）：push 21534 num>0（有其它队盯上我）时按玩家选的档处置—
- *      **立即转移**（默认）= 发 8521 去就近 175 营帐/174 平台（取 10018 快照里未被 PVP 的最近一个，快照无则不凭空造）；
- *      **抗争到底** = 不发任何转移包。全仓唯一能挪队的口就是 8521（游戏警告面板无撤离按钮）；仅队长可发、仅在停在非BOSS点才动，见 warn.js 文件头。
- *   9. 自动驾驶（driveEnabled，默认关）：其余引擎全是「到点即干活」，本引擎是唯一的**方向盘**——决定「下一个去哪」。
- *      **v3 领航员**：三源数据（表格商店锚点 + 服务器权威 BOSS 坐标 + 901 主动拉视口）+ 四层（数据/阶段/动作/到点）；
- *      优先级：受击逃帐→回攻→BOSS 档（21 开打 / 22 读秒窗上平台）→商店档（缺香肠/勤务/轮巡）→资源巡航→探索；
- *      到点：161 驻留让 shop.js 买货（并 kickShop 叫醒它）、173/163 拿空即走、176/177 交给 boss.js。
- *      开启时 warn.js 让出转移、boss.js 让出非 BOSS 点的攻打行军（两处让闸）；仅队长可发 8521，见 pilot.js 文件头。
- *   10. 拿满自动离场（autoLeaveEnabled，默认关）：借鉴竞品B judgeLeave——宠物携带背包（dataConfig 3017+扩容增益）被高品质（quality≥4）填满时，
- *      把前「容量」只按品质降序选定带出（8581 BAG_GET_SET）后发一次整场退出（8589 LEAVE）。**整场退出不可逆**，故仅队长可发、
- *      只在停稳非行军且（争夺窗已过或在 161 商店点）才撤、容量/背包清单读不到一律不触发、一场最多一次，见 leave.js 文件头。
- *   11. 侦察囤情报（scoutEnabled，默认关）：借鉴竞品B scoutBeast 的**侦察链路**（不接它的派兵择点）——对 10018 快照里的就近野生点（172）
- *      先 8536 BEAST_INFO 免费预检（应答带 beastId 即「已侦察」，直接囤、不花道具），无 beastId 且道具/冷却允许才 8537 BEAST_SCOUT（扣 1 个 41001）；
- *      品质取 enigma_beast[beastId].quality 攒进内存缓存。**只囤情报不改变任何行车/攻打行为**（172 不在巡航档），消耗稀缺勘察车故默认关，见 scout.js 文件头。
+ * 门控：reactor kinds:['pab'] + places:['world']；真正闸门 realmActive()
+ *   = scene.name()==='NWorldMap' && secretRealm.isPabBattleMap()；各引擎每拍/每事件复检，非秘境即长睡。
+ * 总闸：feat enabled。拾取/增益井/拍宠物/BOSS 攻打+投喂+石头/商店补货默认生效、无独立开关；
+ *   编队治疗（会消耗背包道具）、攻击警告应对、自动驾驶、拿满离场、侦察囤情报各有面板开关且默认关。
+ *
+ * 引擎分工（细节见各文件头）：
+ *   • capture.js 拍宠物：已在拍异能兽/BOSS（push 21530 capturingPetPos，BOSS 带 boss:1）后接管拍节奏——
+ *     免费手拍打底、拖拽推送（21527 type=2，窗 2.0s）到达即拍、能量满 3 格放高分持续拍；心动时刻（type=5）
+ *     投喂弹窗择优投喂后立刻关掉。只有大BOSS 窗额外自费投 behave 行 5/6 道具（8546）；不找怪、不派兵。
+ *   • pickup.js 拾取：掉落箱物品/掉落箱宠物/资源点 bag 三类合并；面板按道具 ID 聚合，每行一个目标持有量 T，
+ *     行内「拾」「店」是把它推向 T 的两个渠道（物品只有持有上限，没有渠道上限）；行首拖拽排序＝拾取优先级。
+ *   • 增益井 buff：仅队长可装；三个槽位按 effect_buff 分类不重复（表内 6 类，默认拿 9200001/9200004/9200006），
+ *     同类只在更强时等价替换；全不勾＝不限。
+ *   • heal.js 编队治疗：白名单取 dataConfig(3035)，受伤判据取 8584 应答的 armyPower/maxArmyPower，
+ *     一拍一件、marchId 复用应答里的 Int64 对象。
+ *   • boss.js BOSS 攻打（固定档 BOSS_AUTO，无面板开关）：push 21535 `state===21` 且自己停在**同区域** 176 平台时
+ *     发 8521；石头档读 21539 账本逐点发 8548。区域配对是服务器独占判据，客户端不查 esrId，本地靠
+ *     「试探 + 撞 enigma_realm142 降级该(平台,BOSS) 对」学习，被 142 拒时不拉黑 bossId。攻打/投喂/石头恒开、
+ *     轮次无限、就近选档、relocate 恒关；仅队长可发（8521 驱动的是全队那一条行军）。
+ *   • shop.js 商店补货：补货项＝条目 shop=1 的道具；固定规则另加 type3 跨店限量箱恒优先买（#grabType3，
+ *     不进面板清单）、香肠 41011 恒补到 10（#grabSausage）；总闸＝清单任一行勾了「店」或自动驾驶开启。
+ *     **只在队伍已停靠 161 商店点（marchState=ARRIVED）时买货**，本引擎绝不开车，到店由 pilot kickShop 叫醒；
+ *     到店先 8540 拉货单（每次到店只一次——8540 重查会把本店非 type3 货位的 getTime 归零），再逐项 8542 买；
+ *     货行买完（`_lastNum=0`）而 T 未达时发 8543 刷新（每次扣 1 个 41010，dataConfig 3029 预检，余额耗尽即停）；
+ *     type3 跨店限量不可刷。货表 `enigma_secret_realm_shop` 只运行时可枚举（离线无数据）。
+ *   • warn.js 攻击警告：push 21534 num>0 时按档处置——「立即转移」（默认）发 8521 去就近未被 PVP 的 175 营帐/
+ *     174 平台（快照里没有就不凭空造）；「抗争到底」不发任何转移包。仅队长可发、仅在停在非BOSS点才动。
+ *   • pilot.js 自动驾驶：其余引擎都是「到点即干活」，本引擎是唯一的方向盘——决定下一个去哪。三源数据
+ *     （表商店锚点 + 服务器权威 BOSS 坐标 + 901 主动拉视口）；受击逃帐→回攻→BOSS 档（21 开打 / 22 读秒窗上平台）
+ *     →商店档→资源巡航→探索；到点 161 驻留买货、173/163 拿空即走、176/177 交给 boss.js。开启时 warn.js 让出
+ *     转移、boss.js 让出非 BOSS 点的攻打行军；仅队长可发 8521。
+ *   • leave.js 拿满自动离场：宠物携带背包（dataConfig 3017+扩容增益）被高品质（quality≥4）填满时，把前「容量」只
+ *     按品质降序选定带出（8581 BAG_GET_SET），再发一次整场退出（8589 LEAVE）。整场退出不可逆——仅队长可发、
+ *     只在停稳非行军且（争夺窗已过或在 161 商店点）才撤、容量/背包清单读不到一律不触发、一场最多一次。
+ *   • scout.js 侦察囤情报：对 10018 快照里的就近野生点（172）先 8536 BEAST_INFO 免费预检（应答带 beastId 即
+ *     「已侦察」，直接囤、不花道具），无 beastId 且道具/冷却允许才 8537 BEAST_SCOUT（扣 1 个 41001）；品质取
+ *     `enigma_beast[beastId].quality` 攒进内存缓存。只囤情报，不改变任何行车/攻打行为（172 不在巡航档）。
  *
  * 秘境是「独立活动/独立地图/独立战斗体系/独立背包」的隔离世界：
- *   - 场景名沿用 NWorldMap，但 watchingType===PAB（isPabBattleMap）才是真正的进入标志；
+ *   - 场景名沿用 NWorldMap，进入标志是 watchingType===PAB（isPabBattleMap）；
  *   - 独立背包 roomBagInfo：与玩家主背包 UserData.bagInfo 无关，通过 ENIGMA_SECRET_ROOM_BAG_INFO push 同步；
  *   - 独立协议通道：req 走 TMWatchNetMgr.sendPBV2 → NetMgrSimple WebSocket，resp 回主 NetReciver；
- *   - **秘境隔离**：core/scene-watcher.js 的 world 门对 kind===pab 特殊收口——秘境图内除显式声明 kinds:['pab'] 的本 feat 外，
- *     一律 pause（原 core/pab-watcher.js 的全局规避门控已 P3 第 4 刀并入世界态，见报告 §7.4）；
- *     本 feat 无需自己声明 offInCombat；日常/战斗类 feat 也不用逐个声明，统一由 world 门的秘境隔离收口。
+ *   - **秘境隔离**：core/scene-watcher.js 的 world 门对 kind===pab 收口——秘境图内除显式声明 kinds:['pab'] 的
+ *     本 feat 外一律 pause，故本 feat 无需声明 offInCombat，日常/战斗类 feat 也不用逐个声明。
  *
- * 面板门控（引擎内复检 realmActive()）：
- *   - reactor 世界态门控 kinds:['pab'] + places:['world']（秘境共用主世界场景名 NWorldMap）；
- *   - 真正闸门 realmActive()：scene.name()==='NWorldMap' && secretRealm.isPabBattleMap()；
- *   - 引擎内部每拍/每事件都复检 realmActive()，非秘境即长睡/直接跳过。
- *
- * 分层：仿 mine-cave 目录化，index.js 装配 + capture.js/pickup.js/heal.js/boss.js/shop.js/warn.js/pilot.js/leave.js/scout.js 九引擎 + constants.js 私货；feats 间不互 import。
+ * 分层：index.js 装配 + 九引擎（capture/pickup/heal/boss/shop/warn/pilot/leave/scout）+ constants.js 协议字典；
+ *   feats 间不互 import。
  */
 import { reactor } from '../../../core/reactor.js';
 import { createLog } from '../../../core/log.js';
@@ -127,7 +105,8 @@ var engines = {
  *   pickOrder=拖拽得到的池 key 序（下标即优先级，未排过序为空数组）；pickRank=它的反查表 `{key: idx}`（引擎用）；
  *   buffEffects=要拿的增益类（effect_buff 数组，默认三类；空=不限即六类全要）；
  *   heal=编队治疗 {enabled,threshold,maxPerTick,items[]}（items 空=跟随游戏 dataConfig(3035) 白名单序）；
- *   boss=BOSS 攻打固定档 BOSS_AUTO（无面板开关，用户反馈：次序/轮次/投喂/队长要么是游戏规则（仅队长可发，引擎内 isTeamLeader 已闸）、要么无意义）：攻打/投喂/石头恒开、轮次无限、就近、relocate 恒关（不自动挪台）；
+ *   boss=BOSS 攻打固定档 BOSS_AUTO（无面板开关）：攻打/投喂/石头恒开、轮次无限、就近选档、
+ *     relocate 恒关（不自动挪台）——大小BOSS 时间错开不同现，次序项不影响选目标；仅队长可发（引擎内 isTeamLeader 已闸）；
  *   shop=商店补货派生总闸 {enabled}（enabled 非用户勾选，而是 pickItems 是否存在 shop=1 项的派生态；且**只在队伍已停靠 161 商店点时**补货，见 shop.js）；
  *   warn=攻击警告应对 {enabled,mode}（mode='transfer' 立即转移（默认）/'stand' 抗争到底；默认关，自动挪队风险最高，见 warn.js；自动驾驶开启时本引擎让出转移、交 pilot.js EVADE 接管）；
  *   drive=自动驾驶 {enabled,boss,shopTime,revive,shopDwellMs,emptyDwellMs}（enabled=面板 driveEnabled 总闸（默关）；boss=driveBoss 子闸——BOSS 窗开着时是否自动开往 176 平台，缺省 true；shopTime=大BOSS 前定点商店勤务开关（缺省 true）；revive=driveRevive 子闸——战败(deadType==1)且本场次数未用尽时是否代答 8552 复活，缺省 true；shopDwellMs=到店驻留毫秒（面板秒×1000，默认 25000）；emptyDwellMs=资源/掉落拿空后 settle 毫秒（默认 0=立即走），见 pilot.js）。
@@ -136,9 +115,9 @@ var engines = {
  * @type {{pickItems:Object<string,{on:number,max:number,shop?:number}>, pickOrder:string[], pickRank:Object<string,number>, buffEffects:number[], heal:object, boss:object, shop:{enabled:boolean}, warn:{enabled:boolean,mode:string}, drive:{enabled:boolean,boss:boolean,shopTime:boolean,revive:boolean,shopDwellMs:number,emptyDwellMs:number}}}
  */
 /**
- * BOSS 攻打固定档（面板不再给开关）：用户反馈「攻打次序/轮次/投喂/队长」要么是游戏规则（仅队长可发，boss.js 内 isTeamLeader 已闸）、
- *   要么无意义（大小BOSS 时间错开、不同现，无需选次序；轮次无限、打死为止）。故攻打/投喂/石头恒开，relocate（自动挪台，风险最高）恒关。
- *   order 保留 'guard' 仅因 boss.js #orderCmp 需要一个合法值——大小既错开，次序实际不影响选目标。
+ * BOSS 攻打固定档（面板不给开关）：攻打/投喂/石头恒开、轮次无限、就近选档，relocate（自动挪台，风险最高）恒关。
+ *   仅队长可发——8521 驱动的是全队那一条行军（boss.js 内 isTeamLeader 已闸）；大小BOSS 时间错开、不同现，
+ *   故次序项不影响选目标，order 保留 'guard' 仅因 boss.js #orderCmp 需要一个合法值。
  * @type {{enabled:boolean,order:string,maxRounds:number,stone:boolean,relocate:boolean,feed:boolean}}
  */
 const BOSS_AUTO = Object.freeze({
@@ -200,7 +179,7 @@ const KEY_ITEM = 'item:';
 
 /**
  * itemId → 道具中文名（ITEM 表 `.name` loc 键 → 译文）；行缺失回 `#item:{id}`。
- * 资源点行本身无名字，名字来自它产出的道具（实证 PabBagItem.updateResourceItem：`getTableDataById(rss_station, specId)` → `.item` → 画该道具图标）。
+ * 资源点行本身无名字，名字来自它产出的道具（PabBagItem.updateResourceItem：`getTableDataById(rss_station, specId)` → `.item` → 画该道具图标）。
  * @param {number|string} itemId 道具 id
  * @returns {string}
  */
@@ -210,7 +189,7 @@ function itemLabel(itemId) {
 }
 
 /**
- * ITEM 行 → 游戏自身的持有上限。实证 RealPabController.checkItemNumMax：
+ * ITEM 行 → 游戏自身的持有上限。判据在 RealPabController.checkItemNumMax：
  * 只有 `type===171 && para1_v1` 的道具会被游戏按 `getItemNumById >= para1_v1` 拦住（弹 enigma_item_max_001），
  * 其余 type 直接返回 undefined → 游戏不拦，只有用户填的 max 起作用。
  * @param {object|null} row ITEM 表行
@@ -234,7 +213,7 @@ function itemCap(itemId) {
   try {
     row = l10n.tableRow(TABLE_ITEM, itemId);
   } catch (e) {
-    /* 表未就绪 → 本轮不缓存 */
+    /* 表未就绪 → 本次不缓存 */
     return 0;
   }
   if (!row) return 0;
@@ -243,7 +222,7 @@ function itemCap(itemId) {
 }
 
 /**
- * 异能兽 cfgId → 物种中文名（实证 EnigmaBeastResCfg.getTypeCommonName：`enigma_beast_type[cfg.type].name1` 再过 getText）。
+ * 异能兽 cfgId → 物种中文名（EnigmaBeastResCfg.getTypeCommonName：`enigma_beast_type[cfg.type].name1` 再过 getText）。
  * 物种名按 type 缓存（全表枚举时同一物种多品质行很多，避免逐行查表）。
  * @type {Object<number,string>}
  */
@@ -273,7 +252,7 @@ function beastLabel(row, cfgId) {
 
 /**
  * 增益 buff 选项列表（面板 multiopts 数据源）：枚举 rss_station 里 `effect_buff != 0` 的行，
- * 按 effect_buff 去重成「增益类」（实证秘境三类：行军加速/伤害加深/攻击增强），类名取
+ * 按 effect_buff 去重成「增益类」（秘境三类：行军加速/伤害加深/攻击增强），类名取
  *   `EFFECTBUFF[effect_buff].string` 的 loc 译文（同 PabBuffItem.updateBuffNode）。
  * @returns {Array<{value:number,label:string}>}
  */
@@ -303,7 +282,7 @@ function buildBuffOptions() {
 }
 
 /**
- * 治疗道具选项（面板 multiopts 数据源）：直接拆游戏自己的白名单 `dataConfig(3035)`（源码 verbatim
+ * 治疗道具选项（面板 multiopts 数据源）：直接拆游戏自己的白名单 `dataConfig(3035)`（源码
  *   NWorldPabTeamSelfItem.updateUseItem 就是 `split('|')` 逐件画按钮），行名取 ITEM 表 `.name` 译文。
  * 拆法复用 heal.js 导出的 parseHealWhitelist（面板与引擎两处各拆一次必漂移）。
  * 配置未就绪或该键缺失 → 回空选项（引擎会退回直读同一 dataConfig，不依赖面板选项表）。
@@ -323,11 +302,11 @@ function buildHealOptions() {
 
 /**
  * 构建物品拾取面板的完整池（itemlist 数据源）。**按道具 ID 聚合**，两类来源合成一行：
- *   - `item:{itemId}` = ITEM 表 `type===171` 行（掉落箱物品，实证全表只 2 行）
- *     ∪ enigma_secret_realm_rss_station 非 buff 行的 `.item`（资源点产出道具，实证 type 为 33/166/167 等）。
- *     实证 dump：rss_station 按点位分行，同一道具对应几十行（item=41001 有 44 个 specId、item=41009 有 5 个），
- *     逐 specId 列行会出大量同名项；而数量上限本就按 `getItemNumById(itemId)` 计→ 只有道具维度语义正确。
- *   - `pet:{cfgId}`   = enigma_beast 全表（掉落箱宠物，本期不合并）。
+ *   - `item:{itemId}` = ITEM 表 `type===171` 行（掉落箱物品，全表只 2 行）
+ *     ∪ enigma_secret_realm_rss_station 非 buff 行的 `.item`（资源点产出道具，type 为 33/166/167 等）。
+ *     rss_station 按点位分行，同一道具对应几十行（item=41001 有 44 个 specId、item=41009 有 5 个），逐 specId
+ *     列行会出大量同名项；而数量上限本就按 `getItemNumById(itemId)` 计 → 只有道具维度语义正确。
+ *   - `pet:{cfgId}`   = enigma_beast 全表（掉落箱宠物，不合并）。
  *   两渠道可得性：`shopSellable` = 该道具在货表 enigma_secret_realm_shop 在售（shopItemIdSet 运行时枚举），不在售/表未就绪时「店」勾选置灰；
  *   `pickDisabled` = 该道具无任何掉落/资源点来源（仅商店在售，如各档异能诱饵/秘境护盾）时「拾」勾选置灰；`pet:` 行恒 channel2Disabled（宠物不经商店售卖）。
  * 表未就绪/符号缺失时 try/catch 兜住，回空数组——面板显示「池为空」但不致命。
@@ -339,7 +318,7 @@ function buildPickPool() {
   const seen = {};
   // 商店在售集（货表离线无数据，只运行时可枚；表未就绪回空对象 → 全部置灰，面板下次重刷自然恢复）
   const shopSet = shopItemIdSet(l10n);
-  // type3（跨店共享限量、整场活动限购，如「传奇百兽碎片自选箱」）道具：从面板清单移除，改由商店引擎到店默认最高优先级自动买（见 shop.js #grabType3）
+  // type3（跨店共享限量、整场活动限购，如「传奇百兽碎片自选箱」）道具不进面板清单，由商店引擎到店按最高优先级自动买（见 shop.js #grabType3）
   const t3Set = shopType3ItemIds(l10n);
   try {
     const itemRows = l10n.tableRows(TABLE_ITEM) || [];
@@ -364,7 +343,7 @@ function buildPickPool() {
       const r = rssRows[i];
       if (!r || r.id == null) continue;
       if (Number(r.effect_buff) !== 0) continue; // buff 类走增益井 buffEffects 链路，不入拾取清单
-      // rss_station 行无名字字段（实证 PabBagItem.updateResourceItem 只读 .item/.item_num）→ 名字取它产出的道具，并按该道具合并成一行
+      // rss_station 行无名字字段（PabBagItem.updateResourceItem 只读 .item/.item_num）→ 名字取它产出的道具，并按该道具合并成一行
       const itemId = Number(r.item) || 0;
       if (!itemId || t3Set[itemId] || seen[KEY_ITEM + itemId]) continue;
       seen[KEY_ITEM + itemId] = 1;
@@ -380,7 +359,7 @@ function buildPickPool() {
   }
   // 仅商店在售、无任何掉落/资源点来源的道具（如各档异能诱饵、秘境护盾）：
   //   必须补进持有清单才能勾「店」补货；无拾取来源 → pickDisabled（「拾」置灰）。
-  //   type3（跨店共享限量、整场活动限购）已在上面被排除——它们不进面板，改由商店引擎默认自动买。
+  //   type3（跨店共享限量、整场活动限购）已在上面排除——不进面板，由商店引擎到店自动买。
   for (const itemIdStr of Object.keys(shopSet)) {
     const itemId = Number(itemIdStr) || 0;
     if (!(itemId > 0) || t3Set[itemId] || seen[KEY_ITEM + itemId]) continue;
@@ -434,23 +413,23 @@ function buildEnv() {
       const e = engines.shop;
       if (e && typeof e.kick === 'function') e.kick();
     },
-    // 商店引擎→方向盘的账本口（G7）：8540/8542/8543 应答后回写本店 `time/sausage/piece`。
-    //   pilot 的 shopStage 节拍、选店「香肠没买过」优先、exitStage 的百兽箱判据全靠这本账
-    //   （竞品在 onPabRoomShopDataUpdate 里直接写 state.shops，同一个口子）。
+    // 商店引擎→方向盘的账本口：8540/8542/8543 应答后回写本店 `time/sausage/piece`。
+    //   pilot 的 shopStage 节拍、选店「香肠没买过」优先、exitStage 的百兽箱判据全靠这本账；
+    //   shop 引擎本身不开车，账只喂给方向盘做选点排序。
     markShopLedger: function (key, patch) {
       const e = engines.drive;
       if (e && typeof e.markShopLedger === 'function') e.markShopLedger(key, patch);
     },
-    // 打野档的品质闸（G2）：读 scout.js 的侦察账；未侦察回 null（pilot 按竞品口径当品质 2）。
+    // 打野档的品质闸：读 scout.js 的侦察账；未侦察回 null（pilot 按未知品质当 2 处理）。
     scoutQuality: function (x, y) {
       const e = engines.scout;
       return e && typeof e.qualityAt === 'function' ? e.qualityAt(x, y) : null;
     },
-    // 收场判据的「背包拿满」（G7 exitStage 第三级）：高品质只数 ≥ 携带容量。
+    // 收场判据的「背包拿满」（exitStage 第三级）：高品质只数 ≥ 携带容量。
     //   两侧读不到（容量回 0 / 清单键缺失）一律回 false——宁可不收场，不可误收场。
     petPackFull: petPackIsFull,
-    // 方向盘→离场引擎的「该收场」口径口（G7）：leave.js 直读 pilot 的 exitStage 三级判据（百兽箱 piece →
-    //   加 BOSS 已死 → 加背包拿满，末尾 fightEndTime 兜底），而不是自己再维护一套阈值。
+    // 方向盘→离场引擎的「该收场」口径口：leave.js 直读 pilot 的 exitStage 三级判据（百兽箱 piece →
+    //   加 BOSS 已死 → 加背包拿满，末尾 fightEndTime 兜底），不再自己维护一套阈值。
     driveExitStage: function () {
       const e = engines.drive;
       return e && typeof e.exitStageWant === 'function' ? !!e.exitStageWant() : false;
@@ -460,8 +439,7 @@ function buildEnv() {
 
 /**
  * 秘境宠物携带背包是否已被高品质（`QUALITY_HIGH` 及以上）填满。
- *   verbatim 竞品B `exitStage` 的 `r`：`roomBagInfo.beastInfo` 按 `enigma_beast.quality >= 4` 计数，
- *   与 `dataConfig(3017) + PabExtraPackItemNum` 比较。
+ * 判据：`roomBagInfo.beastInfo` 里 `enigma_beast.quality >= QUALITY_HIGH` 的只数 >= `dataConfig(3017) + PabExtraPackItemNum`。
  * @returns {boolean}
  */
 function petPackIsFull() {
@@ -645,8 +623,8 @@ function sanitizeScout(raw) {
 }
 
 /**
- * 商店补货总闸（自动）：持有清单里只要勾了任一行的「店」渠道（条目 shop=1）即视为开启补货，
- * 不再单独设一个 shopEnabled 勾选（用户反馈：补货应是清单勾选的自然结果，无需额外激活）。
+ * 商店补货总闸（派生）：持有清单里只要勾了任一行的「店」渠道（条目 shop=1）即视为开启补货，
+ * 没有独立的 shopEnabled 勾选——补货是清单勾选的派生态。
  * @param {Object<string,{shop?:number}>} pickItems sanitizePickItems 产物
  * @returns {boolean}
  */
@@ -757,9 +735,7 @@ function configure(c) {
   // c 已是 registry 调 toModuleCfg(=buildModuleCfg) 产出的运行时形状，直接整体接收；**绝不二次归一**——
   //   二次 buildModuleCfg 会用面板平铺键（driveEnabled/healEnabled/warnEnabled/autoLeaveEnabled/scoutEnabled）
   //   去读嵌套产物，一律读不到 → drive/heal/warn/leave/scout 五个开关被强制回落 false（pickItems/buffEffects/
-  //   pickOrder 因两种形态同构而侥幸存活，故拾取一直正常，仅「开关型」能力全哑）。
-  //   实证 20261031：storage driveEnabled=true，而 modCfg.drive.enabled=false，drive #tick 每拍停在 cfg-off，
-  //   停靠 (393,45) 全程 0 笔 8521；同 cs-hunt/index.js configure 的踩坑记录。
+  //   pickOrder 因两种形态同构而侥幸存活，故症状只有「开关型」能力全哑，不易看出来）。
   if (c) modCfg = c;
 }
 
@@ -826,8 +802,8 @@ function run(ctx) {
   //   「立即转移」只在停在非BOSS点且队长时发 8521 去就近营帐（不抢 BOSS 方向盘，见 warn.js）
   engines.warn = new WarnEngine(env);
   engines.warn.start(ctx);
-  // 自动驾驶引擎（driveEnabled，默关）：**v3 领航员**——商店坐标读表锚点、BOSS 坐标读服务器权威态、
-  //   候选池靠 901 主动拉视口（不再等 10018 镜头推送）；受击逃帐/回攻/上平台/到店买货/资源巡航统一方向盘（仅队长发 8521）；
+  // 自动驾驶引擎（driveEnabled，默关）：商店坐标读表锚点、BOSS 坐标读服务器权威态、
+  //   候选池靠 901 主动拉视口（10018 只作兜底）；受击逃帐/回攻/上平台/到店买货/资源巡航统一方向盘（仅队长发 8521）；
   //   开启时 warn.js 让出转移、boss.js 让出非 BOSS 点的攻打行军（两处让闸），见 pilot.js 文件头
   engines.drive = new PilotEngine(env);
   engines.drive.start(ctx);
@@ -901,7 +877,7 @@ reactor.register({
       sortable: true,
       orderKey: 'pickOrder',
       // 两渠道共用一个目标持有量 T（行内数字）：拾取勾 on、商店补货勾 shop（channel2）——
-      //   物品只有持有上限，没有渠道上限；旧版独立的「补货清单」已并入本清单的 shop 标志。
+      //   物品只有持有上限、没有渠道上限，所以两渠道共用同一份清单（补货渠道由 channel2 表达）。
       channel2: {
         key: 'shop',
         label: '商店',
@@ -959,7 +935,7 @@ reactor.register({
       section: '编队治疗',
       stack: true,
       options: buildHealOptions,
-      hint: '选项 = 游戏自己的白名单 dataConfig(3035)（实证 41002 急救绷带 / 41003 全科医疗包）；空=按该白名单顺序逐件用',
+      hint: '选项 = 游戏自己的白名单 dataConfig(3035)（41002 急救绷带 / 41003 全科医疗包）；空=按该白名单顺序逐件用',
     },
     {
       key: 'warnEnabled',
@@ -1004,7 +980,7 @@ reactor.register({
       showIf: function (cfg) {
         return !!(cfg && cfg.driveEnabled);
       },
-      hint: '默认开（与竞品B同逻辑）：21521 推送里 `deadType==1` 且本场已复活次数 < 上限（dataConfig 3056）时，代答一次 8552 `{uid}` 原地复活，避免整场因一次战败停摆。上限读不到/为 0 → 一律不复活（宁不复活也不盲烧次数）；两次复活最短间隔 driveReviveGapMs。关掉则战败只挂诊断、由人自行点复活面板',
+      hint: '默认开：21521 推送里 `deadType==1` 且本场已复活次数 < 上限（dataConfig 3056）时，代答一次 8552 `{uid}` 原地复活，避免整场因一次战败停摆。上限读不到/为 0 → 一律不复活（宁不复活也不盲烧次数）；两次复活最短间隔 driveReviveGapMs。关掉则战败只挂诊断、由人自行点复活面板',
     },
     {
       key: 'driveShopTime',
@@ -1014,7 +990,7 @@ reactor.register({
       showIf: function (cfg) {
         return !!(cfg && cfg.driveEnabled);
       },
-      hint: '默认开：整场约 55min，大BOSS 在 +40min 开打（报文实证 fightBeginTime 偏移）、小BOSS +23min。开启后在 +10/15/20min（相对整场开始）任一时刻若本场还没去过商店，强制开车去就近 161 店点补一趟投喂料（到店即视作完成、本场不再重复；未到点/无候选每拍重试）。关掉则回到「仅补货有缺口时才去店」',
+      hint: '默认开：整场约 55min，大BOSS 在 +40min 开打（按 fightBeginTime 偏移）、小BOSS +23min。开启后在 +10/15/20min（相对整场开始）任一时刻若本场还没去过商店，强制开车去就近 161 店点补一趟投喂料（到店即视作完成、本场不再重复；未到点/无候选每拍重试）。关掉则回到「仅补货有缺口时才去店」',
     },
     {
       key: 'driveShopDwell',

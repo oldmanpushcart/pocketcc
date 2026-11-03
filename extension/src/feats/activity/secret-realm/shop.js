@@ -1,22 +1,22 @@
 /**
  * 商店补货引擎（异能秘境：**只在队伍已停靠的商店点位**补货，不主动开车过去）。
  *
- * 为什么"只在已停靠的店"（源码 verbatim NWorldMapTileClickUtils）：点开商店瓦片（161）时——
+ * 为什么"只在已停靠的店"（源码 NWorldMapTileClickUtils）：点开商店瓦片（161）时——
  *   `for team in tile.teams: team.teamId==roomBaseInfo.teamId ? i=true`，然后 `PAB_SHOP: i ? OpenUI(PabShopPanel) : OpenUI(NWorldPabShopPopup)`
  *   → 只有**本队停在该商店点位**（在该点驻军列表里）才进得去买货面板；而 `8542 SHOP_BUY` **不带坐标**（服务器按"你当前在哪个店"关联）。
- *   → 结论：买货必须"人在店里"。本期按用户选择走**保守档**：队伍已被玩家开到某商店点（roomBaseInfo.pointType===161 且 ARRIVED）才补货，
- *   引擎自己绝不发 8521 挪队去商店（"自动开车到 4 个商店"是更高风险档，本期不做）。
+ *   → 结论：买货必须"人在店里"。本引擎走**保守档**：队伍已被玩家开到某商店点（roomBaseInfo.pointType===161
+ *   且 ARRIVED）才补货，引擎自己绝不发 8521 挪队去商店（自动开车到商店属 pilot 的路线决策，不在本引擎）。
  *
- * 链路（源码 verbatim PabShopPanel / PabShopItem + 报文实证 dashcam 20261018T200040）：
+ * 链路（源码 PabShopPanel / PabShopItem）：
  *   ① `8540 SHOP_INFO {x,y}`（x,y=当前商店点坐标）→ `{items:[{specId,getTime}], readyList:[…]}`；**应答不带 x,y**。
- *      ⚠ **本查询会把本店非 type3 货位的 getTime 归零**（实证同店 19:1 → 再发 8540 → 19:0）→
+ *      ⚠ **本查询会把本店非 type3 货位的 getTime 归零**（同店 19:1 → 再发 8540 → 19:0）→
  *      所以**每次到店只 INFO 一次**（#loadedXY 记账），之后一律以 8542/8543 应答回带的 `items` 为准更新 getTime，
  *      绝不反复 8540 把额度基准刷没。
  *   ② `8542 SHOP_BUY {specId,num}`（无坐标）→ resp 只回新 `{items}`。`num` 可 >1
  *      （游戏自己的选择器 ActivityItemNumSelect{maxCounts} 确认后就是 `emit(PabShopItemBuy, id, chosenNum)` 发一笔 num=所选数）；
- *      录音里 num 恒 1 只是玩家逐次点 1。
- *   ③ `8543 SHOP_REFRESH {x,y}` → resp 只回 `{items}`；**每次恰好扣 1 个刷新币 41010**（实证余量 10→…→1、共 18 次），
- *      且只把**非 type3** 货位 getTime 归零（实证 19:1 →刷新→ 19:0，而同拍 type3 的 20 仍 20:1）。
+ *      玩家逐次点 1 时 num 才为 1。
+ *   ③ `8543 SHOP_REFRESH {x,y}` → resp 只回 `{items}`；**每次恰好扣 1 个刷新币 41010**（余量 10→…→1、共 18 次），
+ *      且只把**非 type3** 货位 getTime 归零（19:1 →刷新→ 19:0，而同拍 type3 的 20 仍 20:1）。
  *      余量 < `_shopRefreshCost`（dataConfig 3029）时游戏 tips enigma_realm74 开不了口 → 本引擎同预检。
  *   ④ 货表 `enigma_secret_realm_shop` 每行字段（verbatim PabShopItem.updateShopItem）：
  *      `id(=specId) / item_id(产出道具) / item_num(每次给量) / cost(单价，用购买币 41009) / buy_times(本店额度) / type(3=跨店共享限量)`；
@@ -83,11 +83,9 @@ export class ShopEngine {
    */
   #items = {};
   /**
-   * @type {Object<string,number>} 各店本次会话为「刷出目标品」已发过的 8543 次数（G5，按点键 `x,y` 记），
-   *   上限取 `driveSausageRefreshMax`。
-   *   ⚠ 此前是单值且在**每次 8540 应答后归零**（而刷店成功的应答本身就是一条 8540/8543 items），
-   *   叠上 shopGapMs(250) 的节拍 → 实战 20261101T200401 在 27:05 一秒内烧光 6 次配额和刷新币 41010。
-   *   现按店计且**不在 INFO 时归零**：一家店一局最多 6 刷（四家共 24 刷），宁可少刷也不把币烧光。
+   * @type {Object<string,number>} 各店本次会话为「刷出目标品」已发过的 8543 次数（按点键 `x,y` 记），
+   *   上限取 `driveSausageRefreshMax`：一家店一局最多 6 刷（四家共 24 刷）。计数按店独立、不在 8540 INFO 时
+   *   归零（刷店成功的应答本身就是一条 8540/8543 items）。
    */
   #refreshTries = {};
   /** @type {number} 上一笔 8543 发起时刻（毫秒）：#tick 用它夹出 shopRefreshGapMs 最小间隔 */
@@ -164,9 +162,8 @@ export class ShopEngine {
     const sc = env.cfg().shop;
     // 总闸：
     //   ① 持有清单里任一行勾了「店」渠道（sc.enabled）→ 用户显式要求的补货；
-    //   ② **自动驾驶开着（drive.enabled）** → 车会自己开到店，不买白跑一趟。
-    //      这条是「到店也不会自动购买」的修正：v2 只有 ①，用户没勾任何「店」渠道时，
-    //      车就算停在店里也一件不买——而自动驾驶本身就是「替我开去商店」的意图表达。
+    //   ② **自动驾驶开着（drive.enabled）** → 车会自己开到店，不买白跑一趟；自动驾驶即「替我开去商店」的
+    //      意图表达，故没勾「店」渠道时也允许到店自动购买。
     const dv = env.cfg().drive;
     const autoBuy = !!(dv && dv.enabled);
     if (!(sc && sc.enabled) && !autoBuy) return tuning.shopSweepMs;
@@ -180,12 +177,12 @@ export class ShopEngine {
       return autoBuy ? tuning.driveScanMs : tuning.shopSweepMs;
     }
     if (this.#busy) return tuning.shopGapMs;
-    // 同一店两条 BUY 之间的额外静默（constants 注释实证：上一笔未结算形态会出 enigma_realm162）
+    // 同一店两条 BUY 之间的额外静默（上一笔未结算形态会出 enigma_realm162，见 constants shopBuyGapMs）
     if (this.#lastBuyEndAt) {
       const buyGapLeft = this.#lastBuyEndAt + tuning.shopBuyGapMs - Date.now();
       if (buyGapLeft > 0) return buyGapLeft;
     }
-    // 8543 刷店的最小间隔（竞品靠 15s 驻留 + await 串行天然封顶，我方 250ms 节拍会一秒把配额烧光）：
+    // 8543 刷店的最小间隔（250ms 节拍连着刷会一秒烧光配额，故必须留间隔）：
     //   这里**只短睡到间隔满**（不能当「本轮无动作」处理，否则 #actOnce 回 false 会睡到 shopSweepMs 而错过整个驻留窗）
     if (this.#lastRefreshAt) {
       const refGapLeft = this.#lastRefreshAt + (Number(tuning.shopRefreshGapMs) || 0) - Date.now();
@@ -249,19 +246,17 @@ export class ShopEngine {
   }
 
   /**
-   * G7 把本店货单回写成 pilot 的店账（竞品B 在 `onPabRoomShopDataUpdate` 里用应答 items 直接回写
-   *   `state.shops[i].time/sausage/piece`，同一个口子）：
-   *   `sausage`/`piece` = 该货位的 `getTime`（本次服务已购次数，>0 = 已买过；竞品存原值而不是布尔，
-   *   因为 `marchShop(1)` 的排序要比大小），`time` = 本次服务时刻（秒）。
-   *   我方额外记 `sausageShelf`（本货单上到底有没有香肠货位）： pilot 的 #shopAllTried 靠它区分
-   *   「这家不卖」（已试尽）与「在架但还没买到」（还要再试），否则四家都买到过香肠的判据在实战里永不成立。
+   * 把本店货单回写成 pilot 的店账：`sausage`/`piece` = 该货位的 `getTime`（本次服务已购次数，>0 = 已买过，
+   *   存原值而不是布尔，因为选店排序要比大小），`time` = 本次服务时刻（秒）。
+   *   额外记 `sausageShelf`（本货单上到底有没有香肠货位）：pilot 的 #shopAllTried 靠它区分
+   *   「这家不卖」（已试尽）与「在架但还没买到」（还要再试）。
    *   pilot 拿它算 shopStage 的 gap、选店「香肠没买过」优先与 exitStage 的百兽箱判据。
    * @param {{x:number,y:number,key:string}} cur 当前商店点
    */
   #markLedger(cur) {
     const env = this.#env;
     if (!cur || !cur.key || typeof env.markShopLedger !== 'function') return;
-    // 竞品 verbatim：`items.find(specId 对应 item_id==41011)?.getTime ?? 旧值`——存的是**已购次数**（可比大小排序）
+    // 取 41011 货位的 getTime（已购次数，供选店比大小）
     let sausage = 0;
     let shelf = 0;
     const sSpecs = this.#specsOf(ITEM_SAUSAGE) || [];
@@ -310,7 +305,7 @@ export class ShopEngine {
     // type3（跨店共享限量、整场活动限购，如「传奇百兽碎片自选箱」）：已从面板清单移除，到店默认最高优先级自动拿下，
     //   不受任何「店」勾选控制——只要商店引擎在跑就先买它，再进入下面按勾选的补货流程。
     if (this.#grabType3(cur, buyBalance)) return true;
-    // 香肠（41011）默认补满：竞品B `option.buy_sausage && getItemNumById(41011) < 10` 同款固定规则。
+    // 香肠（41011）默认补满：固定规则「持有 < 10 就买」（见 #grabSausage）。
     //   香肠是投喂 BOSS 的硬通货；自动驾驶模式下到店必补，不受「店」勾选控制。
     if (this.#grabSausage(cur, buyBalance)) return true;
     for (let i = 0; i < keys.length; i++) {
@@ -498,10 +493,9 @@ export class ShopEngine {
   }
 
   /**
-   * 香肠（41011 全素香肠）的**默认补满**：竞品B `option.buy_sausage && getItemNumById(41011) < 10` 同款固定规则。
-   *   为什么需要它：v2 的补货完全由持有清单「店」勾选驱动，用户没勾 → 到店也一件不买
-   *   （实战口径「到商店也不会自动购买」）。本规则只在**自动驾驶开着**时生效（手动档不篡改用户意图），
-   *   只要人已停在本店、背包香肠不足 `tuning.driveSausageTarget`(10) 就买一笔，直到买满或本店额度耗尽。
+   * 香肠（41011 全素香肠）的**默认补满**：目标持有量 `tuning.driveSausageTarget`(10)。
+   *   只在**自动驾驶开着**时生效（手动档不篡改用户意图）：人已停在本店、背包香肠不足目标就买一笔，
+   *   直到买满或本店额度耗尽。香肠是投喂 BOSS 的硬通货，故不受持有清单「店」勾选控制。
    * @param {{x:number,y:number,key:string}} cur 当前商店点
    * @param {number} buyBalance 购买币余额
    * @returns {boolean} true=这一拍发出了一笔购买
@@ -546,14 +540,14 @@ export class ShopEngine {
       // desired 传 0（不按累计件数降级）：目标差额由入口的 have>=target 每拍复判，拿捏最准
       return this.#sendBuy(cur, spec, qty, 0, this.#bought[spec] || 0);
     }
-    // G5：货单上**根本没香肠**（不是额度买完，那是「交给下一家店」）→ 竞品 `shopConver` 口径
-    //   「无目标品且刷新币够 → 8543 刷店」，上限 driveSausageRefreshMax。
+    // 货单上**根本没香肠**（不是额度买完，那是「交给下一家店」）→ 「无目标品且刷新币够 → 8543 刷店」，
+    //   上限 driveSausageRefreshMax。
     if (!onShelf && specs.length) return this.#refreshFor(cur, 'sausage');
     return false;
   }
 
   /**
-   * 为目标品不在架而刷一次店（G5）。预算与封顶都在本函数：**按店计**且会话内不归零，
+   * 为目标品不在架而刷一次店。预算与封顶都在本函数：**按店计**且会话内不归零，
    *   每次刷完还受 #tick 里的 shopRefreshGapMs 夹隔；刷新币预检与游戏 tips enigma_realm74 同口径
    *   （不够就彻底放弃，不反复烧币）。
    * @param {{x:number,y:number,key:string}} cur 当前商店点
@@ -669,7 +663,7 @@ export class ShopEngine {
   }
 
   /**
-   * 单次刷新消耗（dataConfig 3029，实证值 1，但运行时读）。
+   * 单次刷新消耗（dataConfig 3029，当前值 1，但运行时读）。
    * @returns {number}
    */
   #refreshCost() {
@@ -838,7 +832,7 @@ export function shopItemIdSet(l10n) {
 
 /**
  * type3（跨店共享限量、整场活动限购）道具集：枚举货表 `type===3` 行，返回 `{itemId:1}`——
- * 这类道具（如「传奇百兽碎片自选箱」）不进持有清单面板，改由 ShopEngine 到店默认最高优先级自动购买（见 #grabType3）。
+ * 这类道具（如「传奇百兽碎片自选箱」）不进持有清单面板，由 ShopEngine 到店以最高优先级自动购买（见 #grabType3）。
  * 表离线无数据、只运行时可枚；表未就绪/符号缺失 → 回空对象。
  * @param {object} l10n ACL l10n（tableRows）
  * @returns {Object<number,1>}

@@ -1,9 +1,8 @@
 /**
  * secret-realm 簇内共享纯函数叶子（零 import）：网格键 tileKey、欧氏距离 dist。
  *
- * 此前被逐字复制进本簇 4 个文件：dist 4 份全同；tileKey 3 份全同（warn/scout/boss），
- * pilot 多一份「任一坐标 ≤0 视为无效」的正坐标守卫——收口后用可选 requirePositive 参保语义，
- * pilot 侧以薄委托传 true，18 个调用点零改动（与 core/util.js 的 todayStr epochSec 同一手法）。
+ * 本簇共用一把尺子：dist 为欧氏格距，任一坐标转不出有限数回 Infinity（「不可达」哨兵）；
+ * tileKey 默认不校验正负，需要「≤0 视为无效」的调用方（pilot 的出口/集结点判据）传 requirePositive。
  */
 
 /**
@@ -22,7 +21,7 @@ export function tileKey(x, y, requirePositive) {
 }
 
 /**
- * 两点欧氏距离；任一坐标转不出有限数回 Infinity（作「不可达」哨兵，与原各份一致）。
+ * 两点欧氏距离；任一坐标转不出有限数回 Infinity（作「不可达」哨兵）。
  * @param {number|string} ax
  * @param {number|string} ay
  * @param {number|string} bx

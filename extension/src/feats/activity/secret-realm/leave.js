@@ -1,21 +1,21 @@
 /**
  * 拿满自动离场引擎（异能秘境：宠物携带背包被高品质填满 → 择优带出 → 发一次整场退出）。
  *
- * 面板档位（用户拍板）：**默认关**的总开关 `autoLeaveEnabled`。离场是 `8589 LEAVE` 整场退出（非「换个点」，
+ * 面板档位：**默认关**的总开关 `autoLeaveEnabled`。离场是 `8589 LEAVE` 整场退出（非「换个点」，
  *   见 constants CMD_LEAVE_AREA 条）——一旦发出就把整队从秘境战场撤下，是全 feat 不可逆性最高的一档，故不留任何子开关、
  *   只给一个默认关的总闸，且引擎内多重 fail-safe：任一判据读不到就**不离场**，绝不拿缺证据当「拿满」。
  *
- * 借鉴竞品B enigmaSecret.judgeLeave / exitStage（G7：与竞品同逻辑）：
+ * 判据链：
  *   • 触发闸 = `exitStage` 三级（与 pilot.js 共用一份判据，经 `env.driveExitStage()` 直读）：
  *     `i`=任一店账本 `piece>0`（已在某店买到过百兽箱）/ `1` 再加 `a`=有 BOSS 进入 state30（已打死）/
  *     `2` 再加 `r`=高品质（quality≥4）宠数 ≥ 携带容量；末尾统一用 `fightEndTime` 已过兜底。
  *     本 feat 单独开着（drive 关）时 piece 仍由 shop.js 回写，拿满+买到箱会命中 `tier==2`。
- *   • 容量 verbatim `dataConfig(3017) + BuffType.PabExtraPackItemNum`（ACL petPackCapacity）；
+ *   • 容量 `dataConfig(3017) + BuffType.PabExtraPackItemNum`（ACL petPackCapacity）；
  *     容量读不到（回 0）/ 宠物清单读不到（beastInfo 键不存在，回 null）→ 一律不触发（见 game-api 两条 ACL 注释）；
  *   • 「可安全离场」= 已停泊（teamIsMooring）**且非在途行军**（marchState≠MARCHING）+（战斗窗口已过 或 正停在 161 商店点）
- *     ——verbatim judgeLeave 的 `!isTeamLeader() || pointType==PAB_SHOP || ServerMSTime>=fightEndTime`，我方收紧为
+ *     ——游戏侧「前往」判据只要求 `pointType==PAB_SHOP || ServerMSTime>=fightEndTime`，本引擎收紧为
  *     「停稳 + 窗口结束/在商店」，绝不在队伍行军途中或 BOSS 争夺窗里撤场；
- *   • 「择优带出」= verbatim `beastInfo.sort(by quality desc).splice(0, cap).map(id)`：
+ *   • 「择优带出」= `beastInfo.sort(by quality desc).splice(0, cap).map(id)`：
  *     **先排序再取前「容量」只**（而不是先筛高品质再取）——它是「带最好的走」而不是「只带好的走」；
  *     id（protobuf Int64）原样填 8581 `{itemIds:[], uuIds:[...]}`，`ok===1` 后才发 8589 `{uid:String(UID)}`。
  *
@@ -36,7 +36,7 @@ import {
   tuning,
 } from './constants.js';
 
-/** 离场「拿满」计的高品质阈值（enigma_beast 行 quality，同竞品 exitStage 口径 >=4） */
+/** 离场「拿满」计的高品质阈值（enigma_beast 行 quality ≥ QUALITY_HIGH） */
 const QUALITY_MIN = QUALITY_HIGH;
 
 /**
@@ -88,7 +88,7 @@ export class LeaveEngine {
     if (!Array.isArray(pets)) return tuning.leaveScanMs;
 
     const stats = this.#packStats(pets, cap);
-    // G7 触发闸：与 pilot 共用一份 exitStage 三级判据（内部已含 fightEndTime 兜底）；
+    // 触发闸：与 pilot 共用一份 exitStage 三级判据（内部已含 fightEndTime 兜底）；
     //   pilot 引擎不可用时退化为只认「本场战斗窗口已过」，不拿缺证据当「该收场」。
     const want = typeof env.driveExitStage === 'function' ? !!env.driveExitStage() : false;
     if (!want && !this.#fightOver()) return tuning.leaveScanMs;
@@ -107,7 +107,7 @@ export class LeaveEngine {
   }
 
   /**
-   * 背包统计（verbatim 竞品B `judgeLeave` 的带出口径 + `exitStage` 的拿满口径）：
+   * 背包统计（带出口径与拿满口径共用一次遍历）：
    *   `uuIds` = **全体**宠物按 quality 降序取前 `cap` 只的 id（先排序再截断，而不是先筛高品质再取；
    *     读不到 enigma_beast 行的排最后，不会挤掉已知好宠）；
    *   `count` = 其中高品质（quality≥QUALITY_MIN）只数（诊断用；拿满判据已交给 exitStage 的 `r`）。

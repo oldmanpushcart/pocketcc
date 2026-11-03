@@ -1,104 +1,54 @@
 /**
  * 物品自动拾取引擎（异能秘境：掉落箱 + 资源点 + 增益井，仅当前到达点）。
+ * 协议载荷口径见 constants.js；逐条闸门的落点在 `#pickupDrop`/`#pickupRes` 行内注释，本头只写取数与判据。
  *
  * 触发模型（**三触发源，同一套闸门**）：
- *   ① CHANGE 推送（直连 `ctx.on.push`，载荷自带 x,y 与完整明细；游戏侧只是 PushResponse 对同一包体的
- *      EventCenter emit 转译，现已不经事件层）：
- *     - 21532 ENIGMA_SECRET_ROOM_DROP_CHANGE（原事件 PabRoomRewardBoxDataUpdate），载荷 {x,y,dropInfo,dropBeastInfo,bagGetNum,beastGetNum}
- *     - 21522 ENIGMA_SECRET_ROOM_RESOURCE_CHANGE（原事件 PabRoomResLibraryDataUpdate），载荷 {x,y,bagInfo,buffInfo,bagGetNum,buffGetNum,refreshTime}
- *   ② 资源点：**8526 RESOURCE_INFO 应答**（`ctx.on.resp(8526)`；core/net.js 原先只把推送派到 bus
- *     （`dispatch` 仅在 t===undefined 时跑，应答的 t=_.reqTime），现已按 dir 分命名空间补上 `net.resp.<cmd>`）：
- *     载荷 inner = {bagInfo,buffInfo,refreshTime,bagGetNum,buffGetNum}，**无 x,y**——但 RESOURCE_GET 只需 {rId}、
- *     RESOURCE_GET_BUFF 只需 {rId,pos}，所以不缺坐标也能直接消费。
- *   ③ 掉落箱：**8532 DROP_INFO 的 req↔resp 配对**（`ctx.on.req(8532)` 拿 {x,y} + `ctx.on.resp(8532)` 拿明细）：
- *     应答 inner = {info,dropBeastInfo,endTime,playerInfo,bagGetNum,beastGetNum}（数组键名是 `info` 而非推送用的
- *     `dropInfo`）且**不带坐标**，而 DROP_GET 必须要 {x,y,rId}（实证 PabRewardBoxNode
- *     `sendPBV2(ENIGMA_SECRET_ROOM_DROP_GET,{x:this._tileInfo.tileX,y:this._tileInfo.tileY,rId:e.getUuid()})`）
- *     → 坐标只能从**发包侧**补：游戏 INFO 的请求就是 `{x:this._tileInfo.tileX,y:this._tileInfo.tileY}`（源码与报文双实证）。
- *     同一手法现已推广到资源点（8526 INFO 的 req 也是 `{x:tileX,y:tileY}`，verbatim PabResLibraryNode.requestData），
- *     这样 C 段也能给点位记账（旧实现里 8526 应答无 x,y，根本无从按点聚合）。
- *   为什么必须有 ②③：CHANGE 推送只在**点位数据真的变了**（有人拾取/刷新）时广播，实测安静时段整局 0 条；
- *     而游戏自己在我们打开点位面板时必发 INFO（`PabResLibraryNode.requestData` / `PabRewardBoxNode`），该应答
- *     **不 emit 任何全局事件**（只回调刷新组件），故仅靠 ① 会整局睡死。
- *     报文实证：dashcam 20261010T211420-异能秘境-队长 两次到点都有 21529 TEAM_ARRIVE → 8526 应答
- *     （bagInfo 10/9 条全空闲、bagGetNum=0）却零条 21522 → 引擎未醒、一个 8527 没发；
- *     dashcam 20261004T202430-异能秘境-我是队长-发车 共 9 条 8532/8533 应答，INFO 应答总在 21532 推送后 1~2s 到，
- *     而开局 seq=31 那一条前面**没有任何推送先行**（只靠 ① 就永久错过）。
- *   配对精度：应答事件带 Event.reqTime（= 该应答**那条请求的发出时刻**，游戏按应答的 e.o 在 _requestPacks 里
- *     反查后 verbatim `onMessage(e,…,d.reqTime)` 递进 core/net.js），所以按「ts <= reqTime 中最大的一条」精确取坐标，
- *     不依赖先后顺序；reqTime 取不到时（游戏改版）才退回同 cmd 的 FIFO + TTL 近似。配不到坐标的应答整条丢弃（宁缺不错），
- *     队列溢出则整窗作废——因为错配的后果不是「漏拾」而是拿错点坐标去发 8533，被拒后还会把本来能拾的 dropId 拉黑 6h。
- *   我们只在触发到来时按同口径闸门复刻判定，对「当前刷新的这一个点位」补发 GET 包——绝不主动发 INFO、不遍历全图。
+ *   ① CHANGE 推送（直连 `ctx.on.push`，载荷自带 x,y 与完整明细）：21532 掉落箱、21522 资源点。
+ *   ② 资源点 8526 RESOURCE_INFO **应答**（**无 x,y**）：RESOURCE_GET 只需 {rId}、RESOURCE_GET_BUFF 只需 {rId,pos}。
+ *   ③ 掉落箱 8532 DROP_INFO **req↔resp 配对**（req 拿 {x,y}、resp 拿明细）：应答不带坐标而 DROP_GET 必须要 {x,y,rId}，
+ *     故坐标从**发包侧**补（游戏 INFO 请求就是 `{x:tileX,y:tileY}`）；8526 的 req 也是 `{x,y}`，两类都按点位记账。
+ *   ②③ 不可省：CHANGE 只在**点位数据真的变了**时广播，安静时段整局可以一条都没有；游戏打开点位面板时必发 INFO，该应答
+ *     **不 emit 任何全局事件**（只回调刷新组件）→ 仅靠 ① 会整局睡死。配对按应答事件的 `Event.reqTime` 取「ts <= reqTime
+ *     中最大的一条」，取不到才退同 cmd 的 FIFO + TTL 近似；配不到坐标的应答整条丢弃、队列溢出整窗作废——错配的后果不是
+ *     漏拾而是拿错点坐标发 8533，被拒还会把能拾的 dropId 拉黑 6h。只对触发的当前点位补发 GET，绝不主动发 INFO、不遍历全图。
  *
- * 面板语义（本期改造）：
- *   - 拾取（掉落箱物品/宠物、资源点 bag）默认生效、无总开关；细化通过 pickItems 行式配置：
- *       每项一个「拾」checkbox（on/off 是否拾取）+ 一个数字（目标持有量 T，0=跟随游戏 para1_v1；条目另有 shop 标志=商店补货渠道，与本引擎无关）。
- *   - 增益井 buff 亦默认生效（协议不同、pos 语义不同），不参与 pickItems 清单（类勾选见 buffEffects）。
- *   - 拍宠物另在 capture.js，与此解耦。
+ * 面板语义：拾取（掉落箱物品/宠物、资源点 bag）与增益井 buff 都默认生效、无总开关；细化走 pickItems 行式配置——每项一个
+ *   「拾」checkbox + 一个目标持有量 T（0=跟随游戏 para1_v1），条目另有 shop 标志＝商店补货渠道、与本引擎无关。buff 协议与
+ *   pos 语义都不同，不进 pickItems 清单、类勾选走 buffEffects；拍宠物另在 capture.js，与此解耦。
  *
- * 节拍与判重（实战 dashcam 20261011T195811 后的改造，对应「领取很慢」+「撞一类只能领一次」两条反馈）：
- *   - **流水线发送**：次通道 NetMgrSimple.send 有**按 cmd 的 MsgIdSettings.cdTime 频控**，命中即 `return !1`
- *       （不上线、不报错、无应答），而门面 TMWatchNetMgr.sendPBV2 把三元表达式当语句用、**没有 return** →
- *       我们收不到那个 false，只能靠超时感知。旧代码「逐条 await」于是把被拦的第 2 条空等满整个超时窗
- *       （实测一个点位 62s）。现在候选逐条**发出即继续**，条间按 #gapMs 自适应节拍（撞未发出→翻倍退避，连续命中→回落），
- *       一屏候选在一个短窗内打完。
- *   - **按点位自己记账**：8526 INFO 的 bagInfo 条目**不带 uid**（实测 keys 仅 dropId/specId/likeUids）→
- *       游戏侧「我已领」判据（`specId==e && uid==me`）对 INFO 载荷恒为假 → 同点位同道具被重复发 →
- *       撞 `s=3 d=enigma_realm119`「同一资源点内相同道具只能获取1次」。故 #gotByTile 按点位记 dropId/specId/itemId
- *       三个维度：发出即记 dropId/specId（防重复发同一 rId；未上线则撤销记账留给下轮重试），
- *       成功或撞 119 才记 itemId（同道具换 specId 也拿不到）；21522 推送里带 uid 的「我已领」条目由 #absorbMine 补记。
- *   - **每条 GET 前复检点位**（#tileGate）：marchState ∈ {ARRIVED,GATHERING}、载荷年龄 ≤ tuning.staleMaxMs、
- *       该点位未被 158 判死、**坐标级在位核对**（roomBaseInfo 带 `startPoint`/`targetPoint`，实证 21521 载荷：
- *       ARRIVED 时 sp==tp、MARCHING 时 sp=旧点 tp=目的地；游戏自己就用 `startPoint.x!==tileX` 判「已在该点」
- *       ——NWorldPabCommonPopup.marchClick verbatim；抽样 80/80（20261011T195811 与 T203911 各截 40 条 ms=2 的
- *       21522 推送）推送 x,y 与当时 startPoint 全等 → 无漏杀风险）→ 「ARRIVED 但已换点」这一 marchState
- *       抓不到的 158 场景被堵上。
- *   - **目标优先（抢井语义）**：候选先按面板清单的**拖拽序**（cfg.pickRank，行首 ⣿ 拖出来的下标）排序，
- *       同序（含都没排过序的旧存档）再按「面板显式登记过」优先，且同 itemId 只留一条候选——
- *       多人同抢时配额先用在用户排在最前的道具上。报文实证 dashcam 20261011T203911。
+ * 节拍：次通道 `NetMgrSimple.send` 有按 cmd 的 `MsgIdSettings.cdTime` 频控，命中即 `return !1`（不上线、不报错、无应答），
+ *   而门面 `TMWatchNetMgr.sendPBV2` **没有 return** → 收不到那个 false，只能靠超时感知；故候选逐条**发出即继续**（流水线），
+ *   条间按 #gapMs 自适应（撞未发出→翻倍退避，连续命中→回落）。按点位记账（#gotByTile）：8526 的 bagInfo 条目**不带 uid**
+ *   （keys 仅 dropId/specId/likeUids）→ 游戏侧「我已领」判据（`specId==e && uid==me`）对 INFO 载荷恒为假；故按点位记三维：
+ *   发出即记 dropId/specId（未上线则撤销留下轮），成功或撞 119 才记 itemId（同道具换 specId 也拿不到）；21522 推送里带 uid
+ *   的「我已领」由 #absorbMine 补记。每条 GET 前复检点位（#tileGate）：marchState ∈ {ARRIVED,GATHERING}、载荷年龄 ≤
+ *   tuning.staleMaxMs、未被 158 判死、坐标级**在位核对**（`roomBaseInfo.startPoint`：ARRIVED 时 sp==tp、MARCHING sp=旧点，
+ *   游戏自己也用 `startPoint.x!==tileX` 判「已在该点」）→ 堵上 marchState 抓不到的「ARRIVED 但已换点」158 场景。目标优先
+ *   （抢井语义）：候选先按面板**拖拽序**（cfg.pickRank）排、同序再按「面板显式登记过」优先，且同 itemId 只留一条——多人
+ *   同抢时配额先用在用户排在最前的道具上。
  *
- * 池 key 命名（**按道具 ID 聚合**）：`item:{itemId}` 同时涵盖掉落箱物品与资源点产出道具
- *   （实证 dump：rss_station 按点位分行，item=41001 有 44 个 specId、item=41009 有 5 个，逐点位列行会出大片同名项；
- *   且数量上限本就按 `getItemNumById(itemId)` 计）；`pet:{cfgId}` 掉落箱宠物（不合并）。
- *   `rss:{specId}` 仅作兜底（specId 映射不到产出道具时）。
+ * 池 key（**按道具 ID 聚合**）：`item:{itemId}` 涵盖掉落箱物品与资源点产出道具（rss_station 按点位分行、同一 item 对应多个
+ *   specId，逐点位列行会出大片同名项；上限本就按 `getItemNumById(itemId)` 计）；`pet:{cfgId}` 不合并；`rss:{specId}` 仅兜底。
  *
- * 闸门（源码 verbatim：PabRewardBoxNode / PabResLibraryNode / PabBuffEquipNode / PabBagItem）：
- *   掉落箱（DROP_GET 8533，req {x,y,rId=dropId}）：
- *     - 已领判据 checkItemIdGeted(itemId)：dropInfo 里 `info.itemId==itemId && uid==me` → 跳过；
- *     - **他人已占判据（四类通用）**：条目 `uid` 非空且非我 → 已被队友领走，跳过。实证 8527 应答 57 条里 17 条
- *       `s=3 d=enigma_realm161`「已经被其他指挥官拿走咯」；bagInfo 5287 条里 3032 条带非零 uid、其中仅 110 条是我
- *       → 不过滤就是拿 96% 的无效条目去撞拒绝（游戏 UI 同口径显示 enigma_realm165「已被{0}拿走」，见 PabBagItem.onItemClick）；
- *     - 总量上限 `_itemGetMax=Number(dataConfig(3021))`，已领数 `bagGetNum+beastGetNum` 达上限即停；
- *     - 游戏背包上限 checkItemNumMax(itemId)（仅 type==171 且 para1_v1 有值时判）为真 → 跳过；
- *     - **feat 侧 per-item max**：cfg.pickItems['item:'+itemId].max（>0 生效）且 `pab.getItemNumById(itemId)` >= max → 跳过；
- *     - **feat 侧 per-item off**：cfg.pickItems['item:'+itemId].on===0 → 跳过；
- *     - 宠物 dropBeastInfo 同走 DROP_GET，上限键 dataConfig(3061)；pet 只做 on/off（无数量概念，忽略 max）；
- *     - **本尊已在保护中则不领**：`roomBagInfo.protectBeasts` 里有 `info.id` → 跳过。判据不是抄竞对的猜测，
- *       而是游戏自己就在做同一件事（源码 verbatim：领取面板 `updateContent(e.dropBeastInfo, PabBagItemType.Pet)` →
- *       `updateItem` 里 `isProtecting = getBagPetIsPretecting(t.id)`，那个 `t.id` 就是掉落项的 `info.id`，
- *       与 `protectBeasts` 用 Int64 `.equals` 直比 → 两者同一 id 空间）；数据源符号知识收在 ACL `getProtectingPetIds()`。
- *       ⚠ 全库录音里 `protectBeasts` **恒为 `[]`**（没一次实机保护过），故此闸只有源码级实证、无运行时命中样本；
- *       它 fail-open（读不到就不拦），最坏情况是白撞一次服务器拒绝，不会错杀。
- *     - **品质阈值**（`tuning.dropPetQualityMin`，竞对口径 >=4）：enigma_beast 行 `quality` 低于它就不占配额；
- *       读不到行/字段一律放行（fail-open）。
- *       ⚠ 竞对还拿 `dataConfig(3017)` 当「高品质宠物占位上限」，但游戏源码里 3017 只出现在
- *         **领取选择器的格子数**（`for(g=0;g<3017+PabExtraPackItemNum;g++)`，即我们已经用作 specItem.para1_v1
- *         第二键的那个单次数量），与 `protectBeasts` 无任何关系（后者全库只有一个消费者）→ 不照抄。
- *   资源 bag（RESOURCE_GET 8527，req {rId=dropId}，**无 x,y**）：
- *     - 上限 dataConfig(3013).split('|')[0]=itemMax；`bagGetNum>=itemMax` 停；
- *     - 已领 checkItemIdGeted(specId)：bagInfo 里 `specId==e && uid==me` → 跳过；
- *     - **同点位同道具只可 1 次**：把我已领的条目按 `.item` 归成集合，同点位内该道具的其它 specId 也跳过
- *       （实证 8527 `s=3 d=enigma_realm119`「同一资源点内相同道具只能获取1次」—— 判重维度是**道具**而不是 specId）；
- *     - itemId 由 enigma_secret_realm_rss_station[specId].item 映射，映射后**与该道具共用同一行面板勾选**（过 checkItemNumMax + per-item max）。
- *   增益 buff（RESOURCE_GET_BUFF 8538，req {rId,pos}）：
- *     - `buffGetNum>=buffMax`（3013 的 [1]）停；仅队长可装（isTeamLeader）；
- *     - 类勾选 cfg.buffEffects（effect_buff 数组，默认三类，空=不限）：不属所选类 → 不拾；
- *     - **pos 依 PabBuffEquipNode.initNode + PabBuffSelectItem 语义**：`roomBaseInfo.buffMap[1..3]`，
- *       先找同 effect_buff 已占槽（新 buff_para>旧 → 等价替换；否则直接跳过，**绝不回落空槽**→保证三类不重复），
- *       无同类已装时才取首个空槽；全满且无更强 → 跳过。
+ * 三类闸门口径（源码 PabRewardBoxNode / PabResLibraryNode / PabBuffEquipNode / PabBagItem）：
+ *   掉落箱 DROP_GET 8533 `{x,y,rId=dropId}`：总量 `dataConfig(3021)`（`bagGetNum+beastGetNum` 达上限即停），宠物
+ *   `dataConfig(3061)` 只做 on/off（忽略 max）；已领 = `info.itemId==itemId && uid==me`；**他人已占**（条目 `uid` 非空且
+ *   非我）四类通用跳过——游戏 UI 同口径显示 enigma_realm165，不过滤就是拿无效条目去撞 161「已被其他指挥官拿走」；过游戏
+ *   背包上限 `checkItemNumMax(itemId)`（type==171 且 para1_v1 有值才判）与 feat 侧 `pickItems['item:'+itemId].max`；
+ *   **本尊已在保护中则不领**（`roomBagInfo.protectBeasts` 含掉落项 `info.id`，与 PabBagItem 的 `isProtecting =
+ *   getBagPetIsPretecting(t.id)` 同一 id 空间、Int64 `.equals` 直比，符号收在 ACL `getProtectingPetIds()`，读不到就不拦）；
+ *   **品质阈值** `tuning.dropPetQualityMin`（enigma_beast 行 `quality` 低于它就不占配额，读不到一律放行）。`dataConfig(3017)`
+ *   只是游戏领取选择器的格子数，与 protectBeasts 无关，不当占位上限。
+ *   资源 bag RESOURCE_GET 8527 `{rId=dropId}`（无 x,y）：上限 `dataConfig(3013).split('|')[0]`=itemMax；已领 =
+ *   `specId==e && uid==me`；**同点位同道具只可 1 次**（119 判重维度是**道具**而非 specId，故把我已领条目按 `.item` 归集、
+ *   同点位该道具的其它 specId 也跳过）；itemId 由 enigma_secret_realm_rss_station[specId].item 映射后共用同一行面板勾选。
+ *   增益 buff RESOURCE_GET_BUFF 8538 `{rId,pos}`：上限 `dataConfig(3013)[1]`=buffMax、仅队长可装；pos 依
+ *   PabBuffEquipNode.initNode/PabBuffSelectItem 走 `roomBaseInfo.buffMap[1..3]`——先找同 effect_buff 已占槽（新
+ *   buff_para>旧才等价替换，否则跳过，**绝不回落空槽**以保证三类不重复），无同类已装才取首个空槽。
  *
- * 共同约束：rId=dropId 原值透传（Int64 不 Number 化，仅拉黑 key 用字符串）；被拒（header.s≠0，非「未发出」）6h 拉黑该 dropId
- *   防逐拍重发刷屏；被拒走 info 日志不打 warn，且把 header.d（拒绝原因 loc 键，经 net.js Ret.reason 透传）的译文一并打出。只读+发包红线：全程 sendSecret 发 GET，不碰游戏 Update/Delete、不改本地态。
+ * 共同约束：rId=dropId 原值透传（Int64 不 Number 化，仅拉黑 key 用字符串）；被拒（header.s≠0 且非「未发出」）6h 拉黑该
+ *   dropId 防逐拍重发刷屏，走 info 日志不打 warn，并把 header.d（拒绝原因 loc 键，经 net.js Ret.reason 透传）的译文打出。
+ *   只读+发包红线：全程 sendSecret 发 GET，不碰游戏 Update/Delete、不改本地态。
  */
 import { sleep } from '../../../core/util.js';
 import {
@@ -565,7 +515,7 @@ export class PickupEngine {
           );
           continue;
         }
-        if (cfgId && qMin > 0 && !this.#petQualityEnough(cfgId, qMin)) continue; // 低品质不占配额（竞对口径）
+        if (cfgId && qMin > 0 && !this.#petQualityEnough(cfgId, qMin)) continue; // 低品质不占配额
         if (cfgId) {
           const row = pickRow(cfg, 'pet:' + cfgId);
           if (!row.on) continue;
@@ -590,7 +540,7 @@ export class PickupEngine {
   }
 
   /**
-   * 掉落宠物的品质是否达阈（enigma_beast 行的 `quality`，竞对脚本写死 >=4，此处收进 tuning 可回滚）。
+   * 掉落宠物的品质是否达阈（enigma_beast 行的 `quality`，阈值收在 `tuning.dropPetQualityMin`）。
    * **fail-open**：读不到行、行无该字段、值非有限数 → 一律放行（阈值只用于「已知是低品质」时省配额，
    *   不能因为配置表改名把全部宠物锁死）。
    * @param {number} cfgId 物种 cfgId
@@ -624,7 +574,7 @@ export class PickupEngine {
     const tileKey = this.#tileKey(e);
 
     // C. 资源 bag（RESOURCE_GET req 仅 {rId}）
-    // 本点位内我已领过的**道具**集合：同道具只能拿 1 次（实证 8527 s=3 d=enigma_realm119
+    // 本点位内我已领过的**道具**集合：同道具只能拿 1 次（8527 s=3 d=enigma_realm119
     // 「同一资源点内相同道具只能获取1次」），判重维度是 item 而不是 specId（同点位可多行产出同一 item）。
     // 推送（21522）带 uid 能直接判出；INFO 不带 uid，靠 #gotByTile 本 feat 自己的账补上这一刀。
     /** @type {Set<number>} */
@@ -873,12 +823,12 @@ export class PickupEngine {
   }
 
   /**
-   * 每条 GET 前的点位复检（旧实现串行 await 吃满 62s，队伍早开走了还在按陈旧明细发 → 撞 158）：
+   * 每条 GET 前的点位复检（按陈旧明细继续发会撞 158「小队尚未抵达」）：
    *   ① 载荷年龄 ≤ tuning.staleMaxMs；② 该点位未被 158 判死（在 TTL 内）；
    *   ③ 队伍在点上：roomBaseInfo.marchState ∈ {ARRIVED, GATHERING}（服务器 158 的客户端近似）；
    *   ④ 坐标级在位：roomBaseInfo.startPoint（缺时退 targetPoint）== 本批 tileKey。
-   *      实证 dashcam 20261011T203911 的 21521 载荷：ARRIVED 时 sp==tp、MARCHING 时 sp=旧点 tp=目的地；
-   *      游戏侧同口径判据 verbatim（NWorldPabCommonPopup.marchClick）：
+   *      以 21521 载荷为准：ARRIVED 时 sp==tp、MARCHING 时 sp=旧点 tp=目的地；
+   *      游戏侧同口径判据（NWorldPabCommonPopup.marchClick）：
    *      `t && t.startPoint` 时比 `t.startPoint.x!==tileX || t.startPoint.y!==tileY`。
    *      → 能补上「marchState 仍是 ARRIVED 但已迁到另一点」这个 ③ 抓不到的 158 场景；读不到坐标则放行。
    * @param {string} tileKey 点位键（'' 时跳过判死与坐标核对）
@@ -1008,7 +958,7 @@ export class PickupEngine {
       return;
     }
     if (reason === REJ_SAME_ITEM_ONCE && t.itemId && t.tileKey) {
-      // 同道具只能领 1 次：按道具维度记账，同点位其他 specId 也不再发（旧实现正是这里撞车）
+      // 同道具只能领 1 次：按道具维度记账，同点位其他 specId 也不再发
       this.#acc(t.tileKey).item.add(t.itemId);
     }
     this.#blackOnReject(t.dropId, ret);
@@ -1137,8 +1087,8 @@ export class PickupEngine {
 
   /**
    * 该掉落条目是否已被**别人**占走（dropInfo / dropBeastInfo / bagInfo / buffInfo 四类通用）。
-   * 实证：bagInfo 条目带 `uid`+`playerInfo` 即表示已被该玩家领取，游戏 UI 走 enigma_realm165「已被{0}拿走」；
-   *   我们若不预先过滤，发包会撞 8527/8533 `s=3 d=enigma_realm161`「已经被其他指挥官拿走咯」（实测 17/57 条）。
+   * 推送侧 bagInfo 条目带 `uid`+`playerInfo` 即表示已被该玩家领取（8526 应答条目不带 uid，故要自己记账），游戏 UI 走 enigma_realm165「已被{0}拿走」；
+   *   我们若不预先过滤，发包会撞 8527/8533 `s=3 d=enigma_realm161`「已经被其他指挥官拿走咯」（8527 应答 57 条里 17 条）。
    * @param {object} entry 掉落条目（uid 可能缺省 / 0 / Int64 字符串）
    * @param {string} me 我的 UID 字符串
    * @returns {boolean} true=已被他人领取，应跳过

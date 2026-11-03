@@ -1,7 +1,7 @@
 /**
  * 攻击警告应对引擎（异能秘境：21534 收到「有其他队盯上我」→ 按玩家选的档位处置）。
  *
- * 用户拍板的两条（本引擎据此实现）：
+ * 面板「攻击警告」两档（本引擎据此实现）：
  *   • 触发档位 = **num>0 立即转移**（不做存活窗去抖：只要 push 21534 带来 num>0 就进入转移流程）；
  *   • 转移目的地 = **就近找 174 COMMON_PLANE / 175 TENT 营帐/平台**（发 8521 过去），不是固定安全屋（游戏无回城/撤回原语，见下）。
  *   另一档 = **抗争到底**（不发任何转移包，原地应战）——即本引擎在该档下完全不动作。
@@ -10,11 +10,11 @@
  *   这是**全仓唯一能主动挪队伍的口**。游戏侧攻击警告面板（PabWorldUINew.updateAttackWarnState）只画红点、**没有撤离/应战按钮**，
  *   所以「立即转移/抗争到底」两选项必须我们实装。其余候选口都不对：8589 LEAVE 是整场退出、8552 REVIVE 是战败复活、8551 CALL_HELP 只是发联盟聊天。
  *
- * 为什么「营帐/平台」是合法转移落点（源码 verbatim，报文未录到该用户开到过营帐但不代表不可开）：
+ * 「营帐/平台」是合法转移落点（源码依据）：
  *   • NWorldMapTileClickUtils：点击 `PAB_TENT / PAB_COMMON_PLANE / PAB_ALLY_HELP` → `OpenUI(NWorldPabBuildingCommonPopup)`；
  *   • NWorldPabBuildingCommonPopup.catchPetFinishPlane：`marchBtnNode.active = isTeamLeader()` → 该 popup 带「前往」行军按钮（队长可用）；
  *   • NWorldMapMarchTools：`PAB_ROOM_MOVE`（即 8521 那族行军）的行军线端点集含 `[PAB_ALLY_HELP,PAB_MONSTER,PAB_RESOURCE,PAB_COMMON_PLANE,PAB_TENT,PAB_BOSS_PLANE]`。
- *   ⚠ 报文缺口（如实标注，不阻塞落地）：全部秘境录音里 21529 arrive **从未到达过 174/175**（只到过 173/172/176/178/177/161/179），
+ *   ⚠ 174/175 只作**名义候选**：21529 arrive 落在 173/172/176/178/177/161/179，不落 174/175，
  *     且 10018 瓦片快照里 **174 出现 0 次、175 出现 420 次** → 实际能就近落到的基本都是 175 营帐；174 只作名义候选保留。
  *
  * 料源与安全过滤（只读，不改游戏数据）：
@@ -23,7 +23,7 @@
  *   • 就近营帐取自本引擎自己维护的 10018 快照（视口增量，覆盖范围天然受限 → 快照里没有就**不转移**，绝不凭空造坐标）；
  *   • 落点优先「未被 PVP」（瓦片 `m.state ∉ {11,12}`，verbatim WIPabResource 的本地判据）与「无驻军」；同距取更空者。
  *
- * 频控与红线：只走 ACL sendMarch 发 8521；转移后 warnMoveCooldownMs(45s) 静默（实测整条开车闭环 31~44s，不到达不重评）；
+ * 频控与红线：只走 ACL sendMarch 发 8521；转移后 warnMoveCooldownMs(45s) 静默（整条开车闭环 31~44s，不到达不重评）；
  *   **仅队长可发**（8521 驱动全队那一条行军，多人房各发会互抢方向盘）；非秘境/未激活/关闭档一律长睡。Int64 无（8521 载荷是标量 {x,y}）。
  */
 import { createCycle } from '../../../core/cycle.js';
