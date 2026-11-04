@@ -70,7 +70,7 @@
  *   **关掉整个「自动下田」（宿主 unconfigure/pause）不会取消**——reactor 先置 running=false（alive 变假、cycle 停摆）
  *   再调 pause，在建塔留在原地继续施工，靠下次启用时的首拍自愈（实证：塔建成后盟友照常来采，不毁不损）。
  */
-import { parseData, sleep, CODE_NOT_SENT } from '../../../core/util.js';
+import { parseData, sleep, CODE_NOT_SENT, rejectText } from '../../../core/util.js';
 import { createLog } from '../../../core/log.js';
 import { storage } from '../../../core/storage.js';
 import { Battle } from '../../../core/battle.js';
@@ -384,7 +384,7 @@ function calibrateTower(towerId) {
     .send(CMD_GET_TOWERINFO, { id: String(towerId) })
     .then(function (ret) {
       if (!ret || !ret.ok) {
-        log.info('1034 rejected (code=%s) tower=%s', ret && ret.code, towerId);
+        log.info('1034 rejected (code=%s;data=%s) tower=%s', ret && ret.code, rejectText(ret) || '-', towerId);
         return false;
       }
       var d = parseData(ret.data);
@@ -393,7 +393,7 @@ function calibrateTower(towerId) {
       return ingestTower(t);
     })
     .catch(function (err) {
-      log.debug('1034 threw. tower=%s %s', towerId, err && err.message);
+      log.warn('1034 threw. tower=%s %s', towerId, err && err.message);
       return false;
     });
 }
@@ -443,7 +443,7 @@ function refreshTowers() {
     .then(function (ret) {
       capturing = false; // 同步段：置位后立即关掉，权威灌入不再进缓冲
       if (!ret || !ret.ok) {
-        log.info('1031 rejected (code=%s), keep last snapshot.', ret && ret.code);
+        log.info('1031 rejected (code=%s;data=%s), keep last snapshot.', ret && ret.code, rejectText(ret) || '-');
         return false;
       }
       var d = parseData(ret.data) || {};
@@ -506,11 +506,11 @@ function ledgerList() {
   return arr;
 }
 
-/** 账本落盘（fire-and-forget）：失败仅 debug，内存账本仍是本轮真相。 */
+/** 账本落盘（fire-and-forget）：失败记 warn，内存账本仍是本轮真相。 */
 function persistLedger() {
   Promise.resolve(storage.slot.set(LEDGER_NAME, { v: LEDGER_VER, list: ledgerList() })).catch(
     function (err) {
-      log.debug('persist ledger failed. %s', err && err.message);
+      log.warn('persist ledger failed. %s', err && err.message);
     },
   );
 }
@@ -556,7 +556,7 @@ function loadLedger() {
     })
     .catch(function (err) {
       ledgerLoading = null; // 不置 ledgerLoaded：下拍重试，不把「读不到」伪装成「盘上为空」
-      log.debug('load ledger failed, retry next pass. %s', err && err.message);
+      log.warn('load ledger failed, retry next pass. %s', err && err.message);
     });
   return ledgerLoading;
 }
@@ -906,7 +906,7 @@ function recallPass(serverSec) {
       continue;
     }
     if (!e.marchId) {
-      log.info('tower complete but marchId missing, family=%d (wait next 1031)', e.family);
+      log.warn('tower complete but marchId missing, family=%d (wait next 1031)', e.family);
       continue;
     }
     jobs.push(e);
@@ -1187,7 +1187,7 @@ async function cyclePass() {
   if (!MCFG.families.length) return cfg.idleScanMs;
   // BL-2 R1：机械大师职业闸门。软符号缺失或所选家族均无职业读数 → 整轮不派建（非机械大师/未同步），按 idle 睡。
   if (!checkCap('buffValue')) {
-    log.info('profession buff symbol unavailable (R1), mechBuild idle.');
+    log.warn('profession buff symbol unavailable (R1), mechBuild idle.');
     return cfg.idleScanMs;
   }
   var profSeen = false;

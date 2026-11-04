@@ -366,12 +366,12 @@ function run(ctx) {
   //   发包与应答落地都在引擎里（resp 订阅已挂），装配层只负责点火强拉一次
   engine.refreshInfo(true);
   log.info(
-    'started (mode=%s, 目标人数=%d, 凑人超时=%d分钟, 出征预设=%j, 信标补次数=%s, 科技池=%j, 幸运池(rollDice)=%s).',
+    'started (mode=%s, targetMembers=%d, gatherTimeout=%dmin, marchPresets=%j, beaconRefill=%s, skillPool=%j, luckyPool(rollDice)=%s).',
     modCfg.mode,
     modCfg.targetMemberNum,
     modCfg.waitMin,
     modCfg.presetPool,
-    modCfg.useBeaconWhenShort ? '开' : '关',
+    modCfg.useBeaconWhenShort ? 'on' : 'off',
     modCfg.skillPool,
     JSON.stringify(modCfg.luckyRewards.rollDice),
   );

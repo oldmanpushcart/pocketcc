@@ -26,7 +26,7 @@
  * 属「战斗设置」：单飞执行（busy 期新旨令直接回「稍候」），队列不足只拒当前令不排队。
  */
 import { createLog } from '../../core/log.js';
-import { safeParse } from '../../core/util.js';
+import { safeParse, rejectText } from '../../core/util.js';
 import { game } from '../../core/game.js';
 import { gameData, l10n, march as marchApi } from '../../core/game-api.js';
 import { getUid } from '../../core/player.js';
@@ -361,7 +361,7 @@ async function dispatch(chat, order) {
     );
     reply(chat, order, '得令');
   } else {
-    log.info('decree rejected. x=%d;y=%d;code=%d;data=%s', order.x, order.y, ret.code, ret.data);
+    log.info('decree rejected. x=%d;y=%d;code=%d;data=%s', order.x, order.y, ret.code, rejectText(ret) || '-');
     reply(chat, order, failureText(ret));
   }
 }
@@ -376,7 +376,7 @@ async function probeTarget(x, y) {
   var u = (dataCenter && dataCenter.UserData) || {};
   var r = await map.fetchWindow(net, x, y, { k: u.ServerId | 0 });
   if (!r.ok) {
-    log.warn('901 probe not ok. x=%d;y=%d;code=%s', x, y, r.code);
+    log.debug('901 probe not ok. x=%d;y=%d;code=%s;data=%s', x, y, r.code, rejectText(r) || '-');
     return undefined;
   }
   for (var p of r.points) {

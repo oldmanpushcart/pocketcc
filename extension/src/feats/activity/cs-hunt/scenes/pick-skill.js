@@ -54,7 +54,7 @@ export async function handle(ctx) {
     var pruned = exclude[pi];
     if ((pruned === SKILL_PROPHET || pruned === SKILL_LUCKY) && candidates.indexOf(pruned) >= 0) {
       log.info(
-        '选科技·剪枝让位：round=%d 候选含%s，持有%d+回合%d>%d(剩余窗消化不完)',
+        'pick-skill: pruned-yield round=%d candidate contains %s, held %d + round %d > %d (cannot digest the rest in remaining window)',
         ctx.round,
         skillName(pruned),
         ctx.backpackCount(pruned),
@@ -91,7 +91,7 @@ export async function handle(ctx) {
     ctx.refreshCount(ctx.round) < 2
   ) {
     ctx.bumpRefresh(ctx.round);
-    await ctx.useSkill(SKILL_REFRESH, '刷新科技');
+    await ctx.useSkill(SKILL_REFRESH, 'refresh-skill');
     ctx.invalidateBackpack();
     return;
   }
@@ -111,7 +111,7 @@ export async function handle(ctx) {
   // 择位决策留痕：候选/池序/背包持有/排除集/命中位一次记全（每跑仅数次，info 不刷屏），
   //   回看即可判定「候选有幸运却没选」是池序在前（诱敌等先命中）还是被③剪枝
   log.info(
-    '选科技·round=%d：候选[%s]→pos=%d(%s)｜池=%j｜持有 幸运%d/先知%d｜排除%j',
+    'pick-skill round=%d: candidates[%s]->pos=%d(%s) | pool=%j | held lucky%d/prophet%d | exclude%j',
     ctx.round,
     candidates.join(','),
     pos,
@@ -124,7 +124,7 @@ export async function handle(ctx) {
   await ctx.sendPB(
     REQ_EVENT_PICK_SKILL,
     { treasureId: bits.int64(ctx.treasureId), round: ctx.round, pos: pos },
-    '选科技',
+    'pick-skill',
   );
   ctx.invalidateBackpack(); // 新选科技入包，背包缓存作废
 }

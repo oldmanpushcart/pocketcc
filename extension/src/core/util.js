@@ -76,6 +76,22 @@ export function safeStringify(v) {
 }
 
 /**
+ * 把服务器业务拒绝（code≠0）的应答归一成一串可 grep 的错误文案，供日志打印。
+ * code≠0 时 data（原始应答报文）常携带错误文案——旧 JSON 链路被拒态本是
+ * `'<文案键,参数,...>'` 裸文本键，PB 链路可能是对象——只打 code 无法定位病因，
+ * 故拒绝类日志应以 `data=%s` 带上本函数结果。
+ * 优先级：PBV2 拒绝原因的多语言 key（net 已归一到 `ret.reason`，落在 header.d，
+ * 才能识别「次数耗尽」等语义）> `ret.data`（经 safeStringify，对象序列化为 JSON，
+ * 避免 l10n/模板内部 String() 得 [object Object]）。
+ * @param {object|null} ret net.Ret 或同形状结果对象
+ * @returns {string} 拒绝文案；无载荷时 ''
+ */
+export function rejectText(ret) {
+  if (ret && ret.reason != null && ret.reason !== '') return String(ret.reason);
+  return ret && ret.data != null ? safeStringify(ret.data) : '';
+}
+
+/**
  * 安全 JSON 解析守卫：null/空串→null；已是对象原样透传；字符串解析失败回 null，永不抛。
  * 此前被逐字复制进 4 个 feat（auto-defense/imperial-decree/mask-dance/chat-window）。
  * 边界：map/scanner.js 是「非字符串原样返回入参」的变体（失败回 `s` 而非 null），口径不同保留本地。

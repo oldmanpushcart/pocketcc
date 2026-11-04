@@ -453,7 +453,7 @@ export class AttackFlow {
     // BOSS 表：仅取形态 type(0陆/1海/2空) 与 player_level；应答不带 type，取不到行无法选预设→不攻打
     var row = l10n.tableRow('BOSS', d.bossId);
     if (!row) {
-      log.debug('boss row missing, skip. bossId=%d', d.bossId);
+      log.warn('boss row missing, skip. bossId=%d', d.bossId);
       return null;
     }
 

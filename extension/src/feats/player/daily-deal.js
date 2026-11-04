@@ -98,7 +98,7 @@ async function claimOnce() {
     {
       protocol: 'sendPBV2',
       onError: function (err) {
-        log.debug('cmd 9884 send failed: %s', err && err.message);
+        log.warn('cmd 9884 send threw: %s', err && err.message);
       },
     },
   );
@@ -125,7 +125,9 @@ async function cycleRun() {
   // 新的一天 / 首次运行：权威字段说已领（且回写追平日界）则直接落日戳，省一次发包
   resolvedResetTs = gameData.nextDailyResetTs();
   if (state > 0) {
-    log.debug('每日特惠今日已领（游戏侧领取回写），睡到明日日界。');
+    log.debug(
+      'daily-deal already claimed today (game-side write-back), sleep till next daily reset.',
+    );
     return sleepToTs(resolvedResetTs);
   }
 
@@ -141,7 +143,7 @@ async function cycleRun() {
     // 服务器真拒绝（今日已被手动领走 / 未达条件等）：无副作用，落日戳抑制到次日，每天至多再试一次
     rejectStreak++;
     log.info(
-      '每日特惠领取被拒（streak #%d），明日 0 点后再试。 code=%s%s',
+      'daily-deal claim rejected (streak #%d), retry after next midnight. code=%s%s',
       rejectStreak,
       res.code,
       res.reason ? ' reason=' + res.reason : '',
@@ -149,7 +151,10 @@ async function cycleRun() {
     return sleepToTs(resolvedResetTs);
   }
   rejectStreak = 0;
-  log.info('每日特惠免费奖励已领取（%d 项道具），明日 0 点刷新后再领。', res.items);
+  log.info(
+    'daily-deal free reward claimed (%d items), re-claim after next midnight refresh.',
+    res.items,
+  );
   return sleepToTs(resolvedResetTs);
 }
 

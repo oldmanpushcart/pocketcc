@@ -307,7 +307,7 @@ export class FlowEngine {
 
     // 只读自愈：无快照时按兜底节奏补拉 7531
     if (!this.#hunt) {
-      await host.sendPB(REQ_HUNT_INFO, { treasureId: bits.int64(treasureId) }, '拉本跑详情');
+      await host.sendPB(REQ_HUNT_INFO, { treasureId: bits.int64(treasureId) }, 'fetch-run-detail');
       return EVENT_TICK_MS;
     }
     var status = Number(this.#hunt.status) || 0;
@@ -368,7 +368,7 @@ export class FlowEngine {
     if (!warnedOut) await this.#autoStrategies(treasureId, status, round);
     // 非事件阶段：按兜底节奏只读补拉 7531（刷 round / 来袭态）
     if (status !== HUNT_STATUS.EVENT) {
-      await host.sendPB(REQ_HUNT_INFO, { treasureId: bits.int64(treasureId) }, '拉本跑详情');
+      await host.sendPB(REQ_HUNT_INFO, { treasureId: bits.int64(treasureId) }, 'fetch-run-detail');
     }
     // EVENT/FIGHT 期默认 4s 重扫（FIGHT 窗仅 ~13-25s，需与事件态同密）；若本轮 handleDecide 给出精确倒计时（轮值到我且未到触发阈）则贴近触发点轮询，
     //   避免 4s 粒度把「倒数15s 决断」推迟到实际倒数 11~12s 才发
@@ -433,7 +433,7 @@ export class FlowEngine {
       await this.#host.sendPB(
         REQ_EVENT_DECIDE,
         { treasureId: bits.int64(treasureId), round: round, indexDecide: idx },
-        '选场景',
+        'pick-scene',
       );
     }
     return 0;
@@ -455,7 +455,7 @@ export class FlowEngine {
     var tk = round + ':seq:transfer';
     if (!this.#done.has(tk) && this.#usable(SKILL_TRANSFER)) {
       this.#done.add(tk);
-      await this.#useSkill(treasureId, SKILL_TRANSFER, '数据转换');
+      await this.#useSkill(treasureId, SKILL_TRANSFER, 'data-transfer');
       await this.#reloadBackpack();
       wrote = true;
     }
@@ -477,26 +477,26 @@ export class FlowEngine {
         target = hasLucky ? SKILL_LUCKY : 0;
         // 溢出→转幸运的分流留 info（真机验证点②：镜像复制幸运是否发生、因何发生）
         log.info(
-          '完美镜像·先知溢出(持有%d+回合%d>%d)→%s',
+          'perfect-mirror: prophet overflow (held %d + round %d > %d) -> %s',
           prophetCnt,
           round,
           ROUND_MAX,
-          hasLucky ? '转复制幸运降临' : '背包无幸运，本轮不复制',
+          hasLucky ? 'switch to copy lucky' : 'no lucky in backpack, skip copy this round',
         );
       }
       if (target) {
         var copyOk = await this.#useSkill(
           treasureId,
           SKILL_COPY,
-          '完美镜像复制' + (target === SKILL_LUCKY ? '幸运降临' : '先知'),
+          'perfect-mirror copy ' + (target === SKILL_LUCKY ? 'lucky' : 'prophet'),
           { param: JSON.stringify({ copySkillSpecId: target }) },
         );
         // 复制目标与服务器受理结果留 info（真机验证点②：copySkillSpecId=18 是否被接受，被拒时下行 sendPB 给 reason）
         log.info(
-          '完美镜像·复制 %s(%d) %s',
-          target === SKILL_LUCKY ? '幸运降临' : '先知',
+          'perfect-mirror: copy %s(%d) %s',
+          skillName(target === SKILL_LUCKY ? SKILL_LUCKY : SKILL_PROPHET),
           target,
-          copyOk ? '已接受' : '被拒(见 reason)',
+          copyOk ? 'accepted' : 'rejected (see reason below)',
         );
         await this.#reloadBackpack();
         wrote = true;
@@ -516,7 +516,7 @@ export class FlowEngine {
     var pk = round + ':seq:prophet';
     if (!this.#done.has(pk) && this.#host.isLeader() && this.#usable(SKILL_PROPHET)) {
       this.#done.add(pk);
-      await this.#useSkill(treasureId, SKILL_PROPHET, '先知探测');
+      await this.#useSkill(treasureId, SKILL_PROPHET, 'prophet-probe');
       await this.#reloadBackpack();
     }
   }
@@ -701,24 +701,24 @@ export class FlowEngine {
             if (!this.#canSpend(id) || this.#done.has(dk)) continue; // #canSpend = #usable + #5 族级限窗去重
           }
           this.#done.add(dk);
-          var defOk = await this.#useSkill(treasureId, id, '来袭保命');
+          var defOk = await this.#useSkill(treasureId, id, 'raid-defense');
           // 每次消耗留 info（真机验证点①：无战力门控后是否对弱敌过烧）：记本波来袭规模/预警龄与择用技及受理结果
           log.info(
-            '来袭保命·%s %s(%d)：round=%d 来袭规模=%d 预警龄=%dms%s',
-            defOk ? '已消耗' : '消耗被拒',
+            'raid-defense: %s %s(%d). round=%d raidSize=%d warnAge=%dms%s',
+            defOk ? 'consumed' : 'consume rejected',
             skillName(id),
             id,
             round,
             raidSize,
             raidAgeMs,
-            isCountShield ? '（次数盾·每预警烧一张）' : '',
+            isCountShield ? ' (count-shield: one per warning)' : '',
           );
           spentDef = true;
           break;
         }
         if (!spentDef)
           log.debug(
-            '来袭保命·无可用自保技：round=%d 来袭规模=%d（皆未持有/生效中/本回合已烧）',
+            'raid-defense: no usable self-protection skill. round=%d raidSize=%d (all not-held / in effect / already spent this round)',
             round,
             raidSize,
           );
@@ -755,22 +755,22 @@ export class FlowEngine {
           if (fTarget === SKILL_PROPHET && this.#backpackCount(SKILL_PROPHET) + round > ROUND_MAX)
             fTarget = fCopyable.indexOf(SKILL_LUCKY) >= 0 ? SKILL_LUCKY : 0;
           if (!fTarget) {
-            log.debug('末回合清空·镜像无复制目标，跳过(继续清余技)：round=%d', round);
+            log.debug('last-round-flush: mirror has no copy target, skipped (continue flushing rest). round=%d', round);
             continue;
           }
           flushOpt = { param: JSON.stringify({ copySkillSpecId: fTarget }) };
         }
-        var flushOk = await this.#useSkill(treasureId, sid, '末回合清空', flushOpt);
+        var flushOk = await this.#useSkill(treasureId, sid, 'last-round-flush', flushOpt);
         // 每次清空留 info（真机验证点③：回合盾铜墙铁壁是否在末回合被用掉）：记所用技与池剩
         log.info(
-          '末回合清空·%s %s(%d)：round=%d 池剩%d%s',
-          flushOk ? '已用' : '用被拒',
+          'last-round-flush: %s %s(%d). round=%d poolLeft=%d%s',
+          flushOk ? 'used' : 'use rejected',
           skillName(sid),
           sid,
           round,
           pool.length - j - 1,
           sid === SKILL_COPY
-            ? ' 复制目标=' + skillName(flushOpt ? JSON.parse(flushOpt.param).copySkillSpecId : 0)
+            ? ' copyTarget=' + skillName(flushOpt ? JSON.parse(flushOpt.param).copySkillSpecId : 0)
             : '',
         );
         if (sid === SKILL_COPY && !flushOk) this.#done.delete(fk); // 镜像被拒 → 回退幂等键，相位切换后（如 EVENT→FIGHT）可重试，不至整局卡死
@@ -792,10 +792,10 @@ export class FlowEngine {
         if (ovHeld + round <= ROUND_MAX) continue;
         if (!this.#canSpend(ovId)) continue;
         this.#done.add(ovk);
-        var ovOk = await this.#useSkill(treasureId, ovId, '溢出回收');
+        var ovOk = await this.#useSkill(treasureId, ovId, 'overflow-burn');
         log.info(
-          '溢出回收·%s %s(%d)：round=%d 持有%d+%d>%d(族限窗剩余回合消化不完)',
-          ovOk ? '已烧' : '烧被拒',
+          'overflow-burn: %s %s(%d). round=%d held %d + %d > %d (family window cannot digest the rest in remaining rounds)',
+          ovOk ? 'burned' : 'burn rejected',
           skillName(ovId),
           ovId,
           round,
@@ -861,17 +861,17 @@ export class FlowEngine {
         // 次数盾 26 只看持有>0（#canUse，同来袭保命口径）；其余走 #canSpend（持有+非生效中+族级限窗）
         if (id === SKILL_SHIELD_BATTLE ? !this.#canUse(id) : !this.#canSpend(id)) continue;
         this.#done.add(dk);
-        var ok = await this.#useSkill(treasureId, id, '预警式防御');
+        var ok = await this.#useSkill(treasureId, id, 'warn-defense');
         log.info(
-          '预警式防御·%s %s(%d)：round=%d 敌uid=%s 敌战力=%d 我最强=%d ETA=%s',
-          ok ? '已用' : '用被拒',
+          'warn-defense: %s %s(%d). round=%d enemyUid=%s enemyPower=%d myMax=%d ETA=%s',
+          ok ? 'used' : 'use rejected',
           skillName(id),
           id,
           round,
           eUid,
           ePow,
           myMax,
-          isFinite(eta) ? Math.round(eta / 1000) + 's' : '未知',
+          isFinite(eta) ? Math.round(eta / 1000) + 's' : 'unknown',
         );
         if (!ok) this.#done.delete(dk); // 写被拒 → 回退幂等键（marchId 去重仍留，不重查该敌），下拍新威胁可重试
         return true; // 无论成败本拍已占一个 7551 写额
@@ -898,7 +898,7 @@ export class FlowEngine {
     var ret = await this.#host.sendPB(
       REQ_REWARD_INFO,
       { treasureId: bits.int64(treasureId) },
-      '夺宝奖励背包',
+      'reward-backpack',
     );
     var ack = ret && ret.payload ? ret.payload[REQ_REWARD_FIELD] : null;
     var list = ack && Array.isArray(ack.backpack) ? ack.backpack : [];
@@ -918,7 +918,7 @@ export class FlowEngine {
     var idStr = bits.int64Str(cands[0].id);
     if (!idStr) return;
     this.#done.add(pk);
-    var ok = await this.#useSkill(treasureId, SKILL_PROTECT_REWARD, '掠袭保护奖励', {
+    var ok = await this.#useSkill(treasureId, SKILL_PROTECT_REWARD, 'raid-protect-reward', {
       param: JSON.stringify({ protectRewardIdArr: [idStr] }),
     });
     if (!ok) this.#done.delete(pk); // 写被拒 → 回退幂等键，下拍重试
@@ -963,7 +963,7 @@ export class FlowEngine {
     var ret = await this.#host.sendPB(
       REQ_GET_MARCH_INFOS,
       { treasureId: bits.int64(treasureId), type: type },
-      '行军军情',
+      'march-intel',
     );
     var ack = ret && ret.payload ? ret.payload[REQ_MARCH_FIELD] : null;
     return ack && Array.isArray(ack.marchInfos) ? ack.marchInfos : [];
@@ -1034,10 +1034,10 @@ export class FlowEngine {
         var fsk = round + ':fshield';
         if (!this.#done.has(fsk)) {
           this.#done.add(fsk); // 尝试级记账：被拒不回退、同回合不逐拍循环撞被拒写（次数盾「每预警一张」另属保命路）
-          var shOk = await this.#useSkill(treasureId, SKILL_SHIELD_BATTLE, '掠袭碾压垫盾');
+          var shOk = await this.#useSkill(treasureId, SKILL_SHIELD_BATTLE, 'raid-crush-shield');
           log.info(
-            '掠袭碾压垫盾·%s 毫发无伤(26)：round=%d 敌满员%d×%s=%d > 我方最强%d',
-            shOk ? '已烧' : '烧被拒',
+            'raid-crush-shield: %s unscathed-shield(26). round=%d enemyFull=%dx%s=%d > myMax=%d',
+            shOk ? 'burned' : 'burn rejected',
             round,
             eCap,
             FIGHT_RATIO_HEAVY,
@@ -1052,7 +1052,7 @@ export class FlowEngine {
       }
       if (!(eCap * FIGHT_RATIO_LIGHT > mPow)) {
         log.debug(
-          '敌强门控·弱敌掠袭省急救/增益：round=%d 敌满员%d×%s=%d ≤ 我方最强%d',
+          'enemy-strength gate: light-raid raid, saving aid/buff. round=%d enemyFull=%dx%s=%d <= myMax=%d',
           round,
           eCap,
           FIGHT_RATIO_LIGHT,
@@ -1070,7 +1070,7 @@ export class FlowEngine {
       var aidOk = await this.#useSkill(
         treasureId,
         SKILL_AID,
-        '火线急救',
+        'battle-aid',
         healUid ? { tarUid: healUid } : undefined,
       );
       if (!aidOk) this.#done.delete(aidk);
@@ -1083,7 +1083,7 @@ export class FlowEngine {
       var bk = round + ':buff:' + id;
       if (!this.#canSpend(id) || this.#done.has(bk)) continue;
       this.#done.add(bk);
-      var buffOk = await this.#useSkill(treasureId, id, '战中增益');
+      var buffOk = await this.#useSkill(treasureId, id, 'fight-buff');
       if (!buffOk) this.#done.delete(bk); // 写被拒 → 回退幂等键，下拍重试
       await this.#reloadBackpack();
       return;
@@ -1107,7 +1107,7 @@ export class FlowEngine {
     var ret = await this.#host.sendPB(
       REQ_SKILL_BACKPACK_OPEN,
       { treasureId: bits.int64(treasureId) },
-      '开技能背包',
+      'open-skill-backpack',
     );
     var ack = ret && ret.payload ? ret.payload[REQ_OPEN_FIELD] : null;
     var sb = ack && ack.skillBackpack;
@@ -1241,7 +1241,7 @@ export class FlowEngine {
     var wl = (pools && pools[sceneKey]) || [];
     if (!wl.length) {
       // 静默漏用的两大盲区之一：幸运池空（未勾任何物品）→ 留痕，使实机「有幸运却没翻倍」可判（此前唯一留痕只覆盖 #usable 分支）
-      log.info('幸运×2跳过(' + label + ')：幸运池为空（该场景未勾任何物品）');
+      log.info('lucky-x2 skipped (' + label + '): lucky pool empty (no item checked for this scene)');
       return false;
     }
     if (!rewardResult || !hitWhitelist(rewardResult, wl)) {
@@ -1254,7 +1254,9 @@ export class FlowEngine {
               })
               .join(',')
           : '-';
-      log.info('幸运×2跳过(' + label + ')：中奖[' + got + '] ∉ 已勾池 ' + JSON.stringify(wl));
+      log.info(
+        'lucky-x2 skipped (' + label + '): rolled[' + got + '] not in checked pool ' + JSON.stringify(wl),
+      );
       return false;
     }
     await this.#ensureBackpack();
@@ -1262,18 +1264,18 @@ export class FlowEngine {
       // 命中已勾幸运池但幸运不可用 → 留痕（下次奖励前只翻一次的正常态 vs 背包未落地/真不持有，便于实机排查漏用）
       var held = this.#personal.get(SKILL_LUCKY) || 0;
       log.info(
-        '幸运×2跳过(' +
+        'lucky-x2 skipped (' +
           label +
-          ')：背包已落地=' +
+          '): backpackLoaded=' +
           (this.#backpackLoaded ? 'Y' : 'N') +
-          ' 持有=' +
+          ' held=' +
           held +
-          ' 生效中=' +
+          ' inEffect=' +
           (this.#pending.has(SKILL_LUCKY) ? 'Y' : 'N'),
       );
       return false;
     }
-    return this.#useSkill(treasureId, SKILL_LUCKY, '幸运×2(' + label + ')');
+    return this.#useSkill(treasureId, SKILL_LUCKY, 'lucky-x2(' + label + ')');
   }
 
   /**
@@ -1295,11 +1297,11 @@ export class FlowEngine {
     var ok = await this.#useSkill(
       treasureId,
       SKILL_LUCKY,
-      '幸运×2·溢出提前用(' + label + ' r' + round + ' 持' + held + ')',
+      'lucky-x2 overflow-early-use(' + label + ' r' + round + ' held' + held + ')',
     );
     if (ok)
       log.info(
-        '幸运溢出：round=%d 持有%d>本回合后剩余%d窗，先在%s场景烧一张翻倍本次奖励',
+        'lucky overflow: round=%d held %d > remaining window %d after this round, burning one in scene %s to double this reward',
         round,
         held,
         ROUND_MAX - round,

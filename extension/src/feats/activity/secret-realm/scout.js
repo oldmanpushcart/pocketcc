@@ -215,7 +215,7 @@ export class ScoutEngine {
     if (now - this.#lastToldAt > 60000) {
       this.#lastToldAt = now;
       env.log.debug(
-        'scout: 勘察车 %d 余量 %d ≤ 预留 %d，暂不花道具侦察（改走 8536 免费预检）。',
+        'scout: scout-tool(%d) stock %d <= reserve %d, skip paid scout (fall back to 8536 free pre-check).',
         ITEM_SCOUT_TOOL,
         have,
         tuning.scoutItemReserve,
@@ -244,7 +244,7 @@ export class ScoutEngine {
         if (beastId > 0) {
           self.#record(target.k, beastId, true);
           env.log.info(
-            'scout: 8536 %s 已侦察 → beastId=%d（quality=%s，未花道具）。',
+            'scout: 8536 %s already scouted -> beastId=%d (quality=%s, no item consumed).',
             target.k,
             beastId,
             String(self.#quality(beastId)),
@@ -254,7 +254,7 @@ export class ScoutEngine {
         }
       })
       .catch(function (e) {
-        env.log.warn('scout: 8536 预检异常。', e);
+        env.log.warn('scout: 8536 pre-check threw.', e);
       })
       .then(function () {
         self.#infoInFlight = false;
@@ -276,14 +276,14 @@ export class ScoutEngine {
         if (!env.alive() || !env.realmActive()) return;
         const code = r && r.code;
         if (code === CODE_NOT_SENT || code == null) {
-          env.log.debug('scout: 8537 未真正发出（频控/超时），本拍作废。');
+          env.log.debug('scout: 8537 not actually sent (rate-limited/timeout, code=%s), discard this tick.', String(code));
           return;
         }
         if (Number(code) !== 0) {
           // 服务器明确拒（非「未上线」）：该点当前不可侦察 → 记「查过」进 scoutReQueryMs 长冷却，不逐拍重烧道具撞同一堵
           self.#record(target.k, 0, false);
           env.log.info(
-            'scout: 8537 侦察被拒（%s），该点冷却后再评。',
+            'scout: 8537 scout rejected (%s), re-evaluate this point after cooldown.',
             (r && r.reason) || 'code ' + code,
           );
           return;
@@ -293,7 +293,7 @@ export class ScoutEngine {
         if (beastId > 0) {
           self.#record(target.k, beastId, true);
           env.log.info(
-            'scout: 8537 %s 侦察成功 → beastId=%d（quality=%s，耗 1 个勘察车）。',
+            'scout: 8537 %s scout succeeded -> beastId=%d (quality=%s, consumed 1 scout-tool).',
             target.k,
             beastId,
             String(self.#quality(beastId)),
@@ -303,7 +303,7 @@ export class ScoutEngine {
         }
       })
       .catch(function (e) {
-        env.log.warn('scout: 8537 侦察异常。', e);
+        env.log.warn('scout: 8537 scout threw.', e);
       })
       .then(function () {
         self.#scoutInFlight = false;

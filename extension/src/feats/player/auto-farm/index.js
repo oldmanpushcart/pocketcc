@@ -863,7 +863,7 @@ async function dispatchRows(rows, allow, taken) {
         'row %d preset #%d(%s#%d) army already out, skip.',
         idx,
         row.preset,
-        pa.type ? '采集' : '战斗',
+        pa.type ? 'gather' : 'battle',
         pa.index,
       );
       continue;

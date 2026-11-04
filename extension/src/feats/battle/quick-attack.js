@@ -441,8 +441,8 @@ function resolveMarchType(spec, target) {
   }
   var resolved = marchApi.resolve(base, MARCH_FALLBACK);
   if (resolved !== base)
-    log.info(
-      'marchType 漂移. key=%s;base=%d->%d;flags=%s',
+    log.warn(
+      'marchType drift. key=%s;base=%d->%d;flags=%s',
       spec.key,
       base,
       resolved,

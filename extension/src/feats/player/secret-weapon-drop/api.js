@@ -37,15 +37,17 @@ export const airDropDomain = {
         typeof HU.getMapPosByPosId !== 'function' ||
         typeof HU.getPosIdByMapPos !== 'function'
       ) {
-        log.debug(
-          'homeAirDropSpot: HomeMapUtils 符号缺失（getMapPosList/checkHomeBoxLegal/…）→ 无法定位落点',
+        log.warn(
+          'homeAirDropSpot: HomeMapUtils symbol missing (getMapPosList/checkHomeBoxLegal/…) → cannot locate drop spot',
         );
         return null;
       }
       var GD = game.get(SYM.modules.gameDefine);
       var BI_BUILD = GD && GD.BaseItemType && GD.BaseItemType.Building; // 必为真值：传错 checkHomeBoxLegal 会跳过地形判定
       if (BI_BUILD == null) {
-        log.debug('homeAirDropSpot: GameDefine.BaseItemType.Building 缺失 → 无法定位落点');
+        log.warn(
+          'homeAirDropSpot: GameDefine.BaseItemType.Building missing → cannot locate drop spot',
+        );
         return null;
       }
       var l = sharedValue('l10n');
@@ -99,7 +101,7 @@ export const airDropDomain = {
         }
       }
       log.debug(
-        'homeAirDropSpot: 核心区半径 %d 环内无合法空位（BUILDING 表 %s→ footprint=%dx%d, 网格=%dx%d, 占用格数=%d）',
+        'homeAirDropSpot: no legal free spot within %d rings of core area (BUILDING table %s→ footprint=%dx%d, grid=%dx%d, occupied cells=%d)',
         R,
         air ? 'OK' : 'MISSING',
         airW,
@@ -110,8 +112,8 @@ export const airDropDomain = {
       );
       return null; // 核心区内无合法空位（空地不足）
     } catch (e) {
-      log.debug(
-        'homeAirDropSpot threw: %s —— 落点计算中途抛错被吞，本轮不发',
+      log.warn(
+        'homeAirDropSpot threw: %s —— landing computation threw mid-way and was swallowed, skip sending this round',
         e && (e.stack || e.message),
       );
       return null;
@@ -157,7 +159,7 @@ export const airDropDomain = {
       }
       return out;
     } catch (e) {
-      log.debug('airDropInstances threw: %s', e && (e.message || e));
+      log.warn('airDropInstances threw: %s', e && (e.message || e));
       return [];
     }
   },

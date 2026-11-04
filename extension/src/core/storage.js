@@ -31,7 +31,7 @@ function markContextInvalidated() {
   if (contextInvalidated) return;
   contextInvalidated = true;
   log.info(
-    'extension context invalidated: 本实例所属扩展已被重载，后续存储写入一律丢弃、读取回空，不再逐条报错；请刷新页面（Ctrl+F5）重新挂载。',
+    'extension context invalidated: this instance belongs to a reloaded extension; all later storage writes are dropped and reads return empty without per-call errors; press Ctrl+F5 to refresh the page and re-mount.',
   );
 }
 

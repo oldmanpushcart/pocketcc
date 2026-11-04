@@ -222,7 +222,7 @@ export function bind(binding) {
   }
   if ((binding.kinds || binding.places) && !(binding.scenes && binding.scenes.length)) {
     log.warn(
-      'bind: %s 声明了 kinds/places 但未声明 scenes，世界态镜像就绪前将无条件放行',
+      'bind: %s declares kinds/places but no scenes, will pass unconditionally before world-state mirror is ready',
       binding.id,
     );
   }

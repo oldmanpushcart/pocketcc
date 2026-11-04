@@ -36,7 +36,7 @@ import { reactor } from '../../core/reactor.js';
 import { createCycle } from '../../core/cycle.js';
 import { storage } from '../../core/storage.js';
 import { bus, EVT } from '../../core/bus.js';
-import { todayStr as utilTodayStr } from '../../core/util.js';
+import { todayStr as utilTodayStr, rejectText } from '../../core/util.js';
 
 /** @type {ReturnType<createLog>} 模块日志器（tag=PLAYER_LIKE） */
 const log = createLog('PLAYER_LIKE');
@@ -413,7 +413,7 @@ async function sendLike(uid) {
       );
       return 'limit';
     }
-    log.info('like rejected. uid=%s;code=%d', uid, ret.code);
+    log.info('like rejected. uid=%s;code=%d;data=%s', uid, ret.code, rejectText(ret) || '-');
     return 'rejected';
   } catch (err) {
     log.warn('like error.', err);

@@ -222,7 +222,7 @@ function persist() {
   });
   Promise.resolve(storage.slot.set(STORE_KEY, { v: STORE_VER, scanned: scanned, pool: arr })).catch(
     function (err) {
-      log.debug('persist lvl6 failed. %s', err && err.message);
+      log.warn('persist lvl6 failed. %s', err && err.message);
     },
   );
 }
@@ -259,7 +259,7 @@ function load() {
       );
     })
     .catch(function (err) {
-      log.debug('load lvl6 store failed. %s', err && err.message);
+      log.warn('load lvl6 store failed. %s', err && err.message);
     });
 }
 

@@ -118,7 +118,7 @@ export const march = {
       if (C.isMasterMatch()) return this.typeOf('masterAttackPlayer', fb.master);
       if (C.isTeamLegendServer()) return this.typeOf('teamLegendAttackPlayer', fb.teamLegend);
     }
-    log.warn('march.resolve 降级：WorldUtils/CrossUtils 均不可用，按本服 marchType=%d 发送', base);
+    log.warn('march.resolve degraded: WorldUtils/CrossUtils both unavailable, sending local-server marchType=%d', base);
     return base;
   },
   /**

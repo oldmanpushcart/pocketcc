@@ -282,7 +282,7 @@ function setConfig(id, cfg) {
     var miss = missingSymbols(entry.spec);
     if (miss.length) {
       entry.installed = false;
-      log.warn('install failed: %s —— 依赖的游戏符号无效 missing=%s', id, miss.join(';'));
+      log.warn('install failed: %s (game symbols unresolved) missing=%s', id, miss.join(';'));
     } else {
       try {
         entry.installed = entry.spec.install ? entry.spec.install(entry.ctx) !== false : true;
@@ -290,7 +290,8 @@ function setConfig(id, cfg) {
         entry.installed = false;
         log.warn('install threw: %s', id, err);
       }
-      if (!entry.installed) log.info('install failed: %s', id);
+      // 安装被拒（spec.install 显式返回 false）：依赖断裂致功能停摆，属真异常走 warn。
+      if (!entry.installed) log.warn('install refused: %s (spec.install returned false)', id);
     }
   }
   if (entry.installed && entry.spec.configure) {

@@ -45,7 +45,7 @@
  * 不行军不参战，不设 offInCombat；生命周期由 reactor 托管，pause 摘 push 订阅、resume 重 kick。
  * 面板：独立 feature 卡片（showFields），只出一个只读态览（待收数 / 上次剩余次数 / 上次落点），无可调参数（落点全自动）。
  */
-import { CODE_NOT_SENT, sleep } from '../../core/util.js';
+import { CODE_NOT_SENT, sleep, rejectText } from '../../core/util.js';
 import { createLog } from '../../core/log.js';
 import { bus, EVT } from '../../core/bus.js';
 import { bits, gameData } from '../../core/game-api.js';
@@ -144,7 +144,7 @@ async function queryCharges() {
     {
       protocol: 'sendPB',
       onError: function (err) {
-        log.debug('cmd %d send failed: %s', CMD_SKILL_INFO, err && err.message);
+        log.warn('cmd %d send threw: %s', CMD_SKILL_INFO, err && err.message);
       },
     },
   );
@@ -184,7 +184,7 @@ async function queryCharges() {
 /**
  * 用掉一次空投次数（4170 sendPB）。发前先经 ACL 拿动态落点（场景无关）：拿不到（核心区空地不足/符号缺失）即 noSpace 返回、不发包。
  * isSending 去重闸门；永不 reject。
- * @returns {Promise<{ok:boolean, noSpace?:boolean, code:number, cnt:number, recoverMs:number}>}
+ * @returns {Promise<{ok:boolean, noSpace?:boolean, code:number, cnt:number, recoverMs:number, data?:*, reason?:string}>} 失败时带上原始应答载荷
  */
 async function useCharge() {
   var spot = airDropDomain.homeAirDropSpot(BUILDING_ID_AIRDROP);
@@ -196,12 +196,12 @@ async function useCharge() {
     {
       protocol: 'sendPB',
       onError: function (err) {
-        log.debug('cmd %d send failed: %s', CMD_USE_SKILL, err && err.message);
+        log.warn('cmd %d send threw: %s', CMD_USE_SKILL, err && err.message);
       },
     },
   );
   if (!ret || !ret.ok)
-    return { ok: false, code: ret ? ret.code : CODE_NOT_SENT, cnt: 0, recoverMs: 0 };
+    return { ok: false, code: ret ? ret.code : CODE_NOT_SENT, cnt: 0, recoverMs: 0, data: ret && ret.data, reason: ret && ret.reason };
   // PB V1 业务数据在 pbAck 命名子字段 cdSkillUse（net.sendPB 整体回 pbAck，无 .data 包装）
   var skill = ret.data && ret.data.cdSkillUse && ret.data.cdSkillUse.skill;
   var cnt = skill ? Number(skill.cnt) || 0 : 0;
@@ -213,7 +213,7 @@ async function useCharge() {
 /**
  * 收取一个空投建筑奖励（4168 send JSON）。isSending 去重闸门；永不 reject。
  * @param {string} targetId 空投建筑实例 id
- * @returns {Promise<{ok:boolean, code:number, items:Array}>}
+ * @returns {Promise<{ok:boolean, code:number, items:Array, data?:*, reason?:string}>} 失败时带上原始应答载荷
  */
 async function collectOne(targetId) {
   var ret = await net.sendGuarded(
@@ -221,11 +221,11 @@ async function collectOne(targetId) {
     { targetId: targetId },
     {
       onError: function (err) {
-        log.debug('cmd %d send failed: %s', CMD_COLLECT, err && err.message);
+        log.warn('cmd %d send threw: %s', CMD_COLLECT, err && err.message);
       },
     },
   );
-  if (!ret || !ret.ok) return { ok: false, code: ret ? ret.code : CODE_NOT_SENT, items: [] };
+  if (!ret || !ret.ok) return { ok: false, code: ret ? ret.code : CODE_NOT_SENT, items: [], data: ret && ret.data, reason: ret && ret.reason };
   var d = payloadOf(ret);
   var items = d && d.reward && Array.isArray(d.reward.items) ? d.reward.items : [];
   return { ok: true, code: 0, items: items };
@@ -263,7 +263,7 @@ async function collectPending() {
       // 非 0 码：建筑多半已被游戏侧收取/消失，判该实例终结，出队不再重试
       collected[d.id] = true;
       drops.splice(i, 1);
-      log.info('air drop collect rejected, treat as gone. target=%s;code=%d', d.id, r.code);
+      log.info('air drop collect rejected, treat as gone. target=%s;code=%d;data=%s', d.id, r.code, rejectText(r) || '-');
     }
   }
 }
@@ -319,7 +319,7 @@ async function cycleRun() {
   );
   var delay;
   if (charge.drift) {
-    log.debug(
+    log.warn(
       'cd_skill config unavailable (symbol drift); cannot judge readiness, skip use this round.',
     );
     delay = NO_SPACE_RETRY_MS; // 无法判定就绪态，保守不发，短间隔再查
@@ -364,7 +364,7 @@ async function cycleRun() {
         break;
       } else {
         rejectStreak++;
-        log.info('air drop use rejected (streak #%d). code=%d', rejectStreak, use.code);
+        log.info('air drop use rejected (streak #%d). code=%d;data=%s', rejectStreak, use.code, rejectText(use) || '-');
         delay = rejectStreak >= REJECT_STREAK_MAX ? PROBE_INTERVAL * 2 : PROBE_INTERVAL;
         break;
       }

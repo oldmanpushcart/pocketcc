@@ -35,7 +35,7 @@
  *   驻军/领积分为内置默认行为；撤田腾队列为面板可选项（recallFarm，默认勾选）。
  *   驻军/撤田读本人行军走 core/march.list()（封装 856 GET_ALL_MY_MARCH_INFO，视口无关、Home 亦有全量；不再依赖 mapData.marches）。
  */
-import { parseData, sleep } from '../../core/util.js';
+import { parseData, sleep, rejectText } from '../../core/util.js';
 import { createLog } from '../../core/log.js';
 import { game } from '../../core/game.js';
 import { l10n, gameConf, gameData } from '../../core/game-api.js';
@@ -307,7 +307,7 @@ async function requestInfo() {
   );
   if (threw) return null;
   if (!ret.ok) {
-    log.debug('1055 not ok. code=%d', ret.code);
+    log.debug('1055 not ok. code=%d;data=%s', ret.code, rejectText(ret) || '-');
     return null;
   }
   return parseData(ret.data);
@@ -379,7 +379,7 @@ async function sendRecall(marchId) {
     log.info('recall march ok. marchId=%s', marchId);
     return true;
   }
-  log.info('recall march rejected. marchId=%s;code=%d;data=%s', marchId, ret.code, ret.data);
+  log.info('recall march rejected. marchId=%s;code=%d;data=%s', marchId, ret.code, rejectText(ret) || '-');
   return false;
 }
 
@@ -431,7 +431,7 @@ async function claimRewards() {
       got.push(num); // 本地补记，防本轮重复发同一档
       log.info('claim ok. score=%d;total=%d', num, total);
     } else {
-      log.info('claim rejected. score=%d;code=%d;data=%s', num, ret.code, ret.data);
+      log.info('claim rejected. score=%d;code=%d;data=%s', num, ret.code, rejectText(ret) || '-');
     }
     if (i < thresholds.length - 1) await sleep(cfg.claimInterval);
   }
@@ -447,7 +447,7 @@ async function claimRewards() {
     if (!scoreMaxed) {
       scoreMaxed = true;
       log.info(
-        'score maxed. total=%d;max=%d — 本期发射井结束，下轮撤回驻军并放行 auto-farm.',
+        'score maxed. total=%d;max=%d — this season\'s launch silo done, recall garrison next round and let auto-farm proceed.',
         total,
         maxT,
       );
@@ -803,7 +803,7 @@ function run(ctx) {
   ctx.on.push(PUSH_GUN_FIGHT_REWARD_INFO, onRewardPush);
   if (offHomeReturn) offHomeReturn(); // 先退再挂，防 resume 重激活重复注册
   offHomeReturn = march.onHomeReturn(onMarchArrivedHome);
-  log.info('started (驻军+领积分 内置默认;撤田腾队列=%s).', modCfg.recallFarm ? '开' : '关');
+  log.info('started (garrison + claim-score built-in default; recall-farm-to-free-slot=%s).', modCfg.recallFarm ? 'on' : 'off');
   cycle.kick();
 }
 

@@ -35,7 +35,7 @@
  *   故不声明 places、不声明 offInCombat（战斗态下继续跑）；但声明了 kinds:['homeland']（A 档）：
  *   进峡谷/天梯/秘境/征服者图即 pause，回本服图自动 resume（可行性报告 §7.2 保守选择，要升 B 可改）。
  */
-import { sleep } from '../../core/util.js';
+import { sleep, rejectText } from '../../core/util.js';
 import { createLog } from '../../core/log.js';
 import { game } from '../../core/game.js';
 import { reactor } from '../../core/reactor.js';
@@ -299,7 +299,7 @@ async function claimType(type, label) {
     log.info('receive %s gift ok. wasPending=%d', label, pending);
     return true;
   }
-  log.info('receive %s gift rejected. code=%d', label, ret.code);
+  log.info('receive %s gift rejected. code=%d;data=%s', label, ret.code, rejectText(ret) || '-');
   return false;
 }
 
@@ -339,7 +339,7 @@ async function claimBig() {
     log.info('receive big gift ok. wasPending=%d', pending);
     return true;
   }
-  log.info('receive big gift rejected. code=%d', ret.code);
+  log.info('receive big gift rejected. code=%d;data=%s', ret.code, rejectText(ret) || '-');
   return false;
 }
 

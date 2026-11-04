@@ -160,7 +160,7 @@ async function collectOnce(harvester) {
     { id: harvester.id },
     {
       onError: function (err) {
-        log.debug('cmd 102 send failed (harvest): %s', err && err.message);
+        log.warn('cmd 102 send threw (harvest): %s', err && err.message);
       },
     },
   );

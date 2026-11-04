@@ -170,7 +170,7 @@ export const coinDomain = {
     try {
       return coinState(opt);
     } catch (e) {
-      log.debug('coinState threw: %s', e && (e.message || e));
+      log.warn('coinState threw: %s', e && (e.message || e));
       return { available: false };
     }
   },

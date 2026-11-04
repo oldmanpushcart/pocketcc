@@ -801,7 +801,7 @@ export class PickupEngine {
             }
           }
         } catch (err) {
-          env.log.info('buff pickup skipped (isTeamLeader threw).', err);
+          env.log.warn('buff pickup skipped (isTeamLeader threw).', err);
         }
       }
     }

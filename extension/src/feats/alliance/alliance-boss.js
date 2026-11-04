@@ -52,7 +52,7 @@
  *   单飞闸门 / 触发合并 / 择时重排收口到 core/cycle；pause 后 alive()=false 让 cycle 自然停摆，resume 重新 kick。
  *   合规：全程只读游戏数据 + 直发协议，不调用游戏的 Update* 改写本地态。
  */
-import { sleep, todayStr } from '../../core/util.js';
+import { sleep, todayStr, rejectText } from '../../core/util.js';
 import { createLog } from '../../core/log.js';
 import { bus, EVT } from '../../core/bus.js';
 import { game } from '../../core/game.js';
@@ -454,7 +454,7 @@ function payloadOf(ret) {
 async function ask(cmd, data) {
   return net.sendGuarded(cmd, data, {
     onError: function (err) {
-      log.debug('cmd %d send failed: %s', cmd, err && err.message);
+      log.warn('cmd %d send threw: %s', cmd, err && err.message);
     },
   });
 }
@@ -487,7 +487,7 @@ function normalizeBoss(b) {
 async function requestInfo() {
   var ret = await ask(CMD_GET_INFO, {});
   if (!ret.ok) {
-    log.debug('get info not ok. code=%d', ret.code);
+    log.debug('get info not ok. code=%d;data=%s', ret.code, rejectText(ret) || '-');
     return null;
   }
   var d = payloadOf(ret);
@@ -563,7 +563,7 @@ async function tickBody() {
 async function donateFlow(boss, preloaded) {
   var t = donateTarget(boss.bossId);
   if (!t.known) {
-    log.debug('Alliance_Boss row / num unavailable, skip donate. bossId=%d', boss.bossId);
+    log.warn('Alliance_Boss row / num unavailable, skip donate. bossId=%d', boss.bossId);
     return;
   }
   if (t.count <= 0) {
@@ -612,7 +612,7 @@ async function donateFlow(boss, preloaded) {
       plan -= 1;
       log.info('free donate ok. todayTime=%d;donated=%d', info.todayTime, donatedOf(boss.bossId));
     } else {
-      log.info('free donate rejected (already used?). code=%d;data=%s', freeRet.code, freeRet.data);
+      log.info('free donate rejected (already used?). code=%d;data=%s', freeRet.code, rejectText(freeRet) || '-');
     }
     if (plan <= 0) return;
     await sleep(DONATE_GAP_MS); // 同 cmd 连发会撞频控
@@ -640,7 +640,7 @@ async function donateFlow(boss, preloaded) {
       donateLeft(boss.bossId),
     );
   } else {
-    log.info('donate rejected. count=%d;code=%d;data=%s', plan, paid.code, paid.data);
+    log.info('donate rejected. count=%d;code=%d;data=%s', plan, paid.code, rejectText(paid) || '-');
   }
 }
 

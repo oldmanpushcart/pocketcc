@@ -34,7 +34,7 @@
  *   日常任务形态：面板只出启用开关，无字段无配置（fields=[]，toModuleCfg 返回空）。
  *   不行军不参战，offInCombat:false。生命周期由 reactor 托管，pause 后 alive()=false 自然停摆。
  */
-import { CODE_NOT_SENT } from '../../core/util.js';
+import { CODE_NOT_SENT, rejectText } from '../../core/util.js';
 import { createLog } from '../../core/log.js';
 import { l10n, gameData } from '../../core/game-api.js';
 import { reactor } from '../../core/reactor.js';
@@ -142,7 +142,7 @@ function delayFor(info) {
 /**
  * 直发一条 825 领取。V1 send 应答 Ret.data 是 JSON 串（Ret.from 不解析），自行 parse；永不 reject。
  * @param {number} times 领取前档位（仅日志用）
- * @returns {Promise<{claimed:boolean, code:number}>}
+ * @returns {Promise<{claimed:boolean, code:number, data?:*, reason?:string}>} 失败时带上原始应答载荷（错误文案）
  */
 async function claimOnce(times) {
   var ret = await net.sendGuarded(
@@ -150,12 +150,12 @@ async function claimOnce(times) {
     {},
     {
       onError: function (err) {
-        log.debug('cmd 825 send failed: %s', err && err.message);
+        log.warn('cmd 825 send threw: %s', err && err.message);
       },
     },
   );
   var code = ret ? ret.code : CODE_NOT_SENT;
-  if (!ret || !ret.ok) return { claimed: false, code: code };
+  if (!ret || !ret.ok) return { claimed: false, code: code, data: ret && ret.data, reason: ret && ret.reason };
   var d;
   try {
     d = typeof ret.data === 'string' ? JSON.parse(ret.data) : ret.data;
@@ -188,7 +188,7 @@ async function cycleRun() {
   if (!aliveFn()) return 0;
   if (!res.claimed) {
     rejectStreak++;
-    log.warn('claim rejected (streak #%d). code=%s', rejectStreak, res.code);
+    log.info('claim rejected (streak #%d). code=%s;data=%s', rejectStreak, res.code, rejectText(res) || '-');
   }
   // 领成功后按新态排下拍（间隔由表驱动逐档变长）；next-check 时刻交由驱动器统一打印
   return delayFor(readyInfo());

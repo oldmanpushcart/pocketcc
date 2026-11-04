@@ -1159,7 +1159,7 @@ async function loadOlder() {
     if (!ret || !ret.ok) {
       b.pullPages--;
       setStatus('error');
-      log.warn(
+      log.info(
         'older history rejected: code=%s data=%s',
         ret && ret.code,
         String(ret && ret.data).slice(0, 160),

@@ -221,7 +221,10 @@ export function probe(key, resolve) {
   }
   if (!probeWarned.has(key)) {
     probeWarned.add(key);
-    log.warn('probe "%s" failed —— 符号漂移（游戏更新）或功能/子包未加载，相关能力将降级', key);
+    log.warn(
+      'probe "%s" failed: symbol drift (game update) or feature/subpackage not loaded, related capabilities will degrade',
+      key,
+    );
   }
   return null;
 }
@@ -371,7 +374,7 @@ export function checkCap(key) {
   var k = String(key || '').replace(/\?$/, '');
   var f = CAPS[k];
   if (!f) {
-    log.warn('checkCap: 未登记的能力键 "%s"', key);
+    log.warn('checkCap: unregistered capability key "%s"', key);
     return false;
   }
   try {

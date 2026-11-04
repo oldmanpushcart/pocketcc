@@ -131,7 +131,16 @@ const INTERNAL_FEATURES = [
         placeholder: 'http://127.0.0.1:7391/log',
       },
       { key: 'flushSec', type: 'number', label: '上送间隔(秒)', min: 1, step: 1 },
-      { key: 'minLvl', type: 'string', label: '最低级别(debug/info/warn)', placeholder: 'info' },
+      {
+        key: 'minLvl',
+        type: 'select',
+        label: '最低级别',
+        options: [
+          { value: 'debug', label: 'debug' },
+          { value: 'info', label: 'info' },
+          { value: 'warn', label: 'warn' },
+        ],
+      },
     ],
     apply: (cfg) => {
       const lc = logCollectApi;

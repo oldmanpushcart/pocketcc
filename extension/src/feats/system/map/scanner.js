@@ -8,6 +8,7 @@
  * 服号 k：优先用调用方注入值，缺（0）则以首块应答回显的 k 兜底复用（serverId() 取不到时的自愈）。
  */
 import { createLog } from '../../../core/log.js';
+import { rejectText } from '../../../core/util.js';
 import { createDrain } from '../../../core/drain.js';
 import { worldMap } from '../../../core/game-api.js';
 import { CMD_GET_WORLD_INFO, SERVER } from '../../../core/map.js';
@@ -138,13 +139,13 @@ async function processBlock(b) {
   let ret = await net.sendGuarded(CMD_GET_WORLD_INFO, body, {
     gate: false,
     onError: function (err) {
-      log.warn('block(%d,%d) send failed: %s', b.gx, b.gy, err && err.message);
+      log.warn('block(%d,%d) send threw: %s', b.gx, b.gy, err && err.message);
       threw = true;
     },
   });
   if (threw) return;
   if (!ret || !ret.ok) {
-    log.warn('block(%d,%d) not ok. code=%s', b.gx, b.gy, ret && ret.code);
+    log.debug('block(%d,%d) not ok. code=%s;data=%s', b.gx, b.gy, ret && ret.code, rejectText(ret) || '-');
     return;
   }
   const data = safeParse(ret.data) || {};

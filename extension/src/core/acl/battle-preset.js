@@ -41,7 +41,7 @@ export const battlePreset = {
       return entry;
     } catch (e) {
       log.warn(
-        'battlePreset.recalc threw —— 出征档案重算器不可用（符号漂移？），调用方将走降级口径',
+        'battlePreset.recalc threw: expedition preset recalculator unavailable (symbol drift?); caller will use degraded path',
         e,
       );
       return null;

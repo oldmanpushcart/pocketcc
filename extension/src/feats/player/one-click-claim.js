@@ -49,7 +49,7 @@
  *   日常任务形态：面板只出启用开关，无字段无配置（fields=[]，toModuleCfg 返回空）。
  *   不行军不参战，offInCombat:false。生命周期由 reactor 托管，pause 后 alive()=false 自然停摆。
  */
-import { CODE_NOT_SENT } from '../../core/util.js';
+import { CODE_NOT_SENT, rejectText } from '../../core/util.js';
 import { createLog } from '../../core/log.js';
 import { gameData } from '../../core/game-api.js';
 import { reactor } from '../../core/reactor.js';
@@ -109,7 +109,7 @@ function aliveFn() {
 // ── 发包 ──────────────────────────────────────────────────────────────
 /**
  * 直发 5684 查询领取态。PBV2 应答已由 net 剥到 pbAckV2.data；永不 reject。
- * @returns {Promise<{ok:boolean, code:number, limitTs:number}>} limitTs=下次可领的绝对服务器秒（0=现在可领）
+ * @returns {Promise<{ok:boolean, code:number, limitTs:number, data?:*, reason?:string}>} limitTs=下次可领的绝对服务器秒（0=现在可领）；失败带原始应答载荷
  */
 async function fetchInfo() {
   if (!net) return { ok: false, code: CODE_NOT_SENT, limitTs: 0 };
@@ -119,11 +119,11 @@ async function fetchInfo() {
     {
       protocol: 'sendPBV2',
       onError: function (err) {
-        log.debug('cmd 5684 send failed: %s', err && err.message);
+        log.warn('cmd 5684 send threw: %s', err && err.message);
       },
     },
   );
-  if (!ret || !ret.ok) return { ok: false, code: ret ? ret.code : CODE_NOT_SENT, limitTs: 0 };
+  if (!ret || !ret.ok) return { ok: false, code: ret ? ret.code : CODE_NOT_SENT, limitTs: 0, data: ret && ret.data, reason: ret && ret.reason };
   var d = ret.data || {};
   return { ok: true, code: 0, limitTs: Number(d.limitTimeSec) || 0 };
 }
@@ -131,7 +131,7 @@ async function fetchInfo() {
 /**
  * 直发 5685 一键领取给定行。PBV2 应答 detail 逐行带 code（0=领到）。永不 reject。
  * @param {number[]} ids 可用行 id 列表（来自 gameData.taskRelaxOpenRows）
- * @returns {Promise<{ok:boolean, code:number, success:number, total:number}>}
+ * @returns {Promise<{ok:boolean, code:number, success:number, total:number, data?:*, reason?:string}>} 失败时带上原始应答载荷（错误文案）
  */
 async function claimAll(ids) {
   if (!net) {
@@ -143,12 +143,12 @@ async function claimAll(ids) {
     {
       protocol: 'sendPBV2',
       onError: function (err) {
-        log.debug('cmd 5685 send failed: %s', err && err.message);
+        log.warn('cmd 5685 send threw: %s', err && err.message);
       },
     },
   );
   if (!ret || !ret.ok) {
-    return { ok: false, code: ret ? ret.code : CODE_NOT_SENT, success: 0, total: 0 };
+    return { ok: false, code: ret ? ret.code : CODE_NOT_SENT, success: 0, total: 0, data: ret && ret.data, reason: ret && ret.reason };
   }
   var detail = ret.data && Array.isArray(ret.data.detail) ? ret.data.detail : [];
   var success = 0;
@@ -196,7 +196,9 @@ async function cycleRun() {
   var rows = gameData.taskRelaxOpenRows();
   if (!rows || !rows.length) {
     if (!loggedUnavailable) {
-      log.info('一键领取未对该玩家开启（总闸/服务器灰度/玩法条件不满足），挂起待巡检。');
+      log.debug(
+        'one-click-claim not enabled for this player (master switch / server gray / gameplay gate), idle pending re-scan.',
+      );
       loggedUnavailable = true;
     }
     return IDLE_TICK_MS;
@@ -212,7 +214,7 @@ async function cycleRun() {
       return TRANSIENT_RETRY_MS;
     }
     infoStreak++;
-    log.debug('info rejected by server (streak #%d). code=%s', infoStreak, st.code);
+    log.info('info rejected by server (streak #%d). code=%s;data=%s', infoStreak, st.code, rejectText(st) || '-');
     return infoStreak >= 3 ? IDLE_TICK_MS * 2 : IDLE_TICK_MS;
   }
   infoStreak = 0;
@@ -235,7 +237,7 @@ async function cycleRun() {
       return TRANSIENT_RETRY_MS;
     }
     rejectStreak++;
-    log.info('claim rejected by server (streak #%d). code=%s', rejectStreak, res.code);
+    log.info('claim rejected by server (streak #%d). code=%s;data=%s', rejectStreak, res.code, rejectText(res) || '-');
     return rejectStreak >= 3 ? IDLE_TICK_MS * 2 : IDLE_TICK_MS;
   }
   rejectStreak = 0;
@@ -243,14 +245,14 @@ async function cycleRun() {
   var wakeMs = nextClaimDelay();
   if (res.success > 0) {
     log.info(
-      '一键领取完成：%d/%d 行有奖励，%d min 后复领（0 点那次必领）。',
+      'one-click-claim done: %d/%d rows rewarded, re-claim in %d min (the midnight one is always claimed).',
       res.success,
       res.total,
       Math.round(wakeMs / 60000),
     );
   } else {
     log.debug(
-      '一键领取触发：%d 行均无可领收益，%d min 后再领。',
+      'one-click-claim triggered: no claimable reward in %d rows, re-claim in %d min.',
       res.total,
       Math.round(wakeMs / 60000),
     );

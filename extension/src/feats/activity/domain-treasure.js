@@ -16,7 +16,7 @@
  *   consume 有"名额满即停"的独有逻辑，不套 createDrain，作为 cycleRun 一轮的后半段原样保留在本文件。
  *   兜底定时器是功能内部生产逻辑，pause 后 alive()=false 自然停摆，resume 时 run 复位状态并重新点火。
  */
-import { CODE_NOT_SENT, sleep } from '../../core/util.js';
+import { CODE_NOT_SENT, sleep, rejectText } from '../../core/util.js';
 import { createLog } from '../../core/log.js';
 import { game } from '../../core/game.js';
 import { reactor } from '../../core/reactor.js';
@@ -305,7 +305,7 @@ async function digFlow(mine) {
     return;
   }
 
-  log.info('dig rejected. x=%d;y=%d;code=%d;data=%s', mine.x, mine.y, ret.code, ret.data);
+  log.info('dig rejected. x=%d;y=%d;code=%d;data=%s', mine.x, mine.y, ret.code, rejectText(ret) || '-');
 }
 
 /**

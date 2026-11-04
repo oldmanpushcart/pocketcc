@@ -36,7 +36,7 @@
  *   - 无队且不该自己开车（仅 helper）→ 逐个玩家池成员用 630 PLAYER_INFO 取名 → 7530 按名（likeName）搜该玩家创建的未满队 → 7522 申请入队（不再扫 7526）；main 一律自己建队开车；
  *   - 次数不足且勾了 useBeaconWhenShort → 走通用使用物品 815 消耗定位信标(47001001) 补次数（§7-6 已报文关闭）。
  */
-import { CODE_NOT_SENT, todayStr } from '../../../core/util.js';
+import { CODE_NOT_SENT, todayStr, rejectText } from '../../../core/util.js';
 import { Battle } from '../../../core/battle.js';
 import { march } from '../../../core/march.js';
 import { CMD_GET_WORLD_INFO } from '../../../core/map.js';
@@ -183,7 +183,7 @@ function ensureDailyLoaded() {
     })
     .catch(function (err) {
       dailyRuns.loading = false; // 读失败复位在途闸门，loaded 仍 false 留待下次重试
-      log.debug('daily runs load failed, retry next. %s', err && err.message);
+      log.warn('daily runs load failed, retry next. %s', err && err.message);
     });
 }
 
@@ -447,7 +447,7 @@ export class TeamEngine {
       var gid = this.#waitHome.marchId;
       if (gid && String(m.id) !== gid) return; // 已知本队飞船 marchId 时精确匹配
       this.#waitHome = null;
-      log.info('夺宝飞船已到家散队，开始下一轮建队/入队');
+      log.info('cs-hunt ship arrived home and disbanded, starting next round of team build/join');
       this.#wake();
     });
     // 7501 应答也可能带整队（报文实证 dashcam 20261016T191700 seq88）：统一在此落地，装配层只管点火发包
@@ -532,7 +532,7 @@ export class TeamEngine {
     var now = Date.now();
     if (!force && now - this.#lastInfoAt < INFO_REFRESH_MS) return;
     this.#lastInfoAt = now;
-    await this.#sendPB(REQ_INFO, {}, '拉活动总览');
+    await this.#sendPB(REQ_INFO, {}, 'fetch-activity-overview');
   }
 
   /**
@@ -567,7 +567,7 @@ export class TeamEngine {
       // 队伍清空推（服务器权威「已散队」）：回城等待闸门随之解除，下一拍即可建队/入队
       if (this.#waitHome) {
         this.#waitHome = null;
-        log.debug('队伍解散推送到达，解除回城等待闸门');
+        log.debug('team disbanded push arrived, releasing return-home wait gate');
       }
       this.#clearTeam();
       return;
@@ -579,7 +579,7 @@ export class TeamEngine {
     var tidStr = String(team.treasureId || team.id);
     if (team.status >= TEAM_STATUS.RETURNING || tidStr === this.#endedTreasureId) {
       if (this.#team && this.#team.id === team.id)
-        this.#finishHunt('队伍 push status=' + team.status + '（回城/到家）');
+        this.#finishHunt('team push status=' + team.status + ' (returning/home)');
       return;
     }
     if (!this.#team || this.#team.id !== team.id) {
@@ -594,7 +594,7 @@ export class TeamEngine {
       this.#noArmyLoggedTeamId = '';
       this.#appliedTeamId = ''; // 已入队，清找队申请记账
       this.#teamSince = Date.now(); // 凑人超时基准：从本端看到新队起算
-      log.info('team %s 就位（cfg=%d，成员 %d）', team.id, team.cfg, team.memberCount);
+      log.info('team %s ready (cfg=%d, members %d)', team.id, team.cfg, team.memberCount);
     }
     this.#team = team;
     this.#wake();
@@ -604,7 +604,7 @@ export class TeamEngine {
    * 队伍清空（21371 不带 team / status=ARRIVE / 解散应答）。
    */
   #clearTeam() {
-    if (this.#team) log.info('队伍 %s 已清空（散队/到家）', this.#team.id);
+    if (this.#team) log.info('team %s cleared (disbanded/home)', this.#team.id);
     this.#team = null;
     this.#useItemTeamId = '';
     this.#marchedTeamId = '';
@@ -637,14 +637,14 @@ export class TeamEngine {
     // 终局≠散队：飞船还在返程，到家才散（实证 END@+986s → 散队@+1063s）；窗口内 7521/7522 会被拒
     //   ava_team_tips_011=已加入其他队伍 → 置回城等待闸门，由 10019 到家推/21371 清空推/轮询+超时解除
     var waitMarchId = t && t.selfMarchId && t.selfMarchId !== '0' ? String(t.selfMarchId) : '';
-    log.info('本次夺宝出征已结束（%s），停止拉本跑详情，转下一轮', source);
+    log.info('this cs-hunt march finished (%s), stop pulling run detail, moving to next round', source);
     this.#flow.reset();
     this.#clearTeam();
     if (!this.#waitHome) {
       this.#waitHome = { marchId: waitMarchId, deadline: Date.now() + WAIT_HOME_MAX_MS };
       log.info(
-        '等待夺宝飞船回城散队后才建队/入队%s',
-        waitMarchId ? '（行军 ' + waitMarchId + '）' : '',
+        'waiting for cs-hunt ship to return home and disband before team build/join%s',
+        waitMarchId ? ' (march ' + waitMarchId + ')' : '',
       );
     }
   }
@@ -656,7 +656,7 @@ export class TeamEngine {
    * @param {string} reason 服务器多语言拒因键
    */
   #endHunt(reason) {
-    this.#finishHunt('7531 终局拒因 ' + reason + '=夺宝奇兵小队不存在（漏推兜底）');
+    this.#finishHunt('7531 end-reject reason ' + reason + '=cs-hunt team not found (missed-push fallback)');
   }
 
   /**
@@ -681,7 +681,7 @@ export class TeamEngine {
     this.#selfReadySeen = selfIn;
     if (!selfIn && this.#marchStartTeamId === this.#team.id) {
       this.#marchStartTeamId = ''; // 重武装召集表态闸门，交 tick 第 4 步补发 7527
-      log.info('召集窗口重开且本人未在准备名单（ready=%d），补发准备', ready.length);
+      log.info('rally window reopened and self not in ready list (ready=%d), re-sending ready', ready.length);
     }
     log.debug('ready call: team %s, ready=%d self=%s', this.#team.id, ready.length, selfIn);
     this.#wake();
@@ -754,7 +754,7 @@ export class TeamEngine {
       var curTid = this.#team ? String(this.#team.treasureId || this.#team.id || '') : '';
       if (this.#team && endTid && endTid === curTid) {
         this.#finishHunt(
-          '状态机 push status=' + status + '（终局/回城，round=' + payload.round + '）',
+          'state-machine push status=' + status + ' (end/return, round=' + payload.round + ')',
         );
       }
       return;
@@ -813,7 +813,7 @@ export class TeamEngine {
       var ret = await this.#sendPB(
         REQ_TEAM_APPLY_OP,
         { uid: bits.int64(uid), op: op },
-        op === 1 ? '审批通过' : '拒绝池外申请',
+        op === 1 ? 'approve-apply' : 'reject-outside-pool',
       );
       if (ret.code === CODE_NOT_SENT) return; // 未真正发出（在途/异常）：保留 pending 下拍重试
       this.#applyPending.delete(uid);
@@ -840,7 +840,7 @@ export class TeamEngine {
         rawCfg.mode === 'helper')
     ) {
       this.#helperForced = false;
-      log.info('每日夺宝局数不再处于满额强制态，结束自动转陪跑、回归主跑');
+      log.info('daily cs-hunt runs no longer in full-quota forced state, ending auto side-run mode, back to main run');
     }
     var cfg = this.#cfg();
 
@@ -901,7 +901,7 @@ export class TeamEngine {
       await this.#drainApplyPending();
       if (t.memberCount < 5 && Date.now() - this.#lastApplyListAt >= APPLY_LIST_POLL_MS) {
         this.#lastApplyListAt = Date.now();
-        await this.#sendPB(REQ_TEAM_APPLY_LIST, { teamId: bits.int64(t.id) }, '拉申请池');
+        await this.#sendPB(REQ_TEAM_APPLY_LIST, { teamId: bits.int64(t.id) }, 'fetch-apply-pool');
       }
     }
 
@@ -911,7 +911,7 @@ export class TeamEngine {
       if (wantReward && this.#count === 0) {
         // 主跑但次数为 0：勾了信标补次数则先消耗一个再等 21375 刷新（本轮不表态，下拍复查）；否则降级陪跑加入不浪费时机
         if (cfg.useBeaconWhenShort) {
-          var topped = await this.#useBeacon('要奖励前');
+          var topped = await this.#useBeacon('before-reward');
           if (topped) return ACTIVE_TICK_MS;
         }
         wantReward = false;
@@ -920,7 +920,7 @@ export class TeamEngine {
       await this.#sendPB(
         REQ_TEAM_USE_ITEM,
         { op: wantReward ? 1 : 2 },
-        wantReward ? '要奖励入队' : '陪跑入队',
+        wantReward ? 'join-for-reward' : 'join-as-helper',
       );
     }
 
@@ -958,12 +958,12 @@ export class TeamEngine {
         this.#called = false;
         if (!full && waitedOut)
           log.info(
-            '凑人超时 %d 分钟，人数 %d/%d 直接发车（已到位成员均已派兵）',
+            'people-gathering timed out after %d min, members %d/%d, launching directly (all present members have dispatched)',
             waitMin,
             t.memberCount,
             targetMembers(cfg),
           );
-        var ret = await this.#sendPB(REQ_MARCH_START, { op: 1 }, '同意出发');
+        var ret = await this.#sendPB(REQ_MARCH_START, { op: 1 }, 'agree-depart');
         var code = ret ? ret.code : CODE_NOT_SENT;
         // 闸门只能在 7527 真正受理后提交：过早召集被拒（common_159995=有人 7519 尚未落地）或未真正发出时回滚，
         //   交下拍全员出兵落地后重试（否则一次性闸门被拒因吃掉 → 本队永久不再召集，页外 21372 又收不到 → 卡死）
@@ -975,8 +975,8 @@ export class TeamEngine {
         // 召集闸未开的静默期留痕（对齐调度决策日志规范）：页外 21372 不可达时卡点只能靠本行事后归因。
         //   full（人已达目标）或 waitedOut（凑人超时）时打——前者是「人齐了却不发车」的真卡点，后者是「差出兵」的超时卡点
         log.info(
-          '等待召集出发 reason=%s; members=%d/%d; marched=%d; selfMarch=%s; 已等=%ds（约每 %d 秒随 7501 轮询复查）',
-          t.marchedCount === 0 ? '全员未出兵' : '有人未派兵成功',
+          'waiting for rally depart reason=%s; members=%d/%d; marched=%d; selfMarch=%s; waited=%ds (re-checked with 7501 polling roughly every %ds)',
+          t.marchedCount === 0 ? 'nobody dispatched' : 'some members failed to dispatch',
           t.memberCount,
           targetMembers(cfg),
           t.marchedCount,
@@ -1001,7 +1001,7 @@ export class TeamEngine {
     if (!wait) return 0;
     if (Date.now() >= wait.deadline) {
       this.#waitHome = null;
-      log.info('回城散队等待超时（漏推兑底），放行建队/入队重试');
+      log.info('return-home disband wait timed out (missed-push fallback), allowing team build/join retry');
       return 0;
     }
     var ms = await march.list({ cache: true });
@@ -1011,7 +1011,7 @@ export class TeamEngine {
       if (hit && m.state !== march.State.ARRIVED_HOME) return HOME_POLL_MS; // 飞船仍在途（返程也算）：服务器未散队
     }
     this.#waitHome = null;
-    log.info('夺宝飞船已回城散队（快照轮询确认），开始下一轮建队/入队');
+    log.info('cs-hunt ship returned home and disbanded (confirmed by snapshot polling), starting next round of team build/join');
     return 0;
   }
 
@@ -1029,26 +1029,26 @@ export class TeamEngine {
   async #gateActivity(st) {
     var openKnown = st ? !!st.active : this.#openFlag != null ? this.#openFlag === 1 : null;
     if (openKnown === false) {
-      this.#blockOnce('off', '夺宝奇兵当前不在活动时间（玩法未开/休赛），暂不建队/加入');
+      this.#blockOnce('off', 'cs-hunt not in activity time now (mode not open / off-season), skip team build/join');
       return { proceed: false, sleep: IDLE_TICK_MS };
     }
     if (openKnown === null) {
       await this.refreshInfo(true);
-      this.#blockOnce('unknown', '夺宝奇兵活动态未知（等 7501 应答），本轮不建队/加入');
+      this.#blockOnce('unknown', 'cs-hunt activity state unknown (awaiting 7501 ack), skip team build/join this round');
       return { proceed: false, sleep: ACTIVE_TICK_MS };
     }
     var win = csHunt.playWindowState(this.#slots, csHunt.serverMs());
     if (!win.known) {
       await this.refreshInfo(true);
-      this.#blockOnce('nowin', '夺宝奇兵时段表未知（等 7501 openTime），本轮不建队/加入');
+      this.#blockOnce('nowin', 'cs-hunt play-window schedule unknown (awaiting 7501 openTime), skip team build/join this round');
       return { proceed: false, sleep: ACTIVE_TICK_MS };
     }
     if (!win.in) {
       var wait = win.nextBegin ? win.nextBegin - csHunt.serverMs() : IDLE_TICK_MS;
       this.#blockOnce(
         'window',
-        '夺宝奇兵当前不在每日夺宝时段内（每天 3 场），暂不建队/加入' +
-          (win.nextBegin ? '，下一场约 ' + Math.max(0, Math.round(wait / 60000)) + ' 分钟后' : ''),
+        'cs-hunt not in a daily play window now (3 runs/day), skip team build/join' +
+          (win.nextBegin ? ', next run in about ' + Math.max(0, Math.round(wait / 60000)) + ' min' : ''),
       );
       var cap = wait > WINDOW_WAIT_CAP_FAR_MS ? WINDOW_WAIT_CAP_FAR_MS : WINDOW_WAIT_CAP_NEAR_MS;
       return { proceed: false, sleep: Math.min(Math.max(wait, ACTIVE_TICK_MS), cap) };
@@ -1075,7 +1075,7 @@ export class TeamEngine {
         if (!this.#helperForced) {
           this.#helperForced = true;
           log.info(
-            '今日夺宝局数已达上限（%d 局），自动转陪跑找队（面板开关；跳日归零/调高上限即复位回主跑）',
+            'daily cs-hunt runs reached cap (%d), auto switching to helper team-finding (panel switch; resets to main run on day roll / cap raise)',
             cfg.dailyRuns,
           );
         }
@@ -1083,7 +1083,7 @@ export class TeamEngine {
       }
       this.#blockOnce(
         'daily',
-        '今日夺宝局数已达上限（' + cfg.dailyRuns + ' 局），暂不建队/加入（明日自动恢复）',
+        'daily cs-hunt runs reached cap (' + cfg.dailyRuns + '), skip team build/join (auto recovers next day)',
       );
       return IDLE_TICK_MS;
     }
@@ -1101,16 +1101,16 @@ export class TeamEngine {
   async #tryCreate(cfg, st) {
     var cnt = this.#count != null ? this.#count : st ? st.huntCount : null;
     if (cnt === 0) {
-      if (cfg.useBeaconWhenShort && (await this.#useBeacon('建队前'))) {
+      if (cfg.useBeaconWhenShort && (await this.#useBeacon('before-team-create'))) {
         return ACTIVE_TICK_MS; // 信标已消耗，等 21375 刷新次数后下拍复查
       }
       this.#blockOnce(
         'count',
-        '夺宝次数为 0，暂不建队（游戏侧每 10h 恢复 1 点；未勾选/无信标则不补）',
+        'cs-hunt count is 0, skip team build (game refills 1 point per 10h; no beacon top-up unless checked/in-stock)',
       );
       return IDLE_TICK_MS;
     }
-    var ret = await this.#sendPB(REQ_TEAM_CREATE, { cfg: TEAM_CFG }, '建队');
+    var ret = await this.#sendPB(REQ_TEAM_CREATE, { cfg: TEAM_CFG }, 'create-team');
     var ack = ret && ret.payload ? ret.payload[ACK_TEAM_CREATE] : null;
     if (ack && ack.team) this.#onTeamChange(ack);
     // 服务器判旧队未散（飞船在返途中，终局刚收口而推送漏接时会走到这里）：回闸并停止逐拍连打 7521
@@ -1118,7 +1118,7 @@ export class TeamEngine {
       ret && !ret.ok && ret.payload && ret.payload.header ? String(ret.payload.header.d || '') : '';
     if (rsn === 'ava_team_tips_011' && !this.#waitHome) {
       this.#waitHome = { marchId: '', deadline: Date.now() + WAIT_HOME_MAX_MS };
-      log.info('建队被拒 ava_team_tips_011=已加入其他队伍（旧队散队未落地），改等飞船回城后再试');
+      log.info('team build rejected ava_team_tips_011=already in another team (old disband not landed), waiting for ship return-home before retry');
     }
     return ACTIVE_TICK_MS;
   }
@@ -1160,11 +1160,11 @@ export class TeamEngine {
       this.#joinCursor = (i + 1) % n;
     }
     if (idx < 0) {
-      this.#blockOnce('nojoin', '玩家池为空或全部无效 uid/查无昵称，暂不搜队');
+      this.#blockOnce('nojoin', 'player pool empty or all invalid uid / name not found, skip team search');
       return JOIN_POLL_MS;
     }
     // 本拍只搜这一个：7530 按昵称搜其创建的队，命中未满/未申请/队长即该玩家的队即 7522 申请
-    var ret = await this.#sendPB(REQ_SEARCH_TEAM_LIST, { likeName: name }, '按名搜队');
+    var ret = await this.#sendPB(REQ_SEARCH_TEAM_LIST, { likeName: name }, 'search-team-by-name');
     var payload = ret && ret.payload ? ret.payload[ACK_SEARCH_TEAM_LIST] : null;
     var teams = payload && Array.isArray(payload.team) ? payload.team : [];
     for (var k = 0; k < teams.length; k++) {
@@ -1179,12 +1179,12 @@ export class TeamEngine {
       await this.#sendPB(
         REQ_TEAM_APPLY_OR_CANCEL,
         { teamId: bits.int64(teamId), op: 1 },
-        '申请入队',
+        'apply-join-team',
       );
       return ACTIVE_TICK_MS;
     }
     log.info(
-      `按名搜队：本拍已搜 ${name}（池 ${n} 员轮转，下一拍 ${(idx + 1) % n} 号），未命中未满队`,
+      `search-team-by-name: searched ${name} this tick (pool ${n} rotating, next tick #${(idx + 1) % n}), no under-full team hit`,
     );
     return JOIN_POLL_MS;
   }
@@ -1304,7 +1304,7 @@ export class TeamEngine {
     var now = Date.now();
     if (now - this.#lastBeaconAt < BEACON_COOLDOWN_MS) return false;
     if (gameData.itemAmount(ITEM_BEACON) <= 0) {
-      this.#blockOnce('beacon', label + '：背包无定位信标(47001001)，不补次数');
+      this.#blockOnce('beacon', label + ': no loc beacon(47001001) in backpack, skip count top-up');
       return false;
     }
     if (net.isSending(CMD_ITEM_USE)) return false;
@@ -1316,7 +1316,7 @@ export class TeamEngine {
       {
         gate: false,
         onError: function (err) {
-          log.warn('%s 信标发包 throw. %s', label, err && err.message);
+          log.warn('%s beacon send threw. %s', label, err && err.message);
           threw = true;
         },
       },
@@ -1324,10 +1324,10 @@ export class TeamEngine {
     if (threw) return false;
     if (ret && ret.ok) {
       var remain = ret.data && ret.data.amount;
-      log.info('%s消耗定位信标补次数 ok（剩余 %s）', label, remain == null ? '?' : remain);
+      log.info('%s beacon consumed to refill count ok (remain %s)', label, remain == null ? '?' : remain);
       return true;
     }
-    log.info('%s信标被拒 code=%s', label, ret ? ret.code : CODE_NOT_SENT);
+    log.info('%s beacon rejected code=%s;data=%s', label, ret ? ret.code : CODE_NOT_SENT, rejectText(ret) || '-');
     return false;
   }
 
@@ -1350,7 +1350,7 @@ export class TeamEngine {
     if (!plan) {
       if (this.#noArmyLoggedTeamId !== t.id) {
         this.#noArmyLoggedTeamId = t.id;
-        log.info('presetPool %j 全无可派部队，暂不出征，等回城唤醒补派', cfg.presetPool || []);
+        log.info('presetPool %j has no dispatchable army, holding march, waiting return-home wake to re-dispatch', cfg.presetPool || []);
       }
       return false;
     }
@@ -1379,14 +1379,14 @@ export class TeamEngine {
       this.#marchedTeamId = t.id;
       this.#noArmyLoggedTeamId = '';
       log.info(
-        '满编出征 ok（armyId=%d, 兵队 %d, 英雄 %d）',
+        'full march ok (armyId=%d, squads %d, heroes %d)',
         plan.armyListNew[0].armyId,
         plan.armyListNew.length,
         plan.heroList.length,
       );
       return true;
     }
-    log.info('满编出征被拒 code=%s', ret ? ret.code : CODE_NOT_SENT);
+    log.info('full march rejected code=%s;data=%s', ret ? ret.code : CODE_NOT_SENT, rejectText(ret) || '-');
     return false;
   }
 
@@ -1419,7 +1419,7 @@ export class TeamEngine {
       protocol: 'sendPB',
       gate: false,
       onError: function (err) {
-        log.debug('%s (%d) send failed: %s', label, cmd, err && err.message);
+        log.warn('%s (%d) send threw: %s', label, cmd, err && err.message);
         threw = true;
       },
     });

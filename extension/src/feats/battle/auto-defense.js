@@ -196,7 +196,7 @@ async function getPlayerInfoByUid(uid) {
   );
   if (threw) return null;
   if (!ret || !ret.ok) {
-    log.info('630 not ok. uid=%s;code=%s', uid, ret && ret.code);
+    log.info('630 not ok. uid=%s;code=%s;data=%s', uid, ret && ret.code, rejectText(ret) || '-');
     return null;
   }
   var d = safeParse(ret.data) || {};
@@ -260,12 +260,12 @@ async function buildSnapshot(pushData) {
  * @returns {Promise<{ok:boolean, why:string}>}
  */
 async function moveCity(x, y) {
-  if (net.isSending(CMD_MOVE_CITY_POSITION)) return { ok: false, why: '911 在途' };
+  if (net.isSending(CMD_MOVE_CITY_POSITION)) return { ok: false, why: '911 in-flight' };
   var hasItem = gameData.itemAmount(defense.ITEM_MOVE_CITY) > 0;
   var body = hasItem
     ? { itemId: defense.ITEM_MOVE_CITY, amount: 1, isPurchase: 0, x: x, y: y }
     : { itemId: defense.ITEM_MOVE_CITY, amount: 0, isPurchase: 1, vipShopBuy: 1, x: x, y: y };
-  if (!hasItem) log.info('911 迁城卡不足，改用钻石迁城 isPurchase=1');
+  if (!hasItem) log.info('911 move-city card short, fall back to diamond move-city isPurchase=1');
   var threw = false;
   var ret = await net.sendGuarded(CMD_MOVE_CITY_POSITION, body, {
     gate: false,
@@ -274,10 +274,10 @@ async function moveCity(x, y) {
       threw = true;
     },
   });
-  if (threw) return { ok: false, why: '迁城发包异常' };
-  if (!ret) return { ok: false, why: '迁城无应答' };
+  if (threw) return { ok: false, why: 'move-city send threw' };
+  if (!ret) return { ok: false, why: 'move-city no response' };
   if (ret.ok) return { ok: true, why: '' };
-  return { ok: false, why: '迁城被拒 ' + rejectText(ret) };
+  return { ok: false, why: 'move-city rejected ' + rejectText(ret) };
 }
 
 /**
@@ -311,7 +311,7 @@ function rejectText(ret) {
 
 /** 902 攻击拒因 → 可读串（含未发出哨兵） */
 function attackFailText(ret) {
-  if (ret && ret.code === march.NOT_SENT) return '发送超时或未发出';
+  if (ret && ret.code === march.NOT_SENT) return 'send timeout or not emitted';
   return rejectText(ret);
 }
 
@@ -334,19 +334,27 @@ async function strategyShield(snap) {
   if (st.kind === worldState.KIND.wushuang)
     return {
       result: 'skip',
-      reason: '无双峡谷内护盾不生效，跳过开盾(gen=' + st.gen + ')',
+      reason: 'shield has no effect in wushuang canyon, skip shield (gen=' + st.gen + ')',
       stop: false,
     };
   if (st.crossMap)
     return {
       result: 'skip',
-      reason: '此刻在跨服战场图上(kind=' + st.kind + ')，战场区域无法开盾',
+      reason:
+        'currently on cross-server battlefield (kind=' +
+        st.kind +
+        '), cannot shield in battle zone',
       stop: false,
     };
-  if (snap.shieldItem == null) return { result: 'fail', reason: '背包无可用护盾道具', stop: false };
-  if (snap.warFever) return { result: 'fail', reason: '战争狂热禁止开盾', stop: false };
+  if (snap.shieldItem == null)
+    return { result: 'fail', reason: 'no usable shield item in bag', stop: false };
+  if (snap.warFever) return { result: 'fail', reason: 'war fever forbids shielding', stop: false };
   if (snap.canShieldByGame === false)
-    return { result: 'fail', reason: '游戏判定不可开盾(危险区/跨服)', stop: false };
+    return {
+      result: 'fail',
+      reason: 'game judges shield unavailable (danger zone / cross-server)',
+      stop: false,
+    };
   // 战力闸门（面板勾选「跳过战力判断」则不判；定案 2/3：跳过≠放弃，仍顺延后续策略）
   var powerNote;
   if (cfg.skipPowerCheck) {
@@ -356,11 +364,16 @@ async function strategyShield(snap) {
     var ep = snap.enemy.power,
       mp = snap.me.power;
     if (ep == null) {
-      powerNote = ';power=unknown→assume-max(最悲观);me.power=' + mp + ',enemy.power=null'; // 敌战力取不到按无限高，照常开盾
+      powerNote =
+        ';power=unknown\u2192assume-max(pessimistic);me.power=' + mp + ',enemy.power=null'; // 敌战力取不到按无限高，照常开盾
     } else {
       powerNote = ';me.power=' + mp + ',enemy.power=' + ep;
       if (mp != null && ep <= mp)
-        return { result: 'skip', reason: '我方战力更高，无需开盾' + powerNote, stop: false };
+        return {
+          result: 'skip',
+          reason: 'my power higher, no need to shield' + powerNote,
+          stop: false,
+        };
     }
   }
   var threw = false;
@@ -375,11 +388,11 @@ async function strategyShield(snap) {
       },
     },
   );
-  if (threw) return { result: 'fail', reason: '开盾发包异常' + powerNote, stop: false };
-  if (!aliveFn()) return { result: 'fail', reason: '流程已暂停' + powerNote, stop: false };
+  if (threw) return { result: 'fail', reason: 'shield send threw' + powerNote, stop: false };
+  if (!aliveFn()) return { result: 'fail', reason: 'flow paused' + powerNote, stop: false };
   if (ret && ret.ok)
-    return { result: 'hit', reason: '开盾成功 itemId=' + snap.shieldItem + powerNote, stop: true };
-  return { result: 'fail', reason: '开盾被拒 ' + rejectText(ret) + powerNote, stop: false };
+    return { result: 'hit', reason: 'shield ok itemId=' + snap.shieldItem + powerNote, stop: true };
+  return { result: 'fail', reason: 'shield rejected ' + rejectText(ret) + powerNote, stop: false };
 }
 
 /**
@@ -391,24 +404,29 @@ async function strategyAttack(snap) {
   if (snap.marchesOut !== 0)
     return {
       result: 'skip',
-      reason: '有 ' + snap.marchesOut + ' 支部队在外，需全部回城',
+      reason: 'have ' + snap.marchesOut + ' marches out, all must return home',
       stop: false,
     };
-  if (snap.freeSlots < 1) return { result: 'fail', reason: '无空闲行军队列', stop: false };
+  if (snap.freeSlots < 1) return { result: 'fail', reason: 'no free march queue', stop: false };
   var ex = snap.enemy.x,
     ey = snap.enemy.y;
   if (ex == null || ey == null)
-    return { result: 'fail', reason: '敌主城坐标未知(630 未回坐标)', stop: false };
+    return { result: 'fail', reason: 'enemy home coords unknown (630 returned none)', stop: false };
   var offz = enemyOffZone(snap);
   if (offz)
     return {
       result: 'skip',
-      reason: '敌基地在 ' + offz + ' 区、非本区，跨区打不到，绕后顺延',
+      reason:
+        'enemy base in zone ' + offz + ', not current zone, cross-zone unreachable, defer flank',
       stop: false,
     };
   var marchData = new Battle().plan().preset(cfg.preset).adjust().build();
   if (!marchData.armyListNew.length)
-    return { result: 'fail', reason: '预设 #' + cfg.preset + ' 无兵可派', stop: false };
+    return {
+      result: 'fail',
+      reason: 'preset #' + cfg.preset + ' has no troops to send',
+      stop: false,
+    };
   var spot = await defense.findRelocatableSpot(
     { x: ex, y: ey },
     {
@@ -419,40 +437,51 @@ async function strategyAttack(snap) {
     },
   );
   if (!aliveFn())
-    return { result: 'fail', reason: '流程已暂停 enemy=(' + ex + ',' + ey + ')', stop: false };
+    return { result: 'fail', reason: 'flow paused enemy=(' + ex + ',' + ey + ')', stop: false };
   if (!spot)
     return {
       result: 'fail',
-      reason: '敌 ' + defense.NEAR_RADIUS + ' 单位内无可迁落脚 enemy=(' + ex + ',' + ey + ')',
+      reason:
+        'no relocatable spot within ' +
+        defense.NEAR_RADIUS +
+        ' units of enemy, enemy=(' +
+        ex +
+        ',' +
+        ey +
+        ')',
       stop: false,
     };
   try {
     nav.flyTo({ x: spot.x, y: spot.y, z: serverId() || null, subMap: null, click: false });
   } catch (e) {}
   var mv = await moveCity(spot.x, spot.y);
-  if (!aliveFn()) return { result: 'fail', reason: '迁城后流程已暂停', stop: false };
+  if (!aliveFn()) return { result: 'fail', reason: 'flow paused after move-city', stop: false };
   if (!mv.ok)
     return {
       result: 'fail',
-      reason: '迁城到(' + spot.x + ',' + spot.y + ')失败 ' + mv.why,
+      reason: 'move-city to (' + spot.x + ',' + spot.y + ') failed ' + mv.why,
       stop: false,
     };
   if (!(await waitLanded(spot.x, spot.y)))
-    return { result: 'fail', reason: '迁城回执成功但坐标未落地，放弃攻击防打空', stop: false };
+    return {
+      result: 'fail',
+      reason: 'move-city ack ok but coords not landed yet, skip attack to avoid hitting air',
+      stop: false,
+    };
   var marchType = marchApi.resolve(MARCH_TYPE_ATTACK_PLAYER, MARCH_FALLBACK);
   if (net.isSending(CMD_MARCH_WORLD_POINT))
-    return { result: 'fail', reason: '902 在途，稍后重试', stop: false };
+    return { result: 'fail', reason: '902 in-flight, retry later', stop: false };
   var ret = await march.attack({ marchType: marchType, target: { x: ex, y: ey }, data: marchData });
-  if (!aliveFn()) return { result: 'fail', reason: '攻击发包后流程已暂停', stop: false };
+  if (!aliveFn()) return { result: 'fail', reason: 'flow paused after attack send', stop: false };
   if (ret.ok)
     return {
       result: 'hit',
       reason:
-        '绕后攻击已发：敌(' +
+        'flank attack sent: enemy(' +
         ex +
         ',' +
         ey +
-        ') 自(' +
+        ') from (' +
         spot.x +
         ',' +
         spot.y +
@@ -460,7 +489,7 @@ async function strategyAttack(snap) {
         marchType,
       stop: true,
     };
-  return { result: 'fail', reason: '攻击被拒 ' + attackFailText(ret), stop: false };
+  return { result: 'fail', reason: 'attack rejected ' + attackFailText(ret), stop: false };
 }
 
 /**
@@ -472,11 +501,11 @@ async function strategyRelocate(snap) {
   if (snap.marchesOut !== 0)
     return {
       result: 'skip',
-      reason: '有 ' + snap.marchesOut + ' 支部队在外，需全部回城',
+      reason: 'have ' + snap.marchesOut + ' marches out, all must return home',
       stop: false,
     };
   if (snap.me.x == null || snap.me.y == null)
-    return { result: 'fail', reason: '我方主城坐标未知', stop: false };
+    return { result: 'fail', reason: 'my home coords unknown', stop: false };
   var ex = snap.enemy.x,
     ey = snap.enemy.y;
   var threat = ex != null && ey != null ? { x: ex, y: ey } : null;
@@ -490,19 +519,23 @@ async function strategyRelocate(snap) {
       alive: aliveFn, // 扇区轮换逐轮前检查：上层暂停/卸载即中断，不带着旧快照继续飞图发包
     },
   );
-  if (!aliveFn()) return { result: 'fail', reason: '流程已暂停', stop: false };
-  if (!spot) return { result: 'fail', reason: '无背向敌的可迁落脚', stop: false };
+  if (!aliveFn()) return { result: 'fail', reason: 'flow paused', stop: false };
+  if (!spot) return { result: 'fail', reason: 'no relocatable spot away from enemy', stop: false };
   var mv = await moveCity(spot.x, spot.y);
-  if (!aliveFn()) return { result: 'fail', reason: '迁城后流程已暂停', stop: false };
+  if (!aliveFn()) return { result: 'fail', reason: 'flow paused after move-city', stop: false };
   if (mv.ok) {
     try {
       nav.flyTo({ x: spot.x, y: spot.y, z: serverId() || null, subMap: null, click: false });
     } catch (e) {} // 迁成后镜头跟随到新落地点
-    return { result: 'hit', reason: '迁城逃避至(' + spot.x + ',' + spot.y + ')', stop: true };
+    return {
+      result: 'hit',
+      reason: 'relocate-away to (' + spot.x + ',' + spot.y + ')',
+      stop: true,
+    };
   }
   return {
     result: 'fail',
-    reason: '迁城到(' + spot.x + ',' + spot.y + ')失败 ' + mv.why,
+    reason: 'move-city to (' + spot.x + ',' + spot.y + ') failed ' + mv.why,
     stop: false,
   };
 }
@@ -518,35 +551,40 @@ async function strategyRelocate(snap) {
  * @returns {Promise<{result:string, reason:string, stop:boolean}>}
  */
 async function strategyCounter(snap) {
-  if (snap.freeSlots < 1) return { result: 'fail', reason: '无空闲行军队列', stop: false };
+  if (snap.freeSlots < 1) return { result: 'fail', reason: 'no free march queue', stop: false };
   var ex = snap.enemy.x,
     ey = snap.enemy.y;
   if (ex == null || ey == null)
-    return { result: 'fail', reason: '敌主城坐标未知(630 未回坐标)', stop: false };
+    return { result: 'fail', reason: 'enemy home coords unknown (630 returned none)', stop: false };
   var offz = enemyOffZone(snap);
   if (offz)
     return {
       result: 'skip',
-      reason: '敌基地在 ' + offz + ' 区、非本区，跨区打不到，反击顺延',
+      reason:
+        'enemy base in zone ' + offz + ', not current zone, cross-zone unreachable, defer counter',
       stop: false,
     };
   var marchData = new Battle().plan().preset(cfg.preset).adjust().build();
   if (!marchData.armyListNew.length)
-    return { result: 'fail', reason: '预设 #' + cfg.preset + ' 无兵可派', stop: false };
+    return {
+      result: 'fail',
+      reason: 'preset #' + cfg.preset + ' has no troops to send',
+      stop: false,
+    };
   var marchType = marchApi.resolve(MARCH_TYPE_ATTACK_PLAYER, MARCH_FALLBACK);
   if (net.isSending(CMD_MARCH_WORLD_POINT))
-    return { result: 'fail', reason: '902 在途，稍后重试', stop: false };
+    return { result: 'fail', reason: '902 in-flight, retry later', stop: false };
   var ret = await march.attack({ marchType: marchType, target: { x: ex, y: ey }, data: marchData });
-  if (!aliveFn()) return { result: 'fail', reason: '攻击发包后流程已暂停', stop: false };
+  if (!aliveFn()) return { result: 'fail', reason: 'flow paused after attack send', stop: false };
   if (ret.ok)
     return {
       result: 'hit',
       reason:
-        '原地反击已发：自(' +
+        'in-place counter sent: from (' +
         snap.me.x +
         ',' +
         snap.me.y +
-        ')→敌(' +
+        ')\u2192enemy(' +
         ex +
         ',' +
         ey +
@@ -554,7 +592,7 @@ async function strategyCounter(snap) {
         marchType,
       stop: true,
     };
-  return { result: 'fail', reason: '攻击被拒 ' + attackFailText(ret), stop: false };
+  return { result: 'fail', reason: 'attack rejected ' + attackFailText(ret), stop: false };
 }
 
 /** 按 sid 分派到具体策略 */
@@ -563,7 +601,7 @@ function runStrategy(sid, snap) {
   if (sid === SID.attack) return strategyAttack(snap);
   if (sid === SID.relocate) return strategyRelocate(snap);
   if (sid === SID.counter) return strategyCounter(snap);
-  return Promise.resolve({ result: 'fail', reason: '未知策略 id=' + sid, stop: false });
+  return Promise.resolve({ result: 'fail', reason: 'unknown strategy id=' + sid, stop: false });
 }
 
 /**
@@ -603,7 +641,12 @@ async function runFlow(pushData) {
       snap.me.power,
     );
     if (snap.shieldActive) {
-      decision(snap.marchId, 'autoDefense', 'skip', '护盾已在生效，本轮无需防御');
+      decision(
+        snap.marchId,
+        'autoDefense',
+        'skip',
+        'shield already active, no defense needed this round',
+      );
       return;
     }
     var order = normalizeOrder();
@@ -616,7 +659,7 @@ async function runFlow(pushData) {
           snap.marchId,
           STRATEGY_LABEL[sid] || '#' + sid,
           'not-selected',
-          '面板未勾选该策略',
+          'strategy not selected in panel',
           'debug',
         );
         continue;

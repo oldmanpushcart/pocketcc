@@ -27,11 +27,11 @@ async function handle(ctx) {
   if (!pri) return;
   ctx.markDone(key);
   // 溢出提前消耗必须先于选宝（幸运对「下一次奖励」生效，点完再翻已迟）；未溢出/不可用时无害返回
-  if (ctx.tryLuckyOverflow) await ctx.tryLuckyOverflow(ctx.round, '先手奖励');
+  if (ctx.tryLuckyOverflow) await ctx.tryLuckyOverflow(ctx.round, 'first-move-reward');
   var pos = 1 + Math.floor(Math.random() * 5); // 随机点宝箱（1..5）
   await ctx.sendPB(
     REQ_EVENT_PICK_REWARD,
     { treasureId: bits.int64(ctx.treasureId), round: ctx.round, pos: pos },
-    '先手选奖励',
+    'first-move-pick-reward',
   );
 }

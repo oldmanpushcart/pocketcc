@@ -501,6 +501,8 @@ export let netApi = null;
   /**
    * 内置实时观测回调（collecting().log() 的 tap 实现）：定宽列对齐 + dir/cmd 双色胶囊 + 载荷 %O 内联可展开；
    * 控制台为等宽字体，padEnd/padStart 补宽可靠；徽章内文本先补定宽使胶囊等宽，后列才钉得死
+   * 裸 console 豁免：本函数用 %c 双色胶囊 + %O 内联展开做实时 tap 观测，printf-only 的 createLog logger 无法表达，
+   * 且属录制/观测基础设施（非业务日志），登记为规范例外。
    * @param {object} e 采集条目
    */
   function tapLog(e) {

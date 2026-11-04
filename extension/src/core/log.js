@@ -1,9 +1,33 @@
-// 统一控制台日志：[POCKETCC://<MODULE>] <message>，message 一律英文（UI 文案不在此列）。
-// 三级 info/debug/warn 语义：
-//   info  = 生命周期、关键动作，以及**可预期的业务拒绝**（服务器对已成形请求返回的 code≠0：限额/已满/阶段锁/目标被抢/时序竞争等正常游戏态）。
-//   debug = 逐条调度细节。
-//   warn  = **真异常**：抛错、发送失败/未发出（CODE_NOT_SENT）、应答畸形/不可解析、依赖或配置缺失、未知枚举首次遭遇。
-//   ——即：「服务器说当前不能做」不是错误，走 info；只有「我们没能正确发出/收到/理解」才走 warn。
+// ══ extension 日志规范（开发者契约，分级判据按顺序走）══════════════════
+// 统一控制台日志：[POCKETCC://<MODULE>] <message>。
+//      · message 模板一律英文（UI 文案不在此列）；例外：经 %s 代入的游戏字典中文名（技能名/提示键等
+//        运行时数据值）视为数据不是模板，保留不改。
+//
+// ── 1) warn = 真异常：「我们没能正确发出/收到/理解」或「依赖断裂致引擎/流程停摆」
+//      · catch 到的抛错（threw / load failed / persist failed / save failed / write failed）
+//      · 发送失败或未发出（CODE_NOT_SENT、socket/桥接发送异常）
+//      · 应答畸形、不可解析、int64 精度疑虑首次遭遇
+//      · 游戏符号/表行/订阅通道（ctx.on.push/resp）不可用（install failed、engine idle）
+//      · 未知枚举首次遭遇
+// ── 2) info = 生命周期 + 可预期业务拒绝：「服务器说当前不能做」
+//      · 启动/停止/安装/关键动作完成
+//      · 服务器对已成形请求返回 code≠0：限额/已满/阶段锁/目标被抢/时序竞争/活动未开
+//        （必带 code，并以 `data=%s` 带上应答载荷文案——用 core/util.js 的 rejectText(ret)：
+//         优先 PBV2 多语言键 ret.reason，否则 safeStringify(ret.data)；被拒态 data 常是关键错误文案，只打 code 无法定位病因）
+// ── 3) debug = 调度细节 + 循环态不可动作（随资源回收自愈的跳过：no free slot、材料不足、门控不过、退避中）
+//
+// ── debug 故障可诊断条款 ──
+//      · debug 不吞真异常：凡属第 1) 条的故障线索一律 warn，不得为降噪把抛错/写盘失败压在 debug。
+//      · 每个 skip/abort/reject/return 出口必有日志（debug 起步，高频循环靠节流或 log-collect 折叠），
+//        且必带决策上下文：cmd 号、code、坐标(x,y)、目标/队伍 ID、状态枚举值——
+//        保证 dashcam 日志流（minLvl=debug）单轨即可还原引擎「为什么没动」。
+//      · warn 消息须含可 grep 的定位前缀（协议号/模块动作名），供 dashcam-rec-analysis 直接过滤。
+//
+// ── 硬约束 ──
+//      · 判据是 code 而非 cmd；「服务器拒绝」与「CODE_NOT_SENT」分离处理。
+//      · 业务代码禁止裸 console.*；登记例外：bridge.js（MV3 service worker 无法复用 MAIN logger）、
+//        core/devtools.js（交互式诊断脚本）、core/net.js L513 附近调试 dump、core/chat/log.js（chat 包内收发开关，允许中文）。
+//      · 录制基础设施自身日志必须 createLog(tag,{quiet:true}) 防自录回声。
 //
 // fmt 若含 printf 占位（%s/%d/%i/%f/%%），本模块**自己完成替换**，不再依赖浏览器 console 的格式化：
 //   真机踩坑——游戏页/上报链路拿到的日志里 "%s/%d" 原样残留、参数被追加在尾部（如 auto-farm/floatcar 的 warn），
@@ -13,9 +37,9 @@
 
 /**
  * @typedef {object} Logger
- * @property {function(string, ...*):void} info 生命周期/关键动作 + 可预期业务拒绝
- * @property {function(string, ...*):void} debug 逐条调度细节
- * @property {function(string, ...*):void} warn 真异常（抛错/未发出/畸形/依赖缺失/未知枚举首遇）
+ * @property {function(string, ...*):void} info 生命周期/关键动作 + 可预期业务拒绝（带 code/reason）
+ * @property {function(string, ...*):void} debug 调度细节 + 循环态不可动作（skip/abort 出口必带决策上下文）
+ * @property {function(string, ...*):void} warn 真异常（抛错/未发出/畸形/依赖断裂停摆/未知枚举首遇）
  */
 
 // ── 外运 sink（dashcam 日志上送的唯一 tee 点）───────────────────────

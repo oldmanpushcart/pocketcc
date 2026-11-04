@@ -567,7 +567,7 @@ async function openRefugeeCamp(seg, taken) {
   if (!letter || item.amount(letter) <= 0) return null; // 背包无求救信
   if (net.isSending(CMD_ITEM_USE)) return null; // 815 在途（可能与补药撞车）→ 本轮跳过
   log.info(
-    '难民营：用一张求救信(id=%d)发 815 开营，等 10802 落点（超时 %dms）。',
+    'refugee camp: using one distress letter (id=%d), send 815 to open camp, waiting for 10802 landing (timeout %dms).',
     letter,
     cfg.refugeeWaitMs,
   );
@@ -584,18 +584,18 @@ async function openRefugeeCamp(seg, taken) {
     }, cfg.refugeeWaitMs);
     refugeeWaiters.push(wrapper);
     net.send(CMD_ITEM_USE, { itemid: letter, amount: 1 }).catch(function (err) {
-      log.debug('815 refugee letter use failed. %s', err && err.message);
+      log.warn('815 refugee letter use threw. %s', err && err.message);
     });
   });
   if (!aliveFn()) return null;
   if (!pos) {
-    log.info(
-      '难民营：已发 815 但 %dms 内未收到 10802 落点推送，本轮放弃该营地。',
+    log.debug(
+      'refugee camp: 815 sent but no 10802 landing push within %dms, give up this camp this round.',
       cfg.refugeeWaitMs,
     );
     return null;
   }
-  log.info('难民营：10802 回落点 x=%d y=%d。', pos.x, pos.y);
+  log.info('refugee camp: 10802 landing at x=%d y=%d.', pos.x, pos.y);
   var key = pos.x + ',' + pos.y;
   if (blacklist.has(key) || taken.has(key)) return null;
   return pos;
@@ -658,7 +658,7 @@ async function useStaminaItem(itemId) {
     { itemid: itemId, amount: 1 },
     {
       onError: function (err) {
-        log.debug('815 use failed. %s', err && err.message);
+        log.warn('815 use threw. %s', err && err.message);
       },
     },
   );
@@ -747,7 +747,7 @@ async function cyclePass() {
       if (!refugeeNoLetterNoted) {
         refugeeNoLetterNoted = true;
         log.info(
-          '难民营已勾选，但背包读取求救信(id=%d)数量=%d，判为无信跳过该行。若确有信，多为登录后工具背包未同步进 UserData._items（getItemAmount 只读 _items）——用掉一张信触发 10401 PUSH_TOOL 后即可恢复读取。',
+          'refugee camp selected, but inventory reads distress letter (id=%d) amount=%d, treated as no-letter and this row is skipped. If letters really exist, it is usually that the tool bag was not synced into UserData._items after login (getItemAmount only reads _items) — using one letter to trigger 10401 PUSH_TOOL will restore reading.',
           seg.openItem,
           item.amount(seg.openItem),
         );

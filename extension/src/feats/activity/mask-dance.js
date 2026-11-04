@@ -51,7 +51,7 @@
  * 合规：只读游戏数据（经 game-api ACL）+ 发 2503/901，不调任何 Update/Delete、不 OpenUI。
  *   生命周期由 reactor 托管；pause 只清待排空队列（不保留陈旧坐标快照）。
  */
-import { CODE_NOT_SENT, todayStr, safeParse } from '../../core/util.js';
+import { CODE_NOT_SENT, todayStr, safeParse, rejectText } from '../../core/util.js';
 import { createLog } from '../../core/log.js';
 import { gameData, l10n, bits, worldMap } from '../../core/game-api.js';
 import { getUid } from '../../core/player.js';
@@ -580,7 +580,7 @@ async function locateCityReward(x, y, pid, sid) {
   // viewLevel 取 0 全量点，防聚合档把目标城精简掉（见 PROBE_VIEW_LEVEL 注释）
   var r = await map.fetchWindow(net, x, y, { k: sid | 0, viewLevel: PROBE_VIEW_LEVEL });
   if (!r.ok) {
-    log.debug('901 probe not ok. x=%d;y=%d;code=%s', x, y, r.code);
+    log.debug('901 probe not ok. x=%d;y=%d;code=%s;data=%s', x, y, r.code, rejectText(r) || '-');
     return { kind: 'probe' };
   }
   for (var pt of r.points) {
@@ -704,7 +704,7 @@ async function claimOne(cand) {
       protocol: 'sendPBV2',
       gate: false,
       onError: function (err) {
-        log.debug('cmd 2503 send failed: %s', err && err.message);
+        log.warn('cmd 2503 send threw: %s', err && err.message);
         threw = true;
       },
     },

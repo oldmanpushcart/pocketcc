@@ -536,18 +536,18 @@ export class MiningEngine {
 
   async #execRewardSelf(task) {
     var ret = await this.#env.ask(CMD_REWARD, { id: task.id }, 'reward-self');
-    log.debug(ret.ok ? 'reward-self ok.' : 'reward-self rejected. code=%d', ret.code);
+    log.debug(ret.ok ? 'reward-self ok.' : 'reward-self rejected. code=%d;data=%s', ret.code, rejectText(ret.data));
   }
   async #execRewardOther(task) {
     var ret = await this.#env.ask(CMD_OTHER_GATHER_REWARD, { pos: task.pos }, 'reward-other');
-    log.debug(ret.ok ? 'reward-other ok.' : 'reward-other rejected. code=%d', ret.code);
+    log.debug(ret.ok ? 'reward-other ok.' : 'reward-other rejected. code=%d;data=%s', ret.code, rejectText(ret.data));
   }
   async #execRewardAlliance() {
     var ret = await this.#env.ask(CMD_ALLIANCE_REWARD, {}, 'alliance-reward');
     if (ret.ok) log.debug('alliance-reward ok.');
     else {
       this.#blockedToday.add('alliance-reward');
-      log.debug('alliance-reward rejected. code=%d', ret.code);
+      log.debug('alliance-reward rejected. code=%d;data=%s', ret.code, rejectText(ret.data));
     }
   }
 
@@ -563,7 +563,7 @@ export class MiningEngine {
     var sel = await this.#pickHeroesFor(task);
     if (!this.#env.alive()) return;
     if (!sel || !sel.ok || !sel.heroes.length) {
-      log.info('occupy skip: %s', sel ? sel.reason : '详情不可用');
+      log.info('occupy skip: %s', sel ? sel.reason : 'detail unavailable');
       return;
     }
     var ret = await this.#env.ask(

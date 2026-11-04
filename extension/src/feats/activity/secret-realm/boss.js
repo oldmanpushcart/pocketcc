@@ -403,7 +403,7 @@ export class BossEngine {
       this.#blockedNow.push({ bossId: t.bossId, kind: t.kind });
     }
     env.log.debug(
-      'boss attack: no target passes area gate (platEsr=%s, candidates=%s [bossId@距当前平台格数]).',
+      'boss attack: no target passes area gate (platEsr=%s, candidates=%s [bossId@tiles-from-current-platform]).',
       String(platEsr),
       cand
         .slice(0, 6)

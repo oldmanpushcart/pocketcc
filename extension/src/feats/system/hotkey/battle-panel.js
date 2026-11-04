@@ -105,7 +105,7 @@ function clickNode(node) {
   try {
     bnode.emit('click', btn);
   } catch (e) {
-    log.debug('emit click failed', e);
+    log.warn('emit click threw', e);
   }
   return true;
 }
@@ -202,7 +202,7 @@ function handler(e) {
         return list ? resolveNode(list, [hk.digit - 1]) : null;
       })();
   if (!target) {
-    log.debug('hotkey hit but node missing. digit=%s;dispatch=%s', hk.digit, hk.dispatch);
+    log.warn('hotkey hit but node missing. digit=%s;dispatch=%s', hk.digit, hk.dispatch);
     return false;
   }
 

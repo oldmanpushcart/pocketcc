@@ -10,7 +10,7 @@
  * 每目标可配每日参与上限（0=无限），跨日自动清零，持久化到 pocketcc.feat.allianceRally.daily。
  * 延迟期内 reactor pause → alive=false → 到点自然放弃；信号包络只存标量。
  */
-import { todayStr } from '../../core/util.js';
+import { todayStr, rejectText } from '../../core/util.js';
 import { createLog } from '../../core/log.js';
 import { game } from '../../core/game.js';
 import { reactor } from '../../core/reactor.js';
@@ -393,7 +393,7 @@ async function joinFlow(key, teamId, expireTime) {
       );
     } else {
       // 加入被拒（目标已满/已过期/不可加入等 code=3）属预期业务态，非错误：降为 info（真实网络失败另由 sendJoin 的 join send error warn 兜底）
-      log.info('join rejected. target=%s;teamId=%s;code=%d', key, teamId, ret.code);
+      log.info('join rejected. target=%s;teamId=%s;code=%d;data=%s', key, teamId, ret.code, rejectText(ret) || '-');
     }
   } finally {
     pendingTeamIds.delete(teamId);

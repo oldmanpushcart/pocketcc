@@ -38,7 +38,7 @@
  * 合规：只读游戏数据（经 game-api ACL）+ 直发协议；编队走 core/battle.js 从预设队伍实时重算造数据（不碰游戏本地态、不 OpenUI）。
  *   6476 派真实部队出征战斗、消耗兵力，属派行军类 → 受战斗模式门控 offInCombat:true（战斗态由 reactor 整体 pause，退出即 resume 补扫）。
  */
-import { CODE_NOT_SENT, sleep, todayStr, safeStringify } from '../../core/util.js';
+import { CODE_NOT_SENT, sleep, todayStr, safeStringify, rejectText } from '../../core/util.js';
 import { createLog } from '../../core/log.js';
 import { bus, EVT } from '../../core/bus.js';
 import { storage } from '../../core/storage.js';
@@ -436,7 +436,7 @@ async function send(cmd, body) {
   return await net.sendGuarded(cmd, body, {
     protocol: 'sendPBV2',
     onError: function (err) {
-      log.debug('cmd %d send failed: %s', cmd, err && err.message);
+      log.warn('cmd %d send threw: %s', cmd, err && err.message);
     },
   });
 }
@@ -464,7 +464,7 @@ async function sendLegacy(cmd, body) {
   if (!n) return { ok: false, code: CODE_NOT_SENT, data: null };
   var r = await n.sendGuarded(cmd, body, {
     onError: function (err) {
-      log.debug('cmd %d send failed: %s', cmd, err && err.message);
+      log.warn('cmd %d send threw: %s', cmd, err && err.message);
     },
   });
   var d = r.data;
@@ -911,7 +911,7 @@ async function doScan() {
     if (!aliveFn()) return;
     if (threatOn) await probeSelf(); // 解耦：每轮一进来先探我方快照（不依赖配额/新列表），保证面板展示与后续判定都有数据
     if (daily.maxDaily <= 0) {
-      log.debug('escort_truck_func_type row unavailable, skip scan.');
+      log.warn('escort_truck_func_type row unavailable, skip scan.');
       queue.length = 0;
     } else if (dailyLeft() <= 0) {
       log.debug('daily loot exhausted (%d/%d), stop scan.', daily.used, daily.maxDaily);
@@ -930,7 +930,7 @@ async function doScan() {
         bus.emit(EVT.UI_REFRESH);
       } // 真实列表往返（含空/拒）计一次刷新预算，同时推战力缓存年龄
       if (!ret.ok || !ret.data || !Array.isArray(ret.data.lootTruckViewList)) {
-        log.debug('loot list empty/rejected. cmd=%d;code=%d', cmd, ret.code);
+        log.debug('loot list empty/rejected. cmd=%d;code=%d;data=%s', cmd, ret.code, rejectText(ret) || '-');
         queue.length = 0;
       } else {
         listOpened = true;

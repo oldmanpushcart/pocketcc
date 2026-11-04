@@ -486,7 +486,7 @@ export class PilotEngine {
               const bid = Number(s.bossId) || 0;
               if (bid && !this.#bossDone[bid]) {
                 this.#bossDone[bid] = 1;
-                env.log.info('pilot: BOSS %d 已到场，计入跳过账（guard_policy 口径）。', bid);
+                env.log.info('pilot: BOSS %d arrived on site, counted in skip ledger (guard_policy).', bid);
               }
               break;
             }
@@ -546,7 +546,7 @@ export class PilotEngine {
           return;
         }
         env.log.info(
-          'pilot: 战败已发 8552 复活（第 %d/%d 次，code=%s）。',
+          'pilot: defeat, 8552 revive sent (attempt %d/%d, code=%s).',
           reviveNum + 1,
           limit,
           String(code),
@@ -554,7 +554,7 @@ export class PilotEngine {
       })
       .catch(function (e) {
         self.#reviveInFlight = false;
-        env.log.debug('pilot: 8552 复活抛出：%s', (e && e.message) || e);
+        env.log.warn('pilot: 8552 revive threw: %s', (e && e.message) || e);
       });
   }
 
@@ -722,7 +722,7 @@ export class PilotEngine {
     if (!rows.length) {
       this.#note(
         'no-building-table',
-        'pilot: 建筑表 enigma_secret_realm_building 尚未下发，商店锚点待重试。',
+        'pilot: building table enigma_secret_realm_building not delivered yet, shop anchors pending retry.'
       );
       return;
     }
@@ -740,7 +740,7 @@ export class PilotEngine {
     if (!out.length) {
       this.#note(
         'no-shop-anchor',
-        'pilot: 建筑表里没有本组(build_type=3, group=' + g + ')的商店行，商店档退回视口 161。',
+        'pilot: building table has no shop row for this group (build_type=3, group=' + g + '), shop tier falls back to viewport 161.'
       );
       return;
     }
@@ -755,7 +755,7 @@ export class PilotEngine {
         this.#shopLedger.set(sk, { time: sec, sausage: 0, piece: 0, visited: 0, sausageShelf: 0 });
       }
     }
-    env.log.info('pilot: 商店锚点已装载 %d 个（group=%d）→ %s', out.length, g, JSON.stringify(out));
+    env.log.info('pilot: shop anchors loaded: %d (group=%d) -> %s', out.length, g, JSON.stringify(out));
   }
 
   /**
@@ -838,7 +838,7 @@ export class PilotEngine {
       if (!this.#viewOff && this.#viewMiss >= tuning.driveViewOffAfter) {
         this.#viewOff = true;
         env.log.warn(
-          'pilot: 901 GET_WORLD_INFO 连续 %d 次无应答 → 判定主动视口不可用，降级为 push+锚点模式（商店/BOSS 仍可开，巡航退回 push+探索）。%ds 后重试。',
+          'pilot: 901 GET_WORLD_INFO got no ack %d times in a row -> active view deemed unavailable, degrade to push+anchor mode (shops/BOSS still open, cruise falls back to push+explore). retry after %ds.',
           this.#viewMiss,
           Math.round(tuning.driveViewRetryMs / 1000),
         );
@@ -848,7 +848,7 @@ export class PilotEngine {
     this.#viewMiss = 0;
     if (this.#viewOff) {
       this.#viewOff = false;
-      env.log.info('pilot: 901 主动视口已恢复。');
+      env.log.info('pilot: 901 active view recovered.');
     }
     this.#ingestView(v, cx, cy);
   }
@@ -1423,11 +1423,11 @@ export class PilotEngine {
         this.#shopErrandDone = true;
         this.#note(
           'shop-expired',
-          'pilot: 大BOSS 前商店勤务已过窗口（elapsed ' +
+          'pilot: pre-bigBOSS shop errand window passed (elapsed ' +
             Math.round(elapsedSec) +
             's > ' +
             Math.round(last * 1.5) +
-            's），本场不再为它开车。reason=shop_expired',
+            's), no more driving for it this match. reason=shop_expired',
         );
       } else {
         return 'errand';
@@ -1441,9 +1441,9 @@ export class PilotEngine {
         this.#shopCoolUntil = now + coolMs;
         this.#note(
           'shop-all-tried',
-          'pilot: 四家店都已试过（买到过香肠或已知不卖）却仍缺料，进 ' +
+          'pilot: all four shops already tried (bought sausage or known not sold) yet still short on material, enter ' +
             Math.round(coolMs / 1000) +
-            's 长冷却。reason=shop_all_tried',
+            's long cooldown. reason=shop_all_tried',
         );
         return '';
       }
@@ -1977,11 +1977,11 @@ export class PilotEngine {
     if (!cand) {
       if (kind === 'return') {
         this.#returnPending = false;
-        this.#note('return-none', 'pilot: 回攻无可落平台，转常规重评。reason=no_platform');
+        this.#note('return-none', 'pilot: counter-attack has no landable platform, switch to regular re-eval. reason=no_platform');
       } else {
         this.#note(
           'none|' + kind,
-          'pilot: ' + kind + ' 档在候选池内无可用点，驻留重扫。reason=no_candidate',
+          'pilot: ' + kind + ' tier has no usable point in candidate pool, hold and rescan. reason=no_candidate',
         );
       }
       return;
@@ -1993,7 +1993,7 @@ export class PilotEngine {
       this.#lastDispatch = kind + '|same(' + curKey + ')';
       this.#note(
         'same|' + kind,
-        'pilot: ' + kind + ' 档选中了当前所在点 (' + curKey + ')，已在位，不发 8521，直接进驻留。',
+        'pilot: ' + kind + ' tier picked the current location (' + curKey + '), already in place, do not send 8521, go straight to dwell.',
       );
       this.#enterWork(curKey);
       return;
@@ -2050,9 +2050,9 @@ export class PilotEngine {
           self.#clearTo();
           self.#note(
             'realm-closed',
-            'pilot: 秘境已进入封闭阶段（服务端回 ' +
+            'pilot: realm entered closing phase (server returned ' +
               REJ_BATTLEFIELD_CLOSING +
-              '「战场即将封闭」），行军一律不受理，本场驱动停手。reason=realm_closed',
+              ' "battlefield closing soon"), all marches rejected, this match stops driving. reason=realm_closed',
           );
           wake();
           return;
@@ -2071,7 +2071,7 @@ export class PilotEngine {
           //   ⚠ BOSS 本体坐标来自权威态，撞 159 并不代表「BOSS 不存在」→ 只黑平台/巡航点，不黑 BOSS
           if (self.#toTag !== 'boss') self.#dayBlack[self.#toXY] = 1;
           self.#dropShopAt(self.#toXY);
-          env.log.info('pilot: (%s) 目标点不存在(159)，本场拉黑。', self.#toXY);
+          env.log.info('pilot: (%s) target point not exist (159), blacklisted for this match.', self.#toXY);
           self.#clearTo();
           self.#cooldownUntil = Date.now() + tuning.rejectBackoffMs;
           wake();
@@ -2081,7 +2081,7 @@ export class PilotEngine {
           // §11 163 不可行军：竞品语义「写 cd + 60s marched 冷却」而非“本场拉黑”。
           //   #marched 已在 #dispatch 前写入（L2002），60s 内自然不重选同点；不再写 #dayBlack。
           env.log.info(
-            'pilot: (%s) 不可行军(163)，%ds 内不重选。',
+            'pilot: (%s) cannot march (163), no re-pick for %ds.',
             self.#toXY,
             Math.round(tuning.driveMarchedTtlMs / 1000),
           );
@@ -2096,7 +2096,7 @@ export class PilotEngine {
           //   故与 163 同档「60s marched 冷却」（#marched 已在派发前写入）而非本场拉黑；
           //   #pickPlane 只滤「与 BOSS 不同区域」，不防「与当前停泊同区域」，拉黑会白丢一个稍后即可用的平台。
           env.log.info(
-            'pilot: (%s) 同区域平台互挪禁止(209)，%ds 内不重选（不拉黑，挪开后可回心转意）。',
+            'pilot: (%s) same-area platform move forbidden (209), no re-pick for %ds (not blacklisted, may turn favorable after moving).',
             self.#toXY,
             Math.round(tuning.driveMarchedTtlMs / 1000),
           );
@@ -2108,14 +2108,14 @@ export class PilotEngine {
         if (rej === REJ_NEED_PLANE || rej === REJ_BOSS_AREA || rej === REJ_PLANE_TAKEN) {
           // 平台侧问题：不黑 BOSS 本体，只黑这个平台，下一拍会选另一个平台
           if (self.#toTag === KIND_BOSS_PLANE) self.#dayBlack[self.#toXY] = 1;
-          env.log.info('pilot: (%s) 平台不可用(%s)，本场拉黑该平台，改选别的。', self.#toXY, rej);
+          env.log.info('pilot: (%s) platform unavailable (%s), blacklist this platform for this match, pick another.', self.#toXY, rej);
           self.#clearTo();
           self.#cooldownUntil = Date.now() + tuning.rejectBackoffMs;
           wake();
           return;
         }
         env.log.info(
-          'pilot: goto %s 被拒 (%s)，%ds 后重评。',
+          'pilot: goto %s rejected (%s), re-evaluate after %ds.',
           self.#toKind,
           rej || 'code ' + (r && r.code),
           Math.round(tuning.rejectBackoffMs / 1000),
@@ -2125,7 +2125,7 @@ export class PilotEngine {
         wake();
       })
       .catch(function (e) {
-        env.log.debug('pilot: 8521 ack threw: %s', (e && e.message) || e);
+        env.log.warn('pilot: 8521 ack threw: %s', (e && e.message) || e);
         if (self.#toXY === myKey) {
           self.#clearTo();
           self.#cooldownUntil = Date.now() + tuning.rejectBackoffMs;
@@ -2146,7 +2146,7 @@ export class PilotEngine {
       return tileKey(s.x, s.y) !== key;
     });
     if (this.#shops.length !== before) {
-      self.#env.log.info('pilot: 商店锚点剔除 (%s)，剩 %d 家。', key, this.#shops.length);
+      self.#env.log.info('pilot: shop anchor removed (%s), %d left.', key, this.#shops.length);
     }
   }
 
@@ -2209,7 +2209,7 @@ export class PilotEngine {
     if (this.#escapeFrom && key === tileKey(this.#escapeFrom.x, this.#escapeFrom.y)) {
       this.#escapeFrom = null;
     }
-    env.log.info('pilot: arrived %s (pt=%s)，进入 %s 相位。', key, pt, this.#workMode);
+    env.log.info('pilot: arrived %s (pt=%s), enter %s phase.', key, pt, this.#workMode);
   }
 
   /**
@@ -2275,7 +2275,7 @@ export class PilotEngine {
       }
       this.#workEmptyAt = 0;
       if (now >= this.#workDeadline) {
-        env.log.info('pilot: %s 未探到拿空、兜底上限离点。reason=empty_ceiling', this.#toXY);
+        env.log.info('pilot: %s scouted empty, hit fallback ceiling, leave point. reason=empty_ceiling', this.#toXY)
         return { leave: true, sleep: 0 };
       }
       return { leave: false, sleep: Math.min(tuning.driveScanMs, this.#workDeadline - now) };
@@ -2621,7 +2621,7 @@ export class PilotEngine {
     //   E1 接面板下拉时仍走同一路径（改 config 后需重启驾驶才生效）。
     if (!this.#planIdUsed) {
       this.#planIdUsed = (env.cfg().drive || {}).drivePlan || 'enigmaB_default';
-      env.log.info('pilot: 本次开车方案=%s（配置期选定，整场不热切）', this.#planIdUsed);
+      env.log.info('pilot: this drive plan=%s (picked at config time, no hot-switch during the match)', this.#planIdUsed)
     }
     const plan = PLANS[this.#planIdUsed] || PLANS.enigmaB_default;
     this.#lastStageIds = [];
@@ -2657,7 +2657,7 @@ export class PilotEngine {
         );
       } catch (e) {
         env.log.warn(
-          'pilot: 目标原语 %s 抛错，顺延下一档。err=%s',
+          'pilot: objective primitive %s threw, defer to next tier. err=%s',
           s.obj,
           String((e && e.message) || e),
         );
@@ -2683,7 +2683,7 @@ export class PilotEngine {
           //     其 `viewAt` 判据又会恒真导致无限空转，故删除。）
           this.#note(
             'no-plane',
-            'pilot: BOSS 开台读秒窗内找不到可用平台（视口无 176/174 或全被占），本拍放弃上平台。reason=no_plane',
+            'pilot: no usable platform found within BOSS open-countdown window (viewport lacks 176/174 or all occupied), give up boarding this tick. reason=no_plane',
           );
         }
         continue;
@@ -2720,13 +2720,13 @@ export class PilotEngine {
         this.#lastBranch = 'explore';
         this.#note(
           'explore',
-          'pilot: 视口内无可去点已超 ' +
+          'pilot: no go-to point in viewport for over ' +
             Math.round(tuning.driveIdleExploreMs / 1000) +
-            's，主动开往 (' +
+            's, proactively drive to (' +
             cand.x +
             ',' +
             cand.y +
-            ') 换视野。reason=idle_explore',
+            ') to refresh view. reason=idle_explore',
         );
       } else {
         if (dg) this.#stage = dg.stage; // bossPlaneLead 命中：stage='boss-lead'（L2368-2373）
@@ -2734,7 +2734,7 @@ export class PilotEngine {
         if (!dg || !dg.noIdle) this.#idleSince = 0; // 日常链命中才清；开台拍不清（现状如此）
         if (s.id === 'shopTail' && why) {
           env.log.info(
-            'pilot: 链尾去店 reason=%s gap=%ss（不抢采井/打野）',
+            'pilot: chain-tail go-shop reason=%s gap=%ss (do not preempt mine/wild)',
             why,
             String(this.#shopGapSec(now)),
           );
@@ -2857,7 +2857,7 @@ export class PilotEngine {
       }
       if (now - this.#toAt > tuning.driveMarchTimeoutMs) {
         this.#lastBranch = 'to-timeout';
-        env.log.info('pilot: goto %s 超时未到，记消费重评。reason=march_timeout', this.#toKind);
+        env.log.info('pilot: goto %s timed out without arriving, record spend and re-evaluate. reason=march_timeout', this.#toKind)
         this.#consume(this.#toXY);
         this.#clearTo();
         return tuning.driveScanMs;
@@ -2910,7 +2910,7 @@ export class PilotEngine {
     this.#gateState('notarrived', false, '');
     if (this.#captureBusy()) {
       this.#lastBranch = 'capture';
-      this.#note('capturing', 'pilot: 正在拍异能兽/BOSS，等拍完再挪点。');
+      this.#note('capturing', 'pilot: capturing enigma-beast/BOSS now, wait until capture done before relocating.');
       return 3000;
     }
     if (env.secret.isSecretSending(CMD_MARCH_MOVE)) {
@@ -2920,7 +2920,7 @@ export class PilotEngine {
       if (stuck >= tuning.driveMarchTimeoutMs) {
         // 幽灵条目自愈：NetMgrSimple 只在收到同 cmd 应答时清缓存，应答丢失即永堵
         env.log.warn(
-          'pilot: 8521 通道在途标记堵塞 %ds 且已停泊（疑似幽灵条目），绕闸发一笔探测包自愈。',
+          'pilot: 8521 in-flight marker stuck %ds while already docked (suspected ghost entry), bypass gate and send one probe packet to self-heal.',
           Math.round(stuck / 1000),
         );
         this.#inflightStuckSince = 0;
@@ -3125,7 +3125,7 @@ export class PilotEngine {
     this.#powerGapAt = now + ttl;
     this.#powerGapVal = mine - foe;
     env.log.info(
-      'pilot: check_power 战力差=%d（本队 %d vs 来犯 %d，缓存 %dms）。',
+      'pilot: check_power power-delta=%d (ours %d vs invader %d, cached %dms).',
       mine - foe,
       mine,
       foe,
@@ -3218,10 +3218,10 @@ export class PilotEngine {
     const tail = detail ? ' ' + detail : '';
     if (on && !this.#told[k]) {
       this.#told[k] = 1;
-      this.#env.log.info('pilot: 闸[%s]拦住，方向盘不动。reason=%s%s', name, name, tail);
+      this.#env.log.info('pilot: gate[%s] blocked, hold steering. reason=%s%s', name, name, tail);
     } else if (!on && this.#told[k]) {
       delete this.#told[k];
-      this.#env.log.info('pilot: 闸[%s]放行。reason=%s%s', name, name, tail);
+      this.#env.log.info('pilot: gate[%s] passed. reason=%s%s', name, name, tail);
     }
   }
 
@@ -3329,7 +3329,7 @@ export class PilotEngine {
     });
     this.#cycle.kick();
     env.log.info(
-      'pilot started (锚点表商店 + BOSS 权威坐标 + 901 主动视口; boss/shop/cruise/explore; leader-only).',
+      'pilot started (anchor-table shops + BOSS authoritative coords + 901 active view; boss/shop/cruise/explore; leader-only).',
     );
   }
 

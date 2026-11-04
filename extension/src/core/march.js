@@ -193,7 +193,7 @@ function _fetch() {
     try {
       ret = await n.send(CMD_GET_ALL_MY_MARCH_INFO, {});
     } catch (err) {
-      log.debug('856 send failed. %s', err && err.message);
+      log.warn('856 send failed. %s', err && err.message);
       return null;
     }
     if (!ret || !ret.ok) return null;

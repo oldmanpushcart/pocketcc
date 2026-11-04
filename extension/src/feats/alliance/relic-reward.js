@@ -182,7 +182,7 @@ function configure(partial) {
 async function sendRaw(cmd, body) {
   var ret = await net.sendGuarded(cmd, body, {
     onError: function (err) {
-      log.debug('cmd %d send failed: %s', cmd, err && err.message);
+      log.warn('cmd %d send threw: %s', cmd, err && err.message);
     },
   });
   return { ok: ret.ok, code: ret.code, data: ret.data, payload: payloadOf(ret) };

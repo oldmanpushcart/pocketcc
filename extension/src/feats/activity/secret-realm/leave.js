@@ -177,14 +177,14 @@ export class LeaveEngine {
         if (code === CODE_NOT_SENT || code == null) {
           // 未上线（被频控/超时）：保留待发，下一拍重选重发（选择是可逆动作，反复设同一份不伤态）
           self.#inFlight = false;
-          env.log.debug('leave: 8581 带出选择未真正发出（频控/超时），稍后重试。');
+          env.log.debug('leave: 8581 carry-out selection not actually sent (rate-limited/timeout, code=%s), retry later.', String(code));
           return undefined;
         }
         if (Number(code) !== 0) {
           self.#inFlight = false;
           self.#packDone = true;
           env.log.info(
-            'leave: 8581 带出选择被拒（%s），本场不再尝试自动离场。',
+            'leave: 8581 carry-out selection rejected (%s), no more auto-leave this match.',
             (r && r.reason) || 'code ' + code,
           );
           return undefined;
@@ -198,20 +198,20 @@ export class LeaveEngine {
         const lcode = rr && rr.code;
         if (Number(lcode) === 0) {
           self.#packDone = true;
-          env.log.info('leave: 拿满已择优带出并发 8589 离场（整场退出）。');
+          env.log.info('leave: bag filled, optimally carried out and 8589 leave sent (whole-match exit).');
         } else if (lcode === CODE_NOT_SENT || lcode == null) {
-          env.log.debug('leave: 8589 离场未真正发出（频控/超时），下一拍重试整条链路。');
+          env.log.debug('leave: 8589 leave not actually sent (rate-limited/timeout, code=%s), retry the whole chain next tick.', String(lcode));
         } else {
           self.#packDone = true;
           env.log.info(
-            'leave: 8589 离场被拒（%s），本场不再尝试。',
+            'leave: 8589 leave rejected (%s), no more attempts this match.',
             (rr && rr.reason) || 'code ' + lcode,
           );
         }
       })
       .catch(function (e) {
         self.#inFlight = false;
-        env.log.warn('leave: 离场链路异常。', e);
+        env.log.warn('leave: leave chain threw.', e);
       });
   }
 

@@ -231,7 +231,7 @@ async function refreshFearStarCount() {
     {},
     {
       onError: function (err) {
-        log.debug('1026 fear-star count fetch failed. %s', err && err.message);
+        log.warn('1026 fear-star count fetch threw. %s', err && err.message);
       },
     },
   );

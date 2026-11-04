@@ -45,7 +45,7 @@
  *   日常任务形态：面板只出启用开关，无字段无配置（fields=[]，toModuleCfg 返回空）。
  *   不行军不参战，offInCombat:false。生命周期由 reactor 托管，pause 后 alive()=false 自然停摆。
  */
-import { CODE_NOT_SENT, sleep } from '../../core/util.js';
+import { CODE_NOT_SENT, sleep, rejectText } from '../../core/util.js';
 import { createLog } from '../../core/log.js';
 import { bits, gameData, l10n } from '../../core/game-api.js';
 import { reactor } from '../../core/reactor.js';
@@ -238,11 +238,11 @@ async function fetchInfo() {
     {
       protocol: 'sendPBV2',
       onError: function (err) {
-        log.debug('cmd 9706 send failed: %s', err && err.message);
+        log.warn('cmd 9706 send threw: %s', err && err.message);
       },
     },
   );
-  if (!ret || !ret.ok) return { ok: false, code: ret ? ret.code : CODE_NOT_SENT };
+  if (!ret || !ret.ok) return { ok: false, code: ret ? ret.code : CODE_NOT_SENT, data: ret && ret.data, reason: ret && ret.reason };
   var list = ret.data && ret.data.adMonthCardWatchInfos;
   if (!Array.isArray(list)) {
     log.warn('cmd 9706 ack has no adMonthCardWatchInfos.', ret.data);
@@ -265,7 +265,7 @@ async function fetchInfo() {
  * 直发一条 9707 领某槽位（cnt=1，与真机逐次看点同形）。永不 reject。
  * @param {number} id 槽位 id（AD_NEW 行 id）
  * @param {number} times 领取前已领次数（仅应答缺 adMonthCardInfo 时兜底递增用）
- * @returns {Promise<{claimed:boolean, code:number, gold:number}>}
+ * @returns {Promise<{claimed:boolean, code:number, gold:number, data?:*, reason?:string}>} 失败时带上原始应答载荷（错误文案）
  */
 async function claimOnce(id, times) {
   if (!net) return { claimed: false, code: CODE_NOT_SENT, gold: 0 };
@@ -275,11 +275,11 @@ async function claimOnce(id, times) {
     {
       protocol: 'sendPBV2',
       onError: function (err) {
-        log.debug('cmd 9707 send failed: %s', err && err.message);
+        log.warn('cmd 9707 send threw: %s', err && err.message);
       },
     },
   );
-  if (!ret || !ret.ok) return { claimed: false, code: ret ? ret.code : CODE_NOT_SENT, gold: 0 };
+  if (!ret || !ret.ok) return { claimed: false, code: ret ? ret.code : CODE_NOT_SENT, gold: 0, data: ret && ret.data, reason: ret && ret.reason };
   var info = ret.data && ret.data.adMonthCardInfo;
   if (info && Number(info.adNewId) === id) {
     stateById.set(id, {
@@ -320,7 +320,7 @@ async function cycleRun() {
       log.debug('info transient (not sent/in-flight), retry soon.');
       return TRANSIENT_RETRY_MS;
     }
-    log.info('info rejected by server, poll later. code=%s', st.code);
+    log.info('info rejected by server, poll later. code=%s;data=%s', st.code, rejectText(st) || '-');
     return IDLE_TICK_MS;
   }
 
@@ -351,7 +351,7 @@ async function cycleRun() {
       break; // 在飞/未发出：本轮收口，下拍重读
     }
     claimStreak++;
-    log.info('claim rejected (slot #%d, streak #%d). code=%s', list[i].id, claimStreak, res.code);
+    log.info('claim rejected (slot #%d, streak #%d). code=%s;data=%s', list[i].id, claimStreak, res.code, rejectText(res) || '-');
   }
   if (notSent) {
     log.debug('claim transient (not sent/in-flight), retry soon.');

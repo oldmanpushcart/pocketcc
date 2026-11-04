@@ -201,7 +201,7 @@ function pull() {
     })
     .catch(function (err) {
       inFlight = null;
-      log.debug('1193 load failed, retry later. %s', err && err.message);
+      log.warn('1193 load failed, retry later. %s', err && err.message);
       return false;
     });
   return inFlight;
@@ -230,7 +230,7 @@ function prune() {
 }
 
 /**
- * 活表落盘（fire-and-forget）：{v, scannedAt, list}。失败仅 debug（内存活表仍是本轮真相）。
+ * 活表落盘（fire-and-forget）：{v, scannedAt, list}。失败记 warn（内存活表仍是本轮真相）。
  */
 function persist() {
   dirty = false;
@@ -241,7 +241,7 @@ function persist() {
   Promise.resolve(
     storage.slot.set(TOWER_STORE_KEY, { v: TOWER_STORE_VER, scannedAt: loadedAt, list: arr }),
   ).catch(function (err) {
-    log.debug('persist tower store failed. %s', err && err.message);
+    log.warn('persist tower store failed. %s', err && err.message);
   });
 }
 
@@ -275,7 +275,7 @@ function load() {
       log.info('tower store restored from disk. live=%d scannedAt=%s', live.size, loadedAt || '-');
     })
     .catch(function (err) {
-      log.debug('load tower store failed. %s', err && err.message);
+      log.warn('load tower store failed. %s', err && err.message);
     });
 }
 

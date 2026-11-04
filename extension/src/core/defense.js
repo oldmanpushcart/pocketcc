@@ -210,7 +210,7 @@ async function makeJudge(anchor, opts) {
     } // 可选：若有近期推送则等静默
     if (!ready) {
       log.debug(
-        'makeJudge: 锚点 settle 未就绪(canMoveCity=%s, near=%s) → 无从判定落点',
+        'makeJudge: anchor settle not ready (canMoveCity=%s, near=%s) -> cannot judge spot',
         typeof gameData.canMoveCity(ax, ay),
         gameData.mapLoadedNear(ax, ay, 7),
       );
@@ -243,14 +243,14 @@ async function makeJudge(anchor, opts) {
                 height: 30,
               });
             } catch (e) {
-              log.debug('makeJudge 1001 send error: %s', e && e.message);
+              log.warn('makeJudge 1001 send error: %s', e && e.message);
             }
             break;
           }
           await sleep(step);
         }
         if (!tret || !tret.ok) {
-          log.debug('makeJudge: 1001 领地应答未就绪 → 无从判定禁迁区');
+          log.debug('makeJudge: 1001 territory resp not ready -> cannot judge no-move zone');
           return null;
         }
         var td = tret.data;
@@ -271,7 +271,7 @@ async function makeJudge(anchor, opts) {
           await sleep(step);
         }
         if (terrs == null || (terrs.length === 0 && terr901 > 0)) {
-          log.debug('makeJudge: 堡垒领地模型未就绪(901领土点=%d) → 无从判定禁迁区', terr901);
+          log.debug('makeJudge: fort territory model not ready (901 terr points=%d) -> cannot judge no-move zone', terr901);
           return null;
         }
         terrInfos = terrs;
@@ -423,7 +423,7 @@ async function relocateAway(home, threat, opts) {
     net: opts.ctx && opts.ctx.net,
   });
   if (!judge) {
-    log.debug('relocateAway: 本地锚 judge 未建立（世界图未就绪/canMoveCity 不可得）→ 无从判定');
+    log.debug('relocateAway: local-anchor judge not built (world map not ready / canMoveCity unavailable) -> cannot judge');
     return null;
   }
   var spot = searchAway(home, threat, judge, inBounds, radius);
@@ -452,7 +452,7 @@ async function relocateAway(home, threat, opts) {
     if (opts.alive && !opts.alive()) return null;
     var sc = queue[q];
     log.debug(
-      'relocateAway: 本地带(%d)无背向落点 → 扇区轮换 %d/%d sector=(%d,%d) center=(%d,%d)',
+      'relocateAway: no away spot in local band(%d) -> sector rotation %d/%d sector=(%d,%d) center=(%d,%d)',
       radius,
       q + 1,
       tries,
@@ -469,7 +469,7 @@ async function relocateAway(home, threat, opts) {
     var s2 = searchNear(sc.c, j2, inBounds, RELOC_SECTOR_RADIUS, null);
     if (s2) {
       log.info(
-        'relocateAway: 扇区轮换命中 sector=(%d,%d) → (%d,%d) 距敌²=%d',
+        'relocateAway: sector rotation hit sector=(%d,%d) -> (%d,%d) dist2ToThreat=%d',
         sc.col,
         sc.row,
         s2.x,
@@ -505,7 +505,7 @@ async function findRelocatableSpot(anchor, opts) {
     net: opts.ctx && opts.ctx.net,
   });
   if (!judge) {
-    log.debug('findRelocatableSpot: 世界图未就绪 / canMoveCity 不可得，无从判定落点合法性');
+    log.debug('findRelocatableSpot: world map not ready / canMoveCity unavailable -> cannot judge spot legality');
     return null;
   }
   return searchNear(anchor, judge, inBounds, radius, opts.exclude);

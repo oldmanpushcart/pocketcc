@@ -242,7 +242,7 @@ async function sendDonateRelic(siteId) {
 async function sendRaw(cmd, body) {
   var ret = await net.sendGuarded(cmd, body, {
     onError: function (err) {
-      log.debug('cmd %d send failed: %s', cmd, err && err.message);
+      log.warn('cmd %d send threw: %s', cmd, err && err.message);
     },
   });
   return { ok: ret.ok, code: ret.code, data: ret.data, payload: payloadOf(ret) };
@@ -388,7 +388,7 @@ async function donateLoop(o) {
           smsg,
         );
       } else {
-        log.warn(
+        log.info(
           '%s donate rejected (streak #%d). sid=%d;num=1;code=%d;msg=%s',
           o.tag,
           rejectStreak,
@@ -406,7 +406,7 @@ async function donateLoop(o) {
       '%s donate ok. sid=%d(%s);x%d;addExp+%d;honor+%d;crit=%d',
       o.tag,
       target.id,
-      target.recommended ? '推荐' : '顺位首项',
+      target.recommended ? 'recommended' : 'first-in-order',
       done,
       sumExp,
       sumHonor,
@@ -521,7 +521,7 @@ async function donateRelic() {
           rmsg,
         );
       } else {
-        log.warn(
+        log.info(
           'relic donate rejected (streak #%d). site=%d;code=%d;msg=%s',
           rejectStreak,
           target.id,
@@ -548,7 +548,7 @@ async function donateRelic() {
     log.info(
       'relic donate ok. site=%d(%s);x%d;honor=%d;crit=%d',
       target.id,
-      target.recommended ? '推荐' : '顺位首项',
+      target.recommended ? 'recommended' : 'first-in-order',
       done,
       lastHonor,
       crits,

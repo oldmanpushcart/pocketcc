@@ -23,7 +23,7 @@
  *   定时器是功能内部的生产逻辑，pause 后 alive()=false，挂着的定时器到点空转一次不再自重排，resume 时 run 重新点火。
  *   未声明 scenes → scene 门控默认放行，任何场景都跑（与重构前一致）。
  */
-import { CODE_NOT_SENT, todayStr } from '../../core/util.js';
+import { CODE_NOT_SENT, todayStr, rejectText } from '../../core/util.js';
 import { createLog } from '../../core/log.js';
 import { game } from '../../core/game.js';
 import { createDrain } from '../../core/drain.js';
@@ -652,7 +652,7 @@ async function guardedSend(cmd, payload, label) {
   });
   // 业务拒绝补一条 info；闸门/异常哨兵已在 onError 或回落本身计过，不重复打（与原逐路径文案一致）
   if (!ret.ok && ret.code !== CODE_NOT_SENT) {
-    log.info('%s rejected. code=%d', label, ret.code);
+    log.info('%s rejected. code=%d;data=%s', label, ret.code, rejectText(ret) || '-');
   }
   return ret;
 }

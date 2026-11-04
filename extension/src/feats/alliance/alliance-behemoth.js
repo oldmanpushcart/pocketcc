@@ -139,7 +139,7 @@ async function sendRawPB(cmd, body) {
   var ret = await net.sendGuarded(cmd, body, {
     protocol: 'sendPB',
     onError: function (err) {
-      log.debug('cmd %d send failed: %s', cmd, err && err.message);
+      log.warn('cmd %d send threw: %s', cmd, err && err.message);
     },
   });
   var d = ret && ret.data;
@@ -257,7 +257,7 @@ async function tickBody() {
           : res.code === CODE_NOT_SENT
             ? 'not sent'
             : 'code=' + res.code;
-      log.warn(
+      log.info(
         'behemoth donate rejected (streak #%d). id=%d;level=%d;%s',
         rejectStreak,
         target.behemothId,

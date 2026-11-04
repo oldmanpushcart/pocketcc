@@ -55,13 +55,13 @@ export async function handle(ctx) {
   var ret = await ctx.sendPB(
     REQ_EVENT_CODE_BOX_UNLOCK,
     { treasureId: bits.int64(ctx.treasureId), round: ctx.round, codeNum: pick.cand },
-    '密码提交',
+    'submit-code',
   );
   if (ret.ok) {
     ctx.markDone(key);
-    ctx.log.info('密码大爆炸命中（code=%s）', pick.key);
+    ctx.log.info('code-box hit (code=%s)', pick.key);
   } else {
     var head = ret && ret.payload && ret.payload.header;
-    if (head && head.s) ctx.log.info('密码错 s=%s（继续汇总/穷举）', head.s);
+    if (head && head.s) ctx.log.info('code-box wrong code s=%s (continue aggregating/brute-forcing)', head.s);
   }
 }

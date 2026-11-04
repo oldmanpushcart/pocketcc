@@ -58,7 +58,7 @@
  *   轮首另有一道玩法开启闸（gameData.beastBreedOpen，镜像游戏 isOpenFunc(BREED)）：培育玩法未开放/未开始时
  *   服务器对 15xx 干脆不回包（每条白等 15s 超时，随后连刷读失败 warn），闸关则整轮闭嘴只按 IDLE 档重检。
  */
-import { CODE_NOT_SENT, sleep, todayStr as utilTodayStr } from '../../core/util.js';
+import { CODE_NOT_SENT, sleep, todayStr as utilTodayStr, rejectText } from '../../core/util.js';
 import { netApi } from '../../core/net.js';
 import { createLog } from '../../core/log.js';
 import { storage } from '../../core/storage.js';
@@ -286,24 +286,6 @@ function idStr(v) {
  */
 function randIdx(n) {
   return Math.floor(Math.random() * n) % n;
-}
-
-/**
- * 把拒绝应答归一成一串可 grep 的文本（ret.data 常是对象，l10n.net 内部 String() 会得 [object Object]）
- * @param {object} ret Ret 对象
- * @returns {string} 原始串或 JSON
- */
-function rejectText(ret) {
-  // PBV2 拒绝原因的多语言 key 落在 header.d（已由 net 归一到 ret.reason）；优先用它，才能识别「次数耗尽」等语义
-  if (ret && ret.reason != null && ret.reason !== '') return String(ret.reason);
-  var d = ret && ret.data;
-  if (d == null) return '';
-  if (typeof d === 'string') return d;
-  try {
-    return JSON.stringify(d);
-  } catch (e) {
-    return String(d);
-  }
 }
 
 /**
@@ -731,7 +713,7 @@ async function ensureMain(beasts) {
 async function agreeApplies(applyList, mainSet) {
   if (cfg.autoAgree === 'off' || !applyList.length) return 0;
   if (!mainSet) {
-    log.warn('skip agree: my home has no main beast (server would reject).');
+    log.debug('skip agree: my home has no main beast (server would reject).');
     return 0;
   }
   var myTag = gameData.myAllianceTag();
@@ -859,7 +841,7 @@ async function shareForHelp(myUid, nowMs) {
     ack = JSON.parse(String((ret && ret.data) || ''));
   } catch (e) {}
   if (!ret || !ret.ok || !ack || ack.success !== 1) {
-    log.info('share rejected. code=%s;data=%s', ret && ret.code, ret && ret.data);
+    log.info('share rejected. code=%s;data=%s', ret && ret.code, rejectText(ret) || '-');
     return false;
   }
   ledger.shareAt = nowMs;
@@ -1043,7 +1025,7 @@ async function applyNewBeasts(beasts, visit, inflight, nowSec, nowMs) {
   if (res.noTarget && cfg.mode === 'specify')
     log.debug('no visit candidate in specified list (all busy / inflight).');
   else if (res.noTarget) log.warn('no visit candidate even after fallbacks.');
-  if (res.noBeast) log.warn('no free beast matches faction/type/quality filter.');
+  if (res.noBeast) log.debug('no free beast matches faction/type/quality filter.');
   return res;
 }
 
