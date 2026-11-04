@@ -145,6 +145,7 @@ export const MENU = [
       { id: 'netLog', kind: 'feature', label: '网络日志' },
       { id: 'eventLog', kind: 'feature', label: '事件日志' },
       { id: 'netRecord', kind: 'feature', label: '报文录制', showFields: true },
+      { id: 'logRecord', kind: 'feature', label: '日志上送', showFields: true },
       // 只读信息卡：渲染 core/hotkeys.js 注册表的当前全部绑键（非 feature，不可开关、不进存储）
       { id: 'hotkeyGuide', kind: 'hotkeys', label: '快捷键一览' },
     ],

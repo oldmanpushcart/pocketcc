@@ -33,6 +33,7 @@
 - **聊天窗口** — 半透明浮层：世界/联盟等多频道收发的独立视图，支持 @点名、引用、坐标跳转、撤回、玩家信息卡；只读游戏态、经 `pocketcc.chat` 收发，不改写游戏任何状态（`Ctrl+K` 开合）。
 - **游戏内快捷键** — `Tab` 飞回基地、`H` 基地↔大世界、`B` 背包、`Q` 关闭当前弹窗、`1-8`+`G` 在战斗面板选预设并出征；`F8` 切日常/战斗模式。全局输入层单监听统一分派（打字自动让位、修饰键放行、按场景门控）。
 - **报文录制（黑匣子）** — 默认关闭，开启时仅 tap 缓冲 + 定时批量落盘，绝不阻断游戏真实收发；落盘由本仓库的 [`dashcam/`](../dashcam/README.md) 承接（见[架构](#架构)）。
+- **日志上送** — 与报文录制平行的独立开关（不同存储键/不同端点）：`core/log.js` 单点 tee 到 `core/log-collect.js`，缓冲+连续同文案折叠后批量 POST 到 dashcam `/log`；长期常开设计，热路径仅一次判空+push（序列化/网络全部延迟到 flush），录制器自身日志走 quiet 豁免防自录回声。
 - **战斗模式总开关** — 面板上的全局开关（或热键 `F8`）：开启时派行军类的功能主动挂起，纯发包类与会话看门狗继续跑；浮动图标同步切换日常/战斗双态并带呼吸光晕。
 - **菜单树驱动面板** — Shadow DOM 左右两栏：左为类别 TAB（日常设置 / 战斗设置 / 地图设置 / 系统设置，切换只换右栏），右为卡片列表（组卡片带主闸门开关，关则级联停用子项；功能卡片带启用开关，可展开详细字段）。层级定义在 `core/menu.js`，字段/存储/默认值仍在各功能 descriptor；日常任务与快捷战斗只出 checkbox 不需详细参数，改动即存档即生效。
 
@@ -40,11 +41,11 @@
 
 Chrome MV3，清单只引用 `dist/*` 三个 esbuild 产物（IIFE、未压缩 + sourcemap，控制台栈可读）。注入目标 `https://warh5.rivergame.net/*`：
 
-| 入口 | world | 职责 |
-|---|---|---|
-| `dist/content.js` | MAIN | 与游戏同域同上下文：hook 游戏网络层与控制器，跑全部功能 |
-| `dist/bridge.js` | ISOLATED | 唯一持 `chrome.*` 的一侧：代理 `chrome.storage` 读写给 MAIN；把报文转发给 background |
-| `dist/background.js` | Service Worker | 代发 `fetch POST http://127.0.0.1:7391/ingest` 到本地 dashcam，绕开游戏页 CSP |
+| 入口                 | world          | 职责                                                                                 |
+| -------------------- | -------------- | ------------------------------------------------------------------------------------ |
+| `dist/content.js`    | MAIN           | 与游戏同域同上下文：hook 游戏网络层与控制器，跑全部功能                              |
+| `dist/bridge.js`     | ISOLATED       | 唯一持 `chrome.*` 的一侧：代理 `chrome.storage` 读写给 MAIN；把报文转发给 background |
+| `dist/background.js` | Service Worker | 代发 `fetch POST http://127.0.0.1:7391/ingest` 到本地 dashcam，绕开游戏页 CSP        |
 
 `manifest.json` 权限：`storage` / `unlimitedStorage`；`host_permissions`：`http://127.0.0.1/*`、`http://localhost/*`（仅供报文录制 POST 到本地 dashcam）。
 
@@ -64,7 +65,13 @@ MAIN core/net-collect.js  ──postMessage──▶  bridge.js  ──chrome.ru
    (缓冲 NDJSON)                            (ISOLATED)                      (service worker)                (按会话落盘 .ndjson)
 ```
 
-不启用「报文录制」时 dashcam 无需运行，扩展完全独立可用。
+日志上送链路（同一通道、不同 op/端点，两个开关互不依赖）：
+
+```
+MAIN core/log.js sink tee ──▶ core/log-collect.js（缓冲+折叠）──postMessage(op=dashcam-log-flush)──▶ bridge ──▶ background ──▶ dashcam /log（按小时轮转）
+```
+
+两个开关都关时 dashcam 无需运行，扩展完全独立可用。
 
 ### 目录结构
 
@@ -149,11 +156,11 @@ npm run pack:friend -- --uid=<朋友的游戏UID> --friend=<昵称> [--salt=<盐
 
 ### 参数契约
 
-| 参数 | 说明 |
-|---|---|
-| `--uid` / `--friend` | **必须成对出现**，缺一即 fail-fast 报错退出。单人单包，一个包只授权一个 UID。 |
-| 都不给 | = **无限制包**（等同 `npm run build` 的开发自用包）：运行时闸门全部放行、不弹欢迎界面。 |
-| `--salt` | 可选，缺省用内置 `pcc-2026-a1`。**强烈建议每人换一个**——盐不同则哈希口径不同，一人被破解/外泄不波及其他人，也便于事后追踪。 |
+| 参数                 | 说明                                                                                                                        |
+| -------------------- | --------------------------------------------------------------------------------------------------------------------------- |
+| `--uid` / `--friend` | **必须成对出现**，缺一即 fail-fast 报错退出。单人单包，一个包只授权一个 UID。                                               |
+| 都不给               | = **无限制包**（等同 `npm run build` 的开发自用包）：运行时闸门全部放行、不弹欢迎界面。                                     |
+| `--salt`             | 可选，缺省用内置 `pcc-2026-a1`。**强烈建议每人换一个**——盐不同则哈希口径不同，一人被破解/外泄不波及其他人，也便于事后追踪。 |
 
 ### 产物与防护
 
@@ -192,7 +199,7 @@ release 构建相对开发包的差异：`minify: true` + **关闭 sourcemap** +
   - **联盟设置** — 「基础设置」组（联盟帮助 / 联盟礼物 / 联盟科技 / 联盟守卫）；联盟集结、联盟机甲、遗迹奖励为独立卡片。
   - **活动设置** — 「基础设置」组（海上夺宝 / 重装母舰 / 领域寻宝）；泰坦祝福、花车空投、占领发射井、异能秘境为独立卡片。
   - **战斗设置** — 快捷战斗、奉旨出征、自动防御。
-  - **系统设置** — 聊天窗口、全局地图、镜头跳转、自动重连、网络日志、事件日志、报文录制，以及只读的「快捷键一览」。
+  - **系统设置** — 聊天窗口、全局地图、镜头跳转、自动重连、网络日志、事件日志、报文录制、日志上送，以及只读的「快捷键一览」。
 - 组开关是主闸门：关掉整组即停用全部子项，重新打开恢复各子项之前的勾选（意图存 `intentEnabled`，不丢失）；子项仍可单独勾选。改动即存即生效。新功能默认关闭（不未经同意发游戏包），自动重连默认开启。
 - 只出 checkbox 的功能（日常任务各项、快捷战斗）不展示详细参数，也就不把这些参数写入 local，一律用 descriptor 默认值（只持久化启用/意图两个开关态）；展示字段的功能（联盟集结、次元矿洞、自动重连等）才全量持久化。
 - 面板顶部「战斗模式」为全局开关（或热键 `F8` 直接切换日常/战斗）：开启后派行军类功能挂起、图标转红热态；关闭即恢复并补扫一轮。
@@ -204,14 +211,14 @@ release 构建相对开发包的差异：`minify: true` + **关闭 sourcemap** +
 MAIN world 暴露 `window.pocketcc`，逆向时直接戳：
 
 ```js
-pocketcc.game.get('DataCenter').DATA.UserData.UID        // 取游戏单例
-pocketcc.bus.has('net.10912')                            // 查某推送有无功能订阅
-pocketcc.bus.emit('scene.change', { name: 'NWorldMap' }) // 模拟切场景测门控
-pocketcc.net.sendPBV2(8623, { activityId: 0, type: 2 })  // 手动发包看 Ret
-pocketcc.reactor.list()                                  // 列出全部功能与运行态
-pocketcc.reactor.isRunning('floatCar')                   // 看某功能是否起
-pocketcc.battle.buildFromPreset(0, 0)                    // 看预设部队造出的行军字段
-pocketcc.chat.status()                                   // 聊天连接与房间；pocketcc.chat.on('push', fn) 收频道消息
+pocketcc.game.get('DataCenter').DATA.UserData.UID; // 取游戏单例
+pocketcc.bus.has('net.10912'); // 查某推送有无功能订阅
+pocketcc.bus.emit('scene.change', { name: 'NWorldMap' }); // 模拟切场景测门控
+pocketcc.net.sendPBV2(8623, { activityId: 0, type: 2 }); // 手动发包看 Ret
+pocketcc.reactor.list(); // 列出全部功能与运行态
+pocketcc.reactor.isRunning('floatCar'); // 看某功能是否起
+pocketcc.battle.buildFromPreset(0, 0); // 看预设部队造出的行军字段
+pocketcc.chat.status(); // 聊天连接与房间；pocketcc.chat.on('push', fn) 收频道消息
 ```
 
 ## 开发约定

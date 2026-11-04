@@ -10,7 +10,8 @@ import { screen } from './core/net-guard.js';
 
 /**
  * 把一批 NDJSON 报文 POST 到转发地址，携会话元数据头供 dashcam 命名与建索引。
- * @param {{url?:string, session?:string, ndjson?:string, uid?:string, startTs?:number, note?:string, done?:boolean}} msg
+ * 同形复用：日志上送（dashcam-log-flush）走同一函数发 /log 端点，多带 x-run、缺省会话头落空串即可。
+ * @param {{url?:string, session?:string, ndjson?:string, uid?:string, startTs?:number, note?:string, done?:boolean, run?:string}} msg
  * @returns {Promise<number>} HTTP 状态码
  */
 async function ingest(msg) {
@@ -19,6 +20,7 @@ async function ingest(msg) {
     headers: {
       'content-type': 'application/x-ndjson',
       'x-session': String(msg.session || ''),
+      'x-run': String(msg.run || ''),
       'x-uid': String(msg.uid || ''),
       'x-start': String(msg.startTs || ''),
       // HTTP 头只能携 Latin-1；note 可能含中文，必须 percent 编码，dashcam 侧 decodeURIComponent。
@@ -31,8 +33,9 @@ async function ingest(msg) {
 }
 
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
-  if (msg && msg.type === 'dashcam-flush') {
-    // 准入副闸：不设限包 screen 恒真；授权包报文内账号不符则静默丢弃（不回错、不命中任何文案路标）
+  if (msg && (msg.type === 'dashcam-flush' || msg.type === 'dashcam-log-flush')) {
+    // 准入副闸：不设限包 screen 恒真；授权包报文内账号不符则静默丢弃（不回错、不命中任何文案路标）。
+    // 日志批同样带 uid 进哨，两路语义一致。
     if (!screen(msg.uid)) return false;
     // 异步回执：return true 保持端口；失败/无接收器回 err 仅供诊断，bridge 侧已忽略、不阻断录制。
     ingest(msg)

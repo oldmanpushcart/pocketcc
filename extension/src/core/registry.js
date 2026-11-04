@@ -19,6 +19,7 @@ import { groupConfigs, allMenuItemIds, fieldVisibleFeatureIds } from './menu.js'
 import { netApi } from './net.js';
 import { eventApi } from './event.js';
 import { netCollectApi } from './net-collect.js';
+import { logCollectApi } from './log-collect.js';
 
 /** @type {ReturnType<createLog>} 模块日志器（tag=REGISTRY） */
 const log = createLog('REGISTRY');
@@ -110,6 +111,33 @@ const INTERNAL_FEATURES = [
       if (!rc) return;
       if (cfg && cfg.enabled) rc.start(cfg);
       else rc.stop();
+    },
+  },
+  {
+    // 日志上送（dashcam 双记录之二）：与报文录制平行的**独立开关**——生命周期不同：
+    // 报文是会话制（带业务标签 note、定稿命名），日志长期常开（无业务语义，dashcam 按小时轮转直写）。
+    // 开启→log-collect start(cfg) 挂 log.js sink；关闭→stop() 摘钩（hot path 回落一次判空）。
+    // 句柄走 log-collect.js 具名导出 logCollectApi（与总线同源）。
+    id: 'logRecord',
+    label: '日志上送',
+    storageKey: 'pocketcc.logRecord.config',
+    internal: true,
+    defaults: { enabled: false, logUrl: 'http://127.0.0.1:7391/log', flushSec: 5, minLvl: 'info' },
+    fields: [
+      {
+        key: 'logUrl',
+        type: 'string',
+        label: '日志端点',
+        placeholder: 'http://127.0.0.1:7391/log',
+      },
+      { key: 'flushSec', type: 'number', label: '上送间隔(秒)', min: 1, step: 1 },
+      { key: 'minLvl', type: 'string', label: '最低级别(debug/info/warn)', placeholder: 'info' },
+    ],
+    apply: (cfg) => {
+      const lc = logCollectApi;
+      if (!lc) return;
+      if (cfg && cfg.enabled) lc.start(cfg);
+      else lc.stop();
     },
   },
 ];

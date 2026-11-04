@@ -1,22 +1,28 @@
 /**
- * dashcam 接收器 —— pocketcc 报文「行车记录仪」落盘端
+ * dashcam 接收器 —— pocketcc 「行车记录仪」落盘端：双记录能力
  *
- * 纯 node:http，无三方依赖。接收扩展 background service worker 代发的 NDJSON（每行一条 net entry），
- * 按「会话 / 日期」落盘，供离线 glob 读取分析。
+ * 纯 node:http，无三方依赖。接收扩展 background service worker 代发的 NDJSON，两类流两个端点：
  *
- * 命名规范（本次录制会话 = 一个文件；开→关为一次）：
- *   store/<uid>/<startLocal>[-<note>][-<slug>].ndjson
- *     <startLocal>  录制启动时刻的本地紧凑时间 YYYYMMDDTHHMMSS（可排序、可读）
- *     <note>        面板「本次标签」预填（可空，优先作主题词；保留原大小写/中文，仅净化路径字符）
- *     <slug>        自动派生：本段 cmd 统计去掉噪声与 GET_ 等前缀后的 top 请求名（无 note 时作主题）
- *   同目录另有 index.ndjson（每 session 一行）作为「行程表」：文件名保持机器友好，人读检索走索引。
+ * 1. POST /ingest —— 网络报文（会话制）：面板开→关为一段，带业务标签 note，按下方命名定稿。
+ *   命名规范（本次录制会话 = 一个文件；开→关为一次）：
+ *     store/<uid>/<startLocal>[-<note>][-<slug>].ndjson
+ *       <startLocal>  录制启动时刻的本地紧凑时间 YYYYMMDDTHHMMSS（可排序、可读）
+ *       <note>        面板「本次标签」预填（可空，优先作主题词；保留原大小写/中文，仅净化路径字符）
+ *       <slug>        自动派生：本段 cmd 统计去掉噪声与 GET_ 等前缀后的 top 请求名（无 note 时作主题）
+ *     同目录另有 index.ndjson（每 session 一行）作为「行程表」，行内附 logRef 指向同时段日志段。
+ *   落盘时序：进行中写 .part（只 append）；x-done 或空闲超时后定稿——算 slug、改名、写索引。
  *
- * 落盘时序：session 进行中写入 .part 临时文件（只 append，稳定）；收到 x-done 或空闲超时后「定稿」——
- *   据累计统计算 slug、把 .part 重命名为最终名、往 index.ndjson 追加/更新一行。
+ * 2. POST /log —— 扩展日志（长期常开，无业务语义）：不分会话、不定稿、不建索引，
+ *   按**小时轮转直写**最终文件名（传统 logrotate 形态，崩溃不丢已写内容）：
+ *     store/_log/<uid>/<YYYYMMDDTHH>[-NN].ndjson   行格式 {ts,lvl,mod,msg,n}（n=折叠重复计数）
+ *   按行内 ts 归段；单段超 DASHCAM_LOG_MAXSEG 字节则滚到下一序号段（防失控刷屏把磁盘写满）。
+ *   与报文会话的配对是**查询时软引用**（index 行 logRef 给目录+时间窗），不耦合生命周期。
  *
  * 启动：node server.js
  *   环境变量 DASHCAM_PORT 监听端口（默认 7391）· DASHCAM_OUT 落盘根目录（默认 <工程>/store）
+ *   DASHCAM_LOG_MAXSEG 日志单段字节上限（默认 32MB）
  * 路由：GET / 健康检查 · POST /ingest（x-session/x-uid/x-start/x-note/x-done 头 + NDJSON body）
+ *       POST /log（x-uid/x-run 头 + NDJSON body）
  * 安全：仅绑 127.0.0.1；uid/session/note 做文件名净化并强制剥离 .. 防目录穿越。
  */
 import http from 'node:http';
@@ -33,6 +39,7 @@ const OUT = process.env.DASHCAM_OUT || path.join(__dirname, 'store');
 const IDLE_FINALIZE_MS = 3 * 60 * 1000; // 空闲超此值即定稿（done 批丢失时的兜底）
 const SWEEP_INTERVAL_MS = 30 * 1000;
 const MAX_BODY = 32 * 1024 * 1024; // 单批 body 上限 32MB
+const LOG_MAX_SEG = Number(process.env.DASHCAM_LOG_MAXSEG) || 32 * 1024 * 1024; // 日志单段字节保险丝
 
 // ── 自动 slug 启发式 ──────────────────────────────────────────────
 // 噪声：高频纯轮询/心跳类命令名，派生主题时跳过（可按真机反馈增补）
@@ -217,6 +224,8 @@ function finalizeSession(sessionId, s) {
     note: s.note,
     finalized: true,
     top,
+    // 同时段日志软引用（查询时配对，不耦合生命周期）：日志按小时轮转，窗内可能跨多个段文件
+    logRef: s.uidSeg ? { dir: '_log/' + s.uidSeg, from: s.start, to: s.lastSeen } : null,
   };
   const idx = loadIndex(s.uid, dir);
   idx.set(sessionId, entry);
@@ -311,6 +320,75 @@ function sanitizeNote(raw) {
   return s.slice(0, 40);
 }
 
+/**
+ * 日志批落盘：按行内 ts 归小时段直写最终文件（无 .part、无定稿、无索引——日志无业务语义，
+ * rename 机制那套是为报文会话定稿服务的，这里纯属多余）。
+ * 目录 store/_log/<uid>/；单段超 LOG_MAX_SEG 滚下一序号段（-01/-02…）；坏行静默跳过。
+ * @param {{uid?:string, run?:string}} headers
+ * @param {string} ndjson
+ */
+function ingestLog(headers, ndjson) {
+  const uid = sanitize(headers['x-uid'], 60) || 'anon';
+  const dir = path.join(OUT, '_log', uid);
+  const text = String(ndjson || '').trim();
+  if (!text) return;
+  fs.mkdirSync(dir, { recursive: true }); // 有有效批才建目录，空 POST 不留空壳
+  // 先按小时键分组再写：一次批跨小时（挂机到点）的情况很少，但归段必须按行内 ts 而非到达时刻，
+  // 否则扩展侧缓冲攒着的旧日志会被错归到后一个段里。
+  /** @type {Map<string, string[]>} hourKey -> 行 */
+  const groups = new Map();
+  for (const line of text.split('\n')) {
+    if (!line.trim()) continue;
+    let hourKey;
+    try {
+      const e = JSON.parse(line);
+      // ts 合理区间闸门（2001–2100）：外部误喂报文/秒当毫秒时，不致造出远古段文件污染目录
+      const t = Number(e.ts);
+      const ts = t > 978307200000 && t < 4102444800000 ? t : Date.now();
+      hourKey = fmtLocal(ts).slice(0, 11); // YYYYMMDDTHH（8 位日期 + T + 2 位小时）
+    } catch (_) {
+      continue; // 非单行 JSON：丢弃不阻断（与 /ingest 容错同轨）
+    }
+    const arr = groups.get(hourKey) || [];
+    arr.push(line);
+    groups.set(hourKey, arr);
+  }
+  for (const [hourKey, lines] of groups) {
+    const body = lines.join('\n') + '\n';
+    // 序号段保险丝：只看该小时已存在的「最大序号段」是否超限，超限则新开 maxSeq+1。
+    // 不能从前段往后逐个 stat：基准段一旦被人为截小/调大上限后会「回开」，新行插进旧时间段。
+    let file = path.join(dir, hourKey + '.ndjson');
+    try {
+      // 只看已存在的最大序号段；基准段（无 -NN）最早写入、序号段从 -01 起。
+      // 无序号段时：基准超限 → 新开 -01；有序号段时：只往最大序号段追加，最大也超限 → max+1；
+      // 绝不回头追加基准段（人为截小后会新行插进旧时间段），也不产 -00。
+      let maxSeg = -1;
+      for (const n of fs.readdirSync(dir)) {
+        const m = new RegExp('^' + hourKey + '-(\\d{2})\\.ndjson$').exec(n);
+        if (m) maxSeg = Math.max(maxSeg, Number(m[1]));
+      }
+      if (maxSeg < 0) {
+        if (fs.existsSync(file) && fs.statSync(file).size > LOG_MAX_SEG) {
+          file = path.join(dir, `${hourKey}-01.ndjson`);
+        }
+      } else {
+        const top = path.join(dir, `${hourKey}-${String(maxSeg).padStart(2, '0')}.ndjson`);
+        file =
+          fs.existsSync(top) && fs.statSync(top).size > LOG_MAX_SEG && maxSeg < 99
+            ? path.join(dir, `${hourKey}-${String(maxSeg + 1).padStart(2, '0')}.ndjson`)
+            : top;
+      }
+    } catch (_) {
+      /* 扫目录/stat 失败不阻断，落首选文件 */
+    }
+    try {
+      fs.appendFileSync(file, body);
+    } catch (e) {
+      console.error('[dashcam] log append fail', file, e.message);
+    }
+  }
+}
+
 // ── HTTP ──────────────────────────────────────────────────────────
 function readBody(req) {
   return new Promise((resolve, reject) => {
@@ -335,7 +413,7 @@ const server = http.createServer(async (req, res) => {
   res.setHeader('Access-Control-Allow-Methods', 'POST, GET, OPTIONS');
   res.setHeader(
     'Access-Control-Allow-Headers',
-    'content-type, x-session, x-uid, x-start, x-note, x-done',
+    'content-type, x-session, x-uid, x-start, x-note, x-done, x-run',
   );
 
   if (req.method === 'OPTIONS') {
@@ -368,6 +446,22 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  if (req.method === 'POST' && url === '/log') {
+    try {
+      const ndjson = await readBody(req);
+      ingestLog(req.headers, ndjson);
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end('{"ok":1}');
+    } catch (e) {
+      console.error('[dashcam] log error:', e.message);
+      // 只有限体超限才判 413，落盘异常（ENOSPC/EACCES 等）归 500，不误导端上排障
+      const tooLarge = e.message === 'payload too large';
+      res.writeHead(tooLarge ? 413 : 500, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ ok: 0, error: e.message }));
+    }
+    return;
+  }
+
   res.writeHead(404, { 'content-type': 'application/json' });
   res.end('{"error":"not found"}');
 });
@@ -393,6 +487,6 @@ process.on('SIGTERM', shutdown);
 server.listen(PORT, HOST, () => {
   console.log('[dashcam] listening http://' + HOST + ':' + PORT + '  ->  ' + OUT);
   console.log(
-    '[dashcam] POST /ingest · GET / · 命名 store/<uid>/<startLocal>[-<note>][-<slug>].ndjson · index.ndjson 侧车',
+    '[dashcam] POST /ingest(报文会话) · POST /log(日志小时轮转) · GET / · 命名 store/<uid>/<startLocal>[-<note>][-<slug>].ndjson · index.ndjson 侧车',
   );
 });

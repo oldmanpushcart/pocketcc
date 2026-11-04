@@ -4,6 +4,7 @@
 // 新增 feat 除在这里加 import 外，还须挂进 core/menu.js 菜单树，否则不会出现在面板。
 import './core/net.js';
 import './core/net-collect.js';
+import './core/log-collect.js';
 import './core/event.js';
 import './core/chat.js';
 import './feats/activity/floatcar.js';

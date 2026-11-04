@@ -25,8 +25,8 @@ export let netCollectApi = null;
 (function () {
   'use strict';
 
-  /** @type {ReturnType<createLog>} 模块日志器（tag=REC） */
-  const log = createLog('REC');
+  /** @type {ReturnType<createLog>} 模块日志器（tag=REC）；quiet：自身日志不进日志上送 sink，防自录回声 */
+  const log = createLog('REC', { quiet: true });
 
   /** @type {boolean} 是否正在录制 */
   var recording = false;

@@ -58,6 +58,29 @@ import { screen, slotFree } from './core/net-guard.js';
       return;
     }
 
+    // 日志上送落盘转发：MAIN(log-collect) → bridge → background 代发 POST /log。同报文通道纪律：
+    // fire-and-forget、未放行静默丢弃、失败只记一行不阻断。
+    if (msg.op === 'dashcam-log-flush') {
+      if (!unlocked) return; // 未放行：日志旁路同样静默丢弃
+      try {
+        chrome.runtime.sendMessage(
+          {
+            type: 'dashcam-log-flush',
+            url: msg.url,
+            run: msg.run,
+            uid: msg.uid,
+            ndjson: msg.ndjson,
+          },
+          () => {
+            void chrome.runtime.lastError;
+          },
+        );
+      } catch (e) {
+        console.warn('[pocketcc bridge] dashcam-log-flush send failed', e);
+      }
+      return;
+    }
+
     const { id, op, key, value } = msg;
     // 准入副闸未开：读回空、写静默成功丢弃（与上下文失效降级同款容错风格：回真实形状、不 reject、不挂死在途队列）
     if (!unlocked) {

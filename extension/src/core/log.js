@@ -18,6 +18,23 @@
  * @property {function(string, ...*):void} warn 真异常（抛错/未发出/畸形/依赖缺失/未知枚举首遇）
  */
 
+// ── 外运 sink（dashcam 日志上送的唯一 tee 点）───────────────────────
+// 约定见 setSink：同步、极薄（push 即返）、失败静默；关开关 = setSink(null) 摘钩，
+// hot path 回落到一次判空。未占位消费的尾参（rest）原样引用交出，
+// 由消费侧（log-collect）**当帧串化并截断**——rest 可能是本拍共享的池化对象，延迟序列化会采到改写后的脏数据。
+/** @type {(function({ts:number,lvl:string,mod:string,msg:string,rest:Array}):void)|null} */
+let sink = null;
+
+/**
+ * 安装/摘除日志外运钩子（供 core/log-collect.js 使用，业务代码不要碰）。
+ * sink 收到 {ts, lvl, mod, msg, rest}，同步调用：只允许 push 进内存缓冲，
+ * 绝不做网络/磁盘 IO；sink 抛错一律吞掉，不影响 console 输出。
+ * @param {function(object):void|null} fn 钩子；传 null/非函数即摘除
+ */
+export function setSink(fn) {
+  sink = typeof fn === 'function' ? fn : null;
+}
+
 /** %s 的取值串化：字符串原样、对象 JSON、其余 String()；失败降级 String，绝不抛 */
 function stringify(v) {
   if (v == null) return String(v);
@@ -56,18 +73,28 @@ function printf(fmt, args) {
 /**
  * 创建一个带模块标记的日志器
  * @param {string} module 模块标记（如 NET / BUS），输出为 [POCKETCC://<module>]
+ * @param {{quiet?:boolean}} [opts] quiet=true：只进 console 不进 sink——录制基础设施自身的日志
+ *   必须豁免（flush 时记的 debug 若再进缓冲，会形成自录回声）
  * @returns {Logger} 三级日志器
  */
-export function createLog(module) {
+export function createLog(module, opts) {
   const prefix = `[POCKETCC://${module}]`;
-  function emit(sink, fmt, args) {
+  const quiet = !!(opts && opts.quiet);
+  function emit(lvl, sinkFn, fmt, args) {
     const line = printf(fmt, args);
-    if (line.rest.length) sink.call(console, `${prefix} ${line.msg}`, ...line.rest);
-    else sink.call(console, `${prefix} ${line.msg}`);
+    if (line.rest.length) sinkFn.call(console, `${prefix} ${line.msg}`, ...line.rest);
+    else sinkFn.call(console, `${prefix} ${line.msg}`);
+    if (sink && !quiet) {
+      try {
+        sink({ ts: Date.now(), lvl, mod: module, msg: line.msg, rest: line.rest });
+      } catch (e) {
+        /* 外运失败不打扰 console（此处再 log 会递归，静默即可） */
+      }
+    }
   }
   return {
-    info: (fmt, ...args) => emit(console.info, fmt, args),
-    debug: (fmt, ...args) => emit(console.debug, fmt, args),
-    warn: (fmt, ...args) => emit(console.warn, fmt, args),
+    info: (fmt, ...args) => emit('info', console.info, fmt, args),
+    debug: (fmt, ...args) => emit('debug', console.debug, fmt, args),
+    warn: (fmt, ...args) => emit('warn', console.warn, fmt, args),
   };
 }
