@@ -61,6 +61,7 @@ import { BossEngine } from './boss.js';
 import { ShopEngine, shopItemIdSet, shopType3ItemIds } from './shop.js';
 import { WarnEngine } from './warn.js';
 import { PilotEngine } from './pilot.js';
+import { PLANS, planIds } from './plans.js';
 import { LeaveEngine } from './leave.js';
 import { ScoutEngine } from './scout.js';
 import {
@@ -109,10 +110,10 @@ var engines = {
  *     relocate 恒关（不自动挪台）——大小BOSS 时间错开不同现，次序项不影响选目标；仅队长可发（引擎内 isTeamLeader 已闸）；
  *   shop=商店补货派生总闸 {enabled}（enabled 非用户勾选，而是 pickItems 是否存在 shop=1 项的派生态；且**只在队伍已停靠 161 商店点时**补货，见 shop.js）；
  *   warn=攻击警告应对 {enabled,mode}（mode='transfer' 立即转移（默认）/'stand' 抗争到底；默认关，自动挪队风险最高，见 warn.js；自动驾驶开启时本引擎让出转移、交 pilot.js EVADE 接管）；
- *   drive=自动驾驶 {enabled,boss,shopTime,revive,shopDwellMs,emptyDwellMs}（enabled=面板 driveEnabled 总闸（默关）；boss=driveBoss 子闸——BOSS 窗开着时是否自动开往 176 平台，缺省 true；shopTime=大BOSS 前定点商店勤务开关（缺省 true）；revive=driveRevive 子闸——战败(deadType==1)且本场次数未用尽时是否代答 8552 复活，缺省 true；shopDwellMs=到店驻留毫秒（面板秒×1000，默认 25000）；emptyDwellMs=资源/掉落拿空后 settle 毫秒（默认 0=立即走），见 pilot.js）。
+ *   drive=自动驾驶 {enabled,boss,shopTime,revive,checkPower,shopDwellMs,emptyDwellMs,drivePlan}（enabled=面板 driveEnabled 总闸（默关）；boss=driveBoss 子闸——BOSS 窗开着时是否自动开往 176 平台，缺省 true；shopTime=大BOSS 前定点商店勤务开关（缺省 true）；revive=driveRevive 子闸——战败(deadType==1)且本场次数未用尽时是否代答 8552 复活，缺省 true；checkPower=driveCheckPower 子闸——受威胁时先探战力差（本队 vs 来犯队，8549），明确不亏则这一拍不逃、照常规阶梯干活（对齐竞品 option.check_power），缺省关；shopDwellMs=到店驻留毫秒（面板秒×1000，默认 25000）；emptyDwellMs=资源/掉落拿空后 settle 毫秒（默认 0=立即走）；drivePlan=开车方案 id（缺省 'enigmaB_default'，§15.8），见 pilot.js）。
  *   leave=拿满自动离场 {enabled}（enabled=面板 autoLeaveEnabled 总闸（默关）；无子开关，离场为不可逆的整场退出，见 leave.js）。
- *   scout=侦察囤情报 {enabled}（enabled=面板 scoutEnabled 总闸（默关）；只囤情报不派兵，花 41001 侦察野怪点品质，见 scout.js）。
- * @type {{pickItems:Object<string,{on:number,max:number,shop?:number}>, pickOrder:string[], pickRank:Object<string,number>, buffEffects:number[], heal:object, boss:object, shop:{enabled:boolean}, warn:{enabled:boolean,mode:string}, drive:{enabled:boolean,boss:boolean,shopTime:boolean,revive:boolean,shopDwellMs:number,emptyDwellMs:number}}}
+ *   scout=侦察囤情报 {enabled}（enabled=面板 scoutEnabled 总闸（**v4.1 起缺省开**：打野档品质筛选依赖其情报，关则 #pickBeast 恒按未知品质 2 处理、被 driveBeastMinQuality=4 筛成哑火）；只囤情报不派兵，花 41001 侦察野怪点品质，护栏=先 8536 免费预检/余量闸/速率闸，见 scout.js）。
+ * @type {{pickItems:Object<string,{on:number,max:number,shop?:number}>, pickOrder:string[], pickRank:Object<string,number>, buffEffects:number[], heal:object, boss:object, shop:{enabled:boolean}, warn:{enabled:boolean,mode:string}, drive:{enabled:boolean,boss:boolean,shopTime:boolean,revive:boolean,checkPower:boolean,shopDwellMs:number,emptyDwellMs:number,drivePlan:string}}}
  */
 /**
  * BOSS 攻打固定档（面板不给开关）：攻打/投喂/石头恒开、轮次无限、就近选档，relocate（自动挪台，风险最高）恒关。
@@ -138,7 +139,14 @@ var modCfg = {
   boss: BOSS_AUTO,
   shop: { enabled: false },
   warn: { enabled: false, mode: 'transfer' },
-  drive: { enabled: false, boss: true, shopTime: true, shopDwellMs: 25000, emptyDwellMs: 0 },
+  drive: {
+    enabled: false,
+    boss: true,
+    shopTime: true,
+    shopDwellMs: 25000,
+    emptyDwellMs: 0,
+    drivePlan: 'enigmaB_default',
+  },
   leave: { enabled: false },
   scout: { enabled: false },
 };
@@ -420,6 +428,13 @@ function buildEnv() {
       const e = engines.drive;
       if (e && typeof e.markShopLedger === 'function') e.markShopLedger(key, patch);
     },
+    // §9.2 约束1（farm 侧晶块保底）的「本场已买过百兽箱」位：pickup 不引 pilot（§14.1 零引用红线），
+    //   只能经 env 惰性读 pilot 的 #shopLedger（任一店 piece>0）。读不到（pilot 未起/无账）回 null，
+    //   pickup 按「未买过」保守处理（不扣 3000 预留 → 更不易停采晶块，晶块多采无害）。
+    shopBoxBought: function () {
+      const e = engines.drive;
+      return e && typeof e.isBoxBought === 'function' ? !!e.isBoxBought() : null;
+    },
     // 打野档的品质闸：读 scout.js 的侦察账；未侦察回 null（pilot 按未知品质当 2 处理）。
     scoutQuality: function (x, y) {
       const e = engines.scout;
@@ -661,7 +676,7 @@ function sanitizeWarn(raw) {
 /**
  * 面板的平铺自动驾驶字段 → 引擎用的嵌套对象（秒字段保留原值，sanitizeDrive 负责编毫秒）。
  * @param {object} c 面板原配置
- * @returns {{enabled:boolean,boss:boolean,shopTime:boolean,revive:boolean,shopDwellSec:number,emptyDwellSec:number}}
+ * @returns {{enabled:boolean,boss:boolean,shopTime:boolean,revive:boolean,checkPower:boolean,shopDwellSec:number,emptyDwellSec:number}}
  */
 function pickDriveRaw(c) {
   return {
@@ -669,15 +684,17 @@ function pickDriveRaw(c) {
     boss: !(c && c.driveBoss === false),
     shopTime: !(c && c.driveShopTime === false),
     revive: !(c && c.driveRevive === false),
+    checkPower: c && c.driveCheckPower === true,
     shopDwellSec: c && c.driveShopDwell != null ? c.driveShopDwell : 25,
     emptyDwellSec: c && c.driveEmptyDwell != null ? c.driveEmptyDwell : 0,
+    drivePlan: c && c.drivePlan != null ? String(c.drivePlan) : 'enigmaB_default',
   };
 }
 
 /**
- * drive 归一化：enabled/boss/shopTime/revive 归布尔（boss/shopTime/revive 缺省 true）；秒→毫秒并夹 [0,300s]（非法回默认 25s/0s）。
+ * drive 归一化：enabled/boss/shopTime/revive 归布尔（boss/shopTime/revive 缺省 true）；checkPower 缺省 false（对齐竞品缺省）；秒→毫秒并夹 [0,300s]（非法回默认 25s/0s）；drivePlan 校验为已注册方案 id（非法回落 enigmaB_default）。
  * @param {*} raw pickDriveRaw 产物
- * @returns {{enabled:boolean,boss:boolean,shopTime:boolean,revive:boolean,shopDwellMs:number,emptyDwellMs:number}}
+ * @returns {{enabled:boolean,boss:boolean,shopTime:boolean,revive:boolean,checkPower:boolean,shopDwellMs:number,emptyDwellMs:number,drivePlan:string}}
  */
 function sanitizeDrive(raw) {
   const e = raw && typeof raw === 'object' ? raw : {};
@@ -688,13 +705,16 @@ function sanitizeDrive(raw) {
   let ed = Number(e.emptyDwellSec);
   if (!Number.isFinite(ed)) ed = 0;
   else if (ed > 300) ed = 300;
+  const plan = PLANS[e.drivePlan] ? String(e.drivePlan) : 'enigmaB_default';
   return {
     enabled: e.enabled === true,
     boss: e.boss !== false,
     shopTime: e.shopTime !== false,
     revive: e.revive !== false,
+    checkPower: e.checkPower === true,
     shopDwellMs: sd * 1000,
     emptyDwellMs: ed * 1000,
+    drivePlan: plan,
   };
 }
 
@@ -816,7 +836,7 @@ function run(ctx) {
   //   纯电平轮询无 push 订阅，仅队长可发、多重 fail-safe（容量/背包读不到即不撤），一场最多一次，见 leave.js 文件头
   engines.leave = new LeaveEngine(env);
   engines.leave.start(ctx);
-  // 侦察囤情报引擎（scoutEnabled，默关）：对 10018 快照里就近野生点（172）先 8536 免费预检、无 beastId 且道具/冷却允许才 8537 花 41001 侦察；
+  // 侦察囤情报引擎（scoutEnabled，v4.1 起缺省开——打野档品质闸 #pickBeast 读它的情报缓存，关则打野恒按未知品质 2 处理被 minQ=4 筛成哑火）：对 10018 快照里就近野生点（172）先 8536 免费预检、无 beastId 且道具/冷却允许才 8537 花 41001 侦察；
   //   品质攒进内存缓存、不改变任何行车/攻打行为（172 不在巡航档）；订阅 10018 需 ctx，仅本人背包动作不要求队长，见 scout.js 文件头
   engines.scout = new ScoutEngine(env);
   engines.scout.start(ctx);
@@ -863,10 +883,12 @@ reactor.register({
     driveBoss: true,
     driveShopTime: true,
     driveRevive: true,
+    driveCheckPower: false,
     driveShopDwell: 25,
     driveEmptyDwell: 0,
+    drivePlan: 'enigmaB_default',
     autoLeaveEnabled: false,
-    scoutEnabled: false,
+    scoutEnabled: true,
   },
   fields: [
     {
@@ -983,6 +1005,16 @@ reactor.register({
       hint: '默认开：21521 推送里 `deadType==1` 且本场已复活次数 < 上限（dataConfig 3056）时，代答一次 8552 `{uid}` 原地复活，避免整场因一次战败停摆。上限读不到/为 0 → 一律不复活（宁不复活也不盲烧次数）；两次复活最短间隔 driveReviveGapMs。关掉则战败只挂诊断、由人自行点复活面板',
     },
     {
+      key: 'driveCheckPower',
+      type: 'checkbox',
+      label: '受威胁先探战力差（check_power）',
+      section: '自动驾驶',
+      showIf: function (cfg) {
+        return !!(cfg && cfg.driveEnabled);
+      },
+      hint: '默认关（对齐竞品缺省）：开启后受威胁（21534 num>0）的每一拍先按需查一次 8549「谁在打我」，本队战力取 21521 本地 members 快照、来犯战力取 8549 应答 fightTeams+waitTeams 求和；**明确不亏（差>0）则这一拍不逃**，落回常规阶梯照抢 BOSS/采集；查询失败/数据读不到一律保守照逃。结果缓存数秒（drivePowerGapTtlMs）防逐拍烧协议',
+    },
+    {
       key: 'driveShopTime',
       type: 'checkbox',
       label: '大BOSS 前定点商店勤务',
@@ -1017,6 +1049,21 @@ reactor.register({
       hint: '资源点(173)/掉落箱(163)改为「拿空即走」：物品拾取+BUFF拾取（或物品+宠物）都空后，再多驻留本秒数才挪队（0=立即走，默认 0）。等不到拿空由内部 45s 安全上限兜底，不会死守',
     },
     {
+      key: 'drivePlan',
+      type: 'select',
+      label: '开车方案',
+      section: '自动驾驶',
+      options: function () {
+        return planIds().map(function (id) {
+          return { value: id, label: (PLANS[id] && PLANS[id].label) || id };
+        });
+      },
+      showIf: function (cfg) {
+        return !!(cfg && cfg.driveEnabled);
+      },
+      hint: '缺省 enigmaB_default（竞品B对齐链）；crystal_then_skill 为水晶→技能→BOSS 多区域方案（需线上配 driveStrongRoundMin 阈值才启用分区，否则与缺省行为等价）。切换方案后需停止再开启自动驾驶才生效（整场不热切）',
+    },
+    {
       key: 'autoLeaveEnabled',
       type: 'checkbox',
       label: '拿满自动离场',
@@ -1028,7 +1075,7 @@ reactor.register({
       type: 'checkbox',
       label: '侦察野怪点品质',
       section: '侦察囤情报',
-      hint: '默认关（侦察会消耗背包里稀缺的全地形勘察车 41001，非商店货、只能从野怪点产出拾取）：开启后只对当前视口快照里的就近野生点（172）动手——先 8536 免费预检（若该点已被侦察过，直接囤结果、不花道具），拿不到品质才发 8537 花 1 个勘察车侦察，把 beastId→品质攒进内存缓存。**只囤情报、不会为它派兵/挪队**（野怪点不在巡航档），且两次花道具之间有速率间隔、道具不足即自动改走免费预检。情报仅供面板展示与后续拓点参考',
+      hint: '默认开（v4.1：打野档的品质筛选依赖本情报——关掉后 #pickBeast 对未知品质恒按 2 处理、被下限 4 筛光，打野整档哑火）：只对当前视口快照里的就近野生点（172）动手——先 8536 免费预检（若该点已被侦察过，直接囤结果、不花道具），拿不到品质才发 8537 花 1 个勘察车侦察，把 beastId→品质攒进内存缓存。**只囤情报、不会为它单独派兵/挪队**，且两次花道具之间有速率间隔、道具低于预留量即自动改走免费预检（勘察车 41001 是非商店货、只能从野怪点产出拾取，护栏防烧穿）',
     },
   ],
   toModuleCfg: buildModuleCfg,

@@ -1,4 +1,5 @@
 node_modules/
+.replaytmp/
 extension/dist/
 dashcam/store/
 warroom/

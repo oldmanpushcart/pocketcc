@@ -14,6 +14,8 @@
  *      本引擎在其上加面板阈值：`1 - armyPower/maxArmyPower >= healThreshold/100`。
  *   ③ 道具白名单**不硬编码**：源码 `getDataConfigData(3035).split('|')`，逐个
  *      `getItemNumById(id) > 0` 才画按钮（本 feat 用到的是 41002 急救绷带 / 41003 全科医疗包）。
+ *      v4.1 起按**伤情分档选药**（竞品 recuperate L25042 同旨）：`ratio<0.9` 重伤优先 41003（急救箱），
+ *      否则优先 41002（绷带）；首选不在白名单/缺货/被拉黑则落回勾选（3035）常规序，档位只在白名单内生效。
  *   ④ `8534 ENIGMA_SECRET_ROOM_BAG_USE {info:{itemId,itemCount:1}, marchId}` —— 源码
  *      NWorldPabTeamSelfItem.useItem；**`itemCount` 恒为 1**（游戏是逐件点击语义），
  *      **`marchId` 直接复用 8584 应答里那个 Int64 对象本体**（不 Number 化、不转字符串、不 Int64.fromString）。
@@ -47,6 +49,8 @@ import {
   CMD_MARCH_ARMY_INFO,
   CMD_BAG_USE,
   CFG_PAB_HEAL_ITEMS,
+  ITEM_BANDAGE,
+  ITEM_MEDKIT,
   REJ_RETRY,
   CODE_NOT_SENT,
   tuning,
@@ -292,14 +296,36 @@ export class HealEngine {
   }
 
   /**
-   * 按「勾选序（空=游戏 3035 白名单序）」挑第一件**背包有货且未被本会话拉黑**的道具。
+   * 按「伤情分档优先（竞品 recuperate L25042）+勾选序（空=游戏 3035 白名单序）」挑第一件**背包有货且未被本会话拉黑**的道具。
+   *   重伤（`armyPower/maxArmyPower < 0.9`）先试 41003 急救箱，其余先试 41002 绷带；
+   *   首选不在白名单/缺货/被拉黑 → 落回勾选（3035）常规序（保守：不因为分档把可用药拦在门外；
+   *   副作用是白名单序把 41003 排前时，轻伤也可能花掉急救箱，与竞品双档 fallback 略有出入，属取舍）。
    * @param {object} h 面板 heal 配置 {items}
+   * @param {object|null} army 受伤军队快照（{armyPower,maxArmyPower}；缺=不分档，走常规序）
    * @returns {number} itemId（0=没有可用道具）
    */
-  #pickItem(h) {
+  #pickItem(h, army) {
     const env = this.#env;
     let ids = Array.isArray(h.items) ? h.items.filter(Number.isInteger) : [];
     if (!ids.length) ids = parseHealWhitelist(env.gameConf.dataConfig(CFG_PAB_HEAL_ITEMS));
+    const has = function (id) {
+      for (let i = 0; i < ids.length; i++) if (ids[i] === id) return true;
+      return false;
+    };
+    const usable = function (id) {
+      return has(id) && !this.#rejected[id] && env.secret.getItemNumById(id) > 0;
+    }.bind(this);
+    // 伤情分档：只有重伤才值得先烧贵的急救箱（对齐竞品 ratio<0.9 档）
+    let pref = 0;
+    if (army && army.maxArmyPower > 0) {
+      const ratio = army.armyPower / army.maxArmyPower;
+      pref = ratio < 0.9 ? ITEM_MEDKIT : ITEM_BANDAGE;
+    }
+    if (pref && usable(pref)) {
+      // 余量重新出现 → 解除「已提示过缺货」，让下一次真缺货还能再提示一次
+      delete this.#toldEmpty[pref];
+      return pref;
+    }
     const empty = [];
     for (let i = 0; i < ids.length; i++) {
       const id = ids[i];
@@ -332,7 +358,7 @@ export class HealEngine {
     if (this.#sentThisTick >= maxPer) return false;
     const army = this.#pickWounded(h);
     if (!army) return false;
-    const itemId = this.#pickItem(h);
+    const itemId = this.#pickItem(h, army);
     if (!itemId) return false;
     this.#sendUse(army, itemId);
     this.#sentThisTick++;

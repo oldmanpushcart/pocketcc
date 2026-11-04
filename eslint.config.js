@@ -16,9 +16,11 @@ export default [
       //   tools/          —— 粘贴到 DevTools 控制台执行的一次性逆向探针脚本，不入扩展产物；
       //   warroom/        —— 独立 Node 分析子工程（自带 package.json + node_modules），各有工具链；
       //   .reviewtmp/     —— 本地评审/迁移草稿目录（已 .gitignore），内容多为产物快照与一次性脚本。
+      //   .replaytmp/     —— 本地仿真/对拍草稿目录（已 .gitignore），Node 一次性脚本不适用浏览器 globals。
       'tools/**',
       'warroom/**',
       '.reviewtmp/**',
+      '.replaytmp/**',
     ],
   },
   js.configs.recommended,

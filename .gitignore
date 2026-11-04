@@ -11,6 +11,7 @@ ref_probe.mjs
 nul
 .jscpd/
 .reviewtmp/
+.replaytmp/
 
 # 本地 scratch（探针输出/日志/报文 dump），不入库
 /_*.out

@@ -142,6 +142,7 @@
       KV('lastBranch（本拍停在哪）', ds.lastBranch || '(空=未进入阶梯)');
       KV('lastDispatch（本拍派发结论）', ds.lastDispatch || '(无)');
       KV('gate（各路闸当前态）', JSON.stringify(ds.gate));
+      KV('cd（cd 账本剩余 ms：march=唯一 TO 锁，>0 时日常链发车会被 #can 短睡拦一拍）', JSON.stringify(ds.cd));
       KV('phase', JSON.stringify(ds.phase));
       KV('cfgDrive（引擎自己读到的）', JSON.stringify(ds.cfgDrive));
       KV('elapsedSec（fightBegin 起）', ds.elapsedSec);
@@ -188,6 +189,16 @@
         KV('marched（60s 内已派过的点）', JSON.stringify(ds.marched).slice(0, 260));
       KV('consumed', ds.consumed.length + ' 条 ' + JSON.stringify(ds.consumed).slice(0, 260));
       KV('dayBlack', JSON.stringify(ds.dayBlack));
+      // ── D1 crystal 路线补验（§11）：events 推导 + zone 阈值 + buffTried ──
+      if (ds.crystal) {
+        KV('crystal.planId（本次开车方案）', ds.crystal.planId || '(未锁定)');
+        KV('crystal.driveStrongRoundMin（强区回合阈值）', ds.crystal.driveStrongRoundMin + '（0=关闭分区）');
+        KV('crystal.zoneEnabled', ds.crystal.zoneEnabled);
+        KV('crystal.events（BOSS 开窗时刻推导）', JSON.stringify(ds.crystal.events));
+        KV('crystal.buffTriedCount（探明无 buff 位的井数）', ds.crystal.buffTriedCount);
+      } else {
+        KV('crystal', '(旧构建无此字段)');
+      }
       KV('told（已打过的一次性提示）', JSON.stringify(ds.told));
       const own = ds.tiles.detail
         .filter((t) => t.pt === 173 || t.pt === 163 || t.pt === 161)

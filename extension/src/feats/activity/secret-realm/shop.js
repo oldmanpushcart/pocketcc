@@ -47,6 +47,7 @@ import {
   TABLE_ITEM,
   ITEM_TYPE_PAB,
   ITEM_SAUSAGE,
+  ST_BOSS_DEAD_END,
   PAB_SHOP,
   REJ_RETRY,
   CODE_NOT_SENT,
@@ -284,6 +285,27 @@ export class ShopEngine {
   }
 
   /**
+   * 本场是否已有 BOSS 被打死收场（任一 `bossBaseInfo[].state === ST_BOSS_DEAD_END(30)`）。
+   *   对齐竞品 shopConver L25204 的 `bossBaseInfo.find(state==30)`（**任一个**而非 [0]）：
+   *   清台后香肠价值下降（没 BOSS 可喂）→ 买货优先级从「香肠优先」翻成「百兽箱优先」。
+   *   读不到 BOSS 列表（未下发/抛错）一律当**未清**（保守走常态香肠优先，不越权改变行为）。
+   * @returns {boolean}
+   */
+  #bossCleared() {
+    const env = this.#env;
+    try {
+      const list = env.secret.getBossBaseInfo();
+      if (!Array.isArray(list)) return false;
+      for (let i = 0; i < list.length; i++) {
+        if (list[i] && Number(list[i].state) === ST_BOSS_DEAD_END) return true;
+      }
+    } catch (e) {
+      return false;
+    }
+    return false;
+  }
+
+  /**
    * 找第一个「可买」或「可刷」的选中道具并发起一笔动作（一拍一个）。
    * 数据源是合并后的持有清单（pickItems）：行 key=`item:{itemId}`，条目 `shop=1` 即商店补货渠道勾选；
    *   目标持有量 T = `max>0 ? max : 携带上限 para1_v1`（无渠道上限，只有持有上限），
@@ -302,12 +324,18 @@ export class ShopEngine {
       return false;
     }
     const buyBalance = env.secret.getItemNumById(cur0.buyId);
-    // type3（跨店共享限量、整场活动限购，如「传奇百兽碎片自选箱」）：已从面板清单移除，到店默认最高优先级自动拿下，
-    //   不受任何「店」勾选控制——只要商店引擎在跑就先买它，再进入下面按勾选的补货流程。
-    if (this.#grabType3(cur, buyBalance)) return true;
-    // 香肠（41011）默认补满：固定规则「持有 < 10 就买」（见 #grabSausage）。
-    //   香肠是投喂 BOSS 的硬通货；自动驾驶模式下到店必补，不受「店」勾选控制。
-    if (this.#grabSausage(cur, buyBalance)) return true;
+    // 百兽箱（type3）/香肠的**购买优先级**随 BOSS 是否已清台而翻（竞品 §9.2 shopConver L25204）：
+    //   未清台 → 香肠优先（它是投喂 BOSS 的硬通货，先攒够）；已清台 → 百兽箱优先（没 BOSS 可喂，香肠价值降）。
+    //   两档各自「没需求/不在架就 return false」→ 自然形成竞品 `X || Y` 的兜底语义（香肠需但不在架→刷店，不外溢到百兽箱）。
+    //   ⚠ 两笔都是「一拍只发一个包」，另一档在同拍 return true 后不执行，下一拍再轮到（无买漏，仅优先级差）。
+    if (this.#bossCleared()) {
+      if (this.#grabType3(cur, buyBalance)) return true;
+      if (this.#grabSausage(cur, buyBalance)) return true;
+    } else {
+      // 常态：香肠优先（受 #grabSausage 的 `drive.enabled` 子闸约束，手动档不主动补）→ 再百兽箱。
+      if (this.#grabSausage(cur, buyBalance)) return true;
+      if (this.#grabType3(cur, buyBalance)) return true;
+    }
     for (let i = 0; i < keys.length; i++) {
       const k = keys[i];
       if (k.indexOf(KEY_ITEM) !== 0) continue;

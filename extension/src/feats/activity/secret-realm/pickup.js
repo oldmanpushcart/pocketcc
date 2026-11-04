@@ -2,15 +2,20 @@
  * 物品自动拾取引擎（异能秘境：掉落箱 + 资源点 + 增益井，仅当前到达点）。
  * 协议载荷口径见 constants.js；逐条闸门的落点在 `#pickupDrop`/`#pickupRes` 行内注释，本头只写取数与判据。
  *
- * 触发模型（**三触发源，同一套闸门**）：
+ * 触发模型（**五触发源，同一套闸门**）：
  *   ① CHANGE 推送（直连 `ctx.on.push`，载荷自带 x,y 与完整明细）：21532 掉落箱、21522 资源点。
  *   ② 资源点 8526 RESOURCE_INFO **应答**（**无 x,y**）：RESOURCE_GET 只需 {rId}、RESOURCE_GET_BUFF 只需 {rId,pos}。
  *   ③ 掉落箱 8532 DROP_INFO **req↔resp 配对**（req 拿 {x,y}、resp 拿明细）：应答不带坐标而 DROP_GET 必须要 {x,y,rId}，
  *     故坐标从**发包侧**补（游戏 INFO 请求就是 `{x:tileX,y:tileY}`）；8526 的 req 也是 `{x,y}`，两类都按点位记账。
+ *   ④ 到点 21529（§9.3 自愈补拉）：队伍到 173 后游戏未必推 21522/发 8526（CHANGE 只在点位数据**真的变了**时广播，
+ *     面板不开也不发 INFO）→ 本引擎自补一发 8526（等价竞品 `onPabTeamMarchArrive` 的 resource 分支）。
+ *   ⑤ 瓦片 10018（§9.4 本队箱发现）：视口增量里出现「163 且 `m.teamId` 与本队一致且 `iNum>0`」且去重窗未过且**是本队
+ *     所在点位** → 自补一发 8532（等价竞品 `onUpdateTileInfo`；10018 ≈3 条/秒，只判不 kick）。
  *   ②③ 不可省：CHANGE 只在**点位数据真的变了**时广播，安静时段整局可以一条都没有；游戏打开点位面板时必发 INFO，该应答
  *     **不 emit 任何全局事件**（只回调刷新组件）→ 仅靠 ① 会整局睡死。配对按应答事件的 `Event.reqTime` 取「ts <= reqTime
  *     中最大的一条」，取不到才退同 cmd 的 FIFO + TTL 近似；配不到坐标的应答整条丢弃、队列溢出整窗作废——错配的后果不是
- *     漏拾而是拿错点坐标发 8533，被拒还会把能拾的 dropId 拉黑 6h。只对触发的当前点位补发 GET，绝不主动发 INFO、不遍历全图。
+ *     漏拾而是拿错点坐标发 8533，被拒还会把能拾的 dropId 拉黑 6h。只对触发的当前点位补发 GET；主动 INFO 仅限 ④⑤ 两处、
+ *     且只打本队当前点位（自发包同样占 bus 的 net.req 通道，应答回到 ②③ 的配对管道被同一套闸门消费），遍历全图仍禁。
  *
  * 面板语义：拾取（掉落箱物品/宠物、资源点 bag）与增益井 buff 都默认生效、无总开关；细化走 pickItems 行式配置——每项一个
  *   「拾」checkbox + 一个目标持有量 T（0=跟随游戏 para1_v1），条目另有 shop 标志＝商店补货渠道、与本引擎无关。buff 协议与
@@ -62,6 +67,10 @@ import {
   CFG_RES_LIMITS,
   PUSH_DROP_CHANGE,
   PUSH_RESOURCE_CHANGE,
+  PUSH_TILE_INFO,
+  PUSH_TEAM_ARRIVE,
+  PAB_DROP,
+  PAB_RESOURCE,
   TABLE_RSS_STATION,
   TABLE_BEAST,
   BUFF_SLOT_MIN,
@@ -69,6 +78,10 @@ import {
   CODE_NOT_SENT,
   REJ_SAME_ITEM_ONCE,
   REJ_NOT_ARRIVED,
+  ITEM_BUY_CURRENCY,
+  ITEM_REFRESH_CURRENCY,
+  ITEM_SAUSAGE,
+  ST_BOSS_DEAD_END,
   tuning,
 } from './constants.js';
 
@@ -226,6 +239,13 @@ export class PickupEngine {
    * 撞「未真正发出」（被次通道 cdTime 频控拦下）→ 翻倍退避；连续命中 → 按 tuning.getGapStepMs 回落。
    */
   #gapMs = tuning.getGapMs;
+  /**
+   * @type {Map<string,number>} §9.3/§9.4 **主动补拉去重窗**（竞品 `drop_list` 等价物）：键 `r@x,y`/`d@x,y` → 静默到期（毫秒）。
+   * 发前置记 now+tuning.selfFetchTtlMs；8532 应答带箱 `endTime`（Int64，毫秒）时覆盖为按箱到期静默（竞品 L25232 同维）。
+   */
+  #selfFetch = new Map();
+  /** @type {number|null} 21529 到点补拉的延迟定时器（等 21521 先行落账后复核 startPoint，与 pilot「不信事件时序」同口径） */
+  #arriveTimer = null;
 
   /** @param {object} env 注入底座 {alive, realmActive, cfg, secret, gameConf, gameData, l10n, log} */
   constructor(env) {
@@ -260,8 +280,16 @@ export class PickupEngine {
     ctx.on.resp(CMD_DROP_INFO, function (ev) {
       self.#onDropInfoResp(ev);
     });
+    // 触发源④（§9.3）：到 173 自补一发 8526（push 缺位时唯一的到点唤醒）
+    ctx.on.push(PUSH_TEAM_ARRIVE, function () {
+      self.#onTeamArrive();
+    });
+    // 触发源⑤（§9.4）：10018 视口增量里本队 163 箱 → 当前点位且未过期去重才补一发 8532（≈3 条/秒，只判不 kick）
+    ctx.on.push(PUSH_TILE_INFO, function (ev) {
+      self.#onTilePush(ev);
+    });
     this.#env.log.info(
-      'pickup engine started (CHANGE events + 8526/8532 req↔resp pair, current-tile only, pipelined GETs).',
+      'pickup engine started (CHANGE events + 8526/8532 req↔resp pair + §9.3 arrive/§9.4 tile self-fetch, current-tile only, pipelined GETs).',
     );
   }
 
@@ -356,17 +384,133 @@ export class PickupEngine {
       );
       return;
     }
+    // §9.4 drop_list 记账：应答带箱到期 `endTime`（Int64，毫秒）时把补拉静默窗改按箱到期（竞品 `t.endTime > ServerTime` 同维），
+    //   取不到/已过期才留在 selfFetchTtlMs 兑底窗内（窗满可重拉，箱内容变化另有 21532 push 补位）。
+    const et = inner.endTime != null ? Number(idKey(inner.endTime)) : NaN;
+    if (Number.isFinite(et) && et > Date.now()) this.#selfFetch.set('d@' + c.x + ',' + c.y, et);
     this.#onEvent('reward', snapshotReward(inner, c.x, c.y));
   }
 
-  /** 停止：撤去抖定时器与配对队列（事件退订由 reactor 统一摘除；在飞请求自然 settle）。 */
+  /**
+   * teamId 全精度比对（§9.4 归属闸，A1 避坑口径）：先 idKey 字符串口径（Int64 `.toString()` / 数字串同路），
+   *   不等再退 double 比对——一侧是被抹零的 number 时，`Number(全精度串)` 与抹零 double 相等，同源比较仍成立。
+   * @param {string} myKey 我的 roomBaseInfo.teamId 字符串形态（调用方 idKey 化好）
+   * @param {*} other 10018 瓦片的 m.teamId
+   * @returns {boolean}
+   */
+  #sameTeam(myKey, other) {
+    if (!myKey) return false;
+    const s = idKey(other);
+    if (!s) return false;
+    if (s === myKey) return true;
+    const a = Number(myKey);
+    const b = Number(s);
+    return Number.isFinite(a) && a === b;
+  }
+
+  /**
+   * §9.4：10018 瓦片刷新 → 发现本队的掉落箱。竞品 `onUpdateTileInfo`（L25231）判据照搬：
+   *   `pointType==PAB_DROP && roomBaseInfo.teamId==m.teamId && m.iNum>0 && drop_list 未记该点未过期` → 主动 8532 拉箱。
+   * 两处我方化的收窄（与竞品的有意差异，§9.4 已录）：
+   *   ① 只拉「队伍当前所在点位」（#tileGate 在位核对）：竞品把远箱缓存进 mooring.drop 到点再拾，而我方 #pending
+   *      是**单槽后到优先**，远点应答会顶掉当前点位刚推的 21532 载荷；且远点 GET 反正被 #tileGate 拦，拉了白刷带宽。
+   *   ② 归属双闸用 teamId 全精度串比对（#sameTeam）；读不到 teamId 就一个不拉（红线：只拉本队的箱）。
+   * 不 kick、不遍历；10018 载荷是平的（ev.data 直接 {pointInfos[]}，与 boss.js 同口径）。
+   * @param {object} ev bus `net.10018` 事件
+   */
+  #onTilePush(ev) {
+    const env = this.#env;
+    if (!env.alive() || !env.realmActive()) return;
+    const d = ev && ev.data;
+    const list = d && Array.isArray(d.pointInfos) ? d.pointInfos : null;
+    if (!list || !list.length) return;
+    const pab = env.secret.getPabController();
+    const base = pab && pab.roomBaseInfo;
+    const myTeam = base && base.teamId != null ? idKey(base.teamId) : '';
+    if (!myTeam) return;
+    const now = Date.now();
+    for (let i = 0; i < list.length; i++) {
+      const p = list[i];
+      if (!p || (Number(p.pointType) || 0) !== PAB_DROP) continue;
+      const m =
+        (p.m && typeof p.m === 'object' ? p.m : null) ||
+        (p.extData && typeof p.extData === 'object' ? p.extData : null) ||
+        null;
+      if (!m || !this.#sameTeam(myTeam, m.teamId)) continue; // 归属闸：别人的箱不拉
+      if (!(Number(m.iNum) > 0)) continue; // 没货不拉
+      const x = Math.floor(Number(p.x));
+      const y = Math.floor(Number(p.y));
+      if (!(x > 0) || !(y > 0)) continue;
+      const key = x + ',' + y;
+      const exp = this.#selfFetch.get('d@' + key);
+      if (exp != null && now < exp) continue; // drop_list 去重：箱未过期/静默窗未过不再拉
+      if (!this.#tileGate(key, 0)) continue; // 只拉当前点位（收窄①）
+      this.#selfFetch.set('d@' + key, now + (Number(tuning.selfFetchTtlMs) || 0)); // 先记后动：应答丢失也不在窗内重发
+      env.secret.sendSecret(CMD_DROP_INFO, { x: x, y: y });
+      env.log.debug(
+        'pickup §9.4: own-team drop tile (%d,%d) iNum=%d → proactive 8532 fetch.',
+        x,
+        y,
+        Number(m.iNum),
+      );
+    }
+  }
+
+  /**
+   * §9.3：21529 到点 → 若停在 173 自补一发 8526（等价竞品 `onPabTeamMarchArrive` 的 resource 分支）。
+   * 存在理由：21522 push 只在点位数据**真的变了**时广播，到点后服务器无变化、面板不开就既不推也不 INFO →
+   *   被动闸的拾取会睡满整个驻留窗。补拉的应答走既有 8526 req↔resp 配对（自发包同样上线 bus 的 net.req 通道），零新协议。
+   * 21529 与 21521 无时序保证：延迟一个去抖窗后再读 roomBaseInfo 复核在位（pilot「不信事件时序」同口径）。
+   * 竞品到点还记 cd_time.march（驻留时长）——那是方向盘的职责（§9.1 已收进 pilot 单时钟 #cd），pickup 不越权。
+   */
+  #onTeamArrive() {
+    const self = this;
+    const env = this.#env;
+    if (!env.alive() || !env.realmActive()) return;
+    if (this.#arriveTimer != null) return; // 连续到点事件只排一次复核
+    this.#arriveTimer = setTimeout(function () {
+      self.#arriveTimer = null;
+      self.#fetchResOnArrive();
+    }, tuning.pickupDebounceMs);
+  }
+
+  /**
+   * 到点补拉的实际动作（#onTeamArrive 延迟窗后）：仍在 173 且在位 → 发 8526；每点静默窗防 21529 连触重发。
+   */
+  #fetchResOnArrive() {
+    const env = this.#env;
+    if (!env.alive() || !env.realmActive()) return;
+    const pab = env.secret.getPabController();
+    const base = pab && pab.roomBaseInfo;
+    if (!base || (Number(base.pointType) || 0) !== PAB_RESOURCE) return;
+    const pt = base.startPoint || base.targetPoint;
+    const x = Math.floor(Number(pt && pt.x));
+    const y = Math.floor(Number(pt && pt.y));
+    if (!(x > 0) || !(y > 0)) return;
+    const key = x + ',' + y;
+    if (!this.#tileGate(key, 0)) return;
+    const sk = 'r@' + key;
+    const now = Date.now();
+    const exp = this.#selfFetch.get(sk);
+    if (exp != null && now < exp) return;
+    this.#selfFetch.set(sk, now + (Number(tuning.selfFetchTtlMs) || 0));
+    env.secret.sendSecret(CMD_RESOURCE_INFO, { x: x, y: y });
+    env.log.debug('pickup §9.3: arrived resource (%d,%d) → self 8526 fetch.', x, y);
+  }
+
+  /** 停止：撤去抖/到点补拉定时器与配对队列（事件退订由 reactor 统一摘除；在飞请求自然 settle）。 */
   stop() {
     if (this.#timer != null) {
       clearTimeout(this.#timer);
       this.#timer = null;
     }
+    if (this.#arriveTimer != null) {
+      clearTimeout(this.#arriveTimer);
+      this.#arriveTimer = null;
+    }
     this.#pending = { reward: null, res: null };
     this.#posQ = { reward: [], res: [] };
+    this.#selfFetch = new Map();
   }
 
   /**
@@ -464,6 +608,7 @@ export class PickupEngine {
       const key = 'item:' + itemId;
       const row = pickRow(cfg, key);
       if (!row.on) continue; // 用户关闭该物品
+      if (!this.#farmWorthy(itemId)) continue; // §9.2：货币配额已够，不再浪费拾取位（竞品 ids 过滤的 farm 侧消费）
       if (this.#blacked(it.dropId)) continue;
       if (this.#itemIdGeted(itemId, dropInfo, me)) continue; // 同点位同 itemId 已被我领（推送侧带 uid 才能判出）
       if (this.#takenByOther(it, me)) continue; // 已被队友领走（d=enigma_realm161）
@@ -599,6 +744,7 @@ export class PickupEngine {
       const key = itemId ? 'item:' + itemId : 'rss:' + it.specId;
       const row = pickRow(cfg, key);
       if (!row.on) continue;
+      if (itemId && !this.#farmWorthy(itemId)) continue; // §9.2：货币配额已够不再采（竞品 getResItem 的 `for(h=this.ids)` 同义）
       if (this.#gotLocal(tileKey, it.dropId, it.specId, itemId)) continue; // 本 feat 已按点位发过/已得
       if (itemId && pab) {
         if (this.#itemNumMax(pab, itemId)) continue;
@@ -701,6 +847,59 @@ export class PickupEngine {
     if (specId == null) return 0;
     const st = this.#env.l10n.tableRow(TABLE_RSS_STATION, specId);
     return st ? Number(st.item) || 0 : 0;
+  }
+
+  /**
+   * §9.2 farm 侧三约束（竞品 `get ids()` L24220-24228，消费在 getResItem/getDropBox 的选品循环，**不是** shopConver）：
+   *   把「够买就别再刷/采」的货币从拾取候选里动态剔除（基础式的「目标数>已有 && !checkItemNumMax」我方已由
+   *   pickRow/row.max + #itemNumMax/#roomBagNum 覆盖，本函数只补三条动态约束）：
+   *   约束1（41009 晶块）：`crystal > base − sausage*perSausage − (买过百兽箱?boxReserve:0)` → 停采晶块；
+   *   约束2（41010 刷新币）：`refresh + sausage >= driveSausageTarget` → 停采（商店不再需要刷新）；
+   *   约束3（41010 刷新币）：`bossBaseInfo[0].state==30`（清台）→ 停采（竞品原文取 [0]，不扩 find）。
+   * 公式底数一律走 tuning.shopReserve* 键（竞品内联字面量 12000/500/3000，本仓禁内联）；键缺失/非法 → 该约束失效。
+   * 其余 itemId 不受三约束管辖直接回 true；取数失败/读不到一律 fail-open（多采无害于少采，
+   *   误把晶块/刷新币锁死出拾取池的代价远大于多拾一枚货币）。
+   * @param {number} itemId 拾取候选道具
+   * @returns {boolean} true=仍值得采
+   */
+  #farmWorthy(itemId) {
+    const env = this.#env;
+    if (itemId !== ITEM_BUY_CURRENCY && itemId !== ITEM_REFRESH_CURRENCY) return true;
+    const pab = env.secret.getPabController();
+    if (!pab) return true;
+    // 取数失败/非数值 → NaN，下面统一按「读不到」fail-open
+    const num = function (id) {
+      try {
+        return Number(pab.getItemNumById(id));
+      } catch (e) {
+        return NaN;
+      }
+    };
+    const crystal = num(ITEM_BUY_CURRENCY);
+    const refresh = num(ITEM_REFRESH_CURRENCY);
+    const sausage = num(ITEM_SAUSAGE);
+    if (!Number.isFinite(crystal) || !Number.isFinite(refresh) || !Number.isFinite(sausage))
+      return true;
+    if (itemId === ITEM_BUY_CURRENCY) {
+      const base = Number(tuning.shopReserveBaseCrystal);
+      if (!Number.isFinite(base) || base <= 0) return true;
+      const per = Number(tuning.shopReserveCrystalPerSausage) || 0;
+      const boxReserve = Number(tuning.shopReserveCrystalBeastBox) || 0;
+      // 百兽箱位经 env.shopBoxBought 惰性读 pilot 账（读不到按未买：不扣预留 → 更不易停采，保守同竞品 shops 空集）
+      const boxBought = typeof env.shopBoxBought === 'function' ? !!env.shopBoxBought() : false;
+      const reserve = base - sausage * per - (boxBought ? boxReserve : 0);
+      return !(crystal > reserve);
+    }
+    const sausageTarget = Number(tuning.driveSausageTarget) || 0;
+    if (sausageTarget > 0 && refresh + sausage >= sausageTarget) return false;
+    try {
+      const list = env.secret.getBossBaseInfo();
+      if (Array.isArray(list) && list[0] && Number(list[0].state) === ST_BOSS_DEAD_END)
+        return false;
+    } catch (e) {
+      /* 读不到 BOSS 清单 = 不构成清台，不剔 */
+    }
+    return true;
   }
 
   /**
@@ -1035,6 +1234,10 @@ export class PickupEngine {
    *      不这么处理就会把同类增益装到两个槽上（用户要求的「三个不能重复」）；
    *   2) 无同类已装 → 取首个空槽（buffMap[pos]=0/未定义）；
    *   3) 都无 → 回 0，调用方跳过装备。
+   * §9.4 竞品对照（L25155-25190，2026-11-03 核对）：buff_para 比较内核一致（同类更强才替换，否则不装）；
+   *   两处**有意分歧**保留我方口径：① 竞品写死三类白名单（buff_icon 含 enigma_speed/enigma_attack/enigma_damage），
+   *     我方走面板 buffEffects 类勾选（空=不限，用户口径优先于字面量）；② 竞品把「槽里是非三类 buff」的占位也当可覆盖
+   *     （`r = r || n`），我方只填空槽与同类更强替换——不覆盖用户槽里其它类别的已装 buff（安全优先）。
    * @param {number|string} newSpecId 新 buff 对应的 rss_station specId
    * @param {object} pab PabController 实例
    * @returns {number} 1..3 表示目标 pos；0 表示跳过

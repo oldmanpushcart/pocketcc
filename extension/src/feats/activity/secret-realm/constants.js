@@ -425,6 +425,31 @@ export const TILE_KEY_ESR_ID = 'esrId';
  * @type {string}
  */
 export const TILE_KEY_SET = 'sET';
+/**
+ * 异能秘境三个 BOSS 的区域锚点（**活动固定坐标/类型，跨场实测不换**；保留作参考记录，当前 pilot 不 import）：
+ *   实测 esrId 在 lead 窗内已缓存进 #tiles，#bossEsrId() 决策时恒非 null，几何判区已删。
+ *   • 大BOSS (203,203)（型别 177）：20261011T195811（b10/boss9）、210400（boss9）、本录制 20261101（boss8）三场同位；
+ *   • 小BOSS-B (230,234)（型别 178）：20261011（boss12 esr22）与本录制同位；
+ *   • 小BOSS-A (175,177)（型别 178）：本录制 boss11（esr21）单场报文证据 + 用户跨场确认。
+ * 实测时间轴参考（**仅诊断对照用，决策链不消费**——进房首帧 21535 即带全量权威 stateEndTime，
+ *   硬编码排期会造出会过期的第二真值源）：以本场录制起点计，两小BOSS 同刻 +1137s 开打（21 窗约 7min），
+ *   大BOSS +2157s 开打（21 窗排定 10min）；历史场 20261011 大BOSS 21 时刻≈+2159s，两场差 2s（入场偏移量级）。
+ * 区域形状（本录制实测，901 应答去重 260 个平台格）：176 平台散布在自家锚点周围 1.4~21.2 格的圆环内，
+ *   三区互不重叠；「取最近锚点」判区与服务器 esrId 归属 **0/260 不一致** → 几何判区可完全替代 esr 对照
+ *   （连 esr 编号都不依赖，服务端改编号也不影响）。
+ * 历史用途（已废弃）：曾用于 #zoneAnchor 几何判区，但实测累积池 esrId 恒可用，几何从未触发，代码已删。
+ *   保留本表仅作坐标参考（探针工具、未来换图改版时的备用记录）。
+ * @type {Array<{x:number,y:number,big:boolean,label:string}>}
+ */
+export const PAB_BOSS_ZONES = [
+  { x: 203, y: 203, big: true, label: '大BOSS' },
+  { x: 175, y: 177, big: false, label: '小BOSS-A' },
+  { x: 230, y: 234, big: false, label: '小BOSS-B' },
+];
+/** @type {number} 判 BOSS 落在哪个区容差：本体 pos 就是锚点格本身，实测偏差 0，4 格防坐标取整/改版微动 */
+export const PAB_BOSS_ZONE_TOL = 4;
+/** @type {number} 判平台落在哪个区容差：实测平台距自家锚点最大 21.2，24 留余量；超出则不当本区候选（宁不挪不坐错区） */
+export const PAB_PLANE_ZONE_TOL = 24;
 
 // ─────────── DataConfig 限额键（TableUtils.getDataConfigData）───────────
 /** @type {number} 掉落箱可领总量上限（_itemGetMax = Number(dataConfig(3021))；bagGetNum+beastGetNum 计入） */
@@ -707,6 +732,12 @@ export const QUALITY_HIGH = 4;
  */
 export const ITEM_BUY_CURRENCY = 41009;
 /**
+ * 刷新币（人造水晶）道具 id：8543 SHOP_REFRESH 的计价单位（dataConfig 3028 的 [1]，每次恰好扣 1 个）。
+ *   竞品 §9.2 的 `ids` 购物清单约束直接按本 id 计数（刷新币可作资源/掉落产出采集）。
+ * @type {number}
+ */
+export const ITEM_REFRESH_CURRENCY = 41010;
+/**
  * 商店点位（一共 4 个；地图核对 = push 10018 里 `pointType===161` 的瓦片）。
  * 同一 `k=30911` 服务器上的四项：
  *   `(95,163) id=41776`、`(250,96) id=24702`、`(315,255) id=65438`、`(154,314) id=80462`；
@@ -812,7 +843,11 @@ export const REJ_NOT_IN_FIGHT = 'enigma_realm179';
 export const REJ_PLANE_TAKEN = 'enigma_realm252';
 /** @type {string} 战斗已开启，暂停行军（平台 extData.isFight===1，本平台在战斗中不重派） */
 export const REJ_FIGHT_ONGOING = 'enigma_realm217';
-/** @type {string} 同一区域核心停泊平台之间不允许相互行军（挪台路径约束） */
+/**
+ * @type {string} 同一区域核心停泊平台之间不允许相互行军（挪台路径约束）
+ *   真机报文（20261101T200401）：拒绝情境取决于**本队当前停泊位**（同区平台之间）而非目标点固有属性，
+ *   报文里同点挪开后再行军 11.5s 后即成功 → pilot.js 处置为 60s marched 冷却，不做本场拉黑。
+ */
 export const REJ_SAME_AREA_PLANE = 'enigma_realm209';
 /** @type {string} 离开后当前异能兽捕获进度将被清空，是否确定？（在拍普通宠时挪点需确认 → 自动化默认放弃本轮挪台） */
 export const REJ_LEAVE_CAPTURE_CONFIRM = 'enigma_realm208';
@@ -842,7 +877,7 @@ export const tuning = {
   tapIntervalMs: 250,
   /** 拍宠物：dataConfig(630027) 取不到时的每秒手拍兜底上限（与游戏 checkCaptureOperationCd 同语义） */
   tapMaxPerSecFallback: 4,
-/** 拍宠物：能量满释放（specId=4）之后的静默（毫秒），behave[4].time 读不到时的兜底；该窗口 6.4~10.2s */
+  /** 拍宠物：能量满释放（specId=4）之后的静默（毫秒），behave[4].time 读不到时的兜底；该窗口 6.4~10.2s */
   energyBurstFallbackMs: 7000,
   /**
    * 拍宠物：大BOSS 环节两次投喂道具（8546 specId 5/6）之间的最小间隔（毫秒）。
@@ -914,7 +949,7 @@ export const tuning = {
   healStaleMs: 6000,
   /** BOSS：状态机重扫间隔（毫秒）。21535/21521 都是 kick 唤醒源，本值只作推送漏拍的兜底 */
   bossScanMs: 2000,
-/** BOSS：一次 8521 发出后等待 21521 刷新的**确认超时**（毫秒）；小BOSS 一轮 4.3s、大BOSS 一轮 8s */
+  /** BOSS：一次 8521 发出后等待 21521 刷新的**确认超时**（毫秒）；小BOSS 一轮 4.3s、大BOSS 一轮 8s */
   marchConfirmMs: 8000,
   /**
    * BOSS 攻打：任一 `s≠0` 被拒后的**最小静默**（毫秒）。
@@ -1013,12 +1048,14 @@ export const tuning = {
   /**
    * 驾驶：状态机空闲轮询兜底（毫秒）。kick 源是 21534/21529/21535/21521（10018 只写快照不 kick），
    *   本值只兜「推送漏拍 + 驻留/冷却计时到点」的重评节奏。
+   * @deprecated v4 重写作废：相位推进改由 cd 账本（driveMarchCdSec）驱动，本键停止读取，仅留 storage 兼容。
    */
   driveScanMs: 5000,
   /**
    * 驾驶：一笔 8521 发出后到 21529 到达推送之间的**确认超时**（毫秒）。
    * 一整套开车闭环 31~44.2s，取 90s 给两档余量；
    *   超时即放弃该目标记消费转重评（防「目的地永远到不了」把状态机锁死在 TO 相位）。
+   * @deprecated v4 重写作废：确认超时并入 cd.march 账本（driveMarchCdSec），本键停止读取。
    */
   driveMarchTimeoutMs: 90000,
   /**
@@ -1026,6 +1063,7 @@ export const tuning = {
    * 现仅用于「无采集进度信号」的点（BOSS 平台 176 让 boss.js 打仗、其余非资源/掉落点）；
    *   资源点 173 / 掉落箱 163 走「拿空即走」（driveEmptyDwellMs + driveWorkMaxMs），不吃本值。
    *   取 45s：覆盖到点后 BOSS 攻打/一整套采集闭环上限 44.2s。
+   * @deprecated v4 重写作废：到点驻留改由 driveResStaySec +「拿空即走」判定，本键停止读取。
    */
   driveWorkDwellMs: 45000,
   /**
@@ -1069,12 +1107,14 @@ export const tuning = {
    * 驾驶：资源/掉落点「拿空即走」的**安全兜底上限**（毫秒，不露面板）。
    * 到点判空已有两路（CHANGE 过渡 + 10018 当前态 rTime/iNum），「到点即空」由当前态路当拍即判即走、不吃本值；
    *   本上限只兜「两路都探不到拿空」（真满载且我们的拾取清单拾不完、或快照与 CHANGE 双缺）的极端形态，防死守。
+   * @deprecated v4 重写作废：兜底上限并入 driveResStaySec，本键停止读取。
    */
   driveWorkMaxMs: 45000,
   /**
    * 驾驶：消费点（去过的资源/掉落/商店点）的**解禁 TTL**（毫秒）。
    * 取 10 分钟：与资源点 refreshTime 的刷新量级、商店轮巡 shopSweepMs 同档（补货不是高频动作）；
    *   过期后允许重去（资源点会刷新、商店额度会回补），防「快照里的点被一次性烧完」后永久罢工。
+   * @deprecated v4 重写作废：消费点解禁改由 cd 账本管理，本键停止读取。
    */
   driveConsumedTtlMs: 600000,
   /**
@@ -1094,6 +1134,7 @@ export const tuning = {
    *   距开启 ≤ 本值即提前把队伍挪到就近可用 176 平台——行军本身要 31~44s（见 driveMarchTimeoutMs），
    *   等 21 推送到了再挪必然把开台前几十秒的争夺窗烧在腿上。
    *   取 60000：行军上限 44.2s + 一拍兜底 5s，60s 恰好覆盖。
+   * @deprecated v4 双轨迁移入口：读取以 drivePlaneLeadSec（秒）为准，本键仅用于 load 时 ms/1000 换算。
    */
   driveBossLeadMs: 60000,
   /**
@@ -1102,11 +1143,13 @@ export const tuning = {
    * 若视口内 173 全被别队抽空、rTime 落在 2~3 分钟后，原地等就是干等 3 分钟；
    *   而 10018 只覆盖视口，不移动就永远看不到别处的井。取 30s（≈6 拍）：给「马上刷新」留耐心，又不至于长期停摆。
    *   0 = 关闭探索（无货就原地等）。
+   * @deprecated v4 重写作废（探索档见文档 §10，本次不入）：本键停止读取。
    */
   driveIdleExploreMs: 30000,
   /**
    * 驾驶：**探索步长**（格）。无候选时朝 8 扇区轮转方向各走这么远，落在已见点位上就换下一个方向。
    *   取 12：约一个视口半径量级，既能推出新点位，又不至于把一趟行军拉成两百格长跑（行军 31~44s 是硬成本）。
+   * @deprecated v4 重写作废（探索档见文档 §10，本次不入）：本键停止读取。
    */
   driveExploreStep: 12,
   // ── pilot 主动视口 / 表格锚点 / 到点分派 ──
@@ -1145,6 +1188,7 @@ export const tuning = {
    * pilot：**商店勤务的定期节拍**（毫秒）：距上次到店超过本值且当前点不是商店 → 再去一家
    *   （#shopWant 的 `stage` 档，抢在日常链前）。「勤务/缺香肠/持有缺口」三档**不拦路**，只作链尾兜底那一下的选店排序。
    * 取 8 分钟（5 分钟会把手上的百兽箱/香肠额度提前榨干，且和到店冷却打架）。
+   * @deprecated v4 双轨迁移入口：读取以 driveShopIntervalSec（秒）为准，本键仅用于 load 时 ms/1000 换算。
    */
   driveShopIntervalMs: 480000,
   /**
@@ -1157,6 +1201,45 @@ export const tuning = {
    *   ⚠ 它**不抢在采井/打野之前**（那是拦路电平闸，一局能开出 11 次回店）。
    */
   driveSausageTarget: 10,
+  /**
+   * §9.2 购物/采集**晶块保底**基准（竞品 L24221 写死字面量，非用户调参 → 入 constants 带注释，禁内联魔法数）。
+   *   竞品 `ids` 过滤式：`getItemNumById(41009) > base − getItemNumById(41011)*perSausage − (买过百兽箱?box:0)`
+   *   → 从购物/采集清单剔掉 41009（晶块够买香肠/百兽箱就不必再刷/采晶块）。
+   * @type {number}
+   */
+  shopReserveBaseCrystal: 12000,
+  /** @type {number} §9.2 保底式里每根香肠(41011)扣减的晶块系数（竞品 L24221 `*500`） */
+  shopReserveCrystalPerSausage: 500,
+  /** @type {number} §9.2 保底式里「本场已买过百兽箱(piece==1)」时的晶块额外预留（竞品 L24221 `3000`） */
+  shopReserveCrystalBeastBox: 3000,
+  /**
+   * pickup §9.3/§9.4 **自愈补拉的点位静默窗**（毫秒，键 `r@x,y`/`d@x,y`）。
+   *   竞品语义：`drop_list` 按箱 `endTime` 去重（未过期不再主动 8532），到点 8526 由 `onPabTeamMarchArrive` 触发一次；
+   *   我方 8532 应答若带回 `endTime` 会**覆盖**本 TTL 改为按箱到期日静默，取不到才退回本窗。
+   *   取 30s：与驻留窗（173/163 拿空即走）同量纲，宁可慢一轮也不拿视口内的远点刷查询包。
+   * @type {number}
+   */
+  selfFetchTtlMs: 30000,
+  /**
+   * plans §15.2 crystal_then_skill：**强异能区回合阈值**——`realm[esrId].roundid >= 本值` 的点判为强区（'strong'），
+   * 否则 'normal'。依据字典 FAQ25「先开离出生区最近的微异能区，之后开启靠近地图中心的强异能区」：强区＝后开回合，
+   * 用 roundid 排序切档是唯一不依赖表结构假设的口径。⚠ 阈值具体取值需线上 `cs-*-dump` 类探针读
+   *   `enigma_secret_realm`/`enigma_secret_realm_timer` 全行后钉死（D1/E1 验）；表行读不到 → zone 恒 'any'（不冲强区，保守）。
+   * 取 0=关闭强区判别（全判 'normal'），enigmaB_default 不受影响。
+   * @type {number}
+   */
+  driveStrongRoundMin: 0,
+  /**
+   * plans §15.2 bossOccupy：**大BOSS 开台前占位提前量**（毫秒）。竞品无此独立档（enigmaB 用 drivePlaneLeadSec=60s），
+   *   本方案的「前 2min 占位」按需求原文取 120s。仅在 BOSS 窗判据内取 min，不越过读秒本身。
+   * @type {number}
+   */
+  driveBuffOccupyLeadMs: 120000,
+  /**
+   * plans §15.2 smallGuard：**就近小BOSS 开台前占位提前量**（毫秒），同上门限语义。
+   * @type {number}
+   */
+  driveSmallGuardLeadMs: 120000,
   /**
    * pilot：BOSS 读秒（state22）**结束后的宽限窗**（毫秒）。读秒一结束 BOSS 就转 21 可打，但 21 的推送可能迟到、
    *   而 `stateEndTime` 已过期——若此时窗口判 null，车会从平台上落下去巡航，把整场 BOSS 让掉。
@@ -1222,10 +1305,76 @@ export const tuning = {
   /**
    * pilot：173 井的动态驻留（`min(res_stay_time, 未拿件数 × 0.8 + 1.1)` 秒）。
    *   主判据仍是「拿空即走」，本组值只作**兜底上限**（推送缺件时不至于无限占坑）。
+   * @deprecated v4 合并迁移入口：驻留上限读取以 driveResStaySec（秒）为准，本组三键仅作 load 换算。
    */
   driveResStayPerBagMs: 800,
   driveResStayBaseMs: 1100,
   driveResStayMaxMs: 8000,
+  // ── v4 竞品B（enigmaSecret）对齐新增（见文档 §8；旧键不删、只停读，`load` 里做双轨换算）──
+  /**
+   * pilot：**心跳/行军到点重评的最小间隔**（秒，对齐竞品 `march_cd`）。
+   *   取代旧 `driveScanMs`(5000ms)+`driveMarchTimeoutMs`(90000ms)：新 pilot 的相位推进由 cd 账本驱动，
+   *   本值只是「一笔 8521 发出后到下一拍重评」的最短冷却。
+   * @type {number}
+   */
+  driveMarchCdSec: 3,
+  /**
+   * pilot：**战败复活(8552)后的行军锁定**（秒，对齐竞品 §9.5 L25332「发 8552 后 cd.march=now+2」）。
+   *   给复活落地留窗，防同拍又发 8521 把刚复活的队再拖走。
+   * @type {number}
+   */
+  driveReviveLockSec: 2,
+  /**
+   * pilot：**打野（拍宠/讨伐异能兽）动作冷却**（秒，对齐竞品 `beast_cd`）。
+   * @type {number}
+   */
+  driveBeastCdSec: 10,
+  /**
+   * pilot：**BOSS 相关动作冷却**（秒，对齐竞品 `boss_cd`）。
+   *   ⚠ 方案①下 pilot 只负责「选 BOSS + 开上 176 平台」，打 BOSS 的 8521 让位 boss.js；
+   *   本值约束的是 pilot 侧的挪台/选台节拍，不是攻打节拍。
+   * @type {number}
+   */
+  driveBossCdSec: 1,
+  /**
+   * pilot：**平台（176）挑选策略**（对齐竞品 `plane_policy`，L24187；v4.1 已在 pilot.js #pickPlane 实装）。
+   *   0=近优先（缺省，含占用/在途筛） / 1=无视占用与在途硬占（竞品 L24867 `plane_policy==1 ||` 短路同位） /
+   *   2=远优先（竞品 L24868 `(policy < 2 ? 1 : -1)` 的距离排序方向位）。
+   * @type {number}
+   */
+  drivePlanePolicy: 0,
+  /**
+   * pilot：**大BOSS 开台前预置挪台窗口**（秒，对齐竞品 `plane_time`，双轨于旧 `driveBossLeadMs`）。
+   *   取 60 ≡ `driveBossLeadMs:60000`；`load` 时若 storage 只有旧 ms 键则 `ms/1000` 换算入本键。
+   * @type {number}
+   */
+  drivePlaneLeadSec: 60,
+  /**
+   * pilot：**资源/掉落点到点驻留上限**（秒，对齐竞品 `res_stay_time`）。
+   *   语义等价旧三键 `driveResStayPerBagMs/base/max` 的公式 `min(res_stay, n*0.8+1.1)`（pilot.js L1950），
+   *   本键为该公式的 `res_stay` 上界；旧三键仅作 storage 迁移入口保留。取 8 ≡ `driveResStayMaxMs:8000`。
+   * @type {number}
+   */
+  driveResStaySec: 8,
+  /**
+   * pilot：**商店勤务定期节拍**（秒，对齐竞品 `shop_interval`，双轨于旧 `driveShopIntervalMs`）。
+   *   取 480 ≡ `driveShopIntervalMs:480000`（8 分钟）。
+   * @type {number}
+   */
+  driveShopIntervalSec: 480,
+  /**
+   * pilot：**战力差预检开关**（对齐竞品 `option.check_power`，v4.1 已在 pilot.js 威胁档实装）。
+   *   本队战力取 21521 本地 `roomBaseInfo.members[].powerInfos[].power` 求和（heal.js 同源已证），
+   *   来犯战力按需查 8549 ATTACK_SELF_TEAM（源码已证；本局录制 0 次发的 `TEAM_INFO` 根本不依赖）；
+   *   差>0 这一拍不逃、落回常规阶梯；读不到/查败一律保守照逃（闭开）。
+   * @type {boolean}
+   */
+  driveCheckPower: false,
+  /**
+   * pilot：**战力差探针结果缓存**（毫秒）：威胁窗持续时防逐拍重发 8549 烧协议；超时重探。
+   * @type {number}
+   */
+  drivePowerGapTtlMs: 4000,
   /**
    * pilot：本场已到场打过的 BOSS 是否计入跳过账（与 `guard_policy==2` 联动）。
    *   true=跳过重复目标；false=只按石头奖励记录判（更激进，会重打同一个）。
