@@ -10,6 +10,6 @@
     "resolveJsonModule": true,
     "baseUrl": "."
   },
-  "include": ["extension/src/**/*", "dashcam/*.js", "tools/*.js", "esbuild.config.mjs"],
+  "include": ["extension/src/**/*", "dashcam/*.js", "esbuild.config.mjs"],
   "exclude": ["node_modules", "extension/dist", "release", "dashcam/store", "references"]
 }

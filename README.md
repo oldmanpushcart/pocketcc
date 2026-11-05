@@ -28,7 +28,6 @@ pocketcc/
 ├─ extension/          Chrome MV3 扩展工程（详见 extension/README.md）
 ├─ dashcam/            报文录制接收服务（详见 dashcam/README.md）
 ├─ references/         只读逆向素材：游戏源码镜像 + 分析台账（不入库的大文件已 .gitignore）
-├─ tools/              开发期真机探针脚本（DevTools 片段，非运行期代码）
 ├─ esbuild.config.mjs  扩展三入口的打包配置
 └─ package.json        扩展构建脚本（npm run build / watch；dashcam 不在其中）
 ```

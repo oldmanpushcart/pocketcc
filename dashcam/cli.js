@@ -24,7 +24,7 @@
  *   位置参数传报文会话文件时，自动查同目录 index.ndjson 的 logRef 解析日志目录（软引用配对）。
  *
  * 定位：只认落盘格式，不懂游戏业务——cmd 语义由调用方给。
- * 引擎仿真类 harness（依赖 extension 源码）不放这里，见 extension tools/。
+ * 引擎仿真类 harness（依赖 extension 源码）不放这里，见仓内 scripts/（replay 对拍框架 + verify-manifests）。
  */
 import path from 'node:path';
 import fs from 'node:fs';
