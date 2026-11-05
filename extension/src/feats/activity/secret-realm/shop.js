@@ -53,6 +53,7 @@ import {
   CODE_NOT_SENT,
   tuning,
 } from './constants.js';
+import { GateStateLog } from './gate-log.js';
 
 /** @type {string} 持有清单行 key 前缀（`item:{itemId}`，与 index.js/pickup.js 同口径） */
 const KEY_ITEM = 'item:';
@@ -107,10 +108,15 @@ export class ShopEngine {
   #specsByItem = null;
   /** @type {Array<{spec:number,itemId:number,cost:number,buyTimes:number}>|null} type3（跨店共享限量）货行清单惰性缓存 */
   #type3Specs = null;
+  /** @type {GateStateLog} 静默睡过出口的门控边沿日志（不参与判定） */
+  #gates;
+  /** @type {string} #atShop 本拍回 null 的原因（仅诊断，由 #gates 的 detail 带出） */
+  #atShopWhy = '';
 
   /** @param {object} env 注入底座 {alive, realmActive, cfg, secret, gameConf, l10n, log} */
   constructor(env) {
     this.#env = env;
+    this.#gates = new GateStateLog(env.log, 'shop');
   }
 
   /**
@@ -140,15 +146,31 @@ export class ShopEngine {
   #atShop() {
     const env = this.#env;
     const base = env.secret.getRoomBaseInfo();
-    if (!base || !base.startPoint) return null;
-    if (Number(base.pointType) !== PAB_SHOP) return null;
+    if (!base || !base.startPoint) {
+      this.#atShopWhy = 'no roomBaseInfo/startPoint';
+      return null;
+    }
+    if (Number(base.pointType) !== PAB_SHOP) {
+      this.#atShopWhy = 'pointType=' + base.pointType + ' (not 161 shop)';
+      return null;
+    }
     const S = env.secret.getNMarchState();
     const arrived = S && S.ARRIVED != null ? Number(S.ARRIVED) : 2;
-    if (Number(base.marchState) !== arrived) return null;
-    if (!env.secret.teamIsMooring()) return null;
+    if (Number(base.marchState) !== arrived) {
+      this.#atShopWhy = 'marchState=' + base.marchState + ' (not ' + arrived + ')';
+      return null;
+    }
+    if (!env.secret.teamIsMooring()) {
+      this.#atShopWhy = 'team not mooring';
+      return null;
+    }
     const x = Number(base.startPoint.x);
     const y = Number(base.startPoint.y);
-    if (!(x > 0) || !(y > 0)) return null;
+    if (!(x > 0) || !(y > 0)) {
+      this.#atShopWhy = 'bad coord (' + x + ',' + y + ')';
+      return null;
+    }
+    this.#atShopWhy = '';
     return { x: x, y: y, key: x + ',' + y };
   }
 
@@ -158,8 +180,9 @@ export class ShopEngine {
    */
   #tick() {
     const env = this.#env;
+    const g = this.#gates;
     if (!env.alive()) return 0;
-    if (!env.realmActive()) return tuning.shopSweepMs;
+    if (g.edge('realm-off', !env.realmActive(), 'not in pab realm')) return tuning.shopSweepMs;
     const sc = env.cfg().shop;
     // 总闸：
     //   ① 持有清单里任一行勾了「店」渠道（sc.enabled）→ 用户显式要求的补货；
@@ -167,37 +190,70 @@ export class ShopEngine {
     //      意图表达，故没勾「店」渠道时也允许到店自动购买。
     const dv = env.cfg().drive;
     const autoBuy = !!(dv && dv.enabled);
-    if (!(sc && sc.enabled) && !autoBuy) return tuning.shopSweepMs;
+    if (
+      g.edge(
+        'master-off',
+        !(sc && sc.enabled) && !autoBuy,
+        'pickItems no shop channel and drive off',
+      )
+    ) {
+      return tuning.shopSweepMs;
+    }
     const cur = this.#atShop();
     if (!cur) {
       this.#loadedXY = '';
+      g.edge('docked', false, '');
       // 没停在商店点：
       //   · 自动驾驶开着 → **短轮询**：车随时可能到店，而到店只停 driveShopDwellMs（默认 25s），
       //     本引擎若睡满 shopSweepMs（10 分钟）就错过了整个驻留窗 = 用户口径「到店也不买货」；
-      //   · 手动档 → 保守长睡，等玩家把队开到店里再醒（本引擎绝不主动开车）。
+      //   · 手动档 → 保守长睡，等玩家把队开到店里再醒（本引擎绠不主动开车）。
+      //   闸名用 not-docked：实战最高危路径「到店也不买」就靠这条 + detail 定性。
+      g.edge(
+        'not-docked',
+        true,
+        this.#atShopWhy + (autoBuy ? ' (short poll)' : ' (manual, long sleep)'),
+      );
       return autoBuy ? tuning.driveScanMs : tuning.shopSweepMs;
     }
-    if (this.#busy) return tuning.shopGapMs;
+    g.edge('not-docked', false, '');
+    g.edge('docked', true, 'at (' + cur.x + ',' + cur.y + ')');
+    if (g.edge('busy', this.#busy, 'a 8540/8542/8543 is in flight')) return tuning.shopGapMs;
     // 同一店两条 BUY 之间的额外静默（上一笔未结算形态会出 enigma_realm162，见 constants shopBuyGapMs）
-    if (this.#lastBuyEndAt) {
-      const buyGapLeft = this.#lastBuyEndAt + tuning.shopBuyGapMs - Date.now();
-      if (buyGapLeft > 0) return buyGapLeft;
+    let buyGapLeft = 0;
+    if (this.#lastBuyEndAt) buyGapLeft = this.#lastBuyEndAt + tuning.shopBuyGapMs - Date.now();
+    if (g.edge('buy-gap', buyGapLeft > 0, buyGapLeft > 0 ? 'left=' + buyGapLeft + 'ms' : '')) {
+      return buyGapLeft;
     }
     // 8543 刷店的最小间隔（250ms 节拍连着刷会一秒烧光配额，故必须留间隔）：
     //   这里**只短睡到间隔满**（不能当「本轮无动作」处理，否则 #actOnce 回 false 会睡到 shopSweepMs 而错过整个驻留窗）
+    let refGapLeft = 0;
     if (this.#lastRefreshAt) {
-      const refGapLeft = this.#lastRefreshAt + (Number(tuning.shopRefreshGapMs) || 0) - Date.now();
-      if (refGapLeft > 0) return refGapLeft;
+      refGapLeft = this.#lastRefreshAt + (Number(tuning.shopRefreshGapMs) || 0) - Date.now();
+    }
+    if (g.edge('refresh-gap', refGapLeft > 0, refGapLeft > 0 ? 'left=' + refGapLeft + 'ms' : '')) {
+      return refGapLeft;
     }
 
     // 首次到店（或换了店）：INFO 一次装载货单
     if (this.#loadedXY !== cur.key) {
+      env.log.debug('shop: not INFOed yet at %s, send 8540 first.', cur.key);
       return this.#sendInfo(cur) ? tuning.shopGapMs : tuning.shopSweepMs;
     }
     // 选中的货位里找第一个可买/可刷的（补货项=持有清单 shop 渠道勾选，总闸 enabled 已在 #tick 夹过）
     const acted = this.#actOnce(cur);
+    g.edge('acted', !acted, acted ? '' : 'nothing actionable in selected rows');
     if (acted) return tuning.shopGapMs;
     // 无可动作：本轮扫完，按 shopSweepMs 轮巡（期间队伍若离店则 #atShop 返回 null 自然停）
+    //   带账目计数，事后能回答「是货单齐了还是全被降级」
+    env.log.debug(
+      'shop: sweep done at %s, selected=%d goodsLoaded=%d degraded=%d boughtSpecs=%d, sleep %dms.',
+      cur.key,
+      Object.keys(env.cfg().pickItems || {}).length,
+      Object.keys(this.#items).length,
+      Object.keys(this.#done).length,
+      Object.keys(this.#bought).length,
+      tuning.shopSweepMs,
+    );
     return tuning.shopSweepMs;
   }
 
@@ -793,6 +849,7 @@ export class ShopEngine {
     this.#done = {};
     this.#told = {};
     this.#retriedBuy = {};
+    this.#gates.reset();
     this.#cycle = createCycle({
       log: env.log,
       alive: function () {
@@ -822,6 +879,7 @@ export class ShopEngine {
   /** 停止：置死 #active（cycle 睡眠期定时器靠存活位在到点检查处终止）。 */
   stop() {
     this.#active = false;
+    this.#gates.reset();
     this.#cycle = null;
     this.#items = {};
     this.#loadedXY = '';

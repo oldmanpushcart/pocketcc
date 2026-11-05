@@ -35,6 +35,7 @@ import {
   CODE_NOT_SENT,
   tuning,
 } from './constants.js';
+import { GateStateLog } from './gate-log.js';
 
 /** 离场「拿满」计的高品质阈值（enigma_beast 行 quality ≥ QUALITY_HIGH） */
 const QUALITY_MIN = QUALITY_HIGH;
@@ -59,10 +60,13 @@ export class LeaveEngine {
   #packDone = false;
   /** @type {boolean} 是否有一条 8581/8589 在途（防并发） */
   #inFlight = false;
+  /** @type {GateStateLog} fail-safe 出口的边沿日志（不可逆档，宁可日志多，保证「没撤」能定责） */
+  #gates;
 
   /** @param {object} env 注入底座 {alive, realmActive, cfg, secret, gameData, l10n, log} */
   constructor(env) {
     this.#env = env;
+    this.#gates = new GateStateLog(env.log, 'leave');
   }
 
   /**
@@ -72,28 +76,43 @@ export class LeaveEngine {
    */
   #tick() {
     const env = this.#env;
+    const g = this.#gates;
     if (!env.alive()) return 0;
-    if (!env.realmActive()) return tuning.leaveScanMs;
+    if (g.edge('realm-off', !env.realmActive(), 'not in pab realm')) return tuning.leaveScanMs;
     const lc = env.cfg().leave;
-    if (!lc || !lc.enabled) return tuning.leaveScanMs;
-    if (this.#packDone || this.#inFlight) return tuning.leaveScanMs;
+    if (g.edge('cfg-off', !lc || !lc.enabled, 'autoLeave OFF')) return tuning.leaveScanMs;
+    if (g.edge('pack-done', this.#packDone, 'leave already acted this match'))
+      return tuning.leaveScanMs;
+    if (g.edge('in-flight', this.#inFlight, '8581/8589 in flight')) return tuning.leaveScanMs;
     // 仅队长可发（8589 撤全队那一次在场，与 8521/8548 同口径收队长闸；多人房成员侧一律不动）
-    if (!env.secret.isTeamLeader()) return tuning.leaveScanMs;
+    if (
+      g.edge(
+        'not-leader',
+        !env.secret.isTeamLeader(),
+        '8589 revokes whole-team presence, leader only',
+      )
+    )
+      return tuning.leaveScanMs;
 
     // 容量读不到（回 0）→ 「拿满」无从判起，绝不误撤场（ACL petPackCapacity 的 fail-safe 契约）
     const cap = env.secret.petPackCapacity();
-    if (!(cap > 0)) return tuning.leaveScanMs;
+    if (g.edge('no-capacity', !(cap > 0), 'petPackCapacity=' + cap + ' (unreadable)'))
+      return tuning.leaveScanMs;
     // 宠物清单键不存在（回 null）→ 同上；空数组是「一场没拍到宠」，也不触发（本档是为「拿满」而来）
     const pets = env.secret.getRoomBagPets();
-    if (!Array.isArray(pets)) return tuning.leaveScanMs;
+    if (g.edge('no-bag', !Array.isArray(pets), 'getRoomBagPets not delivered'))
+      return tuning.leaveScanMs;
 
     const stats = this.#packStats(pets, cap);
     // 触发闸：与 pilot 共用一份 exitStage 三级判据（内部已含 fightEndTime 兜底）；
     //   pilot 引擎不可用时退化为只认「本场战斗窗口已过」，不拿缺证据当「该收场」。
     const want = typeof env.driveExitStage === 'function' ? !!env.driveExitStage() : false;
-    if (!want && !this.#fightOver()) return tuning.leaveScanMs;
-    if (!stats.uuIds.length) return tuning.leaveScanMs; // 背包一场没拍到宠 → 不带东西白撤整场
-    if (!this.#exitSafe()) return tuning.leaveScanMs; // 现场不宜撤场（行军中/争夺窗内）→ 等下一拍
+    if (g.edge('not-time', !want && !this.#fightOver(), 'exitStage not reached & window open'))
+      return tuning.leaveScanMs;
+    if (g.edge('empty-pack', !stats.uuIds.length, 'no pet carried in pack'))
+      return tuning.leaveScanMs;
+    const safe = this.#exitSafe();
+    if (g.edge('not-exit-safe', !safe, safe ? '' : this.#exitWhy())) return tuning.leaveScanMs;
 
     this.#doLeave(stats.uuIds);
     return tuning.leaveScanMs;
@@ -153,6 +172,27 @@ export class LeaveEngine {
     const windowOver = end > 1e11 && Date.now() >= end; // 毫秒级绝对时刻且已过 → 争夺窗散场
     const atShop = Number(base.pointType) === PAB_SHOP; // 停在商店点（verbatim judgeLeave 的安全落点）
     return windowOver || atShop;
+  }
+
+  /**
+   * 诊断专用：复述 #exitSafe 的收紧判据，回「不能撤场」的具体原因（''=可安全撤场）。
+   * 不参与判定（决策仍走 #exitSafe），只为 gate[not-exit-safe] 的 detail 定责（不可逆档需逐项区分）。
+   * @returns {string}
+   */
+  #exitWhy() {
+    const env = this.#env;
+    const base = env.secret.getRoomBaseInfo();
+    if (!base) return 'no roomBaseInfo';
+    if (!env.secret.teamIsMooring()) return 'team not mooring';
+    const S = env.secret.getNMarchState();
+    const marching = S && S.MARCHING != null ? Number(S.MARCHING) : 1;
+    if (Number(base.marchState) === marching) return 'marching in flight';
+    const end = toNum(base.fightEndTime);
+    const windowOver = end > 1e11 && Date.now() >= end;
+    const atShop = Number(base.pointType) === PAB_SHOP;
+    if (!(windowOver || atShop))
+      return 'fight window not over & not at shop (pt=' + base.pointType + ')';
+    return '';
   }
 
   /**
@@ -233,6 +273,7 @@ export class LeaveEngine {
     this.#active = true;
     this.#packDone = false;
     this.#inFlight = false;
+    this.#gates.reset();
     createCycle({
       log: env.log,
       alive: function () {
@@ -252,5 +293,6 @@ export class LeaveEngine {
   stop() {
     this.#active = false;
     this.#inFlight = false;
+    this.#gates.reset();
   }
 }

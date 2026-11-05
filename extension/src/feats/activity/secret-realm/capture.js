@@ -117,6 +117,14 @@ export class CaptureEngine {
   #nextFeedAt = 0;
   /** @type {boolean} 本只宠已就「两个投喂格都没货」打过 info（换宠/重新开始才重置，防刷屏） */
   #toldNoFeed = false;
+  /** @type {number} 最近一次观测到「在拍」的时刻（Date.now；不在拍边沿 info 用它算 idle 时长） */
+  #lastFeedAt = 0;
+  /** @type {boolean} 本轮「不在拍」已打过 info（重新在拍后复位，保证只在进入不拍的边沿打一条） */
+  #notFeedLogged = false;
+  /** @type {boolean} 本次静默窗已打过 debug（同窗内不重复，出窗复位） */
+  #quietLogged = false;
+  /** @type {number} 上一次打「手拍配额耗尽」debug 的秒（同一秒只打一条，防刷屏） */
+  #quotaToldSec = 0;
 
   /** @param {object} env 注入底座 {alive, realmActive, cfg, secret, gameData, gameConf, l10n, ui, log} */
   constructor(env) {
@@ -136,7 +144,21 @@ export class CaptureEngine {
     if (!pab) return tuning.feedIdleMs;
 
     const st = this.#feedState(pab);
-    if (!st) return tuning.feedIdleMs; // 不在拍（未开拍/在行军/已结束）→ 长睡
+    if (!st) {
+      // 不在拍（未开拍/在行军/已结束）：只在进入不拍的边沿打一条 info，pass 侧由 onFeedBeast 的在拍 info 承担。
+      if (!this.#notFeedLogged) {
+        this.#notFeedLogged = true;
+        const idle = this.#lastFeedAt ? Date.now() - this.#lastFeedAt : 0;
+        env.log.info(
+          'capture: not feeding (capturingPetPos=%s), idle %dms.',
+          JSON.stringify(pab.capturingPetPos),
+          idle,
+        );
+      }
+      return tuning.feedIdleMs; // 长睡
+    }
+    this.#notFeedLogged = false;
+    this.#lastFeedAt = Date.now();
     const cap = st.cap;
 
     // ① 限时事件的轮询兜底：排在静默窗之前，且只在推送通道失联时启用（能量演出 7s 窗 > 拖拽 2.0s 窗）
@@ -146,9 +168,16 @@ export class CaptureEngine {
       else if (this.#pollEvent(es, pab)) return tuning.tapIntervalMs;
     }
 
-    // ② 静默窗口：能量爆发演出期间游戏侧禁输入兜底拍，睡到窗口结束
+    // ② 静默窗口：能量爆发演出期间游戏侧禁输入兜底拍，睡到窗口结束（首次命中打一条 debug，同窗不重复）
     const now = Date.now();
-    if (now < this.#quietUntil) return this.#quietUntil - now;
+    if (now < this.#quietUntil) {
+      if (!this.#quietLogged) {
+        this.#quietLogged = true;
+        env.log.debug('capture: quiet until +%dms (energy burst).', this.#quietUntil - now);
+      }
+      return this.#quietUntil - now;
+    }
+    this.#quietLogged = false;
 
     // ③ 能量满 → 高分值持续拍（390 分/拍，报文 14/14 复现）
     if (toNum(cap.selfenergy) >= ENERGY_MAX) return this.#useEnergy(pab);
@@ -420,7 +449,18 @@ export class CaptureEngine {
     }
     let limit = Number(env.gameConf.dataConfig(CFG_TAP_LIMIT_PER_SEC)) || 0;
     if (limit <= 0) limit = tuning.tapMaxPerSecFallback;
-    if (this.#tapCount >= limit) return false;
+    if (this.#tapCount >= limit) {
+      if (this.#quotaToldSec !== sec) {
+        this.#quotaToldSec = sec;
+        env.log.debug(
+          'capture: tap quota exhausted limit=%d used=%d sec=%d, wait next second.',
+          limit,
+          this.#tapCount,
+          sec,
+        );
+      }
+      return false;
+    }
     this.#tapCount++;
     return true;
   }
@@ -436,7 +476,16 @@ export class CaptureEngine {
     if (!specId) return;
     try {
       pab.petCaptureOperation(specId);
-      if (why) env.log.debug('capture: %s → specId=%d.', why, specId);
+      if (why) {
+        const ci = pab.capturingInfo || {};
+        env.log.debug(
+          'capture: %s → specId=%d favor=%d/%d.',
+          why,
+          specId,
+          toNum(ci.nowFavor),
+          toNum(ci.allFavor),
+        );
+      }
     } catch (e) {
       env.log.warn('capture: petCaptureOperation(%d) threw.', specId, e);
     }
@@ -458,6 +507,10 @@ export class CaptureEngine {
     this.#petKey = '';
     this.#nextFeedAt = 0;
     this.#toldNoFeed = false;
+    this.#notFeedLogged = false;
+    this.#quietLogged = false;
+    this.#quotaToldSec = 0;
+    this.#lastFeedAt = Date.now();
     this.#active = true;
     if (ctx && ctx.on && typeof ctx.on.push === 'function') {
       this.#lastPushAt = Date.now(); // 先给一个存活窗，避免开局第一拍就走兜底路

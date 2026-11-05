@@ -121,7 +121,7 @@ store/_log/<uid>/<YYYYMMDDTHH>[-NN].ndjson
 { "ts": 1730000000000, "lvl": "warn", "mod": "SECRET", "msg": "dispatch stall, retry 2", "n": 3 }
 ```
 
-- `lvl`：`info`（关键动作/可预期业务拒绝）| `debug`（调度细节）| `warn`（真异常）；面板可调最低档
+- `lvl`：`error`（确定性停摆/不变量违例）| `warn`（真异常但可恢复/已降级）| `info`（关键动作/可预期业务拒绝）| `debug`（调度细节）；面板可调最低档
 - `mod`：`createLog` 的模块标记（如 NET / SECRET / REC）；`msg`：printf 自拼后的完整单行文本
 - `n`：**折叠重复计数**——连续同 `(lvl,mod,msg)` 合并成一条（缺省 1）；溢出时批头会插一条 `[dropped N]` 审计行
 - ⚠️ 隐私：扩展同时开「网络日志」+「日志上送」时，req/resp 载荷会拼进 msg 落盘（含玩家名/坐标等），单行扩展侧截 2048 字符；日常只上送决策日志建议保持 minLvl=info 且关网络日志
@@ -142,7 +142,7 @@ node cli.js log    <目录|段文件|报文会话文件> --grep stall # 日志�
 
 旗标：`--dir=req|resp|push`（req:* 归一为 req）、`--from/--to` 相对首行 ts 的秒（`--anchor` 改锚点）、`--limit`、`--json`（机器可读）、`--width`（截断宽）。大文件流式扫，153MB 单命令约 10s。
 
-log 专属旗标：`--hour=20261104T15` 选段、`--ms=from[,to]` 绝对毫秒窗（接 slice 窗口的双轨对照；缺 to 意为「此刻往后」，与软引用窗同时给则取**交集**）、`--lvl` 最低档（debug|info|warn 只升不降）、`--mod`/`--grep` 子串过滤、`--group=mod|lvl|modlvl` 聚合计数（诊断哪个模块在刷屏）。位置参数传**报文会话文件**时自动经 `index.ndjson` 的 `logRef` 解析日志目录并限定会话窗。
+log 专属旗标：`--hour=20261104T15` 选段、`--ms=from[,to]` 绝对毫秒窗（接 slice 窗口的双轨对照；缺 to 意为「此刻往后」，与软引用窗同时给则取**交集**）、`--lvl` 最低档（debug|info|warn|error 只升不降）、`--mod`/`--grep` 子串过滤、`--group=mod|lvl|modlvl` 聚合计数（诊断哪个模块在刷屏）。位置参数传**报文会话文件**时自动经 `index.ndjson` 的 `logRef` 解析日志目录并限定会话窗。
 
 ```bash
 # 双轨对照：报文发现 t+600~640s 行为异常 → 拉同时刻引擎内心独白

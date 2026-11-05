@@ -139,6 +139,7 @@ const INTERNAL_FEATURES = [
           { value: 'debug', label: 'debug' },
           { value: 'info', label: 'info' },
           { value: 'warn', label: 'warn' },
+          { value: 'error', label: 'error' },
         ],
       },
     ],

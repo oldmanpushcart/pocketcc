@@ -784,6 +784,23 @@ EVADE / 拒绝码退避 / 占用判空 / 单飞 / 回合硬闸 = **全方案共�
 
 ---
 
+## 16. 实战试验跑前清单（日志可诊断性）
+
+> 本 feat 的决策依据几乎全在 debug，而日志上送与报文录制两个开关缺省都是关——忘开任一，这场试验就没有离线证据。周末仅 1 小时窗口，出问题只能靠事后日志+报文定位，故跑前**手工**照单勾选（`run()` 收尾会打一条 `rec reminder` info 作提醒，但不代劳、不改任何面板默认值与日志等级定义）。
+
+1. **面板 → 日志上送**：勾选启用，`minLvl=debug`，`flushSec=5`。
+2. **面板 → 报文录制**：勾选启用，`flushSec=2`，`note` 填场次标签（如「异能秘境-试验1」）。
+3. **试验中不要在 DevTools 里清 console**：sink 是实时 tee，清屏不影响落盘，丢的只是人眼现场。
+4. **收场后固定两条分析命令**（抄自 `skills/dashcam-rec-analysis/SKILL.md`）：
+   ```bash
+   node dashcam/cli.js index <会话.ndjson>
+   node dashcam/cli.js log <会话.ndjson> --lvl=debug --mod=SECRETM --grep=pilot:
+   ```
+
+> 事后诊断锚点：换场时 pilot 打一条 `new match anchor fightBeginTime=...` info，可与报文时间轴对齐（`cli.js slice --from/--to` 秒窗直接换算成「整场 +Nmin」，对照 BOSS 排期小 +23min / 大 +40min）；方向盘每约 30s 一条 `tick#... branch=...` 心跳；各引擎静默睡过走 `gate[...] blocked/passed` 边沿；拍宠物「没拍」走 `not feeding`/`quiet`/`tap quota` 三类原因日志。
+
+---
+
 ## 附录 A：块 A（世界图组队）竞品要点摘要（备查，不入本次）
 
 | 函数                     | 行号          | 一句话                                                                                                                          |

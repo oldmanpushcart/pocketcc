@@ -38,6 +38,7 @@ import {
   CODE_NOT_SENT,
   tuning,
 } from './constants.js';
+import { GateStateLog } from './gate-log.js';
 
 /**
  * 点位键（与 warn.js/pilot.js 同口径的本地小工具；非法坐标回 ''）。
@@ -93,16 +94,19 @@ export class ScoutEngine {
   #lastScoutAt = 0;
   /** @type {number} 上次发 8536 的时刻（Date.now 毫秒；scoutInfoGapMs 全局间隔基准） */
   #lastInfoAt = 0;
-  /** @type {number} 上次 41001 余量不足提示的时刻（Date.now 毫秒；防刷屏） */
-  #lastToldAt = 0;
   /** @type {boolean} 是否有一条 8536 在途（异步链防并发） */
   #infoInFlight = false;
   /** @type {boolean} 是否有一条 8537 在途（异步链防并发） */
   #scoutInFlight = false;
+  /** @type {GateStateLog} 侦察护栏/冷却出口的边沿日志（不参与判定） */
+  #gates;
+  /** @type {number} 本会话发起的 8537 花道具侦察次数（stop 收场小结用） */
+  #paidScouts = 0;
 
   /** @param {object} env 注入底座 {alive, realmActive, cfg, secret, gameData, l10n, log} */
   constructor(env) {
     this.#env = env;
+    this.#gates = new GateStateLog(env.log, 'scout');
   }
 
   /**
@@ -146,23 +150,30 @@ export class ScoutEngine {
    */
   #tick() {
     const env = this.#env;
+    const g = this.#gates;
     if (!env.alive()) return 0;
-    if (!env.realmActive()) return tuning.scoutScanMs;
+    if (g.edge('realm-off', !env.realmActive(), 'not in pab realm')) return tuning.scoutScanMs;
     const sc = env.cfg().scout;
-    if (!sc || !sc.enabled) return tuning.scoutScanMs;
-    if (this.#infoInFlight || this.#scoutInFlight) return 500; // 有一条异步链在途 → 极短退避等其落地
+    if (g.edge('cfg-off', !sc || !sc.enabled, 'scoutEnabled OFF')) return tuning.scoutScanMs;
+    if (
+      g.edge('in-flight', this.#infoInFlight || this.#scoutInFlight, '8536/8537 async chain busy')
+    )
+      return 500; // 有一条异步链在途 → 极短退避等其落地
     const base = env.secret.getRoomBaseInfo();
-    if (!base || !base.startPoint) return tuning.scoutScanMs; // 读不到停泊现场 → 无「就近」锚点，不凭空探
+    if (g.edge('no-base', !base || !base.startPoint, 'no roomBaseInfo/startPoint'))
+      return tuning.scoutScanMs; // 读不到停泊现场 → 无就近参照，不凭空探
     // 换场复位：fightBeginTime 变化 = 新一场秘境 → 清缓存（坐标可同位不同场，旧情报不作数、也允许重烧道具铺）
     const fb = toNum(base.fightBeginTime);
     if (fb > 1e11 && fb !== this.#matchBegin) {
       this.#matchBegin = fb;
       this.#scout = new Map();
+      g.reset(); // 换场清了缓存，边沿状态一并复位
     }
 
     const S = env.secret.getNMarchState();
     const arrived = S && S.ARRIVED != null ? Number(S.ARRIVED) : 2;
-    if (Number(base.marchState) !== arrived) return tuning.scoutScanMs; // 在途行军、视野/坐标在动 → 不打扰
+    if (g.edge('not-arrived', Number(base.marchState) !== arrived, 'marchState=' + base.marchState))
+      return tuning.scoutScanMs; // 在途行军、视野/坐标在动 → 不打扰
 
     const teamId = toNum(base.teamId);
     const now = Date.now();
@@ -183,19 +194,24 @@ export class ScoutEngine {
     cands.sort(function (a, b) {
       return a.d - b.d;
     });
-    if (!cands.length) return tuning.scoutScanMs;
+    if (
+      g.edge('no-candidate', !cands.length, 'no fresh 172 candidate (cooled/visited/none in view)')
+    )
+      return tuning.scoutScanMs;
     const target = cands[0];
 
     // 速率闸：距上次花道具未到 scoutGapMs → 本拍不烧道具，退回 8536 免费预检（囤已侦察结果不耗道具、不受本闸约束）
     const canSpend = now - this.#lastScoutAt >= tuning.scoutGapMs;
-    if (canSpend && this.#haveScoutTool(now)) {
+    if (canSpend && this.#haveScoutTool()) {
       this.#lastScoutAt = now;
+      this.#paidScouts++;
       this.#doScout(target);
       return 0;
     }
     // 无道具 / 未过速率闸 → 只做 8536 免费预检；也受 8536 全局间隔约束
-    if (now - this.#lastInfoAt < tuning.scoutInfoGapMs) {
-      return Math.min(tuning.scoutInfoGapMs - (now - this.#lastInfoAt), tuning.scoutScanMs);
+    const infoLeft = tuning.scoutInfoGapMs - (now - this.#lastInfoAt);
+    if (g.edge('info-gap', infoLeft > 0, '8536 global gap left=' + Math.max(0, infoLeft) + 'ms')) {
+      return Math.min(infoLeft, tuning.scoutScanMs);
     }
     this.#lastInfoAt = now;
     this.#doInfo(target);
@@ -203,25 +219,24 @@ export class ScoutEngine {
   }
 
   /**
-   * 41001 余量闸（带防刷屏提示）：`getItemNumById(ITEM_SCOUT_TOOL) > tuning.scoutItemReserve` 才可花道具侦察。
-   * 余量读不到（回 0）按「不足」处理（闭开：不确定就不烧道具）。不足时每 ≤60s 才打一条 debug，不逐拍刷。
-   * @param {number} now Date.now 毫秒
+   * 41001 余量闸：`getItemNumById(ITEM_SCOUT_TOOL) > tuning.scoutItemReserve` 才可花道具侦察。
+   * 余量读不到（回 0）按「不足」处理（闭开：不确定就不烧道具）。不足/恢复各打一条 gate 边沿 info（tool-reserve）。
    * @returns {boolean} true=可花道具侦察
    */
-  #haveScoutTool(now) {
+  #haveScoutTool() {
     const env = this.#env;
     const have = env.secret.getItemNumById(ITEM_SCOUT_TOOL);
-    if (have > tuning.scoutItemReserve) return true;
-    if (now - this.#lastToldAt > 60000) {
-      this.#lastToldAt = now;
-      env.log.debug(
-        'scout: scout-tool(%d) stock %d <= reserve %d, skip paid scout (fall back to 8536 free pre-check).',
-        ITEM_SCOUT_TOOL,
-        have,
-        tuning.scoutItemReserve,
-      );
-    }
-    return false;
+    const blocked = have <= tuning.scoutItemReserve;
+    this.#gates.edge(
+      'tool-reserve',
+      blocked,
+      'stock=' +
+        have +
+        ' reserve=' +
+        tuning.scoutItemReserve +
+        ' -> fall back to 8536 free pre-check',
+    );
+    return !blocked;
   }
 
   /**
@@ -374,15 +389,17 @@ export class ScoutEngine {
     this.#matchBegin = 0;
     this.#lastScoutAt = 0;
     this.#lastInfoAt = 0;
-    this.#lastToldAt = 0;
     this.#infoInFlight = false;
     this.#scoutInFlight = false;
+    this.#paidScouts = 0;
+    this.#gates.reset();
     if (ctx && ctx.on && typeof ctx.on.push === 'function') {
       ctx.on.push(PUSH_TILE_INFO, function (ev) {
         if (self.#active && env.realmActive()) self.onTilePush(ev);
       });
     } else {
-      env.log.warn('scout: ctx.on.push unavailable, cannot subscribe 10018 (engine idle).');
+      // error 级：无 10018 推送 ⇒ 情报永远攒不到，整场不会自愈（core/log.js 第 1) 条）。
+      env.log.error('scout: ctx.on.push unavailable, cannot subscribe 10018 (engine idle).');
     }
     createCycle({
       log: env.log,
@@ -401,6 +418,12 @@ export class ScoutEngine {
 
   /** 停止：置死 #active、收快照与在途位（cycle 靠 #active 到点自终；事件退订由 reactor 统一摘）。 */
   stop() {
+    this.#env.log.info(
+      'scout: cached=%d points, paid scouts=%d.',
+      this.#scout.size,
+      this.#paidScouts,
+    );
+    this.#gates.reset();
     this.#active = false;
     this.#tiles = new Map();
     this.#infoInFlight = false;

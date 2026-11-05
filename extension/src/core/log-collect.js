@@ -51,7 +51,7 @@ export let logCollectApi = null;
   /**
    * @typedef {object} LogRec dashcam /log 单行落盘格式（结构化，非纯文本）
    * @property {number} ts 客户端毫秒
-   * @property {string} lvl info|debug|warn
+   * @property {string} lvl error|warn|info|debug
    * @property {string} mod 模块标记（createLog 的 module）
    * @property {string} msg printf 自拼后的完整单行文本
    * @property {number} [n] 折叠计数：连续同 (lvl,mod,msg) 的重复条数，缺省 1
@@ -71,9 +71,16 @@ export let logCollectApi = null;
   /** @type {boolean} flush 失败是否已告警（防刷屏，落一次盘后复位） */
   var flushWarned = false;
 
-  /** 级别过滤器：minLvl=debug 全收；info 收 info+warn；warn 只收 warn（只升不降档语义） */
+  /**
+   * 级别过滤器（只升不降档，与 dashcam/cli.js 的 LVL_ORDER 同源语义）：
+   * minLvl=debug 全收；info 收 info+warn+error；warn 收 warn+error；error 只收 error。
+   * error 必须显式列档：否则新增等级会靠「缺省 info 档」的兼容分支被收，改语义时静默漏。
+   * @param {string} lvl
+   * @returns {boolean}
+   */
   function lvlOk(lvl) {
     if (cfg.minLvl === 'debug') return true;
+    if (lvl === 'error') return true; // error 高于任何档位，恒收
     if (cfg.minLvl === 'warn') return lvl === 'warn';
     return lvl !== 'debug'; // 缺省 info 档
   }
@@ -214,7 +221,9 @@ export let logCollectApi = null;
       flushSec:
         config && typeof config.flushSec === 'number' && config.flushSec > 0 ? config.flushSec : 5,
       minLvl:
-        config && /^(debug|info|warn)$/.test(String(config.minLvl || '')) ? config.minLvl : 'info',
+        config && /^(debug|info|warn|error)$/.test(String(config.minLvl || ''))
+          ? config.minLvl
+          : 'info',
     };
     if (running) syncUid();
     restartTimer();

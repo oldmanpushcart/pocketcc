@@ -41,6 +41,7 @@ import {
   CODE_NOT_SENT,
   tuning,
 } from './constants.js';
+import { GateStateLog } from './gate-log.js';
 
 /**
  * 点位键（与 boss.js 同口径的本地小工具；非法坐标回 ''）。
@@ -83,10 +84,13 @@ export class WarnEngine {
   #marchInFlight = false;
   /** @type {Object<string,1>} 已打过的 info 提示键（防刷屏） */
   #told = {};
+  /** @type {GateStateLog} 静默睡过出口的门控边沿日志（不参与判定） */
+  #gates;
 
   /** @param {object} env 注入底座 {alive, realmActive, cfg, secret, log} */
   constructor(env) {
     this.#env = env;
+    this.#gates = new GateStateLog(env.log, 'warn');
   }
 
   /**
@@ -141,10 +145,11 @@ export class WarnEngine {
    */
   #tick() {
     const env = this.#env;
+    const g = this.#gates;
     if (!env.alive()) return 0;
-    if (!env.realmActive()) return tuning.warnScanMs;
+    if (g.edge('realm-off', !env.realmActive(), 'not in pab realm')) return tuning.warnScanMs;
     const w = env.cfg().warn;
-    if (!w || !w.enabled || w.mode !== 'transfer') {
+    if (g.edge('cfg-off', !w || !w.enabled || w.mode !== 'transfer', 'warn.mode!=transfer')) {
       this.#pendingWarn = false; // 「抗争到底」或关档：不动作，也不留待发警告
       return tuning.warnScanMs;
     }
@@ -160,16 +165,28 @@ export class WarnEngine {
       return tuning.warnScanMs;
     }
     const now = Date.now();
-    if (now < this.#cooldownUntil) return this.#cooldownUntil - now;
-    if (!this.#pendingWarn) return tuning.warnScanMs;
-    if (this.#marchInFlight) return tuning.warnScanMs;
+    if (
+      g.edge(
+        'cooldown',
+        now < this.#cooldownUntil,
+        'left=' + Math.max(0, this.#cooldownUntil - now) + 'ms',
+      )
+    )
+      return this.#cooldownUntil - now;
+    if (g.edge('no-pending', !this.#pendingWarn, 'no 21534 num>0 warning pending'))
+      return tuning.warnScanMs;
+    if (g.edge('march-inflight', this.#marchInFlight, '8521 relocate in flight'))
+      return tuning.warnScanMs;
 
     const base = env.secret.getRoomBaseInfo();
-    if (!base || !base.startPoint) return tuning.warnScanMs;
+    if (g.edge('no-base', !base || !base.startPoint, 'no roomBaseInfo/startPoint'))
+      return tuning.warnScanMs;
     const S = env.secret.getNMarchState();
     const arrived = S && S.ARRIVED != null ? Number(S.ARRIVED) : 2;
-    if (Number(base.marchState) !== arrived) return tuning.warnScanMs;
-    if (!env.secret.teamIsMooring()) return tuning.warnScanMs;
+    if (g.edge('not-arrived', Number(base.marchState) !== arrived, 'marchState=' + base.marchState))
+      return tuning.warnScanMs;
+    if (g.edge('not-mooring', !env.secret.teamIsMooring(), 'team not mooring'))
+      return tuning.warnScanMs;
     const curPt = Number(base.pointType) || 0;
     // 停在 BOSS 平台/本体/小BOSS 上的警告属战斗语义：交 BOSS 档或玩家手动，本引擎不抢方向盘
     if (curPt === PAB_BOSS_PLANE || curPt === PAB_BOSS || curPt === PAB_BOSS_GUARD) {
@@ -179,22 +196,16 @@ export class WarnEngine {
       );
       return tuning.warnScanMs;
     }
-    if (!env.secret.isTeamLeader()) {
-      this.#note('leader', 'warn: not leader, 8521 drives whole-team march, skip auto-relocate.');
+    if (
+      g.edge('not-leader', !env.secret.isTeamLeader(), '8521 drives whole-team march, leader only')
+    )
       return tuning.warnScanMs;
-    }
 
     const cx = Number(base.startPoint.x);
     const cy = Number(base.startPoint.y);
     const dst = this.#nearestSafeTent(cx, cy);
-    if (!dst) {
-      // 快照里没有可落地的就近营帐 → 不凭空造目标，保持待发并按 warnScanMs 重扫（视口刷新会补上快照）
-      this.#note(
-        'notent',
-        'warn: no nearby safe tent (174/175) in viewport snapshot yet, hold relocation.',
-      );
-      return tuning.warnScanMs;
-    }
+    // 快照里没有可落地的就近营帐 → 不凭空造目标，保持待发并按 warnScanMs 重扫（视口刷新会补上快照）
+    if (g.edge('no-tent', !dst, 'no tent candidate in viewport snapshot')) return tuning.warnScanMs;
     this.#doTransfer(dst, cx, cy);
     return tuning.warnScanMs;
   }
@@ -293,6 +304,7 @@ export class WarnEngine {
     this.#cooldownUntil = 0;
     this.#marchInFlight = false;
     this.#told = {};
+    this.#gates.reset();
     if (ctx && ctx.on && typeof ctx.on.push === 'function') {
       ctx.on.push(PUSH_SELF_ATTACKED, function (ev) {
         if (self.#active && env.realmActive()) self.onWarnPush(ev);
@@ -301,7 +313,8 @@ export class WarnEngine {
         if (self.#active && env.realmActive()) self.onTilePush(ev);
       });
     } else {
-      env.log.warn('warn: ctx.on.push unavailable, cannot subscribe 21534/10018 (engine idle).');
+      // error 级：无 21534 推送 ⇒ 受击永远感知不到，整场不会自愈（core/log.js 第 1) 条）。
+      env.log.error('warn: ctx.on.push unavailable, cannot subscribe 21534/10018 (engine idle).');
     }
     this.#cycle = createCycle({
       log: env.log,

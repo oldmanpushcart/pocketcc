@@ -55,6 +55,7 @@ import {
   CODE_NOT_SENT,
   tuning,
 } from './constants.js';
+import { GateStateLog } from './gate-log.js';
 
 /**
  * protobuf Long / {_low,_high} / number / 字符串 → 数值（取不到回 0）。与 capture.js 同口径。
@@ -137,10 +138,15 @@ export class HealEngine {
   #toldEmpty = {};
   /** @type {number} 本拍已发出的 8534 条数（一拍一件，与游戏逐件点击同口径） */
   #sentThisTick = 0;
+  /** @type {GateStateLog} 静默睡过出口的门控边沿日志（不参与判定） */
+  #gates;
+  /** @type {string} 本拍「快照新鲜却没治疗」的原因（仅诊断，下一条 debug 带出） */
+  #idleWhy = '';
 
   /** @param {object} env 注入底座 {alive, realmActive, cfg, secret, gameConf, l10n, log} */
   constructor(env) {
     this.#env = env;
+    this.#gates = new GateStateLog(env.log, 'heal');
   }
 
   /**
@@ -149,19 +155,25 @@ export class HealEngine {
    */
   #tick() {
     const env = this.#env;
+    const g = this.#gates;
     if (!env.alive()) return 0;
-    if (!env.realmActive()) return tuning.healScanMs;
+    if (g.edge('realm-off', !env.realmActive(), 'not in pab realm')) return tuning.healScanMs;
     const h = env.cfg().heal;
-    if (!h || !h.enabled) return tuning.healScanMs;
+    if (g.edge('cfg-off', !h || !h.enabled, 'heal.enabled=false')) return tuning.healScanMs;
 
     this.#sentThisTick = 0;
-    if (this.#snapFresh()) {
+    this.#idleWhy = '';
+    if (g.edge('snap-fresh', this.#snapFresh(), this.#snap ? 'armies=' + this.#snap.armies.length : 'no snapshot')) {
       if (this.#healOne(h)) return tuning.healGapMs;
+      // 快照在手却没治疗：把原因落日志（事后区分「真没伤」与「药被拉黑/用完」）
+      env.log.debug('heal: fresh snapshot but no action, reason=%s.', this.#idleWhy || '-');
       return tuning.healScanMs;
     }
     // 快照缺场/过期 → 拉一次（一拍只发一次 INFO；游戏弹层自补的那条 8584 由 resp 订阅照收）
-    if (env.secret.isSecretSending(CMD_MARCH_ARMY_INFO)) return tuning.healGapMs;
-    if (!this.#mayNeedHeal(h)) {
+    if (g.edge('info-inflight', env.secret.isSecretSending(CMD_MARCH_ARMY_INFO), '8584 in flight')) {
+      return tuning.healGapMs;
+    }
+    if (g.edge('nobody-wounded', !this.#mayNeedHeal(h), 'prescan via 21521 powerInfos')) {
       env.log.debug('heal: prescan says nobody wounded (21521 powerInfos), skip 8584.');
       return tuning.healScanMs;
     }
@@ -355,11 +367,28 @@ export class HealEngine {
    */
   #healOne(h) {
     const maxPer = Math.max(1, Number(h.maxPerTick) || 1);
-    if (this.#sentThisTick >= maxPer) return false;
+    if (this.#sentThisTick >= maxPer) {
+      this.#idleWhy = 'per-tick cap ' + maxPer + ' reached';
+      return false;
+    }
     const army = this.#pickWounded(h);
-    if (!army) return false;
+    if (!army) {
+      this.#idleWhy =
+        'nobody below threshold in snapshot (armies=' +
+        (this.#snap ? this.#snap.armies.length : 0) +
+        ', need=' +
+        (Math.min(100, Math.max(0, Number(h.threshold) || 0)) / 100) +
+        ')';
+      return false;
+    }
     const itemId = this.#pickItem(h, army);
-    if (!itemId) return false;
+    if (!itemId) {
+      this.#idleWhy =
+        'no usable item (whitelist rejected/empty; rejected=' +
+        Object.keys(this.#rejected).join(',') +
+        ')';
+      return false;
+    }
     this.#sendUse(army, itemId);
     this.#sentThisTick++;
     // 血量账不在本地镜像：把快照标脏（下一拍重拉），同时接住游戏成功后自补的那条 8584（0.5~0.6s）
@@ -420,12 +449,15 @@ export class HealEngine {
     this.#rejected = {};
     this.#retried = {};
     this.#toldEmpty = {};
+    this.#gates.reset();
+    this.#idleWhy = '';
     if (ctx && ctx.on && typeof ctx.on.resp === 'function') {
       ctx.on.resp(CMD_MARCH_ARMY_INFO, function (ev) {
         self.onArmyInfoResp(ev);
       });
     } else {
-      env.log.warn('heal: ctx.on.resp unavailable, army info cannot be captured (engine idle).');
+      // error 级：订阅通道缺失 ⇒ 血量永远采不到，整场不会自愈（core/log.js 第 1) 条），非偶发抛错。
+      env.log.error('heal: ctx.on.resp unavailable, army info cannot be captured (engine idle).');
     }
     this.#cycle = createCycle({
       log: env.log,
@@ -444,6 +476,7 @@ export class HealEngine {
   /** 停止：置死 #active——cycle 睡眠期间的定时器不会被撤，靠引擎自带存活位在到点/重排两道 alive 检查处终止（防 pause→resume 后孤儿循环）。 */
   stop() {
     this.#active = false;
+    this.#gates.reset();
     this.#cycle = null;
     this.#snap = null;
   }

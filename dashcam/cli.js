@@ -19,7 +19,7 @@
  *   --json                 机器可读输出（逐行 JSON）
  *
  * log 专属旗标：--hour=20261104T15（段前缀） --ms=from,to（绝对毫秒窗，与 slice 双轨对照）
- *   --lvl=debug|info|warn（最低档，只升不降） --mod=NET（子串） --grep=stall（子串）
+ *   --lvl=debug|info|warn|error（最低档，只升不降） --mod=NET（子串） --grep=stall（子串）
  *   --group=mod|lvl|modlvl（聚合计数代替流水）
  *   位置参数传报文会话文件时，自动查同目录 index.ndjson 的 logRef 解析日志目录（软引用配对）。
  *
@@ -339,9 +339,9 @@ if (cmdName === 'index') {
     msWin = msWin ? [Math.max(msWin[0], cliWin[0]), Math.min(msWin[1], cliWin[1])] : cliWin;
     if (msWin[0] > msWin[1]) throw new Error('--ms 与会话 logRef 窗无交集');
   }
-  const LVL_ORDER = { debug: 0, info: 1, warn: 2 };
+  const LVL_ORDER = { debug: 0, info: 1, warn: 2, error: 3 };
   const minLvl = flags.lvl ? String(flags.lvl) : null;
-  if (minLvl && !(minLvl in LVL_ORDER)) throw new Error('--lvl 取 debug|info|warn');
+  if (minLvl && !(minLvl in LVL_ORDER)) throw new Error('--lvl 取 debug|info|warn|error');
   const modSub = flags.mod ? String(flags.mod).toUpperCase() : null;
   const grepSub = flags.grep ? String(flags.grep).toLowerCase() : null;
   const groupBy = flags.group ? String(flags.group) : null;

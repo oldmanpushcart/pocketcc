@@ -761,7 +761,7 @@ function configure(c) {
 
 /**
  * 收掉五个引擎（幂等）：只清各自的定时器与待发队列，事件退订仍由 reactor 统一摘除。
- * 停用异常只告警不阻断（下一个引擎照收），且引用一律置 null，免得脏实例被当成还活着。
+ * 停用异常不阻断（下一个引擎照收），且引用一律置 null，免得脏实例被当成还活着。
  */
 function stopEngines() {
   for (const k of [
@@ -781,7 +781,9 @@ function stopEngines() {
     try {
       if (typeof e.stop === 'function') e.stop();
     } catch (err) {
-      log.warn('%s engine stop threw.', k, err);
+      // error 级判据：stop 抛错意味该引擎的定时器/在飞循环可能没收干，仍会继续发写请求，
+      //   不是偶发抖动——属 core/log.js 第 1) 条「确定性停摆」，需人工重启该能力。
+      log.error('%s engine stop threw.', k, err);
     }
   }
 }
@@ -855,6 +857,14 @@ function run(ctx) {
     modCfg.drive.boss ? 'boss' : 'cruise',
     modCfg.leave.enabled ? 'on' : 'off',
     modCfg.scout.enabled ? 'on' : 'off',
+  );
+  // 跑前录制提醒（只读提醒，不改任何面板默认值与日志等级定义）：本 feat 的决策依据几乎全在 debug，
+  //   而日志上送/报文录制两个开关缺省都是关——忘开任一 = 这场试验没有离线证据。
+  //   中文面板名经 %s 代入，属数据不是模板（见 core/log.js 英文例外条款）。
+  log.info(
+    'rec reminder: set panel「%s」minLvl=debug and enable「%s」before this match.',
+    '日志上送',
+    '报文录制',
   );
 }
 

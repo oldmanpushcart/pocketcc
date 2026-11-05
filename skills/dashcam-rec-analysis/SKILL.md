@@ -34,7 +34,9 @@ node dashcam/cli.js log 录制.ndjson --ms=1730419200000,1730419264000 --lvl=inf
 node dashcam/cli.js log store/_log/<uid>/ --hour=20261104 --group=modlvl
 ```
 
-日志旗标：`--hour=20261104T15` 选段、`--ms=from[,to]` 绝对毫秒窗（可开区间，与会话 logRef 窗同时给取交集）、`--lvl` 最低档（debug|info|warn 只升不降）、`--mod`/`--grep` 子串、`--group=mod|lvl|modlvl` 聚合、`--limit`、`--json`。
+日志旗标：`--hour=20261104T15` 选段、`--ms=from[,to]` 绝对毫秒窗（可开区间，与会话 logRef 窗同时给取交集）、`--lvl` 最低档（debug|info|warn|error 只升不降）、`--mod`/`--grep` 子串、`--group=mod|lvl|modlvl` 聚合、`--limit`、`--json`。
+
+等级语义（高→低）：`error` 确定性停摆/不变量违例（必须人工看）、`warn` 真异常但可恢复/已降级、`info` 生命周期+可预期业务拒绝、`debug` 调度细节。排查开场先用 `--lvl=error` 扫一眼，有条目就是引擎自己好不了；再降到 `warn`/`info` 定时间轴。
 
 ## 分析纪律（踩过坑的）
 

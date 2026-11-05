@@ -607,14 +607,45 @@ export class PickupEngine {
       if (!itemId) continue;
       const key = 'item:' + itemId;
       const row = pickRow(cfg, key);
-      if (!row.on) continue; // 用户关闭该物品
-      if (!this.#farmWorthy(itemId)) continue; // §9.2：货币配额已够，不再浪费拾取位（竞品 ids 过滤的 farm 侧消费）
-      if (this.#blacked(it.dropId)) continue;
-      if (this.#itemIdGeted(itemId, dropInfo, me)) continue; // 同点位同 itemId 已被我领（推送侧带 uid 才能判出）
-      if (this.#takenByOther(it, me)) continue; // 已被队友领走（d=enigma_realm161）
-      if (this.#gotLocal(tileKey, it.dropId, null, itemId)) continue; // 本 feat 已按点位发过/已得（INFO 无 uid 时的唯一判据）
-      if (pab && this.#itemNumMax(pab, itemId)) continue; // 游戏 para1_v1
-      if (row.max > 0 && pab && this.#roomBagNum(pab, itemId) >= row.max) continue; // feat 侧 per-item 背包上限
+      if (!row.on) {
+        // 用户关闭该物品
+        this.#skip('reward-item', x, y, key, 'panel-off');
+        continue;
+      }
+      if (!this.#farmWorthy(itemId)) {
+        // §9.2：货币配额已够，不再浪费拾取位（竞品 ids 过滤的 farm 侧消费）
+        this.#skip('reward-item', x, y, key, 'farm-quota-enough');
+        continue;
+      }
+      if (this.#blacked(it.dropId)) {
+        this.#skip('reward-item', x, y, key, 'blacklisted');
+        continue;
+      }
+      if (this.#itemIdGeted(itemId, dropInfo, me)) {
+        // 同点位同 itemId 已被我领（推送侧带 uid 才能判出）
+        this.#skip('reward-item', x, y, key, 'already-mine');
+        continue;
+      }
+      if (this.#takenByOther(it, me)) {
+        // 已被队友领走（d=enigma_realm161）
+        this.#skip('reward-item', x, y, key, 'taken-by-other');
+        continue;
+      }
+      if (this.#gotLocal(tileKey, it.dropId, null, itemId)) {
+        // 本 feat 已按点位发过/已得（INFO 无 uid 时的唯一判据）
+        this.#skip('reward-item', x, y, key, 'feat-algot');
+        continue;
+      }
+      if (pab && this.#itemNumMax(pab, itemId)) {
+        // 游戏 para1_v1
+        this.#skip('reward-item', x, y, key, 'game-bag-full');
+        continue;
+      }
+      if (row.max > 0 && pab && this.#roomBagNum(pab, itemId) >= row.max) {
+        // feat 侧 per-item 背包上限
+        this.#skip('reward-item', x, y, key, 'feat-max-reached');
+        continue;
+      }
       cands.push({
         cmd: CMD_DROP_GET,
         req: { x: x, y: y, rId: it.dropId },
@@ -646,9 +677,20 @@ export class PickupEngine {
       for (let j = 0; j < dropBeastInfo.length; j++) {
         const pet = dropBeastInfo[j];
         if (!pet || pet.dropId == null) continue;
-        if (String(pet.uid) === me) continue;
-        if (this.#takenByOther(pet, me)) continue; // 已被队友领走（d=enigma_realm161）
-        if (this.#gotLocal(tileKey, pet.dropId, null, 0)) continue;
+        const pkey = 'pet:' + Number(pet.info && pet.info.cfgId);
+        if (String(pet.uid) === me) {
+          this.#skip('reward-pet', x, y, pkey, 'already-mine');
+          continue;
+        }
+        if (this.#takenByOther(pet, me)) {
+          // 已被队友领走（d=enigma_realm161）
+          this.#skip('reward-pet', x, y, pkey, 'taken-by-other');
+          continue;
+        }
+        if (this.#gotLocal(tileKey, pet.dropId, null, 0)) {
+          this.#skip('reward-pet', x, y, pkey, 'feat-algot');
+          continue;
+        }
         const cfgId = Number(pet.info && pet.info.cfgId);
         // 本尊已在保护中（info.id 是 Int64，走 idKey 不拆数字）：再发一发 DROP_GET 只会撞服务器「已有该宠」类拒绝
         const pid = idKey(pet.info && pet.info.id);
@@ -660,12 +702,22 @@ export class PickupEngine {
           );
           continue;
         }
-        if (cfgId && qMin > 0 && !this.#petQualityEnough(cfgId, qMin)) continue; // 低品质不占配额
+        if (cfgId && qMin > 0 && !this.#petQualityEnough(cfgId, qMin)) {
+          // 低品质不占配额
+          this.#skip('reward-pet', x, y, pkey, 'low-quality');
+          continue;
+        }
         if (cfgId) {
           const row = pickRow(cfg, 'pet:' + cfgId);
-          if (!row.on) continue;
+          if (!row.on) {
+            this.#skip('reward-pet', x, y, pkey, 'panel-off');
+            continue;
+          }
         }
-        if (this.#blacked(pet.dropId)) continue;
+        if (this.#blacked(pet.dropId)) {
+          this.#skip('reward-pet', x, y, pkey, 'blacklisted');
+          continue;
+        }
         petCands.push({
           cmd: CMD_DROP_GET,
           req: { x: x, y: y, rId: pet.dropId },
@@ -717,6 +769,8 @@ export class PickupEngine {
     const itemMax = Number(limits[0]) || 0;
     const buffMax = Number(limits[1]) || 0;
     const tileKey = this.#tileKey(e);
+    const rx = Number(e.x);
+    const ry = Number(e.y);
 
     // C. 资源 bag（RESOURCE_GET req 仅 {rId}）
     // 本点位内我已领过的**道具**集合：同道具只能拿 1 次（8527 s=3 d=enigma_realm119
@@ -735,20 +789,51 @@ export class PickupEngine {
     for (let i = 0; i < bagInfo.length; i++) {
       const it = bagInfo[i];
       if (!it || it.dropId == null) continue;
-      if (this.#blacked(it.dropId)) continue;
-      if (this.#specGeted(it.specId, bagInfo, me)) continue;
-      if (this.#takenByOther(it, me)) continue; // 已被队友领走（d=enigma_realm161）
+      if (this.#blacked(it.dropId)) {
+        this.#skip('res-bag', rx, ry, 'drop:' + idKey(it.dropId), 'blacklisted');
+        continue;
+      }
+      if (this.#specGeted(it.specId, bagInfo, me)) {
+        this.#skip('res-bag', rx, ry, 'spec:' + it.specId, 'already-mine');
+        continue;
+      }
+      if (this.#takenByOther(it, me)) {
+        // 已被队友领走（d=enigma_realm161）
+        this.#skip('res-bag', rx, ry, 'spec:' + it.specId, 'taken-by-other');
+        continue;
+      }
       const itemId = this.#stationItem(it.specId);
-      if (itemId && mineItems.has(itemId)) continue; // 同点位该道具已拿过（换个 specId 也拿不到）
+      if (itemId && mineItems.has(itemId)) {
+        // 同点位该道具已拿过（换个 specId 也拿不到）
+        this.#skip('res-bag', rx, ry, 'item:' + itemId, 'same-item-once');
+        continue;
+      }
       // 勾选与上限都按道具维度（面板清单已按 itemId 聚合）；映射不到道具时退回 specId 键
       const key = itemId ? 'item:' + itemId : 'rss:' + it.specId;
       const row = pickRow(cfg, key);
-      if (!row.on) continue;
-      if (itemId && !this.#farmWorthy(itemId)) continue; // §9.2：货币配额已够不再采（竞品 getResItem 的 `for(h=this.ids)` 同义）
-      if (this.#gotLocal(tileKey, it.dropId, it.specId, itemId)) continue; // 本 feat 已按点位发过/已得
+      if (!row.on) {
+        this.#skip('res-bag', rx, ry, key, 'panel-off');
+        continue;
+      }
+      if (itemId && !this.#farmWorthy(itemId)) {
+        // §9.2：货币配额已够不再采（竞品 getResItem 的 `for(h=this.ids)` 同义）
+        this.#skip('res-bag', rx, ry, key, 'farm-quota-enough');
+        continue;
+      }
+      if (this.#gotLocal(tileKey, it.dropId, it.specId, itemId)) {
+        // 本 feat 已按点位发过/已得
+        this.#skip('res-bag', rx, ry, key, 'feat-algot');
+        continue;
+      }
       if (itemId && pab) {
-        if (this.#itemNumMax(pab, itemId)) continue;
-        if (row.max > 0 && this.#roomBagNum(pab, itemId) >= row.max) continue;
+        if (this.#itemNumMax(pab, itemId)) {
+          this.#skip('res-bag', rx, ry, key, 'game-bag-full');
+          continue;
+        }
+        if (row.max > 0 && this.#roomBagNum(pab, itemId) >= row.max) {
+          this.#skip('res-bag', rx, ry, key, 'feat-max-reached');
+          continue;
+        }
       }
       cands.push({
         cmd: CMD_RESOURCE_GET,
@@ -780,17 +865,32 @@ export class PickupEngine {
               if (!env.alive()) return;
               const b = buffInfo[k];
               if (!b || b.dropId == null) continue;
-              if (me && String(b.uid) === me) continue; // 已装备到我槽位（若带 uid）
-              if (this.#takenByOther(b, me)) continue; // 已被队友装走（d=enigma_realm161）
-              if (this.#blacked(b.dropId)) continue;
+              if (me && String(b.uid) === me) {
+                this.#skip('res-buff', rx, ry, 'spec:' + b.specId, 'already-equipped');
+                continue; // 已装备到我槽位（若带 uid）
+              }
+              if (this.#takenByOther(b, me)) {
+                this.#skip('res-buff', rx, ry, 'spec:' + b.specId, 'taken-by-other');
+                continue; // 已被队友装走（d=enigma_realm161）
+              }
+              if (this.#blacked(b.dropId)) {
+                this.#skip('res-buff', rx, ry, 'spec:' + b.specId, 'blacklisted');
+                continue;
+              }
               // 用户只勾了部分增益类（空数组=不限）：不属所选类 → 不拾
               if (want.length) {
                 const srow = env.l10n.tableRow(TABLE_RSS_STATION, b.specId);
                 const eff = srow ? Number(srow.effect_buff) || 0 : 0;
-                if (!eff || want.indexOf(eff) < 0) continue;
+                if (!eff || want.indexOf(eff) < 0) {
+                  this.#skip('res-buff', rx, ry, 'spec:' + b.specId, 'effect-not-selected');
+                  continue;
+                }
               }
               const pos = this.#pickBuffPos(b.specId, pab);
-              if (!pos) continue; // 无空槽且无更强替换 → 跳过
+              if (!pos) {
+                this.#skip('res-buff', rx, ry, 'spec:' + b.specId, 'no-free-or-stronger-slot');
+                continue; // 无空槽且无更强替换 → 跳过
+              }
               const ret = await env.secret.sendSecret(CMD_RESOURCE_GET_BUFF, {
                 rId: b.dropId,
                 pos: pos,
@@ -1075,6 +1175,18 @@ export class PickupEngine {
       }
     }
     return true;
+  }
+
+  /**
+   * 单条候选被跳过的 debug 记录（审计纪律：每个 skip 都能定责「为什么没拾」）。事件驱动、非逐拍，量受载荷约束。
+   * @param {string} kind 类别（reward-item/reward-pet/res-bag/res-buff）
+   * @param {number} x 点位横号
+   * @param {number} y 点位纵号
+   * @param {string} what 目标标识（item:/pet:/spec: 之类）
+   * @param {string} reason 跳过原因（英文短标识，供 --grep 命中）
+   */
+  #skip(kind, x, y, what, reason) {
+    this.#env.log.debug('pickup skip kind=%s at (%d,%d) %s reason=%s.', kind, x, y, what, reason);
   }
 
   /**

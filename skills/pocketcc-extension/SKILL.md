@@ -57,22 +57,24 @@ background.js(SW) 仅做 dashcam fetch 转发
 
 分级判据按顺序走（完整契约见 `core/log.js` 顶部注释）：
 
-1. **warn（真异常）**：「我们没能正确发出/收到/理解」或「依赖断裂致引擎/流程停摆」——catch 到的抛错（threw/load·persist·save failed）、发送失败或未发出（CODE_NOT_SENT）、应答畸形/不可解析、游戏符号/表行/订阅通道不可用（install failed、engine idle）、未知枚举首次遭遇。
-2. **info（生命周期 + 可预期业务拒绝）**：启动/停止/安装/关键动作完成；服务器对已成形请求返回 code≠0（限额/已满/阶段锁/目标被抢/时序竞争/活动未开），必带 code/reason。
-3. **debug（调度细节 + 循环态不可动作）**：随资源回收自愈的跳过（no free slot、材料不足、门控不过、退避中）。
+1. **error（确定性停摆 / 不变量违例）**：「本场不会再自己好起来」，必须人工介入或重启能力才能恢复——方案/契约违例导致本周期拒绝发车、依赖符号/订阅通道缺失致整引擎 idle、引擎与录制链路 `stop()` 抛错。边界：**一次被拒 / 一次超时 / 一次偶发抛错不得升 error**（那是 warn 的已降级形态）；模糊个案留 warn，别稀释 error「必须人工看」的信号价值。
+2. **warn（真异常但可恢复或已降级）**：「我们没能正确发出/收到/理解」——catch 到的抛错（threw/load·persist·save failed）、发送失败或未发出（CODE_NOT_SENT）、应答畸形/不可解析、游戏符号/表行不可用、未知枚举首次遭遇。
+3. **info（生命周期 + 可预期业务拒绝）**：启动/停止/安装/关键动作完成；服务器对已成形请求返回 code≠0（限额/已满/阶段锁/目标被抢/时序竞争/活动未开），必带 code/reason。
+4. **debug（调度细节 + 循环态不可动作）**：随资源回收自愈的跳过（no free slot、材料不足、门控不过、退避中）。
 
 debug 故障可诊断条款：
 
-- debug 不吞真异常：属第 1 条的故障线索一律 warn，不得为降噪把抛错/写盘失败压在 debug。
+- debug 不吞真异常：属第 1/2 条的故障线索一律 error/warn，不得为降噪把抛错/写盘失败压在 debug。
 - 每个 skip/abort/reject/return 出口必有日志（debug 起步，高频循环靠节流或 log-collect 折叠），且必带决策上下文：cmd 号、code、坐标(x,y)、目标/队伍 ID、状态枚举值——保证 dashcam 日志流（minLvl=debug）单轨可还原引擎「为什么没动」。
-- warn 消息须含可 grep 的定位前缀（协议号/模块动作名）。
+- error/warn 消息须含可 grep 的定位前缀（协议号/模块动作名）。
+- 不得为了「让某条日志能上报」而改它的等级：面板 `minLvl` 调到 debug 就能收到全部既有 debug。
 
 其他约定：
 
 - 统一 `createLog(tag)`，tag 用大写模块名（NET/BUS/REACTOR/GAME…）；message 一律英文（登记例外：core/chat/log.js 包内日志）。
 - 判据是 code 而非 cmd；「服务器拒绝」与「CODE_NOT_SENT」分离处理。
 - 自动化撞限额的目标当日拉黑，防止逐拍重发刷屏；被拒路径不得打 warn。
-- 业务代码禁止裸 console.*；登记例外：bridge.js、core/devtools.js、core/net.js 调试 dump。
+- 业务代码禁止裸 console.*；登记例外：bridge.js、core/devtools.js、core/net.js 调试 dump（`createLog` 内部用 console.error 输 error 级，不在此列）。
 - 录制基础设施自身日志必须 `createLog(tag, { quiet: true })` 防自录回声。
 
 ## 代码风格

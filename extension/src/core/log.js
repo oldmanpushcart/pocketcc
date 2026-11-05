@@ -3,25 +3,30 @@
 //      · message 模板一律英文（UI 文案不在此列）；例外：经 %s 代入的游戏字典中文名（技能名/提示键等
 //        运行时数据值）视为数据不是模板，保留不改。
 //
-// ── 1) warn = 真异常：「我们没能正确发出/收到/理解」或「依赖断裂致引擎/流程停摆」
+// ── 1) error = 确定性停摆 / 不变量违例：「本场不会再自己好起来」，必须人工介入或重启能力才能恢复
+//      · 方案/契约/不变量违例导致本周期内拒绝发车（plan/contract violation, refuse to dispatch）
+//      · 依赖符号/订阅通道缺失导致整引擎 idle、install failed（非偶发重试可自愈）
+//      · 引擎/录制链路 stop() 抛错（脏定时器与在飞循环可能继续发写请求）
+//      · 判据边界：**一次被拒 / 一次超时 / 一次偶发抛错不得升 error**，那是 warn 的「已降级」形态；
+//        模糊个案留 warn，别稀释 error「必须人工看」的信号价值。
+// ── 2) warn = 真异常但可恢复或已降级：「我们没能正确发出/收到/理解」
 //      · catch 到的抛错（threw / load failed / persist failed / save failed / write failed）
 //      · 发送失败或未发出（CODE_NOT_SENT、socket/桥接发送异常）
 //      · 应答畸形、不可解析、int64 精度疑虑首次遭遇
-//      · 游戏符号/表行/订阅通道（ctx.on.push/resp）不可用（install failed、engine idle）
-//      · 未知枚举首次遭遇
-// ── 2) info = 生命周期 + 可预期业务拒绝：「服务器说当前不能做」
+//      · 游戏符号/表行不可用、未知枚举首次遭遇
+// ── 3) info = 生命周期 + 可预期业务拒绝：「服务器说当前不能做」
 //      · 启动/停止/安装/关键动作完成
 //      · 服务器对已成形请求返回 code≠0：限额/已满/阶段锁/目标被抢/时序竞争/活动未开
 //        （必带 code，并以 `data=%s` 带上应答载荷文案——用 core/util.js 的 rejectText(ret)：
 //         优先 PBV2 多语言键 ret.reason，否则 safeStringify(ret.data)；被拒态 data 常是关键错误文案，只打 code 无法定位病因）
-// ── 3) debug = 调度细节 + 循环态不可动作（随资源回收自愈的跳过：no free slot、材料不足、门控不过、退避中）
+// ── 4) debug = 调度细节 + 循环态不可动作（随资源回收自愈的跳过：no free slot、材料不足、门控不过、退避中）
 //
 // ── debug 故障可诊断条款 ──
-//      · debug 不吞真异常：凡属第 1) 条的故障线索一律 warn，不得为降噪把抛错/写盘失败压在 debug。
+//      · debug 不吞真异常：凡属第 1)/2) 条的故障线索一律 error/warn，不得为降噪把抛错/写盘失败压在 debug。
 //      · 每个 skip/abort/reject/return 出口必有日志（debug 起步，高频循环靠节流或 log-collect 折叠），
 //        且必带决策上下文：cmd 号、code、坐标(x,y)、目标/队伍 ID、状态枚举值——
 //        保证 dashcam 日志流（minLvl=debug）单轨即可还原引擎「为什么没动」。
-//      · warn 消息须含可 grep 的定位前缀（协议号/模块动作名），供 dashcam-rec-analysis 直接过滤。
+//      · error/warn 消息须含可 grep 的定位前缀（协议号/模块动作名），供 dashcam-rec-analysis 直接过滤。
 //
 // ── 硬约束 ──
 //      · 判据是 code 而非 cmd；「服务器拒绝」与「CODE_NOT_SENT」分离处理。
@@ -37,9 +42,10 @@
 
 /**
  * @typedef {object} Logger
+ * @property {function(string, ...*):void} error 确定性停摆/不变量违例（无法自愈，须人工介入；一次被拒/超时不算）
  * @property {function(string, ...*):void} info 生命周期/关键动作 + 可预期业务拒绝（带 code/reason）
  * @property {function(string, ...*):void} debug 调度细节 + 循环态不可动作（skip/abort 出口必带决策上下文）
- * @property {function(string, ...*):void} warn 真异常（抛错/未发出/畸形/依赖断裂停摆/未知枚举首遇）
+ * @property {function(string, ...*):void} warn 真异常但可恢复/已降级（抛错/未发出/畸形/未知枚举首遇）
  */
 
 // ── 外运 sink（dashcam 日志上送的唯一 tee 点）───────────────────────
@@ -99,7 +105,7 @@ function printf(fmt, args) {
  * @param {string} module 模块标记（如 NET / BUS），输出为 [POCKETCC://<module>]
  * @param {{quiet?:boolean}} [opts] quiet=true：只进 console 不进 sink——录制基础设施自身的日志
  *   必须豁免（flush 时记的 debug 若再进缓冲，会形成自录回声）
- * @returns {Logger} 三级日志器
+ * @returns {Logger} 四级日志器（error/warn/info/debug）
  */
 export function createLog(module, opts) {
   const prefix = `[POCKETCC://${module}]`;
@@ -117,6 +123,7 @@ export function createLog(module, opts) {
     }
   }
   return {
+    error: (fmt, ...args) => emit('error', console.error, fmt, args),
     info: (fmt, ...args) => emit('info', console.info, fmt, args),
     debug: (fmt, ...args) => emit('debug', console.debug, fmt, args),
     warn: (fmt, ...args) => emit('warn', console.warn, fmt, args),

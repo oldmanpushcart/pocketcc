@@ -80,6 +80,7 @@ import {
   CODE_NOT_SENT,
   tuning,
 } from './constants.js';
+import { GateStateLog } from './gate-log.js';
 
 /** @type {number} 只在攻打档认的 BOSS 本体瓦片类型（177 大 / 178 小）；其余瓦片条目对本引擎无意义 */
 const BOSS_TILE_TYPES = [PAB_BOSS, PAB_BOSS_GUARD];
@@ -195,10 +196,13 @@ export class BossEngine {
    * 本拍「state===21 但过不了区域闸」的 BOSS（挪台档的唯一需求源；#pickTarget 每次刷新，不留陈旧值）。
    */
   #blockedNow = [];
+  /** @type {GateStateLog} 攻打档四类闸的边沿日志（替代逐拍 debug，进图后「一次没发 8521」可直接读闸名） */
+  #gates;
 
   /** @param {object} env 注入底座 {alive, realmActive, cfg, secret, log} */
   constructor(env) {
     this.#env = env;
+    this.#gates = new GateStateLog(env.log, 'boss');
   }
 
   // ── 一拍调度 ────────────────────────────────────────────────────────
@@ -229,6 +233,7 @@ export class BossEngine {
    */
   #attackTick(b) {
     const env = this.#env;
+    const g = this.#gates;
     const now = Date.now();
     // 这一条既拦两枪最小间隔、也拦被拒退避（#handleMarchReject 写长档），且必须定 #sleep 而不能回 0
     if (now < this.#cooldownUntil) {
@@ -239,35 +244,37 @@ export class BossEngine {
     if (!base || !base.startPoint) return; // 现场未落地（realm141 的本地近似）→ 不发
     const S = env.secret.getNMarchState();
     const arrived = S && S.ARRIVED != null ? Number(S.ARRIVED) : 2;
-    if (Number(base.marchState) !== arrived) {
-      env.log.debug('boss attack: marchState=%s not ARRIVED(%d).', base.marchState, arrived);
+    if (
+      g.edge(
+        'not-arrived',
+        Number(base.marchState) !== arrived,
+        'marchState=' + base.marchState + ' != ARRIVED(' + arrived + ')',
+      )
+    )
       return;
-    }
     // 只有「当前所在点是 176 平台」才允许发下一次（四段式里在飞两段的 pt 分别是旧平台与 BOSS 本体）
     if (Number(base.pointType) !== PAB_BOSS_PLANE) return;
     if (!env.secret.teamIsMooring()) return;
     // 队长闸（见文件头 §③「队长闸」）：UI 不查队长，但 8521 驱动的是全队那一条行军，成员侧不发
-    if (!env.secret.isTeamLeader()) {
-      env.log.debug('boss attack: not team leader (team march is leader-driven), skip.');
-      return;
-    }
+    if (g.edge('not-leader', !env.secret.isTeamLeader(), 'team march is leader-driven')) return;
     // 自动驾驶让闸：drive.enabled 时「开往平台/巡航/逃袭」的行军权归 drive 统一方向盘，本引擎只在队伍
     //   已停在 176/177/178 上才发攻打行军（到平台后攻打仍照旧由本引擎接管）；非 BOSS 点一律让位，
     //   避免 drive 的 TO 行军与攻打行军互抢那一条 8521 在途位（见 pilot.js 文件头）。关掉 drive 时行为不变。
     const drv = env.cfg().drive;
-    if (drv && drv.enabled && !isBossTile(Number(base.pointType))) {
-      env.log.debug('boss attack: drive on & not on a BOSS tile → skip (reason=drive-driving).');
+    if (
+      g.edge(
+        'drive-driving',
+        !!(drv && drv.enabled && !isBossTile(Number(base.pointType))),
+        'drive on & not on a BOSS tile',
+      )
+    )
       return;
-    }
     if (env.secret.isSecretSending(CMD_MARCH_MOVE) || this.#marchInFlight) {
       this.#sleep = 200;
       return;
     }
     const busy = this.#captureBusy();
-    if (busy) {
-      env.log.debug('boss attack: busy capturing (%s), skip this round.', busy);
-      return;
-    }
+    if (g.edge('busy-capturing', !!busy, 'busy capturing ' + busy)) return;
     const target = this.#pickTarget(b);
     if (!target) {
       // 有 state21 的 BOSS 但被区域闸拦下 → 在「同区域平台」上干等没意义，只在开关打开时试一次挪台
@@ -1116,6 +1123,7 @@ export class BossEngine {
     this.#marchInFlight = false;
     this.#marchTag = '';
     this.#blockedNow = [];
+    this.#gates.reset();
     if (ctx && ctx.on && typeof ctx.on.push === 'function') {
       ctx.on.push(PUSH_BOSS_STATE, function (ev) {
         self.onBossStatePush(ev);
@@ -1135,7 +1143,8 @@ export class BossEngine {
         if (self.#active && env.realmActive()) self.onTilePush(ev);
       });
     } else {
-      env.log.warn('boss: ctx.on.push unavailable, state machine cannot be driven (engine idle).');
+      // error 级：订阅通道缺失 ⇒ BOSS 状态机无法驱动，整场不会自愈（core/log.js 第 1) 条）。
+      env.log.error('boss: ctx.on.push unavailable, state machine cannot be driven (engine idle).');
     }
     this.#cycle = createCycle({
       log: env.log,
@@ -1161,5 +1170,6 @@ export class BossEngine {
     this.#tiles = new Map();
     this.#stoneInflight = '';
     this.#marchInFlight = false;
+    this.#gates.reset();
   }
 }

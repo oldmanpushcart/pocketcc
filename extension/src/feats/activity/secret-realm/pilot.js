@@ -415,6 +415,12 @@ export class PilotEngine {
   #pickDbg = null;
   /** @type {string} 本次 start 锁定的开车方案 id（§15.10 P2：首拍读 config.drive.drivePlan，整场不热切；未知 id 回落 'default'） */
   #planIdUsed = '';
+  /** @type {string} 上次心跳落日志时的分支（分支跳变当拍立刻补一条，防 30s 采样漏掉相位跳变） */
+  #lastLoggedBranch = '';
+  /** @type {number} 上次心跳落日志的拍号（同拍多个 return 点只落一条） */
+  #hbTick = 0;
+  /** @type {string} 上次 census 副行全文（内容相同即抑制，与 log-collect 的折叠互补） */
+  #lastCensusLine = '';
   /**
    * 方案↔引擎契约校验结果（三态）：
    *   `[]`＝未校验（构造/stop 复位后、首拍前）
@@ -2505,10 +2511,13 @@ export class PilotEngine {
       const ctxErrs = validateCtxKeys(ctx);
       if (planErrs.length || ctxErrs.length) {
         this.#contractErrs = planErrs.concat(ctxErrs);
+        // errs 只打前 8 条：整串超长会被 log-collect 截到 MAX_MSG=2048，截断后反而看不清违例项。
+        // 级判据：属「不变量违例 + 本场拒发车」，非偶发抛错 → error（见 core/log.js 第 1) 条）。
         env.log.error(
-          'pilot: plan/contract violation, refuse to dispatch this match. plan=%s errs=%s',
+          'pilot: plan/contract violation, refuse to dispatch this match. plan=%s errs=%s total=%d',
           this.#planIdUsed,
-          JSON.stringify(this.#contractErrs),
+          JSON.stringify(this.#contractErrs.slice(0, 8)),
+          this.#contractErrs.length,
         );
         // 本拍不往下走（首拍也要拒发车）：与 #tick 头部早退保持同一语义、同一睡眠。
         this.#lastBranch = 'contract-violation';
@@ -2563,6 +2572,7 @@ export class PilotEngine {
           if (s.obj === 'shop') this.#stageWhy = why; // BOSS 拍不碰 why（现状⑤从头到尾不赋）
           this.#lastBranch = branch;
           this.#dispatch(kind, null);
+          this.#heartbeat(now);
           return s.obj === 'shop' ? tuning.driveScanMs : this.#sleepAfterDispatch();
         }
         if (s.id === 'bossPlaneLead') {
@@ -2582,6 +2592,7 @@ export class PilotEngine {
         this.#gateState('feed23', true, 'boss state=23');
         this.#stage = 'boss-wait';
         this.#lastBranch = 'boss-wait';
+        this.#heartbeat(now);
         return tuning.driveScanMs;
       }
       if (s.terminal) {
@@ -2590,6 +2601,7 @@ export class PilotEngine {
         if (s.obj === 'shop') this.#stageWhy = why;
         this.#lastBranch = branch;
         this.#dispatch(kind, cand);
+        this.#heartbeat(now);
         return this.#sleepAfterDispatch();
       }
       // §6.6 常规期行军 cd 前置（消费 #can，唯一 TO 锁的兑底）：日常链/探索档发车前须过 cd.march。
@@ -2600,6 +2612,7 @@ export class PilotEngine {
       if (!this.#can('march')) {
         const cdLeft = Math.max(0, (this.#cd.march || 0) - Date.now());
         this.#lastBranch = branch + '-cd';
+        this.#heartbeat(now);
         return Math.min(cdLeft + 50, tuning.driveScanMs);
       }
       if (s.obj === 'explore') {
@@ -2630,6 +2643,7 @@ export class PilotEngine {
         }
       }
       this.#dispatch(kind, cand);
+      this.#heartbeat(now);
       return this.#sleepAfterDispatch();
     }
     // 链全空走到梯尾的拍（＝现状落到⑧/⑨的那拍；任何命中/独占/让路路径都已提前 return）：
@@ -2638,6 +2652,7 @@ export class PilotEngine {
     if (tuning.driveIdleExploreMs > 0 && !this.#idleSince) this.#idleSince = now;
     // ⑨ 梯尾空派发记账（串行模型下 901 已 await 完，不再「短睡等在途」）：无候选记一笔、按常规睡眠。
     this.#dispatch('cruise', null);
+    this.#heartbeat(now);
     return this.#sleepAfterDispatch();
   }
 
@@ -2656,32 +2671,43 @@ export class PilotEngine {
     //   修宪路径：同步 plans.js CTX_KEYS/OBJECTIVES/STAGE_DIAG 或回滚方案侧改动，然后重启驾驶。
     if (this.#contractErrs && this.#contractErrs.length) {
       this.#lastBranch = 'contract-violation';
+      this.#heartbeat(Date.now());
       return tuning.driveScanMs * 8;
     }
     if (!env.alive()) {
       this.#lastBranch = 'dead';
+      this.#heartbeat(Date.now());
       return 0;
     }
+    // 早退闸边沿日志（realm-off/cfg-off/no-base）：使「一次都没动」在日志里必然是某条
+    //   gate blocked/passed，而不是空白；#gateState 只记跳变，不逐拍刷屏。
+    this.#gateState('realm-off', !env.realmActive(), '');
     if (!env.realmActive()) {
       this.#lastBranch = 'realm-off';
+      this.#heartbeat(Date.now());
       return tuning.driveScanMs;
     }
     const b = env.cfg().drive;
+    this.#gateState('cfg-off', !b || !b.enabled, 'drive.enabled=false');
     if (!b || !b.enabled) {
       this.#lastBranch = 'cfg-off';
+      this.#heartbeat(Date.now());
       return tuning.driveScanMs;
     }
     const now = Date.now();
     if (now < this.#cooldownUntil) {
       this.#lastBranch = 'cooldown';
       this.#gateState('cooldown', true, 'left=' + (this.#cooldownUntil - now) + 'ms');
+      this.#heartbeat(now);
       return Math.min(this.#cooldownUntil - now, tuning.driveScanMs);
     }
     this.#gateState('cooldown', false, '');
 
     const base = env.secret.getRoomBaseInfo();
+    this.#gateState('no-base', !base || !base.startPoint, 'no roomBaseInfo/startPoint');
     if (!base || !base.startPoint) {
       this.#lastBranch = 'no-base';
+      this.#heartbeat(now);
       return tuning.driveScanMs;
     }
 
@@ -2720,11 +2746,24 @@ export class PilotEngine {
       this.#viewMiss = 0;
       this.#viewOff = false;
       this.#told = {};
+      // 场次时间锚：换场当拍落一条 info，把日志时间轴钉到 fightBeginTime（= 整场 +0min）。
+      //   字段全部取自已在手的 base，不新增读取；配合文档里 BOSS 排期（小 +23min / 大 +40min）换算。
+      env.log.info(
+        'pilot: new match anchor fightBeginTime=%d teamId=%d leader=%s marchState=%d at (%d,%d) pt=%d.',
+        fb,
+        toNum(base.teamId),
+        String(base.leaderUid == null ? '-' : base.leaderUid),
+        toNum(base.marchState),
+        Math.floor(toNum((base.startPoint || {}).x)),
+        Math.floor(toNum((base.startPoint || {}).y)),
+        toNum(base.pointType),
+      );
     }
     // 计时基准兜底：fightBeginTime 缺失时用首拍时刻，否则「开局暖机/大BOSS 前勤务」永远不触发
     if (!(this.#matchStartAt > 1e11)) this.#matchStartAt = now;
     if (this.#realmClosed) {
       this.#lastBranch = 'realm-closed';
+      this.#heartbeat(now);
       return tuning.driveScanMs * 4;
     }
 
@@ -2747,6 +2786,7 @@ export class PilotEngine {
       this.#stage = 'to';
       if (Number(base.marchState) === arrived && curKey && curKey === this.#toXY) {
         this.#enterWork(curKey);
+        this.#heartbeat(now);
         return 0; // 到点当拍即重评：空井可立刻走
       }
       if (now - this.#toAt > tuning.driveMarchTimeoutMs) {
@@ -2757,10 +2797,12 @@ export class PilotEngine {
         );
         this.#consume(this.#toXY);
         this.#clearTo();
+        this.#heartbeat(now);
         return tuning.driveScanMs;
       }
       // ⚠ 不按剩余超时睡满 90s：到达/被拒可能靠 push 或异步应答回来，而那一拍已返回、无人唤醒
       //   → 只睡到 min(剩余超时, 2 个兜底拍)：睡满本拍就没人唤醒；短轮询的代价可忽略。
+      this.#heartbeat(now);
       return Math.min(this.#toAt + tuning.driveMarchTimeoutMs - now, tuning.driveScanMs * 2);
     }
 
@@ -2769,7 +2811,10 @@ export class PilotEngine {
       this.#lastBranch = 'work';
       this.#stage = 'work';
       const w = this.#workTick(now);
-      if (!w.leave) return w.sleep;
+      if (!w.leave) {
+        this.#heartbeat(now);
+        return w.sleep;
+      }
       const wk = this.#toXY;
       // 到点即锁：离店后 `driveShopStayMs` 内整条路由链不重评——
       //   治「25s 驻留满 → 下一拍又被电平理由开回商店」。#consume 的 10min 只黑那一个点，
@@ -2797,11 +2842,13 @@ export class PilotEngine {
     this.#gateState('leader', !env.secret.isTeamLeader(), '');
     if (!env.secret.isTeamLeader()) {
       this.#lastBranch = 'not-leader';
+      this.#heartbeat(now);
       return tuning.driveScanMs;
     }
     if (!moored) {
       this.#lastBranch = 'not-moored';
       this.#gateState('notarrived', true, 'marchState=' + base.marchState);
+      this.#heartbeat(now);
       return tuning.driveScanMs;
     }
     this.#gateState('notarrived', false, '');
@@ -2811,6 +2858,7 @@ export class PilotEngine {
         'capturing',
         'pilot: capturing enigma-beast/BOSS now, wait until capture done before relocating.',
       );
+      this.#heartbeat(now);
       return 3000;
     }
     if (env.secret.isSecretSending(CMD_MARCH_MOVE)) {
@@ -2826,8 +2874,10 @@ export class PilotEngine {
         this.#inflightStuckSince = 0;
         const probe = this.#pickResource(curKey, cur, null) || this.#explorePoint(cur);
         this.#dispatch('cruise', probe, true);
+        this.#heartbeat(now);
         return this.#sleepAfterDispatch();
       }
+      this.#heartbeat(now);
       return 200;
     }
     this.#inflightStuckSince = 0;
@@ -2854,6 +2904,7 @@ export class PilotEngine {
             this.#threatEvaded = true;
             this.#stage = 'evade';
             this.#dispatch('evade', tent);
+            this.#heartbeat(now);
             return this.#sleepAfterDispatch();
           }
         }
@@ -2861,6 +2912,7 @@ export class PilotEngine {
         const ct0 = this.#tiles.get(curKey);
         if (ct0 && (ct0.state === ST_PVP_READY || ct0.state === ST_PVP_FIGHTING)) {
           this.#stage = 'evade';
+          this.#heartbeat(now);
           return tuning.driveScanMs;
         }
         // 边避边工：不 return，落回常规阶梯，但置 quiet 使 ②回攻 与 ⑤⑥⑦ BOSS 档让路
@@ -2883,6 +2935,7 @@ export class PilotEngine {
         this.#escapeFrom = null;
       } else {
         this.#dispatch('return', win.boss);
+        this.#heartbeat(now);
         return this.#sleepAfterDispatch();
       }
     }
@@ -2893,6 +2946,7 @@ export class PilotEngine {
     this.#gateState('curpvp', curPvp, curPvp ? '(' + curKey + ') state=' + curTile.state : '');
     if (curPvp) {
       this.#lastBranch = 'curpvp';
+      this.#heartbeat(now);
       return tuning.driveScanMs;
     }
 
@@ -2907,6 +2961,7 @@ export class PilotEngine {
         this.#lastBranch = 'hold';
         this.#stage = 'hold';
         this.#gateState('hold', true, 'pt=' + curPt + ' mode=' + win.mode);
+        this.#heartbeat(now);
         return tuning.driveScanMs;
       }
       this.#gateState('hold', false, '');
@@ -2917,6 +2972,8 @@ export class PilotEngine {
     // ── ⑤⑥⑦⑧ 驾驶阶梯（BOSS 档 / 收场店 / 日常链 / 探索档）：判据与顺序在 plans.js，
     //   选点在 #objective，发包/记账/睡眠在 #runStages（现经 #autoLeader await 串行驱动）。
     //   quiet（威胁边避边工拍）喂 win=null → BOSS 档 when 自然不命中，只走日常链/探索档。──
+    // ⚠ 心跳不能放在本行之后：#autoLeader 一路 await 到链尾（#runStages 的每个 return 都在那里），
+    //   放在这只会恒落 branch='inflight/hold/…' 之外的上一拍形态——故各 return 点各自调 #heartbeat。
     return this.#autoLeader(now, cur, curKey, curPt, quiet ? null : win);
   }
 
@@ -3125,6 +3182,56 @@ export class PilotEngine {
     }
   }
 
+  /**
+   * 决策心跳（纯读，不参与任何判定）：把 `debugState()` 的关键字段按节律送进日志流，
+   *   使「方向盘这一拍为什么没动」事后可用 `cli.js log --grep='pilot: tick'` 单轨还原。
+   *   调用点：`#tick` 内**每个 return 前**（早退分支不会比主链少信息）。
+   *   节律：每 6 拍一条（driveScanMs=5000 → 约 30s）或分支跳变当拍一条；同一拍只落一次。
+   *   长度纪律：主行与 census 副行均 ≤ 200 字符（`cli.js log` 非 --json 按 200 截断）。
+   * @param {number} now 毫秒
+   */
+  #heartbeat(now) {
+    const env = this.#env;
+    const branchChanged = this.#lastBranch !== this.#lastLoggedBranch;
+    if (!branchChanged && this.#ticks % 6 !== 0) return;
+    this.#lastLoggedBranch = this.#lastBranch;
+    if (this.#hbTick === this.#ticks) return;
+    this.#hbTick = this.#ticks;
+    // cd 剩余一律走与 debugState 同一纯读表达式（直接读 #cd 存的是绝对解禁时刻）
+    const left = (k) => (this.#cd[k] ? Math.max(0, this.#cd[k] - now) : 0);
+    env.log.debug(
+      'pilot: tick#%d branch=%s stage=%s why=%s cd[march=%d,beast=%d] phase=%s tl=%d idle=%d plan=%s',
+      this.#ticks,
+      this.#lastBranch || '-',
+      this.#stage || '-',
+      this.#stageWhy || '-',
+      left('march'),
+      left('beast'),
+      this.#toKind || 'idle',
+      this.#tiles.size,
+      this.#idleSince ? now - this.#idleSince : 0,
+      this.#planIdUsed || '-',
+    );
+    // 梯尾空派发拍（= 全链无候选）补一行筛除普查：字段名直接从 #pickDbg 的键取，
+    //   因 beast/资源/商店三套计数键集不同，硬编会漏。
+    if (this.#lastBranch === 'cruise') {
+      const dbg = this.#pickDbg;
+      if (dbg) {
+        const parts = [];
+        for (const k in dbg) {
+          if (k === 'best') continue;
+          parts.push(k + '=' + dbg[k]);
+        }
+        parts.push('best=' + (dbg.best || '-'));
+        const line = 'pilot: pick census ' + parts.join(' ');
+        if (line !== this.#lastCensusLine) {
+          this.#lastCensusLine = line;
+          env.log.debug('%s', line.length > 200 ? line.slice(0, 200) : line);
+        }
+      }
+    }
+  }
+
   // ══════════════════════════════════════════════════════════════════════
   // 生命周期
   // ══════════════════════════════════════════════════════════════════════
@@ -3214,7 +3321,8 @@ export class PilotEngine {
         if (body && self.#active && env.realmActive()) self.onDropChange(body);
       });
     } else {
-      env.log.warn('pilot: ctx.on.push unavailable, cannot subscribe 21534/10018 (engine idle).');
+      // error 级：无 21534/10018 推送 ⇒ 受击逃帐与瓦片现场永远拿不到，方向盘整场空转（core/log.js 第 1) 条）。
+      env.log.error('pilot: ctx.on.push unavailable, cannot subscribe 21534/10018 (engine idle).');
     }
     this.#cycle = createCycle({
       log: env.log,
@@ -3390,6 +3498,10 @@ export class PilotEngine {
     this.#active = false;
     this.#planIdUsed = ''; // §15.10 P2：解锁方案，下次 start 重读 config.drive.drivePlan（probe 停驶后 planId 显空属预期）
     this.#contractErrs = []; // 复位为「未校验」三态，允许下次 start 重跑校验
+    // 心跳诊断位一并复位（不参与判定，留着只会让下次 start 首拍少一条）
+    this.#lastLoggedBranch = '';
+    this.#hbTick = 0;
+    this.#lastCensusLine = '';
     this.#cycle = null;
     this.#tiles = new Map();
     this.#shops = [];
