@@ -1,4 +1,4 @@
-// 异能秘境开车方案 · Plan 层排序回放测试（§15.6：enigmaB_default 逐字复刻现状 #tick 目标梯）。
+// 异能秘境开车方案 · Plan 层排序回放测试（§15.6：default 方案逐字复刻现状 #tick 目标梯）。
 // 只测**顺序与 terminal 语义**（哪个阶段赢、独占/回落），不测选点内部（选点由 pilot-select 各自的
 // 夹具/录制重放覆盖）。合成 ctx 覆盖 BOSS 档 / 收场店 / 开台让路 / relax 与日常分支 / 禁走窗。
 // plans.js import 链触到 constants（浏览器全局），与 pilot 测试同法先桩 window/document/chrome 再动态 import。
@@ -24,7 +24,7 @@ globalThis.chrome = globalThis.chrome || {
 
 const mod = await import('../../extension/src/feats/activity/secret-realm/plans.js');
 const { PLANS, matchStages, planIds } = mod;
-const plan = PLANS.enigmaB_default;
+const plan = PLANS.default;
 
 /** 安全缺省 ctx（对应「日常非 relax、无 BOSS、不去店」的空链），按需覆盖。 */
 function mkCtx(over) {
@@ -42,7 +42,6 @@ function mkCtx(over) {
       relax: false,
       beastLock: false,
       shouldExplore: false,
-      zone: () => 'any',
       snap: { points: [], marches: [], cur: { x: 0, y: 0 }, curKey: '', curPt: 0 },
     },
     over,
@@ -50,8 +49,8 @@ function mkCtx(over) {
 }
 const ids = (c) => matchStages(plan, c).map((s) => s.id);
 
-test('planIds 暴露内置方案且 enigmaB_default 在列', () => {
-  assert.ok(planIds().includes('enigmaB_default'));
+test('planIds 暴露内置方案且 default 在列', () => {
+  assert.ok(planIds().includes('default'));
 });
 
 test('BOSS 开打且已停同区平台 → bossFight 独占（terminal，不回落后续）', () => {
@@ -138,117 +137,4 @@ test('shouldExplore 日常链尾追加 explore（非 terminal，排最后）', (
   const c = mkCtx({ relax: false, beastPolicy: 2, shouldExplore: true });
   const got = ids(c);
   assert.equal(got[got.length - 1], 'explore');
-});
-
-// ── C4 · crystal_then_skill（§15.2）：新方案判据只吃 ctx 一等字段（clock/until/events/progress）──
-const crystal = PLANS.crystal_then_skill;
-function mkCrystalCtx(over) {
-  return mkCtx(
-    Object.assign(
-      {
-        clock: { serverMs: 2000000, fightBeginMs: 1000000, fightEndMs: 9000000 },
-        until: () => Infinity, // 缺省：无任何开打时刻→BOSS/商店档自然不命中
-        events: { bigBossStart: null, nearestSmallBossStart: null },
-        progress: {
-          areaOpen: () => false,
-          buffsMaxed: () => false,
-          shopDone: () => false,
-          buffTried: () => false,
-        },
-      },
-      over,
-    ),
-  );
-}
-const cIds = (c) => matchStages(crystal, c).map((s) => s.id);
-
-test('crystal 缺省拍：无开窗/无开打时刻 → 只落 normalCrystal 兜底（when 恒真）', () => {
-  assert.deepStrictEqual(cIds(mkCrystalCtx({})), ['normalCrystal']);
-  assert.ok(planIds().includes('crystal_then_skill'));
-});
-
-test('crystal：强区开窗且 buff 未满 → strongSkill 封顶（非 terminal，后面仍挂兜底）', () => {
-  const c = mkCrystalCtx({
-    progress: {
-      areaOpen: (z) => z === 'strong',
-      buffsMaxed: () => false,
-      shopDone: () => false,
-      buffTried: () => false,
-    },
-  });
-  assert.deepStrictEqual(cIds(c), ['strongSkill', 'normalCrystal']);
-});
-
-test('crystal：槽满3/buff 已满 → 不冲强区；开窗只对 strong 认（normal 开窗不算）', () => {
-  const maxed = mkCrystalCtx({
-    progress: {
-      areaOpen: () => true,
-      buffsMaxed: () => true,
-      shopDone: () => false,
-      buffTried: () => false,
-    },
-  });
-  assert.deepStrictEqual(cIds(maxed), ['normalCrystal']);
-  const onlyNormal = mkCrystalCtx({
-    progress: {
-      areaOpen: (z) => z === 'normal',
-      buffsMaxed: () => false,
-      shopDone: () => false,
-      buffTried: () => false,
-    },
-  });
-  assert.deepStrictEqual(cIds(onlyNormal), ['normalCrystal'], 'normal 开窗不构成冲强区理由');
-});
-
-test('crystal：大BOSS ≤ 2min → bossOccupy 终端独占（不再挂后续档）；已停平台则让位 bossFight', () => {
-  const ev = { bigBossStart: 2120000, nearestSmallBossStart: null };
-  const c = mkCrystalCtx({
-    teamType: 1,
-    events: ev,
-    until: (ts) => (ts ? ts - 2000000 : Infinity),
-  });
-  assert.deepStrictEqual(cIds(c), ['bossOccupy'], 'terminal：列表只有一档');
-  const onPlane = mkCrystalCtx({
-    teamType: 1,
-    bossMode: 'open',
-    onBossPlane: true,
-    bossSameArea: true,
-    events: ev,
-    until: (ts) => (ts ? ts - 2000000 : Infinity),
-  });
-  assert.deepStrictEqual(cIds(onPlane), ['bossFight']);
-});
-
-test('crystal：大BOSS ≤ 5min 且购物未完 → shopPrep 先于完成判据挡住的路；shopDone 后不再去店', () => {
-  const ev = { bigBossStart: 2290000, nearestSmallBossStart: null }; // 距 2min90s → 落在 5min 窗内、2min 窗外
-  const ctx = { until: (ts) => (ts ? ts - 2000000 : Infinity) };
-  const c = mkCrystalCtx(Object.assign({ teamType: 1, events: ev }, ctx));
-  assert.deepStrictEqual(cIds(c), ['shopPrep', 'normalCrystal']);
-  const done = mkCrystalCtx(
-    Object.assign({ teamType: 1, events: ev }, ctx, {
-      progress: {
-        areaOpen: () => false,
-        buffsMaxed: () => false,
-        shopDone: () => true,
-        buffTried: () => false,
-      },
-    }),
-  );
-  assert.deepStrictEqual(cIds(done), ['normalCrystal'], '购物完成 → shopPrep 不命中');
-});
-
-test('crystal：就近小BOSS ≤ 2min → smallGuard 占位；选不到平台由引擎落回后续档（非 terminal）', () => {
-  const ev = { bigBossStart: null, nearestSmallBossStart: 2110000 };
-  const c = mkCrystalCtx({
-    teamType: 1,
-    events: ev,
-    until: (ts) => (ts ? ts - 2000000 : Infinity),
-    progress: {
-      areaOpen: (z) => z === 'strong',
-      buffsMaxed: () => false,
-      shopDone: () => false,
-      buffTried: () => false,
-    },
-  });
-  assert.deepStrictEqual(cIds(c), ['strongSkill', 'smallGuard', 'normalCrystal']);
 });

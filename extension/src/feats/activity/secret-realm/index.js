@@ -110,7 +110,7 @@ var engines = {
  *     relocate 恒关（不自动挪台）——大小BOSS 时间错开不同现，次序项不影响选目标；仅队长可发（引擎内 isTeamLeader 已闸）；
  *   shop=商店补货派生总闸 {enabled}（enabled 非用户勾选，而是 pickItems 是否存在 shop=1 项的派生态；且**只在队伍已停靠 161 商店点时**补货，见 shop.js）；
  *   warn=攻击警告应对 {enabled,mode}（mode='transfer' 立即转移（默认）/'stand' 抗争到底；默认关，自动挪队风险最高，见 warn.js；自动驾驶开启时本引擎让出转移、交 pilot.js EVADE 接管）；
- *   drive=自动驾驶 {enabled,boss,shopTime,revive,checkPower,shopDwellMs,emptyDwellMs,drivePlan}（enabled=面板 driveEnabled 总闸（默关）；boss=driveBoss 子闸——BOSS 窗开着时是否自动开往 176 平台，缺省 true；shopTime=大BOSS 前定点商店勤务开关（缺省 true）；revive=driveRevive 子闸——战败(deadType==1)且本场次数未用尽时是否代答 8552 复活，缺省 true；checkPower=driveCheckPower 子闸——受威胁时先探战力差（本队 vs 来犯队，8549），明确不亏则这一拍不逃、照常规阶梯干活（对齐竞品 option.check_power），缺省关；shopDwellMs=到店驻留毫秒（面板秒×1000，默认 25000）；emptyDwellMs=资源/掉落拿空后 settle 毫秒（默认 0=立即走）；drivePlan=开车方案 id（缺省 'enigmaB_default'，§15.8），见 pilot.js）。
+ *   drive=自动驾驶 {enabled,boss,shopTime,revive,checkPower,shopDwellMs,emptyDwellMs,drivePlan}（enabled=面板 driveEnabled 总闸（默关）；boss=driveBoss 子闸——BOSS 窗开着时是否自动开往 176 平台，缺省 true；shopTime=大BOSS 前定点商店勤务开关（缺省 true）；revive=driveRevive 子闸——战败(deadType==1)且本场次数未用尽时是否代答 8552 复活，缺省 true；checkPower=driveCheckPower 子闸——受威胁时先探战力差（本队 vs 来犯队，8549），明确不亏则这一拍不逃、照常规阶梯干活（对齐竞品 option.check_power），缺省关；shopDwellMs=到店驻留毫秒（面板秒×1000，默认 25000）；emptyDwellMs=资源/掉落拿空后 settle 毫秒（默认 0=立即走）；drivePlan=开车方案 id（缺省 'default'，§15.8），见 pilot.js）。
  *   leave=拿满自动离场 {enabled}（enabled=面板 autoLeaveEnabled 总闸（默关）；无子开关，离场为不可逆的整场退出，见 leave.js）。
  *   scout=侦察囤情报 {enabled}（enabled=面板 scoutEnabled 总闸（**v4.1 起缺省开**：打野档品质筛选依赖其情报，关则 #pickBeast 恒按未知品质 2 处理、被 driveBeastMinQuality=4 筛成哑火）；只囤情报不派兵，花 41001 侦察野怪点品质，护栏=先 8536 免费预检/余量闸/速率闸，见 scout.js）。
  * @type {{pickItems:Object<string,{on:number,max:number,shop?:number}>, pickOrder:string[], pickRank:Object<string,number>, buffEffects:number[], heal:object, boss:object, shop:{enabled:boolean}, warn:{enabled:boolean,mode:string}, drive:{enabled:boolean,boss:boolean,shopTime:boolean,revive:boolean,checkPower:boolean,shopDwellMs:number,emptyDwellMs:number,drivePlan:string}}}
@@ -145,7 +145,7 @@ var modCfg = {
     shopTime: true,
     shopDwellMs: 25000,
     emptyDwellMs: 0,
-    drivePlan: 'enigmaB_default',
+    drivePlan: 'default',
   },
   leave: { enabled: false },
   scout: { enabled: false },
@@ -687,12 +687,12 @@ function pickDriveRaw(c) {
     checkPower: c && c.driveCheckPower === true,
     shopDwellSec: c && c.driveShopDwell != null ? c.driveShopDwell : 25,
     emptyDwellSec: c && c.driveEmptyDwell != null ? c.driveEmptyDwell : 0,
-    drivePlan: c && c.drivePlan != null ? String(c.drivePlan) : 'enigmaB_default',
+    drivePlan: c && c.drivePlan != null ? String(c.drivePlan) : 'default',
   };
 }
 
 /**
- * drive 归一化：enabled/boss/shopTime/revive 归布尔（boss/shopTime/revive 缺省 true）；checkPower 缺省 false（对齐竞品缺省）；秒→毫秒并夹 [0,300s]（非法回默认 25s/0s）；drivePlan 校验为已注册方案 id（非法回落 enigmaB_default）。
+ * drive 归一化：enabled/boss/shopTime/revive 归布尔（boss/shopTime/revive 缺省 true）；checkPower 缺省 false（对齐竞品缺省）；秒→毫秒并夹 [0,300s]（非法回默认 25s/0s）；drivePlan 校验为已注册方案 id（非法回落 'default'）。
  * @param {*} raw pickDriveRaw 产物
  * @returns {{enabled:boolean,boss:boolean,shopTime:boolean,revive:boolean,checkPower:boolean,shopDwellMs:number,emptyDwellMs:number,drivePlan:string}}
  */
@@ -705,7 +705,7 @@ function sanitizeDrive(raw) {
   let ed = Number(e.emptyDwellSec);
   if (!Number.isFinite(ed)) ed = 0;
   else if (ed > 300) ed = 300;
-  const plan = PLANS[e.drivePlan] ? String(e.drivePlan) : 'enigmaB_default';
+  const plan = PLANS[e.drivePlan] ? String(e.drivePlan) : 'default';
   return {
     enabled: e.enabled === true,
     boss: e.boss !== false,
@@ -886,7 +886,7 @@ reactor.register({
     driveCheckPower: false,
     driveShopDwell: 25,
     driveEmptyDwell: 0,
-    drivePlan: 'enigmaB_default',
+    drivePlan: 'default',
     autoLeaveEnabled: false,
     scoutEnabled: true,
   },
@@ -1061,7 +1061,7 @@ reactor.register({
       showIf: function (cfg) {
         return !!(cfg && cfg.driveEnabled);
       },
-      hint: '缺省 enigmaB_default（竞品B对齐链）；crystal_then_skill 为水晶→技能→BOSS 多区域方案（需线上配 driveStrongRoundMin 阈值才启用分区，否则与缺省行为等价）。切换方案后需停止再开启自动驾驶才生效（整场不热切）',
+      hint: '默认方案（竞品B对齐链，唯一在跑的方案）。未来新方案需先完成线上验证才能上架；切换方案后需停止再开启自动驾驶才生效（整场不热切）',
     },
     {
       key: 'autoLeaveEnabled',

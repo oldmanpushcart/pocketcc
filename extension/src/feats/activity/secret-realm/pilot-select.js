@@ -80,7 +80,6 @@ export function resourceCost(p, ctx) {
  * @param {{
  *   startPoint:{x:number,y:number}, serverTimeSec:number, minNum?:number, maxDist?:number,
  *   isRoundOpen:(esrId:number)=>boolean, marches?:Array, marchedList?:Array, marchPolicy?:number,
- *   zoneOf?:((esrId:number)=>string)|null, zone?:string,
  *   firstUnrewardedBoss?:{x:number,y:number}|null, nearestNoSausageShop?:{x:number,y:number}|null
  * }} ctx
  * @returns {{x:number,y:number,pointType:number,m:object,score:number}|null} 最佳井，无则 null
@@ -90,8 +89,6 @@ export function pickResource(points, ctx) {
   const maxDist = ctx.maxDist == null ? Infinity : Number(ctx.maxDist);
   const policy = ctx.marchPolicy || 0;
   const isRoundOpen = ctx.isRoundOpen || (() => true);
-  // §15.3 zone 过滤：只有调用方同时给了 zoneOf 与具体 zone（非 'any'）才拦；enigmaB_default 不传→恒放行（零行为变化）。
-  const zoneGate = ctx.zoneOf && ctx.zone && ctx.zone !== 'any' ? ctx.zone : null;
   let best = null;
   let bestScore = -Infinity;
   for (let i = 0; i < points.length; i++) {
@@ -99,7 +96,6 @@ export function pickResource(points, ctx) {
     if (!p || Number(p.pointType) !== PAB_RESOURCE) continue; // 闸 1：类型（Number 兜字符串 pointType，防静默全 drop）
     const m = p.m || {};
     if (!isRoundOpen(m.esrId)) continue; // 闸 2：回合已开放（用 m.esrId，viewLevel:1）
-    if (zoneGate && String(ctx.zoneOf(m.esrId)) !== zoneGate) continue; // 闸 2b：区域筛选（§15.2 normal/strong）
     if (inMarchedList(ctx.marchedList, p.x, p.y, ctx.serverTimeSec)) continue; // 闸 3a：60s 内派过
     if (!(Number(m.iNum || 0) >= minNum)) continue; // 闸 3b：产出下限
     const dd = dist(p.x, p.y, (ctx.startPoint || {}).x, (ctx.startPoint || {}).y);
@@ -236,78 +232,4 @@ export function pickShop(shops, ctx) {
   }
   const chosen = list[0];
   return chosen ? { x: chosen.pos.x, y: chosen.pos.y } : null;
-}
-
-/**
- * 选「弄技能」目标井（§15.2 strongSkill / §15.10 P1，**报文订正**：录制 2149 帧 901 实证 163 掉落箱
- * 明细无 buff 字段（m 仅 viewId/teamId/playerInfo/esrId/iNum），buff 只出现在 **173 资源点明细**
- * （8526 应答 / 21522 推送的 `buffInfo`）——故本原语选的是**带 buff 位的 173 井**，非 163 箱；
- * 到点后由 pickup.js 既有 8538 链（§9.2 择优+队长闸）完成拾取，pilot 不碰 buff 细节。
- * 闸：类型/回合/zone/空位无在途（同 pickResource），外加**已知无 buff 空位不派**：buffFreeAt 返回
- *   `null`＝该点无 21522 记账（未知，乐观派——到达后自发 8526 探明）；`0`＝确实没 buff 位（剔）；`>0`＝有。
- * 排序：距离最近优先（buff 井不看 iNum 产出，顺路多采交给日常链另拍）。
- * @param {Array} points 901 原样 pointList
- * @param {{
- *   startPoint:{x:number,y:number}, maxDist?:number, isRoundOpen:(esrId:number)=>boolean,
- *   zoneOf?:((esrId:number)=>string)|null, zone?:string,
- *   buffFreeAt:(x:number,y:number)=>number|null, marches?:Array, marchPolicy?:number
- * }} ctx
- * @returns {{x:number,y:number,pointType:number,m:object,dist:number}|null}
- */
-export function pickBuffDrop(points, ctx) {
-  const maxDist = ctx.maxDist == null ? Infinity : Number(ctx.maxDist);
-  const policy = ctx.marchPolicy || 0;
-  const isRoundOpen = ctx.isRoundOpen || (() => true);
-  const buffFreeAt = ctx.buffFreeAt || (() => null);
-  const zoneGate = ctx.zoneOf && ctx.zone && ctx.zone !== 'any' ? ctx.zone : null;
-  const sp = ctx.startPoint || { x: 0, y: 0 };
-  let best = null;
-  let bestD = Infinity;
-  for (let i = 0; i < points.length; i++) {
-    const p = points[i];
-    if (!p || Number(p.pointType) !== PAB_RESOURCE) continue; // 类型：弄技能的承载体是 173（报文订正见上）
-    const m = p.m || {};
-    if (!isRoundOpen(m.esrId)) continue;
-    if (zoneGate && String(ctx.zoneOf(m.esrId)) !== zoneGate) continue;
-    const bf = buffFreeAt(p.x, p.y);
-    // 三态判等必须显式接 null：Number(null)===0（不是 NaN），直接 `Number(…)===0` 会把「未知」误判成「探明无位」全剔。
-    if (bf != null && Number(bf) <= 0) continue; // 已知无 buff 空位（21522 记账）→ 不白跑一趟 31~44s
-    if (Number(m.state) !== 0) continue;
-    if (Array.isArray(m.teams) && m.teams.length > 0) continue;
-    if (hasMarchTargeting(ctx.marches, p.x, p.y, policy)) continue;
-    const dd = dist(p.x, p.y, sp.x, sp.y);
-    if (!(dd > 0 && dd <= maxDist)) continue;
-    if (dd < bestD) {
-      bestD = dd;
-      best = { x: p.x, y: p.y, pointType: p.pointType, m, dist: dd };
-    }
-  }
-  return best;
-}
-
-/**
- * 回合开窗判据（§15.3 progress.areaOpen 的纯核）：把「某区域类别是否已开放」还原成
- *   「是否存在 roundid 满足分区条件且 `ServerTime > beginSec + timer[roundid].start` 的回合」。
- * 行取数（realm/timer 表）由调用方注入，本函数只吃行对象做纯计算；表缺行/字段读不到一律 false（闭开）。
- * @param {{beginSec:number, serverTimeSec:number}} clock 本场开战秒 / 服务器秒
- * @param {(roundId:number)=>{start:number}|null} timerRow roundid → timer 行（读不到给 null）
- * @param {(esrId:number)=>{roundid:number}|null} realmRow esrId → realm 行
- * @param {(roundId:number)=>boolean} roundPick 分区谓词：哪些 roundid 算目标区（如 `>= driveStrongRoundMin`）
- * @param {number[]} esrIds 候选区域 id（采样自 901 快照的 m.esrId 去重集）
- * @returns {boolean}
- */
-export function areaByStart(clock, timerRow, realmRow, roundPick, esrIds) {
-  const beginSec = Number(clock.beginSec);
-  const nowSec = Number(clock.serverTimeSec);
-  if (!(beginSec > 0) || !(nowSec > 0) || !Array.isArray(esrIds)) return false;
-  for (let i = 0; i < esrIds.length; i++) {
-    const realm = realmRow(Number(esrIds[i]) || 0);
-    const round = realm ? Number(realm.roundid) || 0 : 0;
-    if (!(round > 0) || !roundPick(round)) continue;
-    const t = timerRow(round);
-    const start = t ? Number(t.start) : NaN;
-    if (!Number.isFinite(start)) continue;
-    if (nowSec > beginSec + start) return true;
-  }
-  return false;
 }

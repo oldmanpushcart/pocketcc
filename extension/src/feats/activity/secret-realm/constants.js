@@ -1221,26 +1221,6 @@ export const tuning = {
    */
   selfFetchTtlMs: 30000,
   /**
-   * plans §15.2 crystal_then_skill：**强异能区回合阈值**——`realm[esrId].roundid >= 本值` 的点判为强区（'strong'），
-   * 否则 'normal'。依据字典 FAQ25「先开离出生区最近的微异能区，之后开启靠近地图中心的强异能区」：强区＝后开回合，
-   * 用 roundid 排序切档是唯一不依赖表结构假设的口径。⚠ 阈值具体取值需线上 `cs-*-dump` 类探针读
-   *   `enigma_secret_realm`/`enigma_secret_realm_timer` 全行后钉死（D1/E1 验）；表行读不到 → zone 恒 'any'（不冲强区，保守）。
-   * 取 0=关闭强区判别（全判 'normal'），enigmaB_default 不受影响。
-   * @type {number}
-   */
-  driveStrongRoundMin: 0,
-  /**
-   * plans §15.2 bossOccupy：**大BOSS 开台前占位提前量**（毫秒）。竞品无此独立档（enigmaB 用 drivePlaneLeadSec=60s），
-   *   本方案的「前 2min 占位」按需求原文取 120s。仅在 BOSS 窗判据内取 min，不越过读秒本身。
-   * @type {number}
-   */
-  driveBuffOccupyLeadMs: 120000,
-  /**
-   * plans §15.2 smallGuard：**就近小BOSS 开台前占位提前量**（毫秒），同上门限语义。
-   * @type {number}
-   */
-  driveSmallGuardLeadMs: 120000,
-  /**
    * pilot：BOSS 读秒（state22）**结束后的宽限窗**（毫秒）。读秒一结束 BOSS 就转 21 可打，但 21 的推送可能迟到、
    *   而 `stateEndTime` 已过期——若此时窗口判 null，车会从平台上落下去巡航，把整场 BOSS 让掉。
    * 读秒已过期（`state==22 && stateEndTime < now`）仍照打，不做硬筛。

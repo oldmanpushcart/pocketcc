@@ -2,19 +2,26 @@
  * 异能秘境自动驾驶 · 开车方案（Plan）层——纯数据 + 纯判据，无副作用、不发包、不摸引擎。
  *
  * 三层切分（见 docs/feat-异能秘境自动驾驶-v4竞品B对齐重写.md §15）：
- *   Engine(pilot.js #tick)  机制与安全前置（时钟/#cd/mooring/#dispatch/EVADE/拒绝退避/占用/单飞/回合硬闸）——全方案共享
- *   Objectives(pilot-select) 选点纯函数（resource/beast/shop/buff/plane）——全方案复用
- *   Plan(本文件)            阶段**顺序** + 进入/退出**条件** + 区域 + 每目标参数——每方案一份
+ *   Engine(pilot.js #tick)  机制与安全前置（时钟/#cd/mooring/#dispatch/EVADE/拒绝退避/占用/单飞/回合硬闸）——方案共享
+ *   Objectives(pilot-select) 选点纯函数（resource/beast/shop/buff/plane）——方案复用
+ *   Plan(本文件)            阶段**顺序** + 进入/退出**条件** + 每目标参数——每方案一份
  *
  * 依赖方向：pilot.js → plans.js → pilot-select.js/constants.js。本文件是纯叶子：**只 import constants 常量名**。
  * 红线：不出现裸 pointType 数字（如需点型判据一律走 constants 的 PAB_*）；不碰 api/net/引擎；不含可变状态。
+ *
+ * 方案↔引擎契约（防「方案侧一行、引擎侧 40 行」的边界穿透）：
+ *   1. `CTX_KEYS`——方案可读的 ctx 字段**封闭集**。方案需新字段必须同步修 CTX_KEYS + pilot.js #buildCtx，
+ *      禁止只改 #buildCtx 不加清单（启动期 validatePlan 会卡）。
+ *   2. `OBJECTIVES`——引擎 #objective switch 已实现的目标原语名清单。方案 stage.obj 写错/未实现 → 启动期抛。
+ *   3. `params`——**方案私有阈值留在 stage.params**（例：某方案的“前 30s 回店”阈值写 `params:{leadMs:30000}`），
+ *      不往 constants.tuning 里塞方案专用字段；constants.tuning 只存跨方案共享参数。
  *
  * 语义：`stages` 顺序即优先级。`matchStages` 从头试到第一个 `when(ctx)` 为真的阶段；
  *   - `terminal:true` 的阶段命中即**独占本拍**（哪怕选不到目标也不回落后续档）——对应现状
  *     收场车「只回店不再吃井」(pilot.js L2043-2050)、BOSS 开台读秒让位 (L2056-2060) 与
  *     开打拍（L2357-2364：找不到平台也发一笔 `boss-plane|none` 记账就终拍，不落日常链）。
- *   - `stopNext:true` 的阶段只在**真选到目标时**截断后续，选不到则照常顺延——enigmaB_default
- *     暂无使用者（差分回放证实开打档实为 terminal）；语义保留给 Phase C 的真方案。
+ *   - `stopNext:true` 的阶段只在**真选到目标时**截断后续，选不到则照常顺延——默认方案暂无使用者
+ *     （差分回放证实开打档实为 terminal）；语义保留给未来的真方案。
  *   - 两者都不标的阶段命中只表示「先试这一档」，选不到目标由引擎顺延到 matchStages 返回的下一档
  *     ——对应现状日常 acts 循环 `if(!cand) continue` (L2107) 与开台读秒找平台 (L2367-2383)。
  */
@@ -22,7 +29,7 @@ import { PAB_BOSS_PLANE } from './constants.js';
 
 /**
  * ctx：引擎每拍组装后喂给 `when(ctx)` 判据与目标参数的只读上下文。**字段全部由引擎预解析**，
- * 本层不做取数（保持纯、可离线测）。字段来源对照 pilot.js 现状：
+ * 本层不做取数（保持纯、可离线测）。字段来源对照 pilot.js 现状；下方 `CTX_KEYS` 是本 typedef 的运行时投影。
  * @typedef {{
  *   snap: object,                       // {points, marches, cur, curKey, curPt}：901 原样信封 + 当前点
  *   shopWhy: string|null,               // #shopWant 结果：'exit'|'stage'|'errand'|'sausage'|'gap'|null（后三者仅喂链尾排序，不拦路）
@@ -36,39 +43,63 @@ import { PAB_BOSS_PLANE } from './constants.js';
  *   beastPolicy: number,                // tuning.driveBeastPolicy（0/1/2=打野档插入位置）
  *   relax: boolean,                     // #beastStageWant（百兽期＝安心抓宠，链形不同）
  *   beastLock: boolean,                 // #beastLockNow（开台读秒后 0~180s 禁走窗，窗内跳打野档）
- *   shouldExplore: boolean,             // 纯读：已起表且闲逛超时（起表副作用在引擎梯尾，对齐现状 L2391/2465-2468）
- *   zone: (esrId:number)=>string,       // 区域解析：返回 'normal'|'strong'|'any'（Phase C 一等；B1 enigmaB 恒 'any'）
- *   // ── §15.3 ctx 一等字段（C4 新增；enigmaB_default 的判据不消费，缺字段时 matchStages 防御性跳过）──
- *   clock: {serverMs:number, fightBeginMs:number, fightEndMs:number},  // 毫秒时钟（引擎用 serverTime 组装，不回落本地钟）
- *   until: (ts:number|null)=>number,    // 「距某绝对时刻还有多久」毫秒；ts 缺失/无效给 Infinity（判据自然不命中）
- *   events: {bigBossStart:number|null, nearestSmallBossStart:number|null}, // 开打绝对毫秒；推导口径见下（⚠ 录制未覆盖 crystal 路，D1/E1 线上验）
- *   progress: {                         // 跨帧/背包态的只读谓词集（引擎组装，方案侧纯消费）
- *     areaOpen:(zone:string)=>boolean,  //   某区域类别是否已开窗（areaByStart 纯核 + realm/timer 表）
- *     buffsMaxed:(n:number)=>boolean,   //   buffMap[1..n] 全有值＝槽满（订正：「满级」无表据，先按满槽，阈值 n 走判据参数）
- *     shopDone:()=>boolean,             //   本场购物完成（百兽箱已买）
- *     buffTried:(x:number,y:number)=>boolean // 该点已探明无 buff 位（防反复白跑；会话级，换场复位）
- *   }
+ *   shouldExplore: boolean              // 纯读：已起表且闲逛超时（起表副作用在引擎梯尾，对齐现状 L2391/2465-2468）
  * }} Ctx */
+
+/**
+ * 方案↔引擎契约之一：ctx 字段**封闭集**。与上方 `Ctx` typedef 一字对应。
+ * 新字段＝新契约：同步修本清单 + pilot.js #buildCtx，启动期 validatePlan 会卡住未同步的修改。
+ * @type {readonly string[]}
+ */
+export const CTX_KEYS = Object.freeze([
+  'snap',
+  'shopWhy',
+  'teamType',
+  'driveBoss',
+  'bossMode',
+  'onBossPlane',
+  'bossSameArea',
+  'bossFeeding',
+  'marchPolicy',
+  'beastPolicy',
+  'relax',
+  'beastLock',
+  'shouldExplore',
+]);
+
+/**
+ * 方案↔引擎契约之二：引擎 `#objective` switch 已实现的目标原语名清单（与 pilot.js #objective 一字对应）。
+ * 方案 stage.obj 写错、或引擎删了 case 没同步本清单 → 启动期抛（防「选不到点静默顺延」的难排障。
+ * @type {readonly string[]}
+ */
+export const OBJECTIVES = Object.freeze([
+  'bossFight',
+  'plane',
+  'shop',
+  'follow',
+  'beast',
+  'resource',
+  'explore',
+  'wait',
+]);
 
 /**
  * 阶段描述。`obj` 是目标原语名（引擎 `Objectives[obj]` 映射到 pilot-select/#pickPlane 等）；
  * `params` 是**方案语义**的参数（用名字引用 tuning，别把魔法数写死进本文件，保持 config 解耦）。
  * @typedef {{
  *   id: string, obj: string, terminal?: boolean, stopNext?: boolean,
- *   zone?: string,                       // 传给资源/拾取原语的区域过滤（缺省引擎按 'any'）
  *   params?: object,
  *   when: (c:Ctx)=>boolean
  * }} Stage */
 
 /**
- * 内置方案：竞品B对齐（= 现状 #tick 目标梯逐字复刻）。B1 唯一在跑的方案；
- * `crystal_then_skill` 等真方案随 Phase C 的原语（pickBuffDrop/zone/progress）长出后再加。
+ * 内置方案：竞品B对齐（= 现状 #tick 目标梯逐字复刻），也是唯一在跑的方案。
  * 每条 `when` 后注 pilot.js 现状行号，便于对拍与评审。
- * @type {{ enigmaB_default: { label:string, stages:Stage[] } }}
+ * @type {{ default: { label:string, stages:Stage[] } }}
  */
 export const PLANS = {
-  enigmaB_default: {
-    label: '竞品B对齐（内置＝现状）',
+  default: {
+    label: '默认方案',
     stages: [
       // ── BOSS 档（#tick L2349-2383，早于 #stageChain）：team_type>0 && driveBoss 才走 ──
       {
@@ -167,76 +198,6 @@ export const PLANS = {
       { id: 'explore', obj: 'explore', when: (c) => c.shouldExplore }, // L2391
     ],
   },
-
-  /**
-   * §15.2 水晶→技能→水晶→BOSS（C4 新增，非缺省；config.drive.drivePlan='crystal_then_skill' 才启用）。
-   * ⚠ **报文订正**（先证后接）：原图「弄技能=拾带 buff 的 163 掉落」不成立——录制 2149 帧 901 实证
-   *   163 明细无 buff 字段且 esrId 恒 0（不可分区）；buff 在 **173 资源点明细**（8526/21522 的 buffInfo）。
-   *   故 strongSkill 用 `obj:'buff'`（pickBuffDrop 选带 buff 位的 173 井），拾取走 pickup.js 既有 8538 链。
-   * ⚠ events/progress 的引擎侧推导（大/小 BOSS 不分家、按 state22 读秒窗 min 取）未经线上验证，
-   *   本方案不上生产缺省路；enigmaB_default 行为与差分回放零分叉不受本文影响。
-   */
-  crystal_then_skill: {
-    label: '水晶→技能→水晶→BOSS',
-    stages: [
-      // BOSS 开打且已停同区平台→上本体（与 enigmaB 同源，terminal）
-      {
-        id: 'bossFight',
-        obj: 'bossFight',
-        terminal: true,
-        when: (c) =>
-          c.bossMode === 'open' && c.teamType > 0 && c.driveBoss && c.onBossPlane && c.bossSameArea,
-      },
-      // 大BOSS 前 2min 占位（§15.2 bossOccupy）：终端独占——占位拍不落日常链，与 enigmaB 开打档同语义
-      {
-        id: 'bossOccupy',
-        obj: 'plane',
-        params: { source: 'bossWindow' },
-        terminal: true,
-        when: (c) =>
-          c.teamType > 0 &&
-          c.driveBoss &&
-          c.snap.curPt !== PAB_BOSS_PLANE &&
-          c.until(c.events && c.events.bigBossStart) <= 120000,
-      },
-      // 大BOSS 前 5min 购物且本场购物未完（百兽箱未买）；非 terminal：选不到店照常顺延
-      {
-        id: 'shopPrep',
-        obj: 'shop',
-        params: { preferNoSausage: true },
-        when: (c) =>
-          c.snap.curPt !== PAB_BOSS_PLANE &&
-          c.until(c.events && c.events.bigBossStart) <= 300000 &&
-          !(c.progress && c.progress.shopDone()),
-      },
-      // 强区已开窗且 buff 槽未满 3 → 冲强区弄技能（非 terminal：选不到井回普通区采矿）
-      {
-        id: 'strongSkill',
-        obj: 'buff',
-        zone: 'strong',
-        when: (c) => c.progress && !c.progress.buffsMaxed(3) && c.progress.areaOpen('strong'),
-      },
-      // 就近小BOSS 开台读秒窗 ≤ 2min → 提前占位（非 terminal，同 enigmaB bossPlaneLead 语义：没平台落回日常）
-      {
-        id: 'smallGuard',
-        obj: 'plane',
-        params: { source: 'bossWindow' },
-        when: (c) =>
-          c.teamType > 0 &&
-          c.driveBoss &&
-          c.snap.curPt !== PAB_BOSS_PLANE &&
-          c.until(c.events && c.events.nearestSmallBossStart) <= 120000,
-      },
-      // 兜底：普通区采水晶（zone 经引擎 ctx.zone 过滤；driveStrongRoundMin=0 时全判 'normal' 自然放行）
-      {
-        id: 'normalCrystal',
-        obj: 'resource',
-        zone: 'normal',
-        params: { yield: 'cruise' },
-        when: () => true,
-      },
-    ],
-  },
 };
 
 /**
@@ -268,9 +229,70 @@ export function matchStages(plan, ctx) {
 }
 
 /**
- * 供面板/配置列方案 id（缺省回落 enigmaB_default）。
+ * 供面板/配置列方案 id（当前只有 'default' 一个方案，保留 API 以备将来扩展）。
  * @returns {string[]}
  */
 export function planIds() {
   return Object.keys(PLANS);
+}
+
+/**
+ * 方案↔引擎契约校验器。不抛异常，返回违例列表，由调用方决定“启动期直接抵”还是“测试里断言”。
+ * 自“剥除 crystal_then_skill”后新增，专治「方案侧一行、引擎侧 40 行」的边界穿透。
+ *
+ * 检查项：
+ *   1. `stage.obj` 必在 `OBJECTIVES`——防引擎 switch 缺 case，运行期“选不到点静默顺延”。
+ *   2. `terminal` 阶段 id 必在 `stageDiagKeys`——防引擎 STAGE_DIAG 没登记，命中拍 `#stage=undefined`，
+ *      probe 对拍丢分支。例外：`obj==='wait'` 走 cand.wait 专用分支，不经 STAGE_DIAG。
+ *   3. `id`/`obj` 存在且类型正确；`id` 全局唯一。
+ *   4. `when` 为函数（方案层当前保留箭头函数判据；未来如降级为 DSL 会新加一项）。
+ *
+ * @param {{stages?:Stage[]}} plan 待验方案（PLANS[id]）
+ * @param {string[]} stageDiagKeys 引擎 STAGE_DIAG 当前登记的阶段 id 清单（pilot.js 传 Object.keys(STAGE_DIAG)）
+ * @returns {string[]} 违例列表（空数组＝无违例）
+ */
+export function validatePlan(plan, stageDiagKeys) {
+  const errs = [];
+  const stages = (plan && plan.stages) || [];
+  const diag = Array.isArray(stageDiagKeys) ? stageDiagKeys : [];
+  const seen = new Set();
+  for (let i = 0; i < stages.length; i++) {
+    const s = stages[i];
+    if (!s || typeof s !== 'object') {
+      errs.push('stage[' + i + '] 非对象');
+      continue;
+    }
+    const tag = 'stage[' + i + ']' + (s.id ? ' #' + s.id : '');
+    if (typeof s.id !== 'string' || !s.id) errs.push(tag + ' 缺 id');
+    if (typeof s.obj !== 'string' || !s.obj) errs.push(tag + ' 缺 obj');
+    if (typeof s.when !== 'function') errs.push(tag + ' when 非函数');
+    if (s.id) {
+      if (seen.has(s.id)) errs.push(tag + ' id 重复');
+      seen.add(s.id);
+    }
+    if (s.obj && !OBJECTIVES.includes(s.obj)) {
+      errs.push(
+        tag + ' obj=' + s.obj + ' 不在 OBJECTIVES 清单（引擎 #objective 无此 case、或清单未同步）',
+      );
+    }
+    if (s.terminal && s.obj !== 'wait' && s.id && !diag.includes(s.id)) {
+      errs.push(tag + ' terminal 档未登记到 STAGE_DIAG（引擎无法为它提供诊断档位名）');
+    }
+  }
+  return errs;
+}
+
+/**
+ * ctx 字段集校验器：引擎 #buildCtx 产出的 keys 必与 `CTX_KEYS` 一字对应（多/少都算验失败）。
+ * 调用方：dev 模式下 #runStages 首拍跑一次；测试层每次 #buildCtx 产物都可跑。
+ * @param {object} ctx #buildCtx 的返回值
+ * @returns {string[]} 违例列表（空＝无违例）
+ */
+export function validateCtxKeys(ctx) {
+  const errs = [];
+  if (!ctx || typeof ctx !== 'object') return ['ctx 非对象'];
+  const got = Object.keys(ctx);
+  for (const k of got) if (!CTX_KEYS.includes(k)) errs.push('ctx 包含未声明字段：' + k);
+  for (const k of CTX_KEYS) if (!got.includes(k)) errs.push('ctx 缺声明字段：' + k);
+  return errs;
 }

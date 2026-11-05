@@ -50,13 +50,11 @@
 import { createCycle } from '../../../core/cycle.js';
 import { bits } from '../../../core/game-api.js';
 import { tileKey as utilTileKey, dist as utilDist } from './util.js';
-import { PLANS, matchStages } from './plans.js';
+import { PLANS, matchStages, validatePlan, validateCtxKeys } from './plans.js';
 import {
   pickResource,
   pickBeast,
   pickShop,
-  pickBuffDrop,
-  areaByStart,
   exitStageWant as exitStageWantPure,
   shopStageWant as shopStageWantPure,
   beastStageWant as beastStageWantPure,
@@ -133,9 +131,6 @@ const STAGE_DIAG = {
   bossPlaneLead: { stage: 'boss-lead', branch: 'boss-lead', kind: KIND_BOSS_PLANE, noIdle: true },
   shopExit: { stage: 'shop', branch: 'shop', kind: 'shop' },
   shopStage: { stage: 'shop', branch: 'shop', kind: 'shop' },
-  // ── C4 crystal_then_skill 新档（enigmaB_default 不含，缺省路零影响）──
-  bossOccupy: { stage: 'boss-open', branch: 'boss-plane', kind: KIND_BOSS_PLANE },
-  smallGuard: { stage: 'boss-lead', branch: 'boss-lead', kind: KIND_BOSS_PLANE, noIdle: true },
 };
 
 /** @type {string} 持有清单行 key 的道具维度前缀（`item:{itemId}`，与 index.js/pickup.js/shop.js 同口径） */
@@ -404,8 +399,6 @@ export class PilotEngine {
   #workDeadline = 0;
   /** @type {Map<string,{kind:string,bagFree:number,buffFree:number,dropFree:number,beastFree:number,at:number}>} */
   #change = new Map();
-  /** @type {Set<string>} crystal_then_skill §15.2：已探明「整井拿空」的 173 坐标集（会话级，换场/启停复位），防反复白跑 */
-  #buffTried = new Set();
 
   // ── 诊断面（不参与任何判定）─────────────────────────────────────────
   /** @type {number} */
@@ -420,8 +413,18 @@ export class PilotEngine {
   #lastDispatch = '';
   /** @type {object|null} 最近一次选点的筛除计数 */
   #pickDbg = null;
-  /** @type {string} 本次 start 锁定的开车方案 id（§15.10 P2：首拍读 config.drive.drivePlan，整场不热切；未知 id 回落 enigmaB_default） */
+  /** @type {string} 本次 start 锁定的开车方案 id（§15.10 P2：首拍读 config.drive.drivePlan，整场不热切；未知 id 回落 'default'） */
   #planIdUsed = '';
+  /**
+   * 方案↔引擎契约校验结果（三态）：
+   *   `[]`＝未校验（构造/stop 复位后、首拍前）
+   *   `null`＝首拍校验通过
+   *   `string[]`＝违例列表（非空 → #tick 头部拒发车、长睡早退；probe 面板可见）
+   * 违例不抛：createCycle 会 catch run() 抛错并 warn+fallback 重排，抛错=每拍刷屏噪音；
+   * 改成「存违例 + 头部早退」，让下一拍也不再决策、把矛盾顶到面板上。
+   * @type {string[]|null}
+   */
+  #contractErrs = [];
   /** @type {string[]} 本拍方案链命中的阶段与空/中记号（probe 对拍用） */
   #lastStageIds = [];
   /** @type {Object<string,1>} 已打过的 info 提示键 */
@@ -486,7 +489,10 @@ export class PilotEngine {
               const bid = Number(s.bossId) || 0;
               if (bid && !this.#bossDone[bid]) {
                 this.#bossDone[bid] = 1;
-                env.log.info('pilot: BOSS %d arrived on site, counted in skip ledger (guard_policy).', bid);
+                env.log.info(
+                  'pilot: BOSS %d arrived on site, counted in skip ledger (guard_policy).',
+                  bid,
+                );
               }
               break;
             }
@@ -621,10 +627,6 @@ export class PilotEngine {
       beastFree: 0,
       at: Date.now(),
     });
-    // §15.2 buff 档会话账：探明**整井拿空**才拉黑（bag 与 buff 都无空位）；只 buffFree==0 不记——
-    //   采井刷新会重出 buff，拉黑过头会把技能点永久删掉；刷新重出的探明交给换场复位。
-    if (this.#change.get(k).bagFree <= 0 && this.#change.get(k).buffFree <= 0)
-      this.#buffTried.add(k);
     if (this.#workMode === 'empty' && k === this.#toXY && this.#cycle) this.#cycle.kick();
   }
 
@@ -722,7 +724,7 @@ export class PilotEngine {
     if (!rows.length) {
       this.#note(
         'no-building-table',
-        'pilot: building table enigma_secret_realm_building not delivered yet, shop anchors pending retry.'
+        'pilot: building table enigma_secret_realm_building not delivered yet, shop anchors pending retry.',
       );
       return;
     }
@@ -740,7 +742,9 @@ export class PilotEngine {
     if (!out.length) {
       this.#note(
         'no-shop-anchor',
-        'pilot: building table has no shop row for this group (build_type=3, group=' + g + '), shop tier falls back to viewport 161.'
+        'pilot: building table has no shop row for this group (build_type=3, group=' +
+          g +
+          '), shop tier falls back to viewport 161.',
       );
       return;
     }
@@ -755,7 +759,12 @@ export class PilotEngine {
         this.#shopLedger.set(sk, { time: sec, sausage: 0, piece: 0, visited: 0, sausageShelf: 0 });
       }
     }
-    env.log.info('pilot: shop anchors loaded: %d (group=%d) -> %s', out.length, g, JSON.stringify(out));
+    env.log.info(
+      'pilot: shop anchors loaded: %d (group=%d) -> %s',
+      out.length,
+      g,
+      JSON.stringify(out),
+    );
   }
 
   /**
@@ -878,71 +887,6 @@ export class PilotEngine {
     if (!timer) return false;
     const start = Number(timer.start) || 0;
     return Math.floor(Date.now() / 1000) > Math.floor(begin / 1000) + start;
-  }
-
-  /**
-   * §15.3 区域解析器（ctx.zone 的实现）：`realm[esrId].roundid >= driveStrongRoundMin(>0)` → 'strong'，否则 'normal'；
-   *   阀值关（0）/表行读不到/esrId 缺失 → 'any'（不分区，enigmaB_default 与原行为逐字不变）。
-   * @param {number|null} esrId
-   * @returns {string}
-   */
-  #zoneOf(esrId) {
-    const th = Number(tuning.driveStrongRoundMin) || 0;
-    if (!(th > 0)) return 'any';
-    const rid = Number(esrId) || 0;
-    if (!(rid > 0)) return 'any';
-    let round;
-    try {
-      const realm = this.#env.l10n.tableRow(TABLE_REALM, rid);
-      round = realm ? Number(realm.roundid) || 0 : 0;
-    } catch (e) {
-      return 'any';
-    }
-    if (!(round > 0)) return 'any';
-    return round >= th ? 'strong' : 'normal';
-  }
-
-  /**
-   * §15.3 progress.areaOpen：某区域类别是否已开窗（纯核 areaByStart 吃 realm/timer 表，采样 901 快照里的 173 esrId）。
-   * @param {string} zone 'strong'|'normal'
-   * @param {Array|null} pts 本拍 901 原样快照（null＝无新鲜快照→不开窗，闭开）
-   * @param {number} now 毫秒
-   * @returns {boolean}
-   */
-  #areaOpen(zone, pts, now) {
-    if (!(zone === 'strong' || zone === 'normal')) return false;
-    const th = Number(tuning.driveStrongRoundMin) || 0;
-    if (!(th > 0)) return false;
-    if (!Array.isArray(pts) || !pts.length) return false;
-    const env = this.#env;
-    const esrSet = new Set();
-    for (let i = 0; i < pts.length; i++) {
-      const p = pts[i];
-      if (p && Number(p.pointType) === PAB_RESOURCE && p.m && p.m.esrId)
-        esrSet.add(Number(p.m.esrId));
-    }
-    if (!esrSet.size) return false;
-    return areaByStart(
-      { beginSec: Math.floor(this.#matchStartAt / 1000), serverTimeSec: Math.floor(now / 1000) },
-      function (round) {
-        try {
-          return env.l10n.tableRow(TABLE_TIMER, round);
-        } catch (e) {
-          return null;
-        }
-      },
-      function (rid) {
-        try {
-          return env.l10n.tableRow(TABLE_REALM, rid);
-        } catch (e) {
-          return null;
-        }
-      },
-      function (round) {
-        return zone === 'strong' ? round >= th : round < th;
-      },
-      Array.from(esrSet),
-    );
   }
 
   /**
@@ -1977,11 +1921,16 @@ export class PilotEngine {
     if (!cand) {
       if (kind === 'return') {
         this.#returnPending = false;
-        this.#note('return-none', 'pilot: counter-attack has no landable platform, switch to regular re-eval. reason=no_platform');
+        this.#note(
+          'return-none',
+          'pilot: counter-attack has no landable platform, switch to regular re-eval. reason=no_platform',
+        );
       } else {
         this.#note(
           'none|' + kind,
-          'pilot: ' + kind + ' tier has no usable point in candidate pool, hold and rescan. reason=no_candidate',
+          'pilot: ' +
+            kind +
+            ' tier has no usable point in candidate pool, hold and rescan. reason=no_candidate',
         );
       }
       return;
@@ -1993,7 +1942,11 @@ export class PilotEngine {
       this.#lastDispatch = kind + '|same(' + curKey + ')';
       this.#note(
         'same|' + kind,
-        'pilot: ' + kind + ' tier picked the current location (' + curKey + '), already in place, do not send 8521, go straight to dwell.',
+        'pilot: ' +
+          kind +
+          ' tier picked the current location (' +
+          curKey +
+          '), already in place, do not send 8521, go straight to dwell.',
       );
       this.#enterWork(curKey);
       return;
@@ -2071,7 +2024,10 @@ export class PilotEngine {
           //   ⚠ BOSS 本体坐标来自权威态，撞 159 并不代表「BOSS 不存在」→ 只黑平台/巡航点，不黑 BOSS
           if (self.#toTag !== 'boss') self.#dayBlack[self.#toXY] = 1;
           self.#dropShopAt(self.#toXY);
-          env.log.info('pilot: (%s) target point not exist (159), blacklisted for this match.', self.#toXY);
+          env.log.info(
+            'pilot: (%s) target point not exist (159), blacklisted for this match.',
+            self.#toXY,
+          );
           self.#clearTo();
           self.#cooldownUntil = Date.now() + tuning.rejectBackoffMs;
           wake();
@@ -2108,7 +2064,11 @@ export class PilotEngine {
         if (rej === REJ_NEED_PLANE || rej === REJ_BOSS_AREA || rej === REJ_PLANE_TAKEN) {
           // 平台侧问题：不黑 BOSS 本体，只黑这个平台，下一拍会选另一个平台
           if (self.#toTag === KIND_BOSS_PLANE) self.#dayBlack[self.#toXY] = 1;
-          env.log.info('pilot: (%s) platform unavailable (%s), blacklist this platform for this match, pick another.', self.#toXY, rej);
+          env.log.info(
+            'pilot: (%s) platform unavailable (%s), blacklist this platform for this match, pick another.',
+            self.#toXY,
+            rej,
+          );
           self.#clearTo();
           self.#cooldownUntil = Date.now() + tuning.rejectBackoffMs;
           wake();
@@ -2275,7 +2235,10 @@ export class PilotEngine {
       }
       this.#workEmptyAt = 0;
       if (now >= this.#workDeadline) {
-        env.log.info('pilot: %s scouted empty, hit fallback ceiling, leave point. reason=empty_ceiling', this.#toXY)
+        env.log.info(
+          'pilot: %s scouted empty, hit fallback ceiling, leave point. reason=empty_ceiling',
+          this.#toXY,
+        );
         return { leave: true, sleep: 0 };
       }
       return { leave: false, sleep: Math.min(tuning.driveScanMs, this.#workDeadline - now) };
@@ -2324,7 +2287,9 @@ export class PilotEngine {
 
   /**
    * 组装本拍只读上下文（plans.js 的 `Ctx` typedef）。**必须无副作用**：判据层只读这里。
-   * 字段来源逐个对照 pilot.js 现状取数点，B1 行为等价搬迁；zone 恒 'any'（Phase C 一等）。
+   * 字段来源逐个对照 pilot.js 现状取数点，行为等价搬迁。
+   * ⚠ 契约新增/删除字段必须同步 plans.js `CTX_KEYS`（首拍 validateCtxKeys 会卡，
+   *   违例 → #tick 头部拒发车）。只改本函数不上清单 = 启动期报错。
    * @param {number} now
    * @param {{x:number,y:number}} cur
    * @param {string} curKey
@@ -2341,15 +2306,6 @@ export class PilotEngine {
     // 区域一致判定：双方 esrId 真值比较（报文实证 esrB 在 fight 前已缓存恒非 null，平台 esrId 100% 可得）。
     //   缺证放行（防御性，撞 142 拒码分流自会兜底）。
     const sameArea = !esrB || !esrCur || esrB === esrCur;
-    // 安全取数（读失败＝缺料）：用参数默认值接异常，避免「先赋 null 再覆盖」的空转赋值。
-    const safe = (fn) => {
-      try {
-        return fn();
-      } catch {
-        return null;
-      }
-    };
-    const base = safe(() => env.secret.getRoomBaseInfo()) || {};
     return {
       snap: { cur: cur, curKey: curKey, curPt: curPt, boss: win ? win.boss : null },
       shopWhy: this.#lastShopWhy,
@@ -2367,56 +2323,6 @@ export class PilotEngine {
       //   那一拍（L2391/2465-2468）；eager 调用会让 BOSS 让位/收场独占拍提前起表、把探索档
       //   早开 ~30s（真实报文差分回放实钉）。起表改由 #runStages 尾部补。
       shouldExplore: this.#shouldExplore(now),
-      zone: (esrId) => this.#zoneOf(esrId),
-      // ── §15.3 ctx 一等字段（C4）：enigmaB_default 的判据不消费；只为 crystal_then_skill 类新方案供料 ──
-      clock: {
-        serverMs: now,
-        fightBeginMs: this.#matchFightBegin > 1e11 ? this.#matchFightBegin : this.#matchStartAt,
-        fightEndMs: toNum(base.fightEndTime) || 0,
-      },
-      until: function (ts) {
-        const t = Number(ts);
-        return t > 1e11 ? t - now : Infinity; // 无效/缺失时刻＝永不到点，判据自然不命中
-      },
-      // ⚠ 推导口径未线上验证（D1/E1 验）：state22 读秒窗的 stateEndTime 最早一枚给「大BOSS 占位」、
-      //   下一枚给「就近小BOSS」；无 state22 则退而取开打窗（state21 未散场）最早 endTime。
-      events: (function () {
-        const ends = [];
-        const list = safe(() => env.secret.getBossBaseInfo());
-        if (Array.isArray(list)) {
-          for (let i = 0; i < list.length; i++) {
-            const s = list[i];
-            if (!s || Number(s.state) !== ST_PLANE_MARCH) continue;
-            const e = toNum(s.stateEndTime);
-            if (e > 1e11 && e > now) ends.push(e);
-          }
-        }
-        ends.sort(function (a, b) {
-          return a - b;
-        });
-        let fallback = null;
-        if (!ends.length && win && win.boss) {
-          const e0 = toNum(win.boss.endTime);
-          if (e0 > 1e11 && e0 > now) fallback = e0;
-        }
-        return {
-          bigBossStart: ends.length ? ends[0] : fallback,
-          nearestSmallBossStart: ends.length > 1 ? ends[1] : null,
-        };
-      })(),
-      progress: {
-        areaOpen: (z) => this.#areaOpen(z, this.#viewPointsFresh(now), now),
-        buffsMaxed: function (n) {
-          const cnt = Number(n) || 0;
-          if (!(cnt > 0)) return true;
-          const map = safe(() => env.secret.getRoomBaseInfo().buffMap);
-          if (!map) return false; // 读不到＝不构成满，保守继续弄技能
-          for (let k = 1; k <= cnt; k++) if (!map[k]) return false;
-          return true;
-        },
-        shopDone: () => this.isBoxBought(),
-        buffTried: (x, y) => this.#buffTried.has(tileKey(x, y)),
-      },
     };
   }
 
@@ -2424,6 +2330,8 @@ export class PilotEngine {
    * 目标原语 `Objectives[obj]`：把方案里的目标名翻成**选点调用**（B1 仍包老的 #pickX，
    * resource/beast/shop 换成 pilot-select 真窄筛是下一拍的事）。纯选择：不发 8521、
    * 不记账、不设冷却——那些一律留在引擎解释器里，保证「方案层可离线换方案」时引擎侧口径不变。
+   * ⚠ 本 switch 的 case 名清单 = plans.js `OBJECTIVES`。新增/删除 case 请同步该清单，
+   *   首拍 validatePlan 会卡住不一致的修改（违例 → #tick 头部拒发车）。
    * @param {string} obj
    * @param {object|undefined} params 方案语义参数
    * @param {object} ctx
@@ -2535,8 +2443,6 @@ export class PilotEngine {
             minNum,
             maxDist,
             isRoundOpen: (id) => this.#roundOpen(id),
-            zoneOf: ctx.zone || null, // §15.2 zone 过滤（params.zone 由 #runStages 并入；缺省/‘any’ 恒放行）
-            zone: (params || {}).zone,
             marches: this.#viewMarchList,
             marchedList: this.#marchedListArr(),
             marchPolicy: Number(tuning.driveMarchPolicy) || 0,
@@ -2551,39 +2457,6 @@ export class PilotEngine {
           return sel ? { x: sel.x, y: sel.y } : null;
         }
         return this.#pickResource(snap.curKey, snap.cur, bossA, minNum, maxDist);
-      }
-      case 'buff': {
-        // §15.2 strongSkill（报文订正：buff 在 173 明细非 163 箱，见 pilot-select.pickBuffDrop 头注）。
-        //   窄筛只吃新鲜 901 快照；快照不可用→本档直接空（顺延下一档），不降老池——
-        //   老 `#tiles` 归一后无逐点 esrId/zone 语义，降级会把分区筛选谎化成全放行。
-        //   到达后的拾取接缝零新增：§9.3 自发 8526 探明 buffInfo → pickup 既有 8538 链（队长闸+择优）。
-        const nowB = Date.now();
-        const ptsB = this.#viewPointsFresh(nowB);
-        if (!ptsB) return null;
-        const p = params || {};
-        const selfB = this;
-        const selB = pickBuffDrop(ptsB, {
-          startPoint: snap.cur,
-          maxDist: 99999,
-          isRoundOpen: (id) => this.#roundOpen(id),
-          zoneOf: ctx.zone || null,
-          zone: p.zone,
-          buffFreeAt: function (x, y) {
-            const k = tileKey(x, y);
-            if (k && selfB.#buffTried.has(k)) return 0; // 整井拿空探明 → 不回头
-            const c = k ? selfB.#change.get(k) : null;
-            if (c && c.kind === 'res') return Number(c.buffFree) || 0; // 有记账：按空位数
-            return null; // 无记账：未知，乐观派（到达后 8526 探明）
-          },
-          marches: this.#viewMarchList,
-          marchPolicy: Number(tuning.driveMarchPolicy) || 0,
-        });
-        this.#pickDbg = {
-          src: 'view901',
-          seen: ptsB.length,
-          best: selB ? tileKey(selB.x, selB.y) + ' d=' + selB.dist.toFixed(2) : '',
-        };
-        return selB ? { x: selB.x, y: selB.y } : null;
       }
       case 'follow':
         return this.#pickFollow(snap.curKey, snap.cur);
@@ -2620,10 +2493,31 @@ export class PilotEngine {
     //   （防开跑中途换链把 mooring/#cd/防重派语义跨方案撕裂）；stop() 复位后下次 start 重读。
     //   E1 接面板下拉时仍走同一路径（改 config 后需重启驾驶才生效）。
     if (!this.#planIdUsed) {
-      this.#planIdUsed = (env.cfg().drive || {}).drivePlan || 'enigmaB_default';
-      env.log.info('pilot: this drive plan=%s (picked at config time, no hot-switch during the match)', this.#planIdUsed)
+      this.#planIdUsed = (env.cfg().drive || {}).drivePlan || 'default';
+      env.log.info(
+        'pilot: this drive plan=%s (picked at config time, no hot-switch during the match)',
+        this.#planIdUsed,
+      );
+      // 方案↔引擎契约启动校验（剥 crystal_then_skill 后新增）。违例＝本场拒发车：
+      //   不抛（createCycle 会 catch+warn+fallback 重排 → 每拍刷屏噪音），改存 #contractErrs，由 #tick 头部早退。
+      //   修宪纪律见 plans.js 文件头「方案↔引擎契约」三条。
+      const planErrs = validatePlan(PLANS[this.#planIdUsed], Object.keys(STAGE_DIAG));
+      const ctxErrs = validateCtxKeys(ctx);
+      if (planErrs.length || ctxErrs.length) {
+        this.#contractErrs = planErrs.concat(ctxErrs);
+        env.log.error(
+          'pilot: plan/contract violation, refuse to dispatch this match. plan=%s errs=%s',
+          this.#planIdUsed,
+          JSON.stringify(this.#contractErrs),
+        );
+        // 本拍不往下走（首拍也要拒发车）：与 #tick 头部早退保持同一语义、同一睡眠。
+        this.#lastBranch = 'contract-violation';
+        return tuning.driveScanMs * 8;
+      } else {
+        this.#contractErrs = null;
+      }
     }
-    const plan = PLANS[this.#planIdUsed] || PLANS.enigmaB_default;
+    const plan = PLANS[this.#planIdUsed] || PLANS.default;
     this.#lastStageIds = [];
     // 现状只有真走到⑥⑦日常链的那拍才落 stage='cruise/beast-stage' + why（L2082-2083）；
     //   BOSS 档/①②独占/读秒让路/lead短睡全程不碰。标志位把这条「到哪拍才赋值」的时序保住。
@@ -2649,12 +2543,7 @@ export class PilotEngine {
       const branch = dg && dg.branch ? dg.branch : kind;
       let cand;
       try {
-        // §15.2 阶段 zone 透传：并进 params（不改第三参签名）；enigmaB 各档无 zone→params.zone=undefined，下游恒不拦。
-        cand = this.#objective(
-          s.obj,
-          s.zone ? Object.assign({}, s.params, { zone: s.zone }) : s.params,
-          ctx,
-        );
+        cand = this.#objective(s.obj, s.params, ctx);
       } catch (e) {
         env.log.warn(
           'pilot: objective primitive %s threw, defer to next tier. err=%s',
@@ -2676,7 +2565,7 @@ export class PilotEngine {
           this.#dispatch(kind, null);
           return s.obj === 'shop' ? tuning.driveScanMs : this.#sleepAfterDispatch();
         }
-        if (s.id === 'bossPlaneLead' || s.id === 'smallGuard') {
+        if (s.id === 'bossPlaneLead') {
           // 串行模型下 901 已由 #autoLeader await 拉完（以 BOSS 为中心），不存在「在途未回」可等：
           //   #pickPlane 仍选不到平台就是真没有 → 记一笔后落回日常链（这就是它不标 terminal 的原因）。
           //   （旧「短睡 400 等一刀」在 fire-and-forget 时代防白睡 5s，串行 await 后既无在途可等、
@@ -2763,6 +2652,12 @@ export class PilotEngine {
     this.#lastBranch = '';
     this.#stage = '';
     this.#stageWhy = '';
+    // 契约违例 → 拒发车：不做任何决策、不派 8521，长睡避免空转；probe 面板 contractErrs 可见。
+    //   修宪路径：同步 plans.js CTX_KEYS/OBJECTIVES/STAGE_DIAG 或回滚方案侧改动，然后重启驾驶。
+    if (this.#contractErrs && this.#contractErrs.length) {
+      this.#lastBranch = 'contract-violation';
+      return tuning.driveScanMs * 8;
+    }
     if (!env.alive()) {
       this.#lastBranch = 'dead';
       return 0;
@@ -2802,7 +2697,6 @@ export class PilotEngine {
       this.#marched = new Map();
       this.#cd = {};
       this.#change = new Map();
-      this.#buffTried = new Set();
       this.#dayBlack = {};
       this.#shopErrandDone = false;
       this.#shopLastAt = 0;
@@ -2857,7 +2751,10 @@ export class PilotEngine {
       }
       if (now - this.#toAt > tuning.driveMarchTimeoutMs) {
         this.#lastBranch = 'to-timeout';
-        env.log.info('pilot: goto %s timed out without arriving, record spend and re-evaluate. reason=march_timeout', this.#toKind)
+        env.log.info(
+          'pilot: goto %s timed out without arriving, record spend and re-evaluate. reason=march_timeout',
+          this.#toKind,
+        );
         this.#consume(this.#toXY);
         this.#clearTo();
         return tuning.driveScanMs;
@@ -2910,7 +2807,10 @@ export class PilotEngine {
     this.#gateState('notarrived', false, '');
     if (this.#captureBusy()) {
       this.#lastBranch = 'capture';
-      this.#note('capturing', 'pilot: capturing enigma-beast/BOSS now, wait until capture done before relocating.');
+      this.#note(
+        'capturing',
+        'pilot: capturing enigma-beast/BOSS now, wait until capture done before relocating.',
+      );
       return 3000;
     }
     if (env.secret.isSecretSending(CMD_MARCH_MOVE)) {
@@ -3282,7 +3182,6 @@ export class PilotEngine {
     this.#workEmptyAt = 0;
     this.#workDeadline = 0;
     this.#change = new Map();
-    this.#buffTried = new Set();
     this.#ticks = 0;
     this.#lastTickAt = 0;
     this.#lastBranch = '';
@@ -3403,34 +3302,6 @@ export class PilotEngine {
     } catch (e) {
       /* 读不到就只在诊断面显示 null */
     }
-    // D1 crystal 路线探针：纯读 events 推导 + zone 阈值 + buffTried 计数（与 #buildCtx 同源但独立取数，不依赖 ctx 实例）
-    const crystalDiag = function () {
-      const threshold = Number(tuning.driveStrongRoundMin) || 0;
-      const ends = [];
-      try {
-        const bossList = this.#env.secret.getBossBaseInfo();
-        if (Array.isArray(bossList)) {
-          for (let i = 0; i < bossList.length; i++) {
-            const s = bossList[i];
-            if (!s || Number(s.state) !== ST_PLANE_MARCH) continue;
-            const e = toNum(s.stateEndTime);
-            if (e > 1e11 && e > now) ends.push(e);
-          }
-        }
-      } catch (_) {
-        /* ignore */
-      }
-      ends.sort(function (a, c) {
-        return a - c;
-      });
-      return {
-        planId: this.#planIdUsed,
-        driveStrongRoundMin: threshold,
-        zoneEnabled: threshold > 0,
-        events: { bigBossStart: ends[0] || null, nearestSmallBossStart: ends[1] || null },
-        buffTriedCount: this.#buffTried.size,
-      };
-    }.call(this);
     return {
       version: 3,
       active: this.#active,
@@ -3442,6 +3313,8 @@ export class PilotEngine {
       stageWhy: this.#stageWhy,
       planId: this.#planIdUsed,
       stageIds: this.#lastStageIds.slice(0, 8),
+      // 契约三态：[] 未校验 / null 通过 / [...] 违例（非空 → #tick 头部拒发车）
+      contractErrs: this.#contractErrs,
       gate: Object.assign({}, this.#gateNow),
       // cd 账本剩余（毫秒，纯读）：march=行军最小间隔（§2.3 唯一 TO 锁）；>0 时日常链发车会被 #can('march') 短睡拦一拍。
       cd: {
@@ -3509,8 +3382,6 @@ export class PilotEngine {
       bossDone: Object.keys(this.#bossDone),
       told: Object.keys(this.#told),
       change: change,
-      // §11 D1 crystal 路线补验：events 推导 + zone 阈值 + buffTried 计数（纯读）
-      crystal: crystalDiag,
     };
   }
 
@@ -3518,6 +3389,7 @@ export class PilotEngine {
   stop() {
     this.#active = false;
     this.#planIdUsed = ''; // §15.10 P2：解锁方案，下次 start 重读 config.drive.drivePlan（probe 停驶后 planId 显空属预期）
+    this.#contractErrs = []; // 复位为「未校验」三态，允许下次 start 重跑校验
     this.#cycle = null;
     this.#tiles = new Map();
     this.#shops = [];
@@ -3537,6 +3409,5 @@ export class PilotEngine {
     this.#workEmptyAt = 0;
     this.#workDeadline = 0;
     this.#change = new Map();
-    this.#buffTried = new Set();
   }
 }
