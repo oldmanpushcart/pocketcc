@@ -5,6 +5,7 @@
 import { storage } from '../storage.js';
 import { bus, EVT } from '../bus.js';
 import { getUid } from '../player.js';
+import { configs, findFeature, applyFeature } from '../registry.js';
 import { iconSVG } from './icon-svg.js';
 import { isCombat, setCombatMode } from '../mode.js';
 import { ICON_SIZE, PANEL_W, POS_KEY } from './consts.js';
@@ -106,6 +107,7 @@ export async function mountUI() {
    * 重建某张卡，并把它的新控件重新装配一遍。
    * body 是整块 innerHTML 换掉的，每个控件的监听器也一起没了：不传 wireControls 就得到一堆「照常可点、
    *   值却不落盘」的行（联盟集结的行级开关就是这样被默默吞掉过），故重建必与重绑同途。
+   * 重推配置与重建 DOM 同源同途：行的出现即运行时的目标表也要重算（见下方 UI_REFRESH 注释）。
    * @param {string} fid 功能卡 id
    * @returns {boolean} 是否真的重建了
    */
@@ -123,6 +125,14 @@ export async function mountUI() {
   bus.on(EVT.UI_REFRESH, function (payload) {
     const fid = payload && payload.rebuild;
     if (fid) {
+      // 行集变化必把配置重推一次，只重建 DOM 不够：面板读的是扁平键 configs[fid]（读盘即恢复），
+      //   而 feat 运行时那份「目标表」是 toModuleCfg 在推送那一刻的目录行集上算出的快照。目录行常常晚于
+      //   配置灌入才出现（联盟集结的自学习目标要等异步读盘或首条 12003 推送才进 catalogRows），于是那行
+      //   在面板上是勾着的、在引擎里却是 syncTargets 补出来的 enabled:false 占位 —— 「我明明勾了」的分裂态。
+      //   故这里重走一次 applyFeature：toModuleCfg 用当前行集重算，configure 幂等合并，多推一次无副作用。
+      //   且必须放在 panel.hidden 闸门之前 —— 引擎的正确性不能取决于面板开没开。
+      const f = findFeature(fid);
+      if (f && configs[f.id]) applyFeature(f);
       // 面板关着 / 焦点在卡内（rerenderFeatureCard 的保守闸门跳过）：两种情形都记账待开面板时补，不能把行集变化丢掉
       if (panel.hidden || !rebuildCard(fid)) pendingRebuild.add(fid);
     }
