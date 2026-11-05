@@ -123,7 +123,14 @@ async function fetchInfo() {
       },
     },
   );
-  if (!ret || !ret.ok) return { ok: false, code: ret ? ret.code : CODE_NOT_SENT, limitTs: 0, data: ret && ret.data, reason: ret && ret.reason };
+  if (!ret || !ret.ok)
+    return {
+      ok: false,
+      code: ret ? ret.code : CODE_NOT_SENT,
+      limitTs: 0,
+      data: ret && ret.data,
+      reason: ret && ret.reason,
+    };
   var d = ret.data || {};
   return { ok: true, code: 0, limitTs: Number(d.limitTimeSec) || 0 };
 }
@@ -148,7 +155,14 @@ async function claimAll(ids) {
     },
   );
   if (!ret || !ret.ok) {
-    return { ok: false, code: ret ? ret.code : CODE_NOT_SENT, success: 0, total: 0, data: ret && ret.data, reason: ret && ret.reason };
+    return {
+      ok: false,
+      code: ret ? ret.code : CODE_NOT_SENT,
+      success: 0,
+      total: 0,
+      data: ret && ret.data,
+      reason: ret && ret.reason,
+    };
   }
   var detail = ret.data && Array.isArray(ret.data.detail) ? ret.data.detail : [];
   var success = 0;
@@ -214,7 +228,12 @@ async function cycleRun() {
       return TRANSIENT_RETRY_MS;
     }
     infoStreak++;
-    log.info('info rejected by server (streak #%d). code=%s;data=%s', infoStreak, st.code, rejectText(st) || '-');
+    log.info(
+      'info rejected by server (streak #%d). code=%s;data=%s',
+      infoStreak,
+      st.code,
+      rejectText(st) || '-',
+    );
     return infoStreak >= 3 ? IDLE_TICK_MS * 2 : IDLE_TICK_MS;
   }
   infoStreak = 0;
@@ -237,7 +256,12 @@ async function cycleRun() {
       return TRANSIENT_RETRY_MS;
     }
     rejectStreak++;
-    log.info('claim rejected by server (streak #%d). code=%s;data=%s', rejectStreak, res.code, rejectText(res) || '-');
+    log.info(
+      'claim rejected by server (streak #%d). code=%s;data=%s',
+      rejectStreak,
+      res.code,
+      rejectText(res) || '-',
+    );
     return rejectStreak >= 3 ? IDLE_TICK_MS * 2 : IDLE_TICK_MS;
   }
   rejectStreak = 0;

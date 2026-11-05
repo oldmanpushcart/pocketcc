@@ -276,7 +276,10 @@ export class ScoutEngine {
         if (!env.alive() || !env.realmActive()) return;
         const code = r && r.code;
         if (code === CODE_NOT_SENT || code == null) {
-          env.log.debug('scout: 8537 not actually sent (rate-limited/timeout, code=%s), discard this tick.', String(code));
+          env.log.debug(
+            'scout: 8537 not actually sent (rate-limited/timeout, code=%s), discard this tick.',
+            String(code),
+          );
           return;
         }
         if (Number(code) !== 0) {

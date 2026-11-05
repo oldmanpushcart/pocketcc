@@ -361,7 +361,13 @@ async function dispatch(chat, order) {
     );
     reply(chat, order, '得令');
   } else {
-    log.info('decree rejected. x=%d;y=%d;code=%d;data=%s', order.x, order.y, ret.code, rejectText(ret) || '-');
+    log.info(
+      'decree rejected. x=%d;y=%d;code=%d;data=%s',
+      order.x,
+      order.y,
+      ret.code,
+      rejectText(ret) || '-',
+    );
     reply(chat, order, failureText(ret));
   }
 }

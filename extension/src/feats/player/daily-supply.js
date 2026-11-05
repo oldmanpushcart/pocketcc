@@ -155,7 +155,8 @@ async function claimOnce(times) {
     },
   );
   var code = ret ? ret.code : CODE_NOT_SENT;
-  if (!ret || !ret.ok) return { claimed: false, code: code, data: ret && ret.data, reason: ret && ret.reason };
+  if (!ret || !ret.ok)
+    return { claimed: false, code: code, data: ret && ret.data, reason: ret && ret.reason };
   var d;
   try {
     d = typeof ret.data === 'string' ? JSON.parse(ret.data) : ret.data;
@@ -188,7 +189,12 @@ async function cycleRun() {
   if (!aliveFn()) return 0;
   if (!res.claimed) {
     rejectStreak++;
-    log.info('claim rejected (streak #%d). code=%s;data=%s', rejectStreak, res.code, rejectText(res) || '-');
+    log.info(
+      'claim rejected (streak #%d). code=%s;data=%s',
+      rejectStreak,
+      res.code,
+      rejectText(res) || '-',
+    );
   }
   // 领成功后按新态排下拍（间隔由表驱动逐档变长）；next-check 时刻交由驱动器统一打印
   return delayFor(readyInfo());

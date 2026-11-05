@@ -384,7 +384,12 @@ function calibrateTower(towerId) {
     .send(CMD_GET_TOWERINFO, { id: String(towerId) })
     .then(function (ret) {
       if (!ret || !ret.ok) {
-        log.info('1034 rejected (code=%s;data=%s) tower=%s', ret && ret.code, rejectText(ret) || '-', towerId);
+        log.info(
+          '1034 rejected (code=%s;data=%s) tower=%s',
+          ret && ret.code,
+          rejectText(ret) || '-',
+          towerId,
+        );
         return false;
       }
       var d = parseData(ret.data);
@@ -443,7 +448,11 @@ function refreshTowers() {
     .then(function (ret) {
       capturing = false; // 同步段：置位后立即关掉，权威灌入不再进缓冲
       if (!ret || !ret.ok) {
-        log.info('1031 rejected (code=%s;data=%s), keep last snapshot.', ret && ret.code, rejectText(ret) || '-');
+        log.info(
+          '1031 rejected (code=%s;data=%s), keep last snapshot.',
+          ret && ret.code,
+          rejectText(ret) || '-',
+        );
         return false;
       }
       var d = parseData(ret.data) || {};

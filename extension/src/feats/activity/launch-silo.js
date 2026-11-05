@@ -379,7 +379,12 @@ async function sendRecall(marchId) {
     log.info('recall march ok. marchId=%s', marchId);
     return true;
   }
-  log.info('recall march rejected. marchId=%s;code=%d;data=%s', marchId, ret.code, rejectText(ret) || '-');
+  log.info(
+    'recall march rejected. marchId=%s;code=%d;data=%s',
+    marchId,
+    ret.code,
+    rejectText(ret) || '-',
+  );
   return false;
 }
 
@@ -447,7 +452,7 @@ async function claimRewards() {
     if (!scoreMaxed) {
       scoreMaxed = true;
       log.info(
-        'score maxed. total=%d;max=%d — this season\'s launch silo done, recall garrison next round and let auto-farm proceed.',
+        "score maxed. total=%d;max=%d — this season's launch silo done, recall garrison next round and let auto-farm proceed.",
         total,
         maxT,
       );
@@ -803,7 +808,10 @@ function run(ctx) {
   ctx.on.push(PUSH_GUN_FIGHT_REWARD_INFO, onRewardPush);
   if (offHomeReturn) offHomeReturn(); // 先退再挂，防 resume 重激活重复注册
   offHomeReturn = march.onHomeReturn(onMarchArrivedHome);
-  log.info('started (garrison + claim-score built-in default; recall-farm-to-free-slot=%s).', modCfg.recallFarm ? 'on' : 'off');
+  log.info(
+    'started (garrison + claim-score built-in default; recall-farm-to-free-slot=%s).',
+    modCfg.recallFarm ? 'on' : 'off',
+  );
   cycle.kick();
 }
 

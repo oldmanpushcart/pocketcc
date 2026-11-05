@@ -271,7 +271,10 @@ async function makeJudge(anchor, opts) {
           await sleep(step);
         }
         if (terrs == null || (terrs.length === 0 && terr901 > 0)) {
-          log.debug('makeJudge: fort territory model not ready (901 terr points=%d) -> cannot judge no-move zone', terr901);
+          log.debug(
+            'makeJudge: fort territory model not ready (901 terr points=%d) -> cannot judge no-move zone',
+            terr901,
+          );
           return null;
         }
         terrInfos = terrs;
@@ -423,7 +426,9 @@ async function relocateAway(home, threat, opts) {
     net: opts.ctx && opts.ctx.net,
   });
   if (!judge) {
-    log.debug('relocateAway: local-anchor judge not built (world map not ready / canMoveCity unavailable) -> cannot judge');
+    log.debug(
+      'relocateAway: local-anchor judge not built (world map not ready / canMoveCity unavailable) -> cannot judge',
+    );
     return null;
   }
   var spot = searchAway(home, threat, judge, inBounds, radius);
@@ -505,7 +510,9 @@ async function findRelocatableSpot(anchor, opts) {
     net: opts.ctx && opts.ctx.net,
   });
   if (!judge) {
-    log.debug('findRelocatableSpot: world map not ready / canMoveCity unavailable -> cannot judge spot legality');
+    log.debug(
+      'findRelocatableSpot: world map not ready / canMoveCity unavailable -> cannot judge spot legality',
+    );
     return null;
   }
   return searchNear(anchor, judge, inBounds, radius, opts.exclude);

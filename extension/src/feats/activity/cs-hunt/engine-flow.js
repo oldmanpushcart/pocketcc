@@ -755,7 +755,10 @@ export class FlowEngine {
           if (fTarget === SKILL_PROPHET && this.#backpackCount(SKILL_PROPHET) + round > ROUND_MAX)
             fTarget = fCopyable.indexOf(SKILL_LUCKY) >= 0 ? SKILL_LUCKY : 0;
           if (!fTarget) {
-            log.debug('last-round-flush: mirror has no copy target, skipped (continue flushing rest). round=%d', round);
+            log.debug(
+              'last-round-flush: mirror has no copy target, skipped (continue flushing rest). round=%d',
+              round,
+            );
             continue;
           }
           flushOpt = { param: JSON.stringify({ copySkillSpecId: fTarget }) };
@@ -1241,7 +1244,9 @@ export class FlowEngine {
     var wl = (pools && pools[sceneKey]) || [];
     if (!wl.length) {
       // 静默漏用的两大盲区之一：幸运池空（未勾任何物品）→ 留痕，使实机「有幸运却没翻倍」可判（此前唯一留痕只覆盖 #usable 分支）
-      log.info('lucky-x2 skipped (' + label + '): lucky pool empty (no item checked for this scene)');
+      log.info(
+        'lucky-x2 skipped (' + label + '): lucky pool empty (no item checked for this scene)',
+      );
       return false;
     }
     if (!rewardResult || !hitWhitelist(rewardResult, wl)) {
@@ -1255,7 +1260,12 @@ export class FlowEngine {
               .join(',')
           : '-';
       log.info(
-        'lucky-x2 skipped (' + label + '): rolled[' + got + '] not in checked pool ' + JSON.stringify(wl),
+        'lucky-x2 skipped (' +
+          label +
+          '): rolled[' +
+          got +
+          '] not in checked pool ' +
+          JSON.stringify(wl),
       );
       return false;
     }

@@ -242,7 +242,13 @@ async function fetchInfo() {
       },
     },
   );
-  if (!ret || !ret.ok) return { ok: false, code: ret ? ret.code : CODE_NOT_SENT, data: ret && ret.data, reason: ret && ret.reason };
+  if (!ret || !ret.ok)
+    return {
+      ok: false,
+      code: ret ? ret.code : CODE_NOT_SENT,
+      data: ret && ret.data,
+      reason: ret && ret.reason,
+    };
   var list = ret.data && ret.data.adMonthCardWatchInfos;
   if (!Array.isArray(list)) {
     log.warn('cmd 9706 ack has no adMonthCardWatchInfos.', ret.data);
@@ -279,7 +285,14 @@ async function claimOnce(id, times) {
       },
     },
   );
-  if (!ret || !ret.ok) return { claimed: false, code: ret ? ret.code : CODE_NOT_SENT, gold: 0, data: ret && ret.data, reason: ret && ret.reason };
+  if (!ret || !ret.ok)
+    return {
+      claimed: false,
+      code: ret ? ret.code : CODE_NOT_SENT,
+      gold: 0,
+      data: ret && ret.data,
+      reason: ret && ret.reason,
+    };
   var info = ret.data && ret.data.adMonthCardInfo;
   if (info && Number(info.adNewId) === id) {
     stateById.set(id, {
@@ -320,7 +333,11 @@ async function cycleRun() {
       log.debug('info transient (not sent/in-flight), retry soon.');
       return TRANSIENT_RETRY_MS;
     }
-    log.info('info rejected by server, poll later. code=%s;data=%s', st.code, rejectText(st) || '-');
+    log.info(
+      'info rejected by server, poll later. code=%s;data=%s',
+      st.code,
+      rejectText(st) || '-',
+    );
     return IDLE_TICK_MS;
   }
 
@@ -351,7 +368,13 @@ async function cycleRun() {
       break; // 在飞/未发出：本轮收口，下拍重读
     }
     claimStreak++;
-    log.info('claim rejected (slot #%d, streak #%d). code=%s;data=%s', list[i].id, claimStreak, res.code, rejectText(res) || '-');
+    log.info(
+      'claim rejected (slot #%d, streak #%d). code=%s;data=%s',
+      list[i].id,
+      claimStreak,
+      res.code,
+      rejectText(res) || '-',
+    );
   }
   if (notSent) {
     log.debug('claim transient (not sent/in-flight), retry soon.');

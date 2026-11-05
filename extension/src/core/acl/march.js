@@ -118,7 +118,10 @@ export const march = {
       if (C.isMasterMatch()) return this.typeOf('masterAttackPlayer', fb.master);
       if (C.isTeamLegendServer()) return this.typeOf('teamLegendAttackPlayer', fb.teamLegend);
     }
-    log.warn('march.resolve degraded: WorldUtils/CrossUtils both unavailable, sending local-server marchType=%d', base);
+    log.warn(
+      'march.resolve degraded: WorldUtils/CrossUtils both unavailable, sending local-server marchType=%d',
+      base,
+    );
     return base;
   },
   /**

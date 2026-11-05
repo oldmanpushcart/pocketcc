@@ -552,6 +552,10 @@ export class StealEngine {
   }
   async #execHelp(task) {
     var ret = await this.#env.ask(CMD_HELP, { id: task.id, uid: task.uid }, 'help');
-    log.debug(ret.ok ? 'help ok.' : 'help rejected. code=%d;data=%s', ret.code, rejectText(ret.data));
+    log.debug(
+      ret.ok ? 'help ok.' : 'help rejected. code=%d;data=%s',
+      ret.code,
+      rejectText(ret.data),
+    );
   }
 }

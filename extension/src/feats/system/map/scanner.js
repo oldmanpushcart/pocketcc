@@ -145,7 +145,13 @@ async function processBlock(b) {
   });
   if (threw) return;
   if (!ret || !ret.ok) {
-    log.debug('block(%d,%d) not ok. code=%s;data=%s', b.gx, b.gy, ret && ret.code, rejectText(ret) || '-');
+    log.debug(
+      'block(%d,%d) not ok. code=%s;data=%s',
+      b.gx,
+      b.gy,
+      ret && ret.code,
+      rejectText(ret) || '-',
+    );
     return;
   }
   const data = safeParse(ret.data) || {};

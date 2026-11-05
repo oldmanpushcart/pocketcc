@@ -612,7 +612,11 @@ async function donateFlow(boss, preloaded) {
       plan -= 1;
       log.info('free donate ok. todayTime=%d;donated=%d', info.todayTime, donatedOf(boss.bossId));
     } else {
-      log.info('free donate rejected (already used?). code=%d;data=%s', freeRet.code, rejectText(freeRet) || '-');
+      log.info(
+        'free donate rejected (already used?). code=%d;data=%s',
+        freeRet.code,
+        rejectText(freeRet) || '-',
+      );
     }
     if (plan <= 0) return;
     await sleep(DONATE_GAP_MS); // 同 cmd 连发会撞频控

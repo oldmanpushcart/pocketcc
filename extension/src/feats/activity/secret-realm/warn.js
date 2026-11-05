@@ -155,7 +155,7 @@ export class WarnEngine {
       this.#pendingWarn = false;
       this.#note(
         'drive-off',
-        'warn: auto-drive is on, hit-relocation is handled by the unified drive steering, this engine yields the gate.'
+        'warn: auto-drive is on, hit-relocation is handled by the unified drive steering, this engine yields the gate.',
       );
       return tuning.warnScanMs;
     }
@@ -173,7 +173,10 @@ export class WarnEngine {
     const curPt = Number(base.pointType) || 0;
     // 停在 BOSS 平台/本体/小BOSS 上的警告属战斗语义：交 BOSS 档或玩家手动，本引擎不抢方向盘
     if (curPt === PAB_BOSS_PLANE || curPt === PAB_BOSS || curPt === PAB_BOSS_GUARD) {
-      this.#note('bosspt', 'warn: parked on a BOSS-related point, no auto-relocate (combat semantics, leave to manual / stand-and-fight).');
+      this.#note(
+        'bosspt',
+        'warn: parked on a BOSS-related point, no auto-relocate (combat semantics, leave to manual / stand-and-fight).',
+      );
       return tuning.warnScanMs;
     }
     if (!env.secret.isTeamLeader()) {
@@ -186,7 +189,10 @@ export class WarnEngine {
     const dst = this.#nearestSafeTent(cx, cy);
     if (!dst) {
       // 快照里没有可落地的就近营帐 → 不凭空造目标，保持待发并按 warnScanMs 重扫（视口刷新会补上快照）
-      this.#note('notent', 'warn: no nearby safe tent (174/175) in viewport snapshot yet, hold relocation.');
+      this.#note(
+        'notent',
+        'warn: no nearby safe tent (174/175) in viewport snapshot yet, hold relocation.',
+      );
       return tuning.warnScanMs;
     }
     this.#doTransfer(dst, cx, cy);
@@ -246,7 +252,10 @@ export class WarnEngine {
             Math.round(tuning.warnMoveCooldownMs / 1000),
           );
         } else if (r && r.code === CODE_NOT_SENT) {
-          env.log.debug('warn: 8521 not actually sent (secondary channel / rate-limited, code=%s), rescan later.', String(r && r.code));
+          env.log.debug(
+            'warn: 8521 not actually sent (secondary channel / rate-limited, code=%s), rescan later.',
+            String(r && r.code),
+          );
         } else {
           // 被拒（如 158 未抵达 / 157 已在该点 / 163 不可行军）：短冷却防逐拍重发，保留待发让下次警告或重扫再试
           this.#cooldownUntil = Date.now() + tuning.rejectBackoffMs;

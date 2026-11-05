@@ -62,6 +62,7 @@ export async function handle(ctx) {
     ctx.log.info('code-box hit (code=%s)', pick.key);
   } else {
     var head = ret && ret.payload && ret.payload.header;
-    if (head && head.s) ctx.log.info('code-box wrong code s=%s (continue aggregating/brute-forcing)', head.s);
+    if (head && head.s)
+      ctx.log.info('code-box wrong code s=%s (continue aggregating/brute-forcing)', head.s);
   }
 }

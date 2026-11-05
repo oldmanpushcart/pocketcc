@@ -930,7 +930,12 @@ async function doScan() {
         bus.emit(EVT.UI_REFRESH);
       } // 真实列表往返（含空/拒）计一次刷新预算，同时推战力缓存年龄
       if (!ret.ok || !ret.data || !Array.isArray(ret.data.lootTruckViewList)) {
-        log.debug('loot list empty/rejected. cmd=%d;code=%d;data=%s', cmd, ret.code, rejectText(ret) || '-');
+        log.debug(
+          'loot list empty/rejected. cmd=%d;code=%d;data=%s',
+          cmd,
+          ret.code,
+          rejectText(ret) || '-',
+        );
         queue.length = 0;
       } else {
         listOpened = true;

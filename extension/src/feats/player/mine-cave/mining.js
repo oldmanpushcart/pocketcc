@@ -536,11 +536,19 @@ export class MiningEngine {
 
   async #execRewardSelf(task) {
     var ret = await this.#env.ask(CMD_REWARD, { id: task.id }, 'reward-self');
-    log.debug(ret.ok ? 'reward-self ok.' : 'reward-self rejected. code=%d;data=%s', ret.code, rejectText(ret.data));
+    log.debug(
+      ret.ok ? 'reward-self ok.' : 'reward-self rejected. code=%d;data=%s',
+      ret.code,
+      rejectText(ret.data),
+    );
   }
   async #execRewardOther(task) {
     var ret = await this.#env.ask(CMD_OTHER_GATHER_REWARD, { pos: task.pos }, 'reward-other');
-    log.debug(ret.ok ? 'reward-other ok.' : 'reward-other rejected. code=%d;data=%s', ret.code, rejectText(ret.data));
+    log.debug(
+      ret.ok ? 'reward-other ok.' : 'reward-other rejected. code=%d;data=%s',
+      ret.code,
+      rejectText(ret.data),
+    );
   }
   async #execRewardAlliance() {
     var ret = await this.#env.ask(CMD_ALLIANCE_REWARD, {}, 'alliance-reward');

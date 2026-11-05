@@ -383,7 +383,12 @@ async function harvestDue() {
       if (Array.isArray(d.wait) ? d.wait.length < MAX_QUEUE : !!d.reward) blocked = false;
     } else {
       // 无到期项/被拒：结束本轮（正常到期路径记 info，blocked 无 st 的探测路径静默）
-      if (haveSt) log.info('harvest no-op/rejected. code=%s;data=%s', ret && ret.code, rejectText(ret) || '-');
+      if (haveSt)
+        log.info(
+          'harvest no-op/rejected. code=%s;data=%s',
+          ret && ret.code,
+          rejectText(ret) || '-',
+        );
       return;
     }
   }

@@ -305,7 +305,13 @@ async function digFlow(mine) {
     return;
   }
 
-  log.info('dig rejected. x=%d;y=%d;code=%d;data=%s', mine.x, mine.y, ret.code, rejectText(ret) || '-');
+  log.info(
+    'dig rejected. x=%d;y=%d;code=%d;data=%s',
+    mine.x,
+    mine.y,
+    ret.code,
+    rejectText(ret) || '-',
+  );
 }
 
 /**

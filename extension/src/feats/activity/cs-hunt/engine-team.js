@@ -637,7 +637,10 @@ export class TeamEngine {
     // 终局≠散队：飞船还在返程，到家才散（实证 END@+986s → 散队@+1063s）；窗口内 7521/7522 会被拒
     //   ava_team_tips_011=已加入其他队伍 → 置回城等待闸门，由 10019 到家推/21371 清空推/轮询+超时解除
     var waitMarchId = t && t.selfMarchId && t.selfMarchId !== '0' ? String(t.selfMarchId) : '';
-    log.info('this cs-hunt march finished (%s), stop pulling run detail, moving to next round', source);
+    log.info(
+      'this cs-hunt march finished (%s), stop pulling run detail, moving to next round',
+      source,
+    );
     this.#flow.reset();
     this.#clearTeam();
     if (!this.#waitHome) {
@@ -656,7 +659,9 @@ export class TeamEngine {
    * @param {string} reason 服务器多语言拒因键
    */
   #endHunt(reason) {
-    this.#finishHunt('7531 end-reject reason ' + reason + '=cs-hunt team not found (missed-push fallback)');
+    this.#finishHunt(
+      '7531 end-reject reason ' + reason + '=cs-hunt team not found (missed-push fallback)',
+    );
   }
 
   /**
@@ -681,7 +686,10 @@ export class TeamEngine {
     this.#selfReadySeen = selfIn;
     if (!selfIn && this.#marchStartTeamId === this.#team.id) {
       this.#marchStartTeamId = ''; // 重武装召集表态闸门，交 tick 第 4 步补发 7527
-      log.info('rally window reopened and self not in ready list (ready=%d), re-sending ready', ready.length);
+      log.info(
+        'rally window reopened and self not in ready list (ready=%d), re-sending ready',
+        ready.length,
+      );
     }
     log.debug('ready call: team %s, ready=%d self=%s', this.#team.id, ready.length, selfIn);
     this.#wake();
@@ -840,7 +848,9 @@ export class TeamEngine {
         rawCfg.mode === 'helper')
     ) {
       this.#helperForced = false;
-      log.info('daily cs-hunt runs no longer in full-quota forced state, ending auto side-run mode, back to main run');
+      log.info(
+        'daily cs-hunt runs no longer in full-quota forced state, ending auto side-run mode, back to main run',
+      );
     }
     var cfg = this.#cfg();
 
@@ -1001,7 +1011,9 @@ export class TeamEngine {
     if (!wait) return 0;
     if (Date.now() >= wait.deadline) {
       this.#waitHome = null;
-      log.info('return-home disband wait timed out (missed-push fallback), allowing team build/join retry');
+      log.info(
+        'return-home disband wait timed out (missed-push fallback), allowing team build/join retry',
+      );
       return 0;
     }
     var ms = await march.list({ cache: true });
@@ -1011,7 +1023,9 @@ export class TeamEngine {
       if (hit && m.state !== march.State.ARRIVED_HOME) return HOME_POLL_MS; // 飞船仍在途（返程也算）：服务器未散队
     }
     this.#waitHome = null;
-    log.info('cs-hunt ship returned home and disbanded (confirmed by snapshot polling), starting next round of team build/join');
+    log.info(
+      'cs-hunt ship returned home and disbanded (confirmed by snapshot polling), starting next round of team build/join',
+    );
     return 0;
   }
 
@@ -1029,18 +1043,27 @@ export class TeamEngine {
   async #gateActivity(st) {
     var openKnown = st ? !!st.active : this.#openFlag != null ? this.#openFlag === 1 : null;
     if (openKnown === false) {
-      this.#blockOnce('off', 'cs-hunt not in activity time now (mode not open / off-season), skip team build/join');
+      this.#blockOnce(
+        'off',
+        'cs-hunt not in activity time now (mode not open / off-season), skip team build/join',
+      );
       return { proceed: false, sleep: IDLE_TICK_MS };
     }
     if (openKnown === null) {
       await this.refreshInfo(true);
-      this.#blockOnce('unknown', 'cs-hunt activity state unknown (awaiting 7501 ack), skip team build/join this round');
+      this.#blockOnce(
+        'unknown',
+        'cs-hunt activity state unknown (awaiting 7501 ack), skip team build/join this round',
+      );
       return { proceed: false, sleep: ACTIVE_TICK_MS };
     }
     var win = csHunt.playWindowState(this.#slots, csHunt.serverMs());
     if (!win.known) {
       await this.refreshInfo(true);
-      this.#blockOnce('nowin', 'cs-hunt play-window schedule unknown (awaiting 7501 openTime), skip team build/join this round');
+      this.#blockOnce(
+        'nowin',
+        'cs-hunt play-window schedule unknown (awaiting 7501 openTime), skip team build/join this round',
+      );
       return { proceed: false, sleep: ACTIVE_TICK_MS };
     }
     if (!win.in) {
@@ -1048,7 +1071,9 @@ export class TeamEngine {
       this.#blockOnce(
         'window',
         'cs-hunt not in a daily play window now (3 runs/day), skip team build/join' +
-          (win.nextBegin ? ', next run in about ' + Math.max(0, Math.round(wait / 60000)) + ' min' : ''),
+          (win.nextBegin
+            ? ', next run in about ' + Math.max(0, Math.round(wait / 60000)) + ' min'
+            : ''),
       );
       var cap = wait > WINDOW_WAIT_CAP_FAR_MS ? WINDOW_WAIT_CAP_FAR_MS : WINDOW_WAIT_CAP_NEAR_MS;
       return { proceed: false, sleep: Math.min(Math.max(wait, ACTIVE_TICK_MS), cap) };
@@ -1083,7 +1108,9 @@ export class TeamEngine {
       }
       this.#blockOnce(
         'daily',
-        'daily cs-hunt runs reached cap (' + cfg.dailyRuns + '), skip team build/join (auto recovers next day)',
+        'daily cs-hunt runs reached cap (' +
+          cfg.dailyRuns +
+          '), skip team build/join (auto recovers next day)',
       );
       return IDLE_TICK_MS;
     }
@@ -1118,7 +1145,9 @@ export class TeamEngine {
       ret && !ret.ok && ret.payload && ret.payload.header ? String(ret.payload.header.d || '') : '';
     if (rsn === 'ava_team_tips_011' && !this.#waitHome) {
       this.#waitHome = { marchId: '', deadline: Date.now() + WAIT_HOME_MAX_MS };
-      log.info('team build rejected ava_team_tips_011=already in another team (old disband not landed), waiting for ship return-home before retry');
+      log.info(
+        'team build rejected ava_team_tips_011=already in another team (old disband not landed), waiting for ship return-home before retry',
+      );
     }
     return ACTIVE_TICK_MS;
   }
@@ -1160,7 +1189,10 @@ export class TeamEngine {
       this.#joinCursor = (i + 1) % n;
     }
     if (idx < 0) {
-      this.#blockOnce('nojoin', 'player pool empty or all invalid uid / name not found, skip team search');
+      this.#blockOnce(
+        'nojoin',
+        'player pool empty or all invalid uid / name not found, skip team search',
+      );
       return JOIN_POLL_MS;
     }
     // 本拍只搜这一个：7530 按昵称搜其创建的队，命中未满/未申请/队长即该玩家的队即 7522 申请
@@ -1324,10 +1356,19 @@ export class TeamEngine {
     if (threw) return false;
     if (ret && ret.ok) {
       var remain = ret.data && ret.data.amount;
-      log.info('%s beacon consumed to refill count ok (remain %s)', label, remain == null ? '?' : remain);
+      log.info(
+        '%s beacon consumed to refill count ok (remain %s)',
+        label,
+        remain == null ? '?' : remain,
+      );
       return true;
     }
-    log.info('%s beacon rejected code=%s;data=%s', label, ret ? ret.code : CODE_NOT_SENT, rejectText(ret) || '-');
+    log.info(
+      '%s beacon rejected code=%s;data=%s',
+      label,
+      ret ? ret.code : CODE_NOT_SENT,
+      rejectText(ret) || '-',
+    );
     return false;
   }
 
@@ -1350,7 +1391,10 @@ export class TeamEngine {
     if (!plan) {
       if (this.#noArmyLoggedTeamId !== t.id) {
         this.#noArmyLoggedTeamId = t.id;
-        log.info('presetPool %j has no dispatchable army, holding march, waiting return-home wake to re-dispatch', cfg.presetPool || []);
+        log.info(
+          'presetPool %j has no dispatchable army, holding march, waiting return-home wake to re-dispatch',
+          cfg.presetPool || [],
+        );
       }
       return false;
     }
@@ -1386,7 +1430,11 @@ export class TeamEngine {
       );
       return true;
     }
-    log.info('full march rejected code=%s;data=%s', ret ? ret.code : CODE_NOT_SENT, rejectText(ret) || '-');
+    log.info(
+      'full march rejected code=%s;data=%s',
+      ret ? ret.code : CODE_NOT_SENT,
+      rejectText(ret) || '-',
+    );
     return false;
   }
 

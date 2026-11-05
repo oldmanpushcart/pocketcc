@@ -201,7 +201,14 @@ async function useCharge() {
     },
   );
   if (!ret || !ret.ok)
-    return { ok: false, code: ret ? ret.code : CODE_NOT_SENT, cnt: 0, recoverMs: 0, data: ret && ret.data, reason: ret && ret.reason };
+    return {
+      ok: false,
+      code: ret ? ret.code : CODE_NOT_SENT,
+      cnt: 0,
+      recoverMs: 0,
+      data: ret && ret.data,
+      reason: ret && ret.reason,
+    };
   // PB V1 业务数据在 pbAck 命名子字段 cdSkillUse（net.sendPB 整体回 pbAck，无 .data 包装）
   var skill = ret.data && ret.data.cdSkillUse && ret.data.cdSkillUse.skill;
   var cnt = skill ? Number(skill.cnt) || 0 : 0;
@@ -225,7 +232,14 @@ async function collectOne(targetId) {
       },
     },
   );
-  if (!ret || !ret.ok) return { ok: false, code: ret ? ret.code : CODE_NOT_SENT, items: [], data: ret && ret.data, reason: ret && ret.reason };
+  if (!ret || !ret.ok)
+    return {
+      ok: false,
+      code: ret ? ret.code : CODE_NOT_SENT,
+      items: [],
+      data: ret && ret.data,
+      reason: ret && ret.reason,
+    };
   var d = payloadOf(ret);
   var items = d && d.reward && Array.isArray(d.reward.items) ? d.reward.items : [];
   return { ok: true, code: 0, items: items };
@@ -263,7 +277,12 @@ async function collectPending() {
       // 非 0 码：建筑多半已被游戏侧收取/消失，判该实例终结，出队不再重试
       collected[d.id] = true;
       drops.splice(i, 1);
-      log.info('air drop collect rejected, treat as gone. target=%s;code=%d;data=%s', d.id, r.code, rejectText(r) || '-');
+      log.info(
+        'air drop collect rejected, treat as gone. target=%s;code=%d;data=%s',
+        d.id,
+        r.code,
+        rejectText(r) || '-',
+      );
     }
   }
 }
@@ -364,7 +383,12 @@ async function cycleRun() {
         break;
       } else {
         rejectStreak++;
-        log.info('air drop use rejected (streak #%d). code=%d;data=%s', rejectStreak, use.code, rejectText(use) || '-');
+        log.info(
+          'air drop use rejected (streak #%d). code=%d;data=%s',
+          rejectStreak,
+          use.code,
+          rejectText(use) || '-',
+        );
         delay = rejectStreak >= REJECT_STREAK_MAX ? PROBE_INTERVAL * 2 : PROBE_INTERVAL;
         break;
       }
