@@ -19,6 +19,7 @@ import './feats/activity/mask-dance.js';
 import './feats/player/auto-farm/index.js';
 import './feats/player/auto-hunt.js';
 import './feats/player/fear-star-rally.js';
+import './feats/player/radar-task.js';
 import './feats/activity/sea-treasure.js';
 import './feats/activity/mecha-treasure.js';
 import './feats/alliance/alliance-gift.js';

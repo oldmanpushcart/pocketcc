@@ -67,6 +67,7 @@ export const MENU = [
       { id: 'autoFarm', kind: 'feature', label: '自动下田', showFields: true },
       { id: 'autoHunt', kind: 'feature', label: '自动打野', showFields: true },
       { id: 'fearStarRally', kind: 'feature', label: '惧星集结', showFields: true },
+      { id: 'radarTask', kind: 'feature', label: '雷达任务', showFields: true },
       { id: 'mineCave', kind: 'feature', label: '次元矿洞', showFields: true },
       { id: 'beastBreed', kind: 'feature', label: '异能兽培育', showFields: true },
       { id: 'citySkill', kind: 'feature', label: '城市技能', showFields: true },

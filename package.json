@@ -16,6 +16,7 @@
     "test": "node --test",
     "verify:secret-realm": "node scripts/replay/run.mjs --manifest secret-realm",
     "verify:cs-hunt": "node scripts/replay/run.mjs --manifest cs-hunt",
+    "verify:radar-task": "node scripts/replay/run.mjs --manifest radar-task",
     "skill:install": "node scripts/skill-install.mjs",
     "format": "prettier --write \"**/*.{js,mjs,cjs,json}\"",
     "format:check": "prettier --check \"**/*.{js,mjs,cjs,json}\""
