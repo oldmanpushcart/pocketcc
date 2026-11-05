@@ -11,10 +11,13 @@
  *      表 switch 列走 gameData.functionOnValue 三态放行（列里存的是 FunctionKey 值串：warhammer_monster / glorious_science）、
  *      5001 混合集结排除（游戏自己也硬排除；且它加入走 Assembly_Mix_Join 并按队长兵种限兵，本 feat 未接）。
  *      难民营 12 的 search_show 是 0（游戏侧由 getRefugeeCampData() 单独挂在清单末尾），故同构地作为固定行恒在末尾。
- *   ② 12003 自学习 learnTarget()：推来未登记的 itemId → 记 {pointType, marchType, lastTs} 落 storage.data（UID 隔离），面板多一行
- *      「待勾选」，默认 enabled=false、绝不自动开打（关键安全阀）。名字回落 MONSTER_GROUP.name 的译文，取不到用 '#<itemId>'。
+ *   ② 12003 自学习 learnTarget()：推来未登记的 itemId → 记 {pointType, marchType, 情报时长, lastTs} 落 storage.data（UID 隔离），
+ *      面板多一行「待勾选」，默认 enabled=false、绝不自动开打（关键安全阀）；但**行不是按 itemId 而是按 pointType 归并**
+ *      （一族一行，键 'pt<pointType>'）：名字回落 MONSTER_GROUP.name 的译文，取不到用 '#<itemId>'；
+ *      万一不同族撞同名，先试情报时长后缀（「·8小时」）、再退 '#<itemId>'。
  *      这条覆盖表反查抓不到的类型 —— 雷达集结怪 94/95：MONSTER_GROUP.search_show=0、auto_hunt 里没有行，服务器却天天推
- *     （1285 条 12003 语料里 94×50 / 95×27），旧实现查不到行就 return 且不打日志＝静默丢弃；其 pointType 74=RADAR_RALLY_MONSTER
+ *     （1327 条 12003 语料里 94×60 / 95×25；两者的 name、pointType=74、marchType=8、level=100 四项全同，
+ *      只有情报时长 8h/24h 与雷达任务号 10001/10002 可分），旧实现查不到行就 return 且不打日志＝静默丢弃；其 pointType 74=RADAR_RALLY_MONSTER
  *      落在游戏 AllianceAssemlbyController.joinAssemlby 的默认分支（无条件加入），故学到即可直接发 1204。
  *      学习的红线（tableGatedGroups）只圈「本该进集结页签却被闸门明确关掉」的 group（赛季 switch=false、CATALOG_EXCLUDE），
  *      否则一条推送就能把明确关掉的玩法复活成行，而它的 key 撞上历史键（44→warHammer）时还会直接继承已勾选的 warHammerEnabled=true。
@@ -196,7 +199,7 @@ var tableAnnounced = false;
  *   正是「表口径之外、但服务器确实在推的集结」，一律拒学到底等于把改造前的「静默丢弃」换个形式保留下来。
  */
 var tableGatedGroups = null;
-/** @type {Object<string,{pt:number,mt:number,ts:number}>} 自学习条目（键=itemId 字符串），由 targetsState 读回、learnTarget 新增 */
+/** @type {Object<string,{pt:number,mt:number,ts:number,lf:number}>} 自学习条目（键=itemId 字符串；lf=情报存续秒数），由 targetsState 读回、learnTarget 新增 */
 var learnedTargets = {};
 /** @type {boolean} 学习项是否已读回（未读回前不新增、不落盘，防拿内存空表覆掉盘上已学项） */
 var targetsLoaded = false;
@@ -221,6 +224,18 @@ function rowLabel(mg, itemId) {
     if (/[\u3400-\u9fff]/.test(k)) return k;
   }
   return '#' + itemId;
+}
+
+/**
+ * 12003 载荷里的「情报存续时长」（秒）= expireTime - createTime。报文实证：94 恒 ≈28798s（8 小时）、95 恒 ≈86393s（24 小时），
+ *   而两者的 MONSTER_GROUP.name、pointType、marchType、level 完全一致 —— 这是目录里唯一能把它们分开的可用信息。
+ * 只在两个时刻都读得出、且时长落在 (0, 7 天] 时采信，否则返回 0（=未知，同名消歧会退回 '#<itemId>'）。
+ * @param {object} d 12003 载荷
+ * @returns {number} 时长秒数，未知为 0
+ */
+function intelLifeSec(d) {
+  var sec = (Number(d.expireTime) || 0) - (Number(d.createTime) || 0);
+  return sec > 0 && sec <= 7 * 24 * 3600 ? Math.round(sec) : 0;
 }
 
 /**
@@ -347,8 +362,9 @@ function familyReject(pointType) {
 }
 
 /**
- * 拼装目录：表反查行（不可读则种子行）→ 末尾附难民营固定行 → 再附未陈旧的自学习行（排除已占用的 itemId）。
- * 返回恒非空；行携 key/label/itemId/pointType/learned。回落态只缓 CATALOG_RETRY_MS，下一拍就重试回表反查。
+ * 拼装目录：表反查行（不可读则种子行）→ 末尾附难民营固定行 → 再附未陈旧的自学习行（排除已占用的 itemId）
+ *   → 学习行按 pointType 归并成「一族一行」。返回恒非空；行携 key/label/itemId/itemIds/pointType/learned。
+ *   回落态只缓 CATALOG_RETRY_MS，下一拍就重试回表反查。
  * @returns {{rows:object[],at:number,fellBack:boolean}}
  */
 function catalog() {
@@ -428,16 +444,69 @@ function catalog() {
       label: CATALOG_LABELS[ik] || rowLabel(mg, Number(ik)),
       itemId: Number(ik) | 0,
       pointType: e.pt | 0,
+      hours: Math.round((Number(e.lf) || 0) / 3600), // 情报时长（小时）：同名行消歧用；表行没这个信息 → 0
       searchOrder: 0,
       learned: true,
     });
   }
-  // 同名行（实证：94/95 的 MONSTER_GROUP.name 都是 radar_key_149）补 '#<itemId>' 后缀，否则面板两行不可区分
-  var seen = {};
-  for (var c = 0; c < rows.length; c++) seen[rows[c].label] = (seen[rows[c].label] || 0) + 1;
-  for (var d = 0; d < rows.length; d++) {
-    if (seen[rows[d].label] > 1) rows[d].label = rows[d].label + '#' + rows[d].itemId;
+  // 学习行按 pointType 归并成「一族一行」：本 feat 的族身份就是 pointType（与 FAMILY_GATES/familyReject 同口径）。
+  //   报文实证 94/95 的 MONSTER_GROUP.name、pointType(74)、marchType(8)、level(100) 四项全同，只有情报时长（8h/24h）
+  //   与雷达任务号（10001/10002）不同 —— 拆两行等于让玩家对两个无法辨认的名字各做一次决定，且赛季每新增一只同族怪就多一行。
+  //   表反查行不参与归并（各有 switch/页签语义与历史扁平键）；学习项落盘仍按 itemId（30 天续期逐只怪算，归并只发生在读侧）。
+  //   归并行的 key 换成 'pt<pointType>'，旧 'm<itemId>' 那组扁平键不再被行读取；用户的已勾状态由 toModuleCfg 一次性继承
+  //   （enabled 取或、延迟取首个非零、上限取合计），且只在新键从未被决定过时继承 —— 详见那里的注释。
+  var out = [];
+  var ptRow = Object.create(null); // pointType → 该族的归并行（即首个成员那张行对象）
+  for (var f = 0; f < rows.length; f++) {
+    var fr = rows[f];
+    if (!fr.learned || !(fr.pointType > 0)) {
+      out.push(fr); // 表行/种子行/拿不到 pointType 的行：原样保留
+      continue;
+    }
+    var fam = ptRow[fr.pointType];
+    if (fam) {
+      fam.itemIds.push(fr.itemId);
+      if (fam.labels.indexOf(fr.label) < 0) fam.labels.push(fr.label);
+      continue; // 被吸收的同族不再单列
+    }
+    fr.itemIds = [fr.itemId];
+    fr.labels = [fr.label];
+    ptRow[fr.pointType] = fr;
+    out.push(fr); // 归并行落在该族首个成员的位置上
   }
+  Object.keys(ptRow).forEach(function (pt) {
+    var r = ptRow[pt];
+    if (r.itemIds.length < 2) return; // 独苗不改键，免得为归并而把已有勾选抖没
+    r.itemIds.sort(function (x, y) {
+      return x - y;
+    });
+    r.key = 'pt' + r.pointType;
+    r.label = r.labels.join('/'); // 同族不同名（改版可能出现）就把名字并列，不藏任何一个
+    r.itemId = r.itemIds[0]; // 代表 itemId：只供排序/日志；推送匹配走 itemIds 全集（见 rowOfItem）
+    r.hours = 0; // 一族里时长不止一种，'·N小时' 后缀会误导
+  });
+  rows = out;
+  // 同名行消歧（归并后仍可能撞名：表行与学习行、或不同 pointType 却同名）：
+  //   先试「情报时长」——只有同组每行都带时长且互不相同才采纳（后缀成「黑暗军团据点·8小时 / ·24小时」）；
+  //   否则整组一律退回 '#<itemId>'（itemId 是目录里唯一稳定身份），不发「一行带时长、一行光秃」的混排。
+  var groups = Object.create(null); // 标签是表里的自由文本（'constructor' 之类会撞上原型链），无原型字典才安全
+  for (var c = 0; c < rows.length; c++) {
+    var grp = groups[rows[c].label] || (groups[rows[c].label] = []);
+    grp.push(rows[c]);
+  }
+  Object.keys(groups).forEach(function (lb) {
+    var g = groups[lb];
+    if (g.length < 2) return;
+    var hs = g.map(function (r) {
+      return r.hours | 0;
+    });
+    var allHaveHours = hs.every(function (h) {
+      return h > 0;
+    });
+    var usable = allHaveHours && new Set(hs).size === hs.length;
+    for (var i = 0; i < g.length; i++)
+      g[i].label = usable ? lb + '·' + hs[i] + '小时' : lb + '#' + g[i].itemId;
+  });
   catalogCache = { rows: rows, at: now, fellBack: fellBack };
   return catalogCache;
 }
@@ -445,13 +514,17 @@ function catalog() {
 /**
  * 按 itemId 查目录行（未登记回 null）。走 catalogRows()（而非裸 catalog()）：推送处理路径上目录读取意外抛错
  *   也不能抹掉一次加入，回落种子行就是旧行为（只有 44/9100/12 认得）。
+ * 归并行（一族一行）的成员存在 itemIds 里，所以 94/95 都命中同一行；行上的 itemId 只是代表（排序/日志用）。
  * @param {number|string} itemId 12003 载荷 itemId
  * @returns {object|null}
  */
 function rowOfItem(itemId) {
   var rows = catalogRows();
   for (var i = 0; i < rows.length; i++) {
-    if (String(rows[i].itemId) === String(itemId)) return rows[i];
+    var r = rows[i];
+    if (String(r.itemId) === String(itemId)) return r;
+    for (var j = 0; r.itemIds && j < r.itemIds.length; j++)
+      if (String(r.itemIds[j]) === String(itemId)) return r;
   }
   return null;
 }
@@ -501,7 +574,15 @@ function learnTarget(d) {
   if (e) {
     // 已登记：只刷新「最后一次被推到」的时刻（陈旧判定用）；距上次落盘超过 6h 才再写一次，避免每推一次写一次盘
     e.ts = now;
-    if (now - (Number(e.wTs) || 0) > 1000 * 60 * 60 * 6) {
+    // 老条目（本改造之前学的）没有 lf：这次推来就补上并立刻落盘一次（一次性的，不走 6h 节流），
+    //   否则面板后缀会一直停在旧写法 '#<itemId>'（能区分、但对不上游戏里的雷达任务）。
+    var life = intelLifeSec(d);
+    var backfill = life > 0 && !(Number(e.lf) > 0);
+    if (backfill) {
+      e.lf = life;
+      catalogCache = null; // 时长参与同名行消歧，不失效就还是旧后缀
+    }
+    if (backfill || now - (Number(e.wTs) || 0) > 1000 * 60 * 60 * 6) {
       e.wTs = now;
       persistTargets();
     }
@@ -511,6 +592,7 @@ function learnTarget(d) {
   learnedTargets[k] = {
     pt: Number(d.pointType) | 0,
     mt: Number(d.marchType) | 0,
+    lf: intelLifeSec(d),
     ts: now,
     wTs: now,
   };
@@ -582,7 +664,13 @@ function syncTargets() {
   for (var i = 0; i < rows.length; i++) {
     var k = rows[i].key;
     if (!cfg.targets[k])
-      cfg.targets[k] = { enabled: false, joinDelayMs: 0, dailyLimit: 0, itemId: rows[i].itemId };
+      cfg.targets[k] = {
+        enabled: false,
+        joinDelayMs: 0,
+        dailyLimit: 0,
+        itemId: rows[i].itemId,
+        itemIds: rows[i].itemIds || [rows[i].itemId], // 归并行带整族成员，日志能把「哪只怪算在本行上」说清
+      };
   }
 }
 
@@ -1216,11 +1304,28 @@ reactor.register({
     var targets = {};
     for (var i = 0; i < rows.length; i++) {
       var k = rows[i].key;
+      var ids = rows[i].itemIds || [rows[i].itemId];
+      // 归并（一族一行）把键从 'm<itemId>' 换成了 'pt<pointType>'：老键上用户已做的决定不能凭空丢，
+      //   但只在「新键还没被决定过」时继承（c[k+'Enabled'] 从未入 defaults 也未入盘 = undefined）——
+      //   否则用户后来显式取消勾选会被老键翻回 true。口径：enabled 取或（任一成员勾过就是要打）、
+      //   延迟取首个非零、每日上限取合计（旧配置每只怪各一份额度，相加才等价）。
+      var enabled = !!c[k + 'Enabled'];
+      var delayMs = (Number(c[k + 'DelaySec']) || 0) * 1000;
+      var limit = Number(c[k + 'DailyLimit']) | 0;
+      if (ids.length > 1 && c[k + 'Enabled'] === undefined) {
+        for (var m = 0; m < ids.length; m++) {
+          var mk = 'm' + ids[m];
+          if (c[mk + 'Enabled']) enabled = true;
+          if (!delayMs) delayMs = (Number(c[mk + 'DelaySec']) || 0) * 1000;
+          limit += Number(c[mk + 'DailyLimit']) | 0;
+        }
+      }
       targets[k] = {
-        enabled: !!c[k + 'Enabled'],
-        joinDelayMs: (Number(c[k + 'DelaySec']) || 0) * 1000,
-        dailyLimit: Number(c[k + 'DailyLimit']) | 0,
+        enabled: enabled,
+        joinDelayMs: delayMs,
+        dailyLimit: limit,
         itemId: rows[i].itemId,
+        itemIds: ids,
       };
     }
     return { targets: targets };
