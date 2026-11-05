@@ -18,7 +18,7 @@ import {
   syncControls,
   buildWorldStatus,
 } from './panel.js';
-import { wirePanel } from './wire.js';
+import { wirePanel, wireControls } from './wire.js';
 import { worldState } from '../world/state.js';
 
 /**
@@ -102,12 +102,21 @@ export async function mountUI() {
    */
   const pendingRebuild = new Set();
 
+  /**
+   * 重建某张卡，并把它的新控件重新装配一遍。
+   * body 是整块 innerHTML 换掉的，每个控件的监听器也一起没了：不传 wireControls 就得到一堆「照常可点、
+   *   值却不落盘」的行（联盟集结的行级开关就是这样被默默吞掉过），故重建必与重绑同途。
+   * @param {string} fid 功能卡 id
+   * @returns {boolean} 是否真的重建了
+   */
+  const rebuildCard = (fid) => rerenderFeatureCard(panel, fid, wireControls);
+
   /** 开面板时补渲染积压的行集变化（每个 fid 只试一次，失败也不重试，免得不存在的卡反复排队）。 */
   function flushRebuild() {
     if (!pendingRebuild.size) return;
     for (const fid of [...pendingRebuild]) {
       pendingRebuild.delete(fid);
-      rerenderFeatureCard(panel, fid);
+      rebuildCard(fid);
     }
   }
 
@@ -115,7 +124,7 @@ export async function mountUI() {
     const fid = payload && payload.rebuild;
     if (fid) {
       // 面板关着 / 焦点在卡内（rerenderFeatureCard 的保守闸门跳过）：两种情形都记账待开面板时补，不能把行集变化丢掉
-      if (panel.hidden || !rerenderFeatureCard(panel, fid)) pendingRebuild.add(fid);
+      if (panel.hidden || !rebuildCard(fid)) pendingRebuild.add(fid);
     }
     if (panel.hidden) return;
     refreshTexts(panel);

@@ -232,9 +232,12 @@ export function buildPanelHTML() {
  *   不会靠「用户自己打开面板」自愈；调用侧（core/ui/index.js 的 pendingRebuild）负责记账并在开面板时补渲染。
  * @param {Element} root 面板根
  * @param {string} fid 功能 id（如 'allianceRally'）
+ * @param {(scope:Element)=>void} [rewire] 新 body 的控件装配回调（实际就是 wireControls）。
+ *   body 是 innerHTML 整块换掉的，里面每个控件的监听器也一起没了，不重绑就是「照常可点、看着像改好了，
+ *   值却不落盘也不生效」的静默失效（面板级委托只兼容容器型字段，管不到逐元素绑定的勾选框/数字/下拉）。
  * @returns {boolean} 是否真的重建了
  */
-export function rerenderFeatureCard(root, fid) {
+export function rerenderFeatureCard(root, fid, rewire) {
   if (!root || !/^[-\w]+$/.test(String(fid))) return false; // fid 来自功能侧自报，先验字再进选择器
   const card = root.querySelector(`.pc-sec[data-fid="${fid}"]`);
   const body = card && card.querySelector('.pc-sec-body');
@@ -246,10 +249,15 @@ export function rerenderFeatureCard(root, fid) {
   const f = findFeature(fid);
   if (!f) return false;
   body.innerHTML = buildFieldsHTML(fid, f) || '<div class="pc-empty">无可调参数</div>';
-  // 有状态清单（好友/优先级/物品）靠 widgets 重绑，与首次渲染同口径；其余容器型字段走事件委托，无需装配
-  body.querySelectorAll('.pc-ulist').forEach(mountUidList);
-  body.querySelectorAll('.pc-slist').forEach(mountSortList);
-  body.querySelectorAll('.pc-ilist').forEach(mountItemList);
+  // 控件装配：优先用调用方给的整块重绑回调（与首次渲染同口径）；没给就只兜得住有状态清单，
+  //   其余逐元素控件会因 innerHTML 换掉而无人绑定（新调用方务必把 rewire 传上）。
+  if (typeof rewire === 'function') {
+    rewire(body);
+  } else {
+    body.querySelectorAll('.pc-ulist').forEach(mountUidList);
+    body.querySelectorAll('.pc-slist').forEach(mountSortList);
+    body.querySelectorAll('.pc-ilist').forEach(mountItemList);
+  }
   refreshFieldVisibility(card); // 条件字段显隐随新行集重算
   refreshTexts(card);
   return true;

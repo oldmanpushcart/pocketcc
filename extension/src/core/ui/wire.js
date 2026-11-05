@@ -19,7 +19,8 @@ import {
 const logCore = createLog('CORE');
 
 /**
- * 给面板绑定交互：TAB 切换 / 卡片折叠 / 组主闸门级联 / 功能开关 / 字段改值 / 登出 / 战斗模式。
+ * 给面板绑定交互：TAB 切换 / 卡片折叠 / 组主闸门级联 / 功能开关（以上面板chrome）+ 卡内字段控件（wireControls）
+ *   + 容器型字段的面板级委托（wireContainerFields）。
  * 所有改动即存档（saveFeature/saveGroup）并实时编排（applyFeature）。
  * @param {Element} panel 面板根元素
  */
@@ -112,8 +113,21 @@ export function wirePanel(panel) {
     });
   });
 
+  // 卡内字段控件的逐元素绑定抽成 wireControls：卡片 body 会被 rerenderFeatureCard 整块换掉（联盟集结/自动打野的行集随目录浮动），
+  //   换出来的新控件若不重走一遍绑定就一个监听都没有——表现是「照常可点、看着像勾上了，值却不落盘也不生效」（面板级委托只管容器型字段）。
+  wireControls(panel);
+  wireContainerFields(panel);
+}
+
+/**
+ * 绑定卡片 body 内的字段控件：勾选框 / 数字 / 下拉 / 按钮 / 文本 / UID 复合行 / 各类清单装配。
+ * 与 wirePanel 分开导出，正是为了让「卡重建后重新装配」成为可能（调用方见 rerenderFeatureCard 的 rewire 参数）。
+ * 对同一批元素重复调用是有害的（双监听 = 一次改动存两遍、应用两遍），所以只对 innerHTML 新替换出来的元素调用。
+ * @param {Element} root 绑定范围：整面板（首次装配）或刚重建的某个 .pc-sec-body
+ */
+export function wireControls(root) {
   // 功能字段勾选框（type:'checkbox' 的 field，如按集结目标单独开关）：改动即存档 + 热更
-  panel.querySelectorAll('input.pc-fchk').forEach((cb) => {
+  root.querySelectorAll('input.pc-fchk').forEach((cb) => {
     cb.addEventListener('click', (e) => e.stopPropagation());
     cb.addEventListener('change', () => {
       const f = findFeature(cb.dataset.id);
@@ -121,12 +135,19 @@ export function wirePanel(panel) {
       configs[f.id][cb.dataset.key] = cb.checked;
       saveFeature(f);
       applyFeature(f);
+      // 行级开关不留日志的话，「我明明勾了」就只能靠猜：key 与勾选态进日志流，dashcam 单轨可回溯改动时刻
+      logCore.debug(
+        'field checkbox changed. feature=%s;key=%s;checked=%s',
+        f.id,
+        cb.dataset.key,
+        cb.checked,
+      );
     });
   });
 
   // 数字字段：钳制到 min，存档 + 运行中热更（区间规则行内的数字格无 data-id，归 wirePanel 末尾的委托处理）
   // rallygrid（联盟集结目标紧凑表）行内的延迟/上限格：顶层 fd.key ≠ input.dataset.key，需下探 rows（同 tripick.parts 口径）。
-  panel.querySelectorAll('input[type=number]').forEach((input) => {
+  root.querySelectorAll('input[type=number]').forEach((input) => {
     if (!input.dataset.id) return;
     input.addEventListener('change', () => {
       const f = findFeature(input.dataset.id);
@@ -153,7 +174,7 @@ export function wirePanel(panel) {
   // tripick（行内多下拉，如异能兽培育「派出的兽 [属相][品种][品质]」）的 select data-key 是 part.key（applyFactions…），
   //   ctrlrow（一行多控件，如惧星集结「等级/方式/预设队伍」）的是 cell.key，都不等于 field.key（applyAttrTrio / fearStarRow），
   //   故 descriptor 查找须同时下探 parts / cells（口径见 findFieldDescriptor），选项取该子控件自己的口径。
-  panel.querySelectorAll('select.pc-fsel').forEach((sel) => {
+  root.querySelectorAll('select.pc-fsel').forEach((sel) => {
     sel.addEventListener('change', () => {
       const f = findFeature(sel.dataset.id);
       if (!f) return;
@@ -173,7 +194,7 @@ export function wirePanel(panel) {
   });
 
   // 动作按钮（type:'button'）：点击调 fd.onClick(cfg)，返回 Promise 则禁用+文案反馈；不触发卡片折叠
-  panel.querySelectorAll('.pc-fbtn').forEach((btn) => {
+  root.querySelectorAll('.pc-fbtn').forEach((btn) => {
     btn.addEventListener('click', (e) => {
       e.stopPropagation();
       const f = findFeature(btn.dataset.id);
@@ -197,7 +218,7 @@ export function wirePanel(panel) {
   });
 
   // 可编辑文本字段（如城市技能赠送 UID）：点输入框不触发卡片折叠，改动 trim 后按字符串存档 + 热更
-  panel.querySelectorAll('input.pc-fstr').forEach((input) => {
+  root.querySelectorAll('input.pc-fstr').forEach((input) => {
     input.addEventListener('click', (e) => e.stopPropagation());
     input.addEventListener('change', () => {
       const f = findFeature(input.dataset.id);
@@ -214,19 +235,26 @@ export function wirePanel(panel) {
   // UID 复合行（type:'uid'，城市技能）：装配显示态↔输入态切换 + 失焦反查名字（见 setupUidField）。
   // 行内勾选框是 .pc-fchk，已由上面的通用处理器接好；这里只管输入控件的状态机。
   // 好友清单的行（.pc-uli）走下方 mountUidList 单独装配，此处排除。
-  panel.querySelectorAll('.pc-uidwrap').forEach((w) => {
+  root.querySelectorAll('.pc-uidwrap').forEach((w) => {
     if (!w.classList.contains('pc-uli')) setupUidField(w);
   });
 
   // 好友清单字段（type:'uidlist'，玩家点赞）：逐容器装配（行状态机 + ＋/× 增删，见 mountUidList）。
-  panel.querySelectorAll('.pc-ulist').forEach(mountUidList);
+  root.querySelectorAll('.pc-ulist').forEach(mountUidList);
 
   // 领取优先级清单字段（type:'sortlist'，遗迹奖励）：逐容器装配（↑/↓ 交换相邻位，见 mountSortList）。
-  panel.querySelectorAll('.pc-slist').forEach(mountSortList);
+  root.querySelectorAll('.pc-slist').forEach(mountSortList);
 
   // 物品清单字段（type:'itemlist'，秘境拾取）：逐容器装配，行不可增删（见 mountItemList）。
-  panel.querySelectorAll('.pc-ilist').forEach(mountItemList);
+  root.querySelectorAll('.pc-ilist').forEach(mountItemList);
+}
 
+/**
+ * 容器型字段的面板级事件委托（ranges/multiopts/minerules/farmrules/huntlist/…）、登出与战斗模式总开关的绑定。
+ * 这些挂在面板根上，卡体重建不影响委托生效，故无需随卡重新装配。
+ * @param {Element} panel 面板根元素
+ */
+function wireContainerFields(panel) {
   panel.querySelector('#pc-logout').addEventListener('click', () => {
     session.logout(); // 游戏登出（PlatformCore 符号收口于 core/game-api.js 防腐层）
   });
