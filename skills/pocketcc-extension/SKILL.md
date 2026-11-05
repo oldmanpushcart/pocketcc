@@ -1,0 +1,93 @@
+---
+name: pocketcc-extension
+description: pocketcc Chrome MV3 扩展侧工程规范，覆盖 feat 新增/修改、reactor 生命周期、网络层与推送订阅、日志分级、UID 隔离存储、调度原语 createCycle、JSDoc 与私有成员代码风格。当在 extension/ 目录下新增或修改玩法（feat）、核心模块（core）、菜单、面板 UI，或用户提到 reactor、sendPBV2、ctx.on.push、createCycle、manifest 时使用。
+---
+
+# pocketcc 扩展工程规范
+
+## 构建与验证
+
+- 改动后必须跑 `npm run build`（esbuild 三入口 IIFE，target chrome110）与 `npm run lint`（根目录 flat 配置）。
+- `extension/dist/` 是构建产物，禁止手工编辑或直接改它来"调试"。
+- 新增入口需同时修改 `esbuild.config.mjs` 的 builds 数组与 `extension/manifest.json`。
+
+## 架构分层（依赖方向不可逆）
+
+```
+feats/<分组>/<玩法> → core/ → 游戏 DOM/符号
+bridge.js(ISOLATED) ←postMessage→ MAIN(content)
+background.js(SW) 仅做 dashcam fetch 转发
+```
+
+- feats 之间不得互相 import；公共逻辑下沉 `core/`。
+- **分层闸门**：`npm run arch`（dependency-cruiser，配置 `.dependency-cruiser.cjs`）强制执行上面两条（core 不回引 feats、feats 间不互 import），当前**无豁免基线**。跨 feat 复用的「常量真相 + 纯查询」下沉**薄底座**（`core/map.js` 地图、`core/item.js` 物品、`core/march.js` 行军）——范式：只收口真相/查询/只读发包骨架，**不聚合玩法动词**；feat 私货（UI 配色/筛选树/扫描调参如 `FILTER_TREE`/`SCAN_GRID`/`DEFAULTS`）留在 `feats/`，不发协议的聚合不下沉。
+- `content.entry.js` 是唯一装配点：import 顺序即旧 content_scripts 顺序（net → feat → boot），并把 bus/game/storage/reactor 等挂到 `window.pocketcc` 调试面。
+- 游戏 bundle 内部符号知识（模块注册名、类属性链、枚举成员名、配置表名）**一律收口 `core/game-api.js`（ACL 防腐层）**，业务层只依赖能力 API（l10n/nav/gameData/gameConf/bits/session），不得在 feat 里直接 `game.get` 或裸写符号链。
+
+## 新增 feat 清单（按序执行）
+
+1. 建文件 `extension/src/feats/<分组>/<玩法>.js`（分组：daily/activity/battle/chat/map/hotkey）。
+2. 在 `core/menu.js` 菜单树挂载：声明分组、label、是否 `showFields`。
+3. 在 `content.entry.js` 追加 import。
+4. 通过 `reactor.register(spec)` 声明式注册，spec 必含 `label/storageKey/defaults`（面板描述符），按需实现 `install/configure/run/pause` 钩子与 `scenes` 门控（如限定 Home/NWorldMap）。
+5. 战斗模式语义上强制下线玩法类 feat（沿用既有门控，不自造开关）。
+
+## 硬性红线
+
+- **feat 脚本只读 + 发包**：禁止调用游戏侧 Update/Delete 等改写本地数据的方法；本地态以应答/推送为准。
+- 网络一律走 `window.pocketcc.net` 的 promise 封装：`send/sendPBV2(cmd, data) → Promise<Ret{code,data,ok}>`，在途查询用 `isSending(cmd)`；被拒语义用 `CODE_NOT_SENT` 等哨兵码，不抛异常控制流。
+- 报文订阅三条命名空间，均经 `ctx.on.*` 登记（退订由 reactor 自动托管，禁止直接摸 bus 或手工 off）：推送 `ctx.on.push(cmd)`、应答 `ctx.on.resp(cmd)`、**本端发包** `ctx.on.req(cmd)`。
+  - `ctx.on.req` 必须走这条（内部经 `pocketcc.net.onReq` 按需拉起发送 hook），直接 `bus.on('net.req.…')` 会订到一条永不派发的空事件。
+  - req 只在包**真上线之后**才派（游戏两条通道的 send/sendPB/sendPBV2 在 needDisable / MsgIDSettings / `cdTime` 请求太频繁 / encode 失败 处 `return!1`，静默无异常）。
+  - 「请求带而应答不带」的字段只能从 req 侧取（实证：秘境 8532 req 带 {x,y}、应答不带）；req↔resp 配对用应答的 `Event.reqTime`（= 该应答那条请求的发出时刻）取 `ts <= reqTime` 中最大的一条，**不要靠 FIFO + TTL 猜**（错配后果是拿错点坐标发写请求，被拒还会误拉黑有效目标）。
+  - req 事件名是**逻辑 cmd**、resp 是**线上 cmd**：主通道有 `msgIdReplaceMap`/`getOldCmd` 换号，换号时两者不同名（次通道 NetMgrSimple 无换号表）。
+- 两条发送通道都要当回事：主通道 `NetMgr.NET` 实例 + 次通道 `NetMgrSimple.prototype`（秘境/观战走另一条 websocket，`TMWatchNetMgr.sendPBV2` 在 `isPabBattleMap` 时分叉到它）。次通道挂点探不到会**整局降级且不重试**（两个类同在 Script bundle，不存在“还没加载”的时序窗口），状态查 `pocketcc.net.secondaryStatus()`（`pending|ok|missing`），改版当天 `pocketcc.net.reprobeSecondary()` 重探即可，不必刷页。
+- 心跳不进观测面：`core/net.js` 的 `hbCodes` 集合滤掉两条通道心跳（主 0/NO_QUEUE_HEART、次 6385/TM_WATCH_HEART，次通道号由发送 wrapper 自学习登记；入站在 NetReciver 单点、认不出通道归属，所以必须用集合），因此 **dashcam 录音与 `collecting()` 里没心跳行**，对拍时别当成漏采。
+- `run()` 里 `new` 出的引擎/带定时器对象**必须存模块级引用**，并在 spec 声明 `pause(ctx)`：reactor 的触发器摘除管不到 feat 自建的 `setTimeout`、在飞 `await` 循环与配对队列，不显式收就会在 resume 后拿陈旧快照继续发写请求（`pause` 钩子现由 `core/reactor.js` 的 `pause()` 末尾调用）。
+- 存储只走 `core/storage.js` 入口（UID 命名空间 + 双 blob + per-blob 串行队列），MAIN 侧禁止直接 `chrome.storage`（那是 bridge 的事）。detail-hidden 功能的详细参数不落盘、只持久化 enabled/intentEnabled。
+- 报文对照：发请求的字段形态须与 dashcam 录制报文**逐键一致**，不靠猜；注释里用「报文实证 dashcam <会话文件名>」标注证据来源。
+
+## 调度原语
+
+- 周期性扫描/消费类逻辑用 `core/cycle.js` 的 `createCycle({run, alive, fallback, log})`：`run()` 返回 `>0` 睡眠毫秒、`<=0` 立即再跑；触发一律 `kick`（在飞时置 pending，本轮结束补扫一次）。
+- 不要在 feat 里手写 `scheduleCycle/triggerCycle/doCycle` 样板；间隔决策（退避曲线、idle 降频）留在调用方 `run()` 返回值里。
+- 一次性任务/无周期重排需求不套 createCycle。
+
+## 日志规范
+
+分级判据按顺序走（完整契约见 `core/log.js` 顶部注释）：
+
+1. **warn（真异常）**：「我们没能正确发出/收到/理解」或「依赖断裂致引擎/流程停摆」——catch 到的抛错（threw/load·persist·save failed）、发送失败或未发出（CODE_NOT_SENT）、应答畸形/不可解析、游戏符号/表行/订阅通道不可用（install failed、engine idle）、未知枚举首次遭遇。
+2. **info（生命周期 + 可预期业务拒绝）**：启动/停止/安装/关键动作完成；服务器对已成形请求返回 code≠0（限额/已满/阶段锁/目标被抢/时序竞争/活动未开），必带 code/reason。
+3. **debug（调度细节 + 循环态不可动作）**：随资源回收自愈的跳过（no free slot、材料不足、门控不过、退避中）。
+
+debug 故障可诊断条款：
+
+- debug 不吞真异常：属第 1 条的故障线索一律 warn，不得为降噪把抛错/写盘失败压在 debug。
+- 每个 skip/abort/reject/return 出口必有日志（debug 起步，高频循环靠节流或 log-collect 折叠），且必带决策上下文：cmd 号、code、坐标(x,y)、目标/队伍 ID、状态枚举值——保证 dashcam 日志流（minLvl=debug）单轨可还原引擎「为什么没动」。
+- warn 消息须含可 grep 的定位前缀（协议号/模块动作名）。
+
+其他约定：
+
+- 统一 `createLog(tag)`，tag 用大写模块名（NET/BUS/REACTOR/GAME…）；message 一律英文（登记例外：core/chat/log.js 包内日志）。
+- 判据是 code 而非 cmd；「服务器拒绝」与「CODE_NOT_SENT」分离处理。
+- 自动化撞限额的目标当日拉黑，防止逐拍重发刷屏；被拒路径不得打 warn。
+- 业务代码禁止裸 console.*；登记例外：bridge.js、core/devtools.js、core/net.js 调试 dump。
+- 录制基础设施自身日志必须 `createLog(tag, { quiet: true })` 防自录回声。
+
+## 代码风格
+
+- JSDoc 必须覆盖：类、方法、关键成员字段、常量（`@typedef/@param/@returns`；常量 `@type/@const` 说明用途）。
+- 文件头部保留大段 JSDoc 说明书（玩法链路、协议清单、闸门判据、触发源），完整设计取舍写 `extension/docs/core/<api>.md`（八节模板），不塞进源码注释。
+- 类私有成员一律原生 `#` 前缀，不用 `_` 前缀或 WeakMap。
+- 格式全仓交给 Prettier（`npm run format`，2 空格、printWidth 100、单引号），不手工调排版；保存时 VSCode 自动 Prettier + ESLint fixAll。空 catch 是合法的“吞异常降级”惯用法，但要保证降级后循环不停摆。
+- Int64 字段按字符串读，不做 Number 转换（精度陷阱）；64 位 ID 比较用字符串。
+
+## 交付前自查
+
+- [ ] `npm run build` 通过、`npm run lint` 无新增 error
+- [ ] 新 feat 在面板出现且开关生效（install/run/pause 走 reactor）
+- [ ] 未直接触碰游戏符号名/`game.get`（走了 ACL）
+- [ ] 报文订阅经 `ctx.on.push/resp/req`，退订由 reactor 托管；req↔resp 配对按 `Event.reqTime` 而非顺序猜测
+- [ ] `run()` 里新建的引擎实例已存引用，并有 `pause` 钩子收自建的定时器/队列
+- [ ] 关键决策与协议形态在文件头注释标注了报文实证来源
