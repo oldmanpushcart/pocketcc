@@ -14,6 +14,8 @@
     "lint:fix": "eslint . --fix",
     "arch": "depcruise extension/src --config .dependency-cruiser.cjs && node scripts/arch-size-guard.mjs",
     "test": "node --test",
+    "verify:secret-realm": "node scripts/replay/run.mjs --manifest secret-realm",
+    "verify:cs-hunt": "node scripts/replay/run.mjs --manifest cs-hunt",
     "skill:install": "mkdir -p \"$HOME/.qoder-cn/skills\" && ln -sfn \"$PWD/skills/dashcam-rec-analysis\" \"$HOME/.qoder-cn/skills/dashcam-rec-analysis\"",
     "format": "prettier --write \"**/*.{js,mjs,cjs,json}\"",
     "format:check": "prettier --check \"**/*.{js,mjs,cjs,json}\""
