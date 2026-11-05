@@ -584,11 +584,11 @@ export function itemListInnerHTML(items, state, fd, order) {
 }
 
 /**
- * 怪物清单字段（type:'huntlist'，自动打野）内层 HTML：固定行（每种怪一行、不可增删），逐行可编辑。
+ * 怪物清单字段（type:'huntlist'，自动打野）内层 HTML：每种怪一行（行集由 fd.catalog 给出，可为每次渲染实时反查游戏表的 getter），逐行可编辑。
  * 列：怪物类型（来自 fd.catalog；906 搜怪行把 groupType/pointType/搜索等级 落 title 供校对，道具开营行（openItem）标「用求救信开营」）| 方式（select，选项随该行怪而变）|
- *     攻打数量（0=不限）| 已打（今日已打数量，只读，值由 fd.todayText(key) 提供）| ☑ 参与猎杀。行序恒等于 fd.catalog 下标，
- *     委托靠 data-idx 定位回写 configs[fid][fd.key][idx]。等级不入清单（野怪行派发时从游戏表运行时反查最高档，levelMode='dynamic'；其余行用 catalog.level 回退值），故无等级列。
- * 值以 list（按 key 匹配）为准，缺项回落该 catalog 行默认；list 与 catalog 顺序对齐由功能侧 defaults/归一保证（行不增删故下标稳定）。
+ *     攻打数量（0=不限）| 已打（今日已打数量，只读，值由 fd.todayText(key) 提供）| ☑ 参与猎杀。行序恒等于本次渲染的 fd.catalog 下标，
+ *     该行身份同时钉在 data-hkey 上（目录刷新重排后，委托靠 key 而非下标回写 configs[fid][fd.key]）。等级不入清单（野怪行派发时从游戏表运行时反查最高档，levelMode='dynamic'；其余行用 catalog.level 回退值），故无等级列。
+ * 值以 list（按 key 匹配）为准，缺项回落该 catalog 行默认；list 与 catalog 顺序对齐由 wire 的 align 钩子逐 key 重建保证。
  * 改值（数字/下拉/勾选）由 wirePanel 面板级委托接，无结构性变化不整块重刷；「已打」随 ui.refresh 走 refreshTexts 重算（见 panel.js）。
  * @param {Array<object>} list 当前清单（configs[fid][fd.key]，行序对齐 catalog）
  * @param {object} fd 字段描述符（label / hint / todayText:(key)=>string / catalog:Array<{key,label,groupType,pointType,level,levelMode?,openItem,defaultCount,defaultMode,modes:Array<{value,label}>}>）
@@ -695,8 +695,10 @@ export function presetPoolInnerHTML(list, fd) {
 }
 
 /**
- * 联盟集结目标紧凑表（type:'rallygrid'）内层 HTML：三行合一表 [目标名][延迟入队(秒)输入][每日上限输入][今日已打文本][启用checkbox]，
- * 替代旧的「按 section 分段 + 一字段一行」布局（旧版每个目标占 4 行 × 3 段 = 12 行，压成 3 行+1 列表头）。
+ * 联盟集结目标紧凑表（type:'rallygrid'）内层 HTML：一行一目标的多行表 [目标名][延迟入队(秒)输入][每日上限输入][今日已打文本][启用checkbox]，
+ * 替代旧的「按 section 分段 + 一字段一行」布局（旧版每个目标占 4 行 × 3 段，压成 N 行+1 列表头）。
+ * 行集不要求固定长度：fd.rows 可以是 getter（联盟集结的目标目录已改为运行时反查游戏表 + 推送自学习，行会随赛季增删），
+ *   每格控件身份钉在自己的 key（delay.key / limit.key / count.key / enableKey）上，不依赖行下标。
  * 列头与数据行共用同一 5 列 CSS Grid（`.pc-rghead/.pc-rgrow` 用 display:contents 让子格直挂父栅格），列宽严格对齐。
  * 行内 delay/limit 子格的 min/step/zeroUnlimited/float 元数据挂在 r.delay / r.limit 上，wire.js 数字委托须按 rows 下探（同 tripick.parts 口径）。
  * count 只读格通过 data-fkey + r.count.get(cfg) 输出，refreshTexts 亦按此路径下探。
@@ -727,7 +729,7 @@ export function rallyGridInnerHTML(fd, cfg, fid) {
       const countText = count.get ? String(count.get(cfg) || '') : '';
       return (
         `<div class="pc-rgrow">` +
-        `<span class="pc-rgcell pc-rgc-0">${escAttr(r.name || '')}</span>` +
+        `<span class="pc-rgcell pc-rgc-0" title="${escAttr(r.name || '')}">${escAttr(r.name || '')}</span>` +
         `<span class="pc-rgcell pc-rgc-1"><input type="number" class="pc-rgin" data-id="${fid}" data-key="${escAttr(delay.key)}" min="${delay.min != null ? delay.min : 0}" step="${delay.step != null ? delay.step : 1}" placeholder="${escAttr(delay.placeholder || '')}" value="${delayVal == null ? '' : delayVal}" title="${escAttr(delay.title || '延迟入队(秒)')}"></span>` +
         `<span class="pc-rgcell pc-rgc-2"><input type="number" class="pc-rgin" data-id="${fid}" data-key="${escAttr(limit.key)}" min="${limit.min != null ? limit.min : 0}" step="${limit.step != null ? limit.step : 1}" placeholder="${escAttr(limit.placeholder || (limit.zeroUnlimited ? PLACEHOLDER_UNLIMITED : ''))}" value="${limitEmpty ? '' : limitVal}" title="${escAttr(limit.title || (limit.zeroUnlimited ? '留空 = 不限' : '每日上限'))}"></span>` +
         `<span class="pc-rgcell pc-rgc-3"><span class="pc-fval pc-rgcount" data-fid="${fid}" data-fkey="${escAttr(count.key)}">${countText}</span></span>` +

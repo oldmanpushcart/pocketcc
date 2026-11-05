@@ -159,6 +159,21 @@ export const gameData = {
   alliance() {
     return (userData() && userData().Alliance) || null;
   },
+  /**
+   * 是否在联盟（只读，Alliance.isInAlliance()；游戏侧 MonthCardController.getAutoHuntMonsterList 的集结类闸门用的正是它）。
+   * 三态而非布尔：符号缺失/内部抛错回 null（无从判定），调用方必须按「不判定」放行——把 null 当「不在盟」会在
+   *   UserData.Alliance 子链未就绪时误停整类动作（联盟类行军/集结），那是比少一道闸更糟的回归。
+   * @returns {boolean|null} true 在盟 / false 明确不在盟 / null 读不到（调用方按「无从判定」处理）
+   */
+  inAlliance() {
+    var a = userData() && userData().Alliance;
+    if (!a || typeof a.isInAlliance !== 'function') return null;
+    try {
+      return !!a.isInAlliance();
+    } catch (e) {
+      return null;
+    }
+  },
   /** 本人数字 pid（=UserData.UID，与世界地图 p.pid 同源，已用实录核对）；取不到返回 0 */
   myPid() {
     try {
@@ -292,6 +307,24 @@ export const gameData = {
       return (d && Number(d.Value)) || 0;
     } catch (e) {
       return 0;
+    }
+  },
+  /**
+   * 某 buff 是否「已持有且有效」（Value 非 0）的**三态**只读闸：与 buffValueById 的区别是把「符号不可用」与
+   * 「确实没有该 buff」分开——后者该拦，前者必须放行（把读不到当 false 会误停整类现役动作）。
+   * 调用场景：联盟集结加入前的惧星前置（游戏 AllianceAssemlbyController.joinAssemlby 对 pointType 86 查 941222.Value，缺则 tips）。
+   * @param {number} buffId buff id
+   * @returns {boolean|null} true=持有且 Value≠0；false=明确没有；null=门面/方法不可用，无从判定
+   */
+  buffPresentById(buffId) {
+    var u = userData();
+    var B = u && u[SYM.dataProps.buffPool];
+    if (!B || typeof B.getBuffDataById !== 'function') return null;
+    try {
+      var d = B.getBuffDataById(+buffId);
+      return !!(d && Number(d.Value));
+    } catch (e) {
+      return null; // 查询本身抛错（游戏侧数据未就绪）同归「无从判定」
     }
   },
   /**
@@ -862,6 +895,25 @@ export const gameData = {
       return !!u.FunctionOn(k);
     } catch (e) {
       return false;
+    }
+  },
+  /**
+   * 功能开关位按「值串」只读查询（口径同游戏 UserData.FunctionOn(MONSTER_GROUP.switch)）。
+   * 为何不用 functionOn：GameDefine.FunctionKey 的成员名与值串并不同构（实证 e.WAR_HAMMER_MONSTER="warhammer_monster"），
+   *   而配置表 switch 列存的就是**值串**；拿值串走成员名查会恒得到 undefined 而误判「未开」。
+   * 三态：FunctionOn 符号缺失/抛错 → 回 null（无从判定），调用方须按「放行」处理——把读不到当未开会误删现役玩法行。
+   * @param {string} rawKey FunctionKey 值串（配置表 switch 列原值）；空值=该行走游戏侧的 `!d.switch` 分支、即无闸 → 回 true
+   * @returns {boolean|null} true 已开 / false 明确未开 / null 无从判定
+   */
+  functionOnValue(rawKey) {
+    var k = String(rawKey == null ? '' : rawKey).trim();
+    if (!k) return true;
+    var u = userData();
+    if (!u || typeof u.FunctionOn !== 'function') return null;
+    try {
+      return !!u.FunctionOn(k);
+    } catch (e) {
+      return null;
     }
   },
   /**

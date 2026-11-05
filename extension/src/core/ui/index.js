@@ -14,6 +14,7 @@ import {
   buildPanelHTML,
   refreshFieldVisibility,
   refreshTexts,
+  rerenderFeatureCard,
   syncControls,
   buildWorldStatus,
 } from './panel.js';
@@ -92,9 +93,32 @@ export async function mountUI() {
     true,
   );
 
-  // 功能侧主动推面板刷新（如联盟集结今日计数 +1）；emit 同步，open 时才扫 DOM
-  bus.on(EVT.UI_REFRESH, function () {
-    if (!panel.hidden) refreshTexts(panel);
+  // 功能侧主动推面板刷新（如联盟集结今日计数 +1）；emit 同步，open 时才扫 DOM。
+  // payload.rebuild=<fid>：该功能的**行集**变了（目录新增/删少行），只刷只读格不会改 DOM 结构，须重建那张卡。
+  /**
+   * @type {Set<string>} 待重建的功能卡 fid。
+   * 面板 HTML 只在本函数开头 buildPanelHTML() 建一次，openPanel/closePanel 只翻 hidden —— 所以行集变化若恰好在
+   *   面板关着（或用户正在格子里输入）时被播报，不能一丢了之：记账下来，开面板时补渲染。
+   */
+  const pendingRebuild = new Set();
+
+  /** 开面板时补渲染积压的行集变化（每个 fid 只试一次，失败也不重试，免得不存在的卡反复排队）。 */
+  function flushRebuild() {
+    if (!pendingRebuild.size) return;
+    for (const fid of [...pendingRebuild]) {
+      pendingRebuild.delete(fid);
+      rerenderFeatureCard(panel, fid);
+    }
+  }
+
+  bus.on(EVT.UI_REFRESH, function (payload) {
+    const fid = payload && payload.rebuild;
+    if (fid) {
+      // 面板关着 / 焦点在卡内（rerenderFeatureCard 的保守闸门跳过）：两种情形都记账待开面板时补，不能把行集变化丢掉
+      if (panel.hidden || !rerenderFeatureCard(panel, fid)) pendingRebuild.add(fid);
+    }
+    if (panel.hidden) return;
+    refreshTexts(panel);
   });
 
   let pos = await readIconPos();
@@ -158,6 +182,7 @@ export async function mountUI() {
   function openPanel() {
     placePanel();
     panel.hidden = false;
+    flushRebuild(); // 收起期间播报过的行集变化，此时才真能重渲染（展开本身不动 DOM 结构）
     refreshTexts(panel);
     renderWorldStatus(); // 展开时再核一次世界态（订阅已常驻，此处兜住极早期 world.change 先于挂订阅的窗口）
   }

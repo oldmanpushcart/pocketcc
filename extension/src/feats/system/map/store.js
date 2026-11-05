@@ -252,7 +252,9 @@ export class MapStore {
         continue;
       }
       if (!b.bound || !isFinite(b.bound.minX)) b.bound = newBucketMeta().bound;
-      b.ts = b.ts | 0;
+      // ts 是本地 epoch 毫秒，只能取原值：`| 0` 是 ToInt32 截断，Date.now() 越界后会绕成负数，
+      //   而 isFresh() 对 `b.ts <= 0` 直接判不新鲜 —— 截断一次就等于整张地图永远「建议重扫」。
+      b.ts = Number(b.ts) || 0;
       b.done = !!b.done;
       b.count = b.count | 0;
       b.round = b.round | 0;
@@ -324,7 +326,7 @@ export class MapStore {
       }
       const b = this.bucketMeta(vk);
       b.count = g.x.length;
-      if (!b.ts && legacyMeta && legacyMeta.ts) b.ts = legacyMeta.ts | 0; // 旧旧档只有一个总时间戳，均摊给各桶免遭「建议重扫」
+      if (!b.ts && legacyMeta && legacyMeta.ts) b.ts = Number(legacyMeta.ts) || 0; // 旧旧档只有一个总时间戳，均摊给各桶免遭「建议重扫」
     }
     try {
       await storage.slot.set(SLOT_META, this._indexObject());
@@ -353,7 +355,7 @@ export class MapStore {
     for (const key of Object.keys(this.meta.buckets)) {
       const b = this.meta.buckets[key];
       buckets[key] = {
-        ts: b.ts | 0,
+        ts: Number(b.ts) || 0,
         done: !!b.done,
         count: b.count | 0,
         round: b.round | 0,

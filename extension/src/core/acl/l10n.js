@@ -41,6 +41,15 @@ export const l10n = {
     }
   },
   /**
+   * 配置表读数面是否已就绪（游戏 bundle 已加载且 TableManager.TABLE 单例在场）。
+   * 存在理由：表读不到有两种语义——「还没加载/未就绪」（会自愈，只配 debug）与「改版真读不到」（该 warn），
+   *   只靠 tableRow/tableRows 回 null/[] 分不出，调用方（目录回退路径）拿本能力门控警报。
+   * @returns {boolean} true=可读配置表
+   */
+  tableReady() {
+    return game.ready() && TABLE() != null;
+  },
+  /**
    * 配置表行查询（只读）。
    * @param {string} semantic 语义表名（emotion/emotionNew/emojiGif/item/building）、游戏 TableName 成员名（如 'BOSS'），也可直接传游戏表名串
    * @param {*} id 行 id

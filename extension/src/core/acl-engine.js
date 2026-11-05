@@ -201,10 +201,15 @@ const probes = new Map();
 /** @type {Set<string>} 已记过 warn 的探测键：失败不缓存（下次自愈重探），但只警报一次 */
 const probeWarned = new Set();
 
+/** @type {Set<string>} 已记过「bundle 未就位」debug 的探测键（同键只提一次，不刷屏） */
+const probeDeferred = new Set();
+
 /**
  * 惰性探测：首次解析并缓存，失败记一条 warn（符号漂移警报）。
  * 失败不落缓存：这些符号都在世界地图子包，核心就绪时可能尚未注册，
  * 缓存 null 会把一次早探测钉死整个页面生命周期（自愈不了）。
+ * 警报口径：`__require` 未定义（游戏 bundle 未加载）时只回 null 不 warn，
+ *   调用方要区分「还没就绪」与「真读不到」用 l10n.tableReady() 一类能力。
  * @param {string} key 缓存键（符号语义名）
  * @param {Function} resolve 解析函数，返回目标对象或 null/报错
  * @returns {*|null}
@@ -219,6 +224,17 @@ export function probe(key, resolve) {
     probes.set(key, v);
     return v;
   }
+  // 游戏 bundle 还没把 `__require` 挂上全局（内容脚本求值/面板求值期）：此窗里任何符号都解析不到，
+  // 属加载时序而不属符号漂移，不打警报（否则每次刷页都误报一排「symbol drift」）；失败也不入缓存，下一拍自愈重探。
+  // 完全静默会反过来掉进「真漂移了但没人说」的坑（若 `__require` 永不出现），故留一条可 grep 的 debug 轨迹；
+  //   长期未就绪的最终业务结论仍由各 feat 的 install 报（missing 清单 / engine idle 是 warn 级）。
+  if (!game.ready()) {
+    if (!probeDeferred.has(key)) {
+      probeDeferred.add(key);
+      log.debug('probe deferred: game bundle not loaded yet. key=%s', key);
+    }
+    return null;
+  }
   if (!probeWarned.has(key)) {
     probeWarned.add(key);
     log.warn(
@@ -227,6 +243,51 @@ export function probe(key, resolve) {
     );
   }
   return null;
+}
+
+/**
+ * 探测面状态（调试口径，业务路径不得调用）：ok=已解析并缓存的键，warned=解析失败且已警报过的键，
+ *   deferred=因游戏 bundle 未就位而推迟的键（加载时序，不是漂移）。
+ * 用于判定一条「probe failed」告警究竟是**加载时序**（warned 里出现过、现在 ok 里也有 → 已自愈）
+ *   还是**改版符号漂移**（留在 warned、且控制台复现不了原对象）——同 pocketcc.net.secondaryStatus() 的定位。
+ * @returns {{ok:string[], warned:string[], deferred:string[]}} ok=成功缓存键，warned=失败并警报过的键，deferred=推迟过的键
+ */
+export function probeStatus() {
+  return {
+    ok: Array.from(probes.keys()),
+    warned: Array.from(probeWarned),
+    deferred: Array.from(probeDeferred),
+  };
+}
+
+/**
+ * 强制重探（调试口径）：丢掉某键（或全部）的成功缓存与「只警一次 / 只 debug 一次」标记，下一次取用即按当前符号表重新解析，
+ *   失败可在控制台再看到那条 warn——改版当天不必刷页，清完就地重探（同 pocketcc.net.reprobeSecondary()）。
+ * @param {string} [key] 目标探测键；省略则清全部
+ * @returns {string[]} 被清除的键（省略 key 时返回清除前的全部键，去重）
+ */
+export function reprobe(key) {
+  if (key != null) {
+    probes.delete(key);
+    probeWarned.delete(key);
+    probeDeferred.delete(key);
+    return [key];
+  }
+  var out = [];
+  var seen = {};
+  [Array.from(probes.keys()), Array.from(probeWarned), Array.from(probeDeferred)].forEach(
+    function (ks) {
+      ks.forEach(function (k) {
+        if (seen[k]) return;
+        seen[k] = 1;
+        out.push(k);
+      });
+    },
+  );
+  probes.clear();
+  probeWarned.clear();
+  probeDeferred.clear();
+  return out;
 }
 
 // ─────────────────────── 能力校验表（feat 安装期依赖自检） ───────────────────────

@@ -190,9 +190,10 @@ export const PANEL_CSS = `
     .pc-smove:hover{background:rgba(255,255,255,.1);}
     .pc-smove:disabled{opacity:.3;cursor:default;}
     .pc-row input[type=checkbox]{width:16px;height:16px;cursor:pointer;flex:0 0 auto;}
-    /* 联盟集结目标紧凑表（type:'rallygrid'）：三行合一表 [目标名][延迟入队(秒)输入][每日上限输入][今日已打文本][启用checkbox]，
-       列头与数据行共用同一 5 列 CSS Grid（行包 div 靠 display:contents 将子格直接挂到父栅格），窄面板下输入框弹性收缩、标签只占必要宽度 */
-    .pc-rg{display:grid;grid-template-columns:40px 1fr 1fr 62px 20px;gap:6px;align-items:center;
+    /* 联盟集结目标紧凑表（type:'rallygrid'）：一行一目标的多行表 [目标名][延迟入队(秒)输入][每日上限输入][今日已打文本][启用checkbox]，
+       列头与数据行共用同一 5 列 CSS Grid（行包 div 靠 display:contents 将子格直接挂到父栅格），窄面板下输入框弹性收缩、标签只占必要宽度；
+       目标名列取 minmax(40px,auto)：行集由运行时目录给出，学习行的标签（如「雷达集结怪#94」）比旧手写三行长，定宽 40px 会跨列溢出 */
+    .pc-rg{display:grid;grid-template-columns:minmax(40px,auto) 1fr 1fr 62px 20px;gap:6px;align-items:center;
       width:100%;margin:6px 0 10px;font-size:12px;}
     .pc-rghead{display:contents;}
     .pc-rghead > .pc-rgcell{color:#9ecbff;font-size:11px;opacity:.85;text-align:center;white-space:nowrap;
@@ -200,7 +201,7 @@ export const PANEL_CSS = `
     .pc-rghead > .pc-rgc-0{text-align:left;}
     .pc-rgrow{display:contents;}
     .pc-rgrow > .pc-rgcell{display:flex;align-items:center;justify-content:center;gap:2px;min-width:0;}
-    .pc-rgrow > .pc-rgc-0{justify-content:flex-start;color:#e8eef7;}
+    .pc-rgrow > .pc-rgc-0{justify-content:flex-start;color:#e8eef7;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
     .pc-rgrow > .pc-rgcell input[type=number].pc-rgin{width:100%;min-width:0;padding:2px 4px;border-radius:5px;
       box-sizing:border-box;border:1px solid rgba(255,255,255,.14);background:rgba(255,255,255,.06);
       color:#e8eef7;font:inherit;font-variant-numeric:tabular-nums;}

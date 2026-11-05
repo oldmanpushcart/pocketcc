@@ -19,7 +19,17 @@
  * 合规：全部能力为只读查询或调用游戏原生导航/UI 动作，不改写游戏数据（只读+发包红线）。
  */
 import { game } from './game.js';
-import { SYM, probe, ns, CAPS, checkCap, registerSharedValue, sharedValue } from './acl-engine.js';
+import {
+  SYM,
+  probe,
+  reprobe,
+  probeStatus,
+  ns,
+  CAPS,
+  checkCap,
+  registerSharedValue,
+  sharedValue,
+} from './acl-engine.js';
 import { l10n } from './acl/l10n.js';
 import { bits } from './acl/bits.js';
 import { session } from './acl/session.js';
@@ -69,13 +79,17 @@ export { gameConf };
 /**
  * 调试面（仅供控制台，不入业务路径）：与 core 工具同挂 window.pocketcc（见 content.entry.js），
  * 逆向时 `pocketcc.gameApi.march.flags()` 看战场判定器是否解析成功、
- * `pocketcc.gameApi.march.resolve(13)` 看基础 marchType 在当前战场漂成哪个值（无需等到活动图里复现）。
+ * `pocketcc.gameApi.march.resolve(13)` 看基础 marchType 在当前战场漂成哪个值（无需等到活动图里复现）；
+ * 看到一条 `probe "X" failed` 告警后用 `pocketcc.gameApi.probeStatus()` 分清三种态（ok=已解析、warned=解析失败并警报过、
+ *   deferred=游戏 bundle 未加载而推迟），再用 `pocketcc.gameApi.reprobe('TableManager.TABLE')` 就地重探（不刷页），重探仍失败才去核符号。
  */
 export const debug = {
   SYM,
   CAPS,
   checkCap,
   probe,
+  probeStatus,
+  reprobe,
   ns,
   game,
   l10n,

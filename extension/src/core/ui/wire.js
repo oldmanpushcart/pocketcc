@@ -662,8 +662,8 @@ export function wirePanel(panel) {
     applyFeature(t.f);
   });
 
-  // 怪物清单字段（type:'huntlist'，自动打野）：固定行不可增删，逐行改值（数量、攻打方式、参与；等级不入清单，野怪行派发时由功能侧从游戏表运行时反查）。
-  // 行序恒等于 fd.catalog 下标；数字/勾选/下拉均就地写回 list[idx]，无结构性变化不重刷（攻打方式选项随该行 catalog 固定）。
+  // 怪物清单字段（type:'huntlist'，自动打野）：逐行改值（数量、攻打方式、参与；等级不入清单，野怪行派发时由功能侧从游戏表运行时反查）。
+  // 行集来自 fd.catalog（可以是getter：自动打野的目录已改为运行时反查游戏表，行会随赛季增删）；align 令「存档序==catalog 序」，写回按该行 data-hkey 反查下标。
   const hlTarget = (el) =>
     // 选择器排除 `.pc-ct`：表格型 ctrlrow 容器的 class 就是 "pc-hl pc-ct"，与本字段容器同类名；
     //   data-attr schema 统一后两者都带 data-id + data-fkey，靠属性反查已分不开，只能在选择器上挡。
@@ -684,7 +684,17 @@ export function wirePanel(panel) {
           : { key: mo.key, count: mo.defaultCount | 0, mode: mo.defaultMode, on: !!mo.defaultOn };
       });
     });
-  const hlIdx = (el) => idxOf(el, '.pc-hlrow');
+  const hlIdx = (el, list) => {
+    // 行身份优先用该行渲染时钉死的 data-hkey 到存档数组里反查：目录已改为运行时反查游戏表（表驱动），
+    //   面板渲染后目录可能刷新重排，而 align 把存档数组重建为新目录序——此时「下标==DOM 行序」不再成立，
+    //   按下标写回会勾到别的怪行。key 反查对静态目录与动态目录都等价（旧行仍按 data-idx 回落，行为不变）。
+    const row = el && el.closest ? el.closest('.pc-hlrow') : null;
+    const hk = row && row.dataset ? row.dataset.hkey : '';
+    if (hk) {
+      for (let i = 0; i < list.length; i++) if (list[i] && list[i].key === hk) return i;
+    }
+    return idxOf(el, '.pc-hlrow');
+  };
   panel.addEventListener('change', (e) => {
     const el = e.target;
     if (!el.classList) return;
@@ -694,7 +704,7 @@ export function wirePanel(panel) {
     if (!isNum && !isSel && !isChk) return;
     const t = hlTarget(el);
     if (!t) return;
-    const idx = hlIdx(el);
+    const idx = hlIdx(el, t.list);
     if (idx < 0 || idx >= t.list.length) return;
     const part = el.dataset.part;
     if (isChk) t.list[idx][part] = !!el.checked;

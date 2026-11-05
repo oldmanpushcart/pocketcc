@@ -223,6 +223,39 @@ export function buildPanelHTML() {
 }
 
 /**
+ * 重建某个功能卡片的字段区 DOM（**行集**变了才需要：只刷值不改结构看不见新增行）。
+ * 面板原本是「一次性渲染 + 只刷值」模型，而集结目标 / 打野清单的行集现在来自运行时反查游戏表 + 推送自学习：
+ *   不重建 DOM 就少一行，用户视角即「日志说加了、面板里没看到」。
+ * 重走首次渲染同一入口（buildFieldsHTML），控件值全从 configs 取回，不会丢已存配置；两道保守闸门：
+ *   该卡不在当前面板返回 false，焦点在卡内（用户正在输入）也返回 false。
+ *   注意面板展开/收起只翻 .pc-sec-body 的 hidden，而整块面板 HTML 只在 mountUI 建一次 —— 所以上面两种跳过情形
+ *   不会靠「用户自己打开面板」自愈；调用侧（core/ui/index.js 的 pendingRebuild）负责记账并在开面板时补渲染。
+ * @param {Element} root 面板根
+ * @param {string} fid 功能 id（如 'allianceRally'）
+ * @returns {boolean} 是否真的重建了
+ */
+export function rerenderFeatureCard(root, fid) {
+  if (!root || !/^[-\w]+$/.test(String(fid))) return false; // fid 来自功能侧自报，先验字再进选择器
+  const card = root.querySelector(`.pc-sec[data-fid="${fid}"]`);
+  const body = card && card.querySelector('.pc-sec-body');
+  if (!body) return false; // 该卡不在当前面板（不可展开或不属于本面板）：由调用侧记账，别默默当成已刷完
+  // 面板在 Shadow DOM 里，document.activeElement 只会给到宿主元素，须取所属根的同名属性
+  const focused =
+    (body.getRootNode() && body.getRootNode().activeElement) || document.activeElement;
+  if (focused && body.contains(focused)) return false; // 正在输入：不抢焦点、不丢未落盘的值（由调用侧记账后重试）
+  const f = findFeature(fid);
+  if (!f) return false;
+  body.innerHTML = buildFieldsHTML(fid, f) || '<div class="pc-empty">无可调参数</div>';
+  // 有状态清单（好友/优先级/物品）靠 widgets 重绑，与首次渲染同口径；其余容器型字段走事件委托，无需装配
+  body.querySelectorAll('.pc-ulist').forEach(mountUidList);
+  body.querySelectorAll('.pc-slist').forEach(mountSortList);
+  body.querySelectorAll('.pc-ilist').forEach(mountItemList);
+  refreshFieldVisibility(card); // 条件字段显隐随新行集重算
+  refreshTexts(card);
+  return true;
+}
+
+/**
  * 刷新面板内所有 type:'text' 只读字段：按 descriptor.get() 重算当前值。
  * 另特处理怪物清单（huntlist）的「已打」只读格（.pc-hlstat[data-hlstat]）：按行 key 调 fd.todayText(key)。
  * 面板打开 / 卡片展开 / 切 TAB / 功能侧 ui.refresh 时调用，无需定时器（避免常驻轮询）。
