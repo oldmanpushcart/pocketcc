@@ -1,0 +1,30 @@
+# 行尾单一真相：仓库内与工作区一律 LF。
+#
+# 为什么必须有这份文件：本机 core.autocrlf=true 且此前仓内无 .gitattributes，
+# git 于是按「仓库存 LF、签出写 CRLF」处理，任何人跑一次 `prettier --write` 或
+# 编辑器按 LF 存盘，那批文件就立刻变成「git status 挂 M、git diff 查不出任何内容」
+# 的幽灵脏（本次实测：346 个追踪文件里 152 个磁盘 CRLF / 189 个 LF，索引 blob
+# 则 100% 无 CR）。CRLF 还与 .prettierrc.json 的 endOfLine:"lf" 直接冲突，
+# `npm run format:check` 因此长年报 80 个文件；归一后只剩 1 个
+# （secret-realm/heal.js 的 printWidth 折行，属既存格式债、与本行尾无关）。
+#
+# eol=lf 优先级高于 core.autocrlf，故 Windows 上签出也是 LF；跨平台字节一致，
+# 幽灵脏与 format:check 的 EOL 噪声一并消除。
+#
+# 已核实的现状：346 个追踪文件的索引 blob 本就 100% 无 CR（`git add --renormalize .`
+# 暂存为空），所以这份文件不重写任何 blob，只约束签出与后续提交。
+# 例外：references/竞对逆向/竞品A/ 下若干文件带只读属性（取证快照的防误改手段），
+# 归一脚本不改权限、故它们磁盘上仍是 CRLF；因 eol=lf 在读取时按 LF 比对，
+# `git status` 依旧干净，只是 `git checkout` 若强制重写会失败——遇到时先撤只读位。
+* text=auto eol=lf
+
+# 二进制：既不换行尾，也不做行级文本 diff / merge
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.webp binary
+*.ico binary
+*.woff binary
+*.woff2 binary
+*.ttf binary
