@@ -9,7 +9,10 @@
  *
  * 刷新节奏（静态时刻表）：游戏日（以 daily.refreshMs 为 0 点）切成 24 个等长小时格，「时段模板」给每格一个次数占比，
  *   「今日刷新上限 cap」按占比分到各格（最大余数法，保证 Σ=cap），格内间隔 = 1h / 该格次数；
- *   每次只查表取“下一个格点”，错过的格点不补刷——cap 与刷新频率单调对应（调大变密、调小变疏）。
+ *   每次只查表取“下一个格点”（落点须领先当前时刻一个 reloadGap，同一格点至多消费一次），错过的格点不补刷——
+ *   cap 与刷新频率单调对应（调大变密、调小变疏）。
+ *   长睡按 hopCap 分段：分段醒只重查表（6486/999）、不出列表也不计配额，否则格内间隔 > hopCap 的稀疏格会每格点吃两次 cap；
+ *   格内间隔 < reloadGap 的极端密格则改为跳点欠耗——两面夹住后「一天实测 ≈ Σ=cap」才是真不变量。
  *
  * 协议族（NRequestIdV2 实证，均走 net.sendPBV2 新 PB 链路，ret.data 已是解码对象）：
  *   6473 ESCORT_TRUCK_LOOT_TRUCK_VIEW_OPEN {funcType, localServerDisable:1} → {funcType, lootNum, lootTruckViewList:[LootTruckView]}；
@@ -138,10 +141,10 @@ const cfg = {
  *   面板只暴露「时段模板（三档内置）+ 今日刷新上限」，占比表内置防误调。
  * @type {{capDefault:number, slotMs:number, hopCap:number, presetDefault:string}}
  */
-const REFRESH = {
+export const REFRESH = {
   capDefault: 300, // 今日刷新上限默认值（面板可改）
   slotMs: 3600000, // 一格 = 1 小时
-  hopCap: 1000 * 60 * 10, // 长睡分段上限：0 占比格与日界前分段醒来按同一张表重算（幂等），兼防刷新点被推正后睡过头
+  hopCap: 1000 * 60 * 10, // 长睡分段上限：分段醒只重查表（cycleRun 据 plannedPointMs 判别，不消耗 cap），兼防刷新点被推正后睡过头
   presetDefault: 'normal',
 };
 
@@ -150,13 +153,28 @@ const REFRESH = {
  *   热点（00:10–02:00 玩家集中发车）最密、白天居中、深夜最稀；「省心」把 20 点后压到 0（该档当晚不刷，睡到次日）。
  * @type {Object<string, number[]>}
  */
-const REFRESH_PRESETS = {
-  /** 密集：全天都盯，深夜也不归零（Σ=94） */
-  dense: [6, 6, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 3, 3, 2, 2],
-  /** 正常（默认）：热点密·白天中·深夜稀（Σ=70） */
-  normal: [9, 9, 1, 1, 1, 1, 1, 1, 4, 4, 5, 5, 3, 3, 3, 3, 3, 3, 3, 3, 1, 1, 1, 1],
+export const REFRESH_PRESETS = {
+
+  /** 密集：全天都盯，深夜也不归零 */
+  dense: [
+    5, 5, 5, 5, 5, 5, 5, 5, 
+    5, 5, 5, 5, 5, 5, 5, 5, 
+    5, 5, 5, 5, 5, 5, 5, 5,
+  ],
+
+  /** 正常（默认）：热点密·白天中·深夜稀 */
+  normal: [
+    9, 9, 1, 1, 1, 1, 1, 1, 
+    4, 4, 5, 5, 3, 3, 3, 3, 
+    3, 3, 3, 3, 1, 1, 1, 1,
+  ],
+
   /** 省心：只盯热点与上午，20 点后不刷（Σ=54） */
-  calm: [6, 6, 3, 3, 3, 3, 3, 3, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 0, 0, 0, 0],
+  calm: [
+    6, 6, 3, 3, 3, 3, 3, 3, 
+    2, 2, 2, 2, 2, 2, 2, 2, 
+    2, 2, 2, 2, 0, 0, 0, 0,
+  ],
 };
 
 /** 模板档位的面板文案（值 = select 选项 label） */
@@ -172,6 +190,11 @@ var refreshCap = REFRESH.capDefault;
 var refreshPreset = REFRESH.presetDefault;
 /** @type {number[]} 当前生效的 24 格刷新次数分配（configure 按 cap × 占比重算，Σ=cap） */
 var slotCounts = allocateSlots(REFRESH_PRESETS[REFRESH.presetDefault], REFRESH.capDefault);
+/**
+ * @type {number} 本轮排程要打的格点（绝对时刻 ms，由 planNextRefresh 写入；0 = 非格点出口或人工/推送 kick）。
+ *   cycleRun 靠它判别「grid-hop 分段醒」：分段醒只重查表（6486/999），不打列表——分段是防睡错日界的保险，不该是配额消费者。
+ */
+var plannedPointMs = 0;
 
 /** @type {object|null} 网络底座 */
 var net;
@@ -298,12 +321,13 @@ function configure(partial) {
     refreshPreset = nextPreset;
     slotCounts = allocateSlots(REFRESH_PRESETS[refreshPreset], refreshCap);
     // 时刻表变了：kick 立即跑一轮落到新表（睡眠中被打断、在飞时合并为 pending，本轮尾返 0 补扫）；
-    // 格点仍幂等——nextGridPointMs 只取未来格点、不回填已错过点，这次即时刷多出的一次往返由 reloadGap 节流 + refreshUsed≥cap 总闸封顶。
-    if (aliveFn()) cycle.kick();
+    // 格点仍幂等——nextGridPointAbs 只取领先 reloadGap 的未来格点、不回填已错过点，故这次即时刷至多多一次往返，
+    // 由 refreshUsed≥cap 总闸封顶（改 cap/模板是人工动作，一天数次量级，不为其加特判）。
+    if (aliveFn()) kickNow();
   }
   rankMap = new Map();
   for (var i = 0; i < order.length; i++) rankMap.set(order[i], i);
-  if (threatOn && (presetIdx !== prevPreset || !my.ready)) cycle.kick(); // 换攻击预设/尚未探到：唤醒一轮刷新展示快照（配额耗尽也能探；缓存作废靠 powerFp 比对，不在此处做）
+  if (threatOn && (presetIdx !== prevPreset || !my.ready)) kickNow(); // 换攻击预设/尚未探到：唤醒一轮刷新展示快照（配额耗尽也能探；缓存作废靠 powerFp 比对，不在此处做）
   prevPreset = presetIdx;
   bus.emit(EVT.UI_REFRESH); // 阈值/开关变更后即时重算面板“可打上限”展示
 }
@@ -903,13 +927,22 @@ async function lootFlow(cand) {
 /**
  * 刷一轮：同步配额 → 配额闸门 → 拉列表（首发 6473/后续 6474，reloadGap 节流）→ 过滤可打候选（命中勾选物品 + 通过校验 + 未被拒拉黑）
  *   → 按优先级升序排 → 整批替换 queue → 交消费。永不 reject。
+ * @param {boolean} [resyncOnly] grid-hop 分段醒口径：只做重查表（6486 同步配额/刷新点 + 999 我方快照）就返回，
+ *   不出列表请求、不推 refreshUsed（分段是防睡错日界的保险，不是配额消费者）
  * @returns {Promise<void>}
  */
-async function doScan() {
+async function doScan(resyncOnly) {
   try {
     await fetchRefresh();
     if (!aliveFn()) return;
     if (threatOn) await probeSelf(); // 解耦：每轮一进来先探我方快照（不依赖配额/新列表），保证面板展示与后续判定都有数据
+    if (resyncOnly) {
+      log.debug(
+        'grid-hop wake: table re-synced, list reload skipped (point in %ds).',
+        Math.round((plannedPointMs - serverNowMs()) / 1000),
+      );
+      return; // 分段醒：刷新点可能已被推正，planNextRefresh 会按新日帧重算格点
+    }
     if (daily.maxDaily <= 0) {
       log.warn('escort_truck_func_type row unavailable, skip scan.');
       queue.length = 0;
@@ -1111,7 +1144,7 @@ function curSlotOf(nowMs) {
  * @param {number} cap 今日刷新总数
  * @returns {number[]} 24 格各自的刷新次数
  */
-function allocateSlots(weights, cap) {
+export function allocateSlots(weights, cap) {
   var ws = [],
     sum = 0,
     i;
@@ -1144,20 +1177,30 @@ function allocateSlots(weights, cap) {
 }
 
 /**
- * 下一格点（绝对时刻 ms），静态时刻表口径：本格内取第一个不早于 now 的点（k = ceil((now-格起点)/格内间隔)），
+ * 下一格点（纯函数，单测直驱）：本格内取第一个「领先 nowMs 至少 minLeadMs」的点（k = ceil((nowMs+minLeadMs-格起点)/格内间隔)），
  * 本格点位已走完就顺延到后面第一个有配额的格——错过的格点不补刷，天然实现「已流逝时间扣掉对应次数」。
  * 格边界安全：上一格末点（3600-step）距下一格首点恰为一个格内间隔，不会扎堆。找不到返回 null。
- * @param {number} nowMs
- * @returns {number|null}
+ *
+ * minLeadMs 是本格的回归红线（历史事故：cap=5000 在一个游戏日 14 小时就烧光）：格点数学用 serverNowMs()（秒级截断、与本地
+ * 时钟两套口径），休眠却走本地 setTimeout → 唤醒常落在格点前零点几秒。若只取「不早于 now」的点，本轮 doScan/consume 结束后
+ * ceil 会**重新命中同一个格点**、delay 落到亚秒级，再被抬到 reloadGap 地板 → 3s 后又打一次真实列表往返；而地板值恰等于
+ * doScan 的同名节流闸门（3000ms），补刷刚好越过闸门照计 refreshUsed → 一个格点吃两次配额（实测 1.34~1.71 次/格点）。
+ * 要求落点领先 now 一个 reloadGap 后，同一格点不可能被命中两次，进度严格单调；step < reloadGap 的极端密格改为「跳点欠耗」
+ * （略少于计划），而不是贴地板超支——cap 再大也不会失控。
+ * @param {number} nowMs 当前时刻（与 dayStart 同一时钟口径）
+ * @param {number[]} counts 24 格刷新次数（allocateSlots 产物）
+ * @param {number} dayStart 本游戏日 0 点绝对时刻（ms）
+ * @param {number} minLeadMs 落点须领先 nowMs 的最小毫秒数（调用方传 cfg.reloadGap；0 = 退化为旧口径，仅供对照）
+ * @returns {number|null} 下一个格点（绝对 ms）；今日格点走完返回 null
  */
-function nextGridPointMs(nowMs) {
-  var dayStart = dayStartMs(nowMs);
+export function nextGridPointAbs(nowMs, counts, dayStart, minLeadMs) {
+  var probe = nowMs + Math.max(0, minLeadMs | 0); // 探测时刻带领先量：杜绝同格点二次命中
   for (var i = 0; i < 24; i++) {
-    var n = slotCounts[i] | 0;
+    var n = counts[i] | 0;
     if (n <= 0) continue; // 0 占比格：整小时不刷
     var start = dayStart + i * REFRESH.slotMs,
       step = REFRESH.slotMs / n;
-    var k = Math.ceil((nowMs - start) / step);
+    var k = Math.ceil((probe - start) / step);
     if (k < 0) k = 0; // 尚未开始的格：取其首点
     if (k >= n) continue; // 本格点位已全部走过：顺延
     return start + k * step;
@@ -1166,58 +1209,89 @@ function nextGridPointMs(nowMs) {
 }
 
 /**
- * 下一轮刷新间隔：查静态时刻表取下一个格点（cap 定总量、模板定各小时占比，间隔与 cap 单调相关）。
+ * 择时下拍（纯函数，单测直驱）：把四道闸门 + 格点夹取收在一处，便于离线断言。
  *   ① 成功配额耗尽 → 睡到服务器刷新点(+缓冲)；② 实际往返次数触 cap → 防失控，睡到下一刷新点；
- *   ③ 未同步到刷新点 → 退化 activeRefresh；④ 今日格点走完（占比全 0 或已过完）→ 睡到日界。
- *   长睡按 hopCap 分段：醒来重查同一张表（格点幂等，不会补刷），兼防 refreshMs 被推正后还睡在旧日帧上。
+ *   ③ 未同步到刷新点 → 退化 activeRefresh；④ 今日格点走完（占比全 0 或已过完）→ 睡到日界；
+ *   ⑤ 正常格点：delay = 格点 - now；超过 hopCap 则夹成 hopCap 分段（reason=grid-hop，point 仍返回原格点）。
+ * 出口 delay 恒 >0（cycle 对 delay<=0 会立即再跑，变成不计数但持续发包的空转）；grid 出口天然 >= 领先量，
+ *   所以这里只兜一个 1ms 下限作异常路护栏，**不是** reloadGap 地板（地板与 doScan 节流闸门同值会把同一格点的
+ *   二次往返放进来，双倍吃掉 cap——见 nextGridPointAbs 注释）。
+ * @param {number} nowMs 当前时刻（与 dayStart 同一口径，运行时传 serverNowMs()）
+ * @param {number[]} counts 24 格刷新次数（allocateSlots 产物）
+ * @param {number} dayStart 本游戏日 0 点（ms）
+ * @param {{refreshUsed:number, cap:number, maxDaily:number, dailyLeft:number, refreshMs:number, activeRefresh:number, idleRefresh:number, flipBuffer:number}} st 运行时状态快照
+ * @param {number} leadMs 格点领先量（运行时传 cfg.reloadGap；缺省也取 cfg.reloadGap——漏传不得静默退化为旧口径）
+ * @returns {{delay:number, reason:string, point:number}} point = 本轮排程要打的格点（绝对 ms）；非格点出口为 0
+ */
+export function planRefresh(nowMs, counts, dayStart, st, leadMs) {
+  var lead = leadMs == null ? cfg.reloadGap : leadMs; // 领先量是择点的不变量，缺省即安全口径（lead=0 会让 ceil 重命中同一格点）
+  /** @type {function(number, string, number=): object} 统一兜底：delay 保证 >0，point 缺省 0（绝不用 |0 截：绝对 epoch 毫秒走 Int32 会回绕成分段醒错判） */
+  function fin(delay, reason, point) {
+    return { delay: delay > 0 ? delay : 1, reason: reason, point: point == null ? 0 : point };
+  }
+  if (st.maxDaily > 0 && st.dailyLeft <= 0) {
+    // ① 成功配额耗尽
+    var ms = st.refreshMs - nowMs + st.flipBuffer;
+    return fin(ms > 0 ? ms : st.idleRefresh, ms > 0 ? 'quota' : 'idle-fallback');
+  }
+  if (st.refreshUsed >= st.cap) {
+    // ② 实际往返次数触顶（手动/异常放大兼底）
+    var m2 = st.refreshMs - nowMs;
+    return fin(m2 > 0 ? m2 : st.idleRefresh, m2 > 0 ? 'budget' : 'idle-fallback');
+  }
+  if (!st.refreshMs) return fin(st.activeRefresh, 'no-refresh-point'); // ③ 未同步到刷新点：时刻表无从对齐
+  var next = nextGridPointAbs(nowMs, counts, dayStart, lead);
+  if (next == null) {
+    // ④ 今日格点走完：睡到日界重开
+    var m3 = st.refreshMs - nowMs;
+    return fin(m3 > 0 ? m3 : st.idleRefresh, m3 > 0 ? 'day-done' : 'idle-fallback');
+  }
+  // ⑤ 格点就位；长睡按 hopCap 分段（醒来只重查表，不消耗配额，见 cycleRun 的分段醒判据）
+  var delay = next - nowMs;
+  if (delay > REFRESH.hopCap) return fin(REFRESH.hopCap, 'grid-hop', next);
+  return fin(delay, 'grid', next);
+}
+
+/**
+ * 下一轮刷新间隔：查静态时刻表取下一个格点（cap 定总量、模板定各小时占比，间隔与 cap 单调相关）。
+ *   闸门与夹取均在纯函数 planRefresh 里（单测直驱）；本函数只取数、记 plannedPointMs、输出一条决策日志。
+ *   格点一律带 reloadGap 领先量（nextGridPointAbs），故此处不再需要「delay 不足就抬到 reloadGap」的地板。
+ *   长睡按 hopCap 分段：分段醒只重查表（格点幂等、不补刷、不出列表），兼防 refreshMs 被推正后还睡在旧日帧上。
  * 长期运行排查：各出口收敛为一条 debug 决策日志，reason 定位闸门、slot/step 展示本格计划密度。
  * @returns {number} 毫秒
  */
 function planNextRefresh() {
   var nowMs = serverNowMs();
-  var delay, reason;
-  if (daily.maxDaily > 0 && dailyLeft() <= 0) {
-    // ① 成功配额耗尽
-    var ms = daily.refreshMs - nowMs + cfg.flipBuffer;
-    delay = ms > 0 ? ms : cfg.idleRefresh;
-    reason = ms > 0 ? 'quota' : 'idle-fallback';
-  } else if (stats.refreshUsed >= refreshCap) {
-    // ② 实际刷新次数触顶（手动/异常放大兼底）
-    var m2 = daily.refreshMs - nowMs;
-    delay = m2 > 0 ? m2 : cfg.idleRefresh;
-    reason = m2 > 0 ? 'budget' : 'idle-fallback';
-  } else if (!daily.refreshMs) {
-    // 未同步到刷新点：时刻表无从对齐
-    delay = cfg.activeRefresh;
-    reason = 'no-refresh-point';
-  } else {
-    var next = nextGridPointMs(nowMs);
-    if (next == null) {
-      // ④ 今日格点走完：睡到日界重开
-      var m3 = daily.refreshMs - nowMs;
-      delay = m3 > 0 ? m3 : cfg.idleRefresh;
-      reason = m3 > 0 ? 'day-done' : 'idle-fallback';
-    } else {
-      delay = next - nowMs;
-      reason = delay > REFRESH.hopCap ? 'grid-hop' : 'grid'; // grid-hop：长睡分段，醒来重查表
-      if (delay < cfg.reloadGap)
-        delay = cfg.reloadGap; // 绝对地板（列表重随机节流）
-      else if (delay > REFRESH.hopCap) delay = REFRESH.hopCap;
-    }
-  }
+  var p = planRefresh(
+    nowMs,
+    slotCounts,
+    dayStartMs(nowMs),
+    {
+      refreshUsed: stats.refreshUsed,
+      cap: refreshCap,
+      maxDaily: daily.maxDaily,
+      dailyLeft: dailyLeft(),
+      refreshMs: daily.refreshMs,
+      activeRefresh: cfg.activeRefresh,
+      idleRefresh: cfg.idleRefresh,
+      flipBuffer: cfg.flipBuffer,
+    },
+    cfg.reloadGap,
+  );
+  plannedPointMs = p.point; // 0 = 非格点出口；grid/grid-hop 记下本轮要打的格点，供 cycleRun 判别分段醒
   var slot = curSlotOf(nowMs),
     step = slot >= 0 && (slotCounts[slot] | 0) > 0 ? REFRESH.slotMs / (slotCounts[slot] | 0) : 0;
   log.debug(
     'next refresh in %ds. reason=%s; slot=%d step=%ds; refreshUsed=%d/%d; dailyLeft=%d',
-    Math.round(delay / 1000),
-    reason,
+    Math.round(p.delay / 1000),
+    p.reason,
     slot,
     Math.round(step / 1000),
     stats.refreshUsed,
     refreshCap,
     dailyLeft(),
   );
-  return delay;
+  return p.delay;
 }
 
 /**
@@ -1226,7 +1300,10 @@ function planNextRefresh() {
  * @returns {Promise<number>} 下拍 delay（毫秒）；0 = 立即再跑（alive=false 或 pending 补扫）。
  */
 async function cycleRun() {
-  await doScan();
+  // grid-hop 分段醒：还没到本轮排程的格点，就只重查表不出列表（否则 step > hopCap 的稀疏格每格点吃 2 次配额）。
+  //   consume 照旧跑，保住 lootFlow 返回 'notsent'（在途收手、留待下轮）那批候选的重试路径。
+  var hopWake = plannedPointMs !== 0 && serverNowMs() + cfg.reloadGap < plannedPointMs;
+  await doScan(hopWake);
   if (!aliveFn()) return 0;
   await consume();
   if (!aliveFn()) return 0;
@@ -1251,7 +1328,7 @@ function onRefreshPush(ev) {
   applyRefresh(d);
   if (before <= 0 && dailyLeft() > 0) {
     log.info('loot quota restored by push, wake scan.');
-    cycle.kick();
+    kickNow();
   }
 }
 
@@ -1289,8 +1366,17 @@ function run(ctx) {
   ctx.on.push(CMD_REFRESH_PUSH, onRefreshPush); // 订阅须挂 run：pause 会统一摘 triggers，install 只跑一次不重挂
   log.info('started.');
   Promise.all([loadBlocked(), loadStats()]).then(function () {
-    if (aliveFn()) cycle.kick();
+    if (aliveFn()) kickNow();
   });
+}
+
+/**
+ * 立即唤醒一轮并保证这一轮一定出列表：清掉 plannedPointMs，使 cycleRun 不把这次当作 grid-hop 分段醒。
+ *   kick 的语义都是「人工改了表 / 推送说有新机会 / 冷启动」，落到分段醒判据上会被误判成"还没到点"而跳过列表，故必须先清标记。
+ */
+function kickNow() {
+  plannedPointMs = 0;
+  cycle.kick();
 }
 
 /**
@@ -1376,7 +1462,7 @@ reactor.register({
       label: '今日刷新上限',
       min: 1,
       step: 10,
-      hint: '一天计划刷多少次卡车列表：按模板占比铺到 24 个小时格，cap 越大整体越密（正常模板 cap=300 → 热点约 2.4 分钟、白天约 4.6 分钟、深夜约 15 分钟一次）',
+      hint: '一天计划刷多少次卡车列表：cap 就是一个游戏日的总量（模板只决定 24 个小时格的分布），按占比铺到各格，cap 越大整体越密（正常模板 cap=300 → 热点 00-02 约 1.5 分钟、08-10 约 3.5 分钟、10-12 约 2.7 分钟、12-20 约 4.6 分钟、深夜约 15 分钟一次）。提醒：收益瓶颈是服务器每日可掠夺次数上限（loot_num_max_daily，个位数），cap 上千基本只在空转列表请求',
     },
     {
       key: 'refreshState',
