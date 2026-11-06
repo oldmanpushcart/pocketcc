@@ -12,7 +12,7 @@
     "watch": "node esbuild.config.mjs --watch",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
-    "arch": "depcruise extension/src --config .dependency-cruiser.cjs && node scripts/arch-size-guard.mjs",
+    "arch": "depcruise extension/src --config .dependency-cruiser.cjs && node scripts/arch-size-guard.mjs && node scripts/check-slice-fns.mjs",
     "test": "node --test",
     "verify:secret-realm": "node scripts/replay/run.mjs --manifest secret-realm",
     "verify:cs-hunt": "node scripts/replay/run.mjs --manifest cs-hunt",
