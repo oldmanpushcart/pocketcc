@@ -3502,6 +3502,7 @@ export class PilotEngine {
     this.#lastLoggedBranch = '';
     this.#hbTick = 0;
     this.#lastCensusLine = '';
+    if (this.#cycle) this.#cycle.dispose();
     this.#cycle = null;
     this.#tiles = new Map();
     this.#shops = [];

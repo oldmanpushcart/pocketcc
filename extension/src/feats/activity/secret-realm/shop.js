@@ -876,10 +876,11 @@ export class ShopEngine {
     if (this.#active && this.#cycle) this.#cycle.kick();
   }
 
-  /** 停止：置死 #active（cycle 睡眠期定时器靠存活位在到点检查处终止）。 */
+  /** 停止：置死 #active、摘除 cycle 哨兵。 */
   stop() {
     this.#active = false;
     this.#gates.reset();
+    if (this.#cycle) this.#cycle.dispose();
     this.#cycle = null;
     this.#items = {};
     this.#loadedXY = '';

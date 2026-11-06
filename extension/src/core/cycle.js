@@ -41,7 +41,8 @@ var WAKE_GRACE_MS = 2 * 60 * 1000;
 var STUCK_WARN_MS = 3 * 60 * 1000;
 
 /**
- * 活例登记表：看门狗扫子遍历用。content-script 页面级生命周期，feat 数量有限，不清退可接受。
+ * 活例登记表：看门狗扫子遍历用。通过 createCycle 返回的 dispose() 可主动解除登记；
+ * 未 dispose 的条目在页面存活期内常驻（feat 数量有限、页面级生命周期，泄漏可接受）。
  * @type {Set<function():void>}
  */
 var sentinels = new Set();
@@ -93,7 +94,7 @@ function fmtAt(ms) {
 /**
  * 创建一个调和循环驱动器。
  * @param {{run: () => Promise<number>, alive: () => boolean, fallback: number, log?: object}} o
- * @returns {{kick: () => void, readonly pending: boolean}}
+ * @returns {{kick: () => void, dispose: () => void, readonly pending: boolean, readonly wakeAt: number, readonly inFlight: boolean}}
  */
 export function createCycle(o) {
   const log = o.log || createLog('CYCLE');
@@ -171,7 +172,8 @@ export function createCycle(o) {
   // 看门狗哨兵：只在 alive 时动作（pause 后链自然终止由 reactor resume 走 run() 重 kick，不属孤儿）。
   //   本检查跑在独立宏任务里，exec 同步段（置 running/排 timer）不可被切断，无窗口误判。
   ensureSweeper();
-  sentinels.add(function check() {
+  /** @type {function():void} 哨兵引用，dispose 时用于从 Set 删除 */
+  const sentinel = function check() {
     if (!alive()) return;
     if (running) {
       if (!stuckWarned && execSince && Date.now() - execSince > STUCK_WARN_MS) {
@@ -197,10 +199,20 @@ export function createCycle(o) {
     // alive、不在飞、也没排程：链条成孤儿（真机：pause/return 0 交错后标志与链脱节），补扫一轮自证判据
     log.warn('cycle orphaned while alive, self-heal kick.');
     exec();
-  });
+  };
+  sentinels.add(sentinel);
 
   return {
     kick: kick,
+    /**
+     * 释放本 cycle 占用的看门狗资源：摘除哨兵 + 清除待飞 timer。
+     * 调用后 cycle 不可再用（无状态保护，调用方自行确保不再 kick）。
+     * 典型场景：feat run() 重建 cycle 前先 dispose 旧实例。
+     */
+    dispose: function () {
+      clearTimer();
+      sentinels.delete(sentinel);
+    },
     get pending() {
       return pending;
     },

@@ -332,6 +332,7 @@ export class WarnEngine {
   /** 停止：置死 #active、收循环与快照（事件退订由 reactor 统一摘）。 */
   stop() {
     this.#active = false;
+    if (this.#cycle) this.#cycle.dispose();
     this.#cycle = null;
     this.#tiles = new Map();
     this.#pendingWarn = false;

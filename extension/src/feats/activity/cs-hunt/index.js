@@ -338,6 +338,7 @@ function install(ctx) {
 function run(ctx) {
   ctxRef = ctx;
   stopEngine();
+  if (cycle) cycle.dispose();
   engine = new TeamEngine(buildEnv());
   engine.start(ctx);
   // P0 只读闭环：状态机主推送与技能/来袭推送在本期只转储留痕（动作在 P3/P4，强依赖 §7-6/§7-8 未捕项）
@@ -407,6 +408,7 @@ function stopEngine() {
  */
 function pause() {
   stopEngine();
+  if (cycle) cycle.dispose();
   cycle = null;
 }
 

@@ -540,9 +540,10 @@ export class CaptureEngine {
     env.log.info('capture engine started (tap/energy/event rhythm).');
   }
 
-  /** 停止：置死 #active——cycle 睡眠期间的定时器不会被撤，靠引擎自带存活位在到点/重排两道 alive 检查处终止（防 pause→resume 后孤儿循环与新引擎并发）。 */
+  /** 停止：置死 #active、摘除 cycle 哨兵。 */
   stop() {
     this.#active = false;
+    if (this.#cycle) this.#cycle.dispose();
     this.#cycle = null;
   }
 }

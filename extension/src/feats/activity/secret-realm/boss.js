@@ -1166,6 +1166,7 @@ export class BossEngine {
    */
   stop() {
     this.#active = false;
+    if (this.#cycle) this.#cycle.dispose();
     this.#cycle = null;
     this.#tiles = new Map();
     this.#stoneInflight = '';

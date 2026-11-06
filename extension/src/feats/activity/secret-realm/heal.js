@@ -163,14 +163,22 @@ export class HealEngine {
 
     this.#sentThisTick = 0;
     this.#idleWhy = '';
-    if (g.edge('snap-fresh', this.#snapFresh(), this.#snap ? 'armies=' + this.#snap.armies.length : 'no snapshot')) {
+    if (
+      g.edge(
+        'snap-fresh',
+        this.#snapFresh(),
+        this.#snap ? 'armies=' + this.#snap.armies.length : 'no snapshot',
+      )
+    ) {
       if (this.#healOne(h)) return tuning.healGapMs;
       // 快照在手却没治疗：把原因落日志（事后区分「真没伤」与「药被拉黑/用完」）
       env.log.debug('heal: fresh snapshot but no action, reason=%s.', this.#idleWhy || '-');
       return tuning.healScanMs;
     }
     // 快照缺场/过期 → 拉一次（一拍只发一次 INFO；游戏弹层自补的那条 8584 由 resp 订阅照收）
-    if (g.edge('info-inflight', env.secret.isSecretSending(CMD_MARCH_ARMY_INFO), '8584 in flight')) {
+    if (
+      g.edge('info-inflight', env.secret.isSecretSending(CMD_MARCH_ARMY_INFO), '8584 in flight')
+    ) {
       return tuning.healGapMs;
     }
     if (g.edge('nobody-wounded', !this.#mayNeedHeal(h), 'prescan via 21521 powerInfos')) {
@@ -377,7 +385,7 @@ export class HealEngine {
         'nobody below threshold in snapshot (armies=' +
         (this.#snap ? this.#snap.armies.length : 0) +
         ', need=' +
-        (Math.min(100, Math.max(0, Number(h.threshold) || 0)) / 100) +
+        Math.min(100, Math.max(0, Number(h.threshold) || 0)) / 100 +
         ')';
       return false;
     }
@@ -473,10 +481,11 @@ export class HealEngine {
     env.log.info('heal engine started (8584 snapshot → 8534 one item per tick).');
   }
 
-  /** 停止：置死 #active——cycle 睡眠期间的定时器不会被撤，靠引擎自带存活位在到点/重排两道 alive 检查处终止（防 pause→resume 后孤儿循环）。 */
+  /** 停止：置死 #active、摘除 cycle 哨兵。 */
   stop() {
     this.#active = false;
     this.#gates.reset();
+    if (this.#cycle) this.#cycle.dispose();
     this.#cycle = null;
     this.#snap = null;
   }
