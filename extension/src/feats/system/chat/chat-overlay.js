@@ -1,9 +1,9 @@
 /**
  * 聊天浮层 UI（Ctrl+K 开关的半透明窗口，Shadow DOM 与游戏样式双向隔离）。
- * 纯视图层：缓冲、协议、历史拉取全在 chat-window.js；本模块只负责渲染与交互，
+ * 纯视图层：缓冲、协议、历史拉取、发送全在 chat/ 切片（channels/history/send/normalize）；本模块只负责渲染与交互，
  * 通过 handlers 回调面把用户动作上报给业务层。风格延续 core/ui.js 的深色毛玻璃，无装饰动效。
  *
- * 消息条目 entry（由 chat-window 预处理好，overlay 不再懂协议）：
+ * 消息条目 entry（由业务层（channels/normalize）预处理好，overlay 不再懂协议）：
  *   { id, timeStr, name, self:boolean, mention:boolean, pmDir:string|null('-> 听白'等，拼进 name 后),
  *     segments: [{type:'text'|'at'|'chip', s:string, copy?:string, action?:object}]
  *             （at=高亮 @片段、chip=链接占位；带 action=可跳转卡片点击走 onJump，否则点击复制 copy）,
@@ -28,6 +28,7 @@
  */
 import { createLog } from '../../../core/log.js';
 import { escStrict as utilEscStrict } from '../../../core/util.js';
+import { AT_ALL_LABEL } from './context.js';
 
 /** @type {ReturnType<createLog>} 模块日志器（tag=CHATWIN） */
 const log = createLog('CHATWIN');
@@ -40,8 +41,6 @@ const MIN_H = 220;
 const DEFAULT_W = 380;
 /** @type {number} 默认高度（px） */
 const DEFAULT_H = 480;
-/** @type {string} 「全体成员」在输入框里的展示文本（业务层负责替换为协议常量） */
-export const AT_ALL_LABEL = '全体成员';
 
 /**
  * Shadow DOM 内样式：.pcw- 前缀，全部规则与游戏隔离
@@ -1232,13 +1231,18 @@ export class ChatOverlay {
     const end = (e) => {
       if (!drag) return;
       drag = null;
-      try {
-        bar.releasePointerCapture(e.pointerId);
-      } catch (err) {}
-      this.#notify('onGeomChange', this.getGeom());
+      this.#releaseAndNotify(bar, e);
     };
     bar.addEventListener('pointerup', end);
     bar.addEventListener('pointercancel', end);
+  }
+
+  /** 通用 pointer 拖拽收尾：释放捕获 + 通知几何变更（#wireHead / #wireSideDrag / #wireResizeHandle 共用） */
+  #releaseAndNotify(hd, e) {
+    try {
+      hd.releasePointerCapture(e.pointerId);
+    } catch (err) {}
+    this.#notify('onGeomChange', this.getGeom());
   }
 
   /** 侧栏/消息区分隔条：拖拽调宽（100–360px，上限再受窗口宽约束），松手随几何存档持久 */
@@ -1260,10 +1264,7 @@ export class ChatOverlay {
     const end = (e) => {
       if (!rs) return;
       rs = null;
-      try {
-        hd.releasePointerCapture(e.pointerId);
-      } catch (err) {}
-      this.#notify('onGeomChange', this.getGeom());
+      this.#releaseAndNotify(hd, e);
     };
     hd.addEventListener('pointerup', end);
     hd.addEventListener('pointercancel', end);
@@ -1409,13 +1410,11 @@ export class ChatOverlay {
         this.#geom = clampGeom({ x, y, w, h });
         this.#applyGeom();
       });
+      // eslint-disable-next-line sonarjs/no-identical-functions -- 与 #wireSideDrag 的 end 形式相同但捕获不同闭包变量，抽象反而降低可读性
       const end = (e) => {
         if (!rs) return;
         rs = null;
-        try {
-          hd.releasePointerCapture(e.pointerId);
-        } catch (err) {}
-        this.#notify('onGeomChange', this.getGeom());
+        this.#releaseAndNotify(hd, e);
       };
       hd.addEventListener('pointerup', end);
       hd.addEventListener('pointercancel', end);

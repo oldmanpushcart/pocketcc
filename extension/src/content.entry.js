@@ -43,7 +43,7 @@ import './feats/player/daily-deal.js';
 import './feats/battle/quick-attack.js';
 import './feats/battle/imperial-decree.js';
 import './feats/battle/auto-defense.js';
-import './feats/system/chat/chat-window.js';
+import './feats/system/chat/index.js';
 import './feats/system/map/global-map.js';
 import './feats/system/map/quick-jump.js';
 // 游戏内快捷键：core/hotkeys.js 集中注册表，非 feat——import 即 hotkeys.bind 自激活，
