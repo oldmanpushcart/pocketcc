@@ -14,8 +14,8 @@
 - [与扩展的链路](#与扩展的链路)
 - [路由](#路由)
 - [报文命名规范](#报文命名规范一次开--关--一个文件)
-- [日志命名与轮转](#日志命名与轮转长期常开按小时直写)
-- [索引侧车](#索引侧车-storeuidindexndjson)
+- [日志命名与轮转](#日志命名与轮转长期常开按天直写)
+- [索引侧车](#索引侧车-storerecuid-dashcam-rec-indexndjson)
 - [落盘格式](#落盘格式)
 - [离线分析 CLI](#离线分析-clidashcamclij)
 - [安全](#安全)
@@ -59,35 +59,41 @@ npm start          # 等价 node server.js
 ## 报文命名规范（一次开→关 = 一个文件）
 
 ```
-store/<uid>/<startLocal>[-<note>][-<slug>].ndjson
-例：store/14179309129759/20260929T101432-芯片祝福STEP2.ndjson
-    store/14179309129759/20260929T103201-airdrop-info+chip-airdrop.ndjson   ← 无 note 时自动派生 slug
+store/rec/<uid>/dashcam-rec-<startLocal>[-<note>][-<slug>].ndjson
+例：store/rec/14179309129759/dashcam-rec-20260929T101432-芯片祝福STEP2.ndjson
+    store/rec/14179309129759/dashcam-rec-20260929T103201-airdrop-info+chip-airdrop.ndjson   ← 无 note 时自动派生 slug
 ```
+
+- **统一 `dashcam-rec-` 前缀 + `store/rec/` 目录**双保险，与日志侧 `dashcam-log-`/`store/log/` 互不误吞（任一侧 glob 都不会命中另一侧）。
 
 - `<startLocal>`：录制启动时刻本地紧凑时间 `YYYYMMDDTHHMMSS`（可排序、可读）。
 - `<note>`：面板「本次标签」预填（可空；**优先作用作主题词**，保留中文，仅去路径/控制字符）。
 - `<slug>`：自动派生——本段 cmd 统计去掉噪声（心跳 / `GET_WORLD_INFO` 等高频轮询）与 `GET_` 等前缀后，取 top 请求名（无 note 时作主题）。
-- 会话进行中先写 `*.part.ndjson`；收到 `x-done` 或空闲超时后**定稿**：算 slug → 重命名为最终名 → 追加索引。
+- 会话进行中先写 `dashcam-rec-*.part.ndjson`；收到 `x-done` 或空闲超时后**定稿**：算 slug → 重命名为最终名 → 追加索引。
 
-## 日志命名与轮转（长期常开，按小时直写）
+## 日志命名与轮转（长期常开，按天直写）
 
 ```
-store/_log/<uid>/<YYYYMMDDTHH>[-NN].ndjson
-例：store/_log/14179309129759/20261104T15.ndjson          ← 15 时段
-    store/_log/14179309129759/20261104T15-01.ndjson       ← 单段超 LOG_MAX_SEG 的溢出序号段
+store/log/<uid>/dashcam-log-<YYYYMMDD>[-NN].ndjson
+例：store/log/14179309129759/dashcam-log-20261104.ndjson        ← 当天段
+    store/log/14179309129759/dashcam-log-20261104-01.ndjson     ← 单段超 LOG_MAX_SEG 的溢出序号段
 ```
 
-与报文流的本质差异：日志无业务语义，不分会话、不定稿、不建索引——**按行内 ts 归小时段直接 append 最终文件名**（传统 logrotate 形态，崩溃不丢已写内容）。`_log/` 前缀目录与报文 `<uid>/` 目录平行，glob `<uid>/*.ndjson` 不会误吞日志。`LOG_MAX_SEG` 是滚段**触发阈值而非硬截断**（单批可整体超出后滚下一段）；本服务按**单实例**设计，多进程共用同一 `DASHCAM_OUT` 不保证并发安全。
+> 早期无前缀的小时段 `20261104T15.ndjson`、按天段 `20261104.ndjson` 形式文件仍被分析 CLI（`logSegments`）兼容读取，历史数据不丢。
+
+与报文流的本质差异：日志无业务语义，不分会话、不定稿、不建索引——**按行内 ts 归天段直接 append 最终文件名**（传统 logrotate 形态，崩溃不丢已写内容）。`store/log/` 与报文 `store/rec/` 目录分层，加上各自文件名前缀，glob 不会误吞。`LOG_MAX_SEG` 是滚段**触发阈值而非硬截断**（单批可整体超出后滚下一段）；本服务按**单实例**设计，多进程共用同一 `DASHCAM_OUT` 不保证并发安全。
 
 **与报文会话的配对是查询时软引用**：报文定稿时 index 行写入 `logRef:{dir,from,to}`（日志自己不带业务标签，业务窗口由报文侧供给），CLI 能自动解析。
 
-## 索引侧车 `store/<uid>/index.ndjson`
+## 索引侧车 `store/rec/<uid>/dashcam-rec-index.ndjson`
 
-每定稿一次会话追加一行（按 `start` 升序整体重写），作为「行程表」。文件名保持机器友好，人读检索走这里：
+每定稿一次会话追加一行（按 `start` 升序整体重写），作为「行程表」。固定机器友好名 `dashcam-rec-index.ndjson`（与同目录 `dashcam-rec-*.ndjson` 录制体共用前缀，但不带时间戳不会归入录制）：
 
 ```json
-{"file":"<uid>/<name>.ndjson","uid":...,"sessionId":...,"start":...,"end":...,"durMs":...,"lines":...,"slug":"...","note":"...","finalized":true,"top":[["GET_WORLD_INFO",19]],"logRef":{"dir":"_log/<uid>","from":...,"to":...}}
+{"file":"rec/<uid>/dashcam-rec-<name>.ndjson","uid":...,"sessionId":...,"start":...,"end":...,"durMs":...,"lines":...,"slug":"...","note":"...","finalized":true,"top":[["GET_WORLD_INFO",19]],"logRef":{"dir":"log/<uid>","from":...,"to":...}}
 ```
+
+> `file` / `logRef.dir` 均为相对 `DASHCAM_OUT`（store 根）的路径：录制在 `rec/<uid>/…`，日志在 `log/<uid>/…`。
 
 ## 落盘格式
 
@@ -142,7 +148,7 @@ node cli.js log    <目录|段文件|报文会话文件> --grep stall # 日志�
 
 旗标：`--dir=req|resp|push`（req:* 归一为 req）、`--from/--to` 相对首行 ts 的秒（`--anchor` 改锚点）、`--limit`、`--json`（机器可读）、`--width`（截断宽）。大文件流式扫，153MB 单命令约 10s。
 
-log 专属旗标：`--hour=20261104T15` 选段、`--ms=from[,to]` 绝对毫秒窗（接 slice 窗口的双轨对照；缺 to 意为「此刻往后」，与软引用窗同时给则取**交集**）、`--lvl` 最低档（debug|info|warn|error 只升不降）、`--mod`/`--grep` 子串过滤、`--group=mod|lvl|modlvl` 聚合计数（诊断哪个模块在刷屏）。位置参数传**报文会话文件**时自动经 `index.ndjson` 的 `logRef` 解析日志目录并限定会话窗。
+log 专属旗标：`--hour=20261104` 选段（天粒度；旧版 `--hour=20261104T15` 小时段仍兼容）、`--ms=from[,to]` 绝对毫秒窗（接 slice 窗口的双轨对照；缺 to 意为「此刻往后」，与软引用窗同时给则取**交集**）、`--lvl` 最低档（debug|info|warn|error 只升不降）、`--mod`/`--grep` 子串过滤、`--group=mod|lvl|modlvl` 聚合计数（诊断哪个模块在刷屏）。位置参数传**报文会话文件**时自动经 `dashcam-rec-index.ndjson` 的 `logRef` 解析日志目录并限定会话窗。
 
 ```bash
 # 双轨对照：报文发现 t+600~640s 行为异常 → 拉同时刻引擎内心独白
@@ -152,11 +158,26 @@ node cli.js log 录制.ndjson --lvl=info --grep stall
 
 **边界（红线）**：本 CLI 只认落盘格式、不懂游戏业务——cmd 语义由调用方给，不 import `extension/src` 任何常量。依赖引擎的仿真/回放 harness（如秘境的 pilot 单引擎仿真）属于扩展验证工具，不在本工程。
 
+## store 维护脚本（写操作，`cli.js` 自身仍只读）
+
+两个一次性/按需维护脚本，命名与派生算法以本文档为准复刻 `server.js`（若服务端落盘格式变更须同步）：
+
+- `migrate-store.js` —— 旧布局→新规范（rec/log 分层 + 前缀）一次性迁移，已执行完毕，保留备查。
+- `repair-store.js` —— 修历史损坏：
+
+```bash
+cd dashcam
+node repair-store.js merge    [--uid=<uid>] [--apply]              # 同会话被撞名拆成 base + base-NN → 合回单文件
+node repair-store.js finalize <uid> [<startLocal|sessionId>] [--note=<note>] [--apply]  # 孤儿 .part → 转正名 + 补 index
+```
+
+纪律：默认 dry-run；`--apply` 前自动探测端口（server 在跑则拒绝）；merge 校验 seq 跨片从 1 连续铺满且 ts 单调才并（不满足=不同会话，拒绝、退码 2）；写出回读行数==源总和才删源；index tmp+rename 按 start 升序；x-note 不在 .part 文件名里，finalize 缺省留空不臆造。
+
 也可逐行 `JSON.parse` 自写脚本统计：
 
 ```powershell
 # PowerShell：统计某会话内各 cmd 出现次数
-Get-Content store/*/*.ndjson | ForEach-Object { ($_ | ConvertFrom-Json).cmd } | Group-Object | Sort-Object Count -Descending
+Get-Content store/rec/*/*.ndjson | ForEach-Object { ($_ | ConvertFrom-Json).cmd } | Group-Object | Sort-Object Count -Descending
 ```
 
 ## 安全
