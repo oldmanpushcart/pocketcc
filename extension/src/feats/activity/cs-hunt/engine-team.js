@@ -2,7 +2,7 @@
  * feats/activity/cs-hunt/engine-team.js —— 夺宝奇兵（CSHunt）组队编排引擎（P1 队长最小闭环）。
  *
  * 覆盖链路（设计文档 extension/docs/feat-夺宝奇兵.md §3，分期见 §8）：
- *   1. 队长无队 → 7521 建队（`{cfg:1}`，报文实证 dashcam 20261016T191700）；
+ *   1. 队长无队 → 7521 建队（`{cfg:1}`，实录报文实证）；
  *   2. 队长审批 → 21374 置脏 → 7528 复核申请池 → 池内 7523 `{uid,op:1}`（池外按配置忽略/拒绝）；
  *   3. 队长凑够 targetMemberNum 且全员派兵到位（每人 marchId 非零）→ 7527 `{op:1}` 发起出发召集（服务端随后派 21372 给全队）；
  *      凑人超时（借鉴竞对 waitmin，面板 waitMin 默认 3 分钟）：人数未达标但已到位成员皆已派兵 → 也直接召集，不永久等；
@@ -11,17 +11,17 @@
  *      收 21372 召集 → 7527 `{op:1}` 同意出发。
  *
  * 编排时序（报文实证，勿凭直觉改）：
- *   陪跑趟 dashcam 20261016T190507：7522 申请 → 21371 入队 → 7520 `{op:2}` → 7519 出征 →
+ *   陪跑实录趟：7522 申请 → 21371 入队 → 7520 `{op:2}` → 7519 出征 →
  *     21372 召集 → 7527 `{op:1}` → 21376 status=0（MARCHING）。
  *   **先满编出征、后应答召集**——7519 把本人部队派到集结点，7527 才是「我准备好了」。
- *   队长趟 dashcam 20261016T191700：7521 → 7528 → 7519 → 7523×n → 7527（人数到齐且全员派兵到位后召集）。
+ *   队长实录趟：7521 → 7528 → 7519 → 7523×n → 7527（人数到齐且全员派兵到位后召集）。
  *
  * 幂等与去重：
  *   - 7519 同内容连发两条间隔 23s 均 s=0（重复发包无害，报文实证），但仍按 teamId 记一次、失败才重试；
  *   - 每个写请求经 net.isSending(cmd) 在途去重；
  *   - 队伍快照一律由应答/推送落地（不镜像游戏数据、不调游戏 updateXxx，遵守 feat 只读+发包红线）；
  *   - **终局后散队闸门**：状态机 END/RETURN 时服务器队伍并未即散——夺宝飞船还在返程，到家才散队
- *     （报文实证 dashcam 20261017T120320：END@+986s → 21371 散队@+1063s）。窗口内建队 7521/申请 7522
+ *     （报文实证：实录 END@+986s → 21371 散队@+1063s）。窗口内建队 7521/申请 7522
  *     会被拒 ava_team_tips_011=已加入其他队伍（游戏 UI 随之反复提示）→ #finishHunt 置 #waitHome 闸门，
  *     解除走三通道：10019 飞船(marchType=137)到家边沿推送 / 21371 队伍清空推送 / 快照轮询+超时兑底。
  *
@@ -29,7 +29,7 @@
  *   - huntCount 只由推送 21375 喂（游戏侧同款口径：RealCSHuntController.updateUserCrossTreasureChange），
  *     新会话未收到该推送时 count 为「未知」，此时不硬拦建队，交服务器裁决；
  *   - 控制器实例未接管（没进过玩法子包）时 csHunt.readState() 恒 null，故 tick 按 INFO_REFRESH_MS 兜底周期
- *     重发一次只读 7501（应答也可能带整队，实证 dashcam 20261016T191700 seq88）。
+ *     重发一次只读 7501（应答也可能带整队，实录报文实证）。
  *
  * P2 队员/陪跑（本期新增）：
  *   - 玩法模式 cfg.mode：'main'（主跑，要奖励耗次数）/ 'helper'（陪跑，op:2 不耗次数）；角色不再靠单列开关，而是 mode 驱动；
@@ -96,11 +96,11 @@ const WINDOW_WAIT_CAP_NEAR_MS = 1800000;
 const INFO_REFRESH_MS = 90000;
 /**
  * @type {number} 未开跑等待期主动轮询 7501 的间隔（毫秒）：游戏界面在夺宝页外时服务器不推队伍态
- *   （实证 dashcam 20261017T1938：审批后 21371/21372 均漏达，整队电平冻结 3 分钟，点开队伍页才补到）；
- *   队长 full/allMarched 召集判定不能依赖推送可达，靠应答带整队（实证 20261016T191700 seq88）喂电平。纯读包。
+ *   （实证审批后 21371/21372 均漏达的实录：整队电平冻结 3 分钟，点开队伍页才补到）；
+ *   队长 full/allMarched 召集判定不能依赖推送可达，靠应答带整队（实录应答实证）喂电平。纯读包。
  */
 const TEAM_POLL_MS = 20000;
-/** @type {number} 队长兜底拉申请池（7528）的最小间隔（毫秒）：审批主路是 21374 推送，此仅节流补漏，杜绝逐拍刷屏（实证 20261018T190716 曾 3 秒内 95 次 7528） */
+/** @type {number} 队长兜底拉申请池（7528）的最小间隔（毫秒）：审批主路是 21374 推送，此仅节流补漏，杜绝逐拍刷屏（真机实录曾 3 秒内 95 次 7528） */
 const APPLY_LIST_POLL_MS = 20000;
 /** @type {number} 630 PLAYER_INFO：按 uid 查玩家昵称（陪跑按名搜队用；业务强相关报文，收口本 feat，不入通用 net.js） */
 const CMD_PLAYER_INFO = 630;
@@ -450,7 +450,7 @@ export class TeamEngine {
       log.info('cs-hunt ship arrived home and disbanded, starting next round of team build/join');
       this.#wake();
     });
-    // 7501 应答也可能带整队（报文实证 dashcam 20261016T191700 seq88）：统一在此落地，装配层只管点火发包
+    // 7501 应答也可能带整队（实录报文实证）：统一在此落地，装配层只管点火发包
     ctx.on.resp(REQ_INFO, (ev) => {
       var ack = this.#ack(ev, ACK_INFO);
       if (!ack) return;
@@ -524,7 +524,7 @@ export class TeamEngine {
   }
 
   /**
-   * 7501 只读拉态（`{header:{}}`，报文实证 dashcam 20261016T191700 seq7）：team 由 resp 订阅落地，本方法只管择时。
+   * 7501 只读拉态（`{header:{}}`，实录报文实证）：team 由 resp 订阅落地，本方法只管择时。
    * 控制器实例缺席（没进过玩法子包）时，这是唯一能把开关态/整队喂进来的通道；在途或未落地均静默跳过，不阻断编排。
    * @param {boolean} force 无视兜底周期强拉一次
    */
@@ -676,7 +676,7 @@ export class TeamEngine {
     var ready = Array.isArray(payload.readyMember) ? payload.readyMember : [];
     this.#called = true;
     // 名单里有没有本人——没有则说明召集窗口被重开且本人准备被重置（迟到队员到位后全员重准备的实证
-    //   20261023：同一队 ready 名单 0→1→2→3→0 循环十余次，7527 因一次性闸门再没补发，队友视角「迟迟不准备」）
+    //   真机事故：同一队 ready 名单 0→1→2→3→0 循环十余次，7527 因一次性闸门再没补发，队友视角「迟迟不准备」）
     var myUid = gameData.myUidStr();
     var selfIn = false;
     for (var i = 0; i < ready.length; i++) {
@@ -755,7 +755,7 @@ export class TeamEngine {
     this.#flow.onHuntInfo(payload);
     if (status === HUNT_STATUS.END || status === HUNT_STATUS.RETURN) {
       // 状态机到 END(4)/RETURN(5) 即「本次出征结束」的**服务器权威推送**，比 7531 cs_treasure294 早约 90s
-      //   （报文实证 dashcam 20261017T120320：status=4@+986s、status=5@+1013s，而 7531 直到 +1078s 才 cs_treasure294）
+      //   （报文实证实录：status=4@+986s、status=5@+1013s，而 7531 直到 +1078s 才 cs_treasure294）
       //   → 主判定走此，停掉对将消亡 treasureId 的 7531 空拉、尽快转下一轮；7531 拒因路径（#endHunt）降为漏推兜底。
       //   仅当推送 tid 与当前队一致才收口（新一轮已开跑时旧 END 迟到不误清）。
       var endTid = bits.int64Str(payload.treasureId);
@@ -901,7 +901,7 @@ export class TeamEngine {
       if (!gate2.proceed) return gate2.sleep;
     }
 
-    // 界面在夺宝页外时服务器队伍态推送不可达（实证 20261017T1938：审批后整队冻结 3 分钟，点开队伍页才收到 21372）
+    // 界面在夺宝页外时服务器队伍态推送不可达（实录实证：审批后整队冻结 3 分钟，点开队伍页才收到 21372）
     //   → 主动轮询 7501 补整队电平（应答经 ctx.on.resp(REQ_INFO) 落地 #team），不再只看 !present()：
     //   控制器在场但人在页外时镜像同样陈旧，readState 回填不可靠；召集判定改靠应答电平驱动
     if (Date.now() - this.#lastInfoAt >= TEAM_POLL_MS) await this.refreshInfo(true);
@@ -1158,7 +1158,7 @@ export class TeamEngine {
    *   ① 630 PLAYER_INFO 按 uid 取昵称（#lookupName，带缓存）→ ② 7530 按昵称 likeName 搜其创建的队 →
    *   ③ 命中未满、未申请、队长即该玩家的队 → 7522 op:1 申请加入，找到即停手。
    *   每拍之间按 JOIN_POLL_MS 节流（原一趟连打整池已废弃）；游标走到底回卷重扫；申请后等 21371/21373 落地接管（不轮询等审批）。
-   *   报文实证 dashcam 20261016T190507：630 应答 data.playerInfo(JSON 串).username=昵称；7530 请求 {likeName}，
+   *   报文实证实录：630 应答 data.playerInfo(JSON 串).username=昵称；7530 请求 {likeName}，
    *   应答 crossTreasureSearchTeamList.team[]（row.id/uid 为 Long，members/maxMembers/applied）；7522 {teamId:Long,op:1}。
    *   已知局限：likeName 是子串匹配，昵称含 emoji/空格时整串搜可能搜不到（真机手动也常剥字搜），故查无即跳过下一个成员。
    * @param {object} cfg 模块配置（rolePool: uidlist `[{uid,name}]`）
@@ -1223,7 +1223,7 @@ export class TeamEngine {
 
   /**
    * 630 PLAYER_INFO 按 uid 取玩家昵称（陪跑找队按名搜队用；业务强相关报文收口本 feat，不入通用 net.js）。
-   *   报文实证 dashcam 20261016T190507：req `{uid:"字符串"}`（NET.send，非 sendPB）；应答 data.playerInfo 是 JSON 串，
+   *   报文实证实录：req `{uid:"字符串"}`（NET.send，非 sendPB）；应答 data.playerInfo 是 JSON 串，
    *   其内 username=显示昵称（nickname 常空，昵称可含 emoji/空格）。命中缓存直接回；查无/异常缓存空串避免反复打网络；stop() 清缓存。
    * @param {object} net 网络底座
    * @param {string} uidStr 目标玩家 uid（字符串）
@@ -1374,14 +1374,14 @@ export class TeamEngine {
 
   /**
    * 满编出征 7519：按 presetPool 取第一个能出兵的预设，直发 JSON 通道（**非 sendPB**）。
-   * 报文体逐键对齐 dashcam 20261016T191700：`{marchType:137,armyList,armyListNew,heroList,trapList,formation:0,formationV2}`，
+   * 报文体逐键对齐实录报文：`{marchType:137,armyList,armyListNew,heroList,trapList,formation:0,formationV2}`，
    *   体内无 treasureId；extraArmy 仅在有补位时才带（录制样本无此键，PB 编码空对象会多出脏字段）。
    * @param {object} t 队伍快照
    * @returns {Promise<boolean>} 是否已发出（无兵/未发出返回 false，由调用方下一拍重试）
    */
   async #marchFull(t) {
     // 游戏侧已有本人行军（marchId 非零），不再重复派；
-    //   注意 bits.int64Str(Long(0,0)) 回 '0' 代表「无行军」，不可当 truthy 误判（dashcam 20261017T031255 根因）。
+    //   注意 bits.int64Str(Long(0,0)) 回 '0' 代表「无行军」，不可当 truthy 误判（实录事故根因）。
     if (t.selfMarchId && t.selfMarchId !== '0') {
       this.#marchedTeamId = t.id;
       return true;

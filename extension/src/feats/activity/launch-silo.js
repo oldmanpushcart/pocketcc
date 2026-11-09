@@ -8,7 +8,7 @@
  * 收尾：个人积分刷满（total≥最高档且全档已领）即视为本期结束——主动撤回驻井部队(904)、放行 auto-farm 照常回填、
  *   本期不再驻军/领奖，只保持窗口探测直到活动 end 复位等下一期。
  *
- * 依据（反编译常量 + 三份实机报文 dashcam 双重验证，详见 references/游戏逆向/占领发射井分析报告.md）：
+ * 依据（反编译常量 + 三份实机报文双重验证，详见 references/游戏逆向/占领发射井分析报告.md）：
  *   协议（均走旧 JSON NET.send，应答 data 为 JSON 串需 parse）：
  *     1055 GET_GUN_FIGHT_INFO {} → {start,end,cur,list:[{id,owner(联盟aid),ownuid,tag,name,totem,time}]}（活动信息 + 4 井归属）
  *     1057 GET_GUN_FIGHT_USER_INFO {} → {total,os,ks,gs,us,reward:[]}（个人积分 + 已领档位 num 列表）

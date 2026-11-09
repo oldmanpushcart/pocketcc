@@ -130,7 +130,7 @@ exec(): running=true; pending=false; clearTimer(); → await run()
 ## 7. 调试面
 
 - 日志 tag：独立使用时 `[POCKETCC://CYCLE]`；四家迁移均注入 feat 自己的 log（如 `[POCKETCC://SEA-TREASURE]`），故异常重排在 feat 日志里看 `cycle run threw.`。
-- 无可控制台直戳的可变状态（`running/pending/timer` 均私有）；观测靠 `run()` 内的 debug 日志与各 feat 的 ndjson 回放对拍（`dashcam/store/<uid>/…`）。
+- 无可控制台直戳的可变状态（`running/pending/timer` 均私有）；观测靠 `run()` 内的 debug 日志与各 feat 的真人报文实录回放对拍。
 
 ## 8. 变更记录
 

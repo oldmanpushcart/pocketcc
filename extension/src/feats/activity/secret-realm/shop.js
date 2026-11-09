@@ -85,9 +85,10 @@ export class ShopEngine {
    */
   #items = {};
   /**
-   * @type {Object<string,number>} 各店本次会话为「刷出目标品」已发过的 8543 次数（按点键 `x,y` 记），
-   *   上限取 `driveSausageRefreshMax`：一家店一局最多 6 刷（四家共 24 刷）。计数按店独立、不在 8540 INFO 时
-   *   归零（刷店成功的应答本身就是一条 8540/8543 items）。
+   * @type {Object<string,number>} 各店**本场**为「刷出目标品」已发过的 8543 次数（按点键 `x,y` 记），
+   *   上限取 `driveSausageRefreshMax`（现 12）。计数按店独立、不在 8540 INFO 时归零
+   *   （刷店成功的应答本身就是一条 8540/8543 items）；换场由 #syncMatch 整体归零——
+   *   会话级累计会让同一激活连打多场时第 2 场起预算必爆（症状同「只买到 7/10」）。
    */
   #refreshTries = {};
   /** @type {number} 上一笔 8543 发起时刻（毫秒）：#tick 用它夹出 shopRefreshGapMs 最小间隔 */
@@ -112,6 +113,8 @@ export class ShopEngine {
   #gates;
   /** @type {string} #atShop 本拍回 null 的原因（仅诊断，由 #gates 的 detail 带出） */
   #atShopWhy = '';
+  /** @type {string} 场次锚（fightBeginTime 的字符串形；''=未钉）——变化即换场，#syncMatch 用它复位按场预算 */
+  #matchKey = '';
 
   /** @param {object} env 注入底座 {alive, realmActive, cfg, secret, gameConf, l10n, log} */
   constructor(env) {
@@ -175,6 +178,29 @@ export class ShopEngine {
   }
 
   /**
+   * 换场检测（fightBeginTime 变化 = 新一场秘境）：复位**按场计**的预算与进度账。
+   *   引擎只在激活/挂起时重建，同一激活可连打多场；不靠本复位的话 `driveSausageRefreshMax`
+   *   会跨场累计，第 2 场起「同店刷到买满」预算必爆。
+   *   fightBeginTime 可能是 Int64 形态，统一转字符串比较（对象引用不参与判定）。
+   * @param {object|null} base roomBaseInfo
+   */
+  #syncMatch(base) {
+    const fb = base && base.fightBeginTime;
+    const key = fb == null ? '' : String(fb);
+    if (!key || key === this.#matchKey) return;
+    const first = !this.#matchKey;
+    this.#matchKey = key;
+    this.#refreshTries = {};
+    this.#bought = {};
+    this.#done = {};
+    this.#retriedBuy = {};
+    this.#told = {};
+    // 首钉静默；换场留一条 info 给单轨日志定轴（不逐拍刷屏）
+    if (!first)
+      this.#env.log.info('shop: new match (fightBeginTime=%s), refresh budget reset.', key);
+  }
+
+  /**
    * 一拍：判停店 → 未装货单则 INFO；否则找一个可动作货位买/刷；全都齐即长睡。永不 reject。
    * @returns {number} 下拍间隔（毫秒）
    */
@@ -183,6 +209,8 @@ export class ShopEngine {
     const g = this.#gates;
     if (!env.alive()) return 0;
     if (g.edge('realm-off', !env.realmActive(), 'not in pab realm')) return tuning.shopSweepMs;
+    // 换场复位先于一切业务闸：引擎长期存活跨场，不复位则刷新预算/进度账/去重表跨场累计
+    this.#syncMatch(env.secret.getRoomBaseInfo());
     const sc = env.cfg().shop;
     // 总闸：
     //   ① 持有清单里任一行勾了「店」渠道（sc.enabled）→ 用户显式要求的补货；
@@ -380,6 +408,10 @@ export class ShopEngine {
       return false;
     }
     const buyBalance = env.secret.getItemNumById(cur0.buyId);
+    // drive 模式下香肠(41011) 由 #grabSausage 独占补满（含 driveSausageRefreshMax 预算刷店）；
+    //   通用清单不得重复处理该品目——否则 #grabSausage soldOut 不再置 done 后，本路径 L462 的裸
+    //   #sendRefresh 会绕过预算把刷币刷干（手动档 #grabSausage 空转，故仅在 drive 开启时让位）。
+    const driveOn = !!(env.cfg().drive && env.cfg().drive.enabled);
     // 百兽箱（type3）/香肠的**购买优先级**随 BOSS 是否已清台而翻（竞品 §9.2 shopConver L25204）：
     //   未清台 → 香肠优先（它是投喂 BOSS 的硬通货，先攒够）；已清台 → 百兽箱优先（没 BOSS 可喂，香肠价值降）。
     //   两档各自「没需求/不在架就 return false」→ 自然形成竞品 `X || Y` 的兜底语义（香肠需但不在架→刷店，不外溢到百兽箱）。
@@ -399,6 +431,7 @@ export class ShopEngine {
       if (!e || Number(e.shop) !== 1) continue; // 只看商店补货渠道勾选
       const itemId = Number(k.slice(KEY_ITEM.length));
       if (!(itemId > 0)) continue;
+      if (driveOn && itemId === ITEM_SAUSAGE) continue; // 香肠由 #grabSausage 预算化独占，见上
       const specs = this.#specsOf(itemId);
       if (!specs.length) continue;
       /** @type {number[]} 本店在售且本会话未降级的货行 */
@@ -591,9 +624,23 @@ export class ShopEngine {
     const target = Number(tuning.driveSausageTarget) || 0;
     if (!(target > 0)) return false;
     const have = env.secret.getItemNumById(ITEM_SAUSAGE);
+    // 进度旗标（计划 E）：单轨日志直接定责「买到几根 / 刷了几次」。#note 边沿去重，每个新 have 值只落一条
+    //   （含抵达目标的最后一条），不逐拍刷屏。
+    this.#note(
+      'sausage-progress-' + cur.key + '-' + have,
+      'shop: sausage progress ' +
+        have +
+        '/' +
+        target +
+        ' at ' +
+        cur.key +
+        ', refreshes used ' +
+        (Number(this.#refreshTries[cur.key]) || 0),
+    );
     if (have >= target) return false;
     const specs = this.#specsOf(ITEM_SAUSAGE);
     let onShelf = false;
+    let soldOut = false;
     for (let i = 0; i < specs.length; i++) {
       const spec = specs[i];
       if (this.#done[spec]) continue;
@@ -606,13 +653,15 @@ export class ShopEngine {
       }
       const cost = Number(row.cost) || 0;
       if (cost <= 0 || buyBalance < cost) {
-        this.#done[spec] = 1; // 买不起——本店降级（缺购买币）
+        this.#done[spec] = 1; // 买不起——本店降级（缺购买币：刷新不改变余额，不再刷）
         continue;
       }
       const getTime = this.#items[spec] || 0;
       const quotaLeft = Math.max((Number(row.buy_times) || 0) - getTime, 0);
       if (quotaLeft <= 0) {
-        this.#done[spec] = 1; // 本店额度买完，剩下的交给下一家店
+        // 需求 2（同店刷到买满）：本店香肠额度买完**不再永久 done**——记 soldOut，本轮若无别的可买则走 8543 刷店
+        //   把 getTime 归零后继续买（受 driveSausageRefreshMax 与刷新币余额封顶，have>=target 入口闸自然停）。
+        soldOut = true;
         continue;
       }
       const affordable = Math.floor(buyBalance / cost);
@@ -624,9 +673,9 @@ export class ShopEngine {
       // desired 传 0（不按累计件数降级）：目标差额由入口的 have>=target 每拍复判，拿捏最准
       return this.#sendBuy(cur, spec, qty, 0, this.#bought[spec] || 0);
     }
-    // 货单上**根本没香肠**（不是额度买完，那是「交给下一家店」）→ 「无目标品且刷新币够 → 8543 刷店」，
-    //   上限 driveSausageRefreshMax。
-    if (!onShelf && specs.length) return this.#refreshFor(cur, 'sausage');
+    // 货单上**根本没香肠**，或**香肠本店额度已买完**（需求 2：同店刷到买满）：都走「刷店」（预算 driveSausageRefreshMax）
+    //   ——刷新把非 type3 行 getTime 归零，下一拍即可继续买，直到 have>=target 或刷新预算/刷新币耗尽。
+    if (specs.length && (!onShelf || soldOut)) return this.#refreshFor(cur, 'sausage');
     return false;
   }
 
@@ -644,15 +693,10 @@ export class ShopEngine {
     if (!(max > 0)) return false;
     const tries = Number(this.#refreshTries[cur.key]) || 0;
     if (tries >= max) {
+      // 预算烧尽的成因有「不在架」与「本店额度买完」两种（需求 2 后不只前者），统一措辞为 short
       this.#note(
         'rmax' + cur.key,
-        'shop: ' +
-          what +
-          ' still off-shelf at ' +
-          cur.key +
-          ' after ' +
-          max +
-          ' refreshes, give up.',
+        'shop: ' + what + ' still short at ' + cur.key + ' after ' + max + ' refreshes, give up.',
       );
       return false;
     }
@@ -660,11 +704,11 @@ export class ShopEngine {
     if (!cur0) return false;
     const rcost = this.#refreshCost();
     if (rcost > 0 && env.secret.getItemNumById(cur0.refreshId) < rcost) {
-      this.#note('rcur' + cur.key, 'shop: ' + what + ' off-shelf, no refresh currency.');
+      this.#note('rcur' + cur.key, 'shop: ' + what + ' still short, no refresh currency.');
       return false;
     }
     this.#refreshTries[cur.key] = tries + 1;
-    env.log.info('shop: %s off shelf at %s, refreshing (%d/%d).', what, cur.key, tries + 1, max);
+    env.log.info('shop: %s short at %s, refreshing (%d/%d).', what, cur.key, tries + 1, max);
     return this.#sendRefresh(cur);
   }
 
@@ -844,6 +888,7 @@ export class ShopEngine {
     this.#items = {};
     this.#loadedXY = '';
     this.#refreshTries = {};
+    this.#matchKey = '';
     this.#lastRefreshAt = 0;
     this.#bought = {};
     this.#done = {};
@@ -887,6 +932,7 @@ export class ShopEngine {
     this.#lastBuyEndAt = 0;
     this.#lastRefreshAt = 0;
     this.#refreshTries = {};
+    this.#matchKey = '';
     this.#specsByItem = null;
     this.#type3Specs = null;
   }

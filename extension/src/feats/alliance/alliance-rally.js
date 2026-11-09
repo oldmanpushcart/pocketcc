@@ -374,7 +374,7 @@ function catalog() {
   var rows = buildTableRows();
   var fellBack = !rows;
   if (fellBack) {
-    // 表不可读这一路必有日志（保证 dashcam 单轨可还原「为什么面板只有种子行」）；但只在读数面已就绪时 warn，
+    // 表不可读这一路必有日志（保证日志流单轨可还原「为什么面板只有种子行」）；但只在读数面已就绪时 warn，
     //   bundle 未加载那一拍（面板先于 install 渲染）回退属加载时序，会自愈，不是符号漂移。
     log.debug('rally catalog fell back to seed rows. reason=%s', tableFallbackReason);
     if (!fallbackAnnounced && l10n.tableReady()) {

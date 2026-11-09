@@ -13,14 +13,14 @@
  *  机械田「塔」是另一条轴：bid 前缀 floor(bid/1000)（51 金 / 52 油 / 53 粮 / 71 雷神），
  *  以及职业 buffId（1101001 采金…）——那是建塔玩法私货，只有 mech-build 用，**不在本模块**，
  *  由 mech-build 自持「面板家族 ↔ 塔 bid 前缀 ↔ 落点田组(FLOOR(id/100) 轴) ↔ buff」四元组表。
- *  两条轴绝不可当作恒等合并：一座「采金」塔落在 floor(id/100)=1 的田上（dashcam 实证），
+ *  两条轴绝不可当作恒等合并：一座「采金」塔落在 floor(id/100)=1 的田上（实录报文实证），
  *  而 floor(id/100)=1 在采集侧叫石油——「建塔落点」与「田本身叫什么」本就是两回事。
  *  RESOURCE 表的 resource_type 字段又是第三套（游戏 ResourceType 枚举），本模块不碰。
  *
  * 等级天花板：906 只能搜到 1~5 级普通田；6 级田非 906 可达，只由「遗迹区域刷新」邮件开出
  *  （pointType 恒 38，即 core/map.js 的 FORTRESS_RES_POINT_TYPE），故本模块把通用起始上界钉为 RESOURCE_MAX_LEVEL=5。雷神族无 4/5 级行，
  *  groupTypeFor(16, 4|5) 自然返回 0，调用方据此跳过发包——天花板由「表里有没有这一行」隐式表达，
- *  无需为每族另立硬编码上限（实证金/油/粮到 5、雷神到 3，dashcam 查询普通田全量）。
+ *  无需为每族另立硬编码上限（实证金/油/粮到 5、雷神到 3，全量查询普通田实测）。
  *  逐档下探的调用方拿不到「该族到几级」会白撞空行，故本模块另外提供 maxLevelForFamily(family) 作为族级上界查询。
  *
  * 依赖方向：core → game-api（只经 l10n 能力 API 读 RESOURCE 表，不 game.get、不摸 window.pocketcc）；

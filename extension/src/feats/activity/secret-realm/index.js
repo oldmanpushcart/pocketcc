@@ -110,10 +110,10 @@ var engines = {
  *     relocate 恒关（不自动挪台）——大小BOSS 时间错开不同现，次序项不影响选目标；仅队长可发（引擎内 isTeamLeader 已闸）；
  *   shop=商店补货派生总闸 {enabled}（enabled 非用户勾选，而是 pickItems 是否存在 shop=1 项的派生态；且**只在队伍已停靠 161 商店点时**补货，见 shop.js）；
  *   warn=攻击警告应对 {enabled,mode}（mode='transfer' 立即转移（默认）/'stand' 抗争到底；默认关，自动挪队风险最高，见 warn.js；自动驾驶开启时本引擎让出转移、交 pilot.js EVADE 接管）；
- *   drive=自动驾驶 {enabled,boss,shopTime,revive,checkPower,shopDwellMs,emptyDwellMs,drivePlan}（enabled=面板 driveEnabled 总闸（默关）；boss=driveBoss 子闸——BOSS 窗开着时是否自动开往 176 平台，缺省 true；shopTime=大BOSS 前定点商店勤务开关（缺省 true）；revive=driveRevive 子闸——战败(deadType==1)且本场次数未用尽时是否代答 8552 复活，缺省 true；checkPower=driveCheckPower 子闸——受威胁时先探战力差（本队 vs 来犯队，8549），明确不亏则这一拍不逃、照常规阶梯干活（对齐竞品 option.check_power），缺省关；shopDwellMs=到店驻留毫秒（面板秒×1000，默认 25000）；emptyDwellMs=资源/掉落拿空后 settle 毫秒（默认 0=立即走）；drivePlan=开车方案 id（缺省 'default'，§15.8），见 pilot.js）。
+ *   drive=自动驾驶 {enabled,boss,shopTime,revive,checkPower,shopDwellMs,emptyDwellMs,hopMaxSec,drivePlan}（enabled=面板 driveEnabled 总闸（默关）；boss=driveBoss 子闸——BOSS 窗开着时是否自动开往 176 平台，缺省 true；shopTime=大BOSS 前定点商店勤务开关（缺省 true）；revive=driveRevive 子闸——战败(deadType==1)且本场次数未用尽时是否代答 8552 复活，缺省 true；checkPower=driveCheckPower 子闸——受威胁时先探战力差（本队 vs 来犯队，8549），明确不亏则这一拍不逃、照常规阶梯干活（对齐竞品 option.check_power），缺省关；shopDwellMs=到店驻留毫秒（面板秒×1000，默认 25000）；emptyDwellMs=资源/掉落拿空后 settle 毫秒（默认 0=立即走）；hopMaxSec=巡航单跳车程上限秒（面板 driveHopSec，默认 10；超限不长途直冲、就近资源/平台/野怪作跳板，见 pilot.js）；drivePlan=开车方案 id（缺省 'default'，§15.8），见 pilot.js）。
  *   leave=拿满自动离场 {enabled}（enabled=面板 autoLeaveEnabled 总闸（默关）；无子开关，离场为不可逆的整场退出，见 leave.js）。
  *   scout=侦察囤情报 {enabled}（enabled=面板 scoutEnabled 总闸（**v4.1 起缺省开**：打野档品质筛选依赖其情报，关则 #pickBeast 恒按未知品质 2 处理、被 driveBeastMinQuality=4 筛成哑火）；只囤情报不派兵，花 41001 侦察野怪点品质，护栏=先 8536 免费预检/余量闸/速率闸，见 scout.js）。
- * @type {{pickItems:Object<string,{on:number,max:number,shop?:number}>, pickOrder:string[], pickRank:Object<string,number>, buffEffects:number[], heal:object, boss:object, shop:{enabled:boolean}, warn:{enabled:boolean,mode:string}, drive:{enabled:boolean,boss:boolean,shopTime:boolean,revive:boolean,checkPower:boolean,shopDwellMs:number,emptyDwellMs:number,drivePlan:string}}}
+ * @type {{pickItems:Object<string,{on:number,max:number,shop?:number}>, pickOrder:string[], pickRank:Object<string,number>, buffEffects:number[], heal:object, boss:object, shop:{enabled:boolean}, warn:{enabled:boolean,mode:string}, drive:{enabled:boolean,boss:boolean,shopTime:boolean,revive:boolean,checkPower:boolean,shopDwellMs:number,emptyDwellMs:number,hopMaxSec:number,drivePlan:string}}}
  */
 /**
  * BOSS 攻打固定档（面板不给开关）：攻打/投喂/石头恒开、轮次无限、就近选档，relocate（自动挪台，风险最高）恒关。
@@ -145,6 +145,7 @@ var modCfg = {
     shopTime: true,
     shopDwellMs: 25000,
     emptyDwellMs: 0,
+    hopMaxSec: 10,
     drivePlan: 'default',
   },
   leave: { enabled: false },
@@ -428,6 +429,13 @@ function buildEnv() {
       const e = engines.drive;
       if (e && typeof e.markShopLedger === 'function') e.markShopLedger(key, patch);
     },
+    // 拾取引擎→方向盘的「此点对我已采完/无需采」口：pickup 不引 pilot（§14.1 零引用红线），经 env 惰性回灌。
+    //   单人开车下一个资源井常剩下自己不要的货，服务器看非空→双路拿空判据失效→只能由 pickup 主动报；
+    //   pilot 收到即让当前停靠点即时离站（防重派靠离站时的 #consume）。读不到（pilot 未起）静默降级。
+    markTileExhausted: function (key) {
+      const e = engines.drive;
+      if (e && typeof e.markTileExhausted === 'function') e.markTileExhausted(key);
+    },
     // §9.2 约束1（farm 侧晶块保底）的「本场已买过百兽箱」位：pickup 不引 pilot（§14.1 零引用红线），
     //   只能经 env 惰性读 pilot 的 #shopLedger（任一店 piece>0）。读不到（pilot 未起/无账）回 null，
     //   pickup 按「未买过」保守处理（不扣 3000 预留 → 更不易停采晶块，晶块多采无害）。
@@ -676,7 +684,7 @@ function sanitizeWarn(raw) {
 /**
  * 面板的平铺自动驾驶字段 → 引擎用的嵌套对象（秒字段保留原值，sanitizeDrive 负责编毫秒）。
  * @param {object} c 面板原配置
- * @returns {{enabled:boolean,boss:boolean,shopTime:boolean,revive:boolean,checkPower:boolean,shopDwellSec:number,emptyDwellSec:number}}
+ * @returns {{enabled:boolean,boss:boolean,shopTime:boolean,revive:boolean,checkPower:boolean,shopDwellSec:number,emptyDwellSec:number,hopSec:number}}
  */
 function pickDriveRaw(c) {
   return {
@@ -687,6 +695,7 @@ function pickDriveRaw(c) {
     checkPower: c && c.driveCheckPower === true,
     shopDwellSec: c && c.driveShopDwell != null ? c.driveShopDwell : 25,
     emptyDwellSec: c && c.driveEmptyDwell != null ? c.driveEmptyDwell : 0,
+    hopSec: c && c.driveHopSec != null ? c.driveHopSec : 10,
     drivePlan: c && c.drivePlan != null ? String(c.drivePlan) : 'default',
   };
 }
@@ -694,7 +703,7 @@ function pickDriveRaw(c) {
 /**
  * drive 归一化：enabled/boss/shopTime/revive 归布尔（boss/shopTime/revive 缺省 true）；checkPower 缺省 false（对齐竞品缺省）；秒→毫秒并夹 [0,300s]（非法回默认 25s/0s）；drivePlan 校验为已注册方案 id（非法回落 'default'）。
  * @param {*} raw pickDriveRaw 产物
- * @returns {{enabled:boolean,boss:boolean,shopTime:boolean,revive:boolean,checkPower:boolean,shopDwellMs:number,emptyDwellMs:number,drivePlan:string}}
+ * @returns {{enabled:boolean,boss:boolean,shopTime:boolean,revive:boolean,checkPower:boolean,shopDwellMs:number,emptyDwellMs:number,hopMaxSec:number,drivePlan:string}}
  */
 function sanitizeDrive(raw) {
   const e = raw && typeof raw === 'object' ? raw : {};
@@ -705,6 +714,9 @@ function sanitizeDrive(raw) {
   let ed = Number(e.emptyDwellSec);
   if (!Number.isFinite(ed)) ed = 0;
   else if (ed > 300) ed = 300;
+  let hs = Number(e.hopSec);
+  if (!Number.isFinite(hs) || hs <= 0) hs = 10;
+  else if (hs > 120) hs = 120;
   const plan = PLANS[e.drivePlan] ? String(e.drivePlan) : 'default';
   return {
     enabled: e.enabled === true,
@@ -714,6 +726,7 @@ function sanitizeDrive(raw) {
     checkPower: e.checkPower === true,
     shopDwellMs: sd * 1000,
     emptyDwellMs: ed * 1000,
+    hopMaxSec: hs,
     drivePlan: plan,
   };
 }
@@ -896,6 +909,7 @@ reactor.register({
     driveCheckPower: false,
     driveShopDwell: 25,
     driveEmptyDwell: 0,
+    driveHopSec: 10,
     drivePlan: 'default',
     autoLeaveEnabled: false,
     scoutEnabled: true,
@@ -985,7 +999,7 @@ reactor.register({
         { value: 'transfer', label: '立即转移（默认）' },
         { value: 'stand', label: '抗争到底' },
       ],
-      hint: '立即转移=发 8521 去就近 175 营帐/174 平台（只取 10018 视口快照里未被 PVP 的最近一个；快照里无则不凭空造目标）；仅队长可发、仅在停在非BOSS点(marchState=ARRIVED)才动，转移后 45s 静默。抗争到底=不发任何转移包，原地应战',
+      hint: '立即转移=发 8521 去就近可行军的点（173 资源/174 平台/175 营帐/172 野怪——只取 10018 视口快照里未被 PVP 的最近一个，走过去即脱离拉线、不打野；快照里无则不凭空造目标）；仅队长可发、仅在停在非BOSS点(marchState=ARRIVED)才动，转移后 45s 静默。抗争到底=不发任何转移包，原地应战',
     },
     {
       key: 'driveEnabled',
@@ -1057,6 +1071,18 @@ reactor.register({
         return !!(cfg && cfg.driveEnabled);
       },
       hint: '资源点(173)/掉落箱(163)改为「拿空即走」：物品拾取+BUFF拾取（或物品+宠物）都空后，再多驻留本秒数才挪队（0=立即走，默认 0）。等不到拿空由内部 45s 安全上限兜底，不会死守',
+    },
+    {
+      key: 'driveHopSec',
+      type: 'number',
+      label: '最长单跳车程(秒)',
+      section: '自动驾驶',
+      min: 1,
+      step: 1,
+      showIf: function (cfg) {
+        return !!(cfg && cfg.driveEnabled);
+      },
+      hint: '需求 3：巡航选点的单跳车程上限（秒，默认 10）。丰盛井若超出本值×地图速度折算的距离则不长途直冲，改就近找一个资源点/停泊平台/攻击宠物(172)作跳板逐拍逼近（跳板只挪位、不打野）；窗内无任何落脚点则换视野探索。调大=更远也直冲、调小=更保守分步挪',
     },
     {
       key: 'drivePlan',

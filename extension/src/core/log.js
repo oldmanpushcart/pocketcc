@@ -25,8 +25,8 @@
 //      · debug 不吞真异常：凡属第 1)/2) 条的故障线索一律 error/warn，不得为降噪把抛错/写盘失败压在 debug。
 //      · 每个 skip/abort/reject/return 出口必有日志（debug 起步，高频循环靠节流或 log-collect 折叠），
 //        且必带决策上下文：cmd 号、code、坐标(x,y)、目标/队伍 ID、状态枚举值——
-//        保证 dashcam 日志流（minLvl=debug）单轨即可还原引擎「为什么没动」。
-//      · error/warn 消息须含可 grep 的定位前缀（协议号/模块动作名），供 dashcam-rec-analysis 直接过滤。
+//        保证日志流（minLvl=debug）单轨即可还原引擎「为什么没动」。
+//      · error/warn 消息须含可 grep 的定位前缀（协议号/模块动作名），供离线分析直接过滤。
 //
 // ── 硬约束 ──
 //      · 判据是 code 而非 cmd；「服务器拒绝」与「CODE_NOT_SENT」分离处理。

@@ -5,7 +5,7 @@
  *   由 online_reward 配置表驱动（第 times+1 行），行数跑完即当日封顶，等日切重置。
  *   本功能只做免费线：付费礼包（payByExchangeId，真钱充值）不碰。
  *
- * 协议（抓包实证 20261007T015329-每日补给.ndjson）：
+ * 协议（抓包实证）：
  *   825 RequestId.GetTimeReward，V1 send（非 PB），载荷 {}（商店格 SupplyGiftCell 同款，DailyGift 面板的
  *   isAll=1 与「付费礼包全买光」联动、语义不明，不采用）→ 应答 d（JSON 串）=
  *   {reward:{resource:{gold…}…}, timeReward:{rewardTime,times}}，伴随 push 10001/10031 到账（本功能不订阅）。
@@ -26,7 +26,7 @@
  *   - wait 档：睡到点 + 缓冲（封顶 IDLE×8，到点前零发包，重读无损）；
  *   - capped 档：睡到本地日界 + 缓冲（封顶 26h），不逐轮空查；例外：日界后 1h 宽限窗内仍判 capped
  *     降为 IDLE 巡检——防御保险：若日切重置回写滞后（直发不回写）或 times 实为滚动队列，
- *     一次性 24h 长睡会整天跳过；注：36 档累计间隔≈>24h，正常跑不到封顶，此分支平时无感（20261019）。
+ *     一次性 24h 长睡会整天跳过；注：36 档累计间隔≈>24h，正常跑不到封顶，此分支平时无感。
  *   - 数据未就绪（timeReward null / 表未加载）：IDLE 档巡检；
  *   - 连续被拒 3 次：退 IDLE×2。
  *

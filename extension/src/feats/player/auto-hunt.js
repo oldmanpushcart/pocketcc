@@ -9,16 +9,16 @@
  *   多预设出兵 —— 派发一个目标时按 presets 顺序遍历，对预设 n 调 Battle().plan().preset(n).adjust().build()（adjust 已排除在途兵），
  *              取第一个「能出兵」（armyListNew 非空、且配了英雄则英雄已就绪）者发 902/1201；全池无兵则该目标本轮不派、等唤醒。
  *
- * 打法与协议（报文实证 dashcam 20261011T183821-发起攻打野怪 / 20261011T184302-发起攻打野怪-5连 / 20261011T192612-集结5人打锤子 / 20261011T185055-补充体力）：
+ * 打法与协议（报文实证：发起攻打野怪 / 打野怪-5连 / 集结5人打锤子 / 补充体力四趟实录）：
  *   搜野怪 906 WORLD_SEARCH_MONSTER —— req {minLevel,maxLevel,groupType,pointType}；resp {point:{x,y,id,pointType,m:{itemId,level,expireTime}}}，服务端直接回一个可打点（视口无关，Home 可跑）。
- *        pointType=tab：1 野怪（无需集结）、3 集结（战锤）。groupType=怪物 species（黑雷神陆军 61、黑暗陆军 43、黑暗海军 42、黑暗空军 41、战锤 44，实证于 183821 与游戏内 906 搜索）。
+ *        pointType=tab：1 野怪（无需集结）、3 集结（战锤）。groupType=怪物 species（黑雷神陆军 61、黑暗陆军 43、黑暗海军 42、黑暗空军 41、战锤 44，实证于实录报文与游戏内 906 搜索）。
  *        等级：清单不暴露区间，固定搜该怪最高档（min=max）——野怪行（pointType=1）的最高档不再硬编码，派发时由 resolveHuntLevel 从游戏本地表
  *        运行时反查（= UserData.Level + MONSTER_REFRESH 最大 level_relative，旧野怪再钳 data_config 1120）；反查不可用才回落 MONSTERS.level 常数（曾实证：黑暗军团 86、黑雷神陆军 106）。
  *        黑暗军团(41/42/43) 实测不支持区间搜索（1~86 搜空、86~86 才回点），故恒取单档。
- *   无集结行军 902 MARCH_WORLD_POINT —— 走 core/march.attack() 组 canonical body；marchType 5 单打（183821 seq280/384/465/549 实证）、42 五连（184302 seq806 实证）。
- *   创建集结 1201 —— 直发 req {marchType:8,x,y,time:60,armyList,armyListNew,heroList,trapList,formation:0,formationV2}（无 break/extraArmy，192612 seq39/183114 实证）。
+ *   无集结行军 902 MARCH_WORLD_POINT —— 走 core/march.attack() 组 canonical body；marchType 5 单打（实录报文实证）、42 五连（实录报文实证）。
+ *   创建集结 1201 —— 直发 req {marchType:8,x,y,time:60,armyList,armyListNew,heroList,trapList,formation:0,formationV2}（无 break/extraArmy，集结实录实证）。
  *        「5 人 / 10 人」不是请求字段：同一 1201 body、体力扣减不同（据玩家口径 5 人扣 10 体力、10 人扣 20 体力），故按「攻打方式」给每档记一个体力下限 seg.cost，派前若体力不足该档即跳过（不硬发）。
- *   难民营（道具开营，非 906 搜索）—— 用一张求救信开一个营地：815 ITEM_USE req {itemid:1700039,amount:1} → 服务器推 10802 PUSH_FIND_REFUGEECAMP {x,y}（落点唯一来源）→ 1201 集结（body 同战锤）。背包无求救信即自动忽略该行（用户口径），并受「攻打数量」的当日开营上限约束（当日打满即停、跨日归零）。实证 dashcam 20261012T022955-难民营集结。
+ *   难民营（道具开营，非 906 搜索）—— 用一张求救信开一个营地：815 ITEM_USE req {itemid:1700039,amount:1} → 服务器推 10802 PUSH_FIND_REFUGEECAMP {x,y}（落点唯一来源）→ 1201 集结（body 同战锤）。背包无求救信即自动忽略该行（用户口径），并受「攻打数量」的当日开营上限约束（当日打满即停、跨日归零）。难民营集结实录报文实证。
  *   难民营行启用时装载「镜头抑制器」（core/game-api nav.camGuard）——游戏收到 10802 会自行把镜头甩到新营地（连开多营即「乱飞」）；
  *     本玩法经 net.onPreInbound 抢在原生处理器前登记落点坐标，按坐标命中吞掉那一次自动跳转（坐标不匹配的玩家手动跳转不受影响、无时间窗口）。
  *   体力 —— gameData.energy(1)→{point,pointMax}（push 10021 type:1,point,pointMax,reason）；补充 815 ITEM_USE req {itemid,amount}（小体力 600001+10 / 大体力 600002+50 / 纯情花 700003+30 / 浪漫心 700004+30）。
@@ -57,7 +57,7 @@ const CMD_ITEM_USE = 815;
 const PUSH_ENERGY = 10021;
 /** @type {number} push PUSH_FIND_REFUGEECAMP：用求救信开营后服务器回推营地坐标 {x,y}（难民营落点唯一来源，非 906 搜索） */
 const PUSH_FIND_REFUGEECAMP = 10802;
-/** @type {number} ActivityItem.refugeeLetter：求救信道具 id（815 用一张开一个难民营，实证 20261012T022955） */
+/** @type {number} ActivityItem.refugeeLetter：求救信道具 id（815 用一张开一个难民营，真机报文实证） */
 const REFUGEE_LETTER = 1700039;
 
 /** @type {string} 当日已打计数持久态的数据 blob 逻辑名（与配置分离：频繁写入走 storage.data，面板导出/导入只涉配置） */
@@ -106,7 +106,7 @@ const MODES = {
 
 /**
  * 怪物目录（数据驱动，可扩展位）。清单固定行来源，每种怪一行；modes 为该行「攻打方式」下拉的候选（引用 MODES 键）。
- * groupType/pointType 均实证于 dashcam 183821 与游戏内 906 搜索（稳定协议身份，不随版本漂移）。
+ * groupType/pointType 均实证于实录报文与游戏内 906 搜索（稳定协议身份，不随版本漂移）。
  * level 现降级为「搜索等级回退值」：野怪行（pointType=1）派发时改由 resolveHuntLevel 从游戏本地表运行时反查（见该函数），
  *   仅当表未就绪/读数非法时回落此常数；集结类（战锤，pointType=3）等级由服务端下发、本 feat 无法只读反查，故恒用此常数。
  * openItem 非空者为「道具开营」类（难民营）：不走 906 搜索，改用一张该道具(815)开点 + 10802 落点，故无 groupType/pointType/level。
@@ -617,7 +617,7 @@ async function sendAttack(coord, marchType, plan) {
 }
 
 /**
- * 创建集结 1201（战锤集结）：feat 直发（同 alliance-rally 的 1204 不下沉 core）。body 逐键照抄 192612 seq39/183114（无 break/extraArmy）。
+ * 创建集结 1201（战锤集结）：feat 直发（同 alliance-rally 的 1204 不下沉 core）。body 逐键照抄集结实录报文（无 break/extraArmy）。
  * isSending(1201) 去重。永不 reject。
  * @param {{x:number,y:number}} coord 目标点
  * @param {object} plan MarchData

@@ -9,7 +9,7 @@
  *
  * 网络一律走 promise 封装 window.pocketcc.net：send/sendPBV2(cmd, data) → Promise<Ret{code,data,ok}>，isSending(cmd) 查在途。
  *
- * 三条协议（报文实证 dashcam 20261008T002516-重装母舰奖励领取）：
+ * 三条协议（实录报文实证）：
  *   1) req sendPBV2 8802（PINK_MECHA_MONSTER_LIST）{aid, type}：type=1 → data.myMonsters（我自己发现的），
  *      type=2 → data.worldMonsters（世界使徒）。本 feat 只用 type=2。条目形态
  *      {uid:string, x, y, uuid:string, serverId, frameId, playerInfo, expireMilli:Int64(毫秒), hasMarch}。

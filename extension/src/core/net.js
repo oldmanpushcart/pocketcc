@@ -52,7 +52,7 @@ export let netApi = null;
    *   `this._heartbeatCode` 时自学习放入（verbatim：NetMgr 构造 =0/NO_QUEUE_HEART，NetMgrSimple 构造 =6385/TM_WATCH_HEART）。
    * 为什么必须是集合而不是单值：入站只在 NetReciver 单点挂钩，两条通道汇聚同一入口、报文里认不出通道归属，
    *   拿主通道号去滤入站会让次通道的心跳应答整族漏进日志/采集/dashcam。
-   *   报文实证 dashcam 20261010T211527-异能秘境-队长：1177 行里 68 行是 cmd 6385 的心跳应答（10s 一条，占 5.8%）。
+   *   报文实证（异能秘境队长趟实录）：1177 行入站里 68 行是 cmd 6385 的心跳应答（10s 一条，占 5.8%）。
    * @type {Set<number>}
    */
   var hbCodes = new Set();

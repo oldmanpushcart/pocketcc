@@ -31,8 +31,8 @@ export const bits = {
 
   /**
    * Int64 读侧归一：协议层的 Long 对象（{_low,_high,_unsigned}）/数字/字符串 → 十进制字符串。
-   * 铁律：64 位 id 一律按字符串读与比较，不走 Number（>2^53 精度丢失，实证 dashcam 20261016T19xxxx
-   *   的 treasureId/teamId/member.uid 均为原生 Long 对象，与控制器侧 19 位字符串是两套口径）。
+   * 铁律：64 位 id 一律按字符串读与比较，不走 Number（>2^53 精度丢失，实录报文
+   *   实证 treasureId/teamId/member.uid 均为原生 Long 对象，与控制器侧 19 位字符串是两套口径）。
    * 永不抛异常：null/undefined 回空串，其余取 String(v)。
    * @param {*} v Long 实例 / 数字 / 数字串
    * @returns {string} 十进制字符串（无值为空串）

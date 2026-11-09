@@ -11,11 +11,11 @@
  *   2. 领取后不必急着再领——收益恢复很慢，按 30s 空转会大部分领到 code≠0 的空行；
  *   3. 每日 0 点必定刷新。
  *   据此原采用「纯日锚」调度（领一次即睡到下一个 0 点）。**该前提被报文推翻**：收益是 0 点之后仍全天
- *   线性累积的（dashcam 20261011T172802 那轮 17:28 仍领到 expedition_coin=364），纯日锚会把 0 点后整天的
+ *   线性累积的（实录那轮 17:28 仍领到 expedition_coin=364），纯日锚会把 0 点后整天的
  *   新增漏到第二天，用户侧表现为「游戏里明明还能领，脚本一整天不动」。现调度定为
  *   **「日锚 + 日内 CLAIM_GAP_MS 兜底」取先到者**：0 点那次必领，日内每 2h 复领一批（全天约 12 拍）。
  *
- * 协议（报文实证 dashcam 20261011T172802-一键领取.ndjson；源码锚点 extracted/subpack 的
+ * 协议（实录报文实证；源码锚点 extracted/subpack 的
  *   TaskRelaxTool / OpenBuildingBotNode / OpenBuildingBotDetailPop）：
  *   5684 TASK_RELAX_ONE_CLICK_GET_INFO，sendPBV2，载荷 {}：
  *     应答 data = {detail:[{id,param,code?}…], limitTimeSec}。limitTimeSec 是**绝对服务器秒**=下次可领时刻

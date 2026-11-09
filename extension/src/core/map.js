@@ -12,7 +12,7 @@
  *     （实证陷阱：viewServerId() 在 Home 返回 -1，绝不可作 k，见 fetchWindow JSDoc）。
  *     906 请求体无坐标/视口无关，groupType/pointType 的语义由各调用方决定（资源/野怪/集结/惧星…）。
  *
- * 数值来源均有实证（references/游戏逆向/全局地图知识点归档.md、地图模块分析报告.md、dashcam 报文实录）：
+ * 数值来源均有实证（references/游戏逆向/全局地图知识点归档.md、地图模块分析报告.md、实录报文）：
  *   瓦片 224×162 / 半宽高 112/81、缩放档、本服 cols=408/rows=952、单窗回点窗 x±58/y±39、pointType=NWorldMapEntityType。
  */
 import { parseData } from './util.js';
@@ -236,7 +236,7 @@ export const POINT_TYPE_MAP = (() => {
 /** @type {number} 玩家城池 pointType（护盾归属实体，见 POINT_TYPES） */
 export const CITY_POINT_TYPE = 1;
 
-/** @type {number} 要塞资源（王者遗迹刷出的 6 级田）pointType（见 POINT_TYPES 38 项；报文实证 dashcam 20261016 856 遗迹田条目 target.targetType=38、普通田=4） */
+/** @type {number} 要塞资源（王者遗迹刷出的 6 级田）pointType（见 POINT_TYPES 38 项；报文实证 856 遗迹田条目 target.targetType=38、普通田=4） */
 export const FORTRESS_RES_POINT_TYPE = 38;
 
 /**
@@ -414,16 +414,22 @@ export function pickSub(p, subs, keys) {
 }
 
 /**
- * 单窗 901（GET_WORLD_INFO）拉取：构造请求体 → 发送 → 归一应答 → 回吐 pointList。永不 reject。
- *   只做「请求 + 解析 + 取点数组」的公共骨架；命中判定/占用建集等业务留在调用方遍历 points。
+ * 单窗 901（GET_WORLD_INFO）拉取：构造请求体 → 发送 → 归一应答 → 回吐 pointList（+ marchList）。永不 reject。
+ *   只做「请求 + 解析 + 取点/取行军数组」的公共骨架；命中判定/占用建集/行军威胁评估等业务留在调用方。
  *   窗口默认 20×20 单点探针（auto-farm 机械塔探针、imperial-decree 目标探针同形）；
  *   defense 迁城占用需大窗（x±58/y±39）+ marchInfo:true，显式传 opts 覆盖。
+ *   marchInfo:true 时同批回 `marchList[]`（项含 marchId/uid/state/marchType/begin{bx,by}/target{tx,ty,
+ *   targetType}/marchStartTime/marchArrive/returnArriveTime）。下发口径实测为「行军线段是否穿窗」而非
+ *   「起终点是否在窗内」（报文实证：窗心 433,395 的一条 begin(665,187)→
+ *   target(175,641) 两端均在窗外仍被下发）——故以目标点为窗心探针时，一切飞向该点的在途行军必在表内。
+ *   本函数不解读这些字段语义（state 含义、ETA 换算归调用方）。
  * @param {{send:Function}} net 已安装 net
  * @param {number} x 请求中心 game x
  * @param {number} y 请求中心 game y
  * @param {{k:number, width?:number, height?:number, viewLevel?:number, marchInfo?:boolean}} opts
  *   k=本服服号（务必 `UserData.ServerId|0`，非 viewServerId——Home 下后者返回 -1 会致 status=3 空应答）
- * @returns {Promise<{ok:boolean, code:*, points:object[], err?:*>}>} ok=false 时 points 为空数组
+ * @returns {Promise<{ok:boolean, code:*, points:object[], marches:object[], err?:*>}>}
+ *   ok=false 时 points/marches 均为空数组；marches=marchInfo:true 时的原始 marchList（未开启时为空）
  */
 export async function fetchWindow(net, x, y, opts) {
   opts = opts || {};
@@ -441,12 +447,13 @@ export async function fetchWindow(net, x, y, opts) {
   try {
     ret = await net.send(CMD_GET_WORLD_INFO, body);
   } catch (err) {
-    return { ok: false, code: null, points: [], err: err };
+    return { ok: false, code: null, points: [], marches: [], err: err };
   }
-  if (!ret || !ret.ok) return { ok: false, code: ret && ret.code, points: [] };
+  if (!ret || !ret.ok) return { ok: false, code: ret && ret.code, points: [], marches: [] };
   var d = parseData(ret.data) || {};
   var list = Array.isArray(d.pointList) ? d.pointList : [];
-  return { ok: true, code: ret.code, points: list };
+  var marches = Array.isArray(d.marchList) ? d.marchList : [];
+  return { ok: true, code: ret.code, points: list, marches: marches };
 }
 
 /**

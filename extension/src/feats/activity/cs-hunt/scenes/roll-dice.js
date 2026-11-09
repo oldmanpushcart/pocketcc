@@ -2,10 +2,10 @@
  * feats/activity/cs-hunt/scenes/roll-dice.js —— 「这次我最大」(rollDice, eventSpecId 1002xx) 场景执行。
  *
  * 交互（§9.4 报文）：掷骰 `7535 {treasureId, round}`；放弃 `7536` 四趟皆 0，故恒掷、不实现。
- * 幸运：掷骰中奖奖励 `eventRollDiceInfo.winRewardResult`（实证 20261018T105933：该字段在触发掷骰的同一 21376 push 里即明文可见），
+ * 幸运：掷骰中奖奖励 `eventRollDiceInfo.winRewardResult`（实录报文实证：该字段在触发掷骰的同一 21376 push 里即明文可见），
  *   其 items ∩ cfg.luckyRewards.rollDice（本场景勾选集，空则不参与幸运判定）→ 动作前先 7551 用幸运(18)。仅主跑发（陪跑无奖励）。
  *
- * **幸运必须先于掷骰**（实证 20261018T105933 round6：手投在掷骰后 4s 用即对本次失效）：同一 tick 内串行 await 完成
+ * **幸运必须先于掷骰**（真机实录 round6：手投在掷骰后 4s 用即对本次失效）：同一 tick 内串行 await 完成
  *   `tryLucky(→7551{18})→7535`，天然保证幸运在掷骰之前。持有态新鲜度由引擎 `#useSkill` 从 7551 应答内嵌 skillBackpack 回写保证
  *   （借鉴竞对），故此处**不再掷骰前强拉 7550**；`#tryLucky` 内部 `ensureBackpack()` 仅在从未落地时补拉一次。
  *

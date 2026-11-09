@@ -16,6 +16,22 @@ import { screen, slotFree } from './core/net-guard.js';
   let unlocked = slotFree();
 
   /**
+   * @type {boolean} 扩展上下文失效哨兵：MV3 重载/停用后 chrome.runtime.* 一律抛 'Extension context invalidated'，
+   * 而 flush 旁路每批日志/报文都会触发 → 若逐次告警必刷屏。命中一次即置真，此后旁路转发静默跳过（与 storage.js
+   * 的 contextInvalidated 同义、不可逆，需页面刷新重建）。
+   */
+  let contextDead = false;
+
+  /**
+   * 判别是否为「扩展上下文失效」抛错（重载/停用后 chrome.runtime 调用的统一报错）。
+   * @param {unknown} e catch 到的异常
+   * @returns {boolean}
+   */
+  function isContextGone(e) {
+    return /Extension context invalidated/.test(String((e && e.message) || e));
+  }
+
+  /**
    * 存储代理：只认本命名空间且 dir='main->bridge' 的消息，按 op 分发到 chrome.storage.local，
    * 结果带同 id 以 dir='bridge->main' 回发（get 回值，set/remove 回 true；异常回 error 字符串）
    * @param {MessageEvent} event window message 事件
@@ -35,7 +51,7 @@ import { screen, slotFree } from './core/net-guard.js';
     // 报文录制落盘转发：MAIN(net-collect) → bridge → background service worker 代发 POST（绕页面 CSP）。
     // fire-and-forget：不回发 MAIN（net-collect 不消费回执）；无接收器/后台错误只记一行，绝不阻断收发。
     if (msg.op === 'dashcam-flush') {
-      if (!unlocked) return; // 未放行：录制旁路同样静默丢弃
+      if (!unlocked || contextDead) return; // 未放行静默丢弃；上下文失效后彻底静默（避免逐批抛错刷屏）
       try {
         chrome.runtime.sendMessage(
           {
@@ -53,6 +69,10 @@ import { screen, slotFree } from './core/net-guard.js';
           },
         );
       } catch (e) {
+        if (isContextGone(e)) {
+          contextDead = true;
+          return;
+        }
         console.warn('[pocketcc bridge] dashcam-flush send failed', e);
       }
       return;
@@ -61,7 +81,7 @@ import { screen, slotFree } from './core/net-guard.js';
     // 日志上送落盘转发：MAIN(log-collect) → bridge → background 代发 POST /log。同报文通道纪律：
     // fire-and-forget、未放行静默丢弃、失败只记一行不阻断。
     if (msg.op === 'dashcam-log-flush') {
-      if (!unlocked) return; // 未放行：日志旁路同样静默丢弃
+      if (!unlocked || contextDead) return; // 未放行静默丢弃；上下文失效后彻底静默（避免逐批抛错刷屏）
       try {
         chrome.runtime.sendMessage(
           {
@@ -76,6 +96,10 @@ import { screen, slotFree } from './core/net-guard.js';
           },
         );
       } catch (e) {
+        if (isContextGone(e)) {
+          contextDead = true;
+          return;
+        }
         console.warn('[pocketcc bridge] dashcam-log-flush send failed', e);
       }
       return;

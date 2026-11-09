@@ -233,9 +233,12 @@ bus.on(EVT.WORLD_CHANGE, recomputeAll);
  * spec 是一个功能的全部声明：运行时（install/configure/run/kinds/places）+ 面板 descriptor
  * （label/storageKey/defaults/fields/toModuleCfg）。面板与存储据此渲染、持久化、推配置，
  * 故 label/storageKey/defaults 为必填——缺则拒绝注册（fail fast，开发期 F5 即见 warn）。
+ * toModuleCfg 也为必填（硬契约）：core/registry.js 的 applyFeature 对**每个** reactor 功能无条件经它把面板 cfg
+ *   归一成运行时 cfg。无可调参数的玩法也要写 `(c) => ({ enabled: !!(c && c.enabled) })`；缺声明不阻断注册，
+ *   但除 enabled 以外的面板字段会永远停在默认值（下方加载期 warn 点名）。
  * symbols：本功能依赖的游戏 bundle 符号（能力语义名，解析表见 core/game-api.js CAPS；'?' 后缀=软依赖），
  * setConfig 首次 install 前由框架统一校验，缺则不跑 install 直接记安装失败。
- * @param {object} spec { id, label, storageKey, defaults, fields?, toModuleCfg?, kinds?, places?, symbols?, install?(ctx), configure?(cfg), run?(ctx), pause?(ctx) }
+ * @param {object} spec { id, label, storageKey, defaults, toModuleCfg, fields?, kinds?, places?, symbols?, install?(ctx), configure?(cfg), run?(ctx), pause?(ctx) }
  *   // 配置字段演化（由 core/registry.js 消费，均可缺省）：version?:number 当前配置版本号；
  *   // migrate?:(cfg,fromVersion)=>cfg 旧版落后时的迁移纯函数；strictConfig?:boolean 读盘剔除未声明的历史残留键。
  */
@@ -251,6 +254,12 @@ function register(spec) {
   if (typeof spec.label !== 'string' || typeof spec.storageKey !== 'string' || !spec.defaults) {
     log.warn('register: spec missing panel descriptor (label/storageKey/defaults): %s', spec.id);
     return;
+  }
+  // toModuleCfg 契约：registry 每次推配置都经它把面板 cfg 归一成运行时 cfg（收口点 core/registry.js moduleCfg）。
+  //   缺声明不会报错（已降级为只透传开关），但除了 enabled 以外的字段就永远停在默认值——加载期就点名，
+  //   不要等用户在面板翻开关时才发现（旧写法在那里抛 TypeError 且日志无痕）。
+  if (typeof spec.toModuleCfg !== 'function') {
+    log.warn('register: spec missing toModuleCfg (cfg keys will stay at defaults): %s', spec.id);
   }
   const entry = {
     spec: spec,

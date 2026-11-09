@@ -9,7 +9,7 @@
  * 校验维度（真人录制对齐 feat 同一份协议字典）：
  *   数据格式 · 写请求体形态（3504/3505/3508 键集 + 902 零部队八键 / 902 带兵 canonical / 1201 十键）
  *   认领前置闸门（行军坐标必来自 3505 回填）/ type×marchType 分派对拍 / radar_event 查表键契约（实例 id 而非 taskId）
- *   领奖时序（3508 需当场 state=4）
+ *   领奖时序（3508 需当场 state=4）/ 停滞止损（dispatch 无完成证据不得超 dispatchStallLimit 重派）
  *   雷达防御（3515 恒空体 + 发包前必有 deBeginTime>0 触发 + feat 击退闸与真人击退对齐）
  *   Int64 形态（任务 id 裸 number vs marchId 十进制串）/ 单飞不变量（软）/ 应答配对率（观察）。
  *
@@ -69,6 +69,8 @@ const {
   isTaskEvent,
   normalizeDeBeginTime,
   defenseGate,
+  stallStep,
+  cfg,
   CMD_GET_INFO,
   CMD_START_TASK,
   CMD_GET_REWARD,
@@ -150,9 +152,9 @@ export default {
   id: 'radar-task',
   featDir: 'extension/src/feats/player',
   defaultRecs: [
-    'dashcam/store/14179309129759/20261106T002310-雷达任务.ndjson',
+    'dashcam/store/rec/14179309129759/dashcam-rec-20261106T002310-雷达任务.ndjson',
     // 第二账号的日常任务录制：含雷达派兵，给「体力只在出兵时扣」提供交叉样本
-    'dashcam/store/15596140531952/20261105T010023-日常任务.ndjson',
+    'dashcam/store/rec/15596140531952/dashcam-rec-20261105T010023-日常任务.ndjson',
   ],
   engineMods: {
     // 单文件 feat：冒烟即「模块可解析 + 协议字典与决策纯函数在册」
@@ -166,6 +168,8 @@ export default {
       'resolveType',
       'actionFor',
       'pickCandidate',
+      'stallStep',
+      'cfg',
       'staminaGate',
       'defenseGate',
       'normalizeDeBeginTime',
@@ -506,7 +510,7 @@ export default {
     // 权威口径三处实证：游戏 RadarTaskPrefab.initData / RadarController.askBeginTask 均以 e.id 查表，
     //   竞品 B server-js.js:19868 同为 getTableDataById(TableName.radar_event, e["id"])；taskId 是另一张表 radar_task 的键。
     // 反例（线上事故）：曾按 taskId 查，10001 命中同号不同物的槽位行 type=205，把据点任务派成零部队援助 902/67 吃 code=3
-    //   （实证 dashcam _log/15596140531952/20261106T03.ndjson）。此处用「只对实例 id 返回权威行、对 taskId 返回毒药行」的桩钉死契约。
+    //   （实证 dashcam store/log/15596140531952/dashcam-log-20261106.ndjson）。此处用「只对实例 id 返回权威行、对 taskId 返回毒药行」的桩钉死契约。
     {
       let pass = 0;
       let fail = 0;
@@ -662,6 +666,72 @@ export default {
         `首见 state=4 共 ${first4.size} 个；其中 ${bareFirst} 个只能从 20013/20025 裸事件看到（丢裸事件即对这些全盲）`,
       );
       rep.check('凡 state=4 实例后续必有 3508 领奖', '完成即领', pass, fail, skip, notes);
+    }
+
+    // ── 维度：停滞止损（HARD）同一实例在无完成证据下的连续 dispatch 不得超 dispatchStallLimit ──────
+    // 第二条反向断言：「发 1201 时坐标来自认领」那类正向判据封不住「集结被服务器 60s 原地解散后
+    // 无限度重派同一条」——必须看 dispatch 之后有没有 state=4 证据。
+    // 实证 dashcam 20261107T005129：同一条 id=3147 在 639s 内被 1201 重派 4 次（每次 s=0 受理、
+    // 行军态恒 8→4 从未出发、任务态 2→1 反复回滚），而整场 0 笔 3505/3508。
+    // 真人基线不违反（两份录制同实例最多 1 笔 dispatch）；坐标无法归属到实例的 dispatch 一律记 skip，不假 PASS。
+    {
+      const limit = cfg.dispatchStallLimit;
+      const dispById = new Map(); // 实例 id -> [{t, cmd}]
+      let orphan = 0; // 坐标回查不到认领回填的 dispatch（录制起点前的存量任务）
+      for (const w of radarWrites) {
+        if (w.cmd !== CMD_MARCH_POINT && w.cmd !== CMD_CREATE_RALLY) continue;
+        if (w.cmd === CMD_MARCH_POINT && !RADAR_MT.has(Number(w.body.marchType))) continue;
+        const claim = claimByPos.get(w.body.x + ',' + w.body.y);
+        if (!claim || claim.t > w.t) {
+          orphan++;
+          continue;
+        }
+        const arr = dispById.get(claim.id) || [];
+        arr.push({ t: w.t, cmd: w.cmd });
+        dispById.set(claim.id, arr);
+      }
+      let pass = 0;
+      let fail = 0;
+      let skip = orphan;
+      const notes = [];
+      if (orphan) notes.push(`${orphan} 笔 dispatch 坐标无认领回填（采样局限，不判负）`);
+      let peakAll = 0;
+      for (const [id, ds] of dispById) {
+        ds.sort((a, b) => a.t - b.t);
+        const tl = stateById.get(id) || [];
+        // 时间轴合并 dispatch(D) 与 state=4 观测(F)：F 即「前一次真做成了」，把无进展计数清零
+        const marks = [
+          ...ds.map((d) => ({ t: d.t, k: 'D' })),
+          ...tl.filter((s) => s.state === ST_FINISH).map((s) => ({ t: s.ts, k: 'F' })),
+        ].sort((a, b) => a.t - b.t);
+        let streak = 0;
+        let peak = 0;
+        for (const m of marks) {
+          if (m.k !== 'D') {
+            streak = 0;
+            continue;
+          }
+          streak++;
+          if (streak > peak) peak = streak;
+        }
+        if (peak > peakAll) peakAll = peak;
+        if (peak > limit) {
+          fail++;
+          if (notes.length < 4)
+            notes.push(
+              `id=${id} taskId=${tl.length ? tl[0].taskId : '?'} 无完成证据下连续 dispatch ${peak} 次 > 止损阈 ${limit}`,
+            );
+        } else pass++;
+      }
+      // 阈本身要与 feat 同源（不在此重抄一份）：拿 stallStep 反推同样的达标形状
+      notes.push(
+        `止损阈=${limit}（cfg.dispatchStallLimit，与 feat stallStep 同源）；最大无进展重派=${peakAll}`,
+      );
+      const probe = stallStep('rollback', limit - 1, limit);
+      if (!probe.yielded) fail++;
+      else pass++;
+      notes.push('stallStep 自检：第 ' + limit + ' 次 rollback 必须达让位阈');
+      rep.check('dispatch 无完成证据不得超止损阈重派', '停滞止损', pass, fail, skip, notes);
     }
 
     // ── 维度：任务推送形态契约（HARD）feat 的 isTaskEvent 判据必须与线上形态一致 ──────

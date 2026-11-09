@@ -25,7 +25,7 @@
 - **具名导出 `netApi` 而非 `net`（本轮改造）**：早先 reactor/feat 经 `window.pocketcc.net` 懒取底座，代价是变成 dependency-cruiser 看不见的影子依赖。现改为 `import { netApi }`，装配期即就绪、`window.pocketcc.net` 降为纯调试面。命名用 `netApi` 是因 IIFE 内部已有局部 `var net`（NetMgr.NET 实例）会遮蔽同名导出。
 - **入站单点、出站双点**：两条通道的报文最终都汇聚 `NetReciver.getInstance().onMessage`，故入站只挂一处即全覆盖；出站两条通道物理隔离（秘境/观战走另一条 websocket），必须各自 hook，否则只包主通道会让次通道整族 req 消失。
 - **次通道只包原型不包门面**：`NetMgrSimple.prototype` 与 `_socket` 销毁重建无关，一次挂钩长期有效；包 `TMWatchNetMgr` 门面会让同一条包记两次（门面在地图外转调 NET）。
-- **心跳用集合而非单值**：入站认不出报文来自哪条通道，拿主通道号去滤会让次通道心跳应答整族漏进日志/采集。报文实证 dashcam 20261010T211527：1177 行里 68 行是 cmd 6385 心跳（占 5.8%）。
+- **心跳用集合而非单值**：入站认不出报文来自哪条通道，拿主通道号去滤会让次通道心跳应答整族漏进日志/采集。实录报文实证：1177 行里 68 行是 cmd 6385 心跳（占 5.8%）。
 - **被拒静默不抛异常**：游戏两条通道在 needDisable / MsgIDSettings / `cdTime` 太频繁 / encode 失败处 `return!1`，无异常；被拒语义用 `CODE_NOT_SENT` 等哨兵码表达，不用异常控制流。
 
 ## 3. API 契约
@@ -69,7 +69,7 @@ netApi.collecting() / stream;     // 采集环形缓冲 / 流式观测
 
 ## 6. 坑与边界
 
-- **心跳不进观测面**：`hbCodes` 已滤两条通道心跳，故 dashcam 录音与 `collecting()` 里没心跳行，对拍时别当成漏采。
+- **心跳不进观测面**：`hbCodes` 已滤两条通道心跳，故 dashcam 实录与 `collecting()` 里没心跳行，对拍时别当成漏采。
 - **`ctx.on.req` 是唯一正解**：绕过它 `bus.on('net.req.…')` 是空订阅（发送 hook 未按需拉起）。
 - **req 只在真上线后派**：`return!1` 的静默拒绝不会产生 req 事件，据此可判断包是否上线。
 - **Int64 字段按字符串读**：64 位 ID 不做 Number 转换（精度陷阱），比较用字符串。
@@ -78,7 +78,7 @@ netApi.collecting() / stream;     // 采集环形缓冲 / 流式观测
 ## 7. 调试面
 
 - `pocketcc.net.secondaryStatus()` 看次通道态；`pocketcc.net.setLog(true)` 开全量收发打印（关闭零开销）。
-- `pocketcc.net.collecting()` 拉当前采集窗口；协议形态对拍走 `dashcam/store/<uid>/…` NDJSON。
+- `pocketcc.net.collecting()` 拉当前采集窗口；协议形态对拍走真人 NDJSON 报文实录。
 - 日志：NET tag；被拒走 info、循环/心跳走 debug，真异常才 warn。
 
 ## 8. 变更记录

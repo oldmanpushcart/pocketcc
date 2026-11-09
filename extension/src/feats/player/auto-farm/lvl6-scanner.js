@@ -16,8 +16,12 @@
  * 窗 60×90、viewLevel1、窗间串行 L6_SCAN_GAP_MS。家族闸：邮件正文写明「资源类型为 农田/油田/金矿」，
  * 该家族未被勾选则整锚点不扫（省 5 窗高危 901）；文案不认识时 fail-open 照扫（家族真值以扫回点为准）。
  *
- * 池条目录 storage.slot('autoFarm.lvl6')，形状 {v, scanned, pool}：跨刷新页保留，免重扫高危 901。
- * 派兵前对候选做中心定点 901 复验（pointType38 & 本盟 & ownerId='0'），复验不过即移出池——持久化的「空闲」可能早已被抢。
+ * 池条目录 storage.slot('autoFarm.lvl6')，形状 {v, scanned, pool, sp}：跨刷新页保留，免重扫高危 901。
+ * 派兵前对候选做中心定点 901 复验（`marchInfo:true`），一发同时完成两件事：
+ *   ① 占领核对：pointType38 & 本盟 & ownerId='0'，非 6 级田即移出池、被占即刷新到期时刻；
+ *   ② 抢道核对：该点是否已有别人的行军在路上且比我先到（`raceLook`）——6 级田是抢的，
+ *     旧实现只看①不看②，真机连吃三块油田「复验时无主→到达时已被抢跑的那支占了」。
+ *   扫图 5 窗仍 `marchInfo:false`（大窗行军表会放大高危 901 包体，且入池时刻的抢道结论几分钟内就会过期）。
  * ⚠️ 复验的免探窗只认 probedAt（派前单点复验时刻），**不认 ts**（普查快照时刻）：5 窗普查一次刷进上百点，
  * 若也给它背书，就成了「扫图后 10 分钟内派兵一律不侦查」——真机撞过：21:00:45 普查入池、21:06:06 才补派，
  * 中间田早被别队占了，连吃 4 发 902 被拒（why=100488 已有人驻扎），每发还把一个好点误钉 30 分钟。
@@ -27,6 +31,8 @@ import { parseData, sleep } from '../../../core/util.js';
 import { createLog } from '../../../core/log.js';
 import { storage } from '../../../core/storage.js';
 import { map } from '../../../core/map.js';
+import { march } from '../../../core/march.js';
+import { getUid } from '../../../core/player.js';
 
 /** @type {ReturnType<typeof createLog>} 模块日志器（tag=AUTO-FARM） */
 const log = createLog('AUTO-FARM');
@@ -59,10 +65,37 @@ const MAIL_FRESH_SEC = 4 * 3600;
 const SCAN_RETRY_MAX = 2;
 /** @type {number} 派前复验的免探窗（毫秒）：只有单点 901 复验过才算数，普查入池不算（见文件头 ⚠️） */
 const REPROBE_MS = 60 * 1000;
-/** @type {number} 候选点被 902 拒后的解禁时长（毫秒）：田下次刷新会复活，到期自动解禁 */
+/** @type {number} 候选点被 902 拒/到达空返后的解禁时长（毫秒）：田下次刷新会复活，到期自动解禁 */
 const BLOCK_MS = 30 * 60 * 1000;
-/** @type {number} 单轮取田最多派前复验探针数（防一拍连发多枚 901） */
-const PROBE_CAP = 2;
+/**
+ * @type {number} 单轮取田最多派前复验探针数（防一拍连发多枚 901）。
+ * 旧值 2 是「6 级田不用抢」的假设下定的；真机实录那一轮：池内 100 点、每 10 分钟一拍只验 2 个、
+ * 26 次连中全回「已被占」，而田只活 4h——额度本身就成了恢复速度的天花板，故按「抢」的语义提到 6。
+ */
+const PROBE_CAP = 6;
+/**
+ * @type {number} 同一轮内相邻两枚复验 901 的最小间隔（毫秒）：提额到 6 后一行可连发多枚，
+ * 而 `NetMgr.send` 有按 cmd 的 cdTime 频控（命中静默 `return!1`、无应答，见「战斗模块分析报告」§4.2），
+ * 被吞的那发只会得到 status='error'（本行本轮不派），白丢一轮抢田机会。
+ */
+const PROBE_GAP_MS = 600;
+/**
+ * @type {number} 抢道安全垫（秒）：敌方到达只比我晚这点时间仍不算抢得过——
+ * 复验到 902 落地、再到服务器受理本身有几百毫秒到秒级滞后，且对方可被加速。
+ */
+const RACE_MARGIN_SEC = 15;
+/**
+ * @type {number} 采集行军速度兜底值（game 单位/秒，曼哈顿距离口径）：仅在还没从自家 902 应答学到速度时用。
+ * 报文实证：实录 mt=3 两条 begin(405,411)→target(386,440)/(388,440)，48/46 单位走 22s ≈ 2.1；
+ * 与运行日志实测「21:02:13 派 (332,352)→≈21:03:20 空返」的 132 单位 / ≈63s 对得上。
+ */
+const SPEED_FALLBACK = 2.1;
+/**
+ * @type {number} 抢不过时的采集估时（秒）：在途行军没有 returnArriveTime（报文实证在途时恒 0），
+ * 拿不到对方空出时刻就按「对方到达 + 本值」估。故意估短：下一拍复验会看见 ownerId≠0 而改按田自带的
+ * expireTime 处理（自纠），反之估长了会白错过一整块田。
+ */
+const HOLD_GUESS_SEC = 10 * 60;
 /** @type {number} 5 窗扫图请求之间的串行间隔（毫秒，免瞬时并发对服务器加压） */
 const SCAN_GAP_MS = 2 * 1000;
 /** @type {number} 无待扫邮件时扫图 cycle 的邮件列表轮询兜底节拍（毫秒）：读邮件廉价，自愈漏推 */
@@ -103,8 +136,10 @@ var aliveFn = function () {
 };
 
 /**
- * 候选池：坐标键 "x,y" → {x,y,family,level:6,ownerId,expireTime,ts(墙上毫秒),probedAt(墙上毫秒),blockedUntil(墙上毫秒)}。
- * ts = 最后一次从报文看到它的时刻（只供老化/展示）；probedAt = 最后一次派前单点复验的时刻（只供免探窗）。
+ * 候选池：坐标键 "x,y" → {x,y,family,level:6,ownerId,expireTime,ts(墙上毫秒),probedAt(墙上毫秒),
+ * blockedUntil(墙上毫秒),contendedUntil(墙上毫秒)}。
+ * ts = 最后一次从报文看到它的时刻（只供老化/展示）；probedAt = 最后一次派前单点复验的时刻（只供免探窗）；
+ * blockedUntil = 902 被拒/到达空返后的解禁时刻；contendedUntil = 派前复验判「抢不过」后最早值得再验的时刻。
  * @type {Map<string, object>}
  */
 var pool = new Map();
@@ -119,6 +154,12 @@ var pending = new Map();
 var retry = {};
 /** @type {boolean} 是否已从盘回填（读盘只做一次） */
 var loaded = false;
+/**
+ * 我方采集行军实测速度（game 单位/秒，0=尚未标定）：由 learnSpeed 从自家 902 应答的
+ * `marchInfo.marchStartTime/marchArrive` 反推，落盘字段 `sp`（跨刷新页仍用实测值而非兜底值）。
+ * @type {number}
+ */
+var mySpeed = 0;
 /** @type {boolean} 是否已成功拉过一次 alliance 邮件首页（单次会话只拉一次） */
 var mailLoaded = false;
 
@@ -181,6 +222,10 @@ function ingestPoints(points) {
       // 普查只证明「这一刻报文里它无主」，不替派兵背书：ownerId 与上次一致时延续既有复验有效期，
       // 一旦变化（被抢/空出）立刻作废，下一次 pick 必发单点 901
       probedAt: old && String(old.ownerId) === String(e.ownerId) ? old.probedAt || 0 : 0,
+      // 抢道结论同理：归属未变则延续（对方还在路上，普查扫回「无主」不代表威胁消失），
+      // 归属一变（对方已驻扎或采完空出）旧结论就过期，交给下一次复验现场重判
+      contendedUntil:
+        old && String(old.ownerId) === String(e.ownerId) ? old.contendedUntil || 0 : 0,
     });
     hits++;
   }
@@ -213,18 +258,18 @@ function pruneScanned() {
 }
 
 /**
- * 池 + 去重表落盘（fire-and-forget）：{v, scanned, pool}。失败仅 debug（内存池仍是本轮扫图真相）。
+ * 池 + 去重表 + 实测速度落盘（fire-and-forget）：{v, scanned, pool, sp}。失败仅 debug（内存池仍是本轮扫图真相）。
  */
 function persist() {
   var arr = [];
   pool.forEach(function (e) {
     arr.push(e);
   });
-  Promise.resolve(storage.slot.set(STORE_KEY, { v: STORE_VER, scanned: scanned, pool: arr })).catch(
-    function (err) {
-      log.warn('persist lvl6 failed. %s', err && err.message);
-    },
-  );
+  Promise.resolve(
+    storage.slot.set(STORE_KEY, { v: STORE_VER, scanned: scanned, pool: arr, sp: mySpeed }),
+  ).catch(function (err) {
+    log.warn('persist lvl6 failed. %s', err && err.message);
+  });
 }
 
 /**
@@ -250,6 +295,8 @@ function load() {
             scanned[kk] = saved.scanned[kk];
         }
       }
+      // 速度标定是纯历史量（不靠报文重建），读不到就继续用兜底值，不影响正确性
+      if (Number(saved.sp) > 0) mySpeed = Number(saved.sp);
       pruneScanned();
       prunePool();
       log.info(
@@ -448,15 +495,97 @@ async function scanPass(wanted) {
 }
 
 /**
- * 派前单点复验：中心定点 901 确认该点仍是 pointEntry 口径的 6 级田。
- * 命中即刷新条目 ownerId/expireTime/ts；已非 6 级田 → 移出池。永不 reject。
+ * 从自家 902 应答标定采集行军速度（供 raceLook 估我方到达）：实录报文实证 ——
+ * 应答 `marchInfo` 带 `marchStartTime/marchArrive`（服务器秒）与 `begin{bx,by}`，
+ * 距离用「出发点→目标点」的曼哈顿长度（与 raceLook 里我方 ETA 同口径，两套距离定义不得混用）。
+ * EMA 平滑（新样本权重 0.4）；明显离群（<0.2 或 >50 单位/秒）直接丢弃，防一次异常把估速带跑。
+ * @param {number} x 派出的目标点 game x
+ * @param {number} y 派出的目标点 game y
+ * @param {object|null} mi 902 应答的 marchInfo（缺字段/时刻不自洽即 noop）
+ */
+function learnSpeed(x, y, mi) {
+  if (!mi) return;
+  var st = Number(mi.marchStartTime) || 0;
+  var ar = Number(mi.marchArrive) || 0;
+  if (!(ar > st)) return;
+  var b = mi.begin || {};
+  var bx = Number(b.bx);
+  var by = Number(b.by);
+  if (!isFinite(bx) || !isFinite(by)) return;
+  var d = Math.abs((x | 0) - bx) + Math.abs((y | 0) - by);
+  if (!(d > 0)) return;
+  var sp = d / (ar - st);
+  if (!(sp >= 0.2) || sp > 50) return;
+  mySpeed = mySpeed ? mySpeed * 0.6 + sp * 0.4 : sp;
+  persist();
+}
+
+/**
+ * 抢道判定（「划算」口径）：marchList 里飞向该点的他人行军中最早到达时刻 vs 我方预计到达。
+ *   敌方剩余秒数 > 我方 ETA + RACE_MARGIN_SEC ⇒ 抢得过（lose=false，照常派）；
+ *   否则判「抢不过」：重试时刻取各对手里最早可能空出的那一支（对方 `returnArriveTime` 有值就用它，
+ *   没值按「到达 + HOLD_GUESS_SEC」估），宁短勿长——短了下一拍复验会看见 ownerId≠0 改按田的 expireTime 处理。
+ *   自己的行军不计（那是「已经下成」而不是威胁）；返程/到家不计；到达时刻读不到按「随时落点」最坏处理。
+ *   服号/本城位置取不到 ⇒ 回 null（fail-open 退回旧行为，不因估算缺失而拦死抢田）。
+ * @param {object[]} marches fetchWindow 透传的原始 marchList
+ * @param {number} x 候选点 game x
+ * @param {number} y 候选点 game y
+ * @returns {{threatSec:number,myEtaSec:number,rivals:number,lose:boolean,retryAfterMs:number}|null}
+ *   null = 表内无一支飞向该点（无威胁）
+ */
+function raceLook(marches, x, y) {
+  if (!marches || !marches.length) return null;
+  var srv = gameData.serverTime() || 0;
+  var my = gameData.myWorldPos();
+  var sp = mySpeed || SPEED_FALLBACK;
+  if (!srv || !my || !(sp > 0)) return null;
+  var myEtaSec = Math.ceil((Math.abs((x | 0) - (my.x | 0)) + Math.abs((y | 0) - (my.y | 0))) / sp);
+  var myUid = '';
+  try {
+    myUid = String(getUid() || '');
+  } catch (err) {}
+  var threatSec = -1;
+  var retryMs = 0;
+  var rivals = 0;
+  for (var i = 0; i < marches.length; i++) {
+    var m = marches[i] || {};
+    var t = m.target || {};
+    if ((t.tx | 0) !== (x | 0) || (t.ty | 0) !== (y | 0)) continue;
+    var st = m.state | 0;
+    if (st === march.State.RETURNING || st === march.State.ARRIVED_HOME) continue;
+    if (myUid && String(m.uid) === myUid) continue;
+    rivals++;
+    var arrive = Number(m.marchArrive) || 0;
+    var left = arrive > srv ? arrive - srv : 0; // 读不到到达时刻就当作随时会落点
+    if (threatSec < 0 || left < threatSec) threatSec = left;
+    var back = Number(m.returnArriveTime) || 0;
+    var ms = back > srv ? (back - srv) * 1000 : (left + HOLD_GUESS_SEC) * 1000;
+    if (!retryMs || ms < retryMs) retryMs = ms;
+  }
+  if (!rivals) return null;
+  var lose = threatSec <= myEtaSec + RACE_MARGIN_SEC;
+  return {
+    threatSec: threatSec,
+    myEtaSec: myEtaSec,
+    rivals: rivals,
+    lose: lose,
+    retryAfterMs: lose ? retryMs : 0,
+  };
+}
+
+/**
+ * 派前单点复验：中心定点 901（`marchInfo:true`）一发拿全两件事——
+ *   ① 该点仍是 pointEntry 口径的 6 级田且无主（已被占则刷新条目为占用态 + 到期时刻）；
+ *   ② 有没有别人的行军正飞向该点且比我先到（raceLook）。
+ * 已非 6 级田 → 移出池。永不 reject。
  * @param {object} e 候选池条目
- * @returns {Promise<{status:'ok'|'gone'|'error', ownerId?:string, expireTime?:number}>}
+ * @returns {Promise<{status:'ok'|'gone'|'error', ownerId?:string, expireTime?:number, contended?:object|null}>}
+ *   status='ok' 且 contended 为空才可派；contended 非空 = 「抢不过」，条目已记 contendedUntil，调用方换下一候选
  */
 function probePoint(e) {
   var key = e.x + ',' + e.y;
   return map
-    .fetchWindow(net, e.x, e.y, { k: worldMap.serverId() })
+    .fetchWindow(net, e.x, e.y, { k: worldMap.serverId(), marchInfo: true })
     .then(function (r) {
       if (!r.ok) return { status: 'error' };
       for (var i = 0; i < r.points.length; i++) {
@@ -468,6 +597,10 @@ function probePoint(e) {
           return { status: 'gone' };
         }
         var old = pool.get(key);
+        var wall = Date.now();
+        // 已被占时不必算抢道（ownerId 那一闸已经拦下，且到期时刻走 expireTime），只给无主点定抢道结论
+        var race = ent.ownerId === '0' ? raceLook(r.marches, e.x, e.y) : null;
+        var contendedUntil = race && race.lose ? wall + race.retryAfterMs : 0;
         pool.set(key, {
           x: e.x,
           y: e.y,
@@ -475,11 +608,17 @@ function probePoint(e) {
           level: 6,
           ownerId: ent.ownerId,
           expireTime: ent.expireTime,
-          ts: Date.now(),
+          ts: wall,
           blockedUntil: old ? old.blockedUntil : 0,
-          probedAt: Date.now(), // 单点复验：这条就是「刚刚亲眼看过」的凭据，免探窗只认它
+          probedAt: wall, // 单点复验：这条就是「刚刚亲眼看过」的凭据，免探窗只认它
+          contendedUntil: contendedUntil,
         });
-        return { status: 'ok', ownerId: ent.ownerId, expireTime: ent.expireTime };
+        return {
+          status: 'ok',
+          ownerId: ent.ownerId,
+          expireTime: ent.expireTime,
+          contended: race && race.lose ? race : null,
+        };
       }
       pool.delete(key);
       return { status: 'gone' };
@@ -491,6 +630,7 @@ function probePoint(e) {
 
 /**
  * 该坐标是否还有「可下」的遗迹候选（升级判定用的廉价窥视，零发包）。
+ * 吃上轮复验留下的两条结论：blockedUntil（被拒/空返）与 contendedUntil（抢不过）都未到期就不算可下。
  * @param {number} family 资源家族编码
  * @param {Set<string>} taken 本轮已占用/已派点键
  * @param {function(string):boolean} [isBlocked] 坐标黑名单判定
@@ -502,7 +642,7 @@ function peek(family, taken, isBlocked) {
   var found = 0;
   pool.forEach(function (e, key) {
     if (found || e.family !== family) return;
-    if (e.blockedUntil > wall) return;
+    if (e.blockedUntil > wall || (e.contendedUntil || 0) > wall) return;
     if (taken && taken.has(key)) return;
     if (isBlocked && isBlocked(key)) return;
     if (e.ownerId !== '0') return;
@@ -514,7 +654,8 @@ function peek(family, taken, isBlocked) {
 
 /**
  * 为一行遗迹田从候选池取点：排序「无主优先 → expireTime 升序（同批田共享到期时刻，先拿将消失的）→ 距本城最近」；
- * 距上次派前复验超 REPROBE_MS 的候选，发单点 901 复验仍无主才返回（本轮探针上限 PROBE_CAP）；被抢/已毁即跳过换下一候选。
+ * 距上次派前复验超 REPROBE_MS 的候选，发单点 901 确认「仍无主且抢得过」才返回（本轮探针上限 PROBE_CAP）；
+ * 被抢/已毁/抢不过 即跳过换下一候选。
  * @param {number} family 资源家族编码
  * @param {Set<string>} taken 本轮已占用/已派点键
  * @param {function(string):boolean} [isBlocked] 坐标黑名单判定
@@ -527,7 +668,7 @@ async function pick(family, taken, isBlocked) {
   var cands = [];
   pool.forEach(function (e, key) {
     if (e.family !== family) return;
-    if (e.blockedUntil > wall) return;
+    if (e.blockedUntil > wall || (e.contendedUntil || 0) > wall) return;
     if (taken && taken.has(key)) return;
     if (isBlocked && isBlocked(key)) return;
     if (e.expireTime && srv && srv >= e.expireTime) return;
@@ -548,11 +689,25 @@ async function pick(family, taken, isBlocked) {
     if (wall - (e.probedAt || 0) >= REPROBE_MS) {
       if (probed >= PROBE_CAP) break; // 本轮探针额度用尽，缺位留 active 档下拍续
       probed++;
+      if (probed > 1) await sleep(PROBE_GAP_MS); // 见 PROBE_GAP_MS：免把连发的 901 送进 cdTime 黑洞
       var pr = await probePoint(e);
       if (!aliveFn()) return null;
       if (pr.status === 'gone') continue;
       if (pr.status === 'error') return null; // 网络未知：本行本轮不派、不拉黑，下拍重试
       if (pr.ownerId !== '0') continue; // 被抢：条目已刷新为占用态+到期时刻，换下一候选
+      if (pr.contended) {
+        // 有人先我一步到：不拉黑（田还是无主的），只记下重试时刻，随即换下一候选继续抢
+        log.debug(
+          'relic skipped (rival arrives first). x=%d y=%d threat=%ds myEta=%ds rivals=%d retry=%ds',
+          e.x,
+          e.y,
+          pr.contended.threatSec,
+          pr.contended.myEtaSec,
+          pr.contended.rivals,
+          Math.round(pr.contended.retryAfterMs / 1000),
+        );
+        continue;
+      }
     }
     return { x: e.x, y: e.y, level: 6, family: e.family };
   }
@@ -560,7 +715,27 @@ async function pick(family, taken, isBlocked) {
 }
 
 /**
- * 902 被拒后把该坐标记入解禁表（田下次刷新会复活，到期自动解禁；异于普通/机械田的 run 期硬拉黑）。
+ * 该家族池内「还值得再复验」的候选数（零发包）：无主、未被拒、未被抢道延后、且过了免探窗（或从未复验）。
+ * 用途：upgradePass 报「没更好田」时区分「真没田」与「还有 92 块没验过」——后者不该睡满 idle 长档。
+ * @param {number} family 面板家族码
+ * @returns {number}
+ */
+function staleCount(family) {
+  var wall = Date.now();
+  var srv = gameData.serverTime() || 0;
+  var n = 0;
+  pool.forEach(function (e) {
+    if (e.family !== family || e.ownerId !== '0') return;
+    if (e.blockedUntil > wall || (e.contendedUntil || 0) > wall) return;
+    if (e.expireTime && srv && srv >= e.expireTime) return;
+    if (wall - (e.probedAt || 0) < REPROBE_MS) return;
+    n++;
+  });
+  return n;
+}
+
+/**
+ * 902 被拒/到达空返后把该坐标记入解禁表（田下次刷新会复活，到期自动解禁；异于普通/机械田的 run 期硬拉黑）。
  * @param {number} x 坐标 x
  * @param {number} y 坐标 y
  * @param {number} [ms] 解禁时长（毫秒），缺省 BLOCK_MS
@@ -603,8 +778,9 @@ function pendingCount() {
 }
 
 /**
- * 按家族体检池（诊断「只下粮不下油」这类取不到点的根因分流）：统计该家族 matched/free/owned/blocked 计数。
+ * 按家族体检池（诊断「只下粮不下油」这类取不到点的根因分流）：统计该家族 matched/free/owned/blocked/contested/stale 计数。
  * matched=0 说明扫图根本没把该家族田入池（家族映射/入池判据问题）；matched>0 而 free=0 说明有田但全被占。
+ * ⚠ free = 无主且未被抢道延后（与 pick 的候选闸同口径）；contested = 上次复验判了抢不过、还没到重试时刻；stale = 还没复验过。
  * @param {number} family 面板家族码
  * @returns {string} 供日志的分解串
  */
@@ -615,6 +791,7 @@ function describe(family) {
   var free = 0;
   var owned = 0;
   var blocked = 0;
+  var contested = 0;
   pool.forEach(function (e) {
     total++;
     if (e.family !== family) return;
@@ -623,8 +800,10 @@ function describe(family) {
       blocked++;
       return;
     }
-    if (e.ownerId === '0') free++;
-    else owned++;
+    if (e.ownerId === '0') {
+      if ((e.contendedUntil || 0) > wall) contested++;
+      else free++;
+    } else owned++;
   });
   return (
     'pool=' +
@@ -638,7 +817,11 @@ function describe(family) {
     ' owned=' +
     owned +
     ' blocked=' +
-    blocked
+    blocked +
+    ' contested=' +
+    contested +
+    ' stale=' +
+    staleCount(family)
   );
 }
 
@@ -651,7 +834,7 @@ function install(o) {
   aliveFn = o.alive;
 }
 
-/** run 复位：清空内存池/去重表/待扫队列（盘上数据由 load() 重新回填） */
+/** run 复位：清空内存池/去重表/待扫队列（盘上数据由 load() 重新回填）；速度标定也归零，由 load 从盘取回 */
 function reset() {
   pool = new Map();
   scanned = {};
@@ -659,6 +842,7 @@ function reset() {
   retry = {};
   loaded = false;
   mailLoaded = false;
+  mySpeed = 0;
 }
 
 /** 遗迹田扫描器单例 */
@@ -677,6 +861,8 @@ export const relic = {
   pick,
   peek,
   block,
+  staleCount,
+  learnSpeed,
   has,
   entryAt,
   size,

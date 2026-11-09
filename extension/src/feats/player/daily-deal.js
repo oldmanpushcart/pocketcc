@@ -4,7 +4,7 @@
  * 玩法：商店「每日特惠」页签每天附赠一份免费奖励（道具/资源），每日 0 点刷新、限购 1 次。
  *   本功能只做免费线：付费档位礼包（真钱 exchange 购买 / 9883 选英雄礼包）不碰。
  *
- * 协议（抓包实证 20261024T093950-每日特惠.ndjson；源码锚点 extracted/subpack 的
+ * 协议（抓包实证；源码锚点 extracted/subpack 的
  *   HeroDailyDealGiftShopNode.onClickReward）：
  *   9884 HERO_DAILY_EXCHANGE_GET_FREE_REWARD，sendPBV2，载荷 {}（游戏领取按钮同款空载荷）→
  *   应答 pbAckV2.data = {reward:{resource:{…}, items:[{itemId,itemCount}…], …}}，header.s=0 为领到；

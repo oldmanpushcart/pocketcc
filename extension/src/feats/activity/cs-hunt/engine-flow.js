@@ -41,7 +41,7 @@
  * 密码大爆炸（codeBox，7537，全员）：本端视图 viewToStr 发频道 17（每回合一次）+ 收队友视图 merge 累积；
  *   汇总满 → 提交；有未知位 → 等队友视图≤15s；超时后未知≤2 → solveCandidates 兜底；未知>2 → 放弃；uidWinMap[我]=true 即停手。
  *
- * 角色门控（**陪跑轮值 dashcam 20261017T025932 修正旧「7532 全员发」口径**）：
+ * 角色门控（**陪跑轮值实录修正旧「7532 全员发」口径**）：
  *   - **7532 仅 `eventDecideInfo.uidDecide` 轮值者发**（每回合服务器指定一人，其他成员发一律 s:3 d:cs_treasure371 「当前阶段不可操作」）；
  *   - 7534/7535（要奖励类）仅主跑发；
  *   - 7537/7538/7551 全员发（陪跑 uidWinMap 也能置 true）。
@@ -321,11 +321,11 @@ export class FlowEngine {
       else if (ei.status === EVENT_PHASE_STATE.EVENT) await this.#handleEvent(treasureId, ei, cfg);
     } else if (status === HUNT_STATUS.WAIT) {
       // 探索回合（每场 round 起始 status=1/WAIT）：数据转换→重拉背包→再判并执行完美镜像复制先知。
-      //   【不再主动维持盾】：实证 20261018T190716 无人来袭时第 4/5 回合白烧唯一铜墙铁壁——盾只在真被掠袭且敌强时
+      //   【不再主动维持盾】：真机实录实证无人来袭时第 4/5 回合白烧唯一铜墙铁壁——盾只在真被掠袭且敌强时
       //   经 #autoStrategies（来袭保命）按需消耗；WAIT 期主动铺盾违背用户口径「无人打就不该用盾」，删除。
       await this.#explorationSkills(treasureId, round);
     } else if (status === HUNT_STATUS.FIGHT) {
-      // 战斗结算相位（status=3，**每回合必经、未挨打也进**，实证 20261016T191700 全程无 21383 掠袭仍每回合成对推 fightWin 0→3）：
+      // 战斗结算相位（status=3，**每回合必经、未挨打也进**，主跑实录全程无 21383 掠袭仍每回合成对推 fightWin 0→3）：
       //   增益/急救仅本回合真被掠袭过（#raidRounds）且过敌强门控（③竞对口径：弱敌不烧、碾压先垫盾）才动手，否则白烧急救与增益；非掠袭回合直接闲置
       await this.#fightStrategies(treasureId, round);
     }
@@ -403,7 +403,7 @@ export class FlowEngine {
     if (phase === EVENT_SHOW_PHASE.PLAY) await this.#decideProphet(treasureId, round);
 
     // ── 轮值闸：7532 只对 eventDecideInfo.uidDecide 指向的那个 uid 放行，其他成员发一律 s:3 cs_treasure371
-    //   报文实证 dashcam 20261017T025932 陪跑：round 1/3/5/9 uidDecide=我 → s:0；2/4/6/7/8/10 非我 → s:3（含 r=7 我方撞 20s 迟交被服务器抢先自决的案例）
+    //   报文实证陪跑实录：round 1/3/5/9 uidDecide=我 → s:0；2/4/6/7/8/10 非我 → s:3（含 r=7 我方撞 20s 迟交被服务器抢先自决的案例）
     var udStr = bits.int64Str(edi.uidDecide);
     var myUidStr = gameData.myUidStr();
     if (!udStr || !myUidStr || udStr !== myUidStr) return 0;
@@ -578,7 +578,7 @@ export class FlowEngine {
       tryLucky: function (sceneKey, rewardResult, label) {
         return self.#tryLucky(treasureId, sceneKey, rewardResult, label);
       },
-      // 幸运溢出提前消耗（用户口径 2026-10-25，实证 20261025T110353 第三跑 r9 持2张无 rollDice 窗、靠手动）：
+      // 幸运溢出提前消耗（用户口径 2026-10-25，实录报文实证：第三跑 r9 持2张无 rollDice 窗、靠手动）：
       //   有奖场景动作前若 持有数 > 本回合后剩余回合数 即先烧一张翻倍本次奖励（兑底末回合清空顾不到后续回合的浪费）
       tryLuckyOverflow: function (round, label) {
         return self.#tryLuckyOverflow(treasureId, round, label);
@@ -681,7 +681,7 @@ export class FlowEngine {
       // 用户口径 2026-10-24：收到来袭预警即立即按 DEFENSE_PRIORITY 保命，删除旧 #enemyOverwhelms「敌强才防」战力门控
       //   （旧门控会把弱敌预警也吞掉、延误自保）；自保技皆 group=1 队长专属，非队长由 #canSpend 天然拦，故保留 isLeader 闸。
       if (this.#host.isLeader()) {
-        // 用户口径 2026-10-25（报文实证 20261025T110353 第三跑 round3）：
+        // 用户口径 2026-10-25（实录报文实证：第三跑 round3）：
         //   毫发无伤(26)=次数盾——每道预警烧一张，不拦同回合再消耗，生效中(#pending，命中即解除重武装)与无持有才是闸；
         //   铜墙铁壁(2)=回合盾——盾生效期间不再施，其余同旧口径；同回合已有任一「来袭保命」记账则增益不再叠烧。
         var shieldPending =
@@ -1004,7 +1004,7 @@ export class FlowEngine {
    *     仍不达 ×FIGHT_RATIO_LIGHT → 弱敌掠袭，急救/增益不烧留给强敌波。侦察数据缺失（敌或我空）fail-open 保留无条件烧。
    *     注：此闸只管**消耗路**（急救/增益/垫盾），不碰「预警即保命」自保路（用户口径 2026-10-24 保命无战力门控）。
    *   ① 火线急救(27)（group=1 队长技）——**按战损定向施治（#2，借鉴竞对）**：7578 type1 我方 armyPower<maxArmyPower 取缺口最大者 uid 传 tarUid（`#mostDamagedUid`）；
-   *     侦察失败/无伤兵数据时回退不带 tarUid、由服务器自决（与原生 7551{27} tarUid=0 一致，实证 dashcam 20261017T185937）；
+   *     侦察失败/无伤兵数据时回退不带 tarUid、由服务器自决（与原生 7551{27} tarUid=0 一致，实录报文实证）；
    *   ② 战中增益族即用（C）——百战不倒/固定增强/战场变换/诱敌来袭按 FIGHT_BUFF_SKILLS 优先级逐个用，每 (round,specId) 一次性，且经 #canSpend 族级限窗去重。
    * @param {string|number} treasureId 本跑 id
    * @param {number} round 当前回合
@@ -1119,7 +1119,7 @@ export class FlowEngine {
     var teamS = specIdCount(sb.teamSkillInfoList);
     var pending = specIdSet(sb.skillPendingEffectInfoList);
     // **空背包（三表皆空）多半是 OPEN 首帧/在途去重的未就绪占位 ack，非「玩家真的一无所有」**：连续前 2 次空不固化、保留旧缓存下拍重试，
-    //   否则会把 load-once 缓存毒化成 #personal={} → 掷骰时 #canUse(幸运) 误判 false 漏用幸运（实证 20261018T105933 round6：掷骰前一次 7550 返空 PERSONAL 被固化）
+    //   否则会把 load-once 缓存毒化成 #personal={} → 掷骰时 #canUse(幸运) 误判 false 漏用幸运（真机实录 round6：掷骰前一次 7550 返空 PERSONAL 被固化）
     if (personal.size === 0 && teamS.size === 0 && pending.size === 0 && this.#bpEmptyStreak < 2) {
       this.#bpEmptyStreak++;
       return;
@@ -1146,7 +1146,7 @@ export class FlowEngine {
    * 消耗技能后重拉背包（作废缓存再取，保证 #canUse 反映最新持有）。
    */
   async #reloadBackpack() {
-    // 上一步 #useSkill 已用 7551 应答内嵌的 skillBackpack（消耗后权威态）刷新 → 无需再发 7550（省一次往返，且规避「用后立刻 7550 拿到瞬时空背包」，实证 20261018T105933 每次用后 7550 均返空）
+    // 上一步 #useSkill 已用 7551 应答内嵌的 skillBackpack（消耗后权威态）刷新 → 无需再发 7550（省一次往返，且规避「用后立刻 7550 拿到瞬时空背包」，实录报文实证：每次用后 7550 均返空）
     if (this.#bpFreshFromUse) {
       this.#bpFreshFromUse = false;
       return;
@@ -1191,7 +1191,7 @@ export class FlowEngine {
   }
 
   /**
-   * 发一条 7551 使用科技（Int64 treasureId 装箱，skillSpecId 裸数字，对齐 dashcam）。
+   * 发一条 7551 使用科技（Int64 treasureId 装箱，skillSpecId 裸数字，对齐实录报文）。
    * @param {string|number} treasureId 本跑 id
    * @param {number} id skillSpecId
    * @param {string} label 日志标签
@@ -1291,7 +1291,7 @@ export class FlowEngine {
   /**
    * 幸运溢出提前消耗（用户口径 2026-10-25）：有奖场景（主跑）动作前判「背包持有幸运张数是否已多于本回合之后的
    *   剩余消化窗」——剩余窗=ROUND_MAX-round 回合（每回合至多消一张），持有>剩余窗即本回合不消必浪费（实证
-   *   20261025T110353 第三跑 round9 持 2 张、后两回合皆非 rollDice，引擎等到 round10 才由清空兑底、用户只能手动提前用）。
+   *   真机第三跑实录 round9 持 2 张、后两回合皆非 rollDice，引擎等到 round10 才由清空兑底、用户只能手动提前用）。
    *   溢出时不要求命中已勾池（翻倍落在何种奖励上都好过浪费）；走 #usable 闸（生效中不重施）；仅主跑。
    * @param {string|number} treasureId 本跑 id
    * @param {number} round 当前回合
@@ -1341,7 +1341,7 @@ export class FlowEngine {
   /**
    * 背包里可复制技能集（personal ∪ team，排除 COPY 自身）。
    *   **无视队长身份含队伍技能**：完美镜像(22) 是 group=2 个人技，把队技作为复制目标不需队长权限
-   *   （报文实证 20261017T041352 陪跑成员 22{copySkillSpecId:26} 复制队技成功）。否则陪跑永远看不到先知(9)→从不复制。
+   *   （报文实证陪跑成员 22{copySkillSpecId:26} 复制队技成功的实录）。否则陪跑永远看不到先知(9)→从不复制。
    * @returns {number[]}
    */
   #copyableSet() {

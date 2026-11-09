@@ -158,6 +158,7 @@ export const SYM = {
     cncHigh25: 'cnc_high_25',
     worldNTerrain: 'world_NTerrain',
     worldNTerrainBorder: 'world_NTerrain_border',
+    sq2026: 'sq_2026',
   },
   /** NWorldMapCoreBiz.WatchingBattleType 成员名（观战/秘境态，mapType 被它强制折算） */
   watchingTypes: {
@@ -415,6 +416,14 @@ export const CAPS = {
   // 邮件只读缓存：MailData 模块在场即可（mailManager 实例由 subpack 载入时挂上，安装期未必就绪，
   //   故 feat 侧应声明为软依赖 'mailData?'，运行期再由 mail.* 内部 probe 自愈重探）
   mailData: () => !!game.get(SYM.modules.mailData),
+  // CQ26 战区宝藏（发掘点候选源）：取器由 core/acl/game-data.js 经 setSharedCapsProbe 回填（同 navFly 口径，
+  //   引擎不反向 import 区段）。单例实例在登录握手后即可用，但投影字段属游戏私有态，故 feat 侧
+  //   声明为软依赖 'cq26NeutralCtrl?'（拿不到降级为只信 22062/22063 推送，不阻断安装）。
+  cq26NeutralCtrl: () => !!sharedCapsProbe('cq26NeutralCtrl'),
+  // CQ26 荒芜冰原数据侧（wasteLandData：22071/22072/22077 三份快照的宿主）：取器同样由
+  //   core/acl/game-data.js 经 setSharedCapsProbe 回填。feat 侧声明为软依赖 'cq26WasteLand?'
+  //   （拿不到只降级为「读自订 push 的标量副本」，不阻断安装，同 cq26NeutralCtrl 口径）。
+  cq26WasteLand: () => !!sharedCapsProbe('cq26WasteLand'),
 };
 
 /**

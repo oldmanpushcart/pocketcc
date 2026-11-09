@@ -29,7 +29,7 @@ background.js(SW) 仅做 dashcam fetch 转发
 1. 建文件 `extension/src/feats/<分组>/<玩法>.js`（分组：daily/activity/battle/chat/map/hotkey）。
 2. 在 `core/menu.js` 菜单树挂载：声明分组、label、是否 `showFields`。
 3. 在 `content.entry.js` 追加 import。
-4. 通过 `reactor.register(spec)` 声明式注册，spec 必含 `label/storageKey/defaults`（面板描述符），按需实现 `install/configure/run/pause` 钩子与 `scenes` 门控（如限定 Home/NWorldMap）。
+4. 通过 `reactor.register(spec)` 声明式注册，spec 必含 `label/storageKey/defaults/toModuleCfg`（面板描述符），按需实现 `install/configure/run/pause` 钩子与 `scenes` 门控（如限定 Home/NWorldMap）。`toModuleCfg` 是硬性契约：`core/registry.js` 的 applyFeature 对**每个** reactor 功能无条件调该钩子把面板 cfg 归一成运行时 cfg，即便玩法无可调参数也要声明为 `(c) => ({ enabled: !!(c && c.enabled) })`——缺声明会在面板翻开关的 DOM change 回调里报（旧写法直接抛 `TypeError` 且不经 createLog、日志零痕迹；现已收口为 warn 降级，但除 `enabled` 外的字段会永远停在默认值）。
 5. 战斗模式语义上强制下线玩法类 feat（沿用既有门控，不自造开关）。
 
 ## 硬性红线

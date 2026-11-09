@@ -5,7 +5,7 @@
  * 由 game-api re-export 保 69 处消费方路径不破，并继续在 game-api 尾部经 registerSharedValue 挂插槽。
  */
 import { game } from '../game.js';
-import { SYM, probe, ns, userData } from '../acl-engine.js';
+import { SYM, probe, ns, userData, setSharedCapsProbe } from '../acl-engine.js';
 import { l10n } from './l10n.js';
 
 // ─────────────────────── 一键领取（TaskRelax 集中领取）开启闸只读枚举 ───────────────────────
@@ -109,7 +109,7 @@ function taskRelaxTypeOpen(type) {
 /**
  * 游戏日界偏移（秒）：每日 0 点刷新对应的 UTC 秒内偏移。真相来自 extracted DateUtils.getOffsetDaysByTime
  * 的归日式 `(t-57600)%86400`，57600=16h → 日界线落在 UTC 16:00 = 服务器本地 0:00（UTC+8）。
- * 符号/常量知识收口 ACL（只读口径）；实证 dashcam 服务器秒与本地文件名 UTC+8 对齐。
+ * 符号/常量知识收口 ACL（只读口径）；实证服务器秒与本地 UTC+8 墙钟对齐。
  * @type {number}
  */
 const GAME_DAY_RESET_OFFSET = 57600;
@@ -117,7 +117,7 @@ const GAME_DAY_RESET_OFFSET = 57600;
 /**
  * @type {number} 排除捐赠的科技组 sid 10900（字典 alliance_tech_name10900=快速作战）：剩余捐赠次数走独立能量池
  * EnergyType.ALLIANCE_BUILDING_DONATE_GOLD_NUM=6，且服务端恒回 addPoint=0（只加建筑经验、不计个人每日荣誉）。
- * 能量池实测（dashcam 全量 10021 归集）：pointMax=200、restoreSec=20 —— 比通用池 4（10/1800）大两个数量级、
+ * 能量池实测（实录报文全量 10021 归集）：pointMax=200、restoreSec=20 —— 比通用池 4（10/1800）大两个数量级、
  * 回点快 90 倍；把它混进普通科技目标会长期霸占 donateTarget（它排在 dev 列表第 8 组，前序满级即命中），
  * 把捐赠交互抬到 3 次/分钟的常驻量。用户定案（快速作战不捐）：ACL 把它从捐赠目标中整体排除——
  * 不进 donateTarget（含回退首项）、不采纳推荐位命中、不再单列 buildingTarget 披露。
@@ -584,7 +584,7 @@ export const gameData = {
   /**
    * 假面舞会（MASK_DANCE / cityReward 宝箱）今日领取态只读快照。
    * 数据源：push 10053 PUSH_USER_DATA_COMMON 的 `{danceRec:{<boxItemId>:次数}, myReceiveDance:[<instanceId 字符串>]}`
-   *   （报文实证 dashcam 20261101T000624-2026万圣节.ndjson line 2336）。
+   *   （实录报文实证）。
    * 口径：
    *   - `byItem` 的键是**宝箱道具 id**（如 260617005），值是该道具今日已领次数；限额是**逐道具**口径
    *     （客户端源码实证：游戏闸门写的是 `daily_limit > itemCityRewardReceivedNum[itemId]`，
@@ -940,7 +940,7 @@ export const gameData = {
   /**
    * 「一键领取 / 集中领取」(TaskRelax) 可用行只读枚举 —— 复刻游戏 TaskRelaxTool.getOpenQuickSweepList 的三级开启闸，
    *   返回空数组即代表该玩家不具备此功能（游戏主城里 bot 入口不会显示），调用方据此整功能挂起。
-   *   源码锚点 extracted/subpack/TaskRelaxTool__TaskRelaxTool.js；报文实证 dashcam 20261011T172802-一键领取.ndjson（5684 INFO / 5685 REWARD）。
+   *   源码锚点 extracted/subpack/TaskRelaxTool__TaskRelaxTool.js；报文实证（5684 INFO / 5685 REWARD）。
    *   开启闸（全部只读，不发包、不改写本地数据）：
    *     ① 账号总闸 FunctionOn(task_relax_claim_all)；
    *     ② 服务器灰度闸 serverTransferRange 命中 DataConfig 79089 白名单（缺配=未放量）；
@@ -972,7 +972,7 @@ export const gameData = {
   },
   /**
    * 能量池快照（UserData.getEnergy(EnergyType数值)，EnergyData 的 Point getter 实时折算自然恢复）。
-   * 联盟捐赠次数池实证（抓包 20260930）：type=4，pointMax=10，restoreSec=1800（每 30 分钟回 1 点）。
+   * 联盟捐赠次数池实证（抓包）：type=4，pointMax=10，restoreSec=1800（每 30 分钟回 1 点）。
    * @param {number} type EnergyType 数值（如 4=ALLIANCE_DONATE_NUM）
    * @returns {object|null} {point,pointMax,nextRecoverSec}；数据源缺失返回 null
    */
@@ -996,6 +996,54 @@ export const gameData = {
   coins() {
     var r = userData() && userData().Resource;
     return r ? Number(r.Coin) || 0 : 0;
+  },
+  /**
+   * 资源余额（UserData.Resource.getResource(resId)，只读）——机械制药配方成本 `resources` 列的口径
+   *   （源码锚点 ProductingData.checkItemCanMake：`Resource.getResource(resId) < count` 即缺料）。
+   * 与 coins() 的区别是三态语义：这里「读不到」必须与「读到了 0」分开——把读不到当缺料会永久跳过有效配方。
+   * 三态：Resource/getResource 不可用或抛错 → null（无从判定，调用方按「放行」处理，最终以服务器拒绝为裁决）；
+   *   读数非法或负 → 0。
+   * @param {number|string} resId 资源 id
+   * @returns {number|null} 余额；null=无从判定
+   */
+  resourceAmount(resId) {
+    var r = userData() && userData().Resource;
+    if (!r || typeof r.getResource !== 'function') return null;
+    var v;
+    try {
+      v = r.getResource(+resId);
+    } catch (e) {
+      return null;
+    }
+    var n = Number(v);
+    return isFinite(n) && n >= 0 ? n : 0;
+  },
+  /**
+   * 制药 lane 的已解锁配方 id 清单（读游戏本地缓存 `UserData.ProductingData.getProductData(true).UnlockList`，只读）。
+   * 源码锚点 ProductingData：`_PotionData.UnlockList` 返回 `_unlock`，而 `_unlock` 只在收到 1387 应答
+   *   （`CommonTools.getProductionFactoryData` → `UpdateProductingData`）时被覆写；该方法**只挂在游戏工厂面板的
+   *   `onShow`** 上，故本项在玩家没开过游戏内工厂面板时为空——空数组不等于「未解锁任何配方」，
+   *   调用方需自行拿自己的 1387 读数或发起一次探测。
+   * 纪律：不调用 `getProductionFactoryData()`（那是发包），只读它写下的缓存。
+   * @returns {number[]} 已解锁配方 id（非法项剔除）；符号缺失/抛错 → []
+   */
+  potionUnlockList() {
+    var pd = userData() && userData().ProductingData;
+    if (!pd || typeof pd.getProductData !== 'function') return [];
+    var data;
+    try {
+      data = pd.getProductData(true); // true=制药 lane（false 为制造 lane）
+    } catch (e) {
+      return [];
+    }
+    var list = data && data.UnlockList;
+    if (!Array.isArray(list)) return [];
+    var out = [];
+    for (var i = 0; i < list.length; i++) {
+      var id = Number(list[i]) || 0;
+      if (id > 0 && out.indexOf(id) < 0) out.push(id);
+    }
+    return out;
   },
   /**
    * 次元矿洞矿种规格表（mine_cave）全量行，惰性缓存（配置表页面生命周期内不变）。
@@ -1168,8 +1216,444 @@ export const gameData = {
     if (!u) return { used: 0, max: 0 };
     return { used: Number(u.myMarchNum) || 0, max: Number(u.myMarchNumMAX) || 0 };
   },
+
+  // ── CQ26 印石清剿 ──────────────────────────────────────────────────────
+  // 探针实证访问链：CQ26Controller.getInstance() → ctrl; ctrl.clearBossData → cbd
+  // getResistance 在 ctrl 上，其余相位/等级/首杀在 cbd 上（需传 lineId）
+
+  /** @returns {object|null} {ctrl, cbd} 控制器实例对；符号漂移时返回 null */
+  _cq26() {
+    var ctrl = probe('CQ26Controller.inst', () => {
+      var m = ns(game.get('CQ26Controller'));
+      var C = m && (m.CQ26Controller || m.default);
+      return C && C.getInstance ? C.getInstance() : C && C.Instance;
+    });
+    if (!ctrl) return null;
+    var cbd = ctrl.clearBossData || null;
+    return { ctrl, cbd };
+  },
+  /**
+   * CQ26 活动是否开启。
+   * @returns {boolean}
+   */
+  cq26IsOpen() {
+    var p = this._cq26();
+    return !!(p && p.ctrl && p.ctrl.isOpen && p.ctrl.isOpen());
+  },
+
+  // ── CQ26 雪原列车（印石专列，塔 id=4 = CQ26TOWERID.TRANSPORT）──────────────
+  // 探针实证访问链：CQ26Controller.getInstance() → ctrl.transportData（CQ26TransportData 单例）
+  // 列车权威时刻只在 2365 应答的 curTrain/lastTrain.baseInfo.times 里（顶层 data.times 实测恒为 []），
+  // 故本域不提供「时刻」类 ACL：feat 自己发 2365 取权威，这里只收口「游戏符号知识」两件事——
+  // 塔是否已激活（前置闸门）与游戏侧缓存快照（面板展示兜底）。
+
+  /** @returns {object|null} {ctrl, td} 专列塔控制器/数据侧；符号漂移或未建数据回 null */
+  _cq26Transport() {
+    var p = this._cq26();
+    if (!p || !p.ctrl || !p.ctrl.transportData) return null;
+    return { ctrl: p.ctrl, td: p.ctrl.transportData };
+  },
+  /**
+   * 专列塔是否已激活（游戏侧 isTowerActivated 口径：预热阶段看 status===COMPLETED，
+   * 否则看 progressPercent>=100）。未激活时列车面板入口本身进不去，2365/2367 属无谓请求，
+   * 供 feat 作前置闸门；控制器不可用回 false（fail-closed，宁可不发也不撞未知态）。
+   * @param {number} [towerId] 塔 id，缺省 4（专列塔）
+   * @returns {boolean}
+   */
+  cq26TransportTowerReady(towerId) {
+    var p = this._cq26Transport();
+    if (!p || !p.ctrl.isTowerActivated) return false;
+    var id = towerId == null ? 4 : Number(towerId) || 4;
+    try {
+      return !!p.ctrl.isTowerActivated(id);
+    } catch (_) {
+      return false;
+    }
+  },
+  /**
+   * 游戏侧缓存的 2365 快照**投影**（transportData.mainData；列车面板从未打开过时为 null）。
+   * 返回新造的标量对象而非游戏对象图：把「只能同帧读」的池化约束变成结构性保证，
+   *   避免调用方顺手 await 或把它存进模块态后读到被池复用后的错值（与 feat 侧 readSnapshot 同一口径）。
+   * **不得作 feat 判据**（缓存可能是上一窗口的陈旧值），仅供面板展示兜底与离线对照。
+   * @returns {{state:number,selfOn:number,userNumber:number,stateEndTime:number,lootNum:number,allLootNum:number,baseRewardGet:number,shareHave:number}|null}
+   */
+  cq26TrainMainData() {
+    var p = this._cq26Transport();
+    var md = p && p.td ? p.td.mainData : null;
+    if (!md || typeof md !== 'object') return null;
+    var ct = md.curTrain || null;
+    var bi = (ct && ct.baseInfo) || {};
+    // 结算字段属于「主体车」：00:00 后 curTrain 已是今日新车，昨日那辆的结算窗开到 12:00（与 feat 侧 readSnapshot 同一口径）
+    var lt = md.lastTrain || null;
+    var sl = lt && lt.baseInfo ? lt : ct;
+    return {
+      state: Number(bi.state) || 0,
+      selfOn: Number(ct && ct.selfOn) || 0,
+      userNumber: Number(ct && ct.userNumber) || 0,
+      stateEndTime: Number(bi.stateEndTime) || 0,
+      lootNum: Number(md.lootNum) || 0,
+      allLootNum: Number(md.allLootNum) || 0,
+      // 结算窗两个闸（报文实证 2365/22096 同名标量字段）：baseRewardGet=1 代表基础奖励已领，
+      //   shareHave 是本人**剩余**可翻卡次数（实测每日 3）。
+      baseRewardGet: Number(sl && sl.baseRewardGet) || 0,
+      shareHave: Number(sl && sl.shareRewardHaveNum) || 0,
+    };
+  },
+
+  // ── CQ26 战区宝藏（中立城挖掘点 EXCAV：地图实体 311 / marchType 332）────────────
+  // 符号实证（extracted/Script/CQ26NeutralController）：单例持三个私有数组态——
+  //   _excavOpenSiteList（push 22062 全量灌入）/ _claimedSiteIds（push 22063 全量灌入，
+  //   服务端持久、跨刷新仍在）/ _selfInfo.mSid（本服服号，来自 push 22001）。
+  // 世界地图快捷按钮（NWorldUIActBtnSetting.checkCQ26NeutralExcavShow）的显隐判据就是
+  //   getFirstOpenEnableSite() != null，纯客户端推导、零发包 —— 故本域把同一判据投影成标量，
+  //   供 feat 做「与玩家眼睛严格一致」的候选源（漏收 22062 时也能自愈）。
+  // 全部为只读投影，不改写任何游戏状态（只读+发包红线）。
+
+  /** @returns {object|null} CQ26NeutralController 单例；子包未加载或符号漂移回 null（不缓存失败，下一拍自愈重探） */
+  _cq26Neutral() {
+    // **只缓存类、每次现取单例**（同 mechaTowerOpen / beastBreedOpen 口径）：
+    //   probe 命中即永久返回缓存值，而 ResetGame.purgeData() 里会 `He.default.getInstance().purge()`
+    //   （实证 extracted/Script/ResetGame，He=CQ26NeutralController；purge 内 `t.instance=null`）。
+    //   缓存实例的话，跨服/重置流程后 ACL 会一直读那个僵尸对象——返回的是**非 null 陈旧数组**，
+    //   于是 feat 侧「投影优先」的分支永占上风，22062 推送缓存这条回落通道被结构性屏蔽（只能刷页自愈）。
+    var C = probe('CQ26NeutralController.ctor', () => {
+      // 命名形状与 CQ26Controller 相反：本模块**只有 default 导出**（实证 `a.default=E`，无 `a.CQ26NeutralController=`）。
+      //   故先查**裸模块**的命名导出、再把 ns() 解包结果当候选：写成 ns(m).CQ26NeutralController || ns(m).default
+      //   会两次解包拿到 undefined（类上没有 default），投影会静默恒返 null 而退成「只信 22062」。
+      var m = game.get('CQ26NeutralController');
+      if (!m) return null;
+      return m.CQ26NeutralController || ns(m) || null;
+    });
+    if (!C) return null;
+    try {
+      return (C.getInstance ? C.getInstance() : C.Instance) || null;
+    } catch (_) {
+      return null;
+    }
+  },
+  /**
+   * 战区宝藏可发掘点的**标量投影**（读游戏内存，零发包；对齐 22062 载荷字段）。
+   * 刻意返回新建普通对象而非游戏对象图：池化/引用外泄是「同帧取值」红线，投影即结构性保证。
+   * @returns {Array<{siteId:string,cityId:number,cfgId:number,ownerSid:number,endTime:number,x:number,y:number,k:number,claimed:boolean,ownServer:boolean}>|null}
+   *   符号不可用回 null（调用方须降级为「只信 push 通道」，不得当成「没有点」）
+   */
+  cq26ExcavSites() {
+    var inst = this._cq26Neutral();
+    var list = inst && inst._excavOpenSiteList;
+    if (!Array.isArray(list)) return null;
+    var claimed = Array.isArray(inst._claimedSiteIds) ? inst._claimedSiteIds : [];
+    var ownSid = (inst._selfInfo && Number(inst._selfInfo.mSid)) || 0;
+    var out = [];
+    for (var i = 0; i < list.length; i++) {
+      var s = list[i] || {};
+      var pos = s.pos || {};
+      var siteId = s.siteId == null ? '' : String(s.siteId);
+      if (!siteId) continue;
+      out.push({
+        siteId: siteId,
+        cityId: Number(s.cityId) || 0,
+        // 22062 行里叫 cityConfigId（而地图 901 地块的 m 里叫 cityCfgId），两个名字不能混用
+        cfgId: Number(s.cityConfigId != null ? s.cityConfigId : s.cityCfgId) || 0,
+        ownerSid: Number(s.ownerSid) || 0,
+        endTime: Number(s.endTime) || 0,
+        x: Number(pos.x) || 0,
+        y: Number(pos.y) || 0,
+        k: Number(pos.k) || 0,
+        claimed: claimed.indexOf(siteId) >= 0,
+        ownServer: ownSid > 0 && Number(s.ownerSid) === ownSid,
+      });
+    }
+    return out;
+  },
+  /**
+   * 游戏侧「宝藏 icon 是否亮着」的权威判据（直接调 getFirstOpenEnableSite，方法名比私有字段抗漂移）。
+   * 方法不可用/符号缺失回 null = 未知（**不得**当作 false 用于决策，只作面板展示与交叉校验）。
+   * @returns {boolean|null}
+   */
+  cq26ExcavIconOn() {
+    var inst = this._cq26Neutral();
+    if (!inst || typeof inst.getFirstOpenEnableSite !== 'function') return null;
+    try {
+      return !!inst.getFirstOpenEnableSite();
+    } catch (_) {
+      return null;
+    }
+  },
+
+  // ── CQ26 印石·中立城商店（霜之密所 CNC Shop：2441~2447 / push 22030）──────────────
+  // 货架行来自 ConquerorSession.getTableName(conqueror_2025_cnc_shop) 的**替换后**表名——CQ26 开启时
+  //   游戏把它换成 series_frost_cnc_shop（实证 extracted/Script/ConquerorSession.initReplaceMap，只换这一张表，
+  //   cnc_city_level 两期共用故不换），本投影直用替换后的语义名，因此**只在 CQ26 期有数据**。
+  // 行字段实证（extracted/subpack/CQ25CNCShopItem.onDataChange/onClickBuy 的取值链）：
+  //   id / item_id / item_num / need_gold / need_score / buy_limit（本人限买） / buy_limit_all（全服共享库存） / order（显示序）。
+
+  /**
+   * 密所货架配置行的**标量投影**：cfgId → 闸门所需字段（纯读配置表，零发包、不改写游戏态）。
+   * 刻意返回新造对象而非游戏行：行对象属表缓存、跨帧引用外泄是红线（同 cq26TrainMainData 口径）。
+   * `level` 一列**表上并不存在**（逐字核对过 CQ25CNCShopItem/CQ25CNCShopMainNode 的全部取值），
+   *   保留此键恒为 0 只为不误导后续读者；城档高低序在 feat 侧按 cityLevelId 现查 cnc_city_level.level。
+   * @returns {Object<string,{itemId:number,num:number,gold:number,score:number,limit:number,limitAll:number,order:number,level:number}>|null}
+   *   表不可读/无行回 **null**（区分于 `{}`：调用方须按「闸门不可判定」fail-closed，不得当成「没有货」）
+   */
+  cq26ShopRows() {
+    var rows = l10n.tableRows('series_frost_cnc_shop');
+    if (!rows || !rows.length) return null;
+    var out = {};
+    for (var i = 0; i < rows.length; i++) {
+      var r = rows[i] || {};
+      var cfgId = Number(r.id);
+      if (!(cfgId > 0)) continue;
+      out[String(cfgId)] = {
+        itemId: Number(r.item_id) || 0,
+        num: Number(r.item_num) || 0,
+        gold: Number(r.need_gold) || 0,
+        score: Number(r.need_score) || 0,
+        // 本人限购与全服共享库存是两个独立闸：前者按 selfBuyCnt、后者按 buyCnt（售罄口径），不可合并
+        limit: Number(r.buy_limit) || 0,
+        limitAll: Number(r.buy_limit_all) || 0,
+        order: Number(r.order) || 0,
+        level: Number(r.level) || 0,
+      };
+    }
+    return Object.keys(out).length ? out : null;
+  },
+
+  // ── CQ26 印石·荒芜冰原「星路大地图身份三元组」（NWL 2201 请求参数 + 本服/外服判据的真相源）──
+  // 探针实证访问链：CQ26Controller.getInstance()（复用 _cq26() 已得的 ctrl）→
+  //   ctrl.selfInfo（push 22001 SERIES_FROST_SELF_INFO 写入，RealCQ26Controller.updateSelfInfo 逐字 `this.selfInfo=e`）、
+  //   ctrl.status（updateStatusData 逐字 `this.status=e`；构造默认 `{cid:0,round:0,…}` 即「状态推送尚未达」哨兵值）。
+  // 本区段只投影「身份/请求参数」三个符号，**不**投影 2201 应答载荷（grid/wastelandInfo/regions 全是协议字段，feat 直接解析即可；
+  //   见 docs/acl-cq26-荒芜冰原.md §5 第四条：身份三元组只收符号、不收数据）。
+  // 只读+发包红线：绝不调 `ctrl.mapData.requestData`（那是发包、且会把游戏自己维护的粘滞 `mapData.group` 写坏）。
+  // 本人 StrUid 直接用已有 gameData.strUid()，此处**不**新增签名。
+
+  /**
+   * 本服在本次星路活动里的分组号与抗性等级（2201 请求 `group` 参数 + canSteal/canHelp 的抗性判据基准）。
+   * **每拍现读、不得缓存 group**：`selfInfo.group` 会因 `isRegroupRound` 每轮重排（源码 updateStatusData），
+   *   `_cq26()` 缓存的是控制器单例本身，这里每次读其**当前** `selfInfo` 字段，故随推送自愈。
+   * 刻意返回新建标量对象、不外泄游戏 `selfInfo` 引用（池化/跨帧红线，同 cq26TrainMainData 口径）。
+   * @returns {{group:number, resistanceLevel:number}|null} `selfInfo` 未推达（ctrl 不可用或 selfInfo 缺失）回 **null**
+   *   （调用方须 fail-closed 停整腿：null ≠ group 0，拿 0 去发 2201 会指错组）
+   */
+  cq26StarLandSelf() {
+    var p = this._cq26();
+    var si = p && p.ctrl ? p.ctrl.selfInfo : null;
+    if (!si || typeof si !== 'object') return null;
+    return {
+      group: Number(si.group) || 0,
+      // 逐字源码 getResistance()：`(this.selfInfo?.resistanceLevel) || 0`
+      resistanceLevel: Number(si.resistanceLevel) || 0,
+    };
+  },
+  /**
+   * 星路活动状态（2201 请求 `cid` 参数 + 盗采窗 `stealBeginTime`/`stealEndTime` 时刻基准）。
+   * @returns {{cid:number, round:number, status:number, beginTime:number, endTime:number, stealBeginTime:number, stealEndTime:number}|null}
+   *   ctrl 不可用、status 非对象，或 `cid<=0`（构造默认 0 = 状态推送尚未达，拿 0 发不出合法 2201）一律回 **null**（调用方停整腿，不得把 0 当有效副本号）
+   */
+  cq26StarLandStatus() {
+    var p = this._cq26();
+    var st = p && p.ctrl ? p.ctrl.status : null;
+    if (!st || typeof st !== 'object' || !(Number(st.cid) > 0)) return null;
+    return {
+      cid: Number(st.cid) || 0,
+      round: Number(st.round) || 0,
+      status: Number(st.status) || 0,
+      beginTime: Number(st.beginTime) || 0,
+      endTime: Number(st.endTime) || 0,
+      stealBeginTime: Number(st.stealBeginTime) || 0,
+      stealEndTime: Number(st.stealEndTime) || 0,
+    };
+  },
+  /**
+   * **老家服号**（`UserData.OriginServerId`；源码实证 MsgDisableRuleManager/PabUtils 用它判「本服 vs 跨服」）。
+   * 与 901 `m.initSid` / 2201 `mSid` 比较的唯一基准。与 `core/acl/world.js` 的 `selfServerId()`（本图所在服，
+   *   登录回包 currk 建立）**不是同一个东西**：跨服进冰原房间时两者不等，而 canSteal/canHelp 用的就是 OriginServerId
+   *   —— 拿错则三腿谓词全错（见 docs/acl-cq26-荒芜冰原.md 坑 11）。
+   * @returns {number|null} 取不到/非正回 **null**（不得当 0：0 会把所有外服点误判成「本服」，盗采腿全退成协助腿）
+   */
+  cq26OriginServerId() {
+    var u = userData();
+    var sid = u && u.OriginServerId;
+    return sid != null && Number(sid) > 0 ? Number(sid) : null;
+  },
+
+  // ── CQ26 印石·荒芜冰原「额度/分区/配置」只读投影（NWL 22071/22072 快照 + 52000xxx 配置）──
+  // 探针实证访问链：CQ26Controller.getInstance() → ctrl.wasteLandData（RealCQ26Controller 构造里
+  //   `this.wasteLandData = new CQ26WasteLandData()`，**无条件构造**，故 ctrl 在场即 wld 在场）。
+  //   wld.wlInfo ← push 22072（onNWLInfoPush 逐字 `this.wlInfo = e`，登录握手前的初值恒为 null）；
+  //   wld.wlList / wlListMap ← push 22071（onNWlListPush 逐字 `this.wlList = e` 后按 wastelandIndex 建 map）。
+  // 额度唯一权威就是这份快照：每个写动作（2115/2116）同秒都伴随一份 22072（实录），
+  //   游戏自己四个 getter（getRemainStealNum/getRemainHelpNum/getTodayCanGatherTime/getIsGathering）也直读它，
+  //   ⇒ feat **零本地记账**。三态纪律：`wlInfo == null` 一律回 null（「还没收到快照」≠「额度用光」），
+  //   只有整份快照在场时，个别键缺失才按 0（与游戏 getter 的 `||0` 同构，方向是 fail-closed）。
+  // 只读+发包红线：本区段绝不调用 wld 的任何 send*/Update*/Delete* 方法，也不写 wlListMap。
+
+  /**
+   * 荒芜冰原数据侧探针（复用 `_cq26()` 已缓存的控制器单例）。
+   * `_cq26()` 缓存的是 CQ26Controller 实例本身 —— 该类**无 purge**（与 CQ26NeutralController 相反，
+   *   后者被 ResetGame.purgeData() 摘除、缓存即成僵尸），故缓存实例无害；`wasteLandData` 每次现读，
+   *   其上的 wlInfo/wlList 随推送整体替换，无需重建视图。
+   * @returns {{ctrl:object, wld:object}|null} 符号漂移/子包未加载回 null
+   */
+  _cq26WasteLand() {
+    var p = this._cq26();
+    var wld = p && p.ctrl ? p.ctrl.wasteLandData : null;
+    if (!wld || typeof wld !== 'object') return null;
+    return { ctrl: p.ctrl, wld: wld };
+  },
+  /**
+   * 荒芜冰原额度/阶段快照（22072 push 的游戏内存投影）。
+   * @returns {{todayCanGatherTime:number, remainStealNum:number, remainHelpNum:number, remainChestNum:number,
+   *            chestDailyLimit:number, isGathering:boolean, curStage:number, curStageEndTime:number, elecPower:number}|null}
+   *   **快照未达（wlInfo==null）回 null** —— 调用方须本拍跳过该腿并 debug，绝不把 null 当 0 而永久静默；
+   *   快照在场时个别键缺失按 0（同游戏 getter 的 `||0`，方向是 fail-closed 不动作）
+   */
+  cq26WlInfo() {
+    var p = this._cq26WasteLand();
+    var wi = p ? p.wld.wlInfo : null;
+    if (!wi || typeof wi !== 'object') return null;
+    return {
+      todayCanGatherTime: Number(wi.todayCanGatherTime) || 0,
+      remainStealNum: Number(wi.remainStealNum) || 0,
+      remainHelpNum: Number(wi.remainHelpNum) || 0,
+      remainChestNum: Math.max(0, Number(wi.remainChestNum) || 0),
+      // 逐字源码 getChestDailyLimit()：`Math.max(0, +getDataConfigData(52000426) || 0)`
+      chestDailyLimit: Math.max(0, Number(gameConf.dataConfig(52000426)) || 0),
+      isGathering: wi.isGathering === 1,
+      curStage: Number(wi.curStage) || 0,
+      curStageEndTime: Number(wi.curStageEndTime) || 0,
+      elecPower: Number(wi.elecPower) || 0,
+    };
+  },
+  /**
+   * 16 个分区状态全量（22071 push 的 `wastelandList` 投影，逐条新建对象、不外泄报文孪生体）。
+   * @returns {Array<{index:number, status:number, type:number, condition:number, endTime:number}>|null}
+   *   快照未达（wlList==null 或列表为空）回 **null**（= 未知，调用方不得当成「没有分区」）
+   */
+  cq26WlLands() {
+    var p = this._cq26WasteLand();
+    var list = p && p.wld.wlList ? p.wld.wlList.wastelandList : null;
+    if (!Array.isArray(list) || !list.length) return null;
+    var out = [];
+    for (var i = 0; i < list.length; i++) {
+      var r = list[i] || {};
+      out.push({
+        index: Number(r.wastelandIndex) || 0,
+        status: Number(r.status) || 0,
+        type: Number(r.wastelandType) || 0,
+        condition: Number(r.wastelandCondition) || 0,
+        endTime: Number(r.endTime) || 0,
+      });
+    }
+    return out;
+  },
+  /**
+   * 单分区快取（本服侧 `checkWlOpening` 的同源判据：status===4 才可动，游戏侧严格比 OPENING）。
+   * 走游戏自己维护的 `wlListMap`（以 wastelandIndex 为键），O(1)。
+   * @param {number} index 分区号（= 2114 的 wastelandIndex = 901 m.specIndex）
+   * @returns {{index:number, status:number, type:number, opening:boolean}|null} 快照未达/该 index 无行回 **null**
+   */
+  cq26WlLand(index) {
+    var p = this._cq26WasteLand();
+    var map = p ? p.wld.wlListMap : null;
+    var idx = Number(index) || 0;
+    var r = map && map[idx];
+    if (!r || typeof r !== 'object') return null;
+    var status = Number(r.status) || 0;
+    return {
+      index: idx,
+      status: status,
+      type: Number(r.wastelandType) || 0,
+      // CQ26WLLandStatus.OPENING = 4（源码 CQ26Common 枚举，实测 checkWlOpening 只认这一个值）
+      opening: status === 4,
+    };
+  },
+  /**
+   * 遗失之箱点位快照（push 22077 `NWL_WASTELAND_CHEST_POS_PUSH` 的游戏内存投影）。
+   * 读**私有字段本体** `_WlBossRwardPBDataPos` 而不是同名 getter：getter 逐字写作
+   *   `this._WlBossRwardPBDataPos || []`，于是「快照尚未达（构造默认 `null`）」与「快照在场且为空
+   *   （本人已把当日快照里的点开完）」在 getter 出口塌成同一个 `[]` —— 后者是「本轮无事」的正常态、
+   *   前者是「未知」，feat 必须分得开（把未知读成空集 = 当天再不动作）。
+   * 私有字段名漂移（读到 `undefined`，与显式 `null` 不是一回事）时才回落 getter，
+   *   而 getter 给出的 `[]` 在这条路上无法归因 ⇒ 一律回 null，让调用方走自己订阅 22077 的标量副本。
+   * 只读+发包红线：本投影只读数组、绝不触碰 wld 的 sendGetOpenedChestList/getOpenedChestSta（后者未 loaded
+   *   时**顺手发一条 2119** 并返回 true，是 UI 的保守策略，自动化照抄会永久漏开第一个宝箱）。
+   * @returns {Array<{x:number,y:number,k:number}>|null} 快照未达/符号不可用回 **null**；`[]` = 快照在场且无未开点
+   */
+  cq26WlChestPos() {
+    var p = this._cq26WasteLand();
+    if (!p) return null;
+    var raw = p.wld._WlBossRwardPBDataPos;
+    if (raw === undefined) {
+      raw = p.wld.wlBossRewardPos;
+      // getter 路径上 `[]` 既可能是「未达」也可能是「已开完」，不可归因 ⇒ 当未知处理
+      if (!Array.isArray(raw) || !raw.length) return null;
+    } else if (raw === null) {
+      return null;
+    } else if (!Array.isArray(raw)) {
+      return null;
+    }
+    var out = [];
+    for (var i = 0; i < raw.length; i++) {
+      var r = raw[i] || {};
+      // 报文实证 22077 行**只有** x/y/k 三键（无 wastelandIndex）：k=房间号，与分区号不是 1:1
+      //   （实证：`2120{9}` 的锚点 k 与同房间 315 地块的 `m.specIndex=11` 不等）⇒ 分区号只能取地块 `m.specIndex`，
+      //   由 feats/cq26/wl-chest.js 经 901/10018 嗅探与定向单窗查询获得，本投影只如实给出三键。
+      out.push({ x: Number(r.x) || 0, y: Number(r.y) || 0, k: Number(r.k) || 0 });
+    }
+    return out;
+  },
+  /**
+   * 荒芜冰原配置读数（`TableUtils.getDataConfigData`，52000363/364/367/372/426 之类）。
+   * 分隔符实为 `'|'`（源码 getMiniGameRewardMultipliers 用 `split(/[|,]/)`，历史踩坑是 split(',')
+   *   把多段值整串 parseInt 成首段之外的小值），故取首段并按 `|`、`,` 双分符兼容。
+   * @param {number} id 配置号
+   * @returns {number|null} 模块不可读/缺配/非数值一律 **null**（调用方 fail-closed：谓词无法求值时停整腿，
+   *   不得用硬编码秒数兜底 —— 尤其 52000367「单次采集成熟秒」无法从报文反推）
+   */
+  cq26WlConf(id) {
+    var raw;
+    try {
+      raw = gameConf.dataConfig(id);
+    } catch (e) {
+      return null;
+    }
+    if (raw == null || raw === '') return null;
+    var n = Number(String(raw).split(/[|,]/)[0]);
+    return isFinite(n) ? n : null;
+  },
+  /**
+   * 采集点资源投影（RESOURCE 表，主键 = 901 `m.itemId`）。
+   * 源码锚点 `CQ26WLWorldGatherPop.onShow`：`TABLE.getTableDataById(TableName.RESOURCE, String(extData.itemId||0))`。
+   * 之所以需要它：`m` 块**不带** `gatherSpeed`（游戏弹窗读 `extData.gatherSpeed` 时仍以
+   *   `Math.floor(3600 * cfg.gather_speed)` 兜底），采集腿按速率择优必须回表。
+   * @param {number|string} itemId 点的 `m.itemId`
+   * @returns {{itemId:number, level:number, gatherSpeed:number, resourceType:number}|null} 表不可读/无行回 null
+   */
+  cq26WlResource(itemId) {
+    var id = Number(itemId) || 0;
+    if (!id) return null;
+    // 刻意不返回行对象本体（表缓存跨帧引用外泄红线），只投影用到的四列
+    var r = l10n.tableRow('RESOURCE', id);
+    if (!r) return null;
+    return {
+      itemId: id,
+      level: Number(r.level) || 0,
+      // 游戏弹窗口径：gather_speed 是「每小时速率」的分数形态，×3600 取整
+      gatherSpeed: Math.floor(3600 * (Number(r.gather_speed) || 0)),
+      resourceType: Number(r.resource_type) || 0,
+    };
+  },
+
   // coinState 快照能力已迁 feats/player/auto-coin-collect/api.js（领域算法下沉，单消费方）
 };
+
+// cq26NeutralCtrl 住在共享区段：经引擎插槽注册给 CAPS.cq26NeutralCtrl（引擎不反向 import 本文件），
+//   供 feats/cq26/excav.js 在安装期自检该控制器单例是否在场（拿不到则降级为「只信 22062/22063 推送」）。
+setSharedCapsProbe('cq26NeutralCtrl', () => gameData._cq26Neutral());
+// 荒芜冰原数据侧（遗失之箱/采集/巨兽共同依赖的 wasteLandData 单例）：同为软依赖能力键，
+//   取不到只让 feat 降级为「只信自订 push 的标量副本」，不阻断安装（feat 声明 'cq26WasteLand?'）。
+setSharedCapsProbe('cq26WasteLand', () => gameData._cq26WasteLand());
 
 // ─────────────────────── 战斗预设 / 头像 → core/acl/{battle-preset,avatar}.js（片4，见文件头 import 与 re-export） ───────────────────────
 

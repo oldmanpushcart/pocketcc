@@ -115,7 +115,7 @@ const INTERNAL_FEATURES = [
   },
   {
     // 日志上送（dashcam 双记录之二）：与报文录制平行的**独立开关**——生命周期不同：
-    // 报文是会话制（带业务标签 note、定稿命名），日志长期常开（无业务语义，dashcam 按小时轮转直写）。
+    // 报文是会话制（带业务标签 note、定稿命名），日志长期常开（无业务语义，接收端按小时轮转直写）。
     // 开启→log-collect start(cfg) 挂 log.js sink；关闭→stop() 摘钩（hot path 回落一次判空）。
     // 句柄走 log-collect.js 具名导出 logCollectApi（与总线同源）。
     id: 'logRecord',
@@ -419,6 +419,23 @@ export function saveGroup(id) {
 }
 
 /**
+ * 取一个功能的运行时配置（toModuleCfg 契约的统一收口点）。
+ * 全部 reactor 功能的 spec 都应声明 toModuleCfg；旧写法在这里无条件调用它，缺声明就在**面板开关的
+ * DOM change 回调**里抛 `TypeError: f.toModuleCfg is not a function`——不经 createLog ⇒ 日志流零痕迹，
+ *   且 setConfig 走不到 ⇒ 开关表观上“按不动”。降级为 warn + 空表：开关仍生效，异常靠日志定位而不是靠崩。
+ * @param {object} f descriptor
+ * @param {object} cfg 面板配置
+ * @returns {object} 运行时配置（不含 enabled，由调用方合并）
+ */
+function moduleCfg(f, cfg) {
+  if (typeof f.toModuleCfg !== 'function') {
+    log.warn('feature %s missing toModuleCfg; runtime cfg falls back to switches only', f.id);
+    return {};
+  }
+  return f.toModuleCfg(cfg);
+}
+
+/**
  * 按当前配置驱动一个功能的运行时。
  *   internal：有 apply 回调的（netLog / eventLog）调之驱动对应 core 模块；无 apply 的（自动重连）由 session hook 直读 configs.reconnect。
  *   其余功能：把 {enabled, ...toModuleCfg(秒→毫秒)} 推给 reactor.setConfig，由门控决定起停。
@@ -430,7 +447,7 @@ export function applyFeature(f) {
     if (f.apply) f.apply(cfg);
     return;
   }
-  reactor.setConfig(f.id, Object.assign({ enabled: cfg.enabled }, f.toModuleCfg(cfg)));
+  reactor.setConfig(f.id, Object.assign({ enabled: cfg.enabled }, moduleCfg(f, cfg)));
 }
 
 /**
@@ -466,7 +483,7 @@ async function reloadForPlayer(reason) {
     } else
       reactor.setConfig(
         f.id,
-        Object.assign({ enabled: configs[f.id].enabled }, f.toModuleCfg(configs[f.id])),
+        Object.assign({ enabled: configs[f.id].enabled }, moduleCfg(f, configs[f.id])),
       );
   }
   // configs 已刷新为新 UID 的值后再通知 UI 重同步控件（否则 UI 在 loadAllConfigs 完成前抢跑会读到旧值）。

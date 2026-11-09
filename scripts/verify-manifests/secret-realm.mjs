@@ -90,8 +90,8 @@ export default {
   id: 'secret-realm',
   featDir: 'extension/src/feats/activity/secret-realm',
   defaultRecs: [
-    'dashcam/store/14179309129759/20261018T200040-异能秘境-我是队长.ndjson',
-    'dashcam/store/14179309129759/20261101T200401-异能秘境-我是队长.ndjson',
+    'dashcam/store/rec/14179309129759/dashcam-rec-20261018T200040-异能秘境-我是队长.ndjson',
+    'dashcam/store/rec/14179309129759/dashcam-rec-20261101T200401-异能秘境-我是队长.ndjson',
   ],
   engineMods: {
     'pilot.js': ['PilotEngine'],

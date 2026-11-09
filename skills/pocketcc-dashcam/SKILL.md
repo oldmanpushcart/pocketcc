@@ -22,13 +22,15 @@ description: pocketcc dashcam 报文录制服务（Node.js）工程规范，覆�
 ## 落盘模型（改动前必须先理解）
 
 ```
-会话进行中：store/<uid>/<sessionId>.part.ndjson   只 append，稳定
+会话进行中：store/rec/<uid>/dashcam-rec-<startLocal>-<sessionId>.part.ndjson   只 append，稳定
 定稿触发：  x-done=1 请求头 ∥ 空闲超 IDLE_FINALIZE_MS(3min)，sweeper 每 30s 扫
-定稿动作：  算 slug → .part 重命名为最终名 → index.ndjson 追加/更新一行（按 start 升序整体重写）→ 出 active 表
-最终命名：  store/<uid>/<startLocal>[-<note>][-<slug>].ndjson
+定稿动作：  算 slug → .part 重命名为最终名 → dashcam-rec-index.ndjson 追加/更新一行（按 start 升序整体重写）→ 出 active 表
+最终命名：  store/rec/<uid>/dashcam-rec-<startLocal>[-<note>][-<slug>].ndjson
   startLocal = 本地紧凑时间 YYYYMMDDTHHMMSS（可排序）
   slug       = cmd 统计剥噪声(NOISE_NAMES)与 GET_ 等前缀后的 top 请求名（无 note 时作主题）
 ```
+
+- **存储分层 + 文件名前缀**：报文→`store/rec/<uid>/`、日志→`store/log/<uid>/`，文件名分别强制带 `dashcam-rec-`/`dashcam-log-` 前缀；rec/log 双保险隔离，任一侧 glob 不会误吞另一侧。索引固定名 `dashcam-rec-index.ndjson`。
 
 - 会话状态只在内存双 Map（`active`: sessionId→会话态；`indexes`: uid→session→索引条目），不引入持久队列/数据库；定稿重命名失败时保留 `.part` 交下次 sweep 重试。
 - `SIGINT`/`SIGTERM` 时 shutdown 收尾全部活跃会话——新增会话态时要同步保证能被收尾。
@@ -38,7 +40,7 @@ description: pocketcc dashcam 报文录制服务（Node.js）工程规范，覆�
 - 链路：`MAIN(net-collect 缓冲) → postMessage → bridge → chrome.runtime → background fetch POST /ingest`，改协议要同时核对扩展侧。
 - 请求头：`x-session` / `x-uid` / `x-start` / `x-note` / `x-done`。**HTTP 头只能 Latin-1**——含中文的 note 必须扩展侧 `encodeURIComponent`、本侧 `decodeURIComponent`，这条互锁不可破坏。
 - body 为 NDJSON，每行一条 net entry：`{dir,cmd,name,data,raw,ts,seq,rt}`；`dir` 取值 `req:send|req:sendPB|req:sendPBV2|resp|push`，`rt` 非应答为 `null`。
-- 落盘按行原样存储（机读友好），人读检索走 `index.ndjson`，不要在文件名里塞语义。
+- 落盘按行原样存储（机读友好），人读检索走 `dashcam-rec-index.ndjson`，不要在文件名里塞语义（前缀 `dashcam-rec-` 是硬规范，主题靠 note/slug）。
 
 ## 容错与日志风格
 

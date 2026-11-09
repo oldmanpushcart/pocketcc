@@ -114,11 +114,11 @@ resource.isRelicTarget({ targetType: 4, itemId: 1603 }); // → false（普通�
 resource.isRelicItemId(1514); // → true（6 级田 itemId 组 15）
 ```
 
-报文实证源：`dashcam/store/15596140531952/20261101T115648-查询普通田.ndjson`（15 发 906 全量家族×等级扫描，应答 `r={itemId,amount,expireTime,allianceAreaOwner,ownerId,aid}`、顶层 `pointType=4`）。
+报文实证源：查询普通田真人实录（15 发 906 全量家族×等级扫描，应答 `r={itemId,amount,expireTime,allianceAreaOwner,ownerId,aid}`、顶层 `pointType=4`）。
 
 ## 8. 变更记录
 
-- **2026-11-01 新增遗迹田识别判据 `isRelicItemId` / `isRelicTarget`**：配合「遗迹田（6 级田）永不撤回」升级为全局撤田不变量（auto-farm 时段外撤田/升级抢田 + launch-silo 腾队列三个出口同口径），并删除面板 `relicIgnoreWindow` checkbox（「遗迹田不受时段限制」从可选项变为固定行为）。三条轴：`targetType===38`（新：`core/march.js` 开始透传 856 `target.targetType`，常量真身 `FORTRESS_RES_POINT_TYPE` 下沉 `core/map.js`）> `floor(itemId/100)===15` > `RESOURCE.level ≥ 6`；都不依赖候选池。报文实证 `dashcam/store/14179309129759/20261016T190507-夺宝奇兵-我是陪跑`（856：普通田 targetType=4、遗迹田 38）。
+- **2026-11-01 新增遗迹田识别判据 `isRelicItemId` / `isRelicTarget`**：配合「遗迹田（6 级田）永不撤回」升级为全局撤田不变量（auto-farm 时段外撤田/升级抢田 + launch-silo 腾队列三个出口同口径），并删除面板 `relicIgnoreWindow` checkbox（「遗迹田不受时段限制」从可选项变为固定行为）。三条轴：`targetType===38`（新：`core/march.js` 开始透传 856 `target.targetType`，常量真身 `FORTRESS_RES_POINT_TYPE` 下沉 `core/map.js`）> `floor(itemId/100)===15` > `RESOURCE.level ≥ 6`；都不依赖候选池。报文实证夺宝陪跑真人实录（856：普通田 targetType=4、遗迹田 38）。
 
 - **2026-11-01 新增 `maxLevelForFamily`**：配合 auto-farm 四维 rank（种类>家族>矿脉级>设施级）改造。原因：`normal-scan.searchDown` 从通用上界 5 逐档下探，对雷神族每拍先撞 4/5 两个表里不存在的档（两行 `warn`）；`pickHigher(16, 3)` 还会把 3/2/1 这些注定不够高的档的 906 发出去再丢弃。现：起点夹族上界 + `pickHigher` 只探 `(above, 族上界]` + 已顶格零发包直回 + `probeLevel` 的空行日志降为 debug；`priority.wantsNormalProbe` 也改按族判上升空间（免白占 5 分钟探测名额）。
 

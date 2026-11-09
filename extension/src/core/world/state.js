@@ -51,9 +51,9 @@ const PLACE_OF_SCENE = {
 /**
  * mapType 语义名 → Kind（谓词链落空时的反查表，也是 adp_war 目前唯一可辨识的入口）。
  * 注意 kvk(2) 对应八国、c4(4) 对应四国、kvk_s2(5) 对应八国第二季（源码 setMapTmxData 实证）。
- * 下面四个 homeland 变体必须全列：地图 setter 会把任何「写 world」就地折算成
- * `world / world_withBoder / world_NTerrain / world_NTerrain_border` 之一（按新地形与边界图两个功能开关），
- * 真机实证本服常态（Home 与 NWorldMap）实际拿到的是 `202 world_NTerrain_border`，
+ * 下面五个 homeland 变体必须全列：地图 setter 会把任何「写 world」就地折算成
+ * `world / world_withBoder / world_NTerrain / world_NTerrain_border / sq_2026` 之一
+ * （按新地形与边界图两个功能开关；sq_2026=15 是 2026 赛季新地图变体，部分玩家启用），
  * 少列任一个都会让常态落 unknown 、把整批玩法饿死（游戏自己同源：WorldUtils.worldMapArr）。
  */
 const KIND_OF_MAPTYPE = {
@@ -61,6 +61,7 @@ const KIND_OF_MAPTYPE = {
   world_withBoder: KIND.homeland,
   world_NTerrain: KIND.homeland,
   world_NTerrain_border: KIND.homeland,
+  sq_2026: KIND.homeland, // 15：新版本服常态地图（2026 赛季起部分玩家启用），与旧 202 互斥
   pab: KIND.pab,
   cab: KIND.wushuang,
   new_cab: KIND.wushuang,

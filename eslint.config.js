@@ -16,9 +16,13 @@ export default [
       //   warroom/        —— 独立 Node 分析子工程（自带 package.json + node_modules），各有工具链；
       //   .reviewtmp/     —— 本地评审/迁移草稿目录（已 .gitignore），内容多为产物快照与一次性脚本。
       //   .replaytmp/     —— 本地仿真/对拍草稿目录（已 .gitignore），Node 一次性脚本不适用浏览器 globals。
+      //   tools/          —— 手工粘贴到游戏页面 DevTools 控制台的逆向探针脚本：不在打包/测试链路内，
+      //                      其 window/console/navigator/__require 属运行期宿主环境，套用扩展或 Node 的
+      //                      globals 契约只会产出恒不成立的 no-undef（.prettierignore 已同目录排除）。
       'warroom/**',
       '.reviewtmp/**',
       '.replaytmp/**',
+      'tools/**',
     ],
   },
   js.configs.recommended,

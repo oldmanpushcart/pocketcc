@@ -5,7 +5,7 @@
  *   提现」两段，游戏只要求点一次：点金币收割机把缓存池连同其自身产量一起结进钱包。矿不单独收（它的产出只折进
  *   缓存池、没有独立结算入口）。本功能接管这一次点击：收割机攒够免费门槛即提现，全程不花钻石、不开面板。
  *
- * 协议（抓包实证 20261025T224348-自动收取金币.ndjson；源码 RequestId.GET_ORDER=102）：
+ * 协议（抓包实证；源码 RequestId.GET_ORDER=102）：
  *   102 V1 send（非 PB），载荷 `{id:收割机建筑实例id}` → 应答 d（JSON 串）=
  *   {reward:{resource:{coin…}}, building:{…更新后的收割机…}, crit:false}，伴随 push 10001 到账与 10101（该建筑
  *   ProCount 归零重排、 UserData.CacheResource 随之清零）。报文实证整段只有一次 req:send 102 {id:"4164271433534422541"}

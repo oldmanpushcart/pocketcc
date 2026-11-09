@@ -15,14 +15,14 @@
  *   皆只读查询（不改写游戏数据、不 OpenUI、不播动画）。
  *   → 发 4170 前先拿落点：拿不到（核心区空地不足 / 符号缺失）就**本轮不发**、退避重试，从源头避免「投放失败」。
  *
- * 协议（抓包实证 20261007T121130-秘密武器-收取奖励.ndjson，有效闭环 seq 4-24）：
+ * 协议（抓包实证）：
  *   用次数 4170 CD_SKILL_USE，走 net.sendPB（PB V1），载荷 {header:{}, cdSkillUse:{id:2, param:[x,y]}} →
  *     应答 pbAck.cdSkillUse.skill={id, start(Long64 ms), cnt, end(Long64 ms)}：cnt 为本次用掉后的**剩余次数**，
  *     end 为下一次次数恢复时刻（Long64，_high*2^32+_low 毫秒；实录该拍 end=0 表示无可解析恢复点）。
  *   收取   4168 Get_Home_Air_Drop_Reward，走 net.send（旧 JSON V1，ret.data 为 JSON 串需自 parse），
  *     载荷 {targetId:"<空投建筑实例 id>"} → 应答 d={reward:{items:[{itemId,itemCount}],resource…}}。
  *   **targetId 不在 4170 应答里**，而由紧随其后的 push 10101 PUSH_BUILDING（buildingId=9001001=空投建筑）下发的
- *     建筑实例 id（seq 7：{buildingId:9001001, x:4, y:66, id:"4874128440122531841"}）；收取后 seq 21 push 10107 建筑消失。
+ *     建筑实例 id（push 项形如 {buildingId:9001001, x:4, y:66, id:"4874128440122531841"}）；收取后 push 10107 建筑消失。
  *     → 本 feat 必须订阅 ctx.on.push(10101) 捕获它，作为待收 targetId。
  *     → 开机播种（默认逻辑）：开启前地面上已存的空投不会重推 10101，故 run() 直接从 UserData.Buildings（BuildingId==9001001）
  *       扫描其实例 id（airDropDomain.airDropInstances）灌入待收队，首个 cycleRun 的 collectPending 即领取，collected 按 id 去重。
@@ -393,7 +393,7 @@ async function cycleRun() {
         break;
       }
     }
-    // 次数用尽出 CD：4170 应答的 skill.end 实为 0（实录 seq12：cnt=0 时 end={_low:0,_high:0}），恢复时刻只在 4169 里，
+    // 次数用尽出 CD：4170 应答的 skill.end 实为 0（实录报文：cnt=0 时 end={_low:0,_high:0}），恢复时刻只在 4169 里，
     // 故本拍不据此 sleep；交下拍 4169 拿权威 end 再睡到恢复点（驱动器会打 next check at）。本拍短隔先让落地奖励（push 10101→drops）被收取。
     if (exhausted) {
       log.info(

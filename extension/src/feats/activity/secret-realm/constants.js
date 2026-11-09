@@ -428,13 +428,13 @@ export const TILE_KEY_SET = 'sET';
 /**
  * 异能秘境三个 BOSS 的区域锚点（**活动固定坐标/类型，跨场实测不换**；保留作参考记录，当前 pilot 不 import）：
  *   实测 esrId 在 lead 窗内已缓存进 #tiles，#bossEsrId() 决策时恒非 null，几何判区已删。
- *   • 大BOSS (203,203)（型别 177）：20261011T195811（b10/boss9）、210400（boss9）、本录制 20261101（boss8）三场同位；
- *   • 小BOSS-B (230,234)（型别 178）：20261011（boss12 esr22）与本录制同位；
- *   • 小BOSS-A (175,177)（型别 178）：本录制 boss11（esr21）单场报文证据 + 用户跨场确认。
+ *   • 大BOSS (203,203)（型别 177）：三场实录（boss9×2、boss8）同位；
+ *   • 小BOSS-B (230,234)（型别 178）：两场实录（boss12 esr22）同位；
+ *   • 小BOSS-A (175,177)（型别 178）：boss11（esr21）单场报文证据 + 用户跨场确认。
  * 实测时间轴参考（**仅诊断对照用，决策链不消费**——进房首帧 21535 即带全量权威 stateEndTime，
- *   硬编码排期会造出会过期的第二真值源）：以本场录制起点计，两小BOSS 同刻 +1137s 开打（21 窗约 7min），
- *   大BOSS +2157s 开打（21 窗排定 10min）；历史场 20261011 大BOSS 21 时刻≈+2159s，两场差 2s（入场偏移量级）。
- * 区域形状（本录制实测，901 应答去重 260 个平台格）：176 平台散布在自家锚点周围 1.4~21.2 格的圆环内，
+ *   硬编码排期会造出会过期的第二真值源）：以本场实录起点计，两小BOSS 同刻 +1137s 开打（21 窗约 7min），
+ *   大BOSS +2157s 开打（21 窗排定 10min）；历史场次大BOSS 21 时刻≈+2159s，两场差 2s（入场偏移量级）。
+ * 区域形状（实录实测，901 应答去重 260 个平台格）：176 平台散布在自家锚点周围 1.4~21.2 格的圆环内，
  *   三区互不重叠；「取最近锚点」判区与服务器 esrId 归属 **0/260 不一致** → 几何判区可完全替代 esr 对照
  *   （连 esr 编号都不依赖，服务端改编号也不影响）。
  * 历史用途（已废弃）：曾用于 #zoneAnchor 几何判区，但实测累积池 esrId 恒可用，几何从未触发，代码已删。
@@ -663,13 +663,14 @@ export const TABLE_BUILDING = 'enigma_secret_realm_building';
 /**
  * 秘境回合表名（TableName.enigma_secret_realm_timer）：`realm roundid` → 回合开放时刻。
  * 「回合已开放」的算法是 `ServerTime > fightBegin/1000 + timer[realm[esrId].roundid].start`。
- * ⚠ 172/173 的 esrId 恒 15、无逐点差异 → **本表不拿来当闸**（只会误拦），只留作诊断可读。
+ * ✔ 实录报文实证：172/173 的 esrId **按区域分档**（观测到 12~19），并非恒 15；
+ *   故本表既当「回合是否已开放」闸（pilot #roundOpen），也供「强/普通异能区」档位（realm[esrId].roundid，pilot #roundTier）。
  * @type {string}
  */
 export const TABLE_TIMER = 'enigma_secret_realm_timer';
 /**
  * 秘境主表名（TableName.enigma_secret_realm）：esrId → roundid / 区域归属，回合表的外键来源。
- * 同上，只读不闸。
+ * roundid 越大=开放回合越晚=越靠地图中心的「强异能区」（字典 FAQ25）；供 #roundOpen 开放闸与 #roundTier 档位。
  * @type {string}
  */
 export const TABLE_REALM = 'enigma_secret_realm';
@@ -845,7 +846,7 @@ export const REJ_PLANE_TAKEN = 'enigma_realm252';
 export const REJ_FIGHT_ONGOING = 'enigma_realm217';
 /**
  * @type {string} 同一区域核心停泊平台之间不允许相互行军（挪台路径约束）
- *   真机报文（20261101T200401）：拒绝情境取决于**本队当前停泊位**（同区平台之间）而非目标点固有属性，
+ *   真机报文：拒绝情境取决于**本队当前停泊位**（同区平台之间）而非目标点固有属性，
  *   报文里同点挪开后再行军 11.5s 后即成功 → pilot.js 处置为 60s marched 冷却，不做本场拉黑。
  */
 export const REJ_SAME_AREA_PLANE = 'enigma_realm209';
@@ -980,6 +981,13 @@ export const tuning = {
    */
   bossTileFreshMs: 60000,
   /**
+   * 驾驶：**21535 BOSS 快照主动复拉**的最小间隔（毫秒）。
+   *   本拍出现「驻留点是 BOSS 点」或「return 档被拒」时，发一次 8522 POINT_INFO（只读）刷新 bossBaseInfo，
+   *   避免逐拍敲；取 15000（driveScanMs 量级）。应答落地会 kick 一拍使「提前离点」判据立即重评。
+   * @type {number}
+   */
+  driveBossStateGapMs: 15000,
+  /**
    * BOSS 攻打：「近区候选」的判定半径（欧氏格数，与 #platformCandidates 同口径）。
    * 口径（10018 里 176 平台 `m.esrId` × 21535 的 bossBaseInfo.pos 对账）：
    *   每只 BOSS 到**它自己区域**平台最近 1.4~7.1 格（boss9 2.0 / boss10 1.4 / boss11 7.1 / boss12 2.0），
@@ -1040,6 +1048,19 @@ export const tuning = {
    */
   warnMoveCooldownMs: 45000,
   /**
+   * 驾驶：**威胁窗内可再逃**的触发阈值（毫秒）。首次逃后，若 21534 num>0 仍持续超过本值
+   *   → 复位 `#threatEvaded` 允许再挪一次（原「一次威胁窗只逃一次」在持续抓车时会困死）。
+   *   ⚠ 耦合：evade 冷却（pilot #dispatch）取 `max(本值, warnMoveCooldownMs)`，本值小于 45s 时
+   *   实际再逃时刻由 warnMoveCooldownMs 决定（取 max 是为两键任何相对大小都不互相遮蔽）。
+   * @type {number}
+   */
+  driveThreatReEvadeMs: 30000,
+  /**
+   * 驾驶：**整场再逃次数上限**（次）。防「挪车循环烧队列」，与 `driveThreatReEvadeMs` 配合。
+   * @type {number}
+   */
+  driveThreatReEvadeMax: 2,
+  /**
    * 攻击警告：转移引擎的空闲轮询兑底（毫秒）。面板档定为「num>0 立即转移」（不做存活窗去抖），
    *   故触发主要靠 push 21534 事件 kick；本值只用于「警告挂起但快照里暂无就近营帐」时的重扫间隔。
    */
@@ -1080,6 +1101,17 @@ export const tuning = {
    *   驻留满即离店；与「大BOSS 前定点勤务」和 reactive 补货共用本值。默认 25s。
    */
   driveShopDwellMs: 25000,
+  /**
+   * 驾驶：**商店每补一件**的驻留预算（毫秒）。到店驻留时长按 `待补件数 × 本值` 动态放宽，
+   *   取 3000：覆盖一次 buy(shopBuyGapMs=600) + 一次 refresh(shopRefreshGapMs=2000) + RTT。
+   */
+  driveShopUnitMs: 3000,
+  /**
+   * 驾驶：**缺口未补时的续留上限**（毫秒）。WORK 相位到点但 `#shopWant` 仍返回 sausage（缺口未补）时，
+   *   在 `#workUntil` 之上最多再延本值后强制离店（防新永动：仍受 `#shopAllTried` + `driveShopStayMs`
+   *   全局路由锁 + `driveShopRevisitMs` 三重闸约束）。
+   */
+  driveShopExtraMs: 20000,
   /**
    * 驾驶：**到店即锁路由**的时长（毫秒）——这是一道**全局路由锁**：停靠期内阶段网关链一次都跑不到日常档，
    *   于是「在店里把货扫完」不会被下一拍的选点逻辑打断，离店后还额外有 15s 不许再被拉回任何店。
@@ -1280,6 +1312,33 @@ export const tuning = {
    *   「该收场」阶段只打**近处大井**，别为远处的井跑 40s。
    */
   driveStrictResMaxDist: 100,
+  /**
+   * pilot：巡航资源档「单跳车程上限」（秒）。远于此的丰盛井不直冲，改在近处挑跳板点一步步挪过去。
+   *   动机：8521 行军一旦发出不可取消，长途＝把后背亮给守株待兔的人（实测案例：直冲 38 格外的井，
+   *   落地即被围、井还是空的，14s 车程足够敌人赶到，最终战败 8552 复活）。逐跳逼近把每趟车程压到可反悔的量级。
+   *   实际最大距离 = 本值 × driveMapUPS（换算成格）。默认 10 ≈ 28 格：只拆掉偶发的长途（本场 p90≈44），
+   *   常规 hop（p50≈25）基本不受影响。离线回落：本值设 0 / 非正数 = 不封顶（退回旧行为，直冲打分最优）；
+   *   但面板 driveHopSec（min 1、sanitizeDrive clamp [1,120]）在线时恒 ≥1，故经面板驱动的实跑不会出现不封顶。
+   *   需求 3：面板「最长单跳车程(秒)」(cfg.drive.hopMaxSec) 缺省覆盖本值（本值仅作缺省/离线回落）。
+   *   需求 3/4：窗内无「最合理井」落脚跳板时，pilot #hopTowardGoal 改就近向打分最优井逼近一个资源点/平台/野怪(172)作跳板（只挪位、不打野）。
+   * @type {number}
+   */
+  driveHopMaxSec: 10,
+  /**
+   * pilot：秘境地图行军速度换算（格/秒），供 driveHopMaxSec 把「车程秒」折算成选点用的「距离格」闸。
+   *   取自真人录制的 dispatch→arrive 实测中位数（约 2.8 格/秒，稳定）。仅作换算系数，不做 ETA 预测。
+   * @type {number}
+   */
+  driveMapUPS: 2.8,
+  /**
+   * pilot：巡航资源选点「强异能区牵引」开关。开启后，当候选井里存在「开放回合更晚」的区域（realm[esrId].roundid
+   *   取最大值 = 强异能区，字典 FAQ25「先开微异能区、后开强异能区」）时，goal 优先从该区取（哪怕更远），
+   *   再经 driveHopMaxSec 的单跳跳板步步逼近——解决「长时间在普通/微异能区随缘逛」。
+   *   只微区开放（全候选同档）或取不到 roundid（离线/无该行）时不改变原打分，向后安全。
+   *   默认 1=开启；设 0 = 关闭分区牵引（退回纯按产量-距离打分）。
+   * @type {number}
+   */
+  driveStrongPull: 1,
   /** @type {number} pilot：停在 172 野怪点的驻留（毫秒）（等拍宠/交战结算） */
   driveStayMonsterMs: 20000,
   /**
@@ -1362,9 +1421,12 @@ export const tuning = {
   driveBossDedupe: true,
   /**
    * shop：为「刷出香肠」而连续刷店的上限（次/每次到店）。
-   *   到店驻留 25s 且刷新是异步一拍一次，故显式封顶，防把 41010 全烧光仍不出货。
+   *   香肠 `specId=19` 的 `buy_times=1`——一根一次刷新，买 N 根需 N−1 次刷，故本值必须按
+   *   `driveSausageTarget − 1 + 冗余` 取、**勿低于目标数**（取 12 ≡ 目标 10 需 9 刷 + 冗余 3）。
+   *   真实成本闸门是刷新币 41010 余额预检（shop.js #refreshFor 已有，与游戏 tips enigma_realm74 同口径），
+   *   本预算只是防「余额充足却永不刷新」的兜底上限，本身不是成本闸门。
    */
-  driveSausageRefreshMax: 6,
+  driveSausageRefreshMax: 12,
   /**
    * pilot：两次复活的最小间隔（毫秒）。8552 应答可能迟到，本值防同一次死亡反复消耗复活次数。
    */

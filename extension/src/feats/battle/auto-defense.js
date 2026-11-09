@@ -707,8 +707,8 @@ function onAttack(ev) {
   // 夺宝奇兵（CSHunt）攻击闸门：星歼者 PVE、对手玩家拦截/击败我的夺宝飞船，服务器都以
   //   uid=0（且缺 level/arrivalTime、marchId 恒等于夺宝 treasureId）的形态推 10167，
   //   那是「争抢的宝箱/飞船被攻打」，不是「你的世界主城被攻打」，无需开盾/迁城/反击。
-  //   真主城被攻必带非 0 攻击者 uid（报文实证 20261007T214736：uid=14913381732485/level/arrivalTime 齐全）；
-  //   真机 4 份夺宝日志全量核验：10167 的 uid 恒为 0，无一例外。故 uid 缺失或为 0 → 非主城被攻，直接跳过。
+  //   真主城被攻必带非 0 攻击者 uid（报文实证：uid=14913381732485/level/arrivalTime 齐全）；
+  //   夺宝日志全量核验：10167 的 uid 恒为 0，无一例外。故 uid 缺失或为 0 → 非主城被攻，直接跳过。
   if (!Number(d.uid)) {
     log.debug(
       '10167 no real attacker uid(%s); treasure-hunt/non-city attack, skip. marchId=%s',

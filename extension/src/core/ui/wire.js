@@ -135,7 +135,7 @@ export function wireControls(root) {
       configs[f.id][cb.dataset.key] = cb.checked;
       saveFeature(f);
       applyFeature(f);
-      // 行级开关不留日志的话，「我明明勾了」就只能靠猜：key 与勾选态进日志流，dashcam 单轨可回溯改动时刻
+      // 行级开关不留日志的话，「我明明勾了」就只能靠猜：key 与勾选态进日志流，单轨可回溯改动时刻
       logCore.debug(
         'field checkbox changed. feature=%s;key=%s;checked=%s',
         f.id,

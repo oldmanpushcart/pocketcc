@@ -94,6 +94,8 @@ export function refreshFieldVisibility(root) {
 
 /**
  * 组卡片：主闸门 checkbox（pc-gen）+ 展开=子项 checkbox 列表（pc-en）。子项详细参数不展示。
+ * 子项声明 `inlineStatus: true` 时，把 descriptor 中第一个 type:'text' 字段的 get() 返回值
+ *   内联到开关行（左标签 · 中状态值 · 右 checkbox），不展开 pc-subfields 块。
  * @param {object} node menu.js 组节点
  * @returns {string}
  */
@@ -104,6 +106,23 @@ function renderGroupCard(node) {
     .map((ch) => {
       const c = configs[ch.id] || { enabled: false };
       const f = findFeature(ch.id);
+      // inlineStatus: 将第一个 text 字段的值内联到开关行
+      if (ch.inlineStatus && f && f.fields && f.fields.length) {
+        const fd = f.fields.find((x) => x.type === 'text');
+        let val = '';
+        if (fd && typeof fd.get === 'function') {
+          try {
+            val = String(fd.get(c) || '');
+          } catch (_) {
+            val = '';
+          }
+        }
+        return (
+          `<label class="pc-row"><span>${ch.label || (f && f.label) || ch.id}</span>` +
+          `<span class="pc-fval" data-fid="${ch.id}" data-fkey="${fd ? fd.key : ''}">${val}</span>` +
+          `<input type="checkbox" class="pc-en" data-id="${ch.id}" ${c.enabled ? 'checked' : ''}></label>`
+        );
+      }
       const head =
         `<label class="pc-row"><span>${ch.label || (f && f.label) || ch.id}</span>` +
         `<input type="checkbox" class="pc-en" data-id="${ch.id}" ${c.enabled ? 'checked' : ''}></label>`;
@@ -264,12 +283,17 @@ export function rerenderFeatureCard(root, fid, rewire) {
 }
 
 /**
- * 刷新面板内所有 type:'text' 只读字段：按 descriptor.get() 重算当前值。
- * 另特处理怪物清单（huntlist）的「已打」只读格（.pc-hlstat[data-hlstat]）：按行 key 调 fd.todayText(key)。
+ * 刷新面板内所有只读字段：type:'text' 按 descriptor.get() 重算当前值；type:'infogrid' 行集来自 fd.rows，
+ * 整块重刷（与首次渲染同一渲染器，靠容器 data-id/data-fkey 反查）。
+ * 另特处理两个清单内的只读格：怪物清单（huntlist）「已打」（.pc-hlstat[data-hlstat] ← fd.todayText(key)）与
+ * 物品清单（itemlist）「总数量」（.pc-istock[data-istock] ← fd.stockText(key)），以及清单页脚汇总
+ *   （.pc-isummary[data-isummary] ← fd.summary(items,state,cfg)，汇总跟快照/额度走同一条通路）。
+ * 这些都是「值随数据变、行结构不变」的格：只改文本，绝不整块重刷（itemlist 的拖拽/勾选监听绑在行节点上）。
  * 面板打开 / 卡片展开 / 切 TAB / 功能侧 ui.refresh 时调用，无需定时器（避免常驻轮询）。
  * @param {Element} root 扫描范围（面板或单个 pane/body）
  */
 export function refreshTexts(root) {
+  root.querySelectorAll('.pc-igraphbox').forEach((box) => refreshFieldBox(box));
   root.querySelectorAll('.pc-fval').forEach((span) => {
     const f = findFeature(span.dataset.fid);
     if (!f) return;
@@ -281,11 +305,28 @@ export function refreshTexts(root) {
       // 怪物清单「已打」格：值按行 key 从 fd.todayText 取（无则不刷）
       if (typeof fd.todayText !== 'function') return;
       next = String(fd.todayText(span.dataset.hlstat) || '');
+    } else if (span.dataset.istock != null) {
+      // 物品清单「总数量」格：值按行 key 从 fd.stockText 取（无则不刷）
+      if (typeof fd.stockText !== 'function') return;
+      next = String(fd.stockText(span.dataset.istock) || '');
     } else {
       if (!fd.get) return;
       next = String(fd.get(configs[f.id]) || '');
     }
     if (span.textContent !== next) span.textContent = next;
+  });
+  // 清单页脚汇总：快照/额度变了就要重算（勾选变更时 widgets.js 走同一个 fd.summary，两条通路同口径）
+  root.querySelectorAll('.pc-isummary').forEach((div) => {
+    if (div.dataset.isummary == null) return;
+    const f = findFeature(div.dataset.fid);
+    if (!f) return;
+    const fd = findFieldDescriptor(f, div.dataset.fkey);
+    if (!fd || typeof fd.summary !== 'function') return;
+    const c = configs[f.id];
+    if (!c) return;
+    const items = typeof fd.items === 'function' ? fd.items(c) : fd.items || [];
+    const next = String(fd.summary(items, c[fd.key] || {}, c) || '');
+    if (div.textContent !== next) div.textContent = next;
   });
 }
 
@@ -327,9 +368,11 @@ export function syncControls(panel) {
   // 这类字段行数可增可减、选项由配置表运行时枚举，不能只回写单个值；重刷与首次渲染走同一张 FIELD_BOXES
   // 渲染表（refreshFieldBox 靠容器上的 data-id + data-fkey 反查 descriptor），不再逐类抄一份同形块。
   // 注意：重刷会重建种类多选下拉的 DOM，展开态随之收起（只在配置补载后发生，可接受）
-  panel.querySelectorAll('.pc-rng, .pc-mopts, .pc-mrule, .pc-frule, .pc-trule').forEach((box) => {
-    refreshFieldBox(box);
-  });
+  panel
+    .querySelectorAll('.pc-rng, .pc-mopts, .pc-mrule, .pc-frule, .pc-trule, .pc-igraphbox')
+    .forEach((box) => {
+      refreshFieldBox(box);
+    });
   // 好友清单：整块重刷 + 重绑（同 ranges，行数可增删）
   panel.querySelectorAll('.pc-ulist').forEach(mountUidList);
   // 领取优先级清单：整块重刷 + 重绑（行不可增删但 ↑/↓ 交换后序号/disabled 态会变）

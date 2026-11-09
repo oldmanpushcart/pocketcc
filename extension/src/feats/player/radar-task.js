@@ -1,7 +1,7 @@
 /**
  * 雷达任务（radarTask）- 日常 feat：自动完成雷达盘任务——每日三连环（类一）+ 普通任务（类二）的「认领→执行→领奖」，同一时间只执行一个任务。
  *
- * 任务分类（报文实证 dashcam 20261106T002310-雷达任务.ndjson）：
+ * 任务分类（实录报文实证）：
  *   类一 每日三连环 —— day_group_events（radar_group_type=3、day_group_id 非 0，录制实测 taskId 10002/10003/10004）：
  *     链式逐个解锁（打完一个领一个，push 20026 才下发下一个 state=0）；三连环各走一种执行形态（零部队援助行军 / 带兵单打 / 联盟集结）。
  *   类二 普通任务 —— events（radar_group_type=1）：
@@ -14,14 +14,14 @@
  * 状态机（任务 event.state，报文实证）：
  *   0 待认领 →(3505)→ 1 已认领（应答回填 x/y）→(派发行军)→ 2 进行中 →(部分类型经 3 需二次动作)→ 4 完成待领 →(3508)→ 移除/被新任务替换。
  *
- * 协议（全部老 send 通道，报文实证 20261106T002310）：
+ * 协议（全部老 send 通道，实录报文实证）：
  *   3504 RadarGetInfo —— req {clearFinishNotify:1}；resp 全量（events / day_group_events.day_group_events / group_events / act_radar_events
  *     + 标量 taskPoolSurplusNum/scaned/nexRefreshtTime/sign/radarLevel…）。
  *   3505 RadarStartTask —— req {id}（实例 id，Number）；resp 为该任务所在的 events|day_group_events|group_events 三选一数组（state 0→1、回填 x/y）。
  *   3508 RadarGetReward —— req {id}；resp 含 reward。串行 + 1.2s 间隔（NetMgr 频控吞连发，同联盟捐献教训）。
  *   3515 RadarDefend —— 一键击退黑暗军团的雷达干扰攻击：**req 空体 {}**（不带 id/坐标），resp 只有 {sign}。
- *     报文实证 20261106T002310 唯一一笔：00:26:53 最后一条 3508 领完 → 20021 `{sign:4, deBeginTime:1793896015}`
- *     （该场 40 条 20021 里唯一 deBeginTime 非 0）→ 4s 后 `3515 req {}` → `resp {sign:5}`（s=0）→ 紧接
+ *     报文实证唯一一笔：00:26:53 最后一条 3508 领完 → 20021 `{sign:4, deBeginTime:1793896015}`
+ *     （实测 40 条 20021 里唯一 deBeginTime 非 0）→ 4s 后 `3515 req {}` → `resp {sign:5}`（s=0）→ 紧接
  *     20021 `{sign:5, deBeginTime:0}`；该笔前后 ±15s 内无一条 10021 体力推送 → **击退不扣体力、不派兵**。
  *     游戏侧链路（源码实证）：`RadarMainPrefab` 见 `radarDefendStartTime` 非 0 就点亮防御入口 → `RadarDefPop`
  *     显示 `PLAYER_LEVEL[等级].att_new` 为门槛、战力不足则按钮置灰 → `radarDefCallBack()` 发这一笔空体。
@@ -29,10 +29,10 @@
  *     零部队型八键 {marchType,x,y,armyList:[],armyListNew:[],heroList:[],trapList:[],formation:0}
  *     （marchType=64 宝藏 / 67 援助点 / 200 玩家求援；报文实证键集即此，与 march.pickUp 的九键 ext 形态不同，feat 直发）。
  *   1201 ALLIANCE_Assembly_Create —— 集结带兵 {marchType:8,x,y,time:60,armyList,armyListNew,heroList,trapList,formation:0,formationV2}
- *     （逐键同惧星实证 20261011T183114）。
+ *     （逐键同惧星据点集结实录）。
  *   推送（两类形态，不可只认数组！）：20013 状态变化 / 20025 环变化的载荷**本身就是单条任务事件**（顶层
  *     {id,taskId,state,x,y,day_group_id,…}，无 events 包装）；20015 新增任务 / 20026 每日链推进则携 events 数组。
- *     实证 20261106T002310：前者 50 条（state=4 有 32 条、state=2 有 18 条）无一例外是裸事件，
+ *     实录报文实证：前者 50 条（state=4 有 32 条、state=2 有 18 条）无一例外是裸事件，
  *     30 个不同 id 里 29 个与 3504 账本同键 —— 「任务已完成待领」这个真相几乎只从 20013/20025 下发，
  *     读成数组会全部静丢弃（已踩过：账本永停 state=1 → 不领奖 + 反复 902 被拒 code=3 死循环）；
  *     20016 杂项 / 20021 sign（仅标量刷新；**deBeginTime 在这两条与 3504 全量三处都带**，>0 即攻击进行中）。
@@ -47,8 +47,8 @@
  *   游戏 `RadarController.askBeginTask`（认领应答回环里同样是拿事件 id 查表）、竞品 B `server-js.js:19868`
  *   （`getTableDataById(TableName.radar_event, e["id"])`）。taskId 是**另一张表 radar_task** 的键（name/des/cost_energy/condition_num，任务内容），
  *   拿 taskId 查 radar_event 会命中「同号不同物」的槽位行：本 feat 首版就这么错查过，黑暗军团据点（taskId=10001，实例 id 1099006/7/8）
- *   被读成 type=205 而发出零部队援助 902 → 服务器 code=3 连拒（实证 _log/15596140531952/20261106T03）。
- *   type 分派（游戏表列出的全集 + 本录制实证）：201 带兵单打(state1) / 202 集结带兵(state1) / 203 零部队宝藏(state1,marchType64)
+ *   被读成 type=205 而发出零部队援助 902 → 服务器 code=3 连拒（真机日志实证）。
+ *   type 分派（游戏表列出的全集 + 实录报文实证）：201 带兵单打(state1) / 202 集结带兵(state1) / 203 零部队宝藏(state1,marchType64)
  *   / 204 零部队据点(state1,marchType65 RADAR_MARCH_COUNTRY) / 205 零部队援助(state1,marchType67) / 206 剪线小游戏
  *   / 207 密码验证小游戏 / 208 搜怪带兵(state3) / 209 仅倒计时规则引用 / 211 零部队求援(state3,marchType200)。
  *   v1 只发 201/202/203/205/211；204/206/207/208/209 归 unsupported（首遇 warn + 当日 latch，绝不猜 body）。
@@ -56,9 +56,18 @@
  *   表可读而该槽位无行（活动雷达/新池）→ 视为未知，不发包（宁可不做的代价低于发错包）。
  *
  * 闸门与纪律：
- *   单飞 —— exec 锁（用户口径：一次只能执行一个任务），随账本 state 跃迁释放（≠2/3 或条目消失），不轮询 marchId 确认。
+ *   单飞 —— exec 锁只锁「执行」（902/1201）；随账本 state 跃迁释放（进 4 / 条目消失 / 回滚到 0/1），不轮询 marchId 确认。
+ *     认领（3505）不占行军槽、不扣体力、不置锁，**exec 在途期间照旧逐拍推进**（真机实录：
+ *     一条集结占锁的 11 分钟里 9 条 state=0 任务 0 笔 3505，就是被 exec 早返回吞掉的）。
  *   拒因退避 —— 三态发送结果区分「服务器拒」与「本端未发出」；同一实例同一动作连续被拒 rejectRetryLimit(2) 次
  *     即当日拉黑该实例（不再重试，但照常领奖）并立即 3504 重拍——因为「拒」最常见的成因就是本地账本陈旧。
+ *   停滞止损 —— 与「被拒」并列的另一类死循环：**s=0 受理、却没做成**（集结窗 60s 到期被服务器原地解散、
+ *     任务态 2→1 回滚）。这类走不到拉黑计数，故按 dispatch 收尾单独记账：rollback 达 dispatchStallLimit(2) 次
+ *     即当日让位该实例（仍照常领奖），并用停滞次数作 candCmp 首键降权，杜绝 day_group_id 恒最大者霸占首位。
+ *     沉降窗 dispatchSettleMs(10s) 内不判（engage 推送实测 <100ms，防与推送赛跑而假计）。
+ *     真机实录：同一条 3147 在 639s 内被重派 4 次、行军态序列恒为 8→4（从未 1/3），而 0 笔认领/领奖。
+ *   在途择时 —— 首次对拍按集结窗到期 execPollMs(90s) 即醒（窗一过就能发现解散并换候选），确认仍在途才降到
+ *     execResyncMs(4min) 低频档；取代原先固定 240s 的「解散了也要再等 4 分钟才看见」。
  *   体力 —— 面板「体力下限」闸门：体力低于下限即暂停执行（认领+出兵一起停），领奖不受限（不扣体力）；
  *     镜像读不到则本轮不动（active 档重判）；阻塞时下拍精准睡到 nextRecoverSec 回点（自然回体不一定推 10021，不能只靠推送）；
  *     配 0 也强制至少 1 点，保证「体力耗尽必停」这一用户口径不被面板误关。
@@ -88,7 +97,7 @@ import { createCycle } from '../../core/cycle.js';
 /** @type {ReturnType<createLog>} 模块日志器（tag=RADAR） */
 const log = createLog('RADAR');
 
-/** @type {number} RequestId.RadarGetInfo：雷达主数据全量（req {clearFinishNotify:1}，20261106T002310 实证） */
+/** @type {number} RequestId.RadarGetInfo：雷达主数据全量（req {clearFinishNotify:1}，真机报文实证） */
 const CMD_GET_INFO = 3504;
 /** @type {number} RequestId.RadarStartTask：认领任务（req {id}，state 0→1） */
 const CMD_START_TASK = 3505;
@@ -144,7 +153,7 @@ const RALLY_WAIT_TIME = 60;
  */
 
 /**
- * radar_event 表 type → 动作映射（state = 该动作生效所需的任务态；游戏 `RadarController.beginMarch` 的 type→marchType 分派 + 20261106T002310 实证）。
+ * radar_event 表 type → 动作映射（state = 该动作生效所需的任务态；游戏 `RadarController.beginMarch` 的 type→marchType 分派 + 实录报文实证）。
  * @type {Object<number,{fromState:number,action:RadarAction}>}
  */
 const TYPE_ACTIONS = {
@@ -152,20 +161,20 @@ const TYPE_ACTIONS = {
   202: { fromState: 1, action: { act: 'rally', needsTroops: true } },
   203: { fromState: 1, action: { act: 'zero', marchType: MT_TREASURE } },
   205: { fromState: 1, action: { act: 'zero', marchType: MT_ASSIST } },
-  208: { fromState: 3, action: { act: 'unsupported' } }, // v1 不做：需 906 搜怪再打，本录制无实证
+  208: { fromState: 3, action: { act: 'unsupported' } }, // v1 不做：需 906 搜怪再打，实录无实证
   211: { fromState: 3, action: { act: 'zero', marchType: MT_HELP } },
 };
 
 /**
  * 游戏侧确实存在、但 v1 明确不动作的 type（宁可跳过也不猜包）：
- *   204 零部队据点（beginMarch 发 marchType=65 RADAR_MARCH_COUNTRY，本录制零样本）、
+ *   204 零部队据点（beginMarch 发 marchType=65 RADAR_MARCH_COUNTRY，实录零样本）、
  *   206 剪线小游戏（WireCutPanel）、207 密码验证小游戏（CodeCheckPanel）、209 仅倒计时规则引用。
  * @type {ReadonlySet<number>}
  */
 const UNSUPPORTED_TYPES = new Set([204, 206, 207, 209]);
 
 /**
- * 录制实证经验表（**仅在 radar_event 读数面整体不可用时**按 taskId 兜底，报文实证 20261106T002310）：
+ * 录制实证经验表（**仅在 radar_event 读数面整体不可用时**按 taskId 兜底，实录报文实证）：
  * 10001 黑暗军团据点=集结、10002 三连环集结位=集结、10003 三连环援助位=零部队援助、10004 三连环扫荡位=带兵单打、40001 求援=零部队求援。
  * ⚠ 这只是「该录制里这些内容恰好落在这些槽位」的快照，**不是 taskId→动作的权威映射**（权威口径见文件头：radar_event 按实例 id 索引）；
  *   表可读时绝不走这张表，否则会重演「据点被当成援助点发零部队 902 吃 code=3」。
@@ -211,6 +220,26 @@ const cfg = {
    * @type {number}
    */
   rejectRetryLimit: 2,
+  /**
+   * dispatch（902/1201）受理到「允许判定停滞」的最小沉降窗（毫秒）：派兵那一刻账本还是 state=1，
+   * engage 推送（state→2）实测紧跟应答 <100ms；窗内一律不放锁、不判停滞，纯防与推送赛跑而假计。
+   * @type {number}
+   */
+  dispatchSettleMs: 1000 * 10,
+  /**
+   * 首次对拍的等待上限（毫秒）= 集结窗 + 缓冲：窗到期即醒，才能在集结被解散那一刻立刻换候选，
+   * 而不是让「服务器 60s 就解散了」再被 execResyncMs 压后 4 分钟
+   * （实录报文实证：4 笔重派同一条集结的间隔是 73.6/300.1/300.1s）。
+   * @type {number}
+   */
+  execPollMs: 1000 * (RALLY_WAIT_TIME + 30),
+  /**
+   * 同一实例「被受理却没做成」连续达此数即当日让位（不再 dispatch，仍照常领奖）。
+   * 与 rejectRetryLimit 分列：那条只统计服务器拒（s≠0），这一条统计 **s=0 受理、集结窗到期却被原地解散、
+   * 任务态回滚到已认领** 的死循环——这种每一次都被受理，走不到拉黑逻辑（真机实录一场 4 笔）。
+   * @type {number}
+   */
+  dispatchStallLimit: 2,
   /** 3508 串行间隔（毫秒，NetMgr 按 cmd 频控教训） */
   claimGapMs: 1200,
   /** 体力阻塞时睡到回点后多加的缓冲（毫秒）：等 UserData 镜像落定 */
@@ -251,8 +280,10 @@ var scalars = { taskPoolSurplusNum: 0, scaned: 0, nexRefreshtTime: 0, sign: 0, d
 /** @type {boolean} 是否已完成首拍 3504 全量同步 */
 var synced = false;
 /**
- * 单飞锁（用户口径：一次只能执行一个任务）。key=实例 id 串；since=置锁墙钟。
- * @type {{key:string,taskId:number,type:number,since:number}|null}
+ * 单飞锁（用户口径：一次只能执行一个任务）。key=实例 id 串；since=置锁墙钟（永不重置，停滞判定按它算龄）；
+ * engaged=服务器是否已确认该次 dispatch 成型（见过 state∈{2,3}）；resynced/resyncAt=首次对拍标记与时刻
+ * （对拍档由它分两级：窗内到期用 execPollMs，确认仍在途后降到 execResyncMs）。
+ * @type {{key:string,taskId:number,type:number,since:number,engaged:boolean,resynced:boolean,resyncAt:number}|null}
  */
 var exec = null;
 /** @type {number} 上次推送唤醒的墙钟时刻（毫秒） */
@@ -288,6 +319,15 @@ var rejectCount = new Map();
  * @type {Set<string>} 当日拉黑的实例 id：除防逐拍重发刷屏，更防它按 candCmp 恒排最前把其余候选饿死；跨日清
  */
 var rejectBlacklist = new Set();
+/**
+ * @type {Map<string,number>} 同一实例「dispatch 被受理却没做成」（账本回滚到可派态、从未进 state=4）的连续次数
+ *   （达 dispatchStallLimit 转当日让位）
+ */
+var stallCount = new Map();
+/**
+ * @type {Set<string>} 当日因连续停滞而让位的实例 id：与 rejectBlacklist 同档（只挡 dispatch，不挡领奖），跨日清
+ */
+var stallYield = new Set();
 /**
  * 已处理完毕（受理成功，或该次触发连续被拒达阈而锁死）的干扰攻击触发时刻 deBeginTime；落盘跨重载不重发。0=无。
  * 幂等键用触发时刻而不是日期串：雷达自清理后若当日再触发一次（字典说至多 1 次，但这是软口径），新时刻会自然重新放行。
@@ -327,6 +367,8 @@ function ensureDay() {
   skipLatch.clear();
   rejectBlacklist.clear();
   rejectCount.clear();
+  stallCount.clear();
+  stallYield.clear();
   persistStats();
 }
 
@@ -471,9 +513,9 @@ function applyPayload(d) {
 
 /**
  * 单条任务事件形态判定。
- * 报文实证 dashcam 20261106T002310：20013 状态变化 / 20025 环变化的载荷**本身**就是一条任务事件，
+ * 报文实证：20013 状态变化 / 20025 环变化的载荷**本身**就是一条任务事件，
  * 顶层直接是 {id,taskId,state,x,y,day_group_id,…}，不套 events/day_group_events 数组；
- * 该场 50 条此类推送里 state=4（完成待领）有 32 条、state=2（行军中）有 18 条，
+ * 实测 50 条此类推送里 state=4（完成待领）有 32 条、state=2（行军中）有 18 条，
  * 且 30 个不同 id 里 29 个与 3504 账本同键 —— 即「任务完成」的真相几乎只走这两条通道。
  * 判据保守：必须同时带 id 与 taskId，且不是已摊好数组的集合载荷（那条优先走 applyPayload）。
  * @param {object} d 推送/应答载荷
@@ -580,14 +622,20 @@ function actionFor(t, type) {
 }
 
 /**
- * 候选排序比较器：day_group_id 降序（三连环优先）→ quality 降序（对齐竞品）→ id 升序（确定性）。
- * @param {{dayGroupId:number,quality:number,id:string}} a
- * @param {{dayGroupId:number,quality:number,id:string}} b
+ * 候选排序比较器：**停滞次数升序（派出去却没做成的往后靠）**→ day_group_id 降序（三连环优先）→
+ * quality 降序（对齐竞品）→ id 升序（确定性）。
+ * 首键专为钉住本次实证：day_group_id 恒最大的那条「集结反复被解散」会永久霸占首位、
+ * 把其余 9 条饿死一整夜（实录报文实证）。调用方不带 stalls 字段（领奖排序/单测）等价于 0，口径不变。
+ * @param {{dayGroupId:number,quality:number,id:string,stalls:(number|undefined)}} a
+ * @param {{dayGroupId:number,quality:number,id:string,stalls:(number|undefined)}} b
  * @returns {number}
  */
 function candCmp(a, b) {
   return (
-    b.dayGroupId - a.dayGroupId || b.quality - a.quality || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0)
+    (a.stalls | 0) - (b.stalls | 0) ||
+    b.dayGroupId - a.dayGroupId ||
+    b.quality - a.quality ||
+    (a.id < b.id ? -1 : a.id > b.id ? 1 : 0)
   );
 }
 
@@ -597,10 +645,12 @@ function candCmp(a, b) {
  * @param {object} mcfg 归一化配置 {doDaily,doEvents,doMarch,preset}
  * @param {(evt:object)=>{type:number,quality:number}} resolve 类型解析（注入，查表键为实例 id）
  * @param {string|null} execKey 当前单飞锁持有者实例 id
- * @param {Set<string>=} blacklist 当日拉黑集合（服务器连续拒后不再反复重试的实例 id）
+ * @param {Set<string>=} blacklist 当日「不再 dispatch」集合（服务器连续拒 + 受理但连续停滞两类让位实例合并而来）
+ * @param {{onlyStart:boolean=,stalls:Object<string,number>=}=} opts 附加口径：onlyStart=exec 在途时只放行认领；
+ *   stalls=实例停滞次数（作 candCmp 首键降权，让刚解散的那条不再顶在最前）
  * @returns {{pick:object|null, gated:boolean, unknown:boolean, unsupported:object[], blacklisted:number}} pick=选中候选；gated=存在被闸门挡住的候选；unknown=本拍首遇未知类型；unsupported=v1 不支持（208）的候选条目（供调用侧 latch 告警）；blacklisted=因拉黑而跳过数
  */
-function pickCandidate(all, mcfg, resolve, execKey, blacklist) {
+function pickCandidate(all, mcfg, resolve, execKey, blacklist, opts) {
   var out = { pick: null, gated: false, unknown: false, unsupported: [], blacklisted: 0 };
   var arr = [];
   for (var t of all) {
@@ -618,6 +668,7 @@ function pickCandidate(all, mcfg, resolve, execKey, blacklist) {
     }
     var act = actionFor(t, info.type);
     if (!act) continue;
+    if (opts && opts.onlyStart && act.act !== 'start') continue; // 在途只放行认领，占兵型不参评也不计 gated
     if (act.act === 'unsupported') {
       out.unsupported.push(t); // 208：v1 不做，交调用侧当日 latch 告警
       continue;
@@ -636,6 +687,7 @@ function pickCandidate(all, mcfg, resolve, execKey, blacklist) {
       act: act,
       id: t.id,
       dayGroupId: t.dayGroupId,
+      stalls: (opts && opts.stalls && opts.stalls[t.id] | 0) || 0,
     });
   }
   arr.sort(candCmp);
@@ -938,17 +990,77 @@ function sleepMs(ms) {
 
 // ── 单飞锁维护 ──────────────────────────────────────────────────────
 /**
- * 依据账本最新态维护 exec 锁：条目消失或 state∉{2,3} 即释放（完成→下一拍领奖；被服务器回滚→可重试）。
- * 在途过久（>execResyncMs）由 cyclePass 触发 3504 对拍后再判，不在此直接放锁。
+ * 停滞记账的一步（纯决策，单测直驱）：只有 rollback（dispatch 被 s=0 受理、账本却回滚到可派态）计停滞；
+ * finish/gone 说明该动作有下文，一律清零。
+ * @param {string} kind finish|gone|rollback
+ * @param {number} prev 该实例此前的连续停滞次数
+ * @param {number} limit cfg.dispatchStallLimit
+ * @returns {{n:number, yielded:boolean}} n=记账后的停滞次数（0=已清零）；yielded=本次达阈而当日让位
+ */
+function stallStep(kind, prev, limit) {
+  if (kind !== 'rollback') return { n: 0, yielded: false };
+  var n = (Number(prev) | 0) + 1;
+  return { n: n, yielded: n >= (Number(limit) | 0) };
+}
+
+/**
+ * 依据账本最新态维护 exec 锁（四种终局，口径与报文实证同步）：
+ *  - state∈{2,3} → 保持锁（行军在途），并记 engaged=服务器已确认该次 dispatch 成型；
+ *  - state=4 → 释放并清零（本动作已达成，下一拍领奖）；
+ *  - 条目消失 → 释放并清零（完成被移除/任务过期，无停滞证据）；
+ *  - 其余（回滚到 0/1）→ 释放并记一次停滞：这就是「集结窗到期被服务器原地解散」那一型。
+ * 沉降窗（dispatchSettleMs）内一律不判：派兵那一刻账本还是 state=1，engage 推送要 <100ms 后才到，
+ * 抢在推送前判会把正常派兵误计成停滞（保持锁等下一拍即可）。
  */
 function syncExecLock() {
   if (!exec) return;
   var t = tasks.get(exec.key);
   if (!t) {
-    exec = null;
+    endExec('gone');
     return;
   }
-  if (t.state !== ST_RUNNING && t.state !== ST_SECONDARY) exec = null;
+  if (t.state === ST_RUNNING || t.state === ST_SECONDARY) {
+    exec.engaged = true;
+    return;
+  }
+  if (t.state === ST_FINISH) {
+    endExec('finish');
+    return;
+  }
+  if (Date.now() - exec.since < cfg.dispatchSettleMs) return; // 等 engage 落地，不与推送赛跑
+  endExec('rollback');
+}
+
+/**
+ * 释放单飞锁并按收尾类型记账（详见 syncExecLock / stallStep）。让位时短拍一次，不等对拍档。
+ * @param {string} kind finish|gone|rollback
+ */
+function endExec(kind) {
+  var e = exec;
+  exec = null;
+  var step = stallStep(kind, stallCount.get(e.key) || 0, cfg.dispatchStallLimit);
+  if (step.n > 0 && !step.yielded) {
+    stallCount.set(e.key, step.n);
+    log.info(
+      'dispatch rolled back without progress. taskId=%d id=%s engaged=%d stalls=%d',
+      e.taskId,
+      e.key,
+      e.engaged ? 1 : 0,
+      step.n,
+    );
+    return;
+  }
+  stallCount.delete(e.key);
+  if (!step.yielded) return;
+  stallYield.add(e.key);
+  log.info(
+    'task yields today (accepted but never progressed). taskId=%d id=%s stalls=%d engaged=%d',
+    e.taskId,
+    e.key,
+    step.n,
+    e.engaged ? 1 : 0,
+  );
+  extraDelay = 1000; // 短拍：立刻换下一个候选，别把其余任务压到对拍档
 }
 
 /**
@@ -957,7 +1069,40 @@ function syncExecLock() {
  * @param {number} type 任务 type
  */
 function lockExec(t, type) {
-  exec = { key: t.id, taskId: t.taskId, type: type, since: Date.now() };
+  exec = {
+    key: t.id,
+    taskId: t.taskId,
+    type: type,
+    since: Date.now(),
+    engaged: false,
+    resynced: false,
+    resyncAt: 0,
+  };
+}
+
+/**
+ * 当日「不再 dispatch」的实例集合：服务器连续拒（rejectBlacklist）+ 受理但连续停滞（stallYield）合并；
+ * 两者都只挡执行、不挡领奖（claimFinished 不看本集合，误伤不会锁死奖励）。
+ * @returns {Set<string>}
+ */
+function yieldIds() {
+  var s = new Set(rejectBlacklist);
+  stallYield.forEach(function (id) {
+    s.add(id);
+  });
+  return s;
+}
+
+/**
+ * 停滞次数快照（喂给 candCmp 的降权键；Map → 普通对象，避开热路径逐次 Map 查找）。
+ * @returns {Object<string,number>}
+ */
+function stallSnapshot() {
+  var o = {};
+  stallCount.forEach(function (n, id) {
+    o[id] = n;
+  });
+  return o;
 }
 
 /**
@@ -975,7 +1120,7 @@ function reasonOfSend(r, okWord) {
  * 服务器拒的统一收尾：同一「实例 id + 动作」连续拒 rejectRetryLimit 次即当日拉黑，并立刻 3504 重拍。
  * 两道治法缺一不可：
  * 1. 拉黑：被拒任务不改变账本态，下一拍 candCmp 仍会选中同一条，不拉黑就是 15s/拍整夜死循环，
- *    且它恒排最前会把其余候选全饿死（实证：20261106T02 一场 id=3145 被拒 12 次、pending=10 全夜不动）。
+ *    且它恒排最前会把其余候选全饿死（真机实录：一场 id=3145 被拒 12 次、pending=10 全夜不动）。
  * 2. 重拍：「拒」最常见的成因是本地账本陈旧（游戏侧已完成而裸事件推送未入账），3504 权威态回来后
  *    该条会直接变 state=4 走领奖，拉黑不会误伤它（claimFinished 不看拉黑名单）。
  * @param {object} t 账本条目
@@ -1077,7 +1222,40 @@ var lastStamina = '-';
 var extraDelay = 0;
 
 /**
- * 单拍：未同步先 3504 → 防御击退 → 领奖 → exec 在途判 → 体力闸 → 选候选 → 执行一步。永不 reject。
+ * exec 在途期间的「只认领」推进（3505）：认领不占行军槽、不扣体力、不置单飞锁，
+ * 所以在途时完全可以把 state=0 的任务先领到手，锁一释放就能立刻出兵。
+ * 实录报文实证：一条集结被 60s 解散窗反复占锁的 11 分钟里，
+ * 9 条 state=0 的普通任务 0 笔 3505、0 笔 3508，日志全刷 reason=exec —— 用户看到的
+ * 「雷达久久不执行」正是被这个早返回吞掉的。单飞锁管的是「执行」，不是「认领」。
+ * 每拍最多 1 条：不一次把整池领空，保留链式解锁节奏与体力闸口径（认领+出兵一起停）。
+ * @returns {Promise<void>}
+ */
+async function claimStartsWhileExec() {
+  if (!exec) return;
+  var en = gameData.energy(STAMINA_TYPE);
+  var pt = en ? en.point : null;
+  lastStamina = pt == null ? '-' : String(pt);
+  if (!staminaGate(pt, MCFG.minStamina).ok) return; // 保持 reason=exec 归因；体力读数已在本行披露
+  var resolve = function (t) {
+    return resolveType(t, l10n.tableRow, l10n.tableReady());
+  };
+  var dec = pickCandidate(tasks.values(), MCFG, resolve, exec.key, yieldIds(), {
+    onlyStart: true,
+    stalls: stallSnapshot(),
+  });
+  var p = dec.pick;
+  if (!p) return;
+  var rs = await startTask(p.task);
+  if (!aliveFn()) return;
+  if (rs === SEND_OK) {
+    extraDelay = extraDelay > 0 ? Math.min(extraDelay, 1000) : 1000; // 领到一条就尽快续领
+    return;
+  }
+  if (rs === SEND_REJECTED) await latchReject(p.task, 'start');
+}
+
+/**
+ * 单拍：未同步先 3504 → 防御击退 → 领奖 → exec 在途判（在途仍推认领）→ 体力闸 → 选候选 → 执行一步。永不 reject。
  * @returns {Promise<void>}
  */
 async function cyclePass() {
@@ -1117,16 +1295,28 @@ async function cyclePass() {
     return;
   }
 
-  // 2) 单飞在途：不轮询行军细节，只按对拍节奏等推送
+  // 2) 单飞在途：不轮询行军细节，只按窗到期对拍；但认领（3505）不受本锁约束（见 claimStartsWhileExec）
   if (exec) {
-    if (Date.now() - exec.since > cfg.execResyncMs) {
+    var age = Date.now() - exec.since;
+    if (age < cfg.dispatchSettleMs) {
+      // 刚受理：等 engage 推送（state→2）落地再判，窗内不放锁也不计停滞
+      lastReason = 'exec';
+      extraDelay = cfg.dispatchSettleMs - age;
+      return;
+    }
+    // 对拍两档：首次按集结窗到期（execPollMs）即醒——窗一过就能发现解散并换候选；
+    // 确认仍 in-flight（真在行军路上）才降到 execResyncMs 低频档，不让长行军变成频繁读接口
+    var gap = exec.resynced ? cfg.execResyncMs : cfg.execPollMs;
+    if (Date.now() - (exec.resyncAt || exec.since) >= gap) {
+      exec.resynced = true;
+      exec.resyncAt = Date.now();
       await fetchInfo(); // 漏推兜底：读通道重拍
       if (!aliveFn()) return;
       syncExecLock();
-      if (exec) exec.since = Date.now(); // 仍占用：重置对拍窗
     }
     if (exec) {
       lastReason = 'exec';
+      await claimStartsWhileExec();
       return;
     }
   }
@@ -1171,7 +1361,9 @@ async function cyclePass() {
   var resolve = function (t) {
     return resolveType(t, l10n.tableRow, l10n.tableReady());
   };
-  var dec = pickCandidate(tasks.values(), MCFG, resolve, exec && exec.key, rejectBlacklist);
+  var dec = pickCandidate(tasks.values(), MCFG, resolve, exec && exec.key, yieldIds(), {
+    stalls: stallSnapshot(),
+  });
   if (dec.unknown) {
     // 未知类型：定位在可推进的账本条目上逐个 latch 告警（不执行）
     tasks.forEach(function (t) {
@@ -1256,14 +1448,20 @@ async function cycleRun() {
     return 1000;
   }
   if (extraDelay > 0) return extraDelay;
-  if (exec) return cfg.execResyncMs;
+  if (exec) {
+    // 在途唤醒节律与 cyclePass 同口径：首次睡到窗到期（execPollMs），对拍过且确认仍在途才降到 execResyncMs；
+    // 下限钳到 pushScanMinGap，避开同一拍里多次重入（窗已过期时 left 可能为负）
+    var left =
+      (exec.resynced ? exec.resyncAt + cfg.execResyncMs : exec.since + cfg.execPollMs) - Date.now();
+    return left > cfg.pushScanMinGap ? left : cfg.pushScanMinGap;
+  }
   if (lastReason === 'pool-empty') return cfg.idleResyncMs;
   if (lastReason === 'idle') return cfg.idleResyncMs;
   return cfg.activeScanMs;
 }
 
 /**
- * 统一决策 debug 行（卡车拦截范式：收敛出口、含归因与关键计数，保证 dashcam debug 单轨可还原「为什么没动」）。
+ * 统一决策 debug 行（卡车拦截范式：收敛出口、含归因与关键计数，保证 debug 日志单轨可还原「为什么没动」）。
  */
 function logDecision() {
   var claimable = 0;
@@ -1273,7 +1471,7 @@ function logDecision() {
     else if (t.state === 0 || t.state === 1 || t.state === 3) pending++;
   });
   log.debug(
-    'pass done. reason=%s; pending=%d; claimable=%d; exec=%s; pool=%d; stamina=%s; blacklist=%d; defend=%s; sign=%d; deBegin=%d',
+    'pass done. reason=%s; pending=%d; claimable=%d; exec=%s; pool=%d; stamina=%s; blacklist=%d; yield=%d; defend=%s; sign=%d; deBegin=%d',
     lastReason,
     pending,
     claimable,
@@ -1281,6 +1479,7 @@ function logDecision() {
     scalars.taskPoolSurplusNum,
     lastStamina,
     rejectBlacklist.size,
+    stallYield.size,
     lastDefend,
     scalars.sign,
     scalars.deBeginTime,
@@ -1315,7 +1514,7 @@ function pushWake() {
 /**
  * 雷达推送统一处理：任务事件入账本 + 标量刷新 + 去抖唤醒。send 通道推送 ev.data 即载荷对象。
  * 必须走 applyPushPayload：20013/20025 是裸事件对象，旧的 applyPayload 只读 events 数组会把它们全丢，
- * 导致账本永远停在 state=1、既不领奖也不重拍（实证：20261106T02 录制外一场 902 code=3 死循环 15s/拍）。
+ * 导致账本永远停在 state=1、既不领奖也不重拍（真机实录：一场 902 code=3 死循环 15s/拍）。
  * @param {object} ev bus Event
  */
 function onRadarPush(ev) {
@@ -1387,6 +1586,8 @@ function run(ctx) {
   staminaWarned = false;
   rejectCount = new Map();
   rejectBlacklist = new Set();
+  stallCount = new Map();
+  stallYield = new Set();
   staminaPendingDrained = false;
   defendRejects = 0;
   lastDefend = '-';
@@ -1531,10 +1732,12 @@ export {
   actionFor,
   candCmp,
   pickCandidate,
+  stallStep,
   staminaGate,
   energyWakeMs,
   defenseGate,
   normalizeDeBeginTime,
+  cfg,
   TYPE_ACTIONS,
   UNSUPPORTED_TYPES,
   TASK_TYPES,

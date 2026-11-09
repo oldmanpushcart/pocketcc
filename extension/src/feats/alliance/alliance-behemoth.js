@@ -10,7 +10,7 @@
  *   7101 ALLIANCE_BEHEMOTH_LIST {header:{}} → pbAck.allianceBehemothList.list[]（游戏登录/联盟刷新链已拉，本功能只读内存快照）；
  *   7102 ALLIANCE_BEHEMOTH_DONATE {header:{}, allianceBehemothDonate:{behemothId, level}} → pbAck.allianceBehemothDonate
  *     = {behemoth(最新 level/exp), reward, addExp, errorCode}；level 传守卫「当前等级」（对齐游戏 donate(behemothId, 当前 level)）。
- *   抓包实证（20261007T003438）：behemothId=1、level=8 连捐 10 次，每次 +4800 exp、能量池 push 10021 type=13 point 9→0 递减、restoreSec=4200。
+ *   抓包实证：behemothId=1、level=8 连捐 10 次，每次 +4800 exp、能量池 push 10021 type=13 point 9→0 递减、restoreSec=4200。
  *
  * 门控（复刻游戏 AllianceBehemothDonateComponent.onClick，全部只读判定后才发）：
  *   - 开启：在盟 && FunctionOn(FunctionKey.alliance_behemoth) && UserData.behemothIsOpen（见 gameData.allianceBehemoth().open）；

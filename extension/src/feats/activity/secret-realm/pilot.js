@@ -40,7 +40,7 @@
  *   在途幽灵条目自愈（`isSecretSending(8521)` 久堵且已停泊 → 绕闸发探测包）；受击逃营帐 + 回攻 / 当前点被 PVP 原地应战；
  *   战败自救：21521 落地 `deadType===1 && dataConfig(3056) > reviveNum` → 8552 `{uid}`（面板可关）。
  *
- * 拒绝码处置（§11，20261101T200401 真机报文验证后定稿）：157 已在该点 → 直接进 WORK；158 在途 → 正常形态不记；163 不能行军 → 60s marched 冷却（竞品语义，不永久拉黑）；
+ * 拒绝码处置（§11，真机报文验证后定稿）：157 已在该点 → 直接进 WORK；158 在途 → 正常形态不记；163 不能行军 → 60s marched 冷却（竞品语义，不永久拉黑）；
  *   159 目标点不存在 → 拉黑该点（店则从锚点表剔除）；141 请先上平台 → 本拍改选平台；
  *   142/252 平台不在同区/已被占 → 拉黑该平台；209 同区互挪 → 60s marched 冷却（拒绝取决于当前停泊位，同点稍后可成功，报文实证，不拉黑）；17 战场即将封闭 → 本场停手；159 点不存在 → 拉黑。
  *
@@ -53,8 +53,10 @@ import { tileKey as utilTileKey, dist as utilDist } from './util.js';
 import { PLANS, matchStages, validatePlan, validateCtxKeys } from './plans.js';
 import {
   pickResource,
+  resolveHop,
   pickBeast,
   pickShop,
+  pickHopTile,
   exitStageWant as exitStageWantPure,
   shopStageWant as shopStageWantPure,
   beastStageWant as beastStageWantPure,
@@ -63,6 +65,7 @@ import {
   CMD_MARCH_MOVE,
   CMD_REVIVE,
   CMD_ATTACK_SELF_TEAM,
+  CMD_POINT_INFO,
   PUSH_SELF_ATTACKED,
   PUSH_TILE_INFO,
   PUSH_BASE_INFO,
@@ -96,6 +99,7 @@ import {
   REJ_BOSS_AREA,
   REJ_PLANE_TAKEN,
   REJ_SAME_AREA_PLANE,
+  REJ_PARAM_ERROR,
   CODE_NOT_SENT,
   TABLE_BUILDING,
   TABLE_ITEM,
@@ -261,7 +265,7 @@ export class PilotEngine {
   /**
    * @type {Array<{x:number,y:number}>} 四个商店的**权威坐标**（表 `enigma_secret_realm_building`
    *   `build_type===3 && group===#group` 的 `coords` 拆分）。与镜头位置完全无关 → 商店档永远有候选。
-   *   固定性双重确认（2026-11-04）：用户口径「4 商店坐标任何一场不换」+ 本录制视口只扫到 2 家
+   *   固定性双重确认（2026-11-04）：用户口径「4 商店坐标任何一场不换」+ 实录视口只扫到 2 家
    *   （(95,163)/(250,96)，pt=161）而表锚点给全 4 家——若从视口找店（v3 旧病）会永远缺另外两家。
    */
   #shops = [];
@@ -331,6 +335,17 @@ export class PilotEngine {
   /** @type {Map<string,number>} 消费账：点位键 → 解禁时刻（driveConsumedTtlMs） */
   #consumed = new Map();
   /**
+   * @type {Map<number,number>} esrId → realm.roundid（区域档位，静态配置表）memo；
+   *   供 #roundTier 区分「强异能区（开放回合更晚、更靠地图中心）vs 普通/微异能区」。
+   */
+  #roundTierCache = new Map();
+  /**
+   * @type {Set<string>} 拾取引擎判「本队对此停靠点已无可采/无需采」的点（单人开车：井里还剩别人要的/超单项上限的货，
+   *   服务器看仍非空、rTime 不在未来，但我不会再来拿）。仅作 WORK「即时离站」用（喂 #isTileEmpty），
+   *   **不**参与选点——防重派由离站时既有的 #consume 记账负责。每次 #enterWork 到点清该键，换场/停机整体清空。
+   */
+  #exhausted = new Set();
+  /**
    * @type {Object<string,number>} cd 账（毫秒时刻，与全局 Date.now 同口径；E 阶段迁 serverTime 时一并换）：
    *   `march`=行军最小间隔（竞品 cd_time.march：L24974 决策前 +3s，§2.3 唯一的「TO 锁」），
    *   `boss`/`beast`=对应 901 查询节流（§2.3）。闸门走 #can、记账走 #setCd，**一律先记后动**。
@@ -370,6 +385,10 @@ export class PilotEngine {
   #threat = false;
   /** @type {boolean} 本次威胁期内是否已扎过一次营（v4.1「边避边工」：扎营后落回常规阶梯继续收益，竞品 avoid_attacked 同旨） */
   #threatEvaded = false;
+  /** @type {number} 本次威胁窗首次 evading 的时刻（毫秒；0=未逃）——`driveThreatReEvadeMs` 再逃基准 */
+  #threatEvadeAt = 0;
+  /** @type {number} 本次威胁窗已触发的再逃次数（上限 `driveThreatReEvadeMax`，防挪车循环烧队列） */
+  #threatReEvade = 0;
   /** @type {number} 战力差探针缓存有效时刻（毫秒绝对；到期重探，防威胁窗逐拍烧 8549） */
   #powerGapAt = 0;
   /** @type {number|null} 战力差探针缓存值（本队−来犯总和；null=证据不足） */
@@ -378,6 +397,19 @@ export class PilotEngine {
   #escapeFrom = null;
   /** @type {boolean} 回攻待办 */
   #returnPending = false;
+  /**
+   * @type {number} evade 专属冷却截止（毫秒）。取代旧「evade 抬全局 `#cooldownUntil` 45s」——
+   *   只约束下一次 evade，不拦常规选点路由（`warnMoveCooldownMs` 语义保留给 warn 引擎）。
+   */
+  #evadeCoolUntil = 0;
+  /** @type {number} 上一次 21535 主动复拉（8522）的时刻（毫秒，`driveBossStateGapMs` 限速基准） */
+  #bossStatePullAt = 0;
+  /**
+   * @type {Object<string,number>} `common_159995`（该点当前不可打）专属短黑：点键 → 解禁毫秒。
+   *   与 #marched 分表：#pickPlane 逐块扫 #tiles、bossFight 直取权威坐标，两者都不读 #marched，
+   *   共用会把「开车成本 60s」的 marched 语义扩散到平台点；本表只被 #paramBlocked 消费。
+   */
+  #paramBlack = {};
   /**
    * @type {Object<number,1>} 本场已到场打过的 BOSS（21521 落地时用 `targetPoint` 对上
    *   `bossBaseInfo[].pos` 记账，供 `guard_policy==2` 过滤）。
@@ -397,6 +429,8 @@ export class PilotEngine {
   #workEmptyAt = 0;
   /** @type {number} 拿空兜底强制离点截止时刻 */
   #workDeadline = 0;
+  /** @type {number} 进入 WORK 驻留时的点型（`#enterWork` 记录，供 `#workTick` 稳定判 BOSS/商店相位，不依赖实时 pointType） */
+  #workPt = 0;
   /** @type {Map<string,{kind:string,bagFree:number,buffFree:number,dropFree:number,beastFree:number,at:number}>} */
   #change = new Map();
 
@@ -459,6 +493,8 @@ export class PilotEngine {
       this.#threat = false;
       // 威胁解除 → 复位扎营位：下次再被盯上重新先扎一次营（v4.1 边避边工的周期单位=一次威胁窗）
       this.#threatEvaded = false;
+      this.#threatEvadeAt = 0;
+      this.#threatReEvade = 0;
     }
   }
 
@@ -596,6 +632,37 @@ export class PilotEngine {
     if (p.piece != null) cur.piece = Number(p.piece) || 0;
     if (p.sausageShelf != null) cur.sausageShelf = Number(p.sausageShelf) ? 1 : 0;
     this.#shopLedger.set(key, cur);
+    // 账本变更留痕：#shopAllTried（白跑惩罚长冷却）与 #pickShop 的 prefer 排序都吃这几个位，
+    //   事后能回答「已知这家不卖香肠/都试过了，为什么还（不）去商店」。
+    this.#env.log.debug(
+      'pilot: shop ledger %s -> time=%d visited=%d sausage=%d piece=%d shelf=%d.',
+      key,
+      cur.time,
+      cur.visited,
+      cur.sausage,
+      cur.piece,
+      cur.sausageShelf,
+    );
+  }
+
+  /**
+   * 拾取引擎→方向盘的「此点对我已采完/无需采」口（零引用红线：pickup 不 import pilot，经 env 惰性回调）。
+   *   单人开车时一个资源井常会剩下自己勾除外/达单项上限的货——服务器看仍非空（bagFree>0 且 rTime 不在未来），
+   *   双路拿空判据（CHANGE 空位数 + 10018 现状态）都抓不到，只能由 pickup 侧主动回灌。
+   * 只标记「即时离站」（#isTileEmpty 认它）+ kick 重评；防重派仍靠离站时既有的 #consume（driveConsumedTtlMs 10min）。
+   * @param {string} key 点位键
+   */
+  markTileExhausted(key) {
+    if (!key) return;
+    if (!this.#exhausted.has(key)) {
+      this.#exhausted.add(key);
+      this.#env.log.debug(
+        'pilot: point %s marked exhausted (nothing left for me), leave ASAP.',
+        key,
+      );
+    }
+    // 当前正停靠在该点且处于「拿空即走」相位 → 踢一拍让它立刻走 empty 分支，不等 45s 兑底天花板。
+    if (this.#workMode === 'empty' && key === this.#toXY && this.#cycle) this.#cycle.kick();
   }
 
   /**
@@ -893,6 +960,30 @@ export class PilotEngine {
     if (!timer) return false;
     const start = Number(timer.start) || 0;
     return Math.floor(Date.now() / 1000) > Math.floor(begin / 1000) + start;
+  }
+
+  /**
+   * 区域档位（需求 2：强/普通异能区区分）：`enigma_secret_realm[esrId].roundid`——值越大 = 开放回合越晚
+   *   = 越靠地图中心的「强异能区」（字典 FAQ25「先开微异能区、后开强异能区」）。
+   *   取不到（esrId 缺失/无该行/离线）回 0 → 该点不参与「强区优先」，退回原按产量-距离打分（安全）。
+   *   roundid 对 esrId 是静态配置，按 esrId memo。
+   * @param {number|null} esrId 点位所属区域行 id
+   * @returns {number} 档位（0=未知）
+   */
+  #roundTier(esrId) {
+    const rid = Number(esrId) || 0;
+    if (!(rid > 0)) return 0;
+    const hit = this.#roundTierCache.get(rid);
+    if (hit != null) return hit;
+    let tier;
+    try {
+      const realm = this.#env.l10n.tableRow(TABLE_REALM, rid);
+      tier = realm ? Number(realm.roundid) || 0 : 0;
+    } catch (e) {
+      tier = 0;
+    }
+    this.#roundTierCache.set(rid, tier);
+    return tier;
   }
 
   /**
@@ -1295,6 +1386,26 @@ export class PilotEngine {
       const end = toNum(s.stateEndTime);
       if (st === ST_BOSS_FIGHTING) {
         if (end > 1e11 && now > end) continue; // 已散场
+        // 现场瓦片否决（与 boss.js #liveTileBlock 同判据、同 fail-open）：21535 说 state21，
+        //   但新鲜的 10018 快照证明该点已非 BOSS 本体（pt=0 或 state≠21）→ 跳过该候选（阶段切换 21535 不推、滞后）。
+        //   #note 边沿去重：本函数每拍都跑（5s），同点只报一次，转正/换场（#told 清空）后可再报。
+        const vt = this.#tiles.get(tileKey(bx, by));
+        if (vt && now - (vt.at || 0) <= (Number(tuning.bossTileFreshMs) || 0)) {
+          const vst = Number(vt.state);
+          if (!vt.pt || vst !== ST_BOSS_FIGHTING) {
+            this.#note(
+              'boss-tile-veto|' + bx + ',' + by,
+              'pilot: boss (' +
+                bx +
+                ',' +
+                by +
+                ') live tile says state=' +
+                vst +
+                ', drop candidate',
+            );
+            continue;
+          }
+        }
         const d = dist(cur.x, cur.y, bx, by);
         if (d < openD) {
           openD = d;
@@ -1330,6 +1441,22 @@ export class PilotEngine {
       return { boss: open, mode: 'open', leftMs: open.endTime > 1e11 ? open.endTime - now : 0 };
     if (lead) return { boss: lead, mode: 'lead', leftMs: leadLeft };
     return null;
+  }
+
+  /**
+   * 当前停靠点能否攻打窗口里的 BOSS：区域（esrId）一致，或任一侧 esr 取不到（缺证放行，撞 142 自会兑底）。
+   *   报文实证：平台 esrId 100% 可得；#bossEsrId 决策期恒非 null（21535 已缓存）→ 跨区域能可靠判出。
+   *   用途：HOLD（④ 档）与 boss 阶梯同区域分流共用——避免「钉在已清空的小BOSS平台上、为别区打不到的 open BOSS 整场死等」。
+   * @param {string} curKey 当前点键
+   * @param {object|null} win #bossWindow 结果
+   * @returns {boolean} true=本平台可打（或未证）；false=确认跨区域、打不到
+   */
+  #bossEngageableHere(curKey, win) {
+    if (!win || !win.boss) return false;
+    const curTile = this.#tiles.get(curKey);
+    const esrCur = curTile && curTile.esrId ? curTile.esrId : null;
+    const esrB = this.#bossEsrId(win.boss);
+    return !esrB || !esrCur || esrB === esrCur;
   }
 
   /**
@@ -1653,7 +1780,7 @@ export class PilotEngine {
     // §11（竞品 L24623）：平台候选**硬筛** `state===22`（可派兵/读秒窗）。报文实证：区域可判时
     //   关键相位（lead60/fight）同区 176 平台恒 state=22 → 硬筛不会把机会筛空；anyBest 兜底仅留给
     //   「判区失效」的改版退路。
-    //   174 兜底删除：两场录制（20261011、20261101）全程 0 块，属无证据路径。
+    //   174 兜底删除：两场实录全程 0 块，属无证据路径。
     let readyBest = null; // 硬筛集（state==22）内的最优
     let readyScore = -Infinity;
     let anyBest = null; // 兜底集（不看 state）的最优
@@ -1661,6 +1788,7 @@ export class PilotEngine {
     this.#tiles.forEach(function (t) {
       if (t.pt !== PAB_BOSS_PLANE) return;
       if (self.#dayBlack[t.k]) return;
+      if (self.#paramBlocked(t.k)) return; // 159995 短黑窗内的平台不再选（该点当前不可打，窗过自然恢复）
       if (t.k === curKey) return; // 同点短路由 #dispatch 处理，这里只需给出目标
       // 占用三筛：policy==1（硬占派）整体短路（竞品 L24867 同位；到达可能撞 252/217 拒码，由拒码分流兜底）
       if (pol !== 1) {
@@ -1710,9 +1838,10 @@ export class PilotEngine {
    * @param {{x:number,y:number}|null} bossA BOSS 引力锚（由调用方传 `#bossScoutAnchor()`）
    * @param {number} [minNum=0] 最小产出（严格档 `5 + ceil(队伍人数/2)`）
    * @param {number} [maxDist=99999] 距离上限（严格档 100）
+   * @param {number} [hopMaxDist=Infinity] 单跳车程上限折算的距离格（需求 B：超出则就近跳板逼近，不长途直冲）；缺省/非正=不封顶
    * @returns {object|null}
    */
-  #pickResource(curKey, cur, bossA, minNum, maxDist) {
+  #pickResource(curKey, cur, bossA, minNum, maxDist, hopMaxDist) {
     const now = Date.now();
     const minYield = Number.isFinite(minNum) && minNum > 0 ? minNum : 0;
     const maxD = Number.isFinite(maxDist) && maxDist > 0 ? maxDist : 99999;
@@ -1734,8 +1863,8 @@ export class PilotEngine {
       anchors: (bossA ? 'B' : '-') + (shopA ? 'S' : '-'),
     };
     const self = this;
-    let best = null;
-    let bestScore = -Infinity;
+    const cands = [];
+    const hopMaxD = Number.isFinite(hopMaxDist) && hopMaxDist > 0 ? hopMaxDist : Infinity;
     this.#tiles.forEach(function (t) {
       dbg.seen++;
       if (t.pt !== PAB_RESOURCE && t.pt !== PAB_DROP) {
@@ -1803,9 +1932,8 @@ export class PilotEngine {
       dbg.pass++;
       const gain = t.iNum == null ? 0 : t.iNum;
       const dCur = d0;
-      // ⚠ 成本项缺锚时必须算 **0**，不能拿 Infinity 去参与减法：
-      //   `Infinity / 5` 仍是 Infinity，而 Infinity 是 truthy，`|| 0` 不生效 → score 恒 -Infinity，
-      //   bestScore 初值也是 -Infinity、`>` 恒假 → 一个点都选不中。
+      // ⚠ 成本项缺锚时必须算 **0**，不能拿 Infinity 去参与减法：`Infinity / 5` 仍是 Infinity、且是 truthy，
+      //   `|| 0` 不生效 → score 会被污染成 -Infinity，丰景点也选不中。
       const dBoss = bossA ? dist(t.x, t.y, bossA.x, bossA.y) : NaN;
       const dShop = shopA ? dist(t.x, t.y, shopA.x, shopA.y) : NaN;
       const score =
@@ -1813,15 +1941,48 @@ export class PilotEngine {
         dCur / 2 -
         (Number.isFinite(dBoss) ? dBoss / 5 : 0) -
         (Number.isFinite(dShop) ? dShop / 6 : 0);
-      if (score > bestScore || (score === bestScore && best && t.at > best.at)) {
-        bestScore = score;
-        best = t;
-      }
+      cands.push({
+        x: t.x,
+        y: t.y,
+        k: t.k,
+        at: t.at,
+        d0,
+        gain,
+        score,
+        tier: self.#roundTier(t.esrId),
+      });
     });
-    if (best) dbg.best = best.k + ' score=' + bestScore.toFixed(2);
+    if (!cands.length) {
+      this.#pickDbg = dbg;
+      return null;
+    }
+    // goal = 打分最优（平手取更新鲜到点的，沿用旧口径）
+    let goal = cands[0];
+    for (const c of cands) {
+      if (c.score > goal.score || (c.score === goal.score && c.at > goal.at)) goal = c;
+    }
+    // 强区优先（需求 2）：开关开启且候选里存在「更高档位（tier=maxTier>0）」时，goal 收敛到该最高档位里打分最优的；
+    //   只有微区开放时 maxTier=微档位且全部候选同档 → goal 等价打分最优（无误牵引）。实际移动仍由 resolveHop 逐跳逼近。
+    let maxTier = 0;
+    for (const c of cands) if (c.tier > maxTier) maxTier = c.tier;
+    if (Number(tuning.driveStrongPull) && maxTier > 0) {
+      let sg = null;
+      for (const c of cands) {
+        if (c.tier !== maxTier) continue;
+        if (!sg || c.score > sg.score || (c.score === sg.score && c.at > sg.at)) sg = c;
+      }
+      if (sg) goal = sg;
+    }
+    // 单跳车程封顶：目标太远则就近跳板逼近（见 resolveHop），窗内无落脚就不发这趟长途
+    const chosen = resolveHop(cands, goal, hopMaxD);
+    dbg.hopMaxDist = hopMaxD;
+    dbg.tier = 'max=' + maxTier + ' goal=' + goal.tier;
+    dbg.best = chosen
+      ? chosen.k + ' score=' + chosen.score.toFixed(2) + (chosen.waypoint ? ' via→' + goal.k : '')
+      : '';
     this.#pickDbg = dbg;
-    if (!best) return null;
-    return { x: best.x, y: best.y };
+    if (!chosen) return null;
+    return { x: chosen.x, y: chosen.y };
   }
 
   /**
@@ -1989,8 +2150,20 @@ export class PilotEngine {
     this.#marched.set(this.#toXY, this.#toAt + tuning.driveMarchedTtlMs);
     if (kind === 'shop') this.#shopLastAt = this.#toAt;
     this.#idleSince = 0;
-    if (kind === 'evade') this.#cooldownUntil = Date.now() + tuning.warnMoveCooldownMs;
-    env.log.info('pilot: goto %s reason=%s', this.#toKind, kind);
+    if (kind === 'evade') {
+      // 再逃窗与 evade 冷却取 max：driveThreatReEvadeMs 只小于本值时不致形同虚设（#mayEvade 先被本闸拦）
+      this.#evadeCoolUntil =
+        Date.now() +
+        Math.max(Number(tuning.warnMoveCooldownMs) || 0, Number(tuning.driveThreatReEvadeMs) || 0);
+    }
+    // 商店发车必带 #shopWant 的动机（exit/stage/errand/sausage/gap）：事后复盘「为什么冲商店」
+    //   要在 info 单轨就能直接定责，不依赖下一拍的 debug 心跳（面板 minLvl=info 时收不到 debug）。
+    env.log.info(
+      'pilot: goto %s reason=%s%s',
+      this.#toKind,
+      kind,
+      kind === 'shop' ? ' why=' + (this.#lastShopWhy || '-') : '',
+    );
     const self = this;
     const myKey = this.#toXY;
     const wake = function () {
@@ -2054,7 +2227,7 @@ export class PilotEngine {
         }
         if (rej === REJ_SAME_AREA_PLANE) {
           // §11 209「同一区域核心停泊平台之间不允许相互行军」：拒绝情境取决于**本队当前停泊位**，不是目标点固有属性。
-          //   真机报文（20261101T200401）：998.7s (230,226) 吃 209 → 挪到 (238,216) → 1010.2s **同点行军成功**，
+          //   真机报文：998.7s (230,226) 吃 209 → 挪到 (238,216) → 1010.2s **同点行军成功**，
           //   故与 163 同档「60s marched 冷却」（#marched 已在派发前写入）而非本场拉黑；
           //   #pickPlane 只滤「与 BOSS 不同区域」，不防「与当前停泊同区域」，拉黑会白丢一个稍后即可用的平台。
           env.log.info(
@@ -2074,6 +2247,34 @@ export class PilotEngine {
             'pilot: (%s) platform unavailable (%s), blacklist this platform for this match, pick another.',
             self.#toXY,
             rej,
+          );
+          self.#clearTo();
+          self.#cooldownUntil = Date.now() + tuning.rejectBackoffMs;
+          wake();
+          return;
+        }
+        if (rej === REJ_PARAM_ERROR) {
+          // common_159995（该点当前不可打）：阶段态、窗过即可打 → 与 boss.js 攻打档同口径只做 60s 短黑，
+          //   但用**专表 #paramBlack**（#marched 的消费者只有 #pickShop/#pickBeast/#pickFollow/#pickResource，
+          //   #pickPlane 扫 #tiles、bossFight 直取权威坐标都不读它——写 marched 对这两档无消费者，5s 循环不断）。
+          //   不写 #dayBlack（权威坐标不因拒绝码拉黑 BOSS 本体）。
+          self.#paramBlack[self.#toXY] = Date.now() + tuning.paramBlacklistMs;
+          // 服务端已判该点不可打 → 回攻不成立（不清 #returnPending 就会「每 5s 重敲 return|同点」死循环）。
+          if (self.#toTag === 'return') {
+            self.#returnPending = false;
+            self.#escapeFrom = null;
+          }
+          // return 档被拒这一路触发 21535 主动复拉（限速），让 BOSS 阶段态尽快转正
+          const tp = String(self.#toXY || '').split(',');
+          self.#refreshBossState(Number(tp[0]), Number(tp[1]));
+          // info 首见一次（#note 边沿；key 带坐标，不同点各自报一次），后续同点重复不再刷屏
+          self.#note(
+            'param-error|' + self.#toXY,
+            'pilot: (' +
+              self.#toXY +
+              ') target not attackable now (159995), short-blacklist ' +
+              Math.round(tuning.paramBlacklistMs / 1000) +
+              's, switch target. reason=param_error',
           );
           self.#clearTo();
           self.#cooldownUntil = Date.now() + tuning.rejectBackoffMs;
@@ -2133,11 +2334,15 @@ export class PilotEngine {
     this.#toAt = 0;
     this.#workEmptyAt = 0;
     this.#workDeadline = 0;
+    // 到点重评：清掉上一站的「对我已采完」标记（若因面板/上限变了这次可能又要采），
+    //   未清前不会被重选（离站已 #consume 10min），故只影响真重访这一次。
+    this.#exhausted.delete(key);
     const env = this.#env;
     const base = env.secret.getRoomBaseInfo();
     const pt = Number((base && base.pointType) || 0);
     const d = env.cfg().drive || {};
     const now = Date.now();
+    this.#workPt = pt; // 驻留相位锁存点型，#workTick 据此判 BOSS/商店相位（不依赖实时 pointType）
     if (pt === PAB_MONSTER) {
       // 到 172 后本拍不重路由，等拍宠/交战把点数结算完
       this.#workMode = 'dwell';
@@ -2147,7 +2352,17 @@ export class PilotEngine {
       this.#workUntil = pt === PAB_RESOURCE ? this.#resDwellMs(key) : 0;
       this.#workDeadline = now + tuning.driveWorkMaxMs;
     } else if (pt === PAB_SHOP) {
-      const ms = Number.isFinite(d.shopDwellMs) ? d.shopDwellMs : tuning.driveShopDwellMs;
+      // 驻留时长按缺口动态放宽：`max(基墙, 待补件数 × driveShopUnitMs)`。
+      //   香肠 `buy_times=1`、一根一刷，买满 10 根需 ≈9 刷——固定 25s 盖不住（实证只买到 7 根）。
+      const baseMs = Number.isFinite(d.shopDwellMs) ? d.shopDwellMs : tuning.driveShopDwellMs;
+      const target = Number(tuning.driveSausageTarget) || 0;
+      const have = env.secret.getItemNumById(ITEM_SAUSAGE) || 0;
+      const need = Math.max(0, target - have);
+      // 动态驻留套总天花板 `基墙 + driveShopExtraMs`：target 被配大时不致线性失控久停
+      const ms = Math.min(
+        Math.max(baseMs, need * (Number(tuning.driveShopUnitMs) || 0)),
+        baseMs + (Number(tuning.driveShopExtraMs) || 0),
+      );
       this.#workMode = 'dwell';
       this.#workUntil = now + ms;
       this.#shopErrandDone = true;
@@ -2249,9 +2464,169 @@ export class PilotEngine {
       }
       return { leave: false, sleep: Math.min(tuning.driveScanMs, this.#workDeadline - now) };
     }
-    if (this.#workUntil && now < this.#workUntil)
+    // dwell 相位：BOSS 点提前离点（不等满驻留）——现场瓦片判死或投喂窗且无石头可领
+    if (isBossish(this.#workPt)) {
+      if (this.#captureBusy()) {
+        // 在点拍宠中不赶车（同威胁块的让路语义）
+      } else {
+        const bp = String(this.#toXY || '').split(',');
+        this.#refreshBossState(Number(bp[0]), Number(bp[1])); // 21535 只读复拉（限速），让 BOSS 阶段态尽快转正
+        const why = this.#bossDwellLeave(this.#toXY);
+        if (why) {
+          env.log.info(
+            'pilot: boss point %s %s, leave early before dwell ceiling. reason=boss_over',
+            this.#toXY,
+            why,
+          );
+          return { leave: true, sleep: 0 };
+        }
+      }
+      // 分段轮询而非一次睡满：21535 阶段切换不推、10018 到达也不 kick，睡满整个驻留窗就没人来判「提前离点」
+      if (this.#workUntil && now < this.#workUntil) {
+        return { leave: false, sleep: Math.min(tuning.driveScanMs, this.#workUntil - now) };
+      }
+    } else if (this.#workUntil && now < this.#workUntil) {
       return { leave: false, sleep: this.#workUntil - now };
+    }
+    // 商店缺口续留：到点但香肠仍未补满 → 最多再延 driveShopExtraMs 后强制离店（仍受三重永动闸约束）
+    if (this.#workPt === PAB_SHOP) {
+      const target = Number(tuning.driveSausageTarget) || 0;
+      const have = env.secret.getItemNumById(ITEM_SAUSAGE) || 0;
+      if (have < target) {
+        const extra = Number(tuning.driveShopExtraMs) || 0;
+        const ceiling = (this.#workUntil || now) + extra;
+        // 同 BOSS 窗：分段轮询，补满当拍即可离店，不空等到 ceiling
+        if (now < ceiling) {
+          return { leave: false, sleep: Math.min(tuning.driveScanMs, ceiling - now) };
+        }
+        env.log.info(
+          'pilot: shop %s sausage still short (%d/%d) after extra %ds, force leave. reason=shop_extra_ceiling',
+          this.#toXY,
+          have,
+          target,
+          Math.round(extra / 1000),
+        );
+      }
+    }
     return { leave: true, sleep: 0 };
+  }
+
+  /**
+   * BOSS 驻留点的提前离点判据（计划 B.3）：现场瓦片证明 BOSS 已终局（`state∈{28,30}` 或点已移除 pt=0），
+   *   或**本点这只** BOSS 进入投喂窗（state23）且石头账本无它的可领条目 → 交回 boss.js/capture，车不留。
+   *   投喂判据只看本点：`#bossFeeding()` 是「任一 BOSS state23」的全局口径，别区开台会把
+   *   本点仍在 state21 交战（石头尚未产出、账本必无条目）的车赶下点，白丢攻打进度。
+   *   与 boss.js #liveTileBlock 同 fail-open 语义：证据超龄（>`bossTileFreshMs`）或读不到一律不据此判死。
+   * @param {string} key 当前驻留点键 'x,y'
+   * @returns {string|null} 离点理由（null=不提前离）
+   */
+  #bossDwellLeave(key) {
+    const now = Date.now();
+    const t = this.#tiles.get(key);
+    if (t && now - (t.at || 0) <= (Number(tuning.bossTileFreshMs) || 0)) {
+      if (!t.pt) return 'point removed (tile pt=0)';
+      const st = Number(t.state);
+      if (st === ST_BOSS_FIGHTING_END || st === ST_BOSS_DEAD_END) return 'tile says state=' + st;
+    }
+    const bid = this.#bossIdAtKey(key);
+    if (bid) {
+      const list = this.#env.secret.getBossBaseInfo();
+      const cur = Array.isArray(list)
+        ? list.find(function (s) {
+            return s && Number(s.bossId) === bid;
+          })
+        : null;
+      // 本点这只进投喂窗且石头未产出 → 攻打/投喂已交接 boss.js，车不留；别区投喂不干涉本点
+      if (cur && Number(cur.state) === ST_BOSS_FEED && !this.#stoneEntryFor(bid)) {
+        return 'feed window, no claimable stone (bossId=' + bid + ')';
+      }
+    }
+    return null;
+  }
+
+  /** 当前点的 BOSS 本体 bossId（getBossBaseInfo pos 对账；无匹配回 0）。 */
+  #bossIdAtKey(key) {
+    if (!key) return 0;
+    const parts = String(key).split(',');
+    const x = Number(parts[0]);
+    const y = Number(parts[1]);
+    const list = this.#env.secret.getBossBaseInfo();
+    if (!Array.isArray(list)) return 0;
+    for (let i = 0; i < list.length; i++) {
+      const s = list[i];
+      if (!s || !s.pos) continue;
+      if (Math.floor(toNum(s.pos.x)) === x && Math.floor(toNum(s.pos.y)) === y)
+        return Number(s.bossId) || 0;
+    }
+    return 0;
+  }
+
+  /** 本点是否处在 159995 短黑窗内（惰性过期，不单独清扫；窗口仅 paramBlacklistMs）。 */
+  #paramBlocked(key) {
+    if (!key) return false;
+    const until = this.#paramBlack[key];
+    if (!(until > 0)) return false;
+    if (Date.now() >= until) {
+      delete this.#paramBlack[key];
+      return false;
+    }
+    return true;
+  }
+
+  /** 石头账本里是否有该 bossId 的可领条目（存在即视为有可领）。 */
+  #stoneEntryFor(bid) {
+    const reward = this.#env.secret.getBossGuardRewardInfo();
+    if (!Array.isArray(reward)) return false;
+    for (let i = 0; i < reward.length; i++) {
+      if (reward[i] && Number(reward[i].bossId) === bid) return true;
+    }
+    return false;
+  }
+
+  /**
+   * 21535 主动复拉（计划 B.2）：驻留点是 BOSS 点或 return 档被拒时，发一次 8522 POINT_INFO（只读）
+   *   触发服务端刷新 bossBaseInfo（阶段切换 21535 不推、滞后）；按 `driveBossStateGapMs` 限速，避免逐拍敲。
+   *   fail-open：坐标非法/发不出去都静默跳过，不伤主逻辑。
+   * @param {number} x BOSS 点 x
+   * @param {number} y BOSS 点 y
+   */
+  #refreshBossState(x, y) {
+    const now = Date.now();
+    const gap = Number(tuning.driveBossStateGapMs) || 15000;
+    if (this.#bossStatePullAt && now - this.#bossStatePullAt < gap) return;
+    if (!(x > 0) || !(y > 0)) return;
+    this.#bossStatePullAt = now;
+    try {
+      const ret = this.#env.secret.sendSecret(CMD_POINT_INFO, {
+        x: Math.floor(x),
+        y: Math.floor(y),
+      });
+      // 应答落地唤醒一拍：21535 阶段切换不推、10018 到达也不 kick，不主动唤醒就只能等分段轮询那一拍
+      if (ret && typeof ret.then === 'function') {
+        const self = this;
+        ret.then(function () {
+          if (self.#cycle) self.#cycle.kick();
+        });
+      }
+    } catch (e) {
+      /* 只读复拉失败不影响主逻辑，下一窗再试 */
+    }
+  }
+
+  /**
+   * 本拍是否允许逃袭（计划 D.2：「一次威胁窗只逃一次」改为可再逃）。
+   *   未逃过→放行；已扎过一次营但 num>0 仍持续超 `driveThreatReEvadeMs` 且未超整场上限 `driveThreatReEvadeMax` → 允许再挪。
+   * @param {number} now 毫秒
+   * @returns {boolean}
+   */
+  #mayEvade(now) {
+    // evade 专属冷却（D.4）：上一次逃后 warnMoveCooldownMs 内不再重发 evade（不抬全局路由锁，不拦常规选点）
+    if (this.#evadeCoolUntil && now < this.#evadeCoolUntil) return false;
+    if (!this.#threatEvaded) return true; // 首逃
+    const reMs = Number(tuning.driveThreatReEvadeMs) || 0;
+    const max = Number(tuning.driveThreatReEvadeMax) || 0;
+    if (!(reMs > 0) || !(max > 0)) return false;
+    return this.#threatReEvade < max && now - this.#threatEvadeAt >= reMs;
   }
 
   /**
@@ -2263,6 +2638,9 @@ export class PilotEngine {
    */
   #isTileEmpty(key) {
     if (!key) return false;
+    // 第三路（本队口径）：拾取引擎已判此点对我无可采/无需采（单人开车剩下的都是不要的）。
+    //   前两条（CHANGE 空位数 / 10018 rTime·iNum 现状态）只看服务器全局态，抓不到「有货但我不要」。
+    if (this.#exhausted.has(key)) return true;
     const c = this.#change.get(key);
     if (c) {
       if (c.kind === 'res' && c.bagFree <= 0 && c.buffFree <= 0) return true;
@@ -2306,12 +2684,8 @@ export class PilotEngine {
   #buildCtx(now, cur, curKey, curPt, win) {
     const env = this.#env;
     const b = env.cfg().drive || {};
-    const curTile = this.#tiles.get(curKey) || null;
-    const esrB = win ? this.#bossEsrId(win.boss) : null;
-    const esrCur = curTile && curTile.esrId ? curTile.esrId : null;
-    // 区域一致判定：双方 esrId 真值比较（报文实证 esrB 在 fight 前已缓存恒非 null，平台 esrId 100% 可得）。
-    //   缺证放行（防御性，撞 142 拒码分流自会兜底）。
-    const sameArea = !esrB || !esrCur || esrB === esrCur;
+    // 区域一致判定：交给 #bossEngageableHere（见其注释）——缺证放行，撞 142 拒码分流自会兑底。
+    const sameArea = this.#bossEngageableHere(curKey, win);
     return {
       snap: { cur: cur, curKey: curKey, curPt: curPt, boss: win ? win.boss : null },
       shopWhy: this.#lastShopWhy,
@@ -2346,11 +2720,15 @@ export class PilotEngine {
   #objective(obj, params, ctx) {
     const snap = ctx.snap;
     switch (obj) {
-      case 'bossFight':
+      case 'bossFight': {
         // 现状 L2358-2360：已停 BOSS 平台且与目标 BOSS 同区域 → 发 8521 打本体。
         //   ⚠ 这不是 boss.js 的活：它只接管**已停 BOSS 相关点**后的打仗/投喂/石头（isBossish 让位），
         //   「从平台开上本体」这一笔行军仍归方向盘；§14.2 方案①的让位到点层是 Phase C 的事。
-        return snap.boss ? { x: snap.boss.x, y: snap.boss.y } : null;
+        if (!snap.boss) return null;
+        // 159995 短黑窗内的本体不再直冲（否则每 rejectBackoffMs 重撞同点）
+        if (this.#paramBlocked(tileKey(snap.boss.x, snap.boss.y))) return null;
+        return { x: snap.boss.x, y: snap.boss.y };
+      }
       case 'plane':
         // win=null（quiet 拍/check_power 未命中）时 snap.boss 为空：回 null 让引擎落后续档，不踩空
         return snap.boss ? this.#pickPlane(snap.boss, snap.curKey) : null;
@@ -2437,32 +2815,90 @@ export class PilotEngine {
           minNum = 0;
           maxDist = 99999;
         }
+        // 单跳车程封顶（需求 B/3：避免长途直冲被守株待兔）：车程秒上限 × 地图速度 → 距离格。
+        //   秒上限取面板可配 cfg.drive.hopMaxSec（缺省回落 tuning.driveHopMaxSec）；严格档 maxDist(100) 更紧时以其为准。
+        const dCfg = this.#env.cfg().drive || {};
+        const hopSec = Number.isFinite(dCfg.hopMaxSec)
+          ? dCfg.hopMaxSec
+          : Number(tuning.driveHopMaxSec) || 10;
+        const hopMaxDist = hopSec * (Number(tuning.driveMapUPS) || 2.8);
         // 窄筛（§5.1 四道闸）优先：本刀 901 快照新鲜时只吃这份原样信封，不再读累积 `#tiles` 池，
         //   也**不**看 `rTime>now` 判空 / `consumed` 10min 黑名单 / 当日拉黑（竞品无此三闸，§5.1 实证）。
         //   快照不可用（901 降级/未起/超期）→ 降级走老 `#pickResource`（读累积 `#tiles` 池，保留 push 兑底）。
         const now = Date.now();
         const pts = this.#viewPointsFresh(now);
         if (pts) {
-          const sel = pickResource(pts, {
+          const mkCtx = (hop) => ({
             startPoint: snap.cur,
             serverTimeSec: Math.floor(now / 1000),
             minNum,
             maxDist,
+            hopMaxDist: hop,
             isRoundOpen: (id) => this.#roundOpen(id),
+            preferStrong: !!Number(tuning.driveStrongPull),
+            roundTier: (id) => this.#roundTier(id),
             marches: this.#viewMarchList,
             marchedList: this.#marchedListArr(),
             marchPolicy: Number(tuning.driveMarchPolicy) || 0,
             firstUnrewardedBoss: bossA,
             nearestNoSausageShop: this.#nearestNoSausageShop(snap.cur),
           });
+          const sel = pickResource(pts, mkCtx(hopMaxDist));
           this.#pickDbg = {
             src: 'view901',
             seen: pts.length,
-            best: sel ? tileKey(sel.x, sel.y) + ' score=' + sel.score.toFixed(2) : '',
+            hopMaxDist,
+            best: sel
+              ? tileKey(sel.x, sel.y) +
+                ' score=' +
+                sel.score.toFixed(2) +
+                (sel.waypoint ? ' via→' + tileKey(sel.goal.x, sel.goal.y) : '')
+              : '',
           };
-          return sel ? { x: sel.x, y: sel.y } : null;
+          if (sel) return { x: sel.x, y: sel.y };
+          // 需求 3/4：窗内无「最合理井」落脚跳板 → 取不封顶时的打分最优井作 goal，向它跳最近资源/平台/宠物。
+          const far = pickResource(pts, mkCtx(Infinity));
+          if (far) {
+            const hop = this.#hopTowardGoal(
+              snap.curKey,
+              snap.cur,
+              { x: far.x, y: far.y },
+              hopMaxDist,
+            );
+            if (hop) {
+              this.#pickDbg.hop = tileKey(hop.x, hop.y) + ' →' + tileKey(far.x, far.y);
+              return { x: hop.x, y: hop.y };
+            }
+          }
+          return null;
         }
-        return this.#pickResource(snap.curKey, snap.cur, bossA, minNum, maxDist);
+        const legacy = this.#pickResource(
+          snap.curKey,
+          snap.cur,
+          bossA,
+          minNum,
+          maxDist,
+          hopMaxDist,
+        );
+        if (legacy) return legacy;
+        const legacyFar = this.#pickResource(
+          snap.curKey,
+          snap.cur,
+          bossA,
+          minNum,
+          maxDist,
+          Infinity,
+        );
+        if (legacyFar) {
+          const hop = this.#hopTowardGoal(
+            snap.curKey,
+            snap.cur,
+            { x: legacyFar.x, y: legacyFar.y },
+            hopMaxDist,
+          );
+          if (hop) return { x: hop.x, y: hop.y };
+        }
+        return null;
       }
       case 'follow':
         return this.#pickFollow(snap.curKey, snap.cur);
@@ -2695,7 +3131,12 @@ export class PilotEngine {
       return tuning.driveScanMs;
     }
     const now = Date.now();
-    if (now < this.#cooldownUntil) {
+    // 全局路由锁（离店/拒码退避）不压威胁拍：整改 2 的目标「被抓立即逃」最怕离店 15s / 退避 5s 窗，
+    //   威胁仍在且允许逃（#mayEvade 含 evade 专属冷却）时越过本闸，由①威胁块当即改道或落回常规链。
+    if (
+      now < this.#cooldownUntil &&
+      !(this.#threat && env.secret.isTeamLeader() && this.#mayEvade(now))
+    ) {
       this.#lastBranch = 'cooldown';
       this.#gateState('cooldown', true, 'left=' + (this.#cooldownUntil - now) + 'ms');
       this.#heartbeat(now);
@@ -2723,7 +3164,9 @@ export class PilotEngine {
       this.#marched = new Map();
       this.#cd = {};
       this.#change = new Map();
+      this.#exhausted = new Set();
       this.#dayBlack = {};
+      this.#paramBlack = {};
       this.#shopErrandDone = false;
       this.#shopLastAt = 0;
       this.#shopCoolUntil = 0;
@@ -2733,6 +3176,10 @@ export class PilotEngine {
       this.#lastReviveAt = 0;
       this.#reviveInFlight = false;
       this.#threatEvaded = false;
+      this.#threatEvadeAt = 0;
+      this.#threatReEvade = 0;
+      this.#evadeCoolUntil = 0;
+      this.#bossStatePullAt = 0;
       this.#powerGapAt = 0;
       this.#powerGapVal = null;
       this.#viewMarch = new Set();
@@ -2779,6 +3226,87 @@ export class PilotEngine {
     const curKey = tileKey(cur.x, cur.y);
     const curPt = Number(base.pointType) || 0;
     const moored = Number(base.marchState) === arrived && env.secret.teamIsMooring();
+
+    // ── ① 受击威胁处置（v4.1 边避边工 + 计划 D：上移到在途/驻留相位之前）════
+    //   上移目的：行军/驻留途中被盯上（21534 num>0）也当拍即挪——旧实现把本块放在 TO/WORK 相位
+    //   return 之后，导致「在途被打完全不逃」（实证：首警到首次 evade 晚 170s）。
+    //   竞品语义：威胁拍并非全停——扎营避过一次后落回常规阶梯继续收益（avoid_attacked 同旨），
+    //   但跳过 BOSS 档（`quiet` 位向下传导）；当前瓦片正处 PVP 交战（state 11/12）则原地全停。
+    //   check_power 闸（面板 driveCheckPower，缺省关）：战力差>0 判「打得过」→ 不扎营、不 quiet，全速含 BOSS 档。
+    let quiet = false;
+    if (this.#threat && env.secret.isTeamLeader()) {
+      if (this.#captureBusy()) {
+        // 拍宠中不打断：保持让路（等本次拍完），仅记一次「threat during capture」
+        this.#note(
+          'threat-capture',
+          'pilot: threat while capturing enigma-beast/BOSS, do not interrupt capture. reason=threat_during_capture',
+        );
+      } else {
+        const dvT = env.cfg().drive || {};
+        let hold = true;
+        if (dvT.checkPower) {
+          const gap = await this.#powerGap(now);
+          hold = !(gap != null && gap > 0); // 证据不足（null）保守按「打不过」处理
+        }
+        if (hold) {
+          this.#lastBranch = 'threat';
+          const safeHere = curPt === PAB_TENT || curPt === PAB_COMMON_PLANE;
+          // 可再逃（D.2）+ 落点回退（D.3）：首逃一次；持续威胁可再挪（上限内）；#pickFleeTarget 返 null 时回退 #explorePoint 当跳板。
+          if (!safeHere && this.#mayEvade(now)) {
+            const tent = this.#pickFleeTarget(curKey, cur) || this.#explorePoint(cur);
+            if (tent) {
+              if (this.#toKind) {
+                // 在途不改相位：行军中另发 8521 必吃 158「在途未到」，而 158 分支不回滚相位——
+                //   旧「改道」写法会把 #toXY 指向从未成行的逃袭点：到站不进 work、超时还把逃袭点白拉黑 10min。
+                //   让原路走完，到达后 dwell 拍威胁块仍每拍重评（受击块上移已解决「驻留被打不逃」）。
+                this.#note(
+                  'threat-inflight',
+                  'pilot: threat while marching to ' +
+                    this.#toKind +
+                    ', keep current march (158 would reject reroute), re-evaluate on arrival. reason=threat_inflight',
+                );
+              } else {
+                this.#stage = 'evade';
+                this.#dispatch('evade', tent);
+                // 记账以「真发出」为准：sendMarch 在 8521 包在飞时返回 false（#dispatch 直接 return），
+                //   此时不烧再逃额度、不置扎营位，下一拍重评。
+                if (this.#toKind) {
+                  if (this.#threatEvaded) this.#threatReEvade++;
+                  this.#threatEvaded = true;
+                  this.#threatEvadeAt = now;
+                } else {
+                  this.#note(
+                    'threat-evade-unsent',
+                    'pilot: evade not sent (8521 packet in flight), retry next tick. reason=evade_unsent',
+                  );
+                }
+                this.#heartbeat(now);
+                return this.#sleepAfterDispatch();
+              }
+            }
+            this.#note(
+              'threat-noflee',
+              'pilot: threat but no flee/explore hop available, fall through to normal ladder. reason=no_flee_target',
+            );
+          }
+          // 交战中挪队只会把部队撒在路上：原地驻守等本窗结束（竞品 L24906 state==12 同语义）
+          const ct0 = this.#tiles.get(curKey);
+          if (ct0 && (ct0.state === ST_PVP_READY || ct0.state === ST_PVP_FIGHTING)) {
+            this.#stage = 'evade';
+            this.#heartbeat(now);
+            return tuning.driveScanMs;
+          }
+          // 边避边工：不 return，落回常规阶梯，但置 quiet 使 ②回攻 与 ⑤⑥⑦ BOSS 档让路
+          quiet = true;
+          this.#stage = 'evade-work';
+          this.#gateState(
+            'threat',
+            true,
+            'evaded=' + (this.#threatEvaded ? 1 : 0) + ' safe=' + (safeHere ? 1 : 0),
+          );
+        }
+      }
+    }
 
     // ── 在途相位：只推进「到达复核 / 超时兜底」，绝不重评路由 ──────────────
     if (this.#toKind) {
@@ -2882,49 +3410,7 @@ export class PilotEngine {
     }
     this.#inflightStuckSince = 0;
 
-    // ── ① 受击威胁处置（v4.1 边避边工，对齐竞品 L24906/L24915-24916）════════
-    //   竞品语义：威胁拍并非全停——扎营避过一次后落回常规阶梯继续收益（avoid_attacked 同旨），
-    //   但跳过 BOSS 档（`quiet` 位向下传导）；当前瓦片正处 PVP 交战（state 11/12）则原地全停。
-    //   check_power 闸（面板 driveCheckPower，缺省关）：战力差>0 判「打得过」→ 不扎营、不 quiet，全速含 BOSS 档。
-    let quiet = false;
-    if (this.#threat) {
-      const dvT = env.cfg().drive || {};
-      let hold = true;
-      if (dvT.checkPower) {
-        const gap = await this.#powerGap(now);
-        hold = !(gap != null && gap > 0); // 证据不足（null）保守按「打不过」处理
-      }
-      if (hold) {
-        this.#lastBranch = 'threat';
-        const safeHere = curPt === PAB_TENT || curPt === PAB_COMMON_PLANE;
-        // 一次威胁期只扎一次营；无安全营可选不白驻留，直接落工（竞品无营时同样继续派发）
-        if (!safeHere && !this.#threatEvaded) {
-          const tent = this.#pickSafeTent(curKey, cur);
-          if (tent) {
-            this.#threatEvaded = true;
-            this.#stage = 'evade';
-            this.#dispatch('evade', tent);
-            this.#heartbeat(now);
-            return this.#sleepAfterDispatch();
-          }
-        }
-        // 交战中挪队只会把部队撒在路上：原地驻守等本窗结束（竞品 L24906 state==12 同语义）
-        const ct0 = this.#tiles.get(curKey);
-        if (ct0 && (ct0.state === ST_PVP_READY || ct0.state === ST_PVP_FIGHTING)) {
-          this.#stage = 'evade';
-          this.#heartbeat(now);
-          return tuning.driveScanMs;
-        }
-        // 边避边工：不 return，落回常规阶梯，但置 quiet 使 ②回攻 与 ⑤⑥⑦ BOSS 档让路
-        quiet = true;
-        this.#stage = 'evade-work';
-        this.#gateState(
-          'threat',
-          true,
-          'evaded=' + (this.#threatEvaded ? 1 : 0) + ' safe=' + (safeHere ? 1 : 0),
-        );
-      }
-    }
+    // ① 受击威胁处置已上移到在途/驻留相位之前（计划 D），`quiet` 位由那里声明并向下传导。
     // ── ② 回攻（威胁解除且逃离点是 BOSS 相关点）——quiet 拍不让路 ─────────────
     if (this.#returnPending && !quiet) {
       this.#lastBranch = 'return';
@@ -2957,14 +3443,31 @@ export class PilotEngine {
     // ── ④ 已停 BOSS 相关点：窗口还开着才 HOLD（攻打/投喂/石头归 boss.js）──
     //   ⚠ HOLD 必须有出口：窗口一散就落下去巡航，否则 BOSS 窗散了车还钉在平台上「整场不动」。
     if (isBossish(curPt)) {
-      if (win) {
+      // HOLD 必须有出口，且出口要区得清「本平台真能打」：win 是全图最近 open，跨区域时不能照 hold（否则
+      //   小BOSS 清完、只剩别区的 open BOSS 时，车会钉在已清空平台上整场不动，直到那个 BOSS 自己散场）。
+      if (win && this.#bossEngageableHere(curKey, win)) {
         this.#lastBranch = 'hold';
         this.#stage = 'hold';
         this.#gateState('hold', true, 'pt=' + curPt + ' mode=' + win.mode);
         this.#heartbeat(now);
         return tuning.driveScanMs;
       }
-      this.#gateState('hold', false, '');
+      // 本平台打不到窗口里的 BOSS（win=null 无 open 窗 / 跨区域：已清小BOSS、只剩别区 open）→ 绝不 HOLD，落到驾驶阶梯：
+      //   boss 档的 plane 目标会挪到对应区域平台（同区域、距 BOSS 最近），无解则落巡航/收场。
+      this.#env.log.debug(
+        win
+          ? 'pilot: on plane ' +
+              curKey +
+              ' (' +
+              curPt +
+              ') but open BOSS ' +
+              win.boss.x +
+              ',' +
+              win.boss.y +
+              ' is other-area → leave, do not hold.'
+          : 'pilot: on plane ' + curKey + ' (' + curPt + ') with no open BOSS window → leave.',
+      );
+      this.#gateState('hold', false, win ? 'not-here' : 'no-window');
     } else {
       this.#gateState('hold', false, '');
     }
@@ -2997,29 +3500,51 @@ export class PilotEngine {
   }
 
   /**
-   * 选逃袭落点：就近未被 PVP 的营帐（175）/通用平台（174）。
+   * 选逃袭落点（需求 1/5：立即转移=向**任意可行军的就近点**发 8521 脱离）。
+   *   旧版只认 174 平台 / 175 营帐，而录制实证 174 在视口快照里几乎不出现、车又多停在 173 资源点/172 野怪点
+   *   上被打 → 快照里没有 174/175 就「不逃」，是「被拉线攻击却没逃走」的直接根因。现把落点扩到
+   *   {175 营帐, 174 平台, 173 资源点, 172 野怪点}：受击档（evade）不发打野/攻打包，只是**走过去挪开**
+   *   即脱离拉线（需求 4：攻击宠物只当跳板、不攻击）。
+   *   安全过滤沿用：排除当前点 / 当日拉黑 / 正被 PVP(state 11/12) / 已交战 / 驻军>1（至少留一个位）。
    * @param {string} curKey 当前点键
    * @param {{x:number,y:number}} cur 当前坐标
    * @returns {{x:number,y:number}|null}
    */
-  #pickSafeTent(curKey, cur) {
+  #pickFleeTarget(curKey, cur) {
     const self = this;
-    let best = null;
-    let bestD = Infinity;
-    this.#tiles.forEach(function (t) {
-      if (t.pt !== PAB_TENT && t.pt !== PAB_COMMON_PLANE) return;
-      if (t.k === curKey) return;
-      if (self.#dayBlack[t.k]) return;
-      if (t.state === ST_PVP_READY || t.state === ST_PVP_FIGHTING) return;
-      if (t.isFight) return;
-      if (t.teams > 1) return; // 至少留一个位
-      const d = dist(t.x, t.y, cur.x, cur.y);
-      if (d < bestD) {
-        bestD = d;
-        best = { x: t.x, y: t.y };
-      }
+    return pickHopTile(Array.from(this.#tiles.values()), {
+      cur: cur,
+      curKey: curKey,
+      requireFreeSlot: true,
+      isBlack: function (k) {
+        return !!self.#dayBlack[k];
+      },
     });
-    return best;
+  }
+
+  /**
+   * 向目标跳板（需求 3/4：附近无满足单跳车程的「最合理井」时，走最近的资源点/停泊平台/攻击宠物作跳板逼近）。
+   *   与 #pickFleeTarget 同一候选点集，但带一个 `goal` 方向：在单跳可达窗（hopMaxD）内挑**最能缩短到 goal 距离**的
+   *   落脚点（同逼近度取更近的）；窗内无任何落脚点回 null（交回探索档换视野，不发不可取消的长途）。
+   *   攻击宠物(172) 在此仅作位移跳板——本函数不发打野/攻打包。
+   * @param {string} curKey 当前点键
+   * @param {{x:number,y:number}} cur 当前坐标
+   * @param {{x:number,y:number}} goal 要逼近的目标（打分最优井坐标）
+   * @param {number} hopMaxD 单跳最大距离（格）
+   * @returns {{x:number,y:number,pt:number}|null}
+   */
+  #hopTowardGoal(curKey, cur, goal, hopMaxD) {
+    if (!goal) return null;
+    const self = this;
+    return pickHopTile(Array.from(this.#tiles.values()), {
+      cur: cur,
+      curKey: curKey,
+      goal: goal,
+      hopMaxD: hopMaxD,
+      isBlack: function (k) {
+        return !!self.#dayBlack[k];
+      },
+    });
   }
 
   /**
@@ -3134,6 +3659,13 @@ export class PilotEngine {
     if (!key) return;
     const now = Date.now();
     this.#consumed.set(key, now + tuning.driveConsumedTtlMs);
+    // 消费账是「离店后同点 10min 不再重选 / 为什么不去那家店」的唯一判据落点，必须留痕：
+    //   没有这条，日志里只能看到「去/不去」，看不到防重派窗口从何时起算。
+    this.#env.log.debug(
+      'pilot: point %s consumed, no re-pick for %ds.',
+      key,
+      Math.round((Number(tuning.driveConsumedTtlMs) || 0) / 1000),
+    );
     // ⚠ 必须箭头函数：`function` 回调在 ESM 严格模式下 this=undefined（真实报文回放抓到的潜伏崩溃，
     //   仅当账本里存在已过期条目时触发）→ 离店记账会整拍炸掉。
     this.#consumed.forEach((until, k) => {
@@ -3184,10 +3716,10 @@ export class PilotEngine {
 
   /**
    * 决策心跳（纯读，不参与任何判定）：把 `debugState()` 的关键字段按节律送进日志流，
-   *   使「方向盘这一拍为什么没动」事后可用 `cli.js log --grep='pilot: tick'` 单轨还原。
+   *   使「方向盘这一拍为什么没动」事后可在日志流按 'pilot: tick' 过滤单轨还原。
    *   调用点：`#tick` 内**每个 return 前**（早退分支不会比主链少信息）。
    *   节律：每 6 拍一条（driveScanMs=5000 → 约 30s）或分支跳变当拍一条；同一拍只落一次。
-   *   长度纪律：主行与 census 副行均 ≤ 200 字符（`cli.js log` 非 --json 按 200 截断）。
+   *   长度纪律：主行与 census 副行均 ≤ 200 字符（日志流非 JSON 输出按 200 截断）。
    * @param {number} now 毫秒
    */
   #heartbeat(now) {
@@ -3255,7 +3787,9 @@ export class PilotEngine {
     this.#viewDbg = null;
     this.#marched = new Map();
     this.#consumed = new Map();
+    this.#exhausted = new Set();
     this.#dayBlack = {};
+    this.#paramBlack = {};
     this.#cooldownUntil = 0;
     this.#realmClosed = false;
     this.#matchFightBegin = 0;
@@ -3279,6 +3813,8 @@ export class PilotEngine {
     this.#threat = false;
     // 威胁伴生位显式配对复位：防引擎复用/换场首拍读不到 fightBeginTime 时，旧威胁窗的扎营位残留使下一次威胁不再避让
     this.#threatEvaded = false;
+    this.#threatEvadeAt = 0;
+    this.#threatReEvade = 0;
     this.#powerGapAt = 0;
     this.#powerGapVal = null;
     this.#escapeFrom = null;
@@ -3508,10 +4044,16 @@ export class PilotEngine {
     this.#shops = [];
     this.#marched = new Map();
     this.#consumed = new Map();
+    this.#exhausted = new Set();
     this.#cd = {};
     this.#dayBlack = {};
+    this.#paramBlack = {};
     this.#threat = false;
     this.#threatEvaded = false;
+    this.#threatEvadeAt = 0;
+    this.#threatReEvade = 0;
+    this.#evadeCoolUntil = 0;
+    this.#bossStatePullAt = 0;
     this.#powerGapAt = 0;
     this.#powerGapVal = null;
     this.#escapeFrom = null;

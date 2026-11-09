@@ -36,7 +36,7 @@ const CMD_USER_MARCH_INFO = 10019;
 const CMD_MARCH_SPEED_UP = 920;
 
 /**
- * 加速道具 itemId（稳定内容常量，真机报文实证 dashcam 20261005T204748）：
+ * 加速道具 itemId（稳定内容常量，真机报文实证）：
  * 同一条行军先 520001（普通）后 520002（高级），应答均 s=0/空载荷。
  * @type {number}
  */
@@ -363,7 +363,7 @@ async function recall(marchId) {
 }
 
 /**
- * 加速一条在途行军（920）。实证报文（dashcam 20261005T204748）：req {marchId:str, itemId:number} → resp {s:0,d:"{}"}（成功空载荷）。
+ * 加速一条在途行军（920）。实证报文：req {marchId:str, itemId:number} → resp {s:0,d:"{}"}（成功空载荷）。
  * 道具削减比（报文实测同一行军 68s→普通 −16s、−16s→高级 −24s，均对「当时剩余时间」生效）：
  *   - 普通 520001：行军剩余时间缩短 25%（剩 75%）；
  *   - 高级 520002：行军剩余时间缩短 50%（剩 50%）。

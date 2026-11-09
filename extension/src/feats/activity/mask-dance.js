@@ -8,17 +8,17 @@
  *   `item_id / share_msg_key / msg_type / daily_limit`（客户端源码 UserItemCityRewardBtn/Panel 实证），
  *   所以本 feat 一律以配置表为准、不按道具号写死。完整协议分析与运行时缺口见 extension/docs/feat-假面舞会.md。
  *
- * 协议（报文实证 dashcam 20261101T000624-2026万圣节.ndjson；源码实证 extracted/subpack/UserItemCityReward*）：
+ * 协议（报文实证；源码实证 extracted/subpack/UserItemCityReward*）：
  *   2503 DANCE_GET_REWARD  sendPBV2 {targetUidStr:"<开启者 pid 字符串>"}
- *     → {header:{s:0}, data:{rewardResult:{items:[{itemId:260617006,itemCount:1}]}}}   line 2332/2337
- *   push 10053 {danceRec:{"260617005":1}, myReceiveDance:["4909640309826248704"]}      line 2336
+ *     → {header:{s:0}, data:{rewardResult:{items:[{itemId:260617006,itemCount:1}]}}}
+ *   push 10053 {danceRec:{"260617005":1}, myReceiveDance:["4909640309826248704"]}
  *     · danceRec    = 按宝箱道具 id 计的今日已领次数（**逐道具**限额的权威分子）
  *     · myReceiveDance = 今日已领过的舞会实例 id 字符串数组（幂等判据，同实例只领一次）
  *     · UserData 落地字段名已由源码坐实：itemCityRewardReceivedNum / itemCityRewardReceivedInstIds
  *   push 10018 / resp 901 玩家城 `p.cityReward = {itemId, instanceId(字符串), num, players[], endTimeMilli}`
- *     line 2065~3494；`players[]` 只是展示名单**不含 uid**，不可作「我领没领」的判据
+ *     （实录报文）；`players[]` 只是展示名单**不含 uid**，不可作「我领没领」的判据
  *   聊天卡两种形态，都只保证给坐标，**给不给 pid 看发卡路径**：
- *     A. 坐标分享卡  llm={t:0, st:4, p:{x,y,z}, pid:"863595288866"}                    line 3326
+ *     A. 坐标分享卡  llm={t:0, st:4, p:{x,y,z}, pid:"863595288866"}
  *     B. 活动分享卡  llm={t:48, icon, s:<share_msg_key>, p:{x,y}, extra:{btnKey:102385, aid,
  *        expireTime, contentParams:[开启者名], jumpServerId}, actt:<msg_type>}
  *        —— sendChatLinkActCommon2 源码实证**不写 pid**；「万圣节派对」分享只走这条，
@@ -41,7 +41,7 @@
  *      真超距会被拒，收到业务拒即当日拉黑该舞会实例（一个实例最多撞一次墙），不会逐拍重发刷日志；
  *   4) **镜像记账**——直发 2503 不回写游戏本地态，故 todayByItem/claimedInstIds 走内存 + 存储镜像，
  *      push 10053 到达时以服务器权威值覆盖（对齐 daily-supply 的 mirror 范式）；
- *   5) **频道不做硬白名单**——实录里这张分享卡是发在世界频道（c=0）的（报文实证 line 3326），
+ *   5) **频道不做硬白名单**——实录里这张分享卡是发在世界频道（c=0）的（报文实证），
  *      而非玩法口径所说的联盟频道，故接全部频道的坐标卡；噪声卡由闸门链里的两道对称闸拦住：
  *      「901 实查该点基地带 cityReward」+「itemId 在 `mask_mystery_party` 有行」（代价仅一次 901 查询，不发包领取）。
  *

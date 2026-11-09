@@ -117,32 +117,33 @@ export function trimJson(o, max = 160) {
 }
 
 /**
- * 日志小时段选段（store/_log/<uid>/ 命名属本工程落盘格式：YYYYMMDDTHH[-NN].ndjson，
- * 如 20261104T17 / 20261104T17-01；日期 8 位 + T + 小时 2 位）。
- * 排序按（小时键，序号）：基准段（无 -NN）写最早，视为序号 -1 排最前；
+ * 日志段选段（store/log/<uid>/ 命名属本工程落盘格式）：
+ *   现规范带 dashcam-log- 前缀、按天轮转 dashcam-log-YYYYMMDD[-NN].ndjson（如 dashcam-log-20261104 / -20261104-01）；
+ *   历史两种形态仍兼容读取，历史数据不丢：
+ *     无前缀按天 YYYYMMDD[-NN].ndjson（如 20261104）；
+ *     无前缀按小时 YYYYMMDDTHH[-NN].ndjson（如 20261104T17）。
+ * 排序按（时间键，序号）：基准段（无 -NN）写最早，视为序号 -1 排最前；
  * 直接按名字 ASCII 升序会把 '-01' 排到基准段前（'-'<'.'）造成时间线倒流。
  * @param {string} dir 日志目录
- * @param {string|null} hourPrefix 段名前缀（如 '20261104' 整天 / '20261104T17' 整小时）；null 全取
+ * @param {string|null} prefix 时间键前缀（如 '20261104' 整天 / '20261104T17' 旧版整小时）；null 全取
  * @returns {string[]} 绝对路径，按时间序
  */
-export function logSegments(dir, hourPrefix) {
+export function logSegments(dir, prefix) {
   let names;
   try {
     names = readdirSync(dir);
   } catch {
     return [];
   }
+  // 剥离 dashcam-log- 前缀后提取时间键（兼容无前缀旧文件），再判 prefix 与排序
   const key = (n) => {
-    const m = /^(\d{8}T\d{2})(?:-(\d{2}))?\.ndjson$/.exec(n);
-    return { hour: m[1], seq: m[2] === undefined ? -1 : Number(m[2]) };
+    const m = /^(?:dashcam-log-)?(\d{8}(?:T\d{2})?)(?:-(\d{2}))?\.ndjson$/.exec(n);
+    return m ? { t: m[1], seq: m[2] === undefined ? -1 : Number(m[2]) } : null;
   };
   return names
-    .filter((n) => /^\d{8}T\d{2}(-\d{2})?\.ndjson$/.test(n))
-    .filter((n) => !hourPrefix || n.startsWith(hourPrefix))
-    .sort((a, b) => {
-      const ka = key(a);
-      const kb = key(b);
-      return ka.hour < kb.hour ? -1 : ka.hour > kb.hour ? 1 : ka.seq - kb.seq;
-    })
-    .map((n) => path.join(dir, n));
+    .map((n) => ({ n, k: key(n) }))
+    .filter((x) => x.k)
+    .filter((x) => !prefix || x.k.t.startsWith(prefix))
+    .sort((a, b) => (a.k.t < b.k.t ? -1 : a.k.t > b.k.t ? 1 : a.k.seq - b.k.seq))
+    .map((x) => path.join(dir, x.n));
 }

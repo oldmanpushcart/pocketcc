@@ -4,7 +4,7 @@
  * 网络一律走 promise 封装 window.pocketcc.net：send/sendPBV2(cmd, data) → Promise<Ret{code,data,ok}>，isSending(cmd) 查在途。
  * 三条协议铁律（target=null、ensureServerResponse=false、无 clickInfo）由 net 封装内部固定，这里不再关心。
  *
- * 报文事实（实证 20261005T005510-泰坦祝福.ndjson + 客户端 WorldTiTanBlessingTreasurePop / NWorldMapTileClickUtils）：
+ * 报文事实（实录报文实证 + 客户端 WorldTiTanBlessingTreasurePop / NWorldMapTileClickUtils）：
  *   13226 PUSH_TITAN_BLESSING_GIFT = 新箱广播，载荷 {uid(字符串), playerInfo, x, y, endTime(ms)}，一次送礼成簇推 3 条（3 只箱）。
  *     ⚠️ 自己发出的箱也照样推给自己（实录 uid 即本人），故必须自己判归属，否则 902 必被服务器拒 → 死循环刷屏。
  *   13227 PUSH_WORLD_TITAN_BLESSING_REWARD_GET = 本人领取到账，载荷 {reward, uuid}（有 uuid 无坐标）。
@@ -585,7 +585,7 @@ async function waitArriveDrop(marchIdStr, prevArrive) {
 
 /**
  * 对刚派出的泰坦祝福拾取行军**循环**使用加速道具，直到剩余行军时间 ≤ 面板目标秒数（早拿箱/省队列位），或道具耗尽/被拒/到达结算超时即停。
- * 语义（同花车空投，真机报文 dashcam 20261005T204748 实证）：普通 520001 剩余缩短 25%、高级 520002 缩短 50%；削减对当时剩余逐次生效。
+ * 语义（同花车空投，真机报文实证）：普通 520001 剩余缩短 25%、高级 520002 缩短 50%；削减对当时剩余逐次生效。
  * 每拍先核背包：普通一发可达标(remain×0.75≤目标)就用普通（更省），否则用高级逼近；首选缺货回退另一支，两支皆缺即停。
  * 发一支后等 10019 把新到达并进快照再据剩余判下一支，绝不盲连发。收敛护栏：单次拾取最多连发 MAX_SHOTS 支。
  * fire-and-forget：内部异常由调用侧 catch，绝不影响领取主流程。

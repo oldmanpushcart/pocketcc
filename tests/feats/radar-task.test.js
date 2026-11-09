@@ -40,6 +40,7 @@ const {
   actionFor,
   candCmp,
   pickCandidate,
+  stallStep,
   staminaGate,
   energyWakeMs,
   defenseGate,
@@ -50,6 +51,8 @@ const {
   ST_FINISH,
   CMD_DEFEND,
   SIGN_MAX,
+  cfg,
+  RALLY_WAIT_TIME,
 } = mod;
 
 test('normalize：四开关缺省视为 true（旧存档缺键不误关），preset 取整钳 [0,8]、非法值归 0=不派兵；minStamina 取整钳非负并钳上界', () => {
@@ -577,3 +580,134 @@ function gateBase() {
     needPower: 90000,
   };
 }
+
+// ── 停滞止损（与 20261107T005129 同型：s=0 受理、集结窗到期被原地解散、任务态 2→1 回滚）──────
+// 实证：同一条 taskId=10002/id=3147 在 639s 内被 1201 重派 4 次（行军态序列恒 8→4，从未出发），
+// 而 9 条 state=0 的普通任务 0 笔 3505、0 笔 3508，日志整场 reason=exec。
+
+test('stallStep：只有 rollback 计停滞；达 dispatchStallLimit 即当日让位；finish/gone 一律清零', () => {
+  assert.deepEqual(stallStep('rollback', 0, 2), { n: 1, yielded: false });
+  assert.deepEqual(stallStep('rollback', 1, 2), { n: 2, yielded: true });
+  // 达成/消失不算停滞（不能把昨天的失败累加到今天已成功的那条上）
+  for (const kind of ['finish', 'gone']) {
+    assert.deepEqual(stallStep(kind, 5, 2), { n: 0, yielded: false }, 'kind=' + kind);
+  }
+  // 阈可收紧：limit=1 时首次 rollback 即让位（feat 内不额外硬编码「再加一次」）
+  assert.deepEqual(stallStep('rollback', 0, 1), { n: 1, yielded: true });
+  // 脏入参不抛穿 cycle
+  assert.deepEqual(stallStep('rollback', undefined, 2), { n: 1, yielded: false });
+  assert.deepEqual(stallStep(undefined, 1, 2), { n: 0, yielded: false });
+});
+
+test('cfg：停滞止损与在途择时三键的口径锁死（沉降窗短于集结窗、首拍对拍=窗+缓冲、两类止损同阈）', () => {
+  const winMs = RALLY_WAIT_TIME * 1000;
+  assert.ok(
+    cfg.dispatchSettleMs < winMs,
+    '沉降窗必须远短于集结窗，否则窗内解散要等到下一个调拍才看得见',
+  );
+  assert.equal(cfg.execPollMs, winMs + 30000, '首次对拍 = 集结窗 + 30s 缓冲');
+  assert.ok(
+    cfg.execPollMs < cfg.execResyncMs,
+    '窗到期即醒要早于低频档（固定 240s 正是「久久不执行」的一半成因）',
+  );
+  assert.equal(
+    cfg.dispatchStallLimit,
+    cfg.rejectRetryLimit,
+    '「受理但停滞」与「服务器拒」同为「留一次自然重试」口径',
+  );
+});
+
+test('candCmp：stalls 为首键（停滞过的往后靠）；无 stalls 字段时与旧口径完全一致', () => {
+  const g19 = { dayGroupId: 19, quality: 4, id: '3147' };
+  const g0 = { dayGroupId: 0, quality: 0, id: '1001' };
+  // 旧口径基线：三连环位（day_group_id 最大）恒排最前——正是它饿死了其余 9 条
+  assert.ok(candCmp(g19, g0) < 0);
+  assert.ok(candCmp(g0, g19) > 0);
+  // 停滞一次后必须让位
+  const arr = [{ ...g19, stalls: 1 }, g0].sort(candCmp);
+  assert.equal(arr[0].id, '1001', 'g19 停滞后普通任务顶上');
+  // 停滞次数相同时回到旧口径（day_group → quality → id）
+  assert.ok(candCmp({ ...g19, stalls: 2 }, { ...g0, stalls: 2 }) < 0);
+  // 领奖排序等不带 stalls 的调用方不得因本键改变行为
+  const claim = [
+    { dayGroupId: 0, quality: 0, id: 'a' },
+    { dayGroupId: 5, quality: 0, id: 'b' },
+  ];
+  assert.deepEqual(
+    claim.sort(candCmp).map((x) => x.id),
+    ['b', 'a'],
+  );
+});
+
+test('pickCandidate：opts.stalls 注入降权键，刚解散的三连环位不再顶在最前', () => {
+  const mk = (id, taskId, dayGroupId, state) => ({
+    id,
+    taskId,
+    state,
+    x: 395,
+    y: 517,
+    dayGroupId,
+    groupType: dayGroupId ? 3 : 1,
+    endTime: 0,
+  });
+  const all = [mk('3147', 10002, 19, 1), mk('1001', 10003, 0, 0)];
+  const mcfg = { doDaily: true, doEvents: true, doMarch: true, preset: 3 };
+  const resolve = (t) =>
+    t.taskId === 10002
+      ? { type: 202, quality: 4 }
+      : t.taskId === 10003
+        ? { type: 205, quality: 0 }
+        : { type: 0, quality: 0 };
+
+  // 无停滞记录：三连环集结位在前（与录制里它被反复选中一致）
+  assert.equal(pickCandidate(all, mcfg, resolve, null, null, { stalls: {} }).pick.id, '3147');
+  // 记 1 次停滞：让位给待认领的普通任务（本例同时验证 opts 缺省等价无降权）
+  assert.equal(pickCandidate(all, mcfg, resolve, null).pick.id, '3147');
+  assert.equal(
+    pickCandidate(all, mcfg, resolve, null, null, { stalls: { 3147: 1 } }).pick.id,
+    '1001',
+  );
+  // 达阈后走让位集合（调用侧把 reject + stall 两类合并传入）：跳过且不误归因 no-preset
+  const dec = pickCandidate(all, mcfg, resolve, null, new Set(['3147']));
+  assert.equal(dec.pick.id, '1001');
+  assert.equal(dec.blacklisted, 1);
+  assert.equal(dec.gated, false);
+});
+
+test('pickCandidate：onlyStart（exec 在途档）只放行认领，占兵型不参评也不误置 gated', () => {
+  const mk = (id, taskId, dayGroupId, state) => ({
+    id,
+    taskId,
+    state,
+    x: 1,
+    y: 1,
+    dayGroupId,
+    groupType: dayGroupId ? 3 : 1,
+    endTime: 0,
+  });
+  // 'a' 集结位（已认领、需兵）；'b' 普通任务待认领；'c' 零部队型已认领
+  const all = [mk('a', 10002, 19, 1), mk('b', 10003, 0, 0), mk('c', 10003, 0, 1)];
+  const resolve = (t) =>
+    t.taskId === 10002
+      ? { type: 202, quality: 4 }
+      : t.taskId === 10003
+        ? { type: 205, quality: 0 }
+        : { type: 0, quality: 0 };
+  // preset=0 的闸门形状（execKey 置为不在池里的持有者，避开与单飞锁自身的跳过混淆）
+  const noPreset = { doDaily: true, doEvents: true, doMarch: true, preset: 0 };
+  const base = pickCandidate(all, noPreset, resolve, 'x');
+  assert.equal(base.gated, true, '不带 onlyStart 时占兵候选被 preset 闸挡住→gated');
+  assert.equal(base.pick.id, 'b', 'a 被 preset 闸拦下后，选中同质里 id 最小的待认领项');
+
+  const inFlight = pickCandidate(all, noPreset, resolve, 'x', null, { onlyStart: true });
+  assert.equal(inFlight.gated, false, '在途档不该把占兵候选计成 no-preset');
+  assert.equal(inFlight.pick.id, 'b');
+  assert.deepEqual(inFlight.pick.act, { act: 'start' });
+
+  // 池里无可认领项（全已在手）→ 在途档选不出任何东西，调用侧保持静默
+  const none = pickCandidate([mk('c', 10003, 0, 1)], noPreset, resolve, 'x', null, {
+    onlyStart: true,
+  });
+  assert.equal(none.pick, null);
+  assert.equal(none.gated, false);
+});

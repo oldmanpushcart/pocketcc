@@ -11,9 +11,12 @@
 //   1 次/分钟（intensive throttling）。createCycle 的每拍 sleep、session 活性监视、游戏自身心跳都走
 //   定时器，被压到 1/min 就等于后台自动化停摆，故隐藏期改由同一心跳按名义时刻派发。
 // 两档频率：加载期 60Hz（按帧吞吐推进，低于前台即等比变慢），主城就绪后降为 idleHz 常驻（默认 10Hz）；
-//   节拍底层固定 TICK_FLOOR_HZ，帧率只决定「每几拍出一帧」，定时器延迟始终 ≤ 1/TICK_FLOOR_HZ 秒。
+//   5 分钟截止的 downshiftAt 兜底——就绪闸门失灵也不会让加载期满速永跑。节拍频率跟随帧率两档
+//   （常驻档 =hz、空闲低档 =IDLE_LOW_HZ，仅连续驱动 ≥2min 且无新定时器登记时落低档），
+//   定时器延迟上限 = 1/节拍（默认档 ≈100ms、低档 ≈500ms；游戏心跳为 1s 粒度，均安全）。
 // 策略入口：registry 的 internal 功能 keepAlive 经 applyPolicy 决定常驻还是彻底交还（面板可关）；
-//   boot.js 在主城就绪闸门先 downshift 兜底（授权挂起/配置未读到也不留满速驱动）。
+//   boot.js 在主城就绪闸门先 downshift 兜底（授权挂起/配置未读到也不留满速驱动），
+//   该闸门迟迟不来时由 startupGuard 到点自行降档；
 // 熔断：心跳在本环境不可用（CSP 拦 blob:、worker 被杀、构造成功却一个节拍都不来）时不再重建，并连带撤掉
 //   可见性伪装整体回到原生行为——留着「伪装成前台却没人喂帧」比不伪装更糟：引擎以为在前景却拿不到帧，
 //   又因为读不到 hidden 而不走它自己的前台恢复分支，反而彻底僵死。
@@ -32,8 +35,14 @@
   const HZ_LOADING = 60;
   /** @type {number} 常驻档默认帧率（Hz）：够驱动引擎与 feat 逻辑，隐藏期 CPU 开销可控 */
   const HZ_IDLE = 10;
-  /** @type {number} 心跳底层节拍频率（Hz）：与渲染帧率解耦，保证定时器延迟上限 ~20ms */
-  const TICK_FLOOR_HZ = 50;
+  /** @type {number} 空闲低档节拍（Hz）：连续驱动 ≥IDLE_AFTER_MS 且无新定时器登记时的驻留节拍，
+   *  帧也按此频率出（逻辑减速但会话维持完好）；任何新定时器登记即恢复常驻档 */
+  const IDLE_LOW_HZ = 2;
+  /** @type {number} 空闲判定窗口（毫秒）：此窗口内有定时器登记就不落低档 */
+  const IDLE_MS = 2 * 60 * 1000;
+  /** @type {number} 加载期满速保险（毫秒）：armed 起到此截止仍未见就绪降档，startupGuard 自行收为 HZ_IDLE，
+   *  防主城就绪闸门失灵导致后台按加载期 60Hz 永跑 */
+  const STARTUP_GUARD_MS = 5 * 60 * 1000;
   /** @type {number} 首拍看门狗留量（毫秒）：worker「构造成功但跑不起来」不会同步抛错，靠它兜底熔断。
    *  隐藏页原生定时器最少 1s 粒度，故实际留量在秒级——真机里首拍只需 ~20ms，不会误判 */
   const BEAT_TIMEOUT_MS = 800;
@@ -42,7 +51,8 @@
   /** @type {number} shim 定时器 id 起始基数：与帧 id 段、原生 id 段都错开 */
   const TIMER_ID_BASE = 0x54494d00;
 
-  /** @type {string} worker 源码：自驱动 tick 环，start/stop 由宿主消息控制（裸 setInterval 在部分内核仍被冻结）。信令格式 {cmd:'start'|'stop', interval} */
+  /** @type {string} worker 源码：自驱动 tick 环，start/stop/改 interval 全由宿主消息控制（裸 setInterval 在部分内核仍被冻结）；
+   *  空闲低档与启动保险降档都经宿主 applyTick 重排，无需改本源码。e.data.interval 仅作缺省兜底 */
   const WORKER_SRC =
     'var t=null;self.onmessage=function(e){' +
     'if(e.data.cmd==="start"){if(t)clearInterval(t);t=setInterval(function(){self.postMessage("t")},e.data.interval||20);}' +
@@ -151,14 +161,20 @@
   let armed = false;
   /** @type {boolean} 当前是否处于「隐藏 + 在位」的驱动态 */
   let shimActive = false;
-  /** @type {number} 当前隐藏期帧率（Hz） */
+  /** @type {number} 当前常驻档帧率/节拍目标（Hz）：低档只在 applyTick 内临时下调 */
   let hz = HZ_LOADING;
-  /** @type {number} worker 节拍间隔（毫秒） */
-  let tickMs = Math.round(1000 / TICK_FLOOR_HZ);
-  /** @type {number} 每几拍出一帧（帧率与节拍解耦） */
+  /** @type {number} worker 节拍间隔（毫秒）：初值仅供未驱动时读数，真值由 applyTick 落位 */
+  let tickMs = 100;
+  /** @type {number} 每几拍出一帧（常驻档恒 1；空闲低档时帧随节拍降频） */
   let frameDiv = 1;
-  /** @type {number} 累计节拍计数（出帧相位） */
+  /** @type {number} 累计节拍计数（历史保留，供排障观察） */
   let beat = 0;
+  /** @type {number} 本轮连续驱动起点（毫秒时刻）；0=未驱动 */
+  let driveMs = 0;
+  /** @type {number} 最近一次「驱动态定时器登记」时刻（毫秒），空闲低档判据；0=从未发生 */
+  let idleStamp = 0;
+  /** @type {boolean} 当前是否处于空闲低档（变化时打日志） */
+  let lowGear = false;
   /** @type {Map<number, function(number):void>} 在飞的帧回调（id -> cb） */
   const pendingFrames = new Map();
   /** @type {number} 帧 id 自增游标 */
@@ -169,7 +185,11 @@
   let port = null;
   /** @type {MessagePort|null} channel 对侧：承接 worker 节拍转发（port 本身无 port2 属性，必须单独存引用） */
   let tickPort = null;
-  /** @type {string|null} worker 脚本的 blob URL：随 retireTicker 一并 revoke，防长会话反复建退役堆积 */
+  /** @type {boolean} 启动保险在挂：置位时 pendingFrames 首次非空且未被认领，由 onBeat 检查到点降档 */
+  let guardPending = false;
+  /** @type {number} 启动保险截止时刻（毫秒）：arm 时 = 装载时刻 + STARTUP_GUARD_MS */
+  let downshiftAt = 0;
+  /** @type {number|null} worker 脚本的 blob URL：随 retireTicker 一并 revoke，防长会话反复建退役堆积 */
   let workerUrl = null;
   /** @type {boolean} 心跳熔断位：置位即认定本环境用不了心跳，此后不再重建（见文件头「熔断」） */
   let tickerBroken = false;
@@ -267,22 +287,55 @@
     return shimActive && !!worker;
   }
 
-  /** 按当前帧率算出节拍参数并同步给 worker（帧率降、节拍不降：定时器延迟上限始终由 TICK_FLOOR_HZ 兜住） */
-  function applyHz() {
-    const tickHz = Math.max(hz, TICK_FLOOR_HZ);
+  /**
+   * 算出本拍应使用的节拍频率并同步给 worker。两档：
+   *   常驻档 = hz（面板帧率）；空闲低档 = IDLE_LOW_HZ——仅当已过加载期（!guardPending）、连续驱动 ≥IDLE_MS、
+   *   近 IDLE_MS 无任何驱动态定时器登记、且确有在飞帧时才落档（帧照此频率出，逻辑减速但会话维持完好）。
+   * 定时器延迟上限 = 1/节拍（常驻档 ≈100ms、低档 ≈500ms），游戏心跳 1s 粒度，均安全。
+   */
+  function applyTick() {
+    const now = Date.now();
+    lowGear =
+      !guardPending && // 加载期不落低档（会拖慢进主城）
+      driveMs > 0 &&
+      now - driveMs >= IDLE_MS &&
+      now - idleStamp >= IDLE_MS &&
+      pendingFrames.size > 0 &&
+      hz > IDLE_LOW_HZ;
+    const tickHz = Math.max(1, lowGear ? IDLE_LOW_HZ : hz);
     tickMs = Math.round(1000 / tickHz);
     frameDiv = Math.max(1, Math.round(tickHz / hz));
     if (worker && shimActive) worker.postMessage({ cmd: 'start', interval: tickMs });
   }
 
-  /** 每个心跳节拍：先扫到期的代管定时器，再按相位出帧（一帧里引擎会顺带跑完 scheduler） */
+  /**
+   * 启动保险：armed 起到 STARTUP_GUARD_MS 截止仍未见过任何就绪降档（downshift/applyPolicy 都会
+   * 经 setHz 认领），说明主城就绪闸门失灵，自行把满速的加载期帧率收为常驻档，杜绝后台 60Hz 永跑。
+   * 自检查挂在 onBeat 首行——隐藏页里原生定时器会被钳到 1s、满 5 分钟更降到 1/min，靠不住；
+   * 而驱动从未启动（全程前台）时不需要保险：原生行为本来就不会过载。
+   */
+  function startupGuardCheck() {
+    if (!guardPending) return;
+    if (Date.now() < downshiftAt) return;
+    guardPending = false;
+    hz = HZ_IDLE;
+    applyTick();
+  }
+
+  /** 每个心跳节拍：先查启动保险，再扫到期的代管定时器，最后按相位出帧（一帧里引擎会顺带跑完 scheduler）；全程零临时数组 */
   function onBeat() {
     if (!driving()) return;
+    startupGuardCheck();
     sweepTimers();
+    applyTick(); // 每拍重估两档：新定时器登记会立刻把低档抬回常驻档
     if (++beat % frameDiv !== 0) return;
-    const entries = Array.from(pendingFrames.entries());
-    for (const [id, cb] of entries) {
-      // 先摘除再执行：回调重入 requestAnimationFrame 时拿到新 id，不会重复触发
+    // 先快照 id 再逐个摘除执行：回调重入 requestAnimationFrame 时拿到新 id，
+    // has+delete 只清旧条目，不会把重排的新请求误删而断掉引擎主循环（id 单调递增保证）
+    const ids = []; // 仅出帧拍分配，长度=在飞帧数（个位数）；节拍频率已跟随帧率，不再每 20ms 分配
+    for (const id of pendingFrames.keys()) ids.push(id);
+    for (const id of ids) {
+      const cb = pendingFrames.get(id);
+      if (!cb) continue;
       pendingFrames.delete(id);
       try {
         cb(performance.now());
@@ -344,8 +397,8 @@
   }
 
   /**
-   * 把一个代管条目交给原生重排：一次型按剩余时间，周期型按名义间隔（相位偏移可接受，
-   * 用 remain 起拖会与心跳侧扫描抢同一个到期点）。条目留在表里，切回隐藏时能收回。
+   * 把一个代管条目交给原生重排（仅用于停驱/撤防交接窗）：一次型按剩余时间，周期型按名义间隔
+   * （相位偏移可接受，用 remain 起拖会与心跳侧扫描抢同一个到期点）。条目留在表里，重复停驱不重挂。
    * @param {number} id shim 定时器 id
    */
   function nativeArm(id) {
@@ -362,37 +415,49 @@
     t.dueAt = Date.now() + (t.every ? t.ms : remain);
   }
 
-  /** 隐藏→可见（或撤钩）：全数交回原生，避免心跳停摆时代管条目迟迟不触发 */
-  function migrateTimersToNative() {
-    for (const id of Array.from(timers.keys())) nativeArm(id);
+  /**
+   * 停驱/撤防交接：把仍由心跳持有的代管条目全数交回原生重排，避免心跳停摆后迟迟不触发。
+   */
+  function holdTimersForHandoff() {
+    for (const id of timers.keys()) nativeArm(id);
   }
 
-  /** 可见→隐藏：收回原生句柄，按原 dueAt 继续等心跳扫描（已过期的下一拍立即补发） */
-  function migrateTimersToShim() {
-    for (const t of Array.from(timers.values())) {
+  /**
+   * 起驱交接（可见→隐藏）：把可见期已交原生重排的代管条目收回心跳持有，按原 dueAt 继续等心跳
+   * 扫描（已过期的下一拍立即补发）。游戏 1s 心跳类 setInterval 多在可见期/加载期就登记，
+   * 若不收回，它们会被浏览器 intensive throttling 压到 1/min 而致掉线——这正是本层存在的理由。
+   */
+  function claimTimersForShim() {
+    const now = Date.now();
+    for (const t of timers.values()) {
       if (t.nativeId === undefined) continue;
       try {
         if (t.every) nativeClearInterval(t.nativeId);
         else nativeClearTimeout(t.nativeId);
       } catch (e) {}
       t.nativeId = undefined;
-      if (t.dueAt < Date.now()) t.dueAt = Date.now();
+      if (t.dueAt < now) t.dueAt = now;
     }
   }
 
-  /** 每拍扫一遍代管表，派发所有已到期且仍由心跳持有的条目（原生持有的条目跳过，由原生侧自己回调） */
+  /**
+   * 每拍扫一遍代管表，派发所有已到期条目（直接迭代 Map：一次型 fireTimer 先删条目再跑回调，
+   * 周期型只改 dueAt，迭代器均不受影响；零临时数组）。表由节拍驱动，频率已跟随帧率两档。
+   */
   function sweepTimers() {
     if (!timers.size) return;
     const now = Date.now();
-    for (const [id, t] of Array.from(timers.entries())) {
+    for (const [id, t] of timers) {
       if (t.nativeId !== undefined || t.dueAt > now) continue;
       fireTimer(id);
     }
   }
 
   /**
-   * 登记并排一个定时器：在位期间一律登记（切隐藏时才能把可见期已排的原生定时器一并收回），
-   * 但只有驱动态才由心跳代管；可见期（或 worker 不可用）仍交原生跑，只记句柄与到期时刻。
+   * 登记并排一个定时器：在位期间一律登记（切隐藏时才能把可见期已排的原生定时器一并收回，
+   * 兼及游戏 1s 心跳这类可见期就创建、后台若不接管就会被节流到 1/min 的关键定时器）；
+   * 但只有驱动态才由心跳代管，可见期（或 worker 不可用）仍交原生跑，只记句柄与到期时刻。
+   * 前台开销仅一次 Map.set（一次型触发即自熄，表不泄漏）。
    * @param {function(...*):void} cb 回调
    * @param {number} ms 延迟/间隔
    * @param {boolean} every 是否周期
@@ -400,13 +465,19 @@
    * @returns {number} 定时器 id（本 shim 命名空间，由 clearTimerWrapper 分流）
    */
   function armTimer(cb, ms, every, args) {
-    // 不在位（后台保活已关）：不登记也不接管，纯透传，不在本 shim 留内存足迹
+    // 不在位（后台保活已关）或回调不可代管（非函数，含字符串形式）：纯透传，不登记
     if (typeof cb !== 'function' || !armed)
       return every ? nativeSetInterval(cb, ms, ...args) : nativeSetTimeout(cb, ms, ...args);
     const id = timerSeq++;
     const d = Math.max(0, Number(ms) || 0);
     timers.set(id, { cb, args, ms: d, every, dueAt: Date.now() + d, nativeId: undefined });
-    if (!driving()) nativeArm(id);
+    if (driving()) {
+      // 驱动态下有定时器登记 = 确有活跟定时业务在跑：刷新空闲低档判据，把节拍抬回常驻档
+      // （心跳类 setInterval 只在创建时计一次，不会持续刷新此位，因此纯挂机能落档）
+      idleStamp = Date.now();
+    } else {
+      nativeArm(id);
+    }
     return id;
   }
 
@@ -453,32 +524,37 @@
   }
 
   // ── 驱动开关与在位状态 ──────────────────────────────────────────────────
-  /** 启动心跳驱动：置活跃位、建 worker、把原生重排中的定时器收回代管 */
+  /** 启动心跳驱动：置活跃位、建 worker、起节拍。新排定时器自此进代管；可见期已在飞的不收回
+   *  （被浏览器钳拍后自然触发一次，见 armTimer 注释），引擎主循环的 rAF 则当场接管 */
   function startDriving() {
     if (tickerBroken) {
       disarm(); // 心跳在本环境已不可用：连带撤掉伪装，别搭一个「伪装在装、无人喂帧」的半架子
       return;
     }
     shimActive = true;
+    driveMs = Date.now();
     ensureTicker();
     if (!worker) {
       // 构造函数同步抛错（CSP 直接拒绝）：不代管任何帧/定时器，连带撤伪装
       shimActive = false;
+      driveMs = 0;
       tickerBroken = true;
       disarm();
       return;
     }
-    applyHz();
+    applyTick();
     // 定时器/帧当场收回代管，不等首拍：引擎的主循环是「一帧里重排下一帧」，
     // 若延后接管，它会先把 rAF 排到一个永远不会触发的原生请求上，循环当场断掉。
+    // 定时器不收回则可见期已排的心跳会一直接原生跑（到背后面被节流），故一并 claim。
     // 代价是最多 BEAT_TIMEOUT_MS（隐藏页里约 1s）的等待窗口，与浏览器自身 1s 对齐同量级，不比默认更差。
-    migrateTimersToShim();
+    claimTimersForShim();
     armBeatWatchdog();
   }
 
-  /** 停止心跳驱动：帧回调与代管定时器全数交还原生（可见后立即续上，语义不丢） */
+  /** 停止心跳驱动：帧回调交还原生、代管定时器全数原生重排（可见后立即续上，语义不丢） */
   function stopDriving() {
     shimActive = false;
+    driveMs = 0;
     clearBeatWatchdog();
     if (worker) worker.postMessage({ cmd: 'stop' });
     if (pendingFrames.size) {
@@ -490,7 +566,7 @@
         } catch (e) {}
       }
     }
-    migrateTimersToNative();
+    holdTimersForHandoff();
   }
 
   /** 可见性变化分流（走 readRealHidden，不读已被伪装的 document.hidden）：不在位时一律停驱透传 */
@@ -502,10 +578,15 @@
     }
   }
 
-  /** 装载 shim：接管 rAF/cAF + 伪装可见性 + 挂可见性监听，并按当前可见态决定是否起心跳 */
+  /** 装载 shim：接管 rAF/cAF + 伪装可见性 + 挂可见性监听，布下启动保险，并按当前可见态决定是否起心跳 */
   function arm() {
     if (armed) return;
     armed = true;
+    // 启动保险布防：直到被显式降档认领（setHz 里摘）或 startupGuardCheck 到点自收
+    if (hz === HZ_LOADING) {
+      guardPending = true;
+      downshiftAt = Date.now() + STARTUP_GUARD_MS;
+    }
     window.requestAnimationFrame = rafWrapper;
     window.cancelAnimationFrame = cancelWrapper;
     // 必须在游戏 JS 执行前接管（本脚本 run_at: document_start 保证这一时序）
@@ -581,17 +662,20 @@
     },
     /**
      * 设定隐藏期帧率（钳制 HZ_MIN~HZ_MAX），正在驱动时立即按新频率重排节拍与出帧相位。
+     * 任何显式降档（downshift/applyPolicy）都经此，故兼作启动保险的「已就绪」认领位。
      * @param {number} v 期望帧率（Hz）
      */
     setHz: function (v) {
       hz = clampHz(v, HZ_IDLE);
-      applyHz();
+      // 认领启动保险：既然已收到明确的就绪帧率，就不需再到点自降
+      guardPending = false;
+      applyTick();
     },
     teardown: disarm,
     /**
-     * 自检快照（DevTools 观察用）：在位/驱动态、真实隐藏态、帧率与节拍、代管数量、心跳是否已熔断。
+     * 自检快照（DevTools 观察用）：在位/驱动态、真实隐藏态、帧率与节拍、空闲低档、代管数量、心跳是否已熔断。
      * @returns {{armed: boolean, driving: boolean, hidden: boolean, hz: number, tickMs: number,
-     *   frameDiv: number, frames: number, timers: number, broken: boolean}}
+     *   frameDiv: number, lowGear: boolean, guardPending: boolean, frames: number, timers: number, broken: boolean}}
      */
     status: function () {
       return {
@@ -601,6 +685,8 @@
         hz: hz,
         tickMs: tickMs,
         frameDiv: frameDiv,
+        lowGear: lowGear,
+        guardPending: guardPending,
         frames: pendingFrames.size,
         timers: timers.size,
         broken: tickerBroken,

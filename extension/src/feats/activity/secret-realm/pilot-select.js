@@ -10,7 +10,15 @@
  * 竞品行号索引见 docs/feat-异能秘境自动驾驶-v4竞品B对齐重写.md。
  * 红线：一律引用 constants 常量名（PAB_*），禁止裸 pointType 数字。
  */
-import { PAB_RESOURCE, PAB_MONSTER, PAB_SHOP } from './constants.js';
+import {
+  PAB_RESOURCE,
+  PAB_MONSTER,
+  PAB_SHOP,
+  PAB_TENT,
+  PAB_COMMON_PLANE,
+  ST_PVP_READY,
+  ST_PVP_FIGHTING,
+} from './constants.js';
 import { dist } from './util.js';
 
 /**
@@ -80,17 +88,21 @@ export function resourceCost(p, ctx) {
  * @param {{
  *   startPoint:{x:number,y:number}, serverTimeSec:number, minNum?:number, maxDist?:number,
  *   isRoundOpen:(esrId:number)=>boolean, marches?:Array, marchedList?:Array, marchPolicy?:number,
- *   firstUnrewardedBoss?:{x:number,y:number}|null, nearestNoSausageShop?:{x:number,y:number}|null
+ *   firstUnrewardedBoss?:{x:number,y:number}|null, nearestNoSausageShop?:{x:number,y:number}|null,
+ *   hopMaxDist?:number, preferStrong?:boolean, roundTier?:(esrId:number)=>number
  * }} ctx
  * @returns {{x:number,y:number,pointType:number,m:object,score:number}|null} 最佳井，无则 null
  */
 export function pickResource(points, ctx) {
   const minNum = ctx.minNum == null ? 0 : Number(ctx.minNum);
   const maxDist = ctx.maxDist == null ? Infinity : Number(ctx.maxDist);
+  const hopMaxDist =
+    Number.isFinite(ctx.hopMaxDist) && ctx.hopMaxDist > 0 ? Number(ctx.hopMaxDist) : Infinity;
   const policy = ctx.marchPolicy || 0;
   const isRoundOpen = ctx.isRoundOpen || (() => true);
-  let best = null;
-  let bestScore = -Infinity;
+  const roundTier = ctx.roundTier || (() => 0);
+  const preferStrong = !!ctx.preferStrong;
+  const cands = [];
   for (let i = 0; i < points.length; i++) {
     const p = points[i];
     if (!p || Number(p.pointType) !== PAB_RESOURCE) continue; // 闸 1：类型（Number 兜字符串 pointType，防静默全 drop）
@@ -104,13 +116,71 @@ export function pickResource(points, ctx) {
     if (Number(m.state) !== 0) continue;
     if (Array.isArray(m.teams) && m.teams.length > 0) continue;
     if (hasMarchTargeting(ctx.marches, p.x, p.y, policy)) continue;
-    const score = Number(m.iNum || 0) - resourceCost(p, ctx);
-    if (score > bestScore) {
-      bestScore = score;
-      best = { x: p.x, y: p.y, pointType: p.pointType, m, score };
+    const gain = Number(m.iNum || 0);
+    cands.push({
+      x: p.x,
+      y: p.y,
+      pointType: p.pointType,
+      m,
+      score: gain - resourceCost(p, ctx),
+      d0: dd,
+      gain,
+      tier: roundTier(m.esrId),
+    });
+  }
+  if (!cands.length) return null;
+  let goal = cands[0];
+  for (const c of cands) if (c.score > goal.score) goal = c;
+  // 强区优先（需求 2）：preferStrong 且候选里存在「更高档位（tier=maxTier>0=强异能区）」时，goal 收敛到该最高档位打分最优的；
+  //   只微区开放时全候选同档 → goal 等价打分最优（无误牵引）。移动仍由 resolveHop 逐跳逼近。
+  if (preferStrong) {
+    let maxTier = 0;
+    for (const c of cands) if (c.tier > maxTier) maxTier = c.tier;
+    if (maxTier > 0) {
+      let sg = null;
+      for (const c of cands) {
+        if (c.tier !== maxTier) continue;
+        if (!sg || c.score > sg.score) sg = c;
+      }
+      if (sg) goal = sg;
     }
   }
-  return best;
+  return resolveHop(cands, goal, hopMaxDist);
+}
+
+/**
+ * 单跳车程封顶下的落点裁决（需求：避免长途直冲被守株待兔）：
+ *   - 目标在「一跳可达」窗内（goal.d0<=hopMaxDist）→ 直冲打分最优的目标。
+ *   - 目标太远 → 在可达窗内挑**最能缩短到目标距离**的近点作跳板（同逼近度先拿产量高的、再挑更近的），
+ *     逐拍逼近；窗内无任何可达跳板则返回 null（宁可在本地挪/探索，也不发一趟不可取消的长途）。
+ * 返回对象与候选同构（{x,y,...}）；走跳板时额外挂 `waypoint:true` 与 `goal:{x,y}` 供上层日志。
+ * @param {Array<{x:number,y:number,d0:number,gain:number}>} cands 已过全部闸的候选（含到当前点距离 d0）
+ * @param {{x:number,y:number,d0:number,gain:number}|null} goal 打分最优（真正的丰盛目标）
+ * @param {number} hopMaxDist 单跳最大距离（调用方由 车程秒上限×地图速度 换算；Infinity=不封顶=旧行为）
+ * @returns {object|null} 直冲 goal，或就近跳板；窗内无落脚则 null
+ */
+export function resolveHop(cands, goal, hopMaxDist) {
+  if (!goal) return null;
+  if (!Number.isFinite(hopMaxDist) || goal.d0 <= hopMaxDist) return goal; // 目标可达 → 直冲
+  let wp = null;
+  for (const c of cands) {
+    if (c === goal) continue;
+    if (!(c.d0 > 0 && c.d0 <= hopMaxDist)) continue; // 跳板本身必须一跳可达
+    const ap = dist(c.x, c.y, goal.x, goal.y); // 逼近度：离最终目标越近越优先
+    if (
+      !wp ||
+      ap < wp.ap ||
+      (ap === wp.ap && c.gain > wp.gain) ||
+      (ap === wp.ap && c.gain === wp.gain && c.d0 < wp.d0)
+    ) {
+      wp = { cand: c, ap, gain: c.gain, d0: c.d0 };
+    }
+  }
+  if (!wp) return null; // 窗内无可落脚 → 不发长途
+  const out = Object.assign({}, wp.cand);
+  out.waypoint = true;
+  out.goal = { x: goal.x, y: goal.y };
+  return out;
 }
 
 /**
@@ -232,4 +302,52 @@ export function pickShop(shops, ctx) {
   }
   const chosen = list[0];
   return chosen ? { x: chosen.pos.x, y: chosen.pos.y } : null;
+}
+
+/**
+ * 逃袭落点 / 向目标跳板 的落脚点选择（纯函数，需求 1/3/4/5）。
+ *   候选点集 = {175 营帐, 174 停泊平台, 173 资源点, 172 野怪}，均**只作“走过去挪开/逼近”的落脚位**，
+ *   本函数不发打野/攻打包（需求 4：攻击宠物只当跳板、不攻击）。
+ *   两种模式：
+ *     · 无 goal（逃袭档，#pickFleeTarget 语义）= 在安全点里取距当前最近的一个，用于“被拉线立即转移”。
+ *     · 有 goal（跳板档，#hopTowardGoal 语义）= 在单跳可达窗（hopMaxD）内挑最能缩短到 goal 距离的落脚点，
+ *       且**必须严格比当前点更逼近 goal**（防稀疏区 A↔B 无进展往复）；窗内无任何前进落脚点回 null（交回探索档换视野，不发不可取消的长途）。
+ *   安全过滤沿用：排除当前点 / 当日拉黑 / 正被 PVP(state 11/12) / 已交战；requireFreeSlot 时再排除驻军>1。
+ * @param {Array<{k:string,x:number,y:number,pt:number,state:number,isFight?:boolean,teams?:number}>} tiles 候选点数组
+ * @param {{cur:{x:number,y:number},curKey:string,goal?:{x:number,y:number}|null,hopMaxD?:number,isBlack?:(k:string)=>boolean,requireFreeSlot?:boolean}} ctx
+ * @returns {{x:number,y:number,pt:number}|null}
+ */
+export function pickHopTile(tiles, ctx) {
+  if (!Array.isArray(tiles)) return null;
+  const cur = ctx.cur;
+  const curKey = ctx.curKey;
+  const goal = ctx.goal || null;
+  const isBlack = ctx.isBlack || null;
+  const requireFreeSlot = ctx.requireFreeSlot === true;
+  const hmax = Number.isFinite(ctx.hopMaxD) && ctx.hopMaxD > 0 ? ctx.hopMaxD : Infinity;
+  // 跳板档（有 goal）：当前点到 goal 的距离，作为「必须严格前进」闸——只接受比此处更逼近 goal 的落脚点。
+  const apCur = goal ? dist(cur.x, cur.y, goal.x, goal.y) : 0;
+  let best = null;
+  let bestAp = Infinity;
+  let bestD = Infinity;
+  for (const t of tiles) {
+    const tpt = Number(t.pt);
+    if (tpt !== PAB_TENT && tpt !== PAB_COMMON_PLANE && tpt !== PAB_RESOURCE && tpt !== PAB_MONSTER)
+      continue;
+    if (t.k === curKey) continue;
+    if (isBlack && isBlack(t.k)) continue;
+    if (t.state === ST_PVP_READY || t.state === ST_PVP_FIGHTING) continue;
+    if (t.isFight) continue;
+    if (requireFreeSlot && t.teams > 1) continue; // 至少留一个位
+    const d0 = dist(t.x, t.y, cur.x, cur.y);
+    if (!(d0 > 0 && d0 <= hmax)) continue;
+    const ap = goal ? dist(t.x, t.y, goal.x, goal.y) : d0;
+    if (goal && !(ap < apCur)) continue; // 跳板档：不前进（含等距/更远）就不挪，杜绝 A↔B 往复
+    if (ap < bestAp || (ap === bestAp && d0 < bestD)) {
+      bestAp = ap;
+      bestD = d0;
+      best = { x: t.x, y: t.y, pt: tpt };
+    }
+  }
+  return best;
 }

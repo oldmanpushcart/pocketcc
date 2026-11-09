@@ -3,7 +3,7 @@
  *
  * 玩法：把「我的异能兽」派到别的玩家基地里培育，等时无后领取产出；同时自家基地可挂一只主宠，
  * 接受别人申请进来配对、并让盟友帮忙加速。协议族 1569~1599 与三条推送的逐字段核对见
- * extension/docs/异能兽培育.md（实录：dashcam 20261002T024843 / 20261007T001108 / 20261007T034829 三份 ndjson +
+ * extension/docs/异能兽培育.md（实录：三份实录报文 +
  * 游戏反编译 RealEnigmaBeastController / EnigmaBeastBreedSelectPop / VisitPop(Cell) / MainPop / BreedInfo）。
  *
  * 为什么归 A：1570（我的兽池）/ 1583（我家在途与寄养）/ 1585（可拜访全量列表）/ 1582（待我处理的申请）
@@ -160,7 +160,7 @@ const APPLY_TTL_HOURS = 6;
 const APPLY_INTERVAL_MS = 1200;
 /** @type {number} 单轮加油上限：一轮 1585 最多给几家加油，避免整轮耗时都花在辅助动作上 */
 const HELP_PER_TICK = 3;
-/** @type {number} 求加油分享的链接子类型 = 游戏 ChatShareLinkType.ENIGMA_BEAST_BREED（实录 20261007T034829 的 llm.t） */
+/** @type {number} 求加油分享的链接子类型 = 游戏 ChatShareLinkType.ENIGMA_BEAST_BREED（实录报文的 llm.t） */
 const SHARE_LINK_TYPE = 35;
 /** @type {number} 分享求加油的缺省间隔（分）：面板可调，取值下限同值（再小就是刷联盟频道） */
 const SHARE_INTERVAL_MIN = 5;
@@ -793,7 +793,7 @@ async function helpBreeding(visit, myUid) {
  * 分享我家这一组培育求盟友加油（同游戏 EnigmaBeastBreedMainPop.onBreedShareClick）：
  * 那条「请来给我的异能兽加油吧」不是 15xx，而是一条聊天链接 —— 670 PostChatMsg，
  * m='link'、c=2（联盟）、llm={t:35, pid:我的StrUid, enigmaBeastInfoList:[我家 main, 寄养进来的 other], uts:1}
- * （id 一律十进制串，实录 20261007T034829 逐字段核对）；盟友点它才发 1587，各人受自己的 310012 限额约束。
+ * （id 一律十进制串，实录报文逐字段核对）；盟友点它才发 1587，各人受自己的 310012 限额约束。
  * 四重闸门：培育中 && main/other 齐 && 已被加油人次未饱和（310011，满了再分享也没人能加）
  * && 距上次分享够 cfg.shareIntervalMin。上次时刻落账本，否则刷新一次页面就多刷一条联盟消息。
  * @param {string} myUid 我的 StrUid

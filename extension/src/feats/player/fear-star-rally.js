@@ -9,7 +9,7 @@
  *   面板排版 —— 上述四项排成一张表（type:'ctrlrow' + table），与自动打野怪物清单同外观：表头行说明各列含义 + 一行数据（无逐行 checkbox）。
  *
  * 惧星隐性规则（用户口径）：
- *   ① 每日攻打上限 —— 1026 req {} → resp d 含 {thorSearchNum}（今日已搜惧星次数，报文实证 dashcam 20261003T023731）；
+ *   ① 每日攻打上限 —— 1026 req {} → resp d 含 {thorSearchNum}（今日已搜惧星次数，实录报文实证）；
  *      上限 = DataConfig 941300（源码 WorldMapMonsterSearchComponentNew：剩余 = 941300 - thorSearchNum）。searchNum≥cap 即今日打完、停手等次日。
  *      次数每日 0 点（本地墙钟午夜）刷新：打完即睡向下个 0 点（msToNextMidnight，分块封顶 6h 防漂移），不整夜按 idle 空轮询。
  *      惧星只能「搜到才能打」，且 906 每搜一次即 +1 thorSearchNum（服务端计数），故本 feat 严格「先判可派再搜」，不为打不掉的点白烧配额。
@@ -18,14 +18,14 @@
  *      「见到过」(confirmed) 只靠 10019 边沿复播 + 行军快照补认，不靠 856 轮询采样：本 feat 派完即转 idle 长睡，
  *      下一次 856 采样通常落在到家之后（856 只回在途行军，返程/到家条目不再下发），存活期根本没有采样点。
  *
- * 打法与协议（报文实证 dashcam 20261011T183821-发起攻打野怪 / 20261011T183114-发起攻打黑暗军团据点集结 / 20261003T023731）：
+ * 打法与协议（报文实证：发起攻打野怪 / 发起攻打黑暗军团据点集结 / 下田撤田三趟实录）：
  *   搜惧星 906 WORLD_SEARCH_MONSTER —— req {minLevel,maxLevel,groupType:9100,pointType:9}；resp {point:{x,y,...}}，服务端直接回一个可打点（视口无关，Home 可跑）。
- *   单打 902 MARCH_WORLD_POINT —— 走 core/march.attack() 组 canonical body（逐键同 183821）；marchType 79。应答带 marchInfo.marchId。
+ *   单打 902 MARCH_WORLD_POINT —— 走 core/march.attack() 组 canonical body（逐键同打野实录）；marchType 79。应答带 marchInfo.marchId。
  *     注意：惧星点（906 回的 pointType 86 = THOR_BUFF_RALLY_MIX_BOSS）不是普通野怪，**不能**沿用普通打野的 marchType 5：
- *     5(ATTACK_MONSTER) 会被服务端按普通怪物表查点 → 拒 world_130509「point error, monster not find」（20261031T190920 实证）。
+ *     5(ATTACK_MONSTER) 会被服务端按普通怪物表查点 → 拒 world_130509「point error, monster not find」（真机报文实证）。
  *     游戏侧 NWorldMapAssemblyEnemyComponent.onAttackNormalMonster 对 THOR_BUFF_RALLY_MIX_BOSS 特判 79 THOR_SCIENCE_BUFF，
  *     同报文实证 902 受理后 marchInfo.marchType=79、10019/10163 亦为 79（10163 pveId=9101005 = 9100+level5）。
- *   集结 1201 ALLIANCE_Assembly_Create —— 直发 req {marchType:8,x,y,time:60,armyList,armyListNew,heroList,trapList,formation:0,formationV2}（无 break/extraArmy，183114 实证）。应答带 marchInfo.marchId。
+ *   集结 1201 ALLIANCE_Assembly_Create —— 直发 req {marchType:8,x,y,time:60,armyList,armyListNew,heroList,trapList,formation:0,formationV2}（无 break/extraArmy，据点集结实录实证）。应答带 marchInfo.marchId。
  *     惧星集结不特判类型（游戏侧 startAssemblyByUserLevel 对 THOR 仍取 ALLIANCE_RALLY_BATTLE=8）。
  *   体力 —— gameData.energy(1)→{point,pointMax}（push 10021）；仅作「体力>0 才搜」的粗闸防零体白烧配额，具体扣减交由服务器拒 + 退避收敛。
  *
@@ -53,7 +53,7 @@ const log = createLog('FEAR-STAR');
 const CMD_CREATE_RALLY = 1201;
 /**
  * @type {number} RequestId.GET_JION_ALL_RCTIME：查惧星当日计数（应答 d 含 thorSearchNum=今日已搜惧星次数）。
- * 报文实证 dashcam 20261003T023731-下田和撤田（包含机械田）.ndjson：resp cmd 1026 data {thorSearchNum,...}。
+ * 报文实证：下田撤田趟实录 resp cmd 1026 data {thorSearchNum,...}。
  */
 const CMD_GET_JION_ALL_RCTIME = 1026;
 /** @type {number} DataConfig 941300：惧星每日搜索次数上限（源码 WorldMapMonsterSearchComponentNew：剩余 = 941300 - thorSearchNum） */
@@ -69,10 +69,10 @@ const POINT_TYPE = 9;
 /**
  * @type {number} 行军类型：惧星单打（NMarchType.THOR_SCIENCE_BUFF=79）。
  * 惧星点（906 回 pointType 86 / itemId 9100）走雷神专属类型，游戏侧 NWorldMapAssemblyEnemyComponent.onAttackNormalMonster
- * 对 THOR_BUFF_RALLY_MIX_BOSS 特判 79；沿用普通野怪的 5 会被拒 world_130509（20261031T190920 实证）。
+ * 对 THOR_BUFF_RALLY_MIX_BOSS 特判 79；沿用普通野怪的 5 会被拒 world_130509（真机报文实证）。
  */
 const MT_ATTACK = 79;
-/** @type {number} 行军类型：创建集结主行军（NMarchType.ALLIANCE_RALLY_BATTLE=8，惧星不特判；183114 实证） */
+/** @type {number} 行军类型：创建集结主行军（NMarchType.ALLIANCE_RALLY_BATTLE=8，惧星不特判；据点集结实录实证） */
 const MT_RALLY = 8;
 /** @type {number} 1201 集结等待时长（秒，报文实证固定 60） */
 const RALLY_WAIT_TIME = 60;
@@ -279,7 +279,7 @@ function syncSelfFearStar(marches) {
 
 /**
  * 置锁后拿一次行军快照补认「这条行军确实存在」：march.js 对每条 10019 都 upsert 快照（不只边沿才复播），
- * 而首条推送往往早于发起应答落地（报文实证 20261011T183821：push 行 286 先于 resp 行 288），
+ * 而首条推送往往早于发起应答落地（报文实证：push 先于 resp 落地），
  * 所以光靠边沿复播会漏认。命中即 confirmed=true；未命中不作判（行军可能尚未入快照）。
  * 稳态走内存快照，零额外网络；快照过期时由 march.js 自行打一次 856 重播种。永不抛错。
  * @param {string} id 发起应答里的 marchId

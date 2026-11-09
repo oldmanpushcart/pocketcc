@@ -28,7 +28,15 @@
 >
 > feat 侧协议台账（号段语义 / 闸门常量 / 状态枚举 + 每条判据的实录与反编译出处）也收在本目录，按 feat 一篇：
 > [`异能兽培育.md`](异能兽培育.md)（`src/feats/player/beast-breed.js`）、
-> [`feat-雷达任务.md`](feat-雷达任务.md)（`src/feats/player/radar-task.js`）。
+> [`feat-雷达任务.md`](feat-雷达任务.md)（`src/feats/player/radar-task.js`）、
+> [`feat-战区宝藏.md`](feat-战区宝藏.md)（`src/feats/cq26/excav.js`，含「为什么不嗅探地图地块 / 不用 EventCenter」的通道选型取舍）、
+> [`feat-霜之密所抢购.md`](feat-霜之密所抢购.md)（`src/feats/cq26/shop.js`，含「为何 burst 必须 `gate:false` 裸发 + 本地镜像收敛」「push 与 status 1→2 同秒 ⇒ 无可提前量」的取舍）、
+> [`feat-机械制药.md`](feat-机械制药.md)（`src/feats/player/potion-craft.js`，制药 lane 单飞排产）、
+> [`feat-快速修理.md`](feat-快速修理.md)（`src/feats/player/quick-repair.js`，英雄免费快速修理 + 医院加速，含「只开免费线」灰度用法）。
+>
+> [`acl-cq26-荒芜冰原.md`](acl-cq26-荒芜冰原.md)（`src/core/acl/game-data.js` 的 NWL 区段，**待实现**）—— 荒芜冰原 2111~2130 / 22071~22077 字段字典与投影契约，含「一个分区只有一种玩法」「`k` 就是 `wkid`」「`todayCanGatherTime` 是剩余、`todayCollectDuration` 是已用」等判据。
+>
+> [`feat-荒芜冰原采集.md`](feat-荒芜冰原采集.md)（`src/feats/cq26/wl-gather/`，**设计定稿、未实现**）—— 一个 feat 三腿（采集 2114 / 协助 2116 / 盗采 2115）的组织与决策文档：为何合一、`2201→2120→901` 三层扫描的成本口径、三腿谓词与配额、对拍规则表、8 条已知缺口；协议与判据的真相源在 ACL，本篇只写「怎么组织与怎么决策」。
 >
 > 异能秘境自动驾驶两篇递进，改动前先读 v4（施工图，带竞品逐行索引与 ACL 缺口清单）：
 > [`feat-异能秘境自动驾驶-v3重设计.md`](feat-异能秘境自动驾驶-v3重设计.md)（现状根因 + 竞品拆解）→

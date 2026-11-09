@@ -497,13 +497,14 @@ export function mountSortList(box) {
 
 /**
  * 装配物品清单容器（.pc-ilist）：行不可增删，每行一枚 checkbox + 一个数字输入；`fd.sortable` 时行首多一个拖拽手柄。
+ * `fd.costCol` 时那个数字输入换成只读钻石价列（.pc-icost）：下方 .pc-imax 委托自然查不到节点，无需额外闸门。
  * 状态形状：`cfg[fd.key] = { [idStr]: { on: 0|1, max: number, [channel2.key]?: 0|1 } }`，未登记的项默认 on=1/max=0（无上限）。
  * `fd.channel2` 存在时行内多一枚第二渠道勾选（.pc-ichk2，回写 `state[key][ch2.key]`，如秘境持有清单的 shop 渠道）。
  * 拖拽序：`cfg[fd.orderKey] = string[]`（池 key 的优先级序，下标即优先级），只由拖拽写入（写全量 DOM 序）；
  *   旧存档无此数组 = 未排过序，面板按池原序展示，引擎也不按序优先（见 feats/activity/secret-realm/pickup.js）。
  * 池项带 `cap`（游戏自身硬上限）时，输入超出 cap 会被自动修正为 cap 并回写框内值。
  * 首次写入前浅拷两层（见下）：内层条目仍与 defaults 共享，registry 的一层克隆到这里不够。checkbox 改动重刷整块（行高量可取）；
- * number 改动不重刷，避免抢用户正在输入的框。两者都走 saveFeature + applyFeature 热更。
+ * number 改动不重刷，避免抢用户正在输入的框（但页脚 fd.summary 会就地回写文本）。两者都走 saveFeature + applyFeature 热更。
  * @param {HTMLElement} box .pc-ilist 容器
  */
 export function mountItemList(box) {
@@ -537,8 +538,18 @@ export function mountItemList(box) {
   };
 
   const rerender = () => {
-    box.innerHTML = itemListInnerHTML(items, state, fd, order);
+    box.innerHTML = itemListInnerHTML(items, state, fd, order, c);
     bind();
+  };
+
+  // 页脚汇总（fd.summary）就地回写：number 改动走的是「不重刷」分支（防抢输入框焦点），
+  //   若不单独回写就会停留旧值（直到下一次整块重刷），故只改这一个节点的文本，不碰行 DOM。
+  const refreshSummary = () => {
+    if (!fd || !fd.summary) return;
+    const foot = box.querySelector('.pc-isummary');
+    if (!foot) return;
+    foot.textContent =
+      typeof fd.summary === 'function' ? fd.summary(items, state, c) : String(fd.summary);
   };
 
   // 拖拽收尾：按当前 DOM 序回写 order（全量池 key，顺带把已从池中消失的残留项清掉）→ 重刷 + 存档 + 热更
@@ -595,7 +606,8 @@ export function mountItemList(box) {
         if (cap > 0 && v > cap) v = cap; // 游戏自身上限抢先：超出直接修正为上限
         num.value = v > 0 ? v : ''; // 0 回写为空→露出占位（无上限/游戏持有上限），与渲染同口径
         e.max = v;
-        // 不重刷，避免抢用户当前输入框；需高亮 off 行时可手动失焦后看下一刷新周期
+        // 不重刷，避免抢用户当前输入框；但页脚汇总要跟着改数走（见 refreshSummary）
+        refreshSummary();
         saveFeature(f);
         applyFeature(f);
       });

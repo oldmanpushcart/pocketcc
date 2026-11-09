@@ -180,6 +180,8 @@ export const PANEL_CSS = `
     .pc-ichk2{flex:0 0 auto;width:14px;height:14px;margin:0;cursor:pointer;accent-color:#4aa3ff;}
     .pc-ichklbl2{margin-left:14px;}
     .pc-iname{flex:0 0 66px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px;color:#e8eef7;}
+    /* fd.nameGrow：名称列改弹性填充（长物品名不截断，同行数字/勾选仍右对齐成列）；类写在 .pc-iname 之后靠源码顺序决胜特异度 */
+    .pc-iname.pc-namegrow{flex:1 1 auto;min-width:0;}
     /* 行内角标：池项带 cap（游戏自身硬上限，如秘境 ITEM.para1_v1）时标 ≤N，提醒超出会被自动修正 */
     .pc-icap{flex:0 0 auto;padding:0 4px;border-radius:4px;font-size:11px;color:#9ecbff;
       background:rgba(74,163,255,.12);border:1px solid rgba(74,163,255,.22);}
@@ -187,6 +189,24 @@ export const PANEL_CSS = `
       border:1px solid rgba(255,255,255,.15);background:rgba(0,0,0,.25);color:#e8eef7;font:inherit;font-size:12px;}
     /* 背包上限 placeholder（cap=0 时的「无上限」）：与打野 .pc-hln 同款亮色，不被浏览器默认浅灰吞掉 */
     .pc-imax::placeholder{color:#cfe3ff;opacity:1;}
+    /* fd.noMax 的钻石价列（代替「购买上限」输入列）：红色对齐游戏内钻石花费读数，表未加载时置灰破折号 */
+    .pc-icost{flex:0 0 auto;min-width:64px;text-align:right;font-variant-numeric:tabular-nums;
+      font-size:12px;color:#ff6b6b;white-space:nowrap;}
+    .pc-icost.pc-icostunk{color:#8b97a8;}
+    /* itemlist 的只读总数量列（fd.stockText，如密所「全部商店该商品剩余之和」）：与价列同右对齐成列。
+       双类选择器 (0-2-0) 压过上方 .pc-fval 的 flex:0 0 auto——那一条源码顺序在后，单类写会被它抢走宽度行为 */
+    .pc-fval.pc-istock{flex:0 0 46px;text-align:right;font-size:12px;white-space:nowrap;}
+    /* 只读信息表格（type:'infogrid'，如密所状态：归属区/等级/状态/倒计时）：一行一条记录，
+       行包 div 用 display:contents 把格子直接挂到父栅格，列宽由内联 grid-template-columns:repeat(N,max-content) 给出
+       ——所有行共用同一套列宽，因此「上下严格对齐」不依赖等宽字体（CJK/数字混排下靠空格填充会错位） */
+    .pc-igraph{display:grid;gap:2px 10px;width:100%;margin:2px 0 6px;font-size:12px;
+      align-items:center;justify-content:start;}
+    .pc-igrow{display:contents;}
+    .pc-igcell{min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+      font-variant-numeric:tabular-nums;color:#e8eef7;}
+    .pc-igright{text-align:right;}
+    .pc-ighead-cell{color:#9ecbff;font-size:11px;opacity:.85;}
+    .pc-ignone{grid-column:1/-1;color:#8b97a8;}
     .pc-smove:hover{background:rgba(255,255,255,.1);}
     .pc-smove:disabled{opacity:.3;cursor:default;}
     .pc-row input[type=checkbox]{width:16px;height:16px;cursor:pointer;flex:0 0 auto;}

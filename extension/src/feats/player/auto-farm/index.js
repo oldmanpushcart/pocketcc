@@ -13,6 +13,15 @@
  *   normal-scan  —— 普通田：906 逐级降序（5→1）搜索，应答即校验（ownerId '0' && amount>0）。
  * 下田前的信息获取全部在 priority.pickBest 内闭环：遗迹 901 复验、机械 901+1034 容量、普通 906 应答。
  *
+ * 6 级田是抢的，三道闸都在 lvl6-scanner 内（详见该文件头）：
+ *   ① 派前单点 901 复验同时开 marchInfo，看有没有别人也在飞向该点——**按 ETA 比划算**：对手预计到达晚于我方
+ *     （加 RACE_MARGIN_SEC 垫）才下，否则只记 contendedUntil（对手预计空出时刻）延后重试，不拉黑；
+ *     扫图 5 窗仍不开 marchInfo（视口外的行军不下发，且徒增包体）；
+ *   ② 902 被拒后同一行本轮内换点续抢（上限 cfg.relicRetryMax），只有全局限流/英雄未归队两类不续抢；
+ *   ③ 到达却从未进采集态（10019 state=5 边沿未亮且 856 未见）= 空返，按 cfg.relicGatherFailMs 短解禁该点。
+ * 排程侧配套：抢田「判无可判」但池里还有未复验候选（relic.staleCount>0）时算 backlog，走 active 档而非 idle 长档，
+ * 否则就成了「每 10 分钟只验几个点、而田只活 4h」（真机实录）。
+ *
  * 子引擎 mech-build（自动建造机械田，需机械大师职业）：共用本 feat 的 ctx / alive / 下田时段闸，
  * 面板字段 mechBuildEnabled + mechBuildFamilies 经 toModuleCfg 归一后由本 feat configure 转发；
  * 时段外/取消勾选时由 mech-build 先拉 1031 权威表、再对**在建（st=2）**塔逐座 1032 TOWER_REMOVE，
@@ -39,19 +48,20 @@
  *
  * 撤田全局不变量：**遗迹田（6 级田）永不撤回**，三个撤田出口一律受此闸——时段外只撤机械/普通（recallAllFarms 硬闸）、
  * 升级抢田跳过遗迹行（upgradePass）、发射井为自己腾队列时把遗迹田剔出候选（launch-silo 走 core/resource.isRelicTarget）。
- * 识别走单一判据 core/resource.isRelicTarget：targetType=38（与 901 pointType 同轴，报文实证 dashcam 20261016 856 条目恒带：普通田 4/遗迹田 38）
+ * 识别走单一判据 core/resource.isRelicTarget：targetType=38（与 901 pointType 同轴，报文实证 856 条目恒带：普通田 4/遗迹田 38）
  * 优先，itemId 组 15 与 RESOURCE level≥6 兜底——三面都不依赖候选池是否已扫过。
  * 理由：6 级田只由遗迹刷新邮件批量开出、4 小时即到期，撤一趟往返就赶不上本期剩下的采集窗，收益远低于损失。
  *
- * 账本：storage.data['autoFarm']，rowIdx → [{marchId,x,y,marchType,heroIds,kind,level,facility,family,itemId,preset,dispatchedAt,upgradedAt,probedAt,recalledAt}]，
- * 每行至多 1 条（recalledAt>0 = 待英雄归队的钉位，旧档无此字段回 undefined 不影响读）；增删行导致下标位移时靠 preset 一致性闸销位（不把别人的田钉到本行），
+ * 账本：storage.data['autoFarm']，rowIdx → [{marchId,x,y,marchType,heroIds,kind,level,facility,family,itemId,preset,dispatchedAt,upgradedAt,probedAt,recalledAt,gatheredAt}]，
+ * 每行至多 1 条（recalledAt>0 = 待英雄归队的钉位；gatheredAt>0 = 该队真进过采集态，遗迹空返闭环的唯一判据；旧档无这些字段回 undefined 不影响读）；增删行导致下标位移时靠 preset 一致性闸销位（不把别人的田钉到本行），
  * 身份闸（英雄集）与孤儿认领沿用旧口径，防止外队把某行钉死到对方采完。
  * 抢田的两个时刻（upgradedAt/probedAt）落盘而非只存内存：本 feat offInCombat，进/出战斗模式与
  * 切场景都会重跑 run()，内存态冷却会被抹平 → 抖动窗口从 10min 退化成 3min。
  *
  * 生命周期由 reactor 托管：places 限 base/world、战斗模式暂停；唤醒源（run/10019 回城/配置变更/推送/遗迹池增长/兜底定时）
  * 全部汇入 cycle.kick。三个 cycle（派兵 / 遗迹扫图 / 机械田重扫）均由 alive 门控，暂停自然停摆；
- * 遗迹扫图拍完若池子变大，会另踢派兵 cycle 一脚（否则新刷的 6 级田要等到下个 idle 长档才有人采）。
+ * 遗迹田是抢的，邮件驱动那条链必须闭环到底：**10264 刷新邮件 → 立即起扫图 cycle（不经去抖）→ 这批待扫邮件扫完 → 立即踢派兵 cycle 一轮**
+ * （下田/换田判定都在 cyclePass 里；旧实现只「池子变大」才踢，零新点的收尾拍不重评，而扫图期间别的队已可能先落子）。
  * 子引擎 mech-build 的 install/configure/run/pause 由本 feat 生命周期统一转发（不独立注册 reactor）。
  */
 import { parseData, sleep } from '../../../core/util.js';
@@ -150,6 +160,13 @@ const cfg = {
    * 保证被预算挡住后面的族下拍也能探到（不是永久盲掉）。
    */
   normalFamilyMax: 2,
+  /**
+   * 遗迹田派兵被拒后，同一行本轮最多再换几个点续抢（纯计数）：6 级田靠抢，
+   * 一个点被别人先下不该白等一整拍（真机实录：被拒后本行直接转入下一行，缺位留到下次唤醒）。
+   */
+  relicRetryMax: 2,
+  /** 遗迹田「到达却从未进入采集态」（被人先一步占/存量异常）的空返解禁（毫秒）：短到能立刻换下一块，又不反复撞同一点 */
+  relicGatherFailMs: 1000 * 60 * 2,
 };
 
 /** @type {object|null} reactor 注入的上下文；alive() 反映运行态 */
@@ -187,6 +204,17 @@ var passProbes = 0;
 var nextDwellReadyAt = 0;
 /** @type {Function|null} march.onHomeReturn 退订句柄（防 resume 重激活重复注册） */
 var offHomeReturn = null;
+/**
+ * @type {Function|null} march.onStateChange 退订句柄：只用来给账本条目销「真开采过」（state=5 GATHERING）。
+ * 没这个边沿就分不清「采满回家」与「到了发现被人先占、一口未采空返」，后者不拉黑就成了每拍重跑同一块死田。
+ */
+var offGatherEdge = null;
+/**
+ * @type {boolean} 抢田/换田的评估还没跑完：或遗迹池里仍有没复验过的候选（relic.staleCount>0），
+ *   或本拍抢田名额（upgradeMaxPerPass）用完了但后面还有行未判。这类「还有事没做完」不该睡 idle 长档
+ *   （真机：100 点池每拍只验 2 个、田只活 4h，永远验不完；8 行要换遗迹田得等满 8 个 10 分钟）。
+ */
+var reEvalPending = false;
 
 /** @returns {boolean} 功能是否仍在运行 */
 function aliveFn() {
@@ -617,6 +645,13 @@ function reconcileLedger(marches, allRules) {
         e.facility = inferFacility(e.kind, hit.x, hit.y);
         changed = true;
       }
+      // 「真开采过」的快照补认：856 里已见 state=5，就不必等 10019 边沿。
+      // 只靠边沿会在「刷新页后重挂订阅」时永久漏认（那期间已在采集的行军不再产生跃迁），
+      // 于是到家被误判成空返、白拉黑一块好田（同类坑见惧星在途锁的 confirmed 修复）。
+      if (!e.gatheredAt && hit.state === march.State.GATHERING) {
+        e.gatheredAt = Date.now();
+        changed = true;
+      }
       keep.push(e);
     }
     if (keep.length !== arr.length) changed = true;
@@ -810,6 +845,25 @@ function markRecalled(marchId) {
 }
 
 /**
+ * 按 marchId 反查账本条目（行军边沿事件只带 id，要落到「哪一行、哪块田」就得这么回查）。
+ * id 一律 String 比较：雪花 id 超过 2^53，转 Number 会静默丢精度后认错人。
+ * @param {string|number} marchId 归一化 March.id
+ * @returns {{rowIdx:number, entry:object}|null}
+ */
+function findLedgerEntry(marchId) {
+  var mid = String(marchId || '');
+  if (!mid) return null;
+  for (var key in ledger) {
+    if (!hasOwn(ledger, key)) continue;
+    var arr = Array.isArray(ledger[key]) ? ledger[key] : [];
+    for (var n = 0; n < arr.length; n++) {
+      if (arr[n] && String(arr[n].marchId) === mid) return { rowIdx: +key, entry: arr[n] };
+    }
+  }
+  return null;
+}
+
+/**
  * 行军到家 → 放开它的「待归队」占位（英雄已释放，此刻该行才算真缺位）。
  * @param {string|number} marchId 到家行军 id
  * @returns {boolean} 是否命中并摘掉了占位条目
@@ -882,69 +936,80 @@ async function dispatchRows(rows, allow, taken) {
       break;
     }
 
-    var cand = await pickBest(row.families, kinds, taken, { familyBudget: cfg.normalFamilyMax });
-    if (!aliveFn()) return dispatched;
-    if (!cand) {
-      log.debug(
-        'no candidate. row=%d preset #%d families=%s kinds=%s',
-        idx,
-        row.preset,
-        (row.families || []).join('+') || '-',
-        kinds.join('+'),
-      );
-      continue;
-    }
-    var ck = cand.x + ',' + cand.y;
-    var ret = await sendFarm(cand, plan);
-    if (!aliveFn()) return dispatched;
-    if (ret.ok) {
-      taken.add(ck);
-      rateLimitStreak = 0;
-      var d = parseData(ret.data) || {};
-      var mid =
-        d.marchInfo && d.marchInfo.marchId != null
-          ? String(d.marchInfo.marchId)
-          : d.marchId != null
-            ? String(d.marchId)
-            : '';
-      ledger[idx] = [
-        {
-          marchId: mid,
-          x: cand.x,
-          y: cand.y,
-          marchType: cand.marchType,
-          heroIds: (plan.presetHeroIds || []).slice(),
-          kind: cand.kind,
-          level: cand.level, // 矿脉（资源）级；机械田未探到时已兜底为设施级
-          facility: cand.facility | 0, // 机械设施级，非机械田 0
-          family: cand.family,
-          itemId: cand.itemId | 0,
-          preset: row.preset,
-          dispatchedAt: Date.now(),
-          upgradedAt: 0,
-          probedAt: 0,
-        },
-      ];
-      persistLedger();
-      free--;
-      dispatched++;
-      log.info(
-        'farm march ok. row=%d kind=%s ore=%d fac=%d family=%d rank=%d x=%d y=%d marchId=%s',
-        idx,
-        cand.kind,
-        cand.level,
-        cand.facility | 0,
-        cand.family,
-        cand.rank,
-        cand.x,
-        cand.y,
-        mid || '?',
-      );
-    } else {
+    // 6 级田靠抢：被拒（多为目标已被别人先一步下）不等于本行本轮无田——同行内换点续抢，
+    // 上一发被拒的点已由 relic.block 记入解禁表，pick 不会重复选中；上限 cfg.relicRetryMax。
+    // 两个例外不续抢：全局限流（中止本轮剩余行）、英雄未归队（换点注定同码，等归队唤醒）。
+    var stopRows = false;
+    for (var att = 0; ; att++) {
+      var cand = await pickBest(row.families, kinds, taken, { familyBudget: cfg.normalFamilyMax });
+      if (!aliveFn()) return dispatched;
+      if (!cand) {
+        if (!att)
+          log.debug(
+            'no candidate. row=%d preset #%d families=%s kinds=%s',
+            idx,
+            row.preset,
+            (row.families || []).join('+') || '-',
+            kinds.join('+'),
+          );
+        break;
+      }
+      var ck = cand.x + ',' + cand.y;
+      var ret = await sendFarm(cand, plan);
+      if (!aliveFn()) return dispatched;
+      if (ret.ok) {
+        taken.add(ck);
+        rateLimitStreak = 0;
+        var d = parseData(ret.data) || {};
+        // 标定我方采集行军速度：抢道判定要拿「我方预计到达」跟对手比，不硬编码秒表
+        relic.learnSpeed(cand.x, cand.y, d.marchInfo || null);
+        var mid =
+          d.marchInfo && d.marchInfo.marchId != null
+            ? String(d.marchInfo.marchId)
+            : d.marchId != null
+              ? String(d.marchId)
+              : '';
+        ledger[idx] = [
+          {
+            marchId: mid,
+            x: cand.x,
+            y: cand.y,
+            marchType: cand.marchType,
+            heroIds: (plan.presetHeroIds || []).slice(),
+            kind: cand.kind,
+            level: cand.level, // 矿脉（资源）级；机械田未探到时已兜底为设施级
+            facility: cand.facility | 0, // 机械设施级，非机械田 0
+            family: cand.family,
+            itemId: cand.itemId | 0,
+            preset: row.preset,
+            dispatchedAt: Date.now(),
+            upgradedAt: 0,
+            probedAt: 0,
+            gatheredAt: 0, // 是否真进过采集态（state=5）：0 = 未观测到，空返闭环靠它
+          },
+        ];
+        persistLedger();
+        free--;
+        dispatched++;
+        log.info(
+          'farm march ok. row=%d kind=%s ore=%d fac=%d family=%d rank=%d x=%d y=%d marchId=%s',
+          idx,
+          cand.kind,
+          cand.level,
+          cand.facility | 0,
+          cand.family,
+          cand.rank,
+          cand.x,
+          cand.y,
+          mid || '?',
+        );
+        break;
+      }
       var errKey = rejectErrKey(ret.data);
       if (errKey === ERR_RATE_LIMIT) {
         // 服务器 902 全局限流（操作过快）：田点本身有效，绝不拉黑；中止本轮剩余行并按 streak 指数退避
         rateLimitStreak++;
+        stopRows = true;
         log.info(
           'farm march rate-limited, stop burst and back off. row=%d kind=%s x=%d y=%d streak=%d',
           idx,
@@ -967,7 +1032,7 @@ async function dispatchRows(rows, allow, taken) {
           cand.x,
           cand.y,
         );
-        continue;
+        break;
       }
       if (cand.kind === KIND.RELIC)
         relic.block(cand.x, cand.y); // 遗迹会刷新复活：记解禁时刻，非同族硬拉黑
@@ -981,7 +1046,16 @@ async function dispatchRows(rows, allow, taken) {
         ret.code,
         errKey || '-',
       );
+      if (cand.kind !== KIND.RELIC || att >= cfg.relicRetryMax) break;
+      if (net.isSending(CMD_MARCH_WORLD_POINT)) {
+        backlogActive = true;
+        break;
+      }
+      // 续抢下一点：拉开间隔同逐条派兵口径（免把重试打成 902 全局限流）
+      log.debug('row=%d relic point lost, grab next. attempt=%d', idx, att + 1);
+      await sleep(cfg.marchInterval);
     }
+    if (stopRows) break;
     if (t < rows.length - 1 && free > 0) await sleep(cfg.marchInterval);
   }
   return dispatched;
@@ -1035,7 +1109,12 @@ async function upgradePass(allow, taken) {
   var wall = Date.now();
   for (var key in ledger) {
     if (!hasOwn(ledger, key)) continue;
-    if (passUpgrades >= cfg.upgradeMaxPerPass) return passUpgrades;
+    if (passUpgrades >= cfg.upgradeMaxPerPass) {
+      // 名额用完（单拍只撞 1 行是既有防抖：904 名额释放慢 + 902 全局限流）但本拍还有行没判：
+      // 不留 active 档就会睡回 10min，刚刷出的 6 级田要分 8 个 10 分钟才能逐行换完。
+      reEvalPending = true;
+      return passUpgrades;
+    }
     var idx = +key;
     var arr = Array.isArray(ledger[key]) ? ledger[key] : [];
     var row = all[idx];
@@ -1086,6 +1165,16 @@ async function upgradePass(allow, taken) {
             })
             .join(' | '),
         );
+        // 池里还有没复验过的点 ⇒ 本行不是「真没田」而是「还没验到」：6 级田靠抢，
+        // 按 idle 长档睡下去就是每 10 分钟只验几个点、而田只活 4h（真机实录整小时零动作）。
+        if (!reEvalPending) {
+          for (var fi = 0; fi < (row.families || []).length; fi++) {
+            if (relic.staleCount(row.families[fi] | 0) > 0) {
+              reEvalPending = true;
+              break;
+            }
+          }
+        }
       }
       continue;
     }
@@ -1158,7 +1247,9 @@ async function cycleRun() {
   } else if (cycle.pending) {
     return 0; // 本轮在飞期间来了外部触发 → 立即补扫一轮（合并语义）
   } else {
-    delay = backlogActive ? cfg.activeScanInterval : cfg.idleScanInterval;
+    // 缺位未补上（backlogActive）或抢田还有一堆没复验过的候选（reEvalPending）⇒ active 档；
+    // 只看前者会把「有田可抢但额度没验完」误归为无事可做，白睡满 10 分钟（真机实录）。
+    delay = backlogActive || reEvalPending ? cfg.activeScanInterval : cfg.idleScanInterval;
   }
   // 时段内也按下个边界主动择时：窗口止→立即撤田（不等 idle 长睡）、新窗口起→立即恢复下田
   if (windowActive()) {
@@ -1228,12 +1319,19 @@ function relicScanRun() {
     for (var f = 0; f < (rules[i].families || []).length; f++) want.add(rules[i].families[f] | 0);
   }
   var before = relic.size();
+  // 本轮进来时有待扫邮件（邮件驱动的一批）：扫完它就必须让派兵侧重评一次，不能只看池子有无变大
+  var hadWork = relic.pendingCount() > 0;
   return Promise.resolve(relic.scanPass(want)).then(function (ms) {
     // 扫图与派兵是两个 cycle（901 名额/限流不牵连），但「扫出新田」得有人去采：
     // 派兵 cycle 此刻多半在睡 idle 长档（10min），不唤醒就成了「邮件收到了、田也扫出来了，却一动不动」
     //（真机踩过：21:00:45 扫出 180 点入池，下一次派兵判定却排在 21:05:48）。
     var after = relic.size();
     if (after > before) pushWake('relic pool grew (' + before + '→' + after + ')');
+    if (hadWork && !relic.pendingCount()) {
+      // 这批刷新邮件收尾（一封也没新增也要踢）：抢道/占田态势在扫图的十几秒里又变了，
+      // 重评一轮才能把「扫到的田」立即变成「派出去的队」；批内已经踢过的多跑一轮成本仅一次 856 + 判定
+      kick(cycle, 'relic scan batch done (mail queued, pool ' + before + '→' + after + ')');
+    }
     return ms;
   });
 }
@@ -1277,6 +1375,7 @@ function earliestDwellReady(rows, allow, now) {
 async function cyclePass() {
   if (!screen(getUid())) return; // 准入存活校验（每拍 O(1)）
   nextDwellReadyAt = 0; // 先清预告，下面的提前 return 分支不得留下上拍旧值
+  reEvalPending = false; // 同上：抢田重评需求每拍重算，不拿上拍的旧候选结论驱动本轮排程
   var allow = globalAllowedKinds();
   outsideRemaining = 0;
   if (windowActive() && !inFarmWindow()) {
@@ -1337,14 +1436,52 @@ function pushWake(why) {
 }
 
 /**
+ * 行军迁入采集态（10019 边沿 state=5 GATHERING）→ 给账本条目钉上「真开采过」的时刻。
+ * 这个边沿是「空返」的唯一判据：只有派兵被受理、走到田上、并且服务器确认开始采集的行军才会点亮它；
+ * 缺了它就无法区分「采满回家」与「到了才发现被人先占、一口未采空返」（后者不短解禁就成了每拍重撞同一块死田）。
+ * @param {object} m 归一化 March
+ */
+function onFarmMarchGather(m) {
+  if (!aliveFn()) return;
+  var mt = (m && m.type) | 0;
+  if (mt !== KIND_FARM && mt !== KIND_TOWER) return;
+  var hit = findLedgerEntry(m && m.id);
+  if (!hit || hit.entry.gatheredAt) return; // 已钉过：同一条行军的重复边沿不再写盘
+  hit.entry.gatheredAt = Date.now();
+  persistLedger();
+  log.debug(
+    'march entered gathering, ledger stamped. row=%d kind=%s x=%d y=%d',
+    hit.rowIdx,
+    hit.entry.kind,
+    hit.entry.x | 0,
+    hit.entry.y | 0,
+  );
+}
+
+/**
  * 采集行军到家（march.onHomeReturn 复播）→ 该行缺位 → 唤醒补派。
  * 只认采集类行军回城；延迟 1.5s 给 HeroController 英雄释放推送落地的时间窗口（主防线见 dispatchRows 的英雄守卫）。
+ * 遗迹田在此做「空返闭环」：到家却从未进过采集态 ⇒ 这块田有问题（被先占/存量为空），短解禁后立刻换下一块，
+ * 而不是留着它在池里被下一拍重新选中（真机实录：21:02:13 派 (332,352)，≈63s 后一口未采空返）。
  * @param {object} m 归一化 March
  */
 function onFarmMarchHome(m) {
   if (!aliveFn()) return;
   var mt = (m && m.type) | 0;
   if (mt !== KIND_FARM && mt !== KIND_TOWER) return;
+  // 摘占位前先回查账本：releaseRecallSlot 会把条目 splice 掉，之后就找不到坐标了
+  var hit = findLedgerEntry(m && m.id);
+  // recalledAt 已钉位说明是我们主动撤的（时段外/升级换田），到家与田好坏无关，不得误解禁
+  if (hit && hit.entry.kind === KIND.RELIC && !hit.entry.gatheredAt && !hit.entry.recalledAt) {
+    relic.block(hit.entry.x | 0, hit.entry.y | 0, cfg.relicGatherFailMs);
+    log.info(
+      'relic home never gathered, point short-blocked. row=%d x=%d y=%d retry=%ds',
+      hit.rowIdx,
+      hit.entry.x | 0,
+      hit.entry.y | 0,
+      Math.round(cfg.relicGatherFailMs / 1000),
+    );
+  }
   // 撤回的那支到家 = 英雄真释放了，此刻摘掉「待归队」占位，该行才算真缺位（比等 856 缺席+超时快一大拍）
   releaseRecallSlot(m.id);
   setTimeout(function () {
@@ -1362,12 +1499,14 @@ function onAllianceRecordPush(ev) {
 }
 
 /**
- * 10264 单封邮件推送：命中「遗迹区域刷新」即入待扫队列并唤醒扫图 cycle（与派兵 cycle 解耦）。
+ * 10264 单封邮件推送：命中「遗迹区域刷新」即入待扫队列并**立即**起一轮扫图。
+ * 走统一的 kick() 出口而非裸 relicCycle.kick()：一是带「剪掉了多久排程」的诊断日志（事故回溯靠它），
+ * 二是本链不经过 pushWake 的 4s 去抖——刷田批次只靠邮件驱动，被去抖吞一次就是白等 60s 轮询兜底。
  * @param {object} ev net 推送事件（载荷在 ev.data）
  */
 function onRelicMailPush(ev) {
   if (!aliveFn()) return;
-  if (relic.onMailPush(ev)) relicCycle.kick();
+  if (relic.onMailPush(ev)) kick(relicCycle, '10264 relic refresh mail');
 }
 
 // ── 生命周期 ────────────────────────────────────────────────────────
@@ -1446,6 +1585,7 @@ function run(ctx) {
   passUpgrades = 0;
   passProbes = 0;
   nextDwellReadyAt = 0;
+  reEvalPending = false;
   ledgerLoaded = false;
   ledgerLoading = false;
   ledger = {};
@@ -1457,6 +1597,8 @@ function run(ctx) {
   ctx.on.push(relic.CMD_PUSH_MAIL, onRelicMailPush);
   if (offHomeReturn) offHomeReturn(); // 先退再挂，防 resume 重激活重复注册
   offHomeReturn = march.onHomeReturn(onFarmMarchHome);
+  if (offGatherEdge) offGatherEdge();
+  offGatherEdge = march.onStateChange(onFarmMarchGather, { to: march.State.GATHERING });
   log.info(
     'started (rows=%d, window=%s).',
     MCFG.rules.length,
@@ -1474,13 +1616,17 @@ function run(ctx) {
 }
 
 /**
- * 暂停钩子：三个 cycle 靠 alive 自然停；这里退订全局 onHomeReturn（reactor 摘不到 feat 自挂的订阅）。
+ * 暂停钩子：三个 cycle 靠 alive 自然停；这里退订 feat 自挂的两条全局行军订阅（reactor 摘不到它们）。
  * @param {object} _ctx reactor 上下文
  */
 function pause(_ctx) {
   if (offHomeReturn) {
     offHomeReturn();
     offHomeReturn = null;
+  }
+  if (offGatherEdge) {
+    offGatherEdge();
+    offGatherEdge = null;
   }
   mechBuild.pause(_ctx);
 }

@@ -178,7 +178,7 @@ net.10019 推送 ──▶ bus('net.10019') ──▶ _onPush: decode → 与 _k
 - **全局单点常驻**：feat 暂停仍收复播 → 回调内自判 `alive` 是硬约束；`off()` 需在重挂路径先调，防重复注册。
 - **集结 ≠ 902**：`alliance-rally` 派最小部队走的是 1204 `ALLIANCE_Assembly`，**不套 `march.attack()`**，只借用 `march.canMarch()` 闸门；`truck-intercept` 只用 `Battle` 造载荷、不碰列表/生命周期，不迁移。
 - **热路径读用 `list({cache:true})`、别塞默认 `list()`**：`{cache:true}` 稳态零网络（10019 边沿 + TTL 兑底）；把权威 `await list()`（856）放进每拍紧循环会放大请求量并给决策压网络 RTT。`floatcar` 名额账/去重即走 `list({cache:true})`；其 `nextReleaseAt` 腾位打点改读归一化 `March.returnArriveTime/marchArrive`（仅取未来时刻，两者都不可用或已成过去才回退轮询）。
-- **speedUp 已实装（920）**：真机报文实证（dashcam 20261005T204748）req `{marchId:str, itemId:number}`→resp `{s:0,d:"{}"}`（成功空载荷）；`itemId` 520001=普通、520002=高级（均为全账号稳定内容 id，就近定义于 march.js）。道具削减比（对「当时剩余时间」生效，报文实测同一行军先普通后高级）：**普通缩短 25%（剩 75%）、高级缩短 50%（剩 50%）**；调用方按「加速到剩余 ≤ N 秒」反推该用哪支。
+- **speedUp 已实装（920）**：真机报文实证 req `{marchId:str, itemId:number}`→resp `{s:0,d:"{}"}`（成功空载荷）；`itemId` 520001=普通、520002=高级（均为全账号稳定内容 id，就近定义于 march.js）。道具削减比（对「当时剩余时间」生效，报文实测同一行军先普通后高级）：**普通缩短 25%（剩 75%）、高级缩短 50%（剩 50%）**；调用方按「加速到剩余 ≤ N 秒」反推该用哪支。
 - **加速后的新到达走 10019 边沿（state 不变）**：920 受理成功后，服务器推一条 `10019`（state 仍 `MARCHING`）带更新后的 `marchInfo.marchArrive`（更早）。`decode` 已把 `marchStartTime/marchArrive/returnArriveTime` 归一化为 `March` 字段，`_cacheApply` 采用新到达（仅当新值解为 0=增量推送未带时刻才回退保留旧值，绝不把加速后的更早到达又冲掉）。因 state 未迁移，**不触发 `onStateChange` 复播**（加速非生命周期跃迁）；依赖到达的 feat（如 floatcar 腾位打点 `nextReleaseTime`）改读归一化 `March.marchArrive/returnArriveTime`，不再摸 `raw.marchArrive`（`raw` 是 `{marchInfo:...}` 嵌套，顶层无该字段，旧读法恒 undefined）。
 - **pickUp 两种 body 勿合并**：三键（海上夺宝/花车）与九键含 `ext`（领域寻宝挖矿/泰坦祝福）是各自真机录制口径，服务器都受理但保持逐键一致最稳；由是否传 `ext` 切换。
 - **缓存快照已并入 `list({cache:true})`（已完成）**：后端仍是 856 播种 + 10019 边沿 upsert/删除 + TTL 兑底刷新，但对外只剩 `list(opt)` 一个入口（`cached()/refresh()` 收为私有）。默认 `list()` 实时且 write-through 喂快照。快照不做跨登录/切号显式复位——靠 TTL 全量重播自然纠偏。
@@ -191,7 +191,7 @@ net.10019 推送 ──▶ bus('net.10019') ──▶ _onPush: decode → 与 _k
 
 ## 8. 变更记录
 
-- **2026-11-01（`target.targetType` 透传）**：`decode` 归一化 `March.target` 新增 `targetType`（与 901 `pointList[].pointType` 同轴）。据 dashcam 报文（`14179309129759/20261016T190507-夺宝奇兵-我是陪跑` 等，856 应答）实证：采集行军 `target={itemId,tx,ty,march_s,tk,targetType,tr}`，普通资源田 `targetType=4`、遗迹 6 级田 `targetType=38`。目的是给「遗迹田永不撤回」全局不变量（见 [`core/resource.js`](resource.md) `isRelicTarget`）提供一条**不依赖 RESOURCE 表**的硬判据；march.js 仍只透传不解读。
+- **2026-11-01（`target.targetType` 透传）**：`decode` 归一化 `March.target` 新增 `targetType`（与 901 `pointList[].pointType` 同轴）。据真机报文（夺宝陪跑场等，856 应答）实证：采集行军 `target={itemId,tx,ty,march_s,tk,targetType,tr}`，普通资源田 `targetType=4`、遗迹 6 级田 `targetType=38`。目的是给「遗迹田永不撤回」全局不变量（见 [`core/resource.js`](resource.md) `isRelicTarget`）提供一条**不依赖 RESOURCE 表**的硬判据；march.js 仍只透传不解读。
 
 - **2026-10-07（加速 push 归一化 + floatcar 行军加速）**：`decode` 新增归一化 `marchStartTime/marchArrive/returnArriveTime`（服务器 epoch 秒，`marchInfo.*` 优先→摊平顶层），供 feat 直接算剩余时间/腾位打点，无需再摸 `raw`（旧 floatcar `nextReleaseAt` 读 `raw.marchArrive` 恒 undefined、静默退化轮询）；`_cacheApply` 对时刻做「新值 >0 才采用、否则保留旧值」的防御合并，确保 920 加速后的 10019 边沿（state 不变）把更早到达并进快照。`speedUp` 文档补充削减比（普通 25%/高级 50%）与「加速后到达经 10019 更新、不触发 onStateChange」的口径。floatcar 新增面板字段 `accelTargetSec`（加速至剩余≤N 秒，0=不加速）：拾取 902 受理后按当前去程到达点判一次，决策前先 `item.amount` 核对背包数量，普通能达标优先普通、否则高级，缺货回退另一支。
 
@@ -199,6 +199,6 @@ net.10019 推送 ──▶ bus('net.10019') ──▶ _onPush: decode → 与 _k
 
 - **2026-10-05（行军全量归一收尾）**：新增 `pickUp()`（902 零部队统一动词，`ext` 切换三键/九键）与 `cached()/refresh()`（同步快照：856 播种 + 10019 边沿 upsert/删除 + TTL 兑底）。将剩余 4 处直读 `mapData.marches`/直发 902 的 feat 收口：`sea-treasure`（`marchAttack`→`pickUp` 三键、`hasMarchAtTarget`→`await list()`、去 NWorldMapData/DataCenter）、`titan-blessing`（`marchPickUp`→`pickUp` 九键）、`domain-treasure`（`digging…Mine`→`pickUp` 九键，isSending 门留 feat）、`floatcar`（`marchPickUp`→`pickUp` 三键；名额账 `freeSlots`/`myActiveMarches`/`hasMarchAtTarget`/`logQueueFullEvidence` 全改走 `cached()` 归一化字段、废 `isMyMarch`、去 NWorldMapData）。至此无 feat 再直发 902/904/856 或直读 `mapData.marches`。
 
-- **2026-10-05**：`speedUp()` 由接口缝→实装。据 dashcam 报文（20261005T204748）确认 920 `MARCH_SPEED_UP` req `{marchId,itemId}`、resp 成功空载荷；新增线协议常量 `CMD_MARCH_SPEED_UP=920` 与加速道具 `ITEM_SPEED_UP_NORMAL=520001`/`ITEM_SPEED_UP_ADVANCED=520002`，同批报文印证 904 召回 `{marchId}`、 856 `{}` 与 decode 嵌套口径。
+- **2026-10-05**：`speedUp()` 由接口缝→实装。据真机报文确认 920 `MARCH_SPEED_UP` req `{marchId,itemId}`、resp 成功空载荷；新增线协议常量 `CMD_MARCH_SPEED_UP=920` 与加速道具 `ITEM_SPEED_UP_NORMAL=520001`/`ITEM_SPEED_UP_ADVANCED=520002`，同批报文印证 904 召回 `{marchId}`、 856 `{}` 与 decode 嵌套口径。
 
 - **2026-10**：新建 `core/march.js`。归一化 `March` + 列表（纯异步 856）+ 名额（`freeSlots/canMarch`）+ 发/撤（`attack/recall`，902 走 `net.send`）+ 生命周期（全局单点 10019 边沿复播，`onStateChange/onHomeReturn`）。全量迁移 8 个 feat：`auto-farm`（856/10019/多槽 free/902 下田）、`launch-silo`（`mapData.marches`→`list()`、904→`recall`、返程→`onHomeReturn`、名额→`canMarch`）、`source-of-war/attack`（10019/名额/902）、`alliance-boss`（`canMarch/sendMarch`）、`quick-attack`+`imperial-decree`（发送骨架→`attack`，跨服漂移留 feat）、`domain-treasure`（在途计数→`list()`）、`alliance-rally`（仅 `canMarch` 闸门，1204 集结发包不动）。`speedUp` 仅留接口缝；缓存快照拆为独立后续。

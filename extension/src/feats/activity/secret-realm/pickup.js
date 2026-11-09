@@ -870,6 +870,7 @@ export class PickupEngine {
     await this.#pipe(tasks, ts);
 
     // D. 增益井 buff（buffEffects 类勾选；RESOURCE_GET_BUFF req {rId,pos}；仅队长可装；pos 依 buffMap 同类替换或首个空槽）
+    let buffSent = false;
     if (pab && buffInfo.length && this.#tileGate(tileKey, ts)) {
       const gotBuff = Number(e.buffGetNum) || 0;
       if (gotBuff < buffMax) {
@@ -910,6 +911,7 @@ export class PickupEngine {
                 rId: b.dropId,
                 pos: pos,
               });
+              buffSent = true;
               if (!(ret && ret.ok)) this.#blackOnReject(b.dropId, ret);
               // 一轮只装一枚：装备成功后 buffMap 需等 push 更新，避免同拍重发同一槽位
               break;
@@ -919,6 +921,23 @@ export class PickupEngine {
           env.log.warn('buff pickup skipped (isTeamLeader threw).', err);
         }
       }
+    }
+
+    // E. 回灌「此点对我已采完/无需采」给方向盘：单人开车时井里常剩自己不需要的货（未勾选/达单项上限/同道具只拿一次/配额已够），
+    //   服务器看仍非空→pilot 双路拿空判据失效、会硬等 driveWorkMaxMs 兑底。本批发出 0 个 GET（bag+buff 都没发）但载荷确实有货
+    //   → 报给 pilot 即时离站（防重派靠离站时的 #consume）。只在仍停靠本点时报（#tileGate）；若本批发了 GET（哪怕 tasks>0）就不报。
+    if (
+      tileKey &&
+      (bagInfo.length > 0 || buffInfo.length > 0) &&
+      tasks.length === 0 &&
+      !buffSent &&
+      this.#tileGate(tileKey, ts)
+    ) {
+      env.markTileExhausted(tileKey);
+      env.log.debug(
+        'pickup: resource (%s) had entries but took nothing → mark exhausted.',
+        tileKey,
+      );
     }
   }
 

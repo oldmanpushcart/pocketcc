@@ -4,7 +4,7 @@
  * 职责：把 log.js 的 tee（setSink）转成「流式缓冲 + 定时批量 POST 到本地 dashcam /log」。
  * 与报文录制（net-collect）是**两个独立开关、两个接收端点**：
  *   - 报文：会话制（面板开→关一段），带业务标签 note，dashcam 定稿命名；
- *   - 日志：长期常开、无业务语义，dashcam 端按小时轮转直写 store/_log/<uid>/，本侧无 done 概念。
+ *   - 日志：长期常开、无业务语义，接收端按小时轮转直写，本侧无 done 概念。
  *
  * 异步纪律（镜像 net-collect，六条逐条对齐）：
  *   1. 关时零挂接：不注册 sink，log.js hot path 回落到一次判空；
@@ -72,7 +72,7 @@ export let logCollectApi = null;
   var flushWarned = false;
 
   /**
-   * 级别过滤器（只升不降档，与 dashcam/cli.js 的 LVL_ORDER 同源语义）：
+   * 级别过滤器（只升不降档）：
    * minLvl=debug 全收；info 收 info+warn+error；warn 收 warn+error；error 只收 error。
    * error 必须显式列档：否则新增等级会靠「缺省 info 档」的兼容分支被收，改语义时静默漏。
    * @param {string} lvl
@@ -127,7 +127,7 @@ export let logCollectApi = null;
 
   /**
    * uid 惰性纠偏：start 时 UID 可能未就绪（登录页/降级重载前勾选），永久停 anon 会被
-   * background 的 screen(uid) 静默丢批 + dashcam 侧 logRef 配对目录对不上，故每次 flush 复核。
+   * background 的 screen(uid) 静默丢批 + 接收端配对目录对不上，故每次 flush 复核。
    */
   function syncUid() {
     var u = getUid() || 'anon';

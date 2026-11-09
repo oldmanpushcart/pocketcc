@@ -4,17 +4,17 @@
  * 纯 node:http，无三方依赖。接收扩展 background service worker 代发的 NDJSON，两类流两个端点：
  *
  * 1. POST /ingest —— 网络报文（会话制）：面板开→关为一段，带业务标签 note，按下方命名定稿。
- *   命名规范（本次录制会话 = 一个文件；开→关为一次）：
- *     store/<uid>/<startLocal>[-<note>][-<slug>].ndjson
+ *   命名规范（本次录制会话 = 一个文件；开→关为一次；文件名统一带 dashcam-rec- 前缀）：
+ *     store/rec/<uid>/dashcam-rec-<startLocal>[-<note>][-<slug>].ndjson
  *       <startLocal>  录制启动时刻的本地紧凑时间 YYYYMMDDTHHMMSS（可排序、可读）
  *       <note>        面板「本次标签」预填（可空，优先作主题词；保留原大小写/中文，仅净化路径字符）
  *       <slug>        自动派生：本段 cmd 统计去掉噪声与 GET_ 等前缀后的 top 请求名（无 note 时作主题）
- *     同目录另有 index.ndjson（每 session 一行）作为「行程表」，行内附 logRef 指向同时段日志段。
- *   落盘时序：进行中写 .part（只 append）；x-done 或空闲超时后定稿——算 slug、改名、写索引。
+ *     同目录另有 dashcam-rec-index.ndjson（每 session 一行）作为「行程表」，行内附 logRef 指向同时段日志段。
+ *   落盘时序：进行中写 dashcam-rec-*.part（只 append）；x-done 或空闲超时后定稿——算 slug、改名、写索引。
  *
  * 2. POST /log —— 扩展日志（长期常开，无业务语义）：不分会话、不定稿、不建索引，
- *   按**小时轮转直写**最终文件名（传统 logrotate 形态，崩溃不丢已写内容）：
- *     store/_log/<uid>/<YYYYMMDDTHH>[-NN].ndjson   行格式 {ts,lvl,mod,msg,n}（n=折叠重复计数）
+ *   按**天轮转直写**最终文件名（传统 logrotate 形态，崩溃不丢已写内容；文件名带 dashcam-log- 前缀）：
+ *     store/log/<uid>/dashcam-log-<YYYYMMDD>[-NN].ndjson   行格式 {ts,lvl,mod,msg,n}（n=折叠重复计数）
  *   按行内 ts 归段；单段超 DASHCAM_LOG_MAXSEG 字节则滚到下一序号段（防失控刷屏把磁盘写满）。
  *   与报文会话的配对是**查询时软引用**（index 行 logRef 给目录+时间窗），不耦合生命周期。
  *
@@ -40,6 +40,14 @@ const IDLE_FINALIZE_MS = 3 * 60 * 1000; // 空闲超此值即定稿（done 批�
 const SWEEP_INTERVAL_MS = 30 * 1000;
 const MAX_BODY = 32 * 1024 * 1024; // 单批 body 上限 32MB
 const LOG_MAX_SEG = Number(process.env.DASHCAM_LOG_MAXSEG) || 32 * 1024 * 1024; // 日志单段字节保险丝
+
+// 存储分层与前缀（新规范）：报文 → store/rec/<uid>/dashcam-rec-*.ndjson；日志 → store/log/<uid>/dashcam-log-*.ndjson。
+// 目录归类 + 文件名前缀双保险，任一侧 glob 都不会误吞另一侧；rec 侧机器索引固定名 dashcam-rec-index.ndjson。
+const REC_SUB = 'rec';
+const LOG_SUB = 'log';
+const REC_PREFIX = 'dashcam-rec-';
+const LOG_PREFIX = 'dashcam-log-';
+const INDEX_NAME = 'dashcam-rec-index.ndjson';
 
 // ── 自动 slug 启发式 ──────────────────────────────────────────────
 // 噪声：高频纯轮询/心跳类命令名，派生主题时跳过（可按真机反馈增补）
@@ -128,7 +136,7 @@ function deriveSlug(nameCounts) {
  * @returns {{name:string, file:string}} name 仅文件名，file 绝对路径
  */
 function resolveName(dir, startLocal, note, slug) {
-  const base = [startLocal, note, slug].filter(Boolean).join('-');
+  const base = REC_PREFIX + [startLocal, note, slug].filter(Boolean).join('-');
   let name = base + '.ndjson';
   if (!fs.existsSync(path.join(dir, name))) return { name, file: path.join(dir, name) };
   for (let i = 1; i < 1000; i++) {
@@ -149,7 +157,7 @@ function loadIndex(uid, dir) {
   if (indexes.has(uid)) return indexes.get(uid);
   const m = new Map();
   try {
-    const p = path.join(dir, 'index.ndjson');
+    const p = path.join(dir, INDEX_NAME);
     if (fs.existsSync(p)) {
       for (const line of fs.readFileSync(p, 'utf8').split(/\r?\n/)) {
         if (!line.trim()) continue;
@@ -178,8 +186,8 @@ function writeIndex(uid, dir) {
   if (!m) return;
   const rows = [...m.values()].sort((a, b) => (a.start || 0) - (b.start || 0));
   const text = rows.map((r) => JSON.stringify(r)).join('\n') + (rows.length ? '\n' : '');
-  const tmp = path.join(dir, 'index.ndjson.tmp');
-  const out = path.join(dir, 'index.ndjson');
+  const tmp = path.join(dir, INDEX_NAME + '.tmp');
+  const out = path.join(dir, INDEX_NAME);
   try {
     fs.writeFileSync(tmp, text);
     fs.renameSync(tmp, out);
@@ -197,7 +205,7 @@ function finalizeSession(sessionId, s) {
   const dir = s.dir;
   const slug = s.note ? '' : deriveSlug(s.nameCounts); // 有 note 时 note 即主题，不再叠 auto slug
   const { name } = resolveName(dir, s.startLocal, s.note, slug);
-  const finalRel = path.join(s.uidSeg, name);
+  const finalRel = path.join(REC_SUB, s.uidSeg, name);
   // 重命名失败则保留 .part 不动，交给下次 sweep 重试
   try {
     if (fs.existsSync(s.partFile)) fs.renameSync(s.partFile, path.join(dir, name));
@@ -224,8 +232,8 @@ function finalizeSession(sessionId, s) {
     note: s.note,
     finalized: true,
     top,
-    // 同时段日志软引用（查询时配对，不耦合生命周期）：日志按小时轮转，窗内可能跨多个段文件
-    logRef: s.uidSeg ? { dir: '_log/' + s.uidSeg, from: s.start, to: s.lastSeen } : null,
+    // 同时段日志软引用（查询时配对，不耦合生命周期）：日志按天轮转，窗内可能跨多个段文件
+    logRef: s.uidSeg ? { dir: LOG_SUB + '/' + s.uidSeg, from: s.start, to: s.lastSeen } : null,
   };
   const idx = loadIndex(s.uid, dir);
   idx.set(sessionId, entry);
@@ -251,7 +259,7 @@ function ingest(headers, ndjson) {
   let s = active.get(sessionId);
   if (!s) {
     const uidSeg = sanitize(uid, 60) || 'anon';
-    const dir = path.join(OUT, uidSeg);
+    const dir = path.join(OUT, REC_SUB, uidSeg);
     fs.mkdirSync(dir, { recursive: true });
     const startLocal = fmtLocal(start);
     s = {
@@ -264,7 +272,7 @@ function ingest(headers, ndjson) {
       nameCounts: new Map(),
       lines: 0,
       lastSeen: Date.now(),
-      partFile: path.join(dir, `${startLocal}-${sessionId}.part.ndjson`),
+      partFile: path.join(dir, `${REC_PREFIX}${startLocal}-${sessionId}.part.ndjson`),
     };
     active.set(sessionId, s);
     fs.appendFileSync(s.partFile, ''); // touch 空文件，后续 append 续写
@@ -321,61 +329,61 @@ function sanitizeNote(raw) {
 }
 
 /**
- * 日志批落盘：按行内 ts 归小时段直写最终文件（无 .part、无定稿、无索引——日志无业务语义，
+ * 日志批落盘：按行内 ts 归天段直写最终文件（无 .part、无定稿、无索引——日志无业务语义，
  * rename 机制那套是为报文会话定稿服务的，这里纯属多余）。
- * 目录 store/_log/<uid>/；单段超 LOG_MAX_SEG 滚下一序号段（-01/-02…）；坏行静默跳过。
+ * 目录 store/log/<uid>/；文件名带 dashcam-log- 前缀；单段超 LOG_MAX_SEG 滚下一序号段（-01/-02…）；坏行静默跳过。
  * @param {{uid?:string, run?:string}} headers
  * @param {string} ndjson
  */
 function ingestLog(headers, ndjson) {
   const uid = sanitize(headers['x-uid'], 60) || 'anon';
-  const dir = path.join(OUT, '_log', uid);
+  const dir = path.join(OUT, LOG_SUB, uid);
   const text = String(ndjson || '').trim();
   if (!text) return;
   fs.mkdirSync(dir, { recursive: true }); // 有有效批才建目录，空 POST 不留空壳
-  // 先按小时键分组再写：一次批跨小时（挂机到点）的情况很少，但归段必须按行内 ts 而非到达时刻，
-  // 否则扩展侧缓冲攒着的旧日志会被错归到后一个段里。
-  /** @type {Map<string, string[]>} hourKey -> 行 */
+  // 先按天键分组再写：归段必须按行内 ts 而非到达时刻，
+  // 否则扩展侧缓冲攒着的旧日志会被错归到后一段里。
+  /** @type {Map<string, string[]>} dayKey -> 行 */
   const groups = new Map();
   for (const line of text.split('\n')) {
     if (!line.trim()) continue;
-    let hourKey;
+    let dayKey;
     try {
       const e = JSON.parse(line);
       // ts 合理区间闸门（2001–2100）：外部误喂报文/秒当毫秒时，不致造出远古段文件污染目录
       const t = Number(e.ts);
       const ts = t > 978307200000 && t < 4102444800000 ? t : Date.now();
-      hourKey = fmtLocal(ts).slice(0, 11); // YYYYMMDDTHH（8 位日期 + T + 2 位小时）
+      dayKey = fmtLocal(ts).slice(0, 8); // YYYYMMDD（8 位日期）
     } catch (_) {
       continue; // 非单行 JSON：丢弃不阻断（与 /ingest 容错同轨）
     }
-    const arr = groups.get(hourKey) || [];
+    const arr = groups.get(dayKey) || [];
     arr.push(line);
-    groups.set(hourKey, arr);
+    groups.set(dayKey, arr);
   }
-  for (const [hourKey, lines] of groups) {
+  for (const [dayKey, lines] of groups) {
     const body = lines.join('\n') + '\n';
-    // 序号段保险丝：只看该小时已存在的「最大序号段」是否超限，超限则新开 maxSeq+1。
+    // 序号段保险丝：只看该天已存在的「最大序号段」是否超限，超限则新开 maxSeq+1。
     // 不能从前段往后逐个 stat：基准段一旦被人为截小/调大上限后会「回开」，新行插进旧时间段。
-    let file = path.join(dir, hourKey + '.ndjson');
+    let file = path.join(dir, LOG_PREFIX + dayKey + '.ndjson');
     try {
       // 只看已存在的最大序号段；基准段（无 -NN）最早写入、序号段从 -01 起。
       // 无序号段时：基准超限 → 新开 -01；有序号段时：只往最大序号段追加，最大也超限 → max+1；
       // 绝不回头追加基准段（人为截小后会新行插进旧时间段），也不产 -00。
       let maxSeg = -1;
       for (const n of fs.readdirSync(dir)) {
-        const m = new RegExp('^' + hourKey + '-(\\d{2})\\.ndjson$').exec(n);
+        const m = new RegExp('^' + LOG_PREFIX + dayKey + '-(\\d{2})\\.ndjson$').exec(n);
         if (m) maxSeg = Math.max(maxSeg, Number(m[1]));
       }
       if (maxSeg < 0) {
         if (fs.existsSync(file) && fs.statSync(file).size > LOG_MAX_SEG) {
-          file = path.join(dir, `${hourKey}-01.ndjson`);
+          file = path.join(dir, `${LOG_PREFIX}${dayKey}-01.ndjson`);
         }
       } else {
-        const top = path.join(dir, `${hourKey}-${String(maxSeg).padStart(2, '0')}.ndjson`);
+        const top = path.join(dir, `${LOG_PREFIX}${dayKey}-${String(maxSeg).padStart(2, '0')}.ndjson`);
         file =
           fs.existsSync(top) && fs.statSync(top).size > LOG_MAX_SEG && maxSeg < 99
-            ? path.join(dir, `${hourKey}-${String(maxSeg + 1).padStart(2, '0')}.ndjson`)
+            ? path.join(dir, `${LOG_PREFIX}${dayKey}-${String(maxSeg + 1).padStart(2, '0')}.ndjson`)
             : top;
       }
     } catch (_) {
@@ -487,6 +495,6 @@ process.on('SIGTERM', shutdown);
 server.listen(PORT, HOST, () => {
   console.log('[dashcam] listening http://' + HOST + ':' + PORT + '  ->  ' + OUT);
   console.log(
-    '[dashcam] POST /ingest(报文会话) · POST /log(日志小时轮转) · GET / · 命名 store/<uid>/<startLocal>[-<note>][-<slug>].ndjson · index.ndjson 侧车',
+    '[dashcam] POST /ingest(报文会话) · POST /log(日志天轮转) · GET / · 命名 store/<uid>/<startLocal>[-<note>][-<slug>].ndjson · index.ndjson 侧车',
   );
 });

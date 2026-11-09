@@ -8,7 +8,7 @@
  *   shape  <file.ndjson> --cmd N [...]      该 cmd 载荷的字段形态（path→覆盖数+样例）
  *   slice  <file.ndjson> --from S --to S    时间窗内全部事件流水（诊断「这 40s 里发生了什么」）
  *   push   <file.ndjson> --cmd N --field P  推送载荷按标量字段过滤/分布（如 21534 的 num>0）
- *   log    <日志目录|段文件|报文会话文件>    日志流（/log 落盘的小时轮转段）：过滤/聚合/双轨对照
+ *   log    <日志目录|段文件|报文会话文件>    日志流（store/log/<uid>/dashcam-log-* 按天轮转段）：过滤/聚合/双轨对照
  *
  * 通用旗标：
  *   --dir=req|resp|push    仅匹配归一后的 dir（req:* 视为 req）
@@ -18,10 +18,10 @@
  *   --eq/--ne/--gt=N       push 的字段值过滤
  *   --json                 机器可读输出（逐行 JSON）
  *
- * log 专属旗标：--hour=20261104T15（段前缀） --ms=from,to（绝对毫秒窗，与 slice 双轨对照）
+ * log 专属旗标：--hour=20261104（段名前缀；日志现按天轮转，取整天——旧版小时段 --hour=20261104T15 仍兼容） --ms=from,to（绝对毫秒窗，小时内定位用它，与 slice 双轨对照）
  *   --lvl=debug|info|warn|error（最低档，只升不降） --mod=NET（子串） --grep=stall（子串）
  *   --group=mod|lvl|modlvl（聚合计数代替流水）
- *   位置参数传报文会话文件时，自动查同目录 index.ndjson 的 logRef 解析日志目录（软引用配对）。
+ *   位置参数传报文会话文件时，自动查同目录 dashcam-rec-index.ndjson 的 logRef 解析日志目录（软引用配对）。
  *
  * 定位：只认落盘格式，不懂游戏业务——cmd 语义由调用方给。
  * 引擎仿真类 harness（依赖 extension 源码）不放这里，见仓内 scripts/（replay 对拍框架 + verify-manifests）。
@@ -71,7 +71,7 @@ function usage() {
   return [
     '用法：node dashcam/cli.js <index|series|shape|slice|push|log> <file> [旗标]',
     '旗标：--cmd --dir --from --to --anchor --limit --fields --field --eq --ne --gt --json --min --width --all',
-    'log 旗标：--hour=20261104T15 --ms=from,to --lvl=info --mod=NET --grep=kw --group=mod|lvl|modlvl',
+    'log 旗标：--hour=20261104 --ms=from,to --lvl=info --mod=NET --grep=kw --group=mod|lvl|modlvl',
     '（--from/--to 为相对文件首行 ts 的秒，可用 --anchor 改锚点；log 位置参数可为日志目录/段文件/报文会话文件）',
   ].join('\n');
 }
@@ -285,7 +285,7 @@ if (cmdName === 'index') {
     );
   }
 } else if (cmdName === 'log') {
-  // 日志流：选段（小时轮转）→ 过滤（级别/模块/关键字/绝对窗）→ 流水或聚合
+  // 日志流：选段（按天轮转，旧小时段兼容）→ 过滤（级别/模块/关键字/绝对窗）→ 流水或聚合
   const abs = path.resolve(file);
   const st = fs.statSync(abs, { throwIfNoEntry: false });
   let dir = abs;
@@ -310,13 +310,13 @@ if (cmdName === 'index') {
   let msWin = null;
   if (st && st.isDirectory()) {
     files = logSegments(dir, hourPrefix);
-  } else if (st && /^\d{8}T\d{2}(-\d{2})?\.ndjson$/.test(path.basename(abs))) {
+  } else if (st && /^(?:dashcam-log-)?\d{8}(T\d{2})?(-\d{2})?\.ndjson$/.test(path.basename(abs))) {
     files = [abs];
     dir = path.dirname(abs);
   } else if (st) {
-    // 报文会话文件 → 同目录 index.ndjson 查 logRef（软引用配对，业务窗口在报文侧）
+    // 报文会话文件 → 同目录 dashcam-rec-index.ndjson 查 logRef（软引用配对，业务窗口在报文侧）
     const base = path.basename(abs).replace(/\.ndjson$/, '');
-    const indexPath = path.join(path.dirname(abs), 'index.ndjson');
+    const indexPath = path.join(path.dirname(abs), 'dashcam-rec-index.ndjson');
     let ref = null;
     if (fs.existsSync(indexPath)) {
       for await (const e of entries(indexPath)) {
@@ -327,8 +327,8 @@ if (cmdName === 'index') {
       }
     }
     if (!ref) throw new Error('非日志目录/段文件，且会话 index 无 logRef（旧 index 行需重录才有）');
-    // logRef.dir 相对 OUT 根（如 _log/<uid>）；会话文件在 <OUT>/<uid>/ 下，上跳一层即 OUT 根
-    dir = path.resolve(path.dirname(abs), '..', ref.dir);
+    // logRef.dir 相对 OUT 根（如 log/<uid>）；会话文件在 <OUT>/rec/<uid>/ 下，上跳两层即 OUT 根
+    dir = path.resolve(path.dirname(abs), '..', '..', ref.dir);
     msWin = [ref.from, ref.to];
     files = logSegments(dir, hourPrefix);
   } else {

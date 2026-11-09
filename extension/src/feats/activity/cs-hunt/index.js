@@ -363,7 +363,7 @@ function run(ctx) {
     },
     fallback: 60000,
   });
-  // 7501 只读拉态（P0 闭环首步，req 体逐键 `{header:{}}`，报文实证 dashcam 20261016T191700 seq7）：
+  // 7501 只读拉态（P0 闭环首步，req 体逐键 `{header:{}}`，实录报文实证）：
   //   发包与应答落地都在引擎里（resp 订阅已挂），装配层只负责点火强拉一次
   engine.refreshInfo(true);
   log.info(
@@ -386,7 +386,7 @@ function run(ctx) {
 function configure(c) {
   // c 已是 registry 调 toModuleCfg(=normalize) 产出的运行时形状，直接整体接收；**绝不二次 normalize**——
   //   首轮归一已把扁平面板键 luckyRollDice 转成 luckyRewards.rollDice，再 normalize 会读不到 luckyRollDice → 幸运池重置为空，
-  //   致 #tryLucky 首闸 !wl.length 静默跳过、幸运必现漏用（实证 20261018T105933 两场主跑；同 auto-hunt 文件头「配置链路」踩坑记录）
+  //   致 #tryLucky 首闸 !wl.length 静默跳过、幸运必现漏用（两场主跑实录实证；同 auto-hunt 文件头「配置链路」踩坑记录）
   if (c) modCfg = c;
 }
 

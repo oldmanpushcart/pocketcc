@@ -31,7 +31,7 @@ const log = createLog('DEFENSE');
 // ── 发协议内容常量（服务器契约，非 bundle 符号，就近收口） ─────────────
 /**
  * 护盾三档（背包道具，开盾恒 isPurchase:0）：按「时长由短到长」排列，pickShieldItem 取持有者优先命中最短档。
- * 实证报文 20261007T220646：200004=4h / 200005=8h / 200006=24h。
+ * 实证报文：200004=4h / 200005=8h / 200006=24h。
  * @type {Array<{itemId:number, hours:number}>}
  */
 const SHIELD_TIERS = [
@@ -40,7 +40,7 @@ const SHIELD_TIERS = [
   { itemId: 200006, hours: 24 },
 ];
 
-/** @type {number} 迁城卡 itemId（背包迁城，911 单档，实证 20261007T220646；目前仅此一档） */
+/** @type {number} 迁城卡 itemId（背包迁城，911 单档，真机报文实证；目前仅此一档） */
 const ITEM_MOVE_CITY = 200003;
 
 /** @type {number} 「贴近敌主城」的切比雪夫半径（定案：以敌基地坐标为原点周围 8 个坐标单位内取最近可落点，无则放弃顺延） */
@@ -217,7 +217,7 @@ async function makeJudge(anchor, opts) {
       return null;
     }
     // 4) 敌盟禁迁区主动自取 1001（GET_TERRITORY_INFO 应答 infos 即锚点视口领地，服务端扩窗 60×60）。
-    //    不读游戏模型：远程切视口时模型仍是旧视口数据——实证 20261008T232006 新视口 1001 回包比 911 晚 2ms 落地，
+    //    不读游戏模型：远程切视口时模型仍是旧视口数据——真机实录实证新视口 1001 回包比 911 晚 2ms 落地，
     //    陈旧领地放行 (412,415)（实入敌盟 buildId=101 区间）被服务器拒 csb_tips_005。net 不可用才退回读模型（同视口场景可信）。
     //    禁迁闸门控对齐游戏 moveCity 权威条件（extracted WorldMapController）：别盟堡垒领地禁迁仅在
     //    (!isKVK() || !八国色号) && ServerState != Fight 时生效——KVK 图或作战态(ServerState==Fight)整图放开别盟领地，

@@ -30,6 +30,7 @@ export const CATEGORIES = {
   player: '玩家设置',
   alliance: '联盟设置',
   activity: '活动设置',
+  cq26: 'CQ26印石',
   battle: '战斗设置',
   system: '系统设置',
 };
@@ -61,6 +62,7 @@ export const MENU = [
           { id: 'dailyDeal', kind: 'feature', label: '每日特惠' },
         ],
       },
+      { id: 'potionCraft', kind: 'feature', label: '机械制药', showFields: true },
       { id: 'playerLike', kind: 'feature', label: '玩家点赞', showFields: true },
       { id: 'sourceOfWar', kind: 'feature', label: '战争之源', showFields: true },
       { id: 'truckIntercept', kind: 'feature', label: '卡车争夺', showFields: true },
@@ -71,6 +73,7 @@ export const MENU = [
       { id: 'mineCave', kind: 'feature', label: '次元矿洞', showFields: true },
       { id: 'beastBreed', kind: 'feature', label: '异能兽培育', showFields: true },
       { id: 'citySkill', kind: 'feature', label: '城市技能', showFields: true },
+      { id: 'quickRepair', kind: 'feature', label: '快速修理', showFields: true },
     ],
   },
   {
@@ -121,6 +124,28 @@ export const MENU = [
       { id: 'launchSilo', kind: 'feature', label: '占领发射井', showFields: true },
       { id: 'secretRealm', kind: 'feature', label: '异能秘境', showFields: true },
       { id: 'csHunt', kind: 'feature', label: '夺宝奇兵', showFields: true },
+    ],
+  },
+  {
+    id: 'cq26',
+    kind: 'category',
+    label: CATEGORIES.cq26,
+    children: [
+      // CQ26 玩法：无可调参数、只出开关的两项收进基础设置组（组内子项 inlineStatus 将只读状态值内联到开关行）；
+      //   带独立参数的（雪原列车/霜之密所抢购/荒芜冰原矿区）保持与本组平级的 feature 卡片
+      {
+        id: 'cq26Basics',
+        kind: 'group',
+        label: '基础设置',
+        defaultEnabled: true,
+        storageKey: 'pocketcc.group.cq26Basics',
+        children: [
+          { id: 'cq26Excav', kind: 'feature', label: '战区宝藏', inlineStatus: true },
+          { id: 'cq26WlChest', kind: 'feature', label: '遗失之箱', inlineStatus: true },
+        ],
+      },
+      { id: 'cq26Train', kind: 'feature', label: '雪原列车', showFields: true },
+      { id: 'cq26Shop', kind: 'feature', label: '霜之密所抢购', showFields: true },
     ],
   },
   {

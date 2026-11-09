@@ -411,7 +411,9 @@ function filterFallback(d) {
     );
   });
   var formationV2 = d.formationV2;
-  if (formationV2 && isFormationMarching(formationV2)) formationV2 = 0;
+  if (formationV2 && isFormationMarching(formationV2)) {
+    formationV2 = 0; // 军阵在途 → 置 0（游戏/服务器不认非法在途军阵）
+  }
   return {
     armyListNew: armys,
     heroList: toHeroList(filterHeroIds(d.heroIds)),
@@ -499,7 +501,9 @@ class MarchPlan {
     var out = recalcData(d, excl);
     if (out) {
       // 重算器不校验非法/在途军阵，排除口径下本地兜一层；活动口径不兜（名额由池来源决定）
-      if (excl && out.formationV2 && isFormationMarching(out.formationV2)) out.formationV2 = 0;
+      if (excl && out.formationV2 && isFormationMarching(out.formationV2)) {
+        out.formationV2 = 0; // 军阵在途 → 置 0（活动口径 excl=false 不兜，名额由池来源决定）
+      }
       return out;
     }
     return excl ? filterFallback(d) : projectRaw(d); // 符号不可用降级：普通→手写过滤，活动→满编

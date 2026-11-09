@@ -39,7 +39,7 @@
 - **其余全部科技（幸运/盾/隐身/闪现/转换/COPY…）直接 `return true`**——无阶段限制。
   → 引擎 `skills.js#canPhase` 已等价（先知仅 decide、刷新仅 event），刷新的 pickSkill 子判由场景路由（fam 1004 才进 pick-skill）天然保证。
 
-**②「只能用一次 / 逐个用」不是计数器，是背包→生效两栏搬运**（报文实证 dashcam `20261016T191700` 用闪现 11）：
+**②「只能用一次 / 逐个用」不是计数器，是背包→生效两栏搬运**（报文实证主跑趟实录：用闪现 11）：
 
 ```
 用前  team:[{10},{11}]  personal:[{18}]  pending:[]
@@ -64,7 +64,7 @@
 
 > COPY 复制目标（引擎 `chooseCopyTarget`）产品口径：先知张数 `<` 剩余回合→复制先知；先知 `<` 够用且有幸运→复制幸运；无可用先知→**本轮不复制（宁可等待）**。剩余回合=`ROUND_MAX-round+1`。
 
-### 0.2 DECIDE 选场景的轮值闸与时间窗（报文实证 dashcam `20261017T025932` 陪跑 · 2026-10-17 定稿）
+### 0.2 DECIDE 选场景的轮值闸与时间窗（报文实证陪跑趟实录 · 2026-10-17 定稿）
 
 游戏把每回合的场景选择权**轮流分给一个队员**（字段 `eventDecideInfo.uidDecide`，Int64）；非轮值者发 7532 一律拒（`s:3, d:cs_treasure371`「当前阶段不可操作」）。
 
@@ -199,11 +199,11 @@ net.send(RequestId.CROSS_TREASURE_TEAM_MARCH=7519, {
 })
 ```
 
-> **selfMarchId 零值守卫**（报头实证 dashcam 20261017T031255）：`bits.int64Str(Long(0,0))` 返回字符串 `'0'` 是 JS truthy，旧版误判为「已在行军」导致跳过 7519。修复后加 `&& t.selfMarchId !== '0'` 排除零值。仅非零 marchId 才代表游戏侧有在途行军。
+> **selfMarchId 零值守卫**（报头实证实录报文）：`bits.int64Str(Long(0,0))` 返回字符串 `'0'` 是 JS truthy，旧版误判为「已在行军」导致跳过 7519。修复后加 `&& t.selfMarchId !== '0'` 排除零值。仅非零 marchId 才代表游戏侧有在途行军。
 
 > **队长召集出发的硬条件（用户口径）**：7527 由队长主动发起需**同时**满足①等待人数到齐（`memberCount >= targetMemberNum`）②全员完成出兵（每个成员 `marchId` 非零，即都派兵到集结点）；任一角色收到 21372 召集（或已在 ready 名单）后表态同意。旧「队长自己派完兵即召集、人数交服务端裁决」的口径已作废——它会在人未齐/队员未出兵时过早发 7527。
 >
-> **服务器实证（报文 dashcam 20261017T031255）**：真人队长在**自己尚未发 7519 派兵**时过早发 7527，被回 `code=3 d=common_159995`（约 +38.5s 失败）；直到 +133s 补发 7519 派兵后，+154.9s 再发 7527 才 `code=0` 受理。即 **7527 须待本队（含队长自身）7519 派兵落地后方可成功**——引擎 `tick` 步 4 的 `allMarched`（`marchedCount === memberCount`，其值来自 7519 经 21373/21371 回填的 marchId）闸天然满足此前置，规避了真人这个过早召集被拒。
+> **服务器实证（实录报文）**：真人队长在**自己尚未发 7519 派兵**时过早发 7527，被回 `code=3 d=common_159995`（约 +38.5s 失败）；直到 +133s 补发 7519 派兵后，+154.9s 再发 7527 才 `code=0` 受理。即 **7527 须待本队（含队长自身）7519 派兵落地后方可成功**——引擎 `tick` 步 4 的 `allMarched`（`marchedCount === memberCount`，其值来自 7519 经 21373/21371 回填的 marchId）闸天然满足此前置，规避了真人这个过早召集被拒。
 
 > 与领域/海上夺宝的零部队 902 完全不同；机甲双条件、可派遣英雄、军阵在途判定沿用 `battle.js` 既有约定（同 auto-hunt 的多预设池语义）。预设选取属编队意图，存 per-UID；若队长已召集（21372）而本方无兵可派，受行军时间窗约束，错过即由服务器判定，不做本地倒计时猜测。
 
@@ -237,7 +237,7 @@ net.send(RequestId.CROSS_TREASURE_TEAM_MARCH=7519, {
 1. 本端视图 `viewToStr` 广播频道 17（每回合一次）；
 2. 收队友视图 → `merge([own, ...peers])` 得汇总；
 3. 汇总无未知位 → 直接提交；
-4. **有未知位且等待未超 15s → 不穷举，本拍 return 等队友回复**（报头实证 dashcam 20261017T031255：旧版立即穷举首个候选填 0 导致错提）；
+4. **有未知位且等待未超 15s → 不穷举，本拍 return 等队友回复**（报头实证实录报文：旧版立即穷举首个候选填 0 导致错提）；
 5. 超时 15s 后仍有未知位且 ≤2 → `solveCandidates` 穷举逐个提交（CODE_GAP 3.5s 节流）；
 6. 未知 >2 → 放弃本回合。
 
@@ -325,9 +325,9 @@ net.send(RequestId.CROSS_TREASURE_TEAM_MARCH=7519, {
 3. **次数恢复参数** ✅ **已解决**：上限 290004='5'、恢复间隔 290005='36000's'=10小时/点（见 §9）；插件仍只消费 `huntCount` 显示与门禁，不本地推算恢复。
 4. **陪跑不可交互清单** ⚠ 半解决（§9.4）：密码场景 protocol 层**队员同样可发 7537**（陪跑趟实测 4 次命中，`uidWinMap` 记队员 win）——"陪跑不可交互"仅 UI 口径，协议层限制比 UI 宽；dice、defPVE、pickSkill 的陪跑限制仍待逐个核对。
 5. **密码掩码实样** ✅ **已解决（§9.4）**：不走聊天、不解析字符——`eventInfo.eventCodeBoxInfo.codeNum[5]` 数组直读，**-1=未知位**、0-9=明文；猜错应答 `header.s=3 + d=cs_treasure281`，`phase` play→show 收敛。
-6. **信标补次数发送路径**（`useBeaconWhenShort` 前置依赖）：✅ **已解决（用户口径 + 报文坐实）**：定位信标补次数**与通用使用物品无区别**——走 `NET.send(ITEM_USE=815, {itemid:47001001, amount:1})`（**JSON 通道、itemid 全小写**，非 sendPB），应答 `{itemId, amount:剩余持有量}`（实证 dashcam 多趟 req:send `{"itemid":600001,"amount":1}` → resp `{"itemId":600001,"amount":2329}`）；消耗后由推送 21375 刷新 huntCount。已落地 `engine-team.#useBeacon`（库存查 `gameData.itemAmount`、20s 冷却防重复消耗）。
+6. **信标补次数发送路径**（`useBeaconWhenShort` 前置依赖）：✅ **已解决（用户口径 + 报文坐实）**：定位信标补次数**与通用使用物品无区别**——走 `NET.send(ITEM_USE=815, {itemid:47001001, amount:1})`（**JSON 通道、itemid 全小写**，非 sendPB），应答 `{itemId, amount:剩余持有量}`（实录报文实证：多趟 req:send `{"itemid":600001,"amount":1}` → resp `{"itemId":600001,"amount":2329}`）；消耗后由推送 21375 刷新 huntCount。已落地 `engine-team.#useBeacon`（库存查 `gameData.itemAmount`、20s 冷却防重复消耗）。
 7. **rollDice 掷骰前奖励字段路径** ✅ **已解决（§9.4）**：`eventInfo.eventRollDiceInfo.winRewardResult` 在 `phase:"play"`（掷骰前）即明文携带物品（用户更正获报文证实）；`pickReward` 场景同构字段 `eventPickRewardInfo` 待补一实样（结构预期一致，不阻塞）。
-8. **先知探测结果字段形态** ✅ **已解决（用户口径 + 陪跑趟 20261016T192930 坐实）**：**使用先知与使用其他科技无区别**——发 `SKILL_USE(7551){treasureId,skillSpecId:9}`；探测结果不另挂字段，而是体现为 **`eventInfo.eventDecideInfo.eventSpecIdList` 在 `phase:"play"` 态提前露出 3 个非 0 位**（param1=3，其余 3 位仍为 0），随后才到 `phase:"show"` 全量明文。实证 round10：`play[0,0,0,0,0,0]` →(先知)→ `play[0,100201,100502,0,100601,0]` → `show[全6位]`。生效推送 21378 `skillEventSpecId:9` 携 `uid`=使用者，**推送形态与谁触发无关**（陪跑能据此知队长开了先知）。→ P4 先知策略：DECIDE 之初队长 `sendUseSkill(9)`，读 play 态非 0 位即探测集合。
+8. **先知探测结果字段形态** ✅ **已解决（用户口径 + 陪跑趟实录坐实）**：**使用先知与使用其他科技无区别**——发 `SKILL_USE(7551){treasureId,skillSpecId:9}`；探测结果不另挂字段，而是体现为 **`eventInfo.eventDecideInfo.eventSpecIdList` 在 `phase:"play"` 态提前露出 3 个非 0 位**（param1=3，其余 3 位仍为 0），随后才到 `phase:"show"` 全量明文。实证 round10：`play[0,0,0,0,0,0]` →(先知)→ `play[0,100201,100502,0,100601,0]` → `show[全6位]`。生效推送 21378 `skillEventSpecId:9` 携 `uid`=使用者，**推送形态与谁触发无关**（陪跑能据此知队长开了先知）。→ P4 先知策略：DECIDE 之初队长 `sendUseSkill(9)`，读 play 态非 0 位即探测集合。
 
 ---
 
@@ -472,7 +472,7 @@ net.send(RequestId.CROSS_TREASURE_TEAM_MARCH=7519, {
 
 **本轮新坐实的报文事实**：
 
-- **先知与任何其他科技发包无区别**（§7-8 关闭）：`7551 {treasureId,skillSpecId:9}`；探测结果 = `eventDecideInfo.eventSpecIdList` 在 `phase:"play"` 态提前露 3 个非 0 位（实证陪跑趟 20261016T192930 round10：`play[0,0,0,0,0,0]`→`play[0,100201,100502,0,100601,0]`→`show[全6位]`），21378 生效推送 `skillEventSpecId:9` 携 `uid`=使用者且形态与谁触发无关；
+- **先知与任何其他科技发包无区别**（§7-8 关闭）：`7551 {treasureId,skillSpecId:9}`；探测结果 = `eventDecideInfo.eventSpecIdList` 在 `phase:"play"` 态提前露 3 个非 0 位（实证陪跑趟实录 round10：`play[0,0,0,0,0,0]`→`play[0,100201,100502,0,100601,0]`→`show[全6位]`），21378 生效推送 `skillEventSpecId:9` 携 `uid`=使用者且形态与谁触发无关；
 - **通用使用物品 = `815 ITEM_USE`**（JSON 通道）：req `{itemid(小写),amount}`、resp `{itemId(驼峰),amount:剩余}`；
 - **7526 队伍行**：`{id:Long,uid:Long(队长),members,maxMembers,applied,cfg,power,level,playerInfo:JSON串,member:[{playerInfo:JSON串(内含 username)、无独立 uid}]}`——队员身份只在 `member[].playerInfo.username`，是「按名找队」的匹配依据（区别于队内实时态 21371/7501 的 `readTeam`，那里的 `member[]` 带 uid/marchId）。
 
@@ -572,7 +572,7 @@ net.send(RequestId.CROSS_TREASURE_TEAM_MARCH=7519, {
    - 修法：给 `core/ui/widgets.js` 的 `mountSortList` 加通用 **`fd.migrate(arr, cfg) → number[]`** 钩子（在 `all` 追加之前跑，就地收敛、变了才 `saveFeature+applyFeature`，幂等）。cs-hunt 的 `skillPool` 字段提供 `migrate`：用 `skills.js` 新增的 `skillGroupRep(specId)`（成员→族代表反查）把 28 行收敛成 ~17 族项并去重，同步收敛 `skillPoolOff`。
 
 2. **幸运池为空 = 运行期枚举拿不到，需静态保底**。`cross_treasure_event` 解包在活动未开/符号缺失时回 []（面板就是空）。
-   - 修法：`constants.js` 新增 **`LUCKY_GIFTS`** 静态目录（报文实证 dashcam 20261016T19* 四趟 `winRewardResult`/`posInfoList.rewardResult` 去重出 27 件礼品，名取自 `字典表.txt`）。`index.js` 的 `rewardPool()` 改为 **运行期枚举优先、空则回退 LUCKY_GIFTS**，保证面板不空、开局前即可勾选。
+   - 修法：`constants.js` 新增 **`LUCKY_GIFTS`** 静态目录（报文实证 2026-10-16 主跑/陪跑四趟真人实录 `winRewardResult`/`posInfoList.rewardResult` 去重出 27 件礼品，名取自 `字典表.txt`）。`index.js` 的 `rewardPool()` 改为 **运行期枚举优先、空则回退 LUCKY_GIFTS**，保证面板不空、开局前即可勾选。
 
 **闸门**：`npm run build` OK、cs-hunt 目录 `eslint` 0 problem（widgets.js 仅 2 条既有告警、非本次区域）、`npm run arch` 无违规（112 modules）、Prettier 通过。`fd.migrate` 是通用能力，其它 sortlist 需要收敛旧口径时可直接复用。
 
@@ -600,7 +600,7 @@ net.send(RequestId.CROSS_TREASURE_TEAM_MARCH=7519, {
 
 用户指出：活动开放（§14 的 `open===1`）只是**赛季旗标，整天为真**，不等于「当前到点」。每天另有 **3 个 2h 夺宝时段**，建队/找队须落在某个时段内。
 
-**时段真相（源码 + 报文实证）**：控制器 `getActivityTimeTips()` 的 `PALYING` 相 = `ServerMSTime` 落在 `timeInfo.openTime[i].beginMill..endMill` 之一。7501 应答 `crossTreasureInfo.openTime[]` 即这些时段（每项 `{beginMill,endMill}` 是 Int64 Long）。报文实证 dashcam `20261016T191700` 主跑趟：`openTime` 各项跨度 2h（`endMill-beginMill=7200000`）、相邻间隔 8h（`28800000`）→ 每天 3 场，数组覆盖整个 round。
+**时段真相（源码 + 报文实证）**：控制器 `getActivityTimeTips()` 的 `PALYING` 相 = `ServerMSTime` 落在 `timeInfo.openTime[i].beginMill..endMill` 之一。7501 应答 `crossTreasureInfo.openTime[]` 即这些时段（每项 `{beginMill,endMill}` 是 Int64 Long）。报文实证主跑趟实录：`openTime` 各项跨度 2h（`endMill-beginMill=7200000`）、相邻间隔 8h（`28800000`）→ 每天 3 场，数组覆盖整个 round。
 
 **ACL 收口**（`core/game-api.js`，feat 不碰 Int64/字段名）：
 
@@ -614,7 +614,7 @@ net.send(RequestId.CROSS_TREASURE_TEAM_MARCH=7519, {
 
 ---
 
-## 16. 策略完善（真机陪跑趟 `20261017T041352` 复盘，用户 6 点纠正，2026-10-17）
+## 16. 策略完善（真机陪跑趟复盘，用户 6 点纠正，2026-10-17）
 
 用户拒绝上一轮把 630 塞进 `core/net.js` 的做法（查询玩家昵称是业务强相关报文，不入通用网络层），并据真机陪跑趟提出 6 项纠正。四决策经对齐：① 镜像**严格只复制先知**（背包无先知则本轮不复制）；② 转场时机 = 探索回合 **数据转换(24)→重拉背包→再判复制(22)→复制先知**，先知(9) 留 DECIDE（type5 游戏强制仅 DECIDE）；③ 找队**只用 7530 按名搜**（弃 7526）；④ 630 收口在 cs-hunt feat 内私有 `#lookupName`（用户以后单独在 core 建类似 item.js 的薄底座再统一收口）。
 
@@ -631,7 +631,7 @@ net.send(RequestId.CROSS_TREASURE_TEAM_MARCH=7519, {
 
 ### 16.2 完美镜像 bug 根因与修法
 
-**根因**：旧 `#copyableSet()` 对非队长排除队技 → 陪跑看不到先知(9，group=1 队技) → `chooseCopyTarget` 恒回 0 → 从不复制。真机实证 dashcam `20261017T041352`：用户手动 `7551{skillSpecId:22,param:"{\"copySkillSpecId\":9}"}` 复制队技先知成功（`header.s:0` 无 errorKey，背包 `teamSkillInfoList:[{10},{9},{9}]`）——**完美镜像(22) 是 group=2 个人技，把队技作为复制目标不需队长权限**。
+**根因**：旧 `#copyableSet()` 对非队长排除队技 → 陪跑看不到先知(9，group=1 队技) → `chooseCopyTarget` 恒回 0 → 从不复制。真机实证实录报文：用户手动 `7551{skillSpecId:22,param:"{\"copySkillSpecId\":9}"}` 复制队技先知成功（`header.s:0` 无 errorKey，背包 `teamSkillInfoList:[{10},{9},{9}]`）——**完美镜像(22) 是 group=2 个人技，把队技作为复制目标不需队长权限**。
 
 **修法**（`engine-flow.js`）：`#copyableSet` 去掉 `isLeader` 闸，personal ∪ team（仅排除 COPY 自身）；`chooseCopyTarget` 简化为「背包有先知即复制先知、无则本轮不复制」（`skills.js`）；转场串联从 `DECIDE.play` 移到 `tick` 的 `WAIT` 分支 `#explorationSkills`（转换→`#reloadBackpack`→再判复制，落实「转换后重判是否有值得复制的科技」），先知另拆 `#decideProphet` 留 DECIDE。`onHuntInfo` 对 `WAIT` 也 `#wake()`，`tick` 按 `status` 返回三态 cadence（EVENT/WAIT/其它）。
 
@@ -645,7 +645,7 @@ net.send(RequestId.CROSS_TREASURE_TEAM_MARCH=7519, {
 
 ### 16.5 陪跑主动找队（630 取名→7530 按名搜→7522 申请）
 
-用户要求「主动挨个搜玩家池」。`#joinTeam(cfg)` 重写：遍历 `rolePool` 每个 uid（跳过自己）→ `#lookupName(net,uid)`（`net.send(630,{uid:String})`，解析 `data.playerInfo`(JSON 串).username，`#uidName` 缓存、查无记空串）→ `#sendPB(7530,{likeName:name})` 搜其创建的队 → 命中未满、未申请、`row.uid===该 uid`（同名他人跳过）的队即 `#sendPB(7522,{teamId:Long,op:1})` 申请，找到即停；整趟 `JOIN_POLL_MS` 节流。630/7530/7522 报文逐键实证 dashcam `20261016T190507`（`likeName:"老陈"` 命中 `username:"书院🍁桂K老陈"` 创建的队）。**已知局限**：likeName 子串匹配，昵称含 emoji/空格时整串可能搜不到（真机手动也常剥字搜），查无即跳过下一成员。
+用户要求「主动挨个搜玩家池」。`#joinTeam(cfg)` 重写：遍历 `rolePool` 每个 uid（跳过自己）→ `#lookupName(net,uid)`（`net.send(630,{uid:String})`，解析 `data.playerInfo`(JSON 串).username，`#uidName` 缓存、查无记空串）→ `#sendPB(7530,{likeName:name})` 搜其创建的队 → 命中未满、未申请、`row.uid===该 uid`（同名他人跳过）的队即 `#sendPB(7522,{teamId:Long,op:1})` 申请，找到即停；整趟 `JOIN_POLL_MS` 节流。630/7530/7522 报文逐键实证陪跑趟实录（`likeName:"老陈"` 命中 `username:"书院🍁桂K老陈"` 创建的队）。**已知局限**：likeName 子串匹配，昵称含 emoji/空格时整串可能搜不到（真机手动也常剥字搜），查无即跳过下一成员。
 
 **常量**：`CMD_PLAYER_INFO=630`（feat 内私有 const，不入 net.js）；`REQ_SEARCH_TEAM_LIST=7530/ACK_SEARCH_TEAM_LIST='crossTreasureSearchTeamList'` 已在 `constants.js`；`REQ_TEAM_LIST=7526` 保留但找队不再引用。引擎字段 `#uidName`（stop 清空）。
 
@@ -684,7 +684,7 @@ net.send(RequestId.CROSS_TREASURE_TEAM_MARCH=7519, {
 
 幸运降临(18) 效果是下一次奖励×2，而 rollDice/pickReward 两个领奖场景已对陪跑早退（不发 7534/7535），陪跑拿到幸运无处可用。故仅在「选科技」处收口：`chooseByPool(pool, candidates, exclude)` 新增第三参 `exclude`（命中位落在排除集合即跳过、继续找下一候选）；`scenes/pick-skill.js` 对非主跑传 `exclude=[SKILL_LUCKY]`，且**兜底随机位也只在非排除位里随机**（不留空、也不误选幸运）。主跑 `exclude=[]` 行为不变。因幸运唯一来源即 pickSkill，此闸使陪跑全程不会持有幸运（`#tryLucky`/末回合清空无需改动）。
 
-## 19. 陪跑多轮复核：决断再提前到倒数 15s + 场景判定的 push/req-resp 结合审计（用户反馈，2026-10-17，报文 dashcam 20261017T120320）
+## 19. 陪跑多轮复核：决断再提前到倒数 15s + 场景判定的 push/req-resp 结合审计（用户反馈，2026-10-17，实录报文）
 
 ### 19.1 决断提前到倒数 15s
 
@@ -702,7 +702,7 @@ net.send(RequestId.CROSS_TREASURE_TEAM_MARCH=7519, {
 
 保留的 7531 周期空拉不是冗余而是**漏推自愈**：非 EVENT（WAIT/FIGHT/回城/终局）每拍拉一次，保证错过 21376 状态转换帧时仍能推进（尤其 WAIT→DECIDE 若漏推、60s cycle fallback 才补会错过决断窗）。故本次**不改** 7531 节奏；若要进一步省网络，应以「订阅 21376 转换 + 仅在 `#hunt` 陈旧超阈时补拉」替换现「每拍固定拉」，属可靠性敏感改动、需活动窗口真机验证后再做。
 
-## 20. 出征结束判定改用 21376 状态机 push 为主、7531 降为兜底（用户反馈，2026-10-17，报文 dashcam 20261017T120320）
+## 20. 出征结束判定改用 21376 状态机 push 为主、7531 降为兜底（用户反馈，2026-10-17，实录报文）
 
 §17 的结束判定挂在 7531 `cs_treasure294`（小队不存在）拒因上，但实证该拒因来得很晚——一局打完后 `treasureId` 仍可查（`7531` 持续 `s=0`）近 90s 才转为 `cs_treasure294`，而服务器**早就用 push 广播了终局**：`21376 status=4(END)@+986s → status=5(RETURN)@+1013s → 21371 team.status=5(ARRIVE)@+1063s → 7531 cs_treasure294@+1078s`。原代码 `#onHuntInfo` 见到 END/RETURN 只 `log.info` 不改状态，于是这 90s 里 `#team` 仍 `status≥MARCHING`、`flow.tick` 继续空拉 7531，直到迟到的 `cs_treasure294` 才由 `#endHunt` 收口——「靠一次 7531 判结束」正出于此。
 

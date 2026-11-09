@@ -33,6 +33,8 @@ import {
   PUSH_TILE_INFO,
   PAB_TENT,
   PAB_COMMON_PLANE,
+  PAB_RESOURCE,
+  PAB_MONSTER,
   PAB_BOSS_PLANE,
   PAB_BOSS,
   PAB_BOSS_GUARD,
@@ -120,7 +122,10 @@ export class WarnEngine {
       const p = list[i];
       if (!p) continue;
       const pt = Number(p.pointType) || 0;
-      if (pt !== PAB_TENT && pt !== PAB_COMMON_PLANE) continue;
+      // 需求 1/5：立即转移落点不再只认 174/175（录制实证车多停在 173 资源点且快照几乎不含 174/175），
+      //   扩到任意可行军点 {175 营帐, 174 平台, 173 资源, 172 野怪}，走过去即脱离拉线（本引擎发的是转移行军、不打野）。
+      if (pt !== PAB_TENT && pt !== PAB_COMMON_PLANE && pt !== PAB_RESOURCE && pt !== PAB_MONSTER)
+        continue;
       const k = tileKey(p.x, p.y);
       if (!k) continue;
       const m = p.m && typeof p.m === 'object' ? p.m : {};

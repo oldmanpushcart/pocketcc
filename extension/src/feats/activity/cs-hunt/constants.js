@@ -7,20 +7,20 @@
  *
  * 证据来源：
  *   - cmd 号：references/游戏逆向/extracted/Script/NRequestId__NRequestId.js / NResponseId__NResponseId.js 逐值核；
- *   - 报文形态与字段名：dashcam 20261016T190507 / T191700 / T192930 / T194018 四趟实况（主跑×2、陪跑×2），
+ *   - 报文形态与字段名：四趟夺宝实况（主跑×2、陪跑×2），
  *     设计文档 extension/docs/feat-夺宝奇兵.md §9.4 已逐条归档；
  *   - 表名/道具 id：同文档 §9 真机 dump（活动未开始期可读）。
  *
  * Int64 铁律：本玩法所有 64 位 id（treasureId / teamId / uid / marchId）在协议层是原生 Long 对象
  *   `{_low,_high,_unsigned}`，**发包前用 bits.int64(字符串) 装箱、读包后用 bits.int64Str 归一为字符串**，
- *   绝不做 Number 转换（实证 dashcam 20261016T191700 的 team.id）。
+ *   绝不做 Number 转换（实录报文实证 team.id）。
  */
 
 // ─────────────────────── 请求号（NRequestId 段 7501–7586，走 sendPB；7519 例外走 send） ───────────────────────
 
 /** @type {number} CROSS_TREASURE_INFO：活动总览（open/roundTime/openTime/seasonId/poolId/lastRound/version），req 仅 `{header:{}}` */
 export const REQ_INFO = 7501;
-/** @type {number} CROSS_TREASURE_TEAM_MARCH：满编出征入队。**走 NET.send（JSON 通道），不是 sendPB**，体内无 treasureId（实证 dashcam 20261016T191700/190507） */
+/** @type {number} CROSS_TREASURE_TEAM_MARCH：满编出征入队。**走 NET.send（JSON 通道），不是 sendPB**，体内无 treasureId（实录报文实证） */
 export const REQ_TEAM_MARCH = 7519;
 /** @type {number} CROSS_TREASURE_TEAM_USE_ITEM：本人要奖励(op:1)/陪跑(op:2)。陪跑无需 treasureId，报文实发 `{op:2}` */
 export const REQ_TEAM_USE_ITEM = 7520;
@@ -38,8 +38,8 @@ export const REQ_TEAM_DISMISS = 7525;
 export const REQ_TEAM_LIST = 7526;
 /**
  * @type {number} CROSS_TREASURE_MARCH_START：出发确认，req `{op:1同意/2拒绝}`。
- * 报文实证时序（dashcam 20261016T191700）：队长凑够人后发 7527 → 服务端派 21372 召集全队；
- *   队员（含陪跑，实证 20261016T190507）先满编 7519 出征、收 21372 后再发 7527 表态。
+ * 报文实证时序（主跑实录）：队长凑够人后发 7527 → 服务端派 21372 召集全队；
+ *   队员（含陪跑，陪跑实录实证）先满编 7519 出征、收 21372 后再发 7527 表态。
  */
 export const REQ_MARCH_START = 7527;
 /** @type {number} CROSS_TREASURE_TEAM_APPLY_LIST：申请池，req `{teamId:Long}`，应答 `apply[]` */
@@ -73,8 +73,8 @@ export const REQ_SKILL_USE_RECORD_OPEN = 7552;
 /**
  * @type {number} CROSS_TREASURE_GET_MARCH_INFOS：行军军情，req `{treasureId,type:1|2}`（1=我方、2=来袭方），
  *   应答 `crossTreasureGetMarchInfos.{marchInfos[],leaderUid}`。
- *   **marchInfos 项字段**（报文实证 dashcam 20261018T105933 seq229）：`{uid(字符串,非 Long),level,playerInfo(JSON 串),power,maxArmyPower,armyPower,heros,armys,deadArmys}`。
- *   我方（type1）`armyPower/maxArmyPower` 齐备→战力门控防御与定向火线急救可判；敌方（type2）`armyPower` 常 undefined、`maxArmyPower` 可用（实证 20261016 旧结论只对敌方成立）。
+ *   **marchInfos 项字段**（实录报文实证）：`{uid(字符串,非 Long),level,playerInfo(JSON 串),power,maxArmyPower,armyPower,heros,armys,deadArmys}`。
+ *   我方（type1）`armyPower/maxArmyPower` 齐备→战力门控防御与定向火线急救可判；敌方（type2）`armyPower` 常 undefined、`maxArmyPower` 可用（旧结论只对敌方成立，主跑实录实证）。
  *   现由本 feat **主动查**（借鉴竞对）：掠袭时拉敌我战力做门控防御、战中拉我方战损做按 uid 火线急救、以及 21383 漏推时以 type2 侦察补武装（见 engine-flow.js `#reconMarches`）。
  */
 export const REQ_GET_MARCH_INFOS = 7578;
@@ -88,7 +88,7 @@ export const REQ_REWARD_INFO = 7572;
 
 /**
  * pbAck 子字段名即「cmd 唯一的业务命名槽」——V1 sendPB 的 ret.data 是整段 pbAck，
- * 推送事件 Event.data 同形（实证 dashcam 20261016T190507 每条 push 的 data 键）。
+ * 推送事件 Event.data 同形（实录逐条 push 的 data 键实证）。
  */
 
 /** @type {number} 队伍整体变更（含 ARRIVE 清态），载荷 `crossTreasureTeamChange.team` */
@@ -127,7 +127,7 @@ export const FIELD_REWARD_MULTIPLE = 'crossTreasureRewardMultipleTakeEffect';
 
 // ─────────────────────── 应答 pbAck 子字段名（发送侧按 cmd 取） ───────────────────────
 
-/** @type {string} 7501 应答业务槽（除活动总览外**也可能带 `team`**——实证 dashcam 20261016T191700 seq88 应答含整队，与 21371 同形，可直接喂 csHunt.readTeam） */
+/** @type {string} 7501 应答业务槽（除活动总览外**也可能带 `team`**——实录应答实证含整队，与 21371 同形，可直接喂 csHunt.readTeam） */
 export const ACK_INFO = 'crossTreasureInfo';
 /** @type {string} 7521 应答业务槽（内含 `team`） */
 export const ACK_TEAM_CREATE = 'crossTreasureTeamCreate';
@@ -144,11 +144,11 @@ export const ACK_HUNT_INFO = 'crossTreasureHuntInfo';
 /** @type {string} 7520 应答业务槽 */
 export const ACK_TEAM_USE_ITEM = 'crossTreasureTeamUseItem';
 
-// ─────────────────────── 请求体业务槽名（**逐条取自 dashcam req 行的 data 键**，不是推断） ───────────────────────
+// ─────────────────────── 请求体业务槽名（**逐条取其实录 req 报文的 data 键**，不是推断） ───────────────────────
 
 /**
  * V1 sendPB 的请求体与应答同形（`{header:{}, <本表键>:{…}}`）；7501/7526/7575 等纯头请求不在表内（实发只有 `header`）。
- * 实证：dashcam 20261016T190507（陪跑）与 T191700（主跑）的 `dir:"req:sendPB"` 行。
+ * 实证：陪跑与主跑实录的 `dir:"req:sendPB"` 行。
  * @type {Object<number,string>}
  */
 export const REQ_FIELD = {
@@ -173,7 +173,7 @@ export const REQ_FIELD = {
 
 // ─────────────────────── PB 枚举语义数值（服务器契约，非游戏符号） ───────────────────────
 
-/** @type {number} MarchType.CS_TEAM_HUNT——7519 出征体固定值（实证 dashcam 20261016T191700 `marchType:137`） */
+/** @type {number} MarchType.CS_TEAM_HUNT——7519 出征体固定值（实录报文实证 `marchType:137`） */
 export const MARCH_TYPE_CS_TEAM_HUNT = 137;
 
 /**
@@ -225,7 +225,7 @@ export const EVENT_PHASE_STATE = { DECIDE: 'decide', EVENT: 'event' };
 /**
  * eventInfo 内的 phase 字段（CSHuntEventPhaseType 线值）。
  * **DECIDE 候选必须等 `SHOW`**：进阶段先推 `PLAY` 且 `eventSpecIdList` 全 0，1~20s 后才推 `SHOW` 明文
- * （实证 dashcam 20261016T19xxxx 四趟皆有全 0 与明文两态，读到全 0 不可动作）。
+ * （实证四趟皆有全 0 与明文两态，读到全 0 不可动作）。
  * @type {{NONE:string,PLAY:string,SHOW:string}}
  */
 export const EVENT_SHOW_PHASE = { NONE: 'none', PLAY: 'play', SHOW: 'show' };
@@ -261,7 +261,7 @@ export const ITEM_BEACON = 47001001;
  * @type {number} ITEM_USE：通用「使用背包道具」。**走 NET.send（JSON 通道），不是 sendPB**，
  *   req `{itemid:number, amount:number}`（**itemid 全小写**，与应答的 itemId 大小写不一致），
  *   应答 `{itemId, amount:使用后剩余持有量}`。定位信标补次数即 `send(815,{itemid:47001001,amount:1})`。
- *   实证 dashcam 多趟 `dir:"req:send"` 行 `{"itemid":600001,"amount":1}` → resp `{"itemId":600001,"amount":2329}`（§7-6 关闭）。
+ *   实证多趟 `dir:"req:send"` 行 `{"itemid":600001,"amount":1}` → resp `{"itemId":600001,"amount":2329}`（§7-6 关闭）。
  */
 export const CMD_ITEM_USE = 815;
 
@@ -296,9 +296,9 @@ export const SKILL_PROTECT_REWARD = 17;
 export const SKILL_TYPE_LIMIT = { 1: 9, 2: 9, 5: 10, 6: 9, 7: 9, 10: 9, 15: 9, 16: 9 };
 /**
  * @type {number} 火线急救（type=4=RISE_PLAYER，group 1 队伍技=队长专属；治成员伤兵）。
- *   **战损判定口径更新（借鉴竞对，报文实证 dashcam 20261018T105933 seq229）**：7578 type1（我方行军）的 `armyPower/maxArmyPower` 齐备，
+ *   **战损判定口径更新（借鉴竞对，实录报文实证）**：7578 type1（我方行军）的 `armyPower/maxArmyPower` 齐备，
  *   可择「armyPower<maxArmyPower 且缺口最大」者按 uid 定向施治（`#mostDamagedUid`）；旧结论「逐员战损不可得」只对 `team.member[].power`/fightInfo/敌方 type2 成立。
- *   侦察失败/战损数据缺失时回退「不带 tarUid、由服务器自决」（与原生 7551{27} 一致，实证 dashcam 20261017T185937 tarUid=0）。
+ *   侦察失败/战损数据缺失时回退「不带 tarUid、由服务器自决」（与原生 7551{27} 一致，实录报文实证 tarUid=0）。
  *   施治门控：status=FIGHT 且本回合真被掠袭过（#raidRounds）——因为 FIGHT 是每回合必经结算相位（未挨打也进），单靠 status 会每回合白烧（用户口径 2026-10-17：无人受伤不治疗）。
  */
 export const SKILL_AID = 27;
@@ -338,12 +338,12 @@ export const LUCKY_SCENES = [
 
 /**
  * 幸运降临(18) 可翻倍的礼品目录（面板展示名，协议匹配一律用 itemId 数字）。
- *   来源：报文实证 dashcam 20261016T19* 等 11 趟夺宝的 winRewardResult / posInfoList.rewardResult 去重，
+ *   来源：11 趟主/陪跑实录报文的 winRewardResult / posInfoList.rewardResult 去重，
  *   名取自 references/字典表.txt。作为面板幸运池的**保底源**：运行期若能从 cross_treasure_event 解包出更全的池则用之，
  *   否则（活动未开/表未下发/符号缺失）回退本表，保证面板不空、开局前即可勾选。
  *   scenes：该道具作为**可翻倍奖励**实际出现的场景族——只认引擎会喂给 #tryLucky 的字段（winRewardResult /
  *     posInfoList.rewardResult），**不含 failRewardResult 未中奖保底、不含 grail 神器**（引擎只翻倍中奖奖励，
- *     勾保底/神器是永不命中的死开关；规范顺序 pickReward→rollDice→codeBox→defPVE，报文实证 dashcam 11 趟），
+ *     勾保底/神器是永不命中的死开关；规范顺序 pickReward→rollDice→codeBox→defPVE，报文实证 11 趟实录），
  *   面板据此把物品归进对应场景折叠组；掉在多个场景的道具会在各相关组各列一份、各自独立勾选。
  * @type {Array<{id:number, name:string, scenes:string[]}>}
  */
@@ -375,7 +375,7 @@ export const LUCKY_GIFTS = [
   { id: 940001, name: '雷神元素', scenes: ['pickReward', 'rollDice'] },
   { id: 801040, name: '装备改造图纸', scenes: ['rollDice'] },
   { id: 2100002, name: '高级招募券', scenes: ['pickReward', 'defPVE'] },
-  // 以下据 11 份主/陪跑报文（win 中奖奖励语境）补录（报文实证 dashcam 2026-10-16/17）
+  // 以下据 11 份主/陪跑报文（win 中奖奖励语境）补录
   { id: 62908, name: '泰坦装备材料随机箱', scenes: ['defPVE'] },
   { id: 2800001, name: '突击阵研究手册', scenes: ['defPVE'] },
   { id: 2800002, name: '攻坚阵研究手册', scenes: ['pickReward'] },

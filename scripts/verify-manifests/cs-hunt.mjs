@@ -87,8 +87,8 @@ export default {
   id: 'cs-hunt',
   featDir: 'extension/src/feats/activity/cs-hunt',
   defaultRecs: [
-    'dashcam/store/14179309129759/20261025T110353-夺宝奇兵-我是主跑.ndjson',
-    'dashcam/store/14179309129759/20261018T030028-夺宝奇兵-我是陪跑.ndjson',
+    'dashcam/store/rec/14179309129759/dashcam-rec-20261025T110353-夺宝奇兵-我是主跑.ndjson',
+    'dashcam/store/rec/14179309129759/dashcam-rec-20261018T030028-夺宝奇兵-我是陪跑.ndjson',
   ],
   engineMods: {
     'constants.js': [
