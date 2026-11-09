@@ -9,17 +9,11 @@
  *   多预设出兵 —— 派发一个目标时按 presets 顺序遍历，对预设 n 调 Battle().plan().preset(n).adjust().build()（adjust 已排除在途兵），
  *              取第一个「能出兵」（armyListNew 非空、且配了英雄则英雄已就绪）者发 902/1201；全池无兵则该目标本轮不派、等唤醒。
  *
- * 怪物清单来源（表驱动，不再手写）：面板行集与派发段由 catalog() 运行时从游戏本地表反查 —— auto_hunt ⨝ MONSTER_GROUP，
- *   闸门对齐游戏自身的 MonthCardController.getAutoHuntMonsterList（不调该 API、只读表自己套闸）：search_show 21/22 决定野怪/集结页签、
- *   switch 走 FunctionOn（表存的是值串，见 gameData.functionOnValue）、five_continuous_type 决定「五连」候选，并排除难民营(12)/惧星(9100)/混合集结(5001)。
- *   于是赛季新增/下线怪物与 warhammer_monster 这类开关翻转会自动反映到面板与派发（新行默认未勾选，勾选权在用户）；
- *   表不可读时整体回落 MONSTERS_SEED（= 历史手写清单），行为零变化。难民营行（道具开营）不参与反查、恒在末尾（与游戏侧同构）。
- *
  * 打法与协议（报文实证 dashcam 20261011T183821-发起攻打野怪 / 20261011T184302-发起攻打野怪-5连 / 20261011T192612-集结5人打锤子 / 20261011T185055-补充体力）：
  *   搜野怪 906 WORLD_SEARCH_MONSTER —— req {minLevel,maxLevel,groupType,pointType}；resp {point:{x,y,id,pointType,m:{itemId,level,expireTime}}}，服务端直接回一个可打点（视口无关，Home 可跑）。
  *        pointType=tab：1 野怪（无需集结）、3 集结（战锤）。groupType=怪物 species（黑雷神陆军 61、黑暗陆军 43、黑暗海军 42、黑暗空军 41、战锤 44，实证于 183821 与游戏内 906 搜索）。
  *        等级：清单不暴露区间，固定搜该怪最高档（min=max）——野怪行（pointType=1）的最高档不再硬编码，派发时由 resolveHuntLevel 从游戏本地表
- *        运行时反查（= UserData.Level + MONSTER_REFRESH 最大 level_relative，旧野怪再钳 data_config 1120）；反查不可用才回落目录行的 level 回退值（曾实证：黑暗军团 86、黑雷神陆军 106）。
+ *        运行时反查（= UserData.Level + MONSTER_REFRESH 最大 level_relative，旧野怪再钳 data_config 1120）；反查不可用才回落 MONSTERS.level 常数（曾实证：黑暗军团 86、黑雷神陆军 106）。
  *        黑暗军团(41/42/43) 实测不支持区间搜索（1~86 搜空、86~86 才回点），故恒取单档。
  *   无集结行军 902 MARCH_WORLD_POINT —— 走 core/march.attack() 组 canonical body；marchType 5 单打（183821 seq280/384/465/549 实证）、42 五连（184302 seq806 实证）。
  *   创建集结 1201 —— 直发 req {marchType:8,x,y,time:60,armyList,armyListNew,heroList,trapList,formation:0,formationV2}（无 break/extraArmy，192612 seq39/183114 实证）。
@@ -111,29 +105,14 @@ const MODES = {
 };
 
 /**
- * 难民营行（「道具开营」类，恒在目录末尾）：不参与表反查、由 buildCatalog 固定追加。口径对齐游戏侧——它也是把自己从
- * getAutoHuntMonsterList 主循环里剥出来、末尾走 getRefugeeCampData() 单独追加的（MONSTER_GROUP(12).search_show=0 不满足入选条件）。
- * 本行不走 906 搜索：用一张求救信(815)开点 + 等 10802 落点，故无 groupType/pointType/level。
- * @type {object}
- */
-const ROW_REFUGEE_CAMP = {
-  key: 'refugeeCamp',
-  label: '难民营',
-  modes: ['rally5', 'rally10'],
-  level: 0,
-  defaultMode: 'rally5',
-  openItem: REFUGEE_LETTER,
-};
-
-/**
- * 怪物目录·兜底种子（**只在游戏本地表不可读时顶上**，与历史手写清单逐字段等值；正常运行时的目录由 catalog() 反查得出）。
- * 存在的意义是「刷表当天/符号缺失时行为零变化」，不是清单真相源 —— 新增/下线怪物请勿来这里改行。
- * 字段语义同 buildCatalog 产出：groupType/pointType 是 906 搜索的协议身份（pointType=页签：1 野怪、3 集结）；
- *   level 是「搜索等级回退值」（野怪行派发时由 resolveHuntLevel 反查覆盖，集结行等级由服务端下发、恒用此值）；
- *   modes 引用 MODES 键（该行「攻打方式」候选）；openItem 非空者为「道具开营」类。
+ * 怪物目录（数据驱动，可扩展位）。清单固定行来源，每种怪一行；modes 为该行「攻打方式」下拉的候选（引用 MODES 键）。
+ * groupType/pointType 均实证于 dashcam 183821 与游戏内 906 搜索（稳定协议身份，不随版本漂移）。
+ * level 现降级为「搜索等级回退值」：野怪行（pointType=1）派发时改由 resolveHuntLevel 从游戏本地表运行时反查（见该函数），
+ *   仅当表未就绪/读数非法时回落此常数；集结类（战锤，pointType=3）等级由服务端下发、本 feat 无法只读反查，故恒用此常数。
+ * openItem 非空者为「道具开营」类（难民营）：不走 906 搜索，改用一张该道具(815)开点 + 10802 落点，故无 groupType/pointType/level。
  * @type {Array<{key:string,label:string,modes:string[],level:number,defaultMode:string,maxCount?:number,groupType?:number,pointType?:number,openItem?:number}>}
  */
-const MONSTERS_SEED = [
+const MONSTERS = [
   {
     key: 'wild',
     label: '黑雷神陆军',
@@ -179,47 +158,15 @@ const MONSTERS_SEED = [
     level: 80,
     defaultMode: 'rally5',
   },
-  ROW_REFUGEE_CAMP,
+  {
+    key: 'refugeeCamp',
+    label: '难民营',
+    modes: ['rally5', 'rally10'],
+    level: 0,
+    defaultMode: 'rally5',
+    openItem: REFUGEE_LETTER,
+  },
 ];
-
-/**
- * @type {Object<number,string>} group → 语义 key（历史手写清单沿用的键）。命中者用旧键，使已存配置（huntlist[].key）与
- *   当日已打计数（autoHunt.daily.counts）无需迁移；表里新增的 group 用 'g<group>'。
- */
-const CATALOG_KEYS = { 41: 'dark3', 42: 'dark2', 43: 'dark1', 44: 'warHammer', 61: 'wild' };
-
-/**
- * @type {Object<number,number>} 野怪行的「搜索等级回退值」（仅 resolveHuntLevel 反查不可用时顶上，均为实证值）。
- *   表里新增、此处没有的野怪 group 回退 0 → 反查也不可用时该行当轮不搜索（宁不发 0 级档，也不猜等级）。
- */
-const WILD_LEVEL_FALLBACK = { 41: 86, 42: 86, 43: 86, 61: 106 };
-
-/**
- * @type {number} 集结行（pointType=3）的搜索等级：游戏由 903 SEARCH_HAMMER_BOSS_MAXLEVEL 应答下发（本 feat 不接该应答、
- *   也无法只读反查），故恒用此实证档（战锤 80 可回点）；搜空即该轮不派，无害。
- */
-const RALLY_LEVEL = 80;
-
-/** @type {number} MONSTER_GROUP.search_show=21 → 打野面板「野怪」页签（实证 41/42/43/61） */
-const SS_WILD = 21;
-/** @type {number} MONSTER_GROUP.search_show=22 → 打野面板「集结」页签（实证 44/5001/9100） */
-const SS_RALLY = 22;
-
-/**
- * @type {number[]} 表反查显式排除的 group：
- *   12 难民营（走 ROW_REFUGEE_CAMP 专用行）、9100 惧星（已拆独立 feat fearStarRally，同列会双跑抢行军队列）、
- *   5001 混合集结（游戏 getAutoHuntMonsterList 自己也硬排除该项）。
- */
-const CATALOG_EXCLUDE = [12, 9100, 5001];
-
-/** @type {number} 目录缓存有效期（毫秒）：面板渲染与逐拍派发共用一份，过期才重读表/开关（赛季开关翻转最迟 30s 内反映到面板与派发） */
-const CATALOG_TTL_MS = 1000 * 30;
-
-/**
- * @type {number} 回落态（拿不到表反查结果）的缓存有效期（毫秒）：只用短 TTL，避开「游戏 bundle 未加载时的探表失败」
- *   被 30s 钉住（面板求值期会走一次本目录，那一拍必读不到表）；下一拍就重试回表反查，syncCatalog 随即重建 segs。
- */
-const CATALOG_RETRY_MS = 1000 * 5;
 
 /** @type {number} data_config 1110 world_v1_monster_group_id：'|' 分隔的新世界野怪 group 名单，命中者走「不受旧野怪上限钳制」的口径（实证游戏 WorldMonsterModel.isNWorldTransformNMonster 即读此项） */
 const CFG_WORLD_V1_GROUPS = 1110;
@@ -232,7 +179,7 @@ const CFG_OLD_MONSTER_MAX_LEVEL = 1120;
  *   旧野怪（group 不在 data_config 1110）：level = min(UserData.Level + maxOffset, data_config 1120)；
  *   新世界野怪（group 命中 data_config 1110，如黑雷神陆军 61）：level = UserData.Level + maxOffset（不受 1120 钳制）。
  *   maxOffset = MONSTER_REFRESH 表 level_relative 列最大值（当前 +6；实证黑暗军团某高等级号→86、黑雷神陆军→号级100+6=106，与旧硬编码逐项吻合）。
- * 任一输入不可得（表未就绪 / 等级为 0 / 读数非法）→ 返回 0，调用方回落目录行的 level 回退值，保证刷表当天或异常时行为零变化。
+ * 任一输入不可得（表未就绪 / 等级为 0 / 读数非法）→ 返回 0，调用方回落 MONSTERS.level 常数，保证刷表当天或异常时行为零变化。
  * @param {number} groupType 野怪 species（906 groupType）
  * @returns {number} 反查到的等级；0=不可用（用回退值）
  */
@@ -261,183 +208,6 @@ function resolveHuntLevel(groupType) {
   } catch (e) {
     return 0;
   }
-}
-
-// ── 怪物目录（表驱动：运行时从游戏本地表反查） ────────────────────
-/** @type {{rows:object[],sig:string,at:number,fellBack:boolean}|null} 目录缓存：rows=与 MONSTERS_SEED 同构的行、sig=侦测目录漂移的签名、at=构建时刻、fellBack=本次是否为回落态 */
-var catalogCache = null;
-/**
- * @type {string} 本轮表反查回落的原因（'ok'=反查成功）；只进日志，供「为什么面板只有种子行」可诊断。
- */
-var catalogFallbackReason = 'never built';
-/** @type {boolean} 「目录回落」是否已播报过（同一页面只提一次 warn，后续逐次回落只留 debug） */
-var fallbackAnnounced = false;
-/** @type {boolean} 「目录来自游戏表」是否已播报过（同一页面只提一次 info：30s TTL 到期不重刷这条） */
-var tableAnnounced = false;
-/**
- * @type {boolean} 是否允许读游戏表（模块求值期 false，install 才置 true）：本 feat 在求值期就要 `normalizeHunt({})` 拿到形状，
- *   而那一刻游戏 bundle（`__require`）还没上全局，读表必落。拿一个「还没到能读」的结论去报回退/延迟，每次刷页都是三条假警报，
- *   故这类先拦住不读（静默用种子行占位）；真回退（install 之后读不到）仍走下面带 reason 的日志路径。
- */
-var tableReadAllowed = false;
-/** @type {string} 最近一次 normalizeHunt 所依据的目录签名；与 catalog().sig 不符即触发 segs 重算（见 syncCatalog） */
-var segsCatalogSig = '';
-
-/**
- * 表列 name → 面板标签：先 auto_hunt.name（更贴打野语境）、回落 MONSTER_GROUP.name，两者都拿不到可读文案时用 '#<group>'。
- * 实证两表 name 列既有语言键（monster_name005 / 105717）也有明文（战锤-4000）：l10n.text 对语言键出译文（返回值≠传入键即命中），
- *   对明文原样返回（查不到回原键），故再按「含中日韩字符」认明文。
- * @param {object} ah auto_hunt 行
- * @param {object} mg MONSTER_GROUP 行
- * @param {number} group 怪物 group（= 906 groupType）
- * @returns {string}
- */
-function catalogLabel(ah, mg, group) {
-  var keys = [ah && ah.name, mg && mg.name];
-  for (var i = 0; i < keys.length; i++) {
-    var k = String(keys[i] == null ? '' : keys[i]).trim();
-    if (!k) continue;
-    var t = l10n.text(k);
-    if (t && t !== k) return t;
-    if (/[\u3400-\u9fff]/.test(k)) return k;
-  }
-  return '#' + group;
-}
-
-/**
- * 从游戏本地表反查怪物目录：auto_hunt ⨝ MONSTER_GROUP，闸门与排序对齐 MonthCardController.getAutoHuntMonsterList +
- * AutoHuntMonsterSettingPop.initMonsterListV1/initView（真相全走 ACL 只读面，不调游戏侧那个聚合 API）。
- * 入选条件：该 group 在 auto_hunt 有行 → MONSTER_GROUP 有行 → search_show 命中页签（21 野怪→pointType 1 / 22 集结→pointType 3，
- *   其余形态（含 search_show=0）不列）→ switch 为空或功能开关已开（表存 FunctionKey 值串，走 gameData.functionOnValue；读不到则放行）→ 不在 CATALOG_EXCLUDE。
- * 不复刻游戏侧的 NWorld 转换怪开放等级闸（data_config 1118 + NWorldRaise 的 WORLD_MONSTER_LEVEL）：低等级号多列一行只会搜空（906 只读、无副作用），
- *   而把它搬进目录反而有「1118/1110 读数异常即误删现役行」的风险。
- * 攻打方式：野怪行的「五连」取决于 auto_hunt.five_continuous_type 非空（实证值 42，与 MODES.combo.marchType 同值；
- *   若日后该列改成别的值，仍按本 feat 已实证的 42 派发，不照表改码）。
- * 刻意不复刻的分支（遇到时表现为「该怪不列」而非误列，是诚实边界）：
- *   KVK 赛季（游戏改用 search_show_kvk + 八国 EC 配置 130137 判定，黑暗机甲/黑暗精卫 9001/9021/9031/9131/9201 等变体只在该态出现）；
- *   活动锤子怪（group 6，需 ActivityController.getLimitHammerBossExchangeActivityId('4') 命中活动）；
- *   惧星（monster_type=40 + buff 941222，已拆独立 feat）；relevance_activity 活动窗口屏蔽；CQ26 临时禁用态。
- * @returns {object[]|null} MONSTERS_SEED 同构行数组（末尾恒附难民营行）；auto_hunt/MONSTER_GROUP 表不可读时返回 null（调用方回落种子）
- */
-function buildCatalog() {
-  var ahRows;
-  try {
-    ahRows = l10n.tableRows('auto_hunt');
-  } catch (e) {
-    catalogFallbackReason = 'auto_hunt read threw: ' + ((e && e.message) || e);
-    return null;
-  }
-  if (!Array.isArray(ahRows) || !ahRows.length) {
-    // 游戏 bundle 未加载（面板求值期）与 TABLE 单例缺失都走这条：l10n.tableRows 统一回 []
-    catalogFallbackReason = 'auto_hunt empty or TABLE singleton unavailable';
-    return null;
-  }
-  var rows = [];
-  var mgHit = 0;
-  for (var i = 0; i < ahRows.length; i++) {
-    var ah = ahRows[i];
-    var group = Number(ah && ah.monster_group);
-    if (!(group > 0) || CATALOG_EXCLUDE.indexOf(group) >= 0) continue;
-    var mg = l10n.tableRow('MONSTER_GROUP', group);
-    if (!mg) continue;
-    mgHit++;
-    var show = Number(mg.search_show);
-    var pointType = show === SS_RALLY ? 3 : show === SS_WILD ? 1 : 0;
-    if (!pointType) continue;
-    if (mg.switch && gameData.functionOnValue(String(mg.switch)) === false) continue; // 赛季功能开关（表 switch 列存 FunctionKey 值串）：明确关了就不列也不派；读不到（null）则放行，防误删现役行
-    var wild = pointType === 1;
-    var modes = wild ? ['single'] : ['rally5', 'rally10'];
-    if (wild && Number(ah.five_continuous_type)) modes.push('combo');
-    rows.push({
-      key: CATALOG_KEYS[group] || 'g' + group,
-      label: catalogLabel(ah, mg, group),
-      groupType: group,
-      pointType: pointType,
-      modes: modes,
-      defaultMode: modes[0],
-      level: wild ? WILD_LEVEL_FALLBACK[group] || 0 : RALLY_LEVEL,
-      searchOrder: Number(mg.search_order) || 0, // 仅供行排序（对齐游戏 search_order），下游不读
-    });
-  }
-  if (!mgHit) {
-    catalogFallbackReason =
-      'auto_hunt has ' + ahRows.length + ' rows but monster_group matched none (table name drift?)';
-    return null; // auto_hunt 有行但 MONSTER_GROUP 一行都反查不到 = 表未真正就绪，回落种子
-  }
-  catalogFallbackReason = 'ok';
-  // 排序照游戏 initView：页签(searchType) 升 → search_order 升 → group 升；难民营行恒在末尾
-  rows.sort(function (a, b) {
-    return a.pointType - b.pointType || a.searchOrder - b.searchOrder || a.groupType - b.groupType;
-  });
-  rows.push(ROW_REFUGEE_CAMP);
-  return rows;
-}
-
-/**
- * 目录行签名（key + 协议身份 + 打法候选 + 等级回退值 + 开营道具 + 标签）：增删行或某行属性变化都会改变签名，供 syncCatalog 侦测漂移。
- * @param {object} mo 目录行
- * @returns {string}
- */
-function catalogRowSig(mo) {
-  return [
-    mo.key,
-    mo.groupType == null ? '-' : mo.groupType,
-    mo.pointType == null ? '-' : mo.pointType,
-    mo.level | 0,
-    mo.modes.join('/'),
-    mo.openItem || 0,
-    mo.label,
-  ].join(':');
-}
-
-/**
- * 取怪物目录（惰性 + TTL 缓存）：面板 descriptor 的 catalog getter 与逐拍派发共用同一份。
- * 表不可得（buildCatalog 回 null）→ 回落 MONSTERS_SEED，行为与改造前零差异；回落态只缓 CATALOG_RETRY_MS。
- * ⚠ 返回值恒非空（难民营行总在里面）：面板 wire 的 huntlist align 钩子会按 catalog 全量重建存档行，
- *   某刻返回空数组会把用户已配的整张清单清成 [] 并落盘。
- * @returns {{rows:object[],sig:string,at:number,fellBack:boolean}}
- */
-function catalog() {
-  var now = Date.now();
-  var ttl = catalogCache && catalogCache.fellBack ? CATALOG_RETRY_MS : CATALOG_TTL_MS;
-  if (catalogCache && now - catalogCache.at < ttl) return catalogCache;
-  if (!tableReadAllowed) {
-    // 求值期这一路不读表也不打日志（理由见 tableReadAllowed）；at:0 使占位缓存立即失效，install 后第一读就拿表目录
-    var seed = MONSTERS_SEED.slice();
-    catalogCache = { rows: seed, sig: seed.map(catalogRowSig).join('|'), at: 0, fellBack: true };
-    return catalogCache;
-  }
-  var rows = buildCatalog();
-  var fellBack = !rows;
-  if (fellBack) {
-    // 回落必有日志（保证 dashcam 单轨可还原「为什么面板只有种子行」）；但只在读数面已就绪时 warn，
-    //   bundle 未加载那一拍已由 tableReadAllowed 拦在门外（根本不读表、不打日志），走到这里只能是表真读不出。
-    log.debug('hunt catalog fell back to seed rows. reason=%s', catalogFallbackReason);
-    if (!fallbackAnnounced && l10n.tableReady()) {
-      fallbackAnnounced = true;
-      log.warn(
-        'hunt monster table unreadable, panel shows seed rows until it reads ok. reason=%s',
-        catalogFallbackReason,
-      );
-    }
-    rows = MONSTERS_SEED.slice();
-  } else if (!tableAnnounced) {
-    // 成功路径也要留痕：否则日志里只有「回落」一种信号，无从判断面板上的是动态行还是种子行（表行与种子行
-    //   内容相近时肉眼看不出差别）；rows 与 seed 不等或将来改版新增怪，这条就是唯一证据。
-    tableAnnounced = true;
-    log.info(
-      'hunt catalog built from game table. rows=%d (seed rows=%d, same set is expected).',
-      rows.length,
-      MONSTERS_SEED.length,
-    );
-  }
-  catalogCache = {
-    rows: rows,
-    sig: rows.map(catalogRowSig).join('|'),
-    at: now,
-    fellBack: fellBack,
-  };
-  return catalogCache;
 }
 
 /**
@@ -470,12 +240,7 @@ var ctxRef = null;
 /** @type {boolean} install 幂等守卫 */
 var installed = false;
 
-/**
- * @type {object} 模块配置（configure 灌入）：{minStamina,autoRefill,presets:number[],segs:归一化行[]}。
- *   本行在模块求值期就调 normalizeHunt→catalog：那一刻游戏 bundle（`__require`）还没上全局，而目录行集只能从表反查，
- *   所以 catalog() 用 tableReadAllowed 直接拦住不读，静默拿一份种子行占位（at:0 立即失效、不留日志）；
- *   真正的表目录由 install 后的首拍 syncCatalog 建立（带 info 留痕）。
- */
+/** @type {object} 模块配置（configure 灌入）：{minStamina,autoRefill,presets:number[],segs:归一化行[]} */
 var MCFG = normalizeHunt({});
 
 /** @type {boolean} 上轮是否仍有缺位未补 / 名额不足（决定 active/idle 两档兜底间隔） */
@@ -503,12 +268,6 @@ var refugeeWaiters = [];
  * @type {boolean}
  */
 var refugeeNoLetterNoted = false;
-
-/**
- * 本轮运行内「集结行已勾选但本人不在盟而跳过」是否已提示过一次（逐拍重演同一条件会刷屏，故 once 闸门）。
- * @type {boolean}
- */
-var rallyNoAllianceNoted = false;
 
 /**
  * 当日已打计数持久态：{ date:'YYYY-MM-DD', counts:{ <key>:number } }。
@@ -545,8 +304,7 @@ function rejectErrKey(data) {
 // ── 配置归一 ────────────────────────────────────────────────────────
 /**
  * 面板原始配置 → 归一化运行时配置（toModuleCfg 用；configure 只整体赋值、不再调本函数）。
- * 清单行按当前目录（catalog，表驱动）顺序重建（保证 tally/派发下标稳定），逐行钳值 + 校验攻打方式在该行候选内；
- *   同时记下本次所依据的目录签名，供 syncCatalog 侦测「目录漂移」（赛季新增/下线怪物、功能开关翻转）。
+ * 清单行按 MONSTERS 顺序重建（保证 tally/派发下标稳定），逐行钳值 + 校验攻打方式在该行候选内。
  * @param {object} raw 面板 configs 快照（{minStamina,autoRefill,presets:number[],huntlist:[{key,min,max,mode,count,on}]}）
  * @returns {object} { minStamina, autoRefill, presets:number[], segs:Array }
  */
@@ -567,14 +325,12 @@ function normalizeHunt(raw) {
     if (r && r.key) byKey[r.key] = r;
   }
   var segs = [];
-  var entry = catalog();
-  segsCatalogSig = entry.sig;
-  for (var m = 0; m < entry.rows.length; m++) {
-    var mo = entry.rows[m];
+  for (var m = 0; m < MONSTERS.length; m++) {
+    var mo = MONSTERS[m];
     var row = byKey[mo.key] || {};
     // 攻打方式：必须在该行候选内，非法/缺省回落该怪默认打法
     var mode = MODES[row.mode] && mo.modes.indexOf(row.mode) >= 0 ? row.mode : mo.defaultMode;
-    // 等级：此处只存目录行的 level 作为回退值（min=max）；野怪行（pointType=1）实际搜索等级由 searchPoint 派发时调 resolveHuntLevel 反查覆盖，反查不可用才用此值（黑暗军团实测只 min=max 才回点）
+    // 等级：此处只存 MONSTERS.level 作为回退值（min=max）；野怪行（pointType=1）实际搜索等级由 searchPoint 派发时调 resolveHuntLevel 反查覆盖，反查不可用才用此值（黑暗军团实测只 min=max 才回点）
     var lv = mo.level | 0;
     var mm = MODES[mode];
     var count = Math.max(0, Number(row.count) | 0);
@@ -601,34 +357,6 @@ function normalizeHunt(raw) {
     presets: presets,
     segs: segs,
   };
-}
-
-/**
- * 目录漂移同步：游戏表刷新 / 功能开关翻转会让目录增删行，而 MCFG.segs 只在 configure（面板改配置）时归一一次。
- * 签名不符就用现有行的 on/mode/count 重新归一：新行按目录默认态（未勾选，勾选权在用户）、下线行自动消失。
- * 每拍 cyclePass 入口调一次（目录本身有 TTL 缓存，未过期仅多一次字串比较）。
- */
-function syncCatalog() {
-  var snap = catalog();
-  // 模块求值期读表必落（那时 `__require` 还没上全局），于是缓存里是一份种子行快照；若启动首拍落在重试 TTL（5s）之内，
-  //   它会把这份快照照单收下，segs 就得等到下一次 catalog()（体力不足降频时要 600s，或直到有人开面板）才吃到表目录。
-  //   此刻已过了加载窗，故主动作废缓存重读一次 —— 让启动那一拍的目录就是表目录。
-  if (snap.fellBack && l10n.tableReady()) {
-    catalogCache = null;
-    snap = catalog();
-  }
-  if (snap.sig === segsCatalogSig) return;
-  MCFG = normalizeHunt({
-    // segs 与面板行同构（携 key/on/mode/count），直接回填即可原样保留用户已选；标量项从当前 MCFG 取回
-    minStamina: MCFG.minStamina,
-    autoRefill: MCFG.autoRefill,
-    presets: MCFG.presets,
-    huntlist: MCFG.segs,
-  });
-  log.info('hunt catalog drifted, segs rebuilt. segs=%d', MCFG.segs.length);
-  // 行集变了：面板只刷只读格不会改 DOM（新行看不见），故带 rebuild 让那张卡重建；
-  //   面板关着或焦点正在格子里时，core/ui/index.js 会先记账，等下次开面板补渲染（展开本身不重跑 buildFieldsHTML）。
-  bus.emit(EVT.UI_REFRESH, { rebuild: 'autoHunt' });
 }
 
 /**
@@ -755,10 +483,9 @@ function dailyDone(key) {
  * @returns {Promise<{x:number,y:number}|null>}
  */
 async function searchPoint(seg, taken) {
-  // 等级：野怪行（pointType=1）派发时实时反查游戏本地表（随账号等级/版本闸浮动），反查不可用回落目录行的 level；
+  // 等级：野怪行（pointType=1）派发时实时反查游戏本地表（随账号等级/版本闸浮动），反查不可用回落 seg.minLevel（=MONSTERS.level）；
   //   集结行（战锤 pointType=3）等级由服务端下发、无法只读反查，恒用回退值。min=max 单档（黑暗军团实测不支持区间搜索）。
   var lv = seg.pointType === 1 ? resolveHuntLevel(seg.groupType) || seg.minLevel : seg.minLevel;
-  if (!(lv > 0)) return null; // 等级不可得（表未就绪且该行无回退值，如新增野怪）：宁不搜，也不发 0 级档
   // 906 只读骨架（isSending 门/异常吞掉/取点）下沉 map.searchPoint；黑名单/taken 业务谓词留本 feat
   var r = await map.searchPoint(net, {
     minLevel: lv,
@@ -945,7 +672,6 @@ async function useStaminaItem(itemId) {
  * @returns {Promise<void>}
  */
 async function cyclePass() {
-  syncCatalog(); // 目录漂移（赛季新增/下线怪物、功能开关翻转）先同步进 segs，再取当拍勾选行
   var segs = [];
   for (var i = 0; i < MCFG.segs.length; i++) {
     var s = MCFG.segs[i];
@@ -1016,17 +742,6 @@ async function cyclePass() {
     // 「攻打数量」= 该行当日总量上限：当日已派满 count 个即停手（跨自然日 rollDateIfNeeded 归零）；未读到当日计数前保守不派封顶行，防启动瞬间误发；count=0(不限) 不受此限
     if (seg.count > 0 && (!dailyStateLoaded || dailyDone(seg.key) >= seg.count)) continue;
     if (stamina < seg.cost) continue; // 体力不够该档（如 10 人集结扣 20），跳过该行不硬发
-    // 集结行需已在联盟（游戏 getAutoHuntMonsterList 对 searchType>=3 的同口径闸）：明确不在盟即跳过，不白吃一次 1201 真拒（真拒会拉黑那个点）。
-    //   inAlliance() 回 null=符号未就绪、无从判定 → 放行，保持改造前行为（把读不到当「不在盟」会误停整类集结）
-    if (seg.rally && gameData.inAlliance() === false) {
-      if (!rallyNoAllianceNoted) {
-        rallyNoAllianceNoted = true;
-        log.info(
-          'rally rows selected but not in an alliance, rally rows are skipped until joining one.',
-        );
-      }
-      continue;
-    }
     // 道具开营类（难民营）：背包无求救信即自动忽略该行（用户口径），不占本轮名额
     if (seg.openItem && item.amount(seg.openItem) <= 0) {
       if (!refugeeNoLetterNoted) {
@@ -1184,7 +899,6 @@ function onEnergyPush() {
 function install(ctx) {
   ctxRef = ctx;
   if (installed) return true;
-  tableReadAllowed = true; // 本拍已远晚于 bundle 就位：目录从这里开始才该读表
   net = ctx.net;
   if (!net.install()) {
     net = null;
@@ -1223,7 +937,6 @@ function run(ctx) {
   blacklist = new Set();
   refugeeWaiters = [];
   refugeeNoLetterNoted = false;
-  rallyNoAllianceNoted = false;
   ensureDailyLoaded(); // 读回当日已打计数（面板「已打」列与本地计数闸门依赖）
   ctx.on.push(PUSH_ENERGY, onEnergyPush);
   ctx.on.push(PUSH_FIND_REFUGEECAMP, onRefugeeCampPush);
@@ -1257,12 +970,11 @@ function pause() {
 
 // ── 面板 descriptor ─────────────────────────────────────────────────
 /**
- * 生成 defaults：全局项 + 怪物清单行（注册时按当时目录铺一次默认值；实际行集以面板每次渲染的 catalog getter 为准）。
- * 每种怪一行，默认未勾选、数量 1、该行默认打法；等级不入配置（固定搜最高档）。
+ * 生成 defaults：全局项 + 怪物清单固定行（每种怪一行，默认未勾选、数量 1、该行默认打法；等级不入配置，固定搜最高档）。
  * @returns {object}
  */
 function buildDefaults() {
-  var huntlist = catalog().rows.map(function (mo) {
+  var huntlist = MONSTERS.map(function (mo) {
     return {
       key: mo.key,
       count: 1,
@@ -1280,35 +992,29 @@ function buildDefaults() {
 }
 
 /**
- * 目录行 → 面板 huntlist 的 catalog 行（descriptor 形态）：补 levelMode（野怪行运行时反查、标题标「动态」）与攻打方式选项标签。
- * @param {object} mo 目录行（buildCatalog / MONSTERS_SEED 同构）
- * @returns {object}
- */
-function huntCatalogRow(mo) {
-  return {
-    key: mo.key,
-    label: mo.label,
-    groupType: mo.groupType,
-    pointType: mo.pointType,
-    level: mo.level,
-    // 野怪行（pointType=1 且非道具开营）等级运行时反查，title 提示标「动态」；其余（集结/难民营）为固定回退值
-    levelMode: mo.pointType === 1 && !mo.openItem ? 'dynamic' : 'fixed',
-    defaultCount: 1,
-    defaultOn: false,
-    defaultMode: mo.defaultMode,
-    maxCount: mo.maxCount,
-    openItem: mo.openItem || 0,
-    modes: mo.modes.map(function (mk) {
-      return { value: mk, label: MODES[mk].label };
-    }),
-  };
-}
-
-/**
- * 生成 fields：全局区（体力下限 / 自动补药 / 打野预设池）+ 怪物清单（表格，行集由 catalog getter 实时给出）。
+ * 生成 fields：全局区（体力下限 / 自动补药 / 打野预设池）+ 怪物清单（表格，固定行）。
  * @returns {object[]}
  */
 function buildFields() {
+  var catalog = MONSTERS.map(function (mo) {
+    return {
+      key: mo.key,
+      label: mo.label,
+      groupType: mo.groupType,
+      pointType: mo.pointType,
+      level: mo.level,
+      // 野怪行（pointType=1 且非道具开营）等级运行时反查，title 提示标「动态」；其余（战锤/难民营）为固定回退值
+      levelMode: mo.pointType === 1 && !mo.openItem ? 'dynamic' : 'fixed',
+      defaultCount: 1,
+      defaultOn: false,
+      defaultMode: mo.defaultMode,
+      maxCount: mo.maxCount,
+      openItem: mo.openItem || 0,
+      modes: mo.modes.map(function (mk) {
+        return { value: mk, label: MODES[mk].label };
+      }),
+    };
+  });
   return [
     {
       key: 'minStamina',
@@ -1334,12 +1040,7 @@ function buildFields() {
       key: 'huntlist',
       label: '怪物清单',
       type: 'huntlist',
-      // 目录 getter：面板每次渲染实时反查游戏表（新增/下线怪物自动增减行，无需再改本 feat）。
-      //   wire 的 huntlist align 钩子会按本 catalog 全量对齐存档行（逐 key 保留已存值、补齐新行、剔除下线行），
-      //   所以 getter 绝不能返空（catalog() 已保证难民营行恒在）。
-      get catalog() {
-        return catalog().rows.map(huntCatalogRow);
-      },
+      catalog: catalog,
       todayText: todayText,
     },
   ];
