@@ -3,6 +3,7 @@
 // 本文件只决定层级归属、显示标签覆写与是否渲染详细字段。
 // 节点：
 //   kind:'category' 类别 = 面板左侧一个 TAB（玩家设置/联盟设置/活动设置/战斗设置/系统设置），本身不可开关；children=右栏卡片数组。
+//     赛季型类别可声明 gate（如 cq26 -> 'cq26Open'），活动未开启时该 TAB 不可点。
 //   kind:'group'    组卡片：标题行带主闸门 checkbox，展开=子项 checkbox 列表（如玩家/联盟基础设置）。
 //   kind:'feature'  功能卡片：标题行带启用 checkbox；showFields=true 时展开 descriptor 的详细字段。
 // 组开关语义（工程决策，勿改回门控方案）：组是 UI 层主闸门，不进 reactor 门控——
@@ -20,6 +21,9 @@
  * @property {boolean} [showFields] feature 为真时面板渲染 descriptor 的详细字段
  * @property {string} [storageKey] group 的配置存储键
  * @property {boolean} [defaultEnabled] group 的默认开关态
+ * @property {string} [gate] category 的活动闸门名：由 ui/panel.js 的 TAB_GATES 注册表求值，
+ *   判据为假（活动未开启）时该左 TAB 置灰不可点。本文件只声明「谁受哪个闸门管」，判据实现留在 UI 层，
+ *   以免菜单树这个纯布局真相反向依赖游戏符号。
  */
 
 /**
@@ -130,9 +134,10 @@ export const MENU = [
     id: 'cq26',
     kind: 'category',
     label: CATEGORIES.cq26,
+    gate: 'cq26Open', // 赛季活动：未开启（含符号投影不可得）时整个 TAB 不可点，与 cq26 各 feat 的活动闸同口径
     children: [
-      // CQ26 玩法：无可调参数、只出开关的两项收进基础设置组（组内子项 inlineStatus 将只读状态值内联到开关行）；
-      //   带独立参数的（雪原列车/霜之密所抢购/荒芜冰原矿区）保持与本组平级的 feature 卡片
+      // CQ26 玩法：无可调参数、只出开关的三项收进基础设置组（组内子项 inlineStatus 将只读状态值内联到开关行）；
+      //   带独立参数的（雪原列车/霜之密所抢购/荒芜冰原矿区/猛犸突袭）保持与本组平级的 feature 卡片
       {
         id: 'cq26Basics',
         kind: 'group',
@@ -142,10 +147,16 @@ export const MENU = [
         children: [
           { id: 'cq26Excav', kind: 'feature', label: '战区宝藏', inlineStatus: true },
           { id: 'cq26WlChest', kind: 'feature', label: '遗失之箱', inlineStatus: true },
+          { id: 'cq26EnergyConvoy', kind: 'feature', label: '能量补充车队', inlineStatus: true },
+          { id: 'cq26IceShake', kind: 'feature', label: '开荒摇一摇', inlineStatus: true },
         ],
       },
       { id: 'cq26Train', kind: 'feature', label: '雪原列车', showFields: true },
       { id: 'cq26Shop', kind: 'feature', label: '霜之密所抢购', showFields: true },
+      { id: 'cq26WlMine', kind: 'feature', label: '荒芜冰原矿区', showFields: true },
+      { id: 'cq26Mammoth', kind: 'feature', label: '猛犸突袭', showFields: true },
+      { id: 'cq26WlBeast', kind: 'feature', label: '冰原巨熊', showFields: true },
+      { id: 'cq26ArkEnergy', kind: 'feature', label: '保卫能量', showFields: true },
     ],
   },
   {

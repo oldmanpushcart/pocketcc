@@ -180,8 +180,8 @@ onWastelandChestPosPush(e){ this._WlBossRwardPBDataPos=e.pos||[]; EVENT.emit(Eve
 
 | 字段 | 样例 | 语义（源码锚点） |
 | --- | --- | --- |
-| `curStage` | 1 / 2 | 赛季阶段；`curStageEndTime` 配 `CQ26WLOpenMain` 倒计时 |
-| `curStageEndTime` | 1794240000 | 阶段结束秒 |
+| `curStage` | 1 / 2 | 赛季阶段 `CQ26WLStatus`：`1 CAN_OPEN`(开荒中) / `2 NOT_OPEN`(面板「等待下次开荒」) / `3 ENDED`(面板「已结束」，不再显示倒计时)；`curStageEndTime` 配 `CQ26WLOpenMain` 倒计时。**只有 1 才有矿可挖/可盗/可助**（wl-mine 三腿的阶段闸，见 §6 坑16） |
+| `curStageEndTime` | 1794240000 | 阶段结束秒（2 阶段实录见 21h+ 倒计时，睡到这个时刻是正解） |
 | `todayCanGatherTime` | 57600 | **今日剩余采集时长（秒）**，57600=16h；`getTodayCanGatherTime()` |
 | `remainStealNum` / `remainHelpNum` | 3 / 3 | 可盗采次 / 可守护(帮助)次；`getRemainStealNum/getRemainHelpNum` |
 | `remainChestNum` | 4 / 5 | 可开箱次；`getRemainChestNum()`，上限 `52000426` |
@@ -314,7 +314,9 @@ onWastelandChestPosPush(e){ this._WlBossRwardPBDataPos=e.pos||[]; EVENT.emit(Eve
 _cq26WasteLand() {}
 
 /** @returns {{todayCanGatherTime:number, remainStealNum:number, remainHelpNum:number, remainChestNum:number,
-              chestDailyLimit:number, isGathering:boolean, curStage:number, curStageEndTime:number, elecPower:number}|null} */
+              chestDailyLimit:number, isGathering:boolean, curStage:number|null,
+              curStageEndTime:number|null, elecPower:number}|null}
+    额度类键缺失按 0（同游戏 getter 的 `||0`）；唯独 `curStage`/`curStageEndTime` 缺键回 **null**（枚举无 0，折成 0 会被读成「已结束」而全停）*/
 cq26WlInfo() {}
 
 /** @returns {Array<{index:number, status:number, type:number, condition:number, endTime:number}>|null} 16 分区全量 */
@@ -398,6 +400,8 @@ cq26OriginServerId() {}
     - ③ 同一场本服只有一个 status=4 的分区，22077 却覆盖 `14001012`/`14002212` 两个房间 ⇒「房间唯一 ⇒ 分区唯一」不成立。
     ⇒ `wastelandIndex` 的唯一真相源是 **315 地块 `m.specIndex`**（源码逐字：`CQ26WLWorldRewardBoxPop.onClickGetReward` 取 `extData.specIndex`）；按映射表反查会拿错号出网，被拒还会把有效目标误计进拉黑（与 §2.5 采集腿的 `showNum===wastelandIndex` 实证**不互推**：那条说的是 region 主键，不是宝箱房间）。
 15. **开箱时 `22072` 抢在 `2118` 应答之前到货**（真人连开箱实录，四颗箱的报文序完全一致：`req 2118 → push 22072(remain−1) → push 22077 → resp 2118 code=0`，单颗往返 45–59ms）：坑 3 说「额度唯一权威是 22072」是对的，但**不能因此把乐观扣减写成「应答里 +1、推送到货清零」**——推送先到、记账后到，那个 `+1` 就是把服务器已经扣掉的那格再扣一遍 ⇒ 乐观值常挂 1。后果不是多发包而是**少发包**：额度 5 只开得出 4，第 5 颗卡在「等下一条 22072」，而 22072 只在额度真变化时才推 ⇒ 该等待永无下文，饿到日界（表观：游戏面板「今日剩余 1/5」而引擎「可开 0/5」）。纪律：① 结算时先比快照（`snapNow < snapAtSend` ⇒ 服务器已反映本笔，不再记乐观账）；② 推送侧按**额度增量**回抵（`prevRemain − curRemain`），额度持平的推送（同包 `elecPower`/采集态变了）**不得**清账；③ 乐观账必须有寿命（本 feat 取 10s），推送丢失时宁可多撞一次被拒也不饿死一整天。单测 `tests/feats/cq26-wl-chest.test.js` 的 `runQuotaLedger` 三种报文序对拍（含旧写法反证）。
+
+16. **赛季阶段与分区状态是两层，feat 只认后者会空跑**（190 场普查脚本 `.reviewtmp/stage-census.mjs` / `stage-sessions.mjs` / `stage-point-shape.mjs` 可复跑）：`curStage`（赛季级 `CQ26WLStatus`）与 `status`（分区级 `CQ26WLLandStatus`）互不蕴含。实证对照 —— `curStage=1`（78 场）：采集额度有消耗、分区含 `OPENING(4)`、316 点有主数可达 91、人的写动作 `2114/2115/2116/2121` 齐全；`curStage=2`（18 场）：**额度恒满 57600、盗采/协助恒 3/3、无一个 `OPENING(4)` 分区、9380 个 316 点全部无主、人的写动作全 0**。⇒ 阶段 2 里没有任何可挖/可盗/可助对象，而只按分区 `status` 判据跑的采集腿仍会每拍发 2201 空刷棋盘、盗采/协助腿仍会对组内的 `status=5` 外服区逐区精扫（1×2120 + 2×901）后空手而归。纪律（已落 `feats/cq26/wl-mine`，见 feat §4.5）：三腿各加 `stageGate`，**只有 `curStage===1` 出新网**；`curStage` 未知（快照缺键 → ACL 回 `null`）时**不挡**，退回既有分区 `status` 判据；阶段闸必须排在 `marchBusy()` 与 `isGathering` 认领之后，否则阶段跳变时还在外面采的那一趟没人收。
 
 ---
 

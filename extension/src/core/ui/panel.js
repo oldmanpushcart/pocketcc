@@ -3,9 +3,21 @@
 import { configs, findFeature } from '../registry.js';
 import { MENU } from '../menu.js';
 import { list as hotkeyList } from '../hotkeys.js';
+import { gameData } from '../game-api.js';
 import { escAttr } from './dom.js';
 import { cardHead, buildFieldsHTML, findFieldDescriptor, refreshFieldBox } from './fields.js';
 import { mountUidList, mountSortList, mountItemList } from './widgets.js';
+
+/**
+ * 左 TAB 的活动闸门注册表：menu.js 类别节点的 `gate` 名 -> 判据（返回假则该 TAB 不可点）。
+ * 判据与各 feat 的活动闸严格同源（cq26 家族一律走 gameData.cq26IsOpen()），面板只镜像引擎事实、
+ * 不自造中间态：符号漂移 / 子包未载导致投影不可得时 cq26IsOpen() 本身就是 false，与 feat 侧
+ * 「活动闸未开 → 一个包都不发」同一口径，不会出现在 TAB 可点而引擎什么都不干的分裂态。
+ * @type {Object<string,()=>boolean>}
+ */
+const TAB_GATES = {
+  cq26Open: () => gameData.cq26IsOpen(),
+};
 
 /**
  * 世界态展示中文名（Kind 场景档 / Place 地图）：仅供面板头部状态胶囊展示，口径对齐
@@ -239,6 +251,53 @@ export function buildPanelHTML() {
         <div class="pc-tabbar">${tabs}</div>
         <div class="pc-tabpanes">${panes}</div>
       </div>`;
+}
+
+/**
+ * 切换左 TAB：只换右栏 pane 的可见性，并刷一次该 pane 的只读 text 字段。
+ * wirePanel 的点击与活动闸门回退（refreshTabGates）共用本入口，避免两处各抄一份切换逻辑而跑偏。
+ * @param {Element} panel 面板根
+ * @param {string} id 类别 id（menu.js category.id）
+ */
+export function activateTab(panel, id) {
+  panel
+    .querySelectorAll('.pc-tab')
+    .forEach((t) => t.classList.toggle('active', t.dataset.tab === id));
+  panel.querySelectorAll('.pc-pane').forEach((p) => {
+    p.hidden = p.dataset.pane !== id;
+  });
+  const pane = panel.querySelector(`.pc-pane[data-pane="${id}"]`);
+  if (pane) refreshTexts(pane);
+}
+
+/**
+ * 重算带 gate 的左 TAB 可点态：活动未开启的 TAB 置 disabled（原生不可点）并在 title 说明原因。
+ * 判据求值抛错按**可点**处理（与 refreshFieldVisibility 的 showIf 同规矩）：宁可多给一次可点，
+ *   也不因 UI 判据炸掉一整类入口。
+ * 当前激活的 TAB 被关时（活动中途退场且面板开着）回退到第一个仍可点的 TAB，别把右栏停在看不见的 pane 上。
+ * 不开轮询：挂载 + 开面板 + 功能侧 UI_REFRESH（面板可见）三处调用即够 —— 活动开关由人在游戏里触发，
+ *   最迟下次展开面板就会跟上。
+ * @param {Element} panel 面板根
+ */
+export function refreshTabGates(panel) {
+  let activeDisabled = false;
+  panel.querySelectorAll('.pc-tab').forEach((tab) => {
+    const node = findMenuNode(tab.dataset.tab);
+    const fn = node && node.gate ? TAB_GATES[node.gate] : null;
+    if (!fn) return; // 无闸门的常规类别、以及判据未注册的闸门名：保持可点
+    let open;
+    try {
+      open = !!fn();
+    } catch (e) {
+      open = true;
+    }
+    tab.disabled = !open;
+    tab.title = open ? '' : `${tab.textContent.trim()}活动未开启`;
+    if (!open && tab.classList.contains('active')) activeDisabled = true;
+  });
+  if (!activeDisabled) return;
+  const fallback = panel.querySelector('.pc-tab:not([disabled])');
+  if (fallback) activateTab(panel, fallback.dataset.tab);
 }
 
 /**

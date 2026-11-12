@@ -33,7 +33,7 @@ globalThis.setInterval = (fn, ms, ...rest) => {
 
 const mod = await import('../../extension/src/feats/cq26/wl-chest.js');
 const { iconShow, reconcileQuota, pickChests, chestBlockReason, ingestChestTiles } = mod;
-const { cancelQuotaDebt, needOptimisticDeduct } = mod;
+const { cancelQuotaDebt, needOptimisticDeduct, quotaText } = mod;
 
 /** 服务器秒与 Date.now() 基准（固定值，判据全部显式传参，不靠墙钟） */
 const NOW_SEC = 1793955600;
@@ -291,7 +291,7 @@ test('应答先于额度推送（慢推送）：乐观账盖住在途那一窗�
 
 test('反证（旧写法）：应答里无条件 +1 会卡在 snap=1/spent=1，第 5 颗永远开不掉', () => {
   // 日志实证 20261108T17：`optimistic quota 0 (snap=1 spent=1), wait next 22072` 从此每 20s 空转到日界，
-  //   而 22072 只在额度真变化时才推 ⇒ 这条推送永无下文。面板表观：游戏「1/5」而引擎「今日可开 0/5（含乐观 -1）」。
+  //   而 22072 只在额度真变化时才推 ⇒ 这条推送永无下文。面板表观：游戏里还剩 1 颗，面板却显示「已领 5/5」（乐观 -1 顶到底）。
   const r = runQuotaLedger({ pushBeforeAck: true, unconditionalDeduct: true });
   assert.deepEqual(r, { opened: 4, snap: 1, spent: 1 });
 });
@@ -313,4 +313,15 @@ test('needOptimisticDeduct：只有快照未动（或不可得）才记乐观账
   assert.equal(needOptimisticDeduct(5, 6), true); // 日界刷新途中 → 保守收紧
   assert.equal(needOptimisticDeduct(5, null), true); // 投影不可得 → 保守收紧
   assert.equal(needOptimisticDeduct(null, 5), true);
+});
+
+test('quotaText：面板分子是「已领」不是「剩余」（旧写法 0/5 会被读成今日一颗没开）', () => {
+  assert.equal(quotaText(5, 5), '已领 0/5'); // 刚过日界：一次没领
+  assert.equal(quotaText(3, 5), '已领 2/5'); // 典型中间态
+  assert.equal(quotaText(0, 5), '已领 5/5'); // 用光（含乐观顶到底）
+  assert.equal(quotaText(-1, 5), '已领 5/5'); // 剩余额度不会为负，夹到上限
+  assert.equal(quotaText(6, 5), '已领 0/5'); // 快照高于日限（配置中途调低）→ 不倒挂成负数
+  assert.equal(quotaText(3, 0), '—'); // 日限配置读不到：没分母就不报进度
+  assert.equal(quotaText(3, undefined), '—');
+  assert.equal(quotaText(3, '5'), '已领 2/5'); // 配置以文本形态回来也要能算
 });

@@ -6,7 +6,13 @@ import { session } from '../game-api.js';
 import { configs, findFeature, saveFeature, saveGroup, applyFeature } from '../registry.js';
 import { collectFeatureIds } from '../menu.js';
 import { isCombat, setCombatMode } from '../mode.js';
-import { findMenuNode, syncFeatureChecks, refreshTexts, refreshFieldVisibility } from './panel.js';
+import {
+  findMenuNode,
+  syncFeatureChecks,
+  refreshTexts,
+  refreshFieldVisibility,
+  activateTab,
+} from './panel.js';
 import { setupUidField, mountUidList, mountSortList, mountItemList } from './widgets.js';
 import {
   findFieldDescriptor,
@@ -25,16 +31,11 @@ const logCore = createLog('CORE');
  * @param {Element} panel 面板根元素
  */
 export function wirePanel(panel) {
-  // TAB 切换：只换右栏 pane 的可见性，切换后刷一次只读 text 字段。
+  // TAB 切换：只换右栏 pane 的可见性，切换后刷一次只读 text 字段（与活动闸门回退同走 activateTab）。
+  // 带 gate 的类别在活动未开启时被 panel.js refreshTabGates 置 disabled，原生不再派发 click，这里无需再判。
   panel.querySelectorAll('.pc-tab').forEach((tab) => {
     tab.addEventListener('click', () => {
-      const id = tab.dataset.tab;
-      panel.querySelectorAll('.pc-tab').forEach((t) => t.classList.toggle('active', t === tab));
-      panel.querySelectorAll('.pc-pane').forEach((p) => {
-        p.hidden = p.dataset.pane !== id;
-      });
-      const pane = panel.querySelector(`.pc-pane[data-pane="${id}"]`);
-      if (pane) refreshTexts(pane);
+      activateTab(panel, tab.dataset.tab);
     });
   });
 
@@ -800,6 +801,26 @@ function wireContainerFields(panel) {
     refreshFieldBox(t.box);
     saveFeature(t.f);
     applyFeature(t.f);
+  });
+
+  // 联盟集结目标表（type:'rallygrid'）自学习行的×删除：行由 feat 目录驱动（learnedTargets ⨝ 表反查），
+  //   删除只能回到 feat 侧动私有持久态，故经描述符 onDeleteRow(itemIdsCsv) 回调，不在这里碰 configs。
+  //   走面板级委托（非逐个绑定）：学习行增删会整块重刷 DOM，委托对新建的按钮照旧生效。
+  panel.addEventListener('click', (e) => {
+    const del = e.target.closest ? e.target.closest('.pc-rgdel') : null;
+    if (!del) return;
+    e.stopPropagation(); // 不触发卡片折叠
+    const box = del.closest('.pc-rg');
+    if (!box) return;
+    const f = findFeature(box.dataset.id);
+    if (!f) return;
+    const fd = findFieldDescriptor(f, box.dataset.fkey);
+    if (!fd || typeof fd.onDeleteRow !== 'function') return;
+    // 先把焦点从×移走：否则下面同步 rebuild 时 rerenderFeatureCard 会拿「activeElement 仍在卡片 body 内」
+    //   判定为「用户正在输入」而跳过重建（行集变化被记进 pendingRebuild，要等重开面板才补刷），
+    //   用户视角即「点了×但行没消失」。blur 后焦点落到面板外，闸门放行，当场删行。
+    del.blur();
+    fd.onDeleteRow(del.dataset.rowkey);
   });
 
   // 战斗模式总开关：翻态即广播 mode.change（reactor 重算门控、图标换态）。不持久化，默认日常。

@@ -14,6 +14,7 @@ import { clampPos, rescuePos, readIconPos } from './icon-pos.js';
 import {
   buildPanelHTML,
   refreshFieldVisibility,
+  refreshTabGates,
   refreshTexts,
   rerenderFeatureCard,
   syncControls,
@@ -61,6 +62,7 @@ export async function mountUI() {
 
   wirePanel(panel);
   refreshFieldVisibility(panel); // 条件字段（fd.showIf）初始态：按当前配置把不该出现的行收起
+  refreshTabGates(panel); // 活动型 TAB（CQ26印石）初始可点态；游戏符号未就绪时下面开面板还会再核一次
 
   // 战斗模式复选框随模式广播同步（含下面的 F8 热键切换，避免图标翻了但面板未跟着变）
   bus.on(EVT.MODE_CHANGE, () => {
@@ -138,6 +140,7 @@ export async function mountUI() {
     }
     if (panel.hidden) return;
     refreshTexts(panel);
+    refreshTabGates(panel); // 功能侧推面板时顺带核一次活动闸门（cq26 家族任何一拍 pokePanel 都能把 TAB 灰/亮带回实时态）
   });
 
   let pos = await readIconPos();
@@ -203,6 +206,7 @@ export async function mountUI() {
     panel.hidden = false;
     flushRebuild(); // 收起期间播报过的行集变化，此时才真能重渲染（展开本身不动 DOM 结构）
     refreshTexts(panel);
+    refreshTabGates(panel); // 活动开/退常在面板收起期间发生，展开时按实时判据回算左 TAB 可点态
     renderWorldStatus(); // 展开时再核一次世界态（订阅已常驻，此处兜住极早期 world.change 先于挂订阅的窗口）
   }
   /** 收起面板 */

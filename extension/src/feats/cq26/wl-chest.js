@@ -832,6 +832,20 @@ function briefReasons(blocked) {
   );
 }
 
+/**
+ * 纯函数：面板进度文案（**分子是已完成**，口径同 wl-mine 的「已用 x/y」）。
+ * 「剩余 x/y」会被读成「今日一颗都没开」，而它其实是「已用光」，方向刚好相反。
+ * @param {number} remain 收紧后的剩余额度（reconcileQuota 之值）
+ * @param {number} limit 每日上限（`chestDailyLimit`；<=0 = 配置读不到）
+ * @returns {string}
+ */
+export function quotaText(remain, limit) {
+  var l = Number(limit) || 0;
+  if (l <= 0) return '—'; // 日限配置（dataConfig 52000426）读不到：没有分母就无从谈「已领几成」
+  var left = Math.min(l, Math.max(0, Number(remain) || 0)); // 夹进 [0, 日限]：分子既不为负、也不冒出「已领 6/5」
+  return '已领 ' + (l - left) + '/' + l;
+}
+
 // ── descriptor ────────────────────────────────────────────────────────
 /**
  * 面板 defaults（唯一交互项是开关：串行连开/不跳图是行为纪律，不做勾选）。
@@ -843,6 +857,7 @@ function buildDefaults() {
 
 /**
  * 面板 fields：单行内联状态（组卡片 inlineStatus 取第一个 type:'text' 的 get() 结果）。
+ * 口径与同家族 wl-mine 的「已用 x/y」一致：**分子是已完成**，见 quotaText。
  * @returns {object[]}
  */
 function buildFields() {
@@ -856,9 +871,7 @@ function buildFields() {
         var info = gameData.cq26WlInfo();
         if (!info) return '—';
         var spent = quotaDebt(Date.now());
-        var remain = reconcileQuota(info.remainChestNum, spent);
-        var limit = info.chestDailyLimit || '—';
-        return remain + '/' + limit;
+        return quotaText(reconcileQuota(info.remainChestNum, spent), info.chestDailyLimit);
       },
     },
   ];

@@ -68,6 +68,9 @@ export const PANEL_CSS = `
       transition:background .15s,color .15s;}
     .pc-tab:hover{background:rgba(255,255,255,.08);}
     .pc-tab.active{background:rgba(70,140,255,.24);color:#dbeaff;font-weight:600;}
+    /* 活动未开启的 TAB（如 CQ26印石）：置灰不可点，且不响应 hover（放在 .active 之后，同特异度靠后覆盖）*/
+    .pc-tab:disabled{opacity:.4;cursor:not-allowed;}
+    .pc-tab:disabled:hover{background:transparent;}
     .pc-tabpanes{flex:1;min-width:0;}
     .pc-pane{max-height:56vh;overflow-y:auto;scrollbar-gutter:stable;padding-right:2px;}
     /* 固定滞动条槽宽度 + 细滑动条：避免内容超高时滞动条出现/消失导致面板横向跳动 */
@@ -213,7 +216,7 @@ export const PANEL_CSS = `
     /* 联盟集结目标紧凑表（type:'rallygrid'）：一行一目标的多行表 [目标名][延迟入队(秒)输入][每日上限输入][今日已打文本][启用checkbox]，
        列头与数据行共用同一 5 列 CSS Grid（行包 div 靠 display:contents 将子格直接挂到父栅格），窄面板下输入框弹性收缩、标签只占必要宽度；
        目标名列取 minmax(40px,auto)：行集由运行时目录给出，学习行的标签（如「雷达集结怪#94」）比旧手写三行长，定宽 40px 会跨列溢出 */
-    .pc-rg{display:grid;grid-template-columns:minmax(40px,auto) 1fr 1fr 62px 20px;gap:6px;align-items:center;
+    .pc-rg{display:grid;grid-template-columns:minmax(40px,auto) 1fr 1fr 62px 40px;gap:6px;align-items:center;
       width:100%;margin:6px 0 10px;font-size:12px;}
     .pc-rghead{display:contents;}
     .pc-rghead > .pc-rgcell{color:#9ecbff;font-size:11px;opacity:.85;text-align:center;white-space:nowrap;
@@ -231,6 +234,10 @@ export const PANEL_CSS = `
     .pc-rgrow > .pc-rgcell input[type=number].pc-rgin:focus::placeholder{color:transparent;}
     .pc-rgrow > .pc-rgcount{width:100%;text-align:center;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
     .pc-rgchk{width:15px;height:15px;cursor:pointer;flex:0 0 auto;}
+    /* 自学习行的×删除按钮（仅学习行出现，在勾选格的 checkbox 右侧）：与勾选同格共存，靠上边 grid 末列 40px 撑开 */
+    .pc-rgdel{flex:0 0 auto;width:16px;height:18px;padding:0;border:none;background:transparent;
+      color:#ff9c9c;font:inherit;font-size:15px;line-height:18px;cursor:pointer;text-align:center;}
+    .pc-rgdel:hover{color:#ff6b6b;}
     .pc-row select.pc-fsel{max-width:150px;flex:0 0 auto;padding:3px 6px;border-radius:6px;
       border:1px solid rgba(255,255,255,.25);background:rgba(20,26,38,.9);color:#e8eef7;font:inherit;}
     /* 行内多下拉（type:'tripick'，如异能兽培育属相/品种/品质同一行）与一行多控件（type:'ctrlrow'，

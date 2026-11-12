@@ -1,6 +1,6 @@
 // cq26-shop（CQ26 霜之密所抢购）纯函数单测：候选全序与「游戏原式闸门 + 竞品下单序」等价（三轴：商品→所→cfg 行）、
 // 商品身份=品种+数量（同 item_id+同 item_num 的多档位合成一行）、总数量列口径、五闸逐条过滤、
-// canBuyCnt 语义（=已用）、本地镜像收敛不重发、Int64 字符串往返、活动级 fail-closed 零发包、ACL 投影形态。
+// canBuyCnt 语义（=已用）、面板「本轮已抢」文案口径、本地镜像收敛不重发、Int64 字符串往返、活动级 fail-closed 零发包、ACL 投影形态。
 // feat 模块 import 链会触到浏览器全局，故先最小桩化 window/document/chrome，再动态 import 取导出纯函数
 // （桩化范式同 cq26-excav / potion-craft）。
 import { test, after } from 'node:test';
@@ -34,6 +34,7 @@ globalThis.setInterval = (fn, ms, ...rest) => {
 
 const mod = await import('../../extension/src/feats/cq26/shop.js');
 const { buildCandidates, gatedPass, productStockSum } = mod;
+const { quotaText } = mod;
 const { gameData, l10n } = await import('../../extension/src/core/game-api.js');
 
 /** CQ26 货架 cfg 空间（普通城 1–11 / 高级城 101–111；实测每所随机缺 1–2 件） */
@@ -388,6 +389,19 @@ test('闸门：额度按 canBuyCnt（已用）扣减，配置不可得时视为 
     ),
     [],
   );
+});
+
+test('面板文案 quotaText：分子是「本轮已抢」（=canBuyCnt，跟随轮次），不是剩余额度', () => {
+  // 旧写法是「本轮额度 剩 0/5」+ 一行会话级「本会话已抢 0 件」：刷新就归零的那行与上行方向相反，被读成「本轮一件没抢」
+  assert.equal(quotaText(5, 5), '本轮已抢 5/5'); // 额度用光（截图那种表观）
+  assert.equal(quotaText(0, 5), '本轮已抢 0/5'); // 轮次刚开始
+  assert.equal(quotaText(2, 5), '本轮已抢 2/5'); // 中间态
+  assert.equal(quotaText(null, 5), '本轮已抢 —/5'); // 2442 快照尚未取得：不拿 0 冒充进度
+  assert.equal(quotaText(6, 5), '本轮已抢 5/5'); // 已用高于配置上限 → 夹住，不冒出 6/5
+  assert.equal(quotaText(-1, 5), '本轮已抢 0/5'); // 异常负值 → 夹住
+  assert.equal(quotaText(2, '5'), '本轮已抢 2/5'); // 配置以文本形态回来也要能算
+  assert.equal(quotaText(2, 0), '额度配置(81268)不可得'); // 没分母就不报进度
+  assert.equal(quotaText(2, undefined), '额度配置(81268)不可得');
 });
 
 test('闸门：截断只看本期剩余额度与本轮已下发数（maxPerBurst 与逐件 max 均已废弃）', () => {

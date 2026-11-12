@@ -31,7 +31,10 @@
  *   - 拦截选车：canLoot===1 且 0<percent≤上限（percent 是「车上剩余货物比例」，不是行程进度：命中后 73→70）；
  *     再对 Top-1 发 2375 精判 rank1 防守战力与乘客数（2369 列表项没名单也没奖池，逐车 2375 是数 KB 载荷，故设「每轮精判辆数」上限省钱）。
  *   - 掠夺 troop 与上车 troop 同形（同一份 buildTrainTroop 喂 2367/2370，实测真人两处报文逐字节相同）。
- *   - 列车行军是 MarchType 314，实测 856 GET_ALL_MY_MARCH_INFO 二十二次应答零命中 314 → **不占 902 行军名额**，故本 feat 不设 march.canMarch 闸。
+ *   - 列车行军是 MarchType 314，**不进 856 GET_ALL_MY_MARCH_INFO 常驻列表**（实录二十二次应答零命中），但**上车这条路要占行军队列**：
+ *     真人手动上车（实证 dashcam 20261111 ts=1794329618637，发包前 856 仅 3 条在途）被服务器拒 `world_130516`=行军队列已满，
+ *     即「占用发生在把兵挂上列车这段行军里，挂上去之后不再占」。故 2367 之前设名额闸（读 UserData used/max），
+ *     且 856 看不到 314 的占用，**不能拿 856 条数当名额依据**（旧结论「不占名额、不设闸」由此作废）。
  *   - 结算主体是 **lastTrain**（不是 curTrain）：00:00 后 curTrain 翻成今日新车（state=10），而昨日那辆的结算窗开到 12:00，
  *     游侧结算闸读的就是 lastTrain.baseInfo.state===30；因此 settle lane 只看 settleState/settleSelfOn/settleUuid，且额外要求
  *     **窗未过**（主体车在窗止后仍可能报 state=30，只看枚举会成 20s 一次的 2373 空转）。
@@ -41,12 +44,24 @@
  *     且未翻位列表按**列车 uuid + TTL** 缓存复用（每翻一张重拉 1~9 页属纯浪费），被抢时靠 2386 被拒后摘掉该位自愈。
  *   - 2373 连续被拒 `REWARD_FAIL_MAX` 次即睡到窗末：这是「自己的车」，没有可拉黑的目标，只能靠次数闸止住空发
  *     （记账按列车 uuid，换车归零，否则上一车的失败会永久抵住后面的每一车）。
+ *   - 2367 被拒按 `header.d` 的**原始多语言 key** 分三档（`rejectText()` 给的是 key 原文不是译文，按文案子串匹配会恒不命中）：
+ *     1) `common_159995` 在本 cmd 语境 = **编队/参数类确定性拒绝**（实证：三连发同 key、逐字节相同，面板把预设队伍换一支即通过）。
+ *        同窗重试无意义 → 按列车 uuid 记账，连续达 BOARD_FAIL_MAX 即停发本窗；只短歇**不睡窗末**，用户改面板预设后重启即生效。
+ *     2) `world_130516`（行军队列已满）与 CODE_NOT_SENT（在途去重/投递抖动）= **分钟级自愈的可重试态** → 短歇重试；
+ *        睡到窗末等于用一个瞬态排队问题烧掉整个 18h 上车窗。
+ *     3) 其余/未知 key（窗已过、已在车上等本窗终结态）→ 睡到窗末，并留 reason 供日后录制再分档。
+ *   - 编队**忠实投影、不设满编闸**：`buildTrainTroop` 走 `plan().preset(idx).adjust({ ignoreMarched: true }).build()`。
+ *     重算器在场时每格数被游戏侧 `checkArmyNum` 三重钳制（格容量 ∧ 该兵种持有数 ∧ 按实例展开的可派池逐只扣、跨格共享），
+ *     兵不够就自然出**残阵**；重算器不可用则降级为满编原样（这层钳制整体消失，可能超库存）。两种结果**都照发**——
+ *     用户决策（2026-11-11）：残阵上车也可以接受，不上车错过得更多。故此处不判 `recalcDegraded`、不加「凑不齐完整预设就顺延」，
+ *     降级的可诊断性由 `core/battle.js` 那条 warn 负责，不在 feat 侧改变发送行为。
  *
  * 拦截判据刻意保守（骨架）：实测我方 14.2M 打赢 rank1=60.5M 的车、输给 rank1=139.2M 的车，
  *   说明服务器不是简单比总战力（疑涉 armyType 克制/hp 逐层），且 percent 与 rank1 战力两因子在仅 2 个样本里混淆。
  *   故：① 拦截默认关闭，勾选才生效；② 只按「货物余量 + 乘客数 + rank1 战力绝对上限」三道保守闸筛；
  *   ③ 每次攻打把决策上下文写进本地样本表（cq26Train.samples），用真人次数喂出经验门槛后再谈胜率模型；
- *   ④ 真·拒绝码（header.s≠0）目前零样本，「被拒即当日拉黑」是临时纪律，待录制细分「当日拉黑 vs 本轮跳过」。
+ *   ④ 真·拒绝码（header.s≠0）目前零样本，「被拒即当日拉黑」是临时纪律，待录制细分「当日拉黑 vs 本轮跳过」；
+ *     例外已先拆一个：`world_130516`（行军队列已满）属我方自身瞬态，**不拉黑**、短歇重试（与 2367 同口径）。
  *
  * 同帧取值与写盘纪律（应答对象池化，代码级红线）：
  *   - 任何跨 await 持有的应答字段必须拆成标量或克隆（uuid 走 cloneInt64）：2375 的 truckView 与 2370 的结算
@@ -128,6 +143,15 @@ const SNAP_TTL_MS = 60 * 1000;
 const HIT_GAP_MS = 5000;
 /** @type {number} 2373 连续被拒上限：达阈即睡到窗末（自己的车无可拉黑对象，只能靠次数闸止住空发） */
 const REWARD_FAIL_MAX = 3;
+/** @type {number} 2367 同一列车 param 类（确定性编队配置）连续被拒上限：达阈停发本窗，换车/重启用归零 */
+const BOARD_FAIL_MAX = 3;
+/**
+ * @type {string} 2367「编队/参数类」拒绝 key（header.d 原文；同一 key 在别的 cmd 语境语义不同，此处只按 2367 的实证处置）
+ * 实证 dashcam 20261111：三连发逐字节相同皆吃它，换一支预设队伍即通过 → 判为配置/编队超库存的确定性拒绝。
+ */
+const ERR_BOARD_PARAM = 'common_159995';
+/** @type {string} 「行军队列已满」全局通用拒绝 key（实证真人手动 2367 也吃它；队列分钟级回收 → 可重试） */
+const ERR_QUEUE_FULL = 'world_130516';
 /** @type {number} 未翻卡位列表缓存 TTL（毫秒）：全服都在翻，陈旧列表只会多挨几次 2386 被拒，但重拉 9 页代价更高 */
 const CARD_CACHE_TTL_MS = 10 * 60 * 1000;
 /** @type {number} 2385 每页卡位数（实测应答 pageSize=32、allRewardNum=270 即 9 页） */
@@ -176,6 +200,10 @@ var hitsDay = '';
 var rewardFails = 0;
 /** @type {string} rewardFails 所属列车（bits.int64Key） */
 var rewardFailKey = '';
+/** @type {number} 2367 ERR_BOARD_PARAM 类（确定性编队配置）连续被拒次数，同窗重试无意义；按列车 uuid 记账 */
+var boardParamFails = 0;
+/** @type {string} boardParamFails 所属列车（bits.int64Key） */
+var boardParamKey = '';
 /**
  * 未翻卡位列表缓存（同一列车窗内复用，避免每翻一张重拉分页）。
  * @type {{localMs:number, uuidKey:string, list:number[]}|null}
@@ -273,6 +301,8 @@ function run(ctx) {
   snap = null; // 每次启用重读权威，不复用上一窗陈旧值
   rewardFails = 0; // 被拒计数属本次运行的局部事实，重启即归零
   rewardFailKey = '';
+  boardParamFails = 0; // 同上：重启后允许用新配置再试本窗
+  boardParamKey = '';
   cardCache = null; // 未翻卡位不得跳运行复用（上一场可能已被人翻空）
   ctx.on.push(PUSH_TRAIN_INFO, onTrainInfoPush);
   ctx.on.push(PUSH_TRAIN_DATA, onTrainDataPush);
@@ -548,6 +578,7 @@ function sleepToDailyReset() {
  * 从预设队伍造列车 troop（实证报文形态：armyPosList 每项**只有** {pos,armyId,armyNum} 三键，
  *   比卡车 6476 少 heroCap/skinId；补位走 extraArmyPos 单对象 {pos:0,armyId,armyNum}）。
  * 组装口径对齐游戏侧 RealNBattleModel.startWarTruckFight（2367/2370 两处共用同一段代码）。
+ * 只问「有没有兵可派」，不问「是不是满编」：残阵与降级满编都照发（理由见文件头闸门判据）。
  * @param {number} presetIdx 战斗预设 1~8
  * @returns {object|null} 无兵可派回 null
  */
@@ -618,6 +649,27 @@ async function boardPass() {
     log.warn('2367 not sent: snapshot missing curTrain.baseInfo.uuid. state=%d', s.state);
     return cfg.backoffMs;
   }
+  var bkey = bits.int64Key(s.uuid);
+  if (boardParamKey !== bkey) {
+    boardParamKey = bkey;
+    boardParamFails = 0; // 换车即新一窗记账：否则上一车的 param 拒绝会永久抵住后面的每一车
+  }
+  if (boardParamFails >= BOARD_FAIL_MAX) {
+    // param 类被拒达阈：同窗不再重发（确定性编队/配置拒绝，重试无意义）；但只短歇不睡窗末，
+    // 面板改预设/代码修复后重启本能力即可用新配置再试，18h 上车窗不被一次误判烧掉。
+    log.debug(
+      '2367 skipped: param-class rejections reached %d for this train, stop boarding this window.',
+      boardParamFails,
+    );
+    return cfg.backoffMs;
+  }
+  // 上车要把兵挂上列车 → 占一条行军队列（实证见文件头：真人手动 2367 被 world_130516 拒）。
+  // max<=0 = UserData 名额主数据读不到，按「未知不拦」放过（与 march.list 同口径），由服务器终裁 + 下面的队满可重试兜底。
+  var mc = gameData.marchCount();
+  if (mc.max > 0 && mc.used >= mc.max) {
+    log.debug('no free march slot (used=%d/max=%d), 2367 not sent, short retry.', mc.used, mc.max);
+    return cfg.backoffMs;
+  }
   var troop = buildTrainTroop(MCFG.boardPreset);
   if (!troop) {
     log.debug(
@@ -633,10 +685,20 @@ async function boardPass() {
     return cfg.backoffMs;
   }
   if (!ret.ok) {
-    // 可预期业务拒绝（窗已过/已在车上/兵不足）：判据第 3 条属 info，不升 warn
-    log.info('2367 rejected. code=%s reason=%s', ret.code, rejectText(ret));
+    var rej = rejectText(ret); // header.d 的**原始多语言 key**（不是译文），必须同帧取
+    var isParam = rej === ERR_BOARD_PARAM;
+    if (isParam) boardParamFails++;
+    // 可预期业务拒绝走 info（判据第 3 条），不升 warn
+    log.info('2367 rejected. code=%s reason=%s paramFails=%d', ret.code, rej, boardParamFails);
+    // 三档处置见文件头：param 类短歇计数（达阈由上面的闸停发本窗）；队满短歇重试（分钟级回收）；
+    // 其余/未知 key 属本窗终结态，睡到窗末。CODE_NOT_SENT 已在上面走短歇。
+    if (isParam || rej === ERR_QUEUE_FULL) {
+      if (!isParam) log.debug('march queue full, 2367 will retry after a short rest.');
+      return cfg.backoffMs;
+    }
     return sleepToWindowEnd(s, cfg.backoffMs);
   }
+  boardParamFails = 0; // 服务器受理即清零（param 记账只认连续串）
   var d = ret.data || {};
   if (Number(d.isOk) !== 1) {
     log.warn('2367 ack isOk=%s (not 1, boarding unconfirmed).', d.isOk);
@@ -869,7 +931,17 @@ async function lootPass() {
     return cfg.backoffMs;
   }
   if (!ret.ok) {
-    var lrej = rejectText(ret); // 同帧取文案再进 await（rejectText 可能回落读池化 data）
+    var lrej = rejectText(ret); // 同帧取 key 原文再进 await（rejectText 可能回落读池化 data）
+    // 队满是我方自身的瞬态（分钟级回收），**不拉黑目标**：每日配额只有 2 次，
+    // 拿自己的排队问题去烧掉一个可掠目标属误伤（拉黑仅留给目标侧/业务性拒绝）。
+    if (lrej === ERR_QUEUE_FULL) {
+      log.info(
+        '2370 rejected by queue full. S%s uuid=%s keep target, short retry.',
+        target.sid,
+        target.key,
+      );
+      return cfg.backoffMs;
+    }
     await markBlocked(target.key, 2370, ret);
     log.info(
       '2370 rejected. S%s uuid=%s code=%s reason=%s',

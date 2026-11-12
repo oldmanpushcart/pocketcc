@@ -182,8 +182,21 @@ export const SYM = {
    * 语义面板名 → UIDataInfo 注册表成员名（运行时符号，面板随版本漂移时单点维护）。
    * pabFeedPopup 实证 UIDataInfoOther：`new UIDataInfoClass("PabPetFeedEventPopup", UIType.TYPE_POP, "__subpack/Pab/WorldUI", …)`，
    *   由 PabPetCaptureNodeNew.pabPetCaptureEvent 在 push 21527 type=5 时 OpenUI。
+   * iceShakePopup 实证 UIDataInfoOther：`t.CQ26WLRemoveIceView = new e("CQ26WLRemoveIceView", UIType.TYPE_POP,
+   *   "m/CQ26/prefab/wasteland", 0, 0, {frame: UIDataFrameType.None, clickBlankClose: false}, …)`——
+   *   `clickBlankClose:false` 意味着这扇摇一摇弹窗点空白关不掉，只能点「发送火焰」或等 10s 倒计时自己收，
+   *   所以 cq26IceShake 代摇成功后必须自己走原生 CloseUI 收窗，否则玩家手滑补点会撞 s=3「参数错误」。
    */
-  uiPanels: { bag: 'BagPanel', pabFeedPopup: 'PabPetFeedEventPopup' },
+  uiPanels: {
+    bag: 'BagPanel',
+    pabFeedPopup: 'PabPetFeedEventPopup',
+    iceShakePopup: 'CQ26WLRemoveIceView',
+    // 报文实证：本项自己的成员名就是 CommonRewardPanel，但面板名是 rewardOutPanel
+    //（UIDataInfoOther：CommonRewardPanel=new e("rewardOutPanel",TYPE_POP,"ui",3,0,
+    //  {frame:None,pauseGuide:!,hideMask:!,cacheUI:!,…})）；另一张同名面板
+    // CommonRewardPanelV2 读的是 .reward/.bigReward，与本面板的 .serverReward 不同口径。
+    commonRewardPanel: 'CommonRewardPanel',
+  },
   /**
    * 世界态可订阅事件名（值就是 EventId 常量值本身，实证 extracted EventId.js：
    * e.CHANGE_SCENE="CHANGE_SCENE"、e.MapTypeChange="MapTypeChange"、
@@ -424,6 +437,10 @@ export const CAPS = {
   //   core/acl/game-data.js 经 setSharedCapsProbe 回填。feat 侧声明为软依赖 'cq26WasteLand?'
   //   （拿不到只降级为「读自订 push 的标量副本」，不阻断安装，同 cq26NeutralCtrl 口径）。
   cq26WasteLand: () => !!sharedCapsProbe('cq26WasteLand'),
+  // CQ26 能量补充车队数据侧（clearBossData.canSendWorldEnergy 宿主）：取器同样由 game-data.js
+  //   经 setSharedCapsProbe 回填。feat 侧声明为软依赖 'cq26ClearBoss?'（拿不到只降级为
+  //   「只信 22001 push」，不阻断安装，同 cq26WasteLand 口径）。
+  cq26ClearBoss: () => !!sharedCapsProbe('cq26ClearBoss'),
 };
 
 /**

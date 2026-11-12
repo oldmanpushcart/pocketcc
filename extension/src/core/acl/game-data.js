@@ -7,6 +7,7 @@
 import { game } from '../game.js';
 import { SYM, probe, ns, userData, setSharedCapsProbe } from '../acl-engine.js';
 import { l10n } from './l10n.js';
+import { bits } from './bits.js';
 
 // ─────────────────────── 一键领取（TaskRelax 集中领取）开启闸只读枚举 ───────────────────────
 
@@ -1241,6 +1242,29 @@ export const gameData = {
     return !!(p && p.ctrl && p.ctrl.isOpen && p.ctrl.isOpen());
   },
 
+  // ── CQ26 印石·能量补充车队（白须怪清理 CB 线，icon = CQ26CBWorldUIEnergyIcon）──────
+  // 世界地图左侧「胶囊+金箭头」icon 的显隐判据（源码 CQ26CBWorldUIEnergyIcon.updateIconShow 逐字）：
+  //   isOpen() && OriginServerId===ServerId && clearBossData.canSendWorldEnergy()。
+  // canSendWorldEnergy() 返回 _canReplenishMonsterEnergy，由 push 22001 SERIES_FROST_SELF_INFO 的
+  //   canReplenishMonsterCleanupEnergy 字段经 updateSelfInfo 写入（领完后服务端立刻推 false 关灯）。
+  // 只读投影：本区段只读 cbd 的状态标志，绝不调用其任何 send*/update* 方法（只读+发包红线）。
+
+  /**
+   * 能量补充车队 icon 是否「可领取」的内存投影（与玩家眼睛严格同源，零发包）。
+   * @returns {boolean|null} true=icon 亮可领；false=icon 灭；**null=符号漂移/cbd 未就绪（无从判定，
+   *   调用方须降级为「只信 22001 push」的缓存，不得当 false 而永久不领）**
+   */
+  cq26EnergySupplyReady() {
+    var p = this._cq26();
+    var cbd = p && p.cbd;
+    if (!cbd || typeof cbd.canSendWorldEnergy !== 'function') return null;
+    try {
+      return !!cbd.canSendWorldEnergy();
+    } catch (_) {
+      return null;
+    }
+  },
+
   // ── CQ26 雪原列车（印石专列，塔 id=4 = CQ26TOWERID.TRANSPORT）──────────────
   // 探针实证访问链：CQ26Controller.getInstance() → ctrl.transportData（CQ26TransportData 单例）
   // 列车权威时刻只在 2365 应答的 curTrain/lastTrain.baseInfo.times 里（顶层 data.times 实测恒为 []），
@@ -1504,9 +1528,11 @@ export const gameData = {
   /**
    * 荒芜冰原额度/阶段快照（22072 push 的游戏内存投影）。
    * @returns {{todayCanGatherTime:number, remainStealNum:number, remainHelpNum:number, remainChestNum:number,
-   *            chestDailyLimit:number, isGathering:boolean, curStage:number, curStageEndTime:number, elecPower:number}|null}
+   *            chestDailyLimit:number, isGathering:boolean, curStage:number|null,
+   *            curStageEndTime:number|null, elecPower:number}|null}
    *   **快照未达（wlInfo==null）回 null** —— 调用方须本拍跳过该腿并 debug，绝不把 null 当 0 而永久静默；
-   *   快照在场时个别键缺失按 0（同游戏 getter 的 `||0`，方向是 fail-closed 不动作）
+   *   快照在场时额度类键缺失按 0（同游戏 getter 的 `||0`，方向是 fail-closed 不动作）；
+   *   唯独 `curStage` / `curStageEndTime` 缺键回 null（枚举无 0，折成 0 会被读成「已结束」而全停）
    */
   cq26WlInfo() {
     var p = this._cq26WasteLand();
@@ -1520,8 +1546,10 @@ export const gameData = {
       // 逐字源码 getChestDailyLimit()：`Math.max(0, +getDataConfigData(52000426) || 0)`
       chestDailyLimit: Math.max(0, Number(gameConf.dataConfig(52000426)) || 0),
       isGathering: wi.isGathering === 1,
-      curStage: Number(wi.curStage) || 0,
-      curStageEndTime: Number(wi.curStageEndTime) || 0,
+      // 枚举 CQ26WLStatus 没有 0，而游戏 onNWLInfoPush 是**整体替换** wlInfo（`this.wlInfo = e`）：
+      //   推送缺 curStage 键时 `||0` 会被读成「已结束」，故缺键一律回 null（无从判定）。
+      curStage: wi.curStage == null ? null : Number(wi.curStage),
+      curStageEndTime: wi.curStageEndTime == null ? null : Number(wi.curStageEndTime),
       elecPower: Number(wi.elecPower) || 0,
     };
   },
@@ -1645,6 +1673,95 @@ export const gameData = {
     };
   },
 
+  // ── CQ26 印石·猛犸突袭（防守 BOSS 线，塔 id=2 = CQ26TOWERID.DEFENSE_BOSS）──────
+  // 探针实证访问链：CQ26Controller.getInstance()（复用 `_cq26()`）→ ctrl.info（应答 22002
+  //   SERIES_FROST_INIT 的 initInfoData → updateInfoData 逐字 `this.info = e.info`；push 22031 的
+  //   updateTempInfo 只增量合并 `e.towerInfoList`，故整份 info 一旦达即持续可读）。
+  // 只读+发包红线：本区段只读 info/配置表，绝不调 ctrl / defenseBossData 的任何 send*/update* 方法。
+
+  /**
+   * 猛犸突袭 BOSS 落点（游戏侧派兵按钮 `getTowerPos(CQ26TOWERID.DEFENSE_BOSS)` 的只读投影，零发包）。
+   * 源码锚点 CQ26DBTroopsInfoPanel.onFightClick 与 RealCQ26Controller.getTowerInfo/getTowerPos 逐字同构：
+   *   遍历 `info.towerInfoList` 取 `towerId` 命中条目的 `pos`。
+   * 报文实证 dashcam-rec-2026110*-印石-我的日常.ndjson：22002 应答
+   *   `towerInfoList[{towerId:2,sfBid:1002,pos:{x:378,y:478}}]`，与同场 902（marchType=308）派兵的
+   *   `x:378,y:478` 完全吻合 —— 坐标可纯报文/纯内存取得，无需摸 UI。
+   * @param {number} [towerId] 塔 id，缺省 2（防守 BOSS 塔）
+   * @returns {{x:number,y:number}|null} 控制器/info/towerInfoList 不可用、无该塔、或 pos 非正一律回
+   *   **null**（调用方 fail-closed 不派兵：坐标 0 发 902 只会撞未知拒绝并白占队列）
+   */
+  cq26DbTowerPos(towerId) {
+    var p = this._cq26();
+    var info = p && p.ctrl ? p.ctrl.info : null;
+    var list = info ? info.towerInfoList : null;
+    if (!Array.isArray(list)) return null;
+    var id = towerId == null ? 2 : Number(towerId) || 2;
+    for (var i = 0; i < list.length; i++) {
+      var t = list[i];
+      if (!t || Number(t.towerId) !== id) continue;
+      var pos = t.pos;
+      if (!pos || typeof pos !== 'object') return null;
+      var x = Number(pos.x) || 0;
+      var y = Number(pos.y) || 0;
+      // 刻意新建标量对象、不外泄游戏 pos 引用（池化/跨帧红线，同 cq26StarLandSelf 口径）
+      return x > 0 && y > 0 ? { x: x, y: y } : null;
+    }
+    return null;
+  },
+  /**
+   * 猛犸突袭「波次奖励」配置行投影（`series_frost_monsterReward`，只取 id/wave 两列）。
+   * 源码锚点 CQ26DBMainRewardCell.sendToGetReward 逐字：整表遍历，`wave>0 && wave<=selfServerDefWave &&
+   *   selfGainWaveRewardSpecIdList.indexOf(id)<0` 者入 2178 的 `waveRewardSpecIdList`（一次打包全领，
+   *   报文实证 dashcam 11-08 21:52 一条 2178 领走 [3001..3007]）。
+   * @returns {Array<{id:number,wave:number}>|null} 表不可读/空表/全行 wave<=0 回 **null**
+   *   （调用方 fail-closed 不领奖：拿不到门槛就凑不出 id 列表，硬发只会撞服务器拒绝）
+   */
+  cq26DbWaveRewardRows() {
+    var rows = l10n.tableRows('series_frost_monsterReward');
+    if (!rows || !rows.length) return null;
+    var out = [];
+    for (var i = 0; i < rows.length; i++) {
+      var r = rows[i] || {};
+      var id = Number(r.id) || 0;
+      var wave = Number(r.wave) || 0;
+      // 游戏循环里的 `wave > 0` 是硬闸（initScoreReward 同样只渲染 wave>0 的行），非正门槛行不存在奖励
+      if (!(id > 0) || !(wave > 0)) continue;
+      out.push({ id: id, wave: wave });
+    }
+    return out.length ? out : null;
+  },
+
+  // ── CQ26 印石·保卫能量（方舟试炼 ARK_TRIAL，塔 id=3 = CQ26TOWERID.ARK）──────
+  // 探针实证访问链：CQ26Controller.getInstance()（复用 `_cq26()`）→ ctrl.arkData。
+  //   源码 CQ26ArkData.updateData 逐字 `this.data = e.arkData; this.cid = e.cid` —— 内存本体就是
+  //   最近一帧 22007 push 的副本（游戏网络层代收），本投影只作 feat 中途启用时的「引导快照」。
+  // 只读+发包红线：只读 arkData.data/cid 标量，绝不调其任何 send*/update* 方法。
+
+  /**
+   * 方舟试炼运行时状态投影（零发包；数据源与 22007 push 同源）。
+   * 报文实证 dashcam-rec-20261111T041102-印石-我的日常.ndjson：22007 push
+   *   `{cid:2, towerId:3, arkData:{status:2, beginTimeSec, endTimeSec, round:0, maxRound:20, arkArmyRed:true, cfgId:2}}`。
+   * @returns {{cid:number,status:number,round:number,maxRound:number,armyRed:boolean,endTimeSec:number}|null}
+   *   控制器/arkData/data 不可用回 **null**（调用方只认自订 push；两路皆空不得派 902-306 写请求，
+   *   绝不拿臆测阶段状态发兵）
+   */
+  cq26ArkState() {
+    var p = this._cq26();
+    var ad = p && p.ctrl ? p.ctrl.arkData : null;
+    var d = ad ? ad.data : null;
+    if (!d || typeof d !== 'object') return null;
+    // 刻意新建标量对象、不外泄游戏 data 引用（池化/跨帧红线，同 cq26DbTowerPos 口径）
+    return {
+      cid: Number(ad.cid) || 0,
+      status: Number(d.status) || 0,
+      round: Number(d.round) || 0,
+      maxRound: Number(d.maxRound) || 0,
+      armyRed: !!d.arkArmyRed,
+      // endTimeSec 报文/内存可能是裸数字或 Long 形态，统一走 bits 兜底（时间戳量纲，值域 <2^53）
+      endTimeSec: bits.int64ToNum(d.endTimeSec),
+    };
+  },
+
   // coinState 快照能力已迁 feats/player/auto-coin-collect/api.js（领域算法下沉，单消费方）
 };
 
@@ -1654,6 +1771,13 @@ setSharedCapsProbe('cq26NeutralCtrl', () => gameData._cq26Neutral());
 // 荒芜冰原数据侧（遗失之箱/采集/巨兽共同依赖的 wasteLandData 单例）：同为软依赖能力键，
 //   取不到只让 feat 降级为「只信自订 push 的标量副本」，不阻断安装（feat 声明 'cq26WasteLand?'）。
 setSharedCapsProbe('cq26WasteLand', () => gameData._cq26WasteLand());
+// 能量补充车队数据侧（clearBossData.canSendWorldEnergy 的宿主）：同为软依赖能力键（feat 声明
+//   'cq26ClearBoss?'），取不到只让 feat 降级为「只信 22001 push 的标量」，不阻断安装（同 cq26WasteLand 口径）。
+setSharedCapsProbe('cq26ClearBoss', () => {
+  var p = gameData._cq26();
+  var cbd = p && p.cbd;
+  return cbd && typeof cbd.canSendWorldEnergy === 'function' ? cbd : null;
+});
 
 // ─────────────────────── 战斗预设 / 头像 → core/acl/{battle-preset,avatar}.js（片4，见文件头 import 与 re-export） ───────────────────────
 

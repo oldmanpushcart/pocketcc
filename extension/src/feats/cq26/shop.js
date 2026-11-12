@@ -34,6 +34,11 @@
  *     即用户指的 S3765/S3281 两区就是在 11/7 这天由城主逐所宣布开市）⇒ push 是最快的权威信号，轮询只作漏收自愈。
  *   另一条决定性证据：status=1 的 2442 所行**已带齐 9 个 buyCnt 键**（货架不缺）——故收到 type=1 后无需等任何
  *     应答就能直接构造候选（本地翻牌），2443 只做后台校正（见 onPushOpen）。
+ *   贴脸时序的两个约束（2026-11-11 一场实录逐笔对齐后定下，详见 feat 文档「用时」一节）：
+ *     a) 本轮首包只花 2ms（push 到达→2444 上 wire），服务器记的「用时」42ms、排 2/40；但一个新所的开市撞上
+ *        正在飞的那轮 burst 时，首包会排到下一个轮次边界（实测晚 245~274ms、名次掉到 21）——故重试间隔走
+ *        burstPacer.pause，新所到达即叫醒（逐条 BUY_GAP_MS 不受影响，同所两件节奏不变）。
+ *     b) sendGuarded 在同步段就写 socket，2443 与面板同步渲染留在同步段会把 2444 挤后——两者都挤到下一个微任务。
  *   密所 id 为 19 位（实测如 4918151952583191043，≈4.9e18）> 2^53，全程字符串往返（见 idStr），禁 Number()。
  *
  * 闸门（全部源码同源，逐件判定，见 buildCandidates）：
@@ -69,6 +74,7 @@
  * 面板刷新：商品总数量列 / 页脚备钻 / 密所状态行都是「行结构不变、值随快照变」的只读格，只走事件驱动一条通路——
  *   applySnapshot / requestSingle / settleBuy / onPushOpen 四处 pokePanel()（EVT.UI_REFRESH，**刻意不带 rebuild**：
  *   带它会整卡重渲染、拆掉用户正在拖拽的行 DOM 与其监听），由 core/ui/panel.js 的 refreshTexts 就地改文本；无 UI 定时器。
+ *   onPushOpen 那一处排在下一个微任务（贴脸路径不做同步渲染，见上「贴脸时序」b）。
  *
  * 已知缺口（诚实声明，交付后需真人开市补证才能固化为对拍）：
  *   1) 2444 的应答**形状**已由消费侧源码钉死（onBuyCallBack 只读这四个字段），但**我方录制里 2444 零命中**
@@ -93,7 +99,14 @@ import { bus, EVT } from '../../core/bus.js';
 import { gameData, gameConf, bits, l10n, worldMap } from '../../core/game-api.js';
 import { item } from '../../core/item.js';
 import { createCycle } from '../../core/cycle.js';
-import { CODE_NOT_SENT, rejectText, safeStringify, sleep, todayStr } from '../../core/util.js';
+import {
+  CODE_NOT_SENT,
+  createWaker,
+  rejectText,
+  safeStringify,
+  sleep,
+  todayStr,
+} from '../../core/util.js';
 
 /** @type {ReturnType<createLog>} */
 const log = createLog('CQ26-SHOP');
@@ -132,7 +145,7 @@ const MAX_REJECT = 3;
 const REJECT_COOL_MS = 60 * 1000;
 /** 贴脸 burst 的重试窗长度（毫秒） */
 const BURST_RETRY_MS = 3000;
-/** 重试窗内重跑候选生成的间隔 */
+/** 重试窗内重跑候选生成的间隔（**可被新所开市提前结束**，见 burstPacer） */
 const BURST_RETRY_GAP_MS = 400;
 /**
  * 逐条 2444 之间的最小间隔（**系统值**，面板不再暴露）：实证取竞品B 的 `asleep(100)`；
@@ -173,6 +186,12 @@ var redPackDone = {};
 var bursting = false;
 /** @type {boolean} burst 在飞时又收到新触发（开市 push 撞上轮询 burst）：置位，由当前轮 finally 末尾合并补扫一轮，不整轮丢弃 */
 var burstPending = false;
+/**
+ * burst 轮次间隔的「可提前结束」休眠句柄：新所开市撞上正在飞的那轮时叫醒它，让它立刻重跑候选生成。
+ *   实测不接这个句柄时，新所首包只能排到下一个 400ms 重试边界（push→2444 实测 245~274ms，而单轮首包只花 2ms）。
+ *   刻意**不覆盖**逐条 BUY_GAP_MS：同一所两件之间的节奏是系统值，保持原样（跨所并行是另一件事）。
+ */
+var burstPacer = createWaker();
 /** @type {boolean} 「额度配置不可得」warn 去重（恢复后复位） */
 var quotaWarned = false;
 /** @type {boolean} 「货架表不可读」warn 去重 */
@@ -182,8 +201,6 @@ var dumpedBuy = false;
 var dumpedRedPack = false;
 /** @type {{text:string,atSec:number}|null} 面板展示用的最近一次成交 */
 var lastDeal = null;
-/** @type {number} 本次会话成交件数 */
-var dealCount = 0;
 
 // ── 生命周期 ──────────────────────────────────────────────────────────
 /**
@@ -749,11 +766,13 @@ function onIconPush(ev) {
 }
 
 /**
- * 开市贴脸路径：本地直接翻牌（省一个 RTT）后立即 burst；同时按游戏 onShopOpen 原式补一条 2443 单所快查。
+ * 贴脸开市时序：本地直接翻牌（省一个 RTT）→ 立即 burst；面板刷新与 2443 单所快查**让位给 2444**。
  * 为何能不等任何应答就下单：实证 2442 快照里 **status=1 的所已带齐 9 个 buyCnt 键**（货架不缺），
  *   而开市本就是 push type=1 本身——即 status 2 是 push 给出的权威结论，本地翻牌不损信息。
  * 2443 只作为**后台校正**（刷新该所的 statusEndSec/tax/buyCnt，并接上 canRevRedPack 这个唯一权威位），
  *   绝不参与下单时序（与游戏侧 onShopOpen 命中当前所时发 requestShopSingleData 同一动作，但游戏是在 UI 上等）。
+ *   本端 wire 顺位：sendGuarded 的同步前缀就写 socket，故留在同步段发 2443 会把 2444 挤后（实测 2443 早 2ms）；
+ *   挪到下一个微任务后，上面 lead.then 已先入队、burst 在其同步段把首包推上 wire，2443 只能排在它后面。
  * 缓存里没有这一所（刚开 feat / 快照陈于其所）时，才退回 2442 全量快照作前导。
  * @param {string} id 开市密所 id
  */
@@ -763,14 +782,7 @@ function onPushOpen(id) {
   if (!gameData.cq26IsOpen()) return;
   var sh = findShop(id);
   if (sh && sh.status === 1) sh.status = 2;
-  pokePanel(); // 本地翻牌也要面板同步（此刻还没发任何一个包，但状态列不能等到应答才动）
   // 无独立「启用抢购」闸：aliveFn（菜单开关/暂停）已在 onIconPush 入口拦下
-  if (sh) {
-    // 后台快查，不串到下单链上（失败不影响本轮 burst，下拍 2442 会兼平）
-    requestSingle(id).catch(function (err) {
-      log.debug('2443 push-lead threw: %s', (err && err.message) || String(err));
-    });
-  }
   var lead = sh ? Promise.resolve() : refresh('push-lead');
   lead
     .then(function () {
@@ -779,6 +791,15 @@ function onPushOpen(id) {
     .catch(function (err) {
       log.warn('push open flow threw: %s', (err && err.message) || String(err));
     });
+  // 本地翻牌的面板同步与后台快查都挤到下一个微任务：状态列仍不等应答（一个微任务内就动），
+  //   但贴脸路径上不再做同步渲染、也不再把 2443 排在 2444 前面。
+  queueMicrotask(function () {
+    pokePanel();
+    if (!sh) return;
+    requestSingle(id).catch(function (err) {
+      log.debug('2443 push-lead threw: %s', (err && err.message) || String(err));
+    });
+  });
 }
 
 // ── burst ─────────────────────────────────────────────────────────────
@@ -800,7 +821,10 @@ async function burst(reason, retry) {
     // 贴脸 push 撞上正在飞的另一轮 burst（轮询兜底或上一条 push）：**不整轮丢弃**，攒一个补扫标志，
     //   由当前轮 finally 末尾合并再跑一轮，否则「轮询 burst 在飞 → 新所的开市 push 被吞」只能等下一拍（60s）。
     burstPending = true;
-    log.debug('burst busy, queued pending resweep. reason=%s', reason);
+    // 光攒补扫标志不够：补扫要等当前轮跑完（重试窗最长 3s），实测新所首包因此晚 245~274ms。
+    //   当前若正睡在轮次间隔上就一并叫醒，让下一轮立即重跑候选生成（本轮已排队的逐条间隔不受影响）。
+    var woken = burstPacer.wake();
+    log.debug('burst busy, queued pending resweep. reason=%s woken=%s', reason, woken);
     return;
   }
   // 早于任何 await 占位：冷启动 mirror 缺失时会 await refresh，若互斥标志晚置，两条 push 可同时越过检查。
@@ -863,7 +887,7 @@ async function burst(reason, retry) {
         }
       } else if (round === 1 || !retry) break;
       if (Date.now() >= deadline || !aliveFn()) break;
-      await sleep(BURST_RETRY_GAP_MS);
+      await burstPacer.pause(BURST_RETRY_GAP_MS);
     }
   } finally {
     bursting = false;
@@ -959,7 +983,6 @@ function settleBuy(c, ret, costMs) {
   }
   rejectCount[c.key] = 0;
   delete coolUntil[c.key];
-  dealCount++;
   var cost = Number(c.row.gold) || 0;
   lastDeal = {
     text:
@@ -1374,20 +1397,30 @@ function shopRows() {
 }
 
 /**
- * 面板概览摘要（type:'text' 的 get）：只留跨所聚合量（额度/已抢/最近成交/拉黑）；
+ * 纯函数：面板「本轮已抢 x/y」文案。分子是**已用**（口径同 wl-mine 的「已用 x/y」、wl-chest 的「已领 x/y」），
+ *   因为读的就是服务器权威的 `canBuyCnt`（本期已用次数）：它天然跟随轮次，不随页面刷新/跨天归零。
+ *   旧写法是「本轮额度 剩 0/5」（分子为剩余）另加一行会话级「本会话已抢 N 件」，两行摆在一起方向相反。
+ * @param {number|null} used 本期已用次数（`canBuyCnt`；null=2442 快照尚未取得）
+ * @param {number} quota 本期总次数（`resolveQuota()`；<=0 = 配置 81268 不可得）
+ * @returns {string}
+ */
+export function quotaText(used, quota) {
+  var q = Number(quota) || 0;
+  if (q <= 0) return '额度配置(81268)不可得';
+  if (used == null) return '本轮已抢 —/' + q; // 没快照就不报进度（下一行已写明「尚无快照」）
+  var u = Math.min(Math.max(0, Number(used) || 0), q); // 夹进 [0, 总次数]：不冒出「已抢 6/5」
+  return '本轮已抢 ' + u + '/' + q;
+}
+
+/**
+ * 面板概览摘要（type:'text' 的 get）：只留跨所聚合量（本轮进度/最近成交/拉黑）；
  *   逐所的状态已移到 infogrid（shopRows），那里才能做到一行一密所且列对齐。
  * @returns {string}
  */
 function shopInfoText() {
   if (!gameData.cq26IsOpen()) return 'CQ26 未开启';
   var lines = [];
-  var quota = resolveQuota();
-  lines.push(
-    quota > 0
-      ? '本轮额度 ' + Math.max(0, quota - (mirror ? mirror.canBuyCnt : 0)) + '/' + quota
-      : '额度配置(81268)不可得',
-  );
-  lines.push('本会话已抢 ' + dealCount + ' 件');
+  lines.push(quotaText(mirror ? Number(mirror.canBuyCnt) || 0 : null, resolveQuota()));
   if (!mirror) lines.push('尚无快照（开 feat 后首轮 2442 取得）');
   if (lastDeal) {
     var d = new Date(lastDeal.atSec * 1000);

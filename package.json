@@ -18,7 +18,9 @@
     "verify:cs-hunt": "node scripts/replay/run.mjs --manifest cs-hunt",
     "verify:radar-task": "node scripts/replay/run.mjs --manifest radar-task",
     "verify:cq26-train": "node scripts/replay/run.mjs --manifest cq26-train",
+    "verify:cq26-wl-beast": "node scripts/replay/run.mjs --manifest cq26-wl-beast",
     "verify:quick-repair": "node scripts/replay/run.mjs --manifest quick-repair",
+    "verify:cq26-ice-shake": "node scripts/replay/run.mjs --manifest cq26-ice-shake",
     "skill:install": "node scripts/skill-install.mjs",
     "format": "prettier --write \"**/*.{js,mjs,cjs,json}\"",
     "format:check": "prettier --check \"**/*.{js,mjs,cjs,json}\""
