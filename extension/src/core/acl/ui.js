@@ -137,7 +137,10 @@ export const ui = {
         return { ok: true, name: nm };
       } catch (e) {
         try {
-          if (canClose) { mgr.Close(nm); return { ok: true, name: nm }; }
+          if (canClose) {
+            mgr.Close(nm);
+            return { ok: true, name: nm };
+          }
         } catch (e2) {}
         log.warn('ui.closeTop(%s) failed: %s', nm, e && e.message);
         return { ok: false, err: 'failed' };
@@ -160,7 +163,10 @@ export const ui = {
       var node = pool[name];
       if (!node || node.active === false) continue;
       var idx = typeof node.getSiblingIndex === 'function' ? node.getSiblingIndex() : ki;
-      if (idx > topIdx) { topIdx = idx; topName = name; }
+      if (idx > topIdx) {
+        topIdx = idx;
+        topName = name;
+      }
     }
     if (topName && backPanel(mgr, topName)) return { ok: true, name: topName };
     return { ok: false, err: 'nothing' };

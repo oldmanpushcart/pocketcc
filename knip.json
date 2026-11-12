@@ -36,10 +36,7 @@
     "extension/src/feats/cq26/wl-beast.js",
     "extension/src/feats/player/radar-task.js"
   ],
-  "ignoreDependencies": [
-    "@types/chrome",
-    "jscpd"
-  ],
+  "ignoreDependencies": ["@types/chrome", "jscpd"],
   "ignoreExportsUsedInFile": true,
   "rules": {
     "types": "off"
