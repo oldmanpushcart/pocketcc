@@ -19,7 +19,7 @@
  *       10:26:29 `arkArmyRed:false` 受理确认（上周场 11-07 11:46:27 同型翻转，只派了这一次、未补兵）。
  *   2336 SERIES_FROST_ARK_TRIAL_DETAIL_INFO  req {} resp {sNum,myNum,totalNum}：面板「本服/总参战」两列的
  *       真相源（实录 10:26 `{2,6,12}` → 派兵受理后 myNum 6→8）。**自动化判据不用它、也不轮询它**
- *       （面板已不展示状态行，为看不见的值发包属白流），此处仅留协议形态备查。
+ *       （参战人数是纯展示数据；面板作战状态行只镜像 22007 与本会话派兵记账，零发包），此处仅留协议形态备查。
  *   902 MARCH_WORLD_POINT `marchType=306` 派兵 —— 走 `core/march.attack()` 组 canonical body，与录制逐键一致
  *       （实证 10:26:14：`{marchType:306, x:408, y:508, armyList/armyListNew 9 队 pos 1/2/3/11/12/13/21/22/23,
  *       heroList:[170,174,169], trapList:[], break:0, formation:0, formationV2:1001, extraArmy}`）。
@@ -42,8 +42,10 @@
  *   `march.onStateChange` 306 的 **state===4(ARRIVED_HOME)** 边沿（规范坑记：10019 对所有行军状态都推，
  *   唤醒只认到家态）+ `createCycle` 档位择时（红点待派 20s 短巡、派后 30s 复核红点翻转、无事长睡靠 push）。
  *
- * 用户口径（面板已据此精简）：自动派兵/补兵是默认行为不设勾选；面板不出状态行（阶段/红点/人数），
- *   状态只在引擎内部维护（判据链），可调项仅剩战斗预设队列。
+ * 用户口径：自动派兵/补兵是默认行为不设勾选，可调项仅剩战斗预设队列；面板出只读「作战状态」三行
+ *   （阶段/波次/止时、红点驻守+本轮派次、最近派兵结算），全部镜像 22007 push（未启用时回落读 ACL 投影，
+ *   同源零发包）与本会话记账，不为展示发任何请求；参战人数（2336）不展示——纯展示数据不值得轮询。
+ *   状态行只如实镜像可读真相，不臆造中间态（口径同 energy-convoy 的亮/灭两态）。
  *
  * 刻意不做：
  *   不发 2331 MAIN_INFO（timelines/energyProgress/对面服务器是展示数据，自动化判据全部来自 22007 push，
@@ -54,6 +56,7 @@
  */
 import { createLog } from '../../core/log.js';
 import { reactor } from '../../core/reactor.js';
+import { bus, EVT } from '../../core/bus.js';
 import { gameData, bits } from '../../core/game-api.js';
 import { Battle } from '../../core/battle.js';
 import { march } from '../../core/march.js';
@@ -112,6 +115,16 @@ var SNAP = null;
 var posCache = null;
 /** @type {Object<string,number>} `status:round` → 本 feat 已派次数 */
 var dispatchTries = Object.create(null);
+/**
+ * @typedef {object} ArkSendRec
+ * @property {number} atMs 派兵结算时刻（Date.now() 基准，面板折墙上钟）
+ * @property {number} round 派兵时的波次
+ * @property {boolean} ok 服务器是否受理
+ * @property {number} troops 派出队伍数（仅 ok 时有意义）
+ * @property {string} note 结果短语（已受理 / 被拒 code=… / 未发出）
+ */
+/** @type {ArkSendRec|null} 最近一次派兵结算（面板「最近派兵」行；null=本会话未派过；纯展示历史，跨 pause 保留） */
+var lastSend = null;
 /** @type {number} 派兵冷却到期时刻（Date.now() 基准） */
 var coolUntilMs = 0;
 /** @type {boolean} 本拍是否刚发出派兵（择时切到「复核红点翻转」档） */
@@ -231,6 +244,7 @@ function onArkPush(ev) {
   if (!prev || prev.armyRed !== SNAP.armyRed) {
     log.debug('22007 arkArmyRed %s -> %s.', prev ? prev.armyRed : '?', SNAP.armyRed);
   }
+  pokePanel(); // 作战状态行随 push 就地重算（面板未开时 UI_REFRESH 早退，零开销）
   if (aliveFn()) cycle.kick();
 }
 
@@ -307,6 +321,7 @@ function bootstrapArkState() {
     a.armyRed,
     a.round,
   );
+  pokePanel(); // 中途启用引导读达：作战状态行从「—」切到真实快照
 }
 
 // ── 派兵腿 ────────────────────────────────────────────────────────────
@@ -397,6 +412,7 @@ async function dispatchLeg() {
       key,
       dispatchTries[key],
     );
+    noteSend(s.round, false, 0, '未发出');
     return;
   }
   if (!ret || !ret.ok) {
@@ -408,6 +424,7 @@ async function dispatchLeg() {
       key,
       dispatchTries[key],
     );
+    noteSend(s.round, false, 0, '被拒 code=' + (ret ? ret.code : '?'));
     return;
   }
   justDispatched = true;
@@ -424,6 +441,7 @@ async function dispatchLeg() {
     // marchId 是 64 位雪花 id：只能按字符串读，Number 会丢精度
     mi.marchId != null ? bits.int64Str(mi.marchId) : '?',
   );
+  noteSend(s.round, true, plan.armyListNew.length, '已受理');
 }
 
 // ── 调度 ──────────────────────────────────────────────────────────────
@@ -502,6 +520,87 @@ const cycle = createCycle({
   fallback: cfg.backoffMs,
 });
 
+// ── 面板状态（只读镜像，零发包）────────────────────────────────────────
+/**
+ * 状态行读源：优先本 feat 的 push 快照；缺席（未启用/刚 pause）回落 ACL 内存投影
+ *   （与 22007 同源：CQ26ArkData.data 就是最近一帧 push 的副本）。两路皆空回 null，面板如实出「—」。
+ * @returns {ArkSnap|null}
+ */
+function displaySnap() {
+  return SNAP || gameData.cq26ArkState();
+}
+
+/**
+ * 推一次面板刷新：作战状态行是「行结构不变、值随 push/结算变」的只读格，走 refreshTexts 就地重算。
+ * 刻意**不带 rebuild**：带它会整卡重渲染、拆掉用户正在操作的预设下拉（口径同 shop.js pokePanel）。
+ */
+function pokePanel() {
+  bus.emit(EVT.UI_REFRESH);
+}
+
+/**
+ * 「最近派兵」行记账 + 推面板刷新（纯展示、不参与判据链；与日志结算同窗调用）。
+ * @param {number} round 派兵时的波次
+ * @param {boolean} ok 是否受理
+ * @param {number} troops 派出队伍数（未受理传 0）
+ * @param {string} note 结果短语
+ */
+function noteSend(round, ok, troops, note) {
+  lastSend = { atMs: Date.now(), round: round, ok: ok, troops: troops, note: note };
+  pokePanel();
+}
+
+/**
+ * 阶段号 → 中文（面板展示；未知号如实给数字，不臆造语义，口径同 mammoth.statusName）。
+ * @param {number} st PBEnumSeriesFrostArkTrialStageStatus
+ * @returns {string}
+ */
+function statusName(st) {
+  switch (st) {
+    case ST.NONE:
+      return '未开始';
+    case ST.PREPARE:
+      return '筹备';
+    case ST.DEPLOY:
+      return '部署';
+    case ST.FIGHT:
+      return '战斗中';
+    case ST.READY:
+      return '间歇';
+    case ST.END:
+      return '结束';
+    default:
+      return '阶段' + st;
+  }
+}
+
+/**
+ * 服务器秒 → 本地 `HH:mm`（阶段边界是服务器时刻，按服务器钟差折墙上钟才读得懂；口径同 mammoth.fmtClock）。
+ * @param {number} epochSec 服务器秒
+ * @returns {string}
+ */
+function fmtClock(epochSec) {
+  var lead = serverNow() - (Number(epochSec) || 0);
+  var d = new Date(Date.now() - lead * 1000);
+  var p = function (n) {
+    return (n < 10 ? '0' : '') + n;
+  };
+  return p(d.getHours()) + ':' + p(d.getMinutes());
+}
+
+/**
+ * 本地毫秒 → `HH:mm:ss`（派兵结算按 Date.now() 记账，直接读墙上钟）。
+ * @param {number} ms
+ * @returns {string}
+ */
+function fmtTime(ms) {
+  var d = new Date(ms);
+  var p = function (n) {
+    return (n < 10 ? '0' : '') + n;
+  };
+  return p(d.getHours()) + ':' + p(d.getMinutes()) + ':' + p(d.getSeconds());
+}
+
 // ── descriptor ────────────────────────────────────────────────────────
 /**
  * 面板 defaults（用户口径：战斗预设队列 1；自动派兵/补兵是默认行为，不设开关）。
@@ -520,8 +619,8 @@ var presetOptions = [1, 2, 3, 4, 5, 6, 7, 8].map(function (i) {
 });
 
 /**
- * 面板 fields：仅 1 个可调项（战斗预设队列）。自动派兵/补兵是默认行为不设勾选（用户口径），
- *   状态行（阶段/红点/人数）整段已撤——判据链只在引擎内部走，面板不镜像。
+ * 面板 fields：3 行只读作战状态（纯镜像 22007 push / ACL 投影 + 本会话派兵记账，零发包）
+ *   + 1 个可调项（战斗预设队列）。自动派兵/补兵是默认行为不设勾选（用户口径）。
  * 刻意**不列 `enabled` 字段**：功能卡片标题行已有直驱 `enabled` 的开关（core/ui/panel.js），
  *   再出一行同义 checkbox 属重复控件（口径逐字同 mammoth.js）。
  * @returns {object[]}
@@ -529,12 +628,53 @@ var presetOptions = [1, 2, 3, 4, 5, 6, 7, 8].map(function (i) {
 function buildFields() {
   return [
     {
+      key: '_stage',
+      type: 'text',
+      label: '阶段 / 波次',
+      section: '作战状态',
+      hint: '只读：镜像 22007 push 的阶段/波次/阶段止时（未启用时回落读游戏内存投影，同源零发包）',
+      get: function () {
+        var s = displaySnap();
+        if (!s) return '—';
+        return (
+          statusName(s.status) +
+          (s.maxRound > 0 ? ' R' + s.round + '/' + s.maxRound : '') +
+          (s.endTimeSec > 0 ? ' · 止 ' + fmtClock(s.endTimeSec) : '')
+        );
+      },
+    },
+    {
+      key: '_garrison',
+      type: 'text',
+      label: '驻守 / 红点',
+      section: '作战状态',
+      hint: '只读：红点亮=服务器催派/催补兵，灭=已确认在场；派次按「阶段:波次」窗口记账，红点复燃开新窗重新计',
+      get: function () {
+        var s = displaySnap();
+        if (!s) return '—';
+        var n = dispatchTries[s.status + ':' + s.round] || 0;
+        return (s.armyRed ? '待补兵' : '已在场') + ' · 本轮派 ' + n + ' 次';
+      },
+    },
+    {
+      key: '_lastSend',
+      type: 'text',
+      label: '最近派兵',
+      section: '作战状态',
+      hint: '只读：本会话最近一次 902-306 的结算（时刻/波次/队伍数/结果），未派过如实显示「未派过」',
+      get: function () {
+        var r = lastSend;
+        if (!r) return '未派过';
+        return fmtTime(r.atMs) + ' R' + r.round + ' · ' + (r.ok ? r.troops + ' 队 ' : '') + r.note;
+      },
+    },
+    {
       key: 'preset',
       type: 'select',
       label: '战斗预设队列',
       section: '驻塔（部队数秒到家，不长期占队列）',
       options: presetOptions,
-      hint: '部署期首派与波次间红点复燃补兵都用同一预设展开（协议层「补兵」就是重发这条 902-306）；战斗阶段游戏禁点参战，本引擎同口径不派',
+      hint: '部署期首派与波次间补兵共用同一预设；战斗阶段游戏禁点参战，引擎同口径不派。',
     },
   ];
 }
