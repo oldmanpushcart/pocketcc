@@ -507,11 +507,16 @@ function orderPoolItems(arr, order) {
 /**
  * 物品清单项字段（type:'itemlist'）内层 HTML：标题行 + 若干 `[拖拽 序号] 名称 [数字(0=占位显示上限/无上限)｜钻石价][≤cap][总数量] [拾] [店]` 行 + hint。
  * 行不可增删（整池全员参与）；每行一枚主勾选 + 一个目标数量输入（全仓统一约定：0=无上限），
- *   或 `fd.costCol` 时把那个数字输入换成**只读的红色钻石价列**（抢购类清单没有「本轮买几件」这个自由度，价才是唯一需要看的数）。
- * `fd.stockText(key, item)` 存在时在价列之后多一枚**只读总数量列**（.pc-istock，如密所「全部商店该商品剩余之和」）：
+ *   或 `fd.costCol` 时把那个数字输入换成**只读的红色钻石价列**；`fd.maxCol` 可让数字输入与价列**共存**
+ *   （抢购类的「本期总上限」分配旋钮，如密所逐商品 cap）。
+ * `fd.boughtText(key, item)` 存在时在输入列之前多一枚**只读已抢列**（.pc-ibought，如密所「该商品本期已抢购次数」），
+ *   与 `fd.stockText` 同一通路——挂 .pc-fval + data-ibought，由 refreshTexts 就地改文本，绝不整块重刷。
+ * `fd.stockText(key, item)` 存在时在输入列之后多一枚**只读总数量列**（.pc-istock，如密所「全部商店该商品剩余之和」）：
  *   它是「随数据变、但不重建行」的格，故与怪物清单「已打」同一通路——挂 .pc-fval + data-istock，由 refreshTexts 就地改文本，
  *   绝不走 refreshFieldBox（那会 innerHTML 覆盖整块、把 mountItemList 绑好的拖拽/勾选监听全拆掉）。
- * 状态 cfg[fd.key] 形如 `{ [idStr]: { on: 0|1, max: number } }`，未登记的项视为默认（on=1、max=0=无上限）。
+ * 状态 cfg[fd.key] 形如 `{ [idStr]: { on: 0|1, [numKey]: number } }`，未登记的项视为默认（on=1、数值=0）。
+ *   数值列的键由 `fd.numKey` 指定（缺省 'max'=目标持有量/上限；矿区盗采/协助用 'min'=最低量门槛），
+ *   列标题/占位/悬停用 `fd.numTitle`/`fd.numPlaceholder`/`head.num`（各自回退旧的 maxTitle/maxPlaceholder/head.max）。
  * 池由 fd.items（数组或 fn(cfg)）提供，每项 `{id, label, cap?, pickDisabled?, channel2Disabled?}`；id 可为字符串（如 'item:41009'）避免跨池数字碰撞。
  * `fd.channel2`（`{key,label,aLabel?,title?,disabledOf?(item)}`）存在时行尾多一枚**第二渠道勾选**（class `.pc-ichk2`，回写 `state[key][ch2.key]`），
  *   用于「同一实体多渠道」的清单（如秘境持有清单：on=拾取渠道、shop=商店补货渠道，两渠道共用一个目标持有量 max）；
@@ -519,11 +524,12 @@ function orderPoolItems(arr, order) {
  *   置灰的勾选渲染为未勾+禁选（存储里的陈旧值不生效也不展示）。行灰化（pc-irowoff）在可用渠道全部关时才生效。
  *   排版：[拖拽手柄][序号] [主勾选] [名称(+≤cap 角标)] [数字输入] [第二渠道勾选]（数量紧跟名称、渠道勾选居右成列）。
  * `fd.sortable`（配 fd.orderKey）时每行行首多一个拖拽手柄 + 序号，展示序按 order 排（下标即优先级，越靠前越先拾）。
+ * `fd.chkTitle` 定制主勾选的 title（缺省「是否自动拾取」；非拾取用途的清单——如矿区盗采/协助——必须覆盖，避免误导）。
  * `cap>0` 表示游戏**自身已有一道硬上限**（如秘境道具的 ITEM.para1_v1）：行内标 `≤cap`、输入框带 max/data-cap，
  *   超过 cap 的值在渲染时就回落为 cap（与 mountItemList 的 change 修正同口径）。
  * @param {Array<{id:string|number,label:string,cap?:number,pickDisabled?:boolean,channel2Disabled?:boolean,cost?:number}>|function(object):Array} items 池源
  * @param {object} state 当前配置对象（cfg[fd.key]）
- * @param {object} fd 字段描述符（label / hint / topHint / items / sortable / orderKey / channel2 / nameGrow / costCol / stockText / stockTitle / summary）
+ * @param {object} fd 字段描述符（label / hint / topHint / head / items / sortable / orderKey / channel2 / nameGrow / costCol / maxCol / numKey / numTitle / numPlaceholder / maxTitle / maxPlaceholder / chkTitle / boughtText / boughtTitle / stockText / stockTitle / summary）
  * @param {Array<string>} [order] 拖拽序（cfg[fd.orderKey]），缺省按池原序展示
  * @param {object} [cfgForSummary] 该 feature 的整个配置对象（仅当 `fd.summary` 为 fn 时作为第三参回传，供汇总读到其他字段）
  * @param {string} [fid] 功能 id（只读格挂 data-fid 供 refreshTexts 回查 descriptor，与 huntListInnerHTML 同口径）
@@ -538,11 +544,16 @@ export function itemListInnerHTML(items, state, fd, order, cfgForSummary, fid) {
   const sortable = !!(fd && fd.sortable);
   const ch2 = fd && fd.channel2;
   // fd.nameGrow：名称列改为弹性填充（flex:1 1 auto）而非固定 66px——长物品名（如密所带钻石价的行）不再被截断，
-  //   且各行的数字/勾选仍右对齐成列（可用宽度恒定）。缺省（秘境）保持固定 66px，行为不变。
+  //   且各行的数字/勾选仍对齐成列（价左对齐、数量居中；可用宽度恒定）。缺省（秘境）保持固定 66px，行为不变。
   const nameGrow = !!(fd && fd.nameGrow);
-  // fd.costCol：数字输入列换成只读钻石价列（.pc-icost 红色，值取池项 cost）；行不再有意义可填的 max，
-  //   mountItemList 的 .pc-imax 委托自然落空（查不到节点），无需额外闸门。
+  // fd.costCol：数字输入列换成只读钻石价列（.pc-icost 红色，值取池项 cost）；fd.maxCol 时输入列复活与价列共存
+  //   （.pc-imax 委托照旧生效）；缺省 maxCol 时行内无输入节点，委托自然落空，无需额外闸门。
   const costCol = !!(fd && fd.costCol);
+  const maxCol = !!(fd && fd.maxCol);
+  // 数值列的键（缺省 'max'）：矿区盗采/协助用 'min' 表「最低量门槛」，与持有量/上限语义区分
+  const numKey = (fd && fd.numKey) || 'max';
+  const boughtOf = fd && typeof fd.boughtText === 'function' ? fd.boughtText : null;
+  const boughtTitle = (fd && fd.boughtTitle) || '该商品本期已抢购次数';
   const stockOf = fd && typeof fd.stockText === 'function' ? fd.stockText : null;
   const stockTitle = (fd && fd.stockTitle) || '全部商店里该商品剩余可买数量之和';
   const rows = arr
@@ -550,8 +561,8 @@ export function itemListInnerHTML(items, state, fd, order, cfgForSummary, fid) {
       const key = String(it.id);
       const s = map[key];
       const cap = Math.max(0, Math.floor(Number(it.cap) || 0));
-      let max = s && Number.isFinite(s.max) ? s.max : 0;
-      if (cap > 0 && max > cap) max = cap; // 游戏自身上限抢先：超 cap 的旧存档值直接回落展示
+      let num = s && Number.isFinite(s[numKey]) ? s[numKey] : 0;
+      if (cap > 0 && num > cap) num = cap; // 游戏自身上限抢先：超 cap 的旧存档值直接回落展示
       const label = it.label || key;
       // 两渠道可得性：置灰=渲染未勾+禁选（陈旧存储值不展示）；行灰化只看可用渠道
       const pickOff = !!it.pickDisabled;
@@ -560,7 +571,7 @@ export function itemListInnerHTML(items, state, fd, order, cfgForSummary, fid) {
       const ch2On = ch2 && !ch2Off && s ? Number(s[ch2.key]) === 1 : false;
       const rowOff = pickOff && !ch2 ? !on : pickOff ? !ch2On : ch2 ? !on && !ch2On : !on;
       const mainChk =
-        `<label class="pc-ichklbl pc-ichkpush" title="${pickOff ? '该物品无掉落来源，不可拾取' : '是否自动拾取'}">` +
+        `<label class="pc-ichklbl pc-ichkpush" title="${pickOff ? '该物品无掉落来源，不可拾取' : escAttr((fd && fd.chkTitle) || '是否自动拾取')}">` +
         `<input type="checkbox" class="pc-ichk" data-ik="${escAttr(key)}"${on && !pickOff ? ' checked' : ''}${pickOff ? ' disabled' : ''}>` +
         `<span>${escAttr(ch2 ? ch2.aLabel || '拾' : '')}</span></label>`;
       const ch2Chk = ch2
@@ -568,17 +579,35 @@ export function itemListInnerHTML(items, state, fd, order, cfgForSummary, fid) {
           `<input type="checkbox" class="pc-ichk2" data-ik="${escAttr(key)}" data-iflag="${escAttr(ch2.key)}"${ch2On ? ' checked' : ''}${ch2Off ? ' disabled' : ''}>` +
           `<span>${escAttr(ch2.label)}</span></label>`
         : '';
-      const numCell = costCol
+      // 价列纯红数字、不带图标（2026-11-12 用户决策：💎 emoji 染不红、◆ 亦弃），红色本身即钻石语义
+      const costCell = costCol
         ? Number(it.cost) > 0
-          ? `<span class="pc-icost" title="单件钻石价">💎${Math.floor(Number(it.cost))}</span>`
+          ? `<span class="pc-icost" title="单件钻石价">${Math.floor(Number(it.cost))}</span>`
           : '<span class="pc-icost pc-icostunk" title="单件钻石价（配置表尚未加载，暂不可知）">—</span>'
-        : `<input type="number" class="pc-imax" data-ik="${escAttr(key)}" min="0" step="1"` +
-          (cap > 0 ? ` max="${cap}" data-cap="${cap}"` : '') +
-          ` value="${max > 0 ? max : ''}" placeholder="${cap > 0 ? cap : '无上限'}"` +
-          ` title="${cap > 0 ? '目标持有量，0=补/拾到上限 ' + cap + '（超出会被自动修正）' : '目标持有量，0=无上限'}">` +
-          (cap > 0
-            ? `<span class="pc-icap" title="游戏自身持有上限 ${cap}，填写超出会被自动修正">≤${cap}</span>`
-            : '');
+        : '';
+      const inputCell =
+        !costCol || maxCol
+          ? `<input type="number" class="pc-imax${maxCol ? ' pc-imaxcap' : ''}" data-ik="${escAttr(key)}" min="0" step="1"` +
+            (cap > 0 ? ` max="${cap}" data-cap="${cap}"` : '') +
+            ` value="${num > 0 ? num : ''}" placeholder="${cap > 0 ? cap : (fd && (fd.numPlaceholder || fd.maxPlaceholder)) || '无上限'}"` +
+            ` title="${escAttr(
+              (fd && (fd.numTitle || fd.maxTitle)) ||
+                (cap > 0
+                  ? '目标持有量，0=补/拾到上限 ' + cap + '（超出会被自动修正）'
+                  : '目标持有量，0=无上限'),
+            )}">` +
+            (cap > 0
+              ? `<span class="pc-icap" title="游戏自身持有上限 ${cap}，填写超出会被自动修正">≤${cap}</span>`
+              : '')
+          : '';
+      // 只读已抢列（值每次渲染现取，数据变化由 refreshTexts 就地回写，与 stockText 同通路）
+      const boughtCell = boughtOf
+        ? `<span class="pc-fval pc-ibought" data-fid="${escAttr(String(fid || ''))}" data-fkey="${escAttr(
+            String((fd && fd.key) || ''),
+          )}" data-ibought="${escAttr(key)}" title="${escAttr(boughtTitle)}">${escAttr(
+            String(boughtOf(key, it) || ''),
+          )}</span>`
+        : '';
       // 只读总数量列（值每次渲染现取，数据变化由 refreshTexts 就地回写，见上 JSDoc）
       const stockCell = stockOf
         ? `<span class="pc-fval pc-istock" data-fid="${escAttr(String(fid || ''))}" data-fkey="${escAttr(
@@ -591,7 +620,9 @@ export function itemListInnerHTML(items, state, fd, order, cfgForSummary, fid) {
         `<div class="pc-irow${rowOff ? ' pc-irowoff' : ''}" data-ikey="${escAttr(key)}">` +
         (sortable ? `<span class="pc-shandle" title="按住拖拽调整拾取优先级">⣿</span>` : '') +
         `<span class="pc-iname${nameGrow ? ' pc-namegrow' : ''}" title="${escAttr(label)}">${escAttr(label)}</span>` +
-        numCell +
+        costCell +
+        boughtCell +
+        inputCell +
         stockCell +
         mainChk +
         ch2Chk +
@@ -599,6 +630,32 @@ export function itemListInnerHTML(items, state, fd, order, cfgForSummary, fid) {
       );
     })
     .join('');
+  // fd.head：表头行（{name,cost,bought,max,stock} 各列文案，缺省有默认词；二渠道列直接用 ch2.label；勾选列只占位不出标题）。
+  //   与数据行共用 .pc-irow 骨架 + 逐列同类名 → 像素级对齐（ranges 表头同款教训：另写一套列宽必错位）；
+  //   放在 .pc-irows 外：renderRows 整块重画只换数据行不抹表头；不挂 data-ikey/data-ibought 钩子，拖拽/刷新逻辑不认它
+  const head = fd && fd.head;
+  const headHtml = head
+    ? `<div class="pc-irow pc-ihead">` +
+      (sortable ? '<span class="pc-shandle"></span>' : '') +
+      `<span class="pc-iname${nameGrow ? ' pc-namegrow' : ''}">${escAttr(head.name || '物品')}</span>` +
+      (costCol ? `<span class="pc-icost">${escAttr(head.cost || '单价')}</span>` : '') +
+      (boughtOf
+        ? `<span class="pc-fval pc-ibought" title="${escAttr(boughtTitle)}">${escAttr(head.bought || '已抢')}</span>`
+        : '') +
+      (!costCol || maxCol
+        ? `<span class="pc-imax${maxCol ? ' pc-imaxcap' : ''}" title="${escAttr((fd && (fd.numTitle || fd.maxTitle)) || '')}">${escAttr(head.num || head.max || '上限')}</span>`
+        : '') +
+      (stockOf
+        ? `<span class="pc-fval pc-istock" title="${escAttr(stockTitle)}">${escAttr(head.stock || '剩余')}</span>`
+        : '') +
+      // 勾选列占位须与数据行 label 同宽（隐藏 checkbox + 同款 span 文案），不出表头词——
+      //   否则名称 flex 列在表头/数据行差几 px，后面所有固定列跟着错位
+      `<span class="pc-ichklbl pc-ichkpush"><input type="checkbox" class="pc-ichk" disabled style="visibility:hidden"><span>${escAttr(ch2 ? ch2.aLabel || '拾' : '')}</span></span>` +
+      (ch2
+        ? `<span class="pc-ichklbl pc-ichklbl2"><input type="checkbox" class="pc-ichk2" disabled style="visibility:hidden"><span>${escAttr(ch2.label)}</span></span>`
+        : '') +
+      `</div>`
+    : '';
   return (
     `<div class="pc-ilisttop">` +
     `<span class="pc-rngtitle">${escAttr(fd.label || '物品清单')}</span>` +
@@ -606,11 +663,12 @@ export function itemListInnerHTML(items, state, fd, order, cfgForSummary, fid) {
       fd.topHint ||
         (costCol
           ? stockOf
-            ? '取消勾选=不抢；红色 💎 = 单件钻石价；末列 = 全部商店剩余之和'
-            : '取消勾选=不抢；红色 💎 = 单件钻石价'
+            ? '取消勾选=不抢；红色数字 = 单件钻石价；末列 = 全部商店剩余之和'
+            : '取消勾选=不抢；红色数字 = 单件钻石价'
           : '取消勾选=不拾；数字=背包上限，0=无上限；行内 ≤N = 游戏自身上限'),
     )}</span>` +
     `</div>` +
+    headHtml +
     `<div class="pc-irows">${rows || '<div class="pc-rnghint">池为空</div>'}</div>` +
     // fd.summary：清单页脚一行汇总（fn(items,state,cfg)→string 或静态串），带 .pc-isummary 钩子。
     //   勾选变更整块重刷 → 实时；数字输入变更不重刷（防抢焦点），由 mountItemList 只回写本页脚文本（见 widgets.js）。

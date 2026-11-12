@@ -497,8 +497,10 @@ export function mountSortList(box) {
 
 /**
  * 装配物品清单容器（.pc-ilist）：行不可增删，每行一枚 checkbox + 一个数字输入；`fd.sortable` 时行首多一个拖拽手柄。
- * `fd.costCol` 时那个数字输入换成只读钻石价列（.pc-icost）：下方 .pc-imax 委托自然查不到节点，无需额外闸门。
- * 状态形状：`cfg[fd.key] = { [idStr]: { on: 0|1, max: number, [channel2.key]?: 0|1 } }`，未登记的项默认 on=1/max=0（无上限）。
+ * `fd.costCol` 时那个数字输入换成只读钻石价列（.pc-icost）：下方 .pc-imax 委托自然查不到节点，无需额外闸门；
+ *   `fd.maxCol` 可让输入与价列共存（委托照旧生效，如密所「本期总上限」旋钮）。
+ * 状态形状：`cfg[fd.key] = { [idStr]: { on: 0|1, [numKey]: number, [channel2.key]?: 0|1 } }`，未登记的项默认 on=1/数值=0；
+ *   数值键由 `fd.numKey` 指定（缺省 'max'=目标持有量；矿区盗采/协助用 'min'=最低量门槛）。
  * `fd.channel2` 存在时行内多一枚第二渠道勾选（.pc-ichk2，回写 `state[key][ch2.key]`，如秘境持有清单的 shop 渠道）。
  * 拖拽序：`cfg[fd.orderKey] = string[]`（池 key 的优先级序，下标即优先级），只由拖拽写入（写全量 DOM 序）；
  *   旧存档无此数组 = 未排过序，面板按池原序展示，引擎也不按序优先（见 feats/activity/secret-realm/pickup.js）。
@@ -515,7 +517,7 @@ export function mountItemList(box) {
   if (!fd) return;
   if (box.__pcRowDrag) return; // 拖拽进行中：跳过重刷，避免 ui.refresh 摧毁被拖行
   const c = configs[fid];
-  // 状态形状是两层（{[idStr]:{on,max,…}}）：registry 读盘只克隆**一层**（内层条目仍与 defaults 同引用），
+  // 状态形状是两层（{[idStr]:{on,[numKey],…}}）：registry 读盘只克隆**一层**（内层条目仍与 defaults 同引用），
   //   故此处自己做两层拷贝。不再用「与 defaults 同引用」作判据——那个判据在 defaults 为空 {} 时正好失效，
   //   而空 defaults + 有内层结构的 descriptor 恰恰是本分支要防的形状。容器每次重建都重拷一次，代价可忽。
   if (!c[fd.key] || typeof c[fd.key] !== 'object' || Array.isArray(c[fd.key])) {
@@ -531,14 +533,18 @@ export function mountItemList(box) {
     c[okey] = Array.isArray(f.defaults && f.defaults[okey]) ? f.defaults[okey].slice() : [];
   }
   const order = okey ? c[okey] : null;
+  // 数值列的键（缺省 'max'）：与 fields.js itemListInnerHTML 同口径，矿区盗采/协助用 'min'
+  const numKey = (fd && fd.numKey) || 'max';
 
   const ensureEntry = (key) => {
-    if (!state[key]) state[key] = { on: 1, max: 0 };
+    if (!state[key]) state[key] = { on: 1, [numKey]: 0 };
     return state[key];
   };
 
   const rerender = () => {
-    box.innerHTML = itemListInnerHTML(items, state, fd, order, c);
+    // fid 必须透传：只读格（boughtText/stockText）与页脚汇总靠 data-fid 被 refreshTexts 回查，
+    //   丢了它勾选重刷后这些格就永远不再随数据刷新（首渲染走 FIELD_BOXES 有 fid，两条通路必须同口径）
+    box.innerHTML = itemListInnerHTML(items, state, fd, order, c, fid);
     bind();
   };
 
@@ -605,7 +611,7 @@ export function mountItemList(box) {
         const cap = Math.max(0, Math.floor(Number(num.dataset.cap) || 0));
         if (cap > 0 && v > cap) v = cap; // 游戏自身上限抢先：超出直接修正为上限
         num.value = v > 0 ? v : ''; // 0 回写为空→露出占位（无上限/游戏持有上限），与渲染同口径
-        e.max = v;
+        e[numKey] = v;
         // 不重刷，避免抢用户当前输入框；但页脚汇总要跟着改数走（见 refreshSummary）
         refreshSummary();
         saveFeature(f);

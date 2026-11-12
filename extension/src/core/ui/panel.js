@@ -345,7 +345,7 @@ export function rerenderFeatureCard(root, fid, rewire) {
  * 刷新面板内所有只读字段：type:'text' 按 descriptor.get() 重算当前值；type:'infogrid' 行集来自 fd.rows，
  * 整块重刷（与首次渲染同一渲染器，靠容器 data-id/data-fkey 反查）。
  * 另特处理两个清单内的只读格：怪物清单（huntlist）「已打」（.pc-hlstat[data-hlstat] ← fd.todayText(key)）与
- * 物品清单（itemlist）「总数量」（.pc-istock[data-istock] ← fd.stockText(key)），以及清单页脚汇总
+ * 物品清单（itemlist）「总数量」（.pc-istock[data-istock] ← fd.stockText(key)）、「已抢」（.pc-ibought[data-ibought] ← fd.boughtText(key)），以及清单页脚汇总
  *   （.pc-isummary[data-isummary] ← fd.summary(items,state,cfg)，汇总跟快照/额度走同一条通路）。
  * 这些都是「值随数据变、行结构不变」的格：只改文本，绝不整块重刷（itemlist 的拖拽/勾选监听绑在行节点上）。
  * 面板打开 / 卡片展开 / 切 TAB / 功能侧 ui.refresh 时调用，无需定时器（避免常驻轮询）。
@@ -368,6 +368,10 @@ export function refreshTexts(root) {
       // 物品清单「总数量」格：值按行 key 从 fd.stockText 取（无则不刷）
       if (typeof fd.stockText !== 'function') return;
       next = String(fd.stockText(span.dataset.istock) || '');
+    } else if (span.dataset.ibought != null) {
+      // 物品清单「已抢」格：值按行 key 从 fd.boughtText 取（无则不刷）
+      if (typeof fd.boughtText !== 'function') return;
+      next = String(fd.boughtText(span.dataset.ibought) || '');
     } else {
       if (!fd.get) return;
       next = String(fd.get(configs[f.id]) || '');

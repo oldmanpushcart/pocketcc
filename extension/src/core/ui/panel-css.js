@@ -164,7 +164,7 @@ export const PANEL_CSS = `
     .pc-ilist{display:flex;flex-direction:column;gap:4px;width:100%;margin:2px 0 6px;}
     .pc-ilisttop{display:flex;align-items:center;justify-content:space-between;gap:8px;}
     .pc-irows{display:flex;flex-direction:column;gap:2px;width:100%;padding-right:2px;}
-    .pc-irow{display:flex;align-items:center;gap:6px;padding:2px 4px;border-radius:4px;background:rgba(255,255,255,.03);}
+    .pc-irow{display:flex;align-items:center;gap:4px;padding:2px 4px;border-radius:4px;background:rgba(255,255,255,.03);}
     /* 可拖拽排序的 itemlist（fd.sortable）：只手柄可起拖（行内有输入框，整行起拖会抢焦点/选字），
        touch-action:none 保证触摸设备上 pointermove 不被滚动抢走（同 .pc-srow） */
     .pc-irow .pc-shandle{touch-action:none;}
@@ -189,16 +189,31 @@ export const PANEL_CSS = `
     .pc-icap{flex:0 0 auto;padding:0 4px;border-radius:4px;font-size:11px;color:#9ecbff;
       background:rgba(74,163,255,.12);border:1px solid rgba(74,163,255,.22);}
     .pc-imax{flex:0 0 auto;width:64px;padding:2px 4px;border-radius:4px;
-      border:1px solid rgba(255,255,255,.15);background:rgba(0,0,0,.25);color:#e8eef7;font:inherit;font-size:12px;}
+      border:1px solid rgba(255,255,255,.15);background:rgba(0,0,0,.25);color:#e8eef7;font:inherit;font-size:12px;
+      appearance:textfield;-moz-appearance:textfield;}
+    /* 隐藏 number 聚焦/悬停时的上下微调箭头：窄列（30px）会被箭头吃掉一半宽；键盘 ↑↓ 仍按 step 调，change 委托不受影响 */
+    .pc-imax::-webkit-inner-spin-button,.pc-imax::-webkit-outer-spin-button{-webkit-appearance:none;margin:0;}
     /* 背包上限 placeholder（cap=0 时的「无上限」）：与打野 .pc-hln 同款亮色，不被浏览器默认浅灰吞掉 */
     .pc-imax::placeholder{color:#cfe3ff;opacity:1;}
-    /* fd.noMax 的钻石价列（代替「购买上限」输入列）：红色对齐游戏内钻石花费读数，表未加载时置灰破折号 */
-    .pc-icost{flex:0 0 auto;min-width:64px;text-align:right;font-variant-numeric:tabular-nums;
+    /* fd.maxCol 的窄输入列（抢购类「本期总上限」，顶多两位数）：border-box 30px + 居中，
+       把宽度让给名称列；placeholder 由 fd.maxPlaceholder 给短符号（如 ∞），「无上限」三字塞不下 */
+    .pc-imax.pc-imaxcap{box-sizing:border-box;width:30px;padding:2px 2px;text-align:center;}
+    /* itemlist 表头行（fd.head）：与数据行同 .pc-irow 骨架逐列对齐；去行底/输入框外观，淡蓝小字区别于数据 */
+    .pc-ihead{background:none;color:#9ecbff;font-size:11px;}
+    .pc-ihead .pc-iname,.pc-ihead .pc-fval,.pc-ihead .pc-icost,.pc-ihead .pc-ichklbl{color:#9ecbff;}
+    .pc-ihead .pc-imax{border:none;background:none;color:#9ecbff;}
+    /* 表头勾选格：隐藏 checkbox 占位保宽（与数据行 label 同宽，保像素对齐）；勾选列不出表头词（用户决策） */
+    /* fd.noMax 的钻石价列（代替「购买上限」输入列）：纯红数字无图标，红色对齐游戏内钻石花费读数，表未加载时置灰破折号；
+       min-width 34 容四位数字（~29px），更宽的价格自动撑开（flex:auto + nowrap） */
+    .pc-icost{flex:0 0 auto;min-width:34px;text-align:left;font-variant-numeric:tabular-nums;
       font-size:12px;color:#ff6b6b;white-space:nowrap;}
     .pc-icost.pc-icostunk{color:#8b97a8;}
-    /* itemlist 的只读总数量列（fd.stockText，如密所「全部商店该商品剩余之和」）：与价列同右对齐成列。
+    /* itemlist 的只读总数量列（fd.stockText，如密所「全部商店该商品剩余之和」）：居中成列（2026-11-12 排版决策：价左对齐、三数量居中）。
        双类选择器 (0-2-0) 压过上方 .pc-fval 的 flex:0 0 auto——那一条源码顺序在后，单类写会被它抢走宽度行为 */
-    .pc-fval.pc-istock{flex:0 0 46px;text-align:right;font-size:12px;white-space:nowrap;}
+    .pc-fval.pc-istock{flex:0 0 24px;text-align:center;font-size:12px;white-space:nowrap;}
+    /* itemlist 的只读已抢列（fd.boughtText，如密所「该商品本期已抢购次数」）：与总数量列同居中成列；
+       24px 容得下三位数（Σ库存上限 280），再宽就挤名称列 */
+    .pc-fval.pc-ibought{flex:0 0 24px;text-align:center;font-size:12px;white-space:nowrap;}
     /* 只读信息表格（type:'infogrid'，如密所状态：归属区/等级/状态/倒计时）：一行一条记录，
        行包 div 用 display:contents 把格子直接挂到父栅格，列宽由内联 grid-template-columns:repeat(N,max-content) 给出
        ——所有行共用同一套列宽，因此「上下严格对齐」不依赖等宽字体（CJK/数字混排下靠空格填充会错位） */
