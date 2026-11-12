@@ -30,7 +30,9 @@
  *  ④ 建成立即撤回（固定行为，非可选项）：st===3 → net.send(904 {marchId}) → state 3 RETURNING → 4 ARRIVED_HOME，
  *     队列释放；塔留在原地（实证撤回后盟友照常来采，army_size 412/218），不撤不影响塔存活；
  *  ⑤ 补建：塔到期/被毁 → 1031 活表里该族条目消失 → 下一拍重新选地派建（家族唯一性靠「塔实例是否存在」
- *     判定，重启/换号天然自愈）；
+ *     判定，重启/换号天然自愈）。**不做提前补建**：服务器强制一族一座——旧塔还在（哪怕只剩几秒寿命）就派第二单
+ *     必被拒 build_122094「该建筑只能建造1个」（2026-11-12 录制实证：四族均在旧塔剩余 <600s 时抢跑被拒），
+ *     故覆盖判定只看「塔实例是否存在」，补建唤醒排在真实到期时刻，到期后重拉 1031 确认消失才派单；
  *  ⑥ 取消在建（停用 / 时段外，两趟销毁在建机械田实录报文实证）：
  *     1033 建塔(buildId,x,y) → 1034/10182 读到 st=2（在建）→ net.send(1032 TOWER_REMOVE, {id:"塔实例id 字符串"})
  *     即销毁在建塔；实证 1032 之后游戏**不再单独发 904**——服务器自动把施工单兵遣返。故取消在建只需 1032（按已认领的
@@ -143,8 +145,6 @@ const cfg = {
   towerRetryMs: 1000 * 30,
   /** 在飞建造行军的轮询间隔（毫秒）：st 2→3 由 10182 推送即时反映，这里只兜漏推 */
   buildPollMs: 1000 * 60,
-  /** 已建成塔「剩余寿命不足此值」（服务器秒）即视为可提前补建 */
-  buildGuardSec: 600,
   /** 无任何在飞/到期事务时的兜底扫描间隔（毫秒） */
   idleScanMs: 1000 * 60 * 5,
   /** 被拒后该家族的重试冷却（毫秒） */
@@ -200,7 +200,6 @@ var installed = false;
 var MCFG = {
   enabled: false,
   families: [],
-  buildGuardSec: cfg.buildGuardSec,
 };
 
 /**
@@ -282,47 +281,36 @@ export function isBuildComplete(tower, serverSec) {
 
 /**
  * 家族覆盖判定（纯函数，供单测「家族唯一去重」口径）：逐家族给出「本轮是否需要为它派建」。
- * 已覆盖 = 活表里该族有 st∈{2,3} 的塔且剩余寿命 ≥ buildGuardSec；或账本里该族有一条尚未撤回的建造。
+ * 已覆盖 = 活表里该族有 st∈{2,3} 的塔（**不论剩余寿命**——服务器一族一座，旧塔没消失前派第二单必被拒
+ *   build_122094「该建筑只能建造1个」，故不做提前补建）；或账本里该族有一条尚未撤回的建造。
  * @param {Array<object>} towerList 本人塔对象数组（1031 list 形状：{id,bid,st,btime,dur,...}）
  * @param {number[]} wanted 面板勾选的家族码数组
  * @param {Object<string, object>} activeLedger family（字符串键）→ 账本条目（{recalledAt}）
- * @param {number} serverSec 服务器当前时刻（秒）
- * @param {number} guardSec 剩余寿命低于此值（秒）即视为该补建
- * @param {function(number):number} [lifespanFn] bid → 存活时长秒注入（缺省读 MAP_BUILDING.duration；单测用固定表隔离游戏符号依赖）
  * @returns {Object<number, {covered:boolean,reason:string}>} 家族 → 规划结论（只含 wanted 内的家族）
  */
-export function planFamilies(towerList, wanted, activeLedger, serverSec, guardSec, lifespanFn) {
+export function planFamilies(towerList, wanted, activeLedger) {
   var out = {};
   var list = Array.isArray(towerList) ? towerList : [];
-  var hasTower = {}; // family -> {covered, reason}
+  var hasTower = {}; // family -> true（st∈{2,3} 即占住家族名额）
   for (var i = 0; i < list.length; i++) {
     var t = list[i];
     var fam = familyOfBid(t && t.bid);
     if (!fam) continue;
     var st = t ? t.st | 0 : 0;
     if (st !== TOWER_STATE_BUILDING && st !== TOWER_STATE_COMPLETE) continue;
-    var left = remainingLifeSec(t, serverSec, lifespanFn || lifespanSec);
-    if (left != null && left < (guardSec | 0)) {
-      // 寿命将尽：仍可被别的家族条目覆盖（同族多塔时保守取「有健康塔者优先」）
-      if (!hasTower[fam] || hasTower[fam].reason === 'expiring')
-        hasTower[fam] = { covered: false, reason: 'expiring' };
-      continue;
-    }
-    hasTower[fam] = { covered: true, reason: 'alive' };
+    hasTower[fam] = true;
   }
   var want = Array.isArray(wanted) ? wanted : [];
   for (var w = 0; w < want.length; w++) {
     var f = want[w] | 0;
     if (FAMILIES.indexOf(f) < 0) continue;
     var led = activeLedger && activeLedger[String(f)];
-    if (hasTower[f] && hasTower[f].covered) {
+    if (hasTower[f]) {
       out[f] = { covered: true, reason: 'alive' };
     } else if (led && !led.recalledAt) {
       out[f] = { covered: true, reason: 'building' };
     } else {
-      out[f] = hasTower[f]
-        ? { covered: false, reason: hasTower[f].reason }
-        : { covered: false, reason: 'none' };
+      out[f] = { covered: false, reason: 'none' };
     }
   }
   return out;
@@ -816,13 +804,14 @@ function dispatchBuild(family) {
         familyCooldown[family] = Date.now() + cfg.familyCooldownMs;
         rejectStreak++;
         log.info(
-          'build rejected. family=%d(%s) bid=%d at (%d,%d) code=%s streak=%d',
+          'build rejected. family=%d(%s) bid=%d at (%d,%d) code=%s msg=%s streak=%d',
           family,
           FAMILY_LABEL[family],
           bid,
           pt.x,
           pt.y,
           ret && ret.code,
+          rejectHint(ret),
           rejectStreak,
         );
         return 'rejected';
@@ -1222,9 +1211,12 @@ async function cyclePass() {
   for (var id in towers) {
     if (Object.prototype.hasOwnProperty.call(towers, id)) list.push(towers[id]);
   }
-  var plan = planFamilies(list, MCFG.families, ledger, serverSec, MCFG.buildGuardSec);
+  var plan = planFamilies(list, MCFG.families, ledger);
   var now = Date.now();
   var expiring = nextExpiryDelayMs(list, serverSec);
+  // 有塔被本地钟判到期（延迟压到下限）却仍在活表：快照可能陈旧，作废 1031 TTL，
+  // 下一拍强制重拉权威表确认塔是否已消失——补建只认「塔真没了」，不抢跑（服务器一族一座）
+  if (expiring > 0 && expiring <= cfg.minExpiryDelayMs) towersLoadedAt = 0;
   var dispatched = 0;
   for (var i = 0; i < FAMILIES.length; i++) {
     var f = FAMILIES[i];
@@ -1263,24 +1255,24 @@ async function cyclePass() {
 }
 
 /**
- * 最近的「塔到期补建」时刻（毫秒）。剩余寿命 < buildGuardSec 的塔即刻（返回 1s，交由家族规划补建）。
+ * 最近的「塔到期补建」唤醒时刻（毫秒）：排在**真实到期时刻**（不提前——旧塔没消失前派单必被拒
+ * build_122094）。已到期（left=0）返回下限间隔尽快复查；寿命查不到的塔不参与择时。
  * @param {Array<object>} list 活表塔数组
  * @param {number} serverSec 服务器当前时刻（秒）
  * @returns {number} 0=没有需要盯的到期塔
  */
 function nextExpiryDelayMs(list, serverSec) {
-  var best = 0;
+  var best = -1; // -1=没有需要盯的到期塔；>=0=最近剩余寿命（秒）
   for (var i = 0; i < list.length; i++) {
     var t = list[i];
     if ((t.st | 0) !== TOWER_STATE_COMPLETE) continue;
-    if (FAMILIES.indexOf(t.family) < 0) continue;
     if (!isWanted(t.family)) continue;
     var left = remainingLifeSec(t, serverSec);
     if (left == null) continue;
-    if (left < MCFG.buildGuardSec) return cfg.minExpiryDelayMs;
-    if (best === 0 || left < best) best = left;
+    if (best < 0 || left < best) best = left;
   }
-  return best > 0 ? Math.max(cfg.minExpiryDelayMs, (best - MCFG.buildGuardSec) * 1000) : 0;
+  if (best < 0) return 0;
+  return Math.max(cfg.minExpiryDelayMs, best * 1000);
 }
 
 /**
@@ -1378,7 +1370,6 @@ function configure(partial) {
   MCFG = {
     enabled: !!partial.mechBuildEnabled,
     families: Array.isArray(partial.mechBuildFamilies) ? partial.mechBuildFamilies.slice() : [],
-    buildGuardSec: cfg.buildGuardSec,
   };
   if (installed && aliveFn()) kick('configure (host panel push)');
   return MCFG;
