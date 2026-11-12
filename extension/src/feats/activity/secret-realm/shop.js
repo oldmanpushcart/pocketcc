@@ -573,7 +573,9 @@ export class ShopEngine {
   /**
    * type3（跨店共享限量、整场活动限购）道具的最高优先级自动购买：本店货单里有、本会话未降级、全场额度未用尽即优先买一笔。
    *   这类道具已从持有清单面板移除（见 index.js buildPickPool），不受任何「店」勾选控制——只要商店引擎在跑就先把它拿下；
-   *   type3 不可刷新，全场额度用尽（`buy_times-getTime<=0`）即永久 done。
+   *   type3 不可刷新，**仅**全场额度确已用尽（`buyTimes-getTime<=0`）才永久 done（B2）：
+   *   「不在本店当前 8540 快照」「余额暂不够」「携带满」都是**暂时不可得**，本轮跳过、下拍/换店重试，不写永久 done。
+   *   ——旧实现把「买完香肠后瞬时余额不足」也降级成本场永久 done，导致后续几家店再也不重试传奇百兽箱碎片。
    * @param {{x:number,y:number,key:string}} cur 当前商店点
    * @param {number} buyBalance 购买币余额
    * @returns {boolean} true=这一拍发出了一笔 type3 购买
@@ -584,24 +586,62 @@ export class ShopEngine {
     for (let i = 0; i < list.length; i++) {
       const info = list[i];
       const spec = info.spec;
+      const t3tag = 'shop: type3 spec=' + spec;
       if (this.#done[spec]) continue;
-      if (!(spec in this.#items)) continue; // 本店当前货单没这个 type3
+      if (!(spec in this.#items)) {
+        // 本店当拍 8540 快照没带出该 type3 槽：跨店固定限量，不代表本店不卖——仅本轮跳过，下次到店 INFO 重试（不写 done）。
+        this.#note(
+          't3-noshelf|' + spec,
+          t3tag +
+            ' not in current shelf snapshot, skip this round (retry next shop). note=not-on-shelf',
+        );
+        continue;
+      }
       const getTime = this.#items[spec] || 0;
       const bought = this.#bought[spec] || 0;
       const quotaLeft = Math.max(info.buyTimes - getTime, 0);
       if (quotaLeft <= 0) {
-        this.#done[spec] = 1; // type3 不可刷：全场额度用尽即永久降级
+        this.#done[spec] = 1; // type3 不可刷：全场额度确已用尽 → 永久降级
+        this.#note(
+          't3-quota|' + spec,
+          t3tag +
+            ' global quota used up (buyTimes=' +
+            info.buyTimes +
+            ' getTime=' +
+            getTime +
+            '), permanent done. note=quota-used',
+        );
         continue;
       }
-      if (info.cost <= 0 || buyBalance < info.cost) {
-        this.#done[spec] = 1; // 缺购买币——本场降级
+      if (info.cost <= 0) {
+        this.#done[spec] = 1; // 货表异常（无价）：永久降级
+        continue;
+      }
+      if (buyBalance < info.cost) {
+        // 暂时买不起（如刚买完香肠余额不足 cost）：不永久降级，余额够了下拍/下次到店再买。
+        this.#note(
+          't3-broke|' + spec,
+          t3tag +
+            ' balance ' +
+            buyBalance +
+            ' < cost ' +
+            info.cost +
+            ', skip this round (retry when affordable). note=broke',
+        );
         continue;
       }
       const capRoom = this.#carryRoom(info.itemId);
       const affordable = Math.floor(buyBalance / info.cost);
       const qty = Math.min(quotaLeft + bought, affordable, capRoom);
       if (qty < 1) {
-        this.#done[spec] = 1;
+        // 携带位满（碎片罕见）：本轮跳过，不写永久 done，腾出空间后可再买。
+        this.#note(
+          't3-carry|' + spec,
+          t3tag +
+            ' no carry room (capRoom=' +
+            capRoom +
+            '), skip this round (retry). note=carry-full',
+        );
         continue;
       }
       return this.#sendBuy(cur, spec, qty, info.buyTimes, bought);

@@ -108,6 +108,10 @@ const PT_KVK_TO = 49;
 const PT_MIX_BOSS = 79;
 /** @type {number} 惧星（须持有 buff 941222 才能加） */
 const PT_THOR = 86;
+/** @type {number} 普通世界 BOSS（WorldMapEntityType.Boss=11，行军走 ATTACK_WORLDBOSS=14，非集结目标） */
+const PT_WORLD_BOSS = 11;
+/** @type {number} 战争之源 BOSS（NWorldMapEntityType.BOSS_V2=298，行军走 ATTACK_WORLD_BOSS_V2=298，非集结目标） */
+const PT_BOSS_V2 = 298;
 
 /** @type {number} data_config 950008：战锤集结的参战账号等级下限（游戏 ShowTips 100273） */
 const CFG_RALLY_MIN_LEVEL = 950008;
@@ -335,6 +339,10 @@ const FAMILY_GATES = [
   { from: PT_KVK_FROM, to: PT_KVK_TO, always: 'KVK 建筑 PVP 集结' },
   // 混合集结：加入报文是 Assembly_Mix_Join 且 allowArmyTypes 受队长兵种约束，报文形态不同
   { pt: PT_MIX_BOSS, always: '混合集结需 Assembly_Mix_Join' },
+  // 世界 BOSS（一期/二期）：临时活动实体，走独立行军类型（14/298）攻打，非日常集结目标；
+  //   即使有人用普通集结报文（marchType=8）发起对它的集结，也不应学习/自动加入（有专属 feat 管理）
+  { pt: PT_WORLD_BOSS, always: '世界 BOSS 非集结目标' },
+  { pt: PT_BOSS_V2, always: '世界 BOSS V2（战争之源）非集结目标' },
   { pt: PT_RALLY_BOSS, check: rallyMinLevelReject },
   { pt: PT_THOR, check: thorBuffReject },
 ];
@@ -433,6 +441,7 @@ function catalog() {
     //   截断后绕成负数（实证 1793844355653|0 = -1451974075），于是 now - ts 恒 ≥ 30 天 → 所有学习项都被当陈旧筛掉，
     //   表现即「learnTarget 返回 true 但 rowOfItem 取不到行」（面板也就永远多不出那一行）。
     if (!e || now - (Number(e.ts) || 0) >= LEARN_STALE_MS) continue;
+    if (familyReject(e.pt)) continue; // 家族闸门拒绝的 pointType 不列（防御性：修前学的世界 BOSS 等陈旧项自动消失）
     var mg;
     try {
       mg = l10n.tableRow('MONSTER_GROUP', Number(ik));
@@ -443,6 +452,7 @@ function catalog() {
       key: CATALOG_KEYS[ik] || 'm' + ik,
       label: CATALOG_LABELS[ik] || rowLabel(mg, Number(ik)),
       itemId: Number(ik) | 0,
+      itemIds: [Number(ik) | 0], // 成员全集：面板×删除按键要删全归并前学到的每一只（同族其余成员 append 到这里）
       pointType: e.pt | 0,
       hours: Math.round((Number(e.lf) || 0) / 3600), // 情报时长（小时）：同名行消歧用；表行没这个信息 → 0
       searchOrder: 0,
@@ -1240,6 +1250,9 @@ function buildRallyRows() {
   return catalogRows().map(function (r) {
     return {
       name: r.label,
+      learned: !!r.learned, // 仅自学习行可删（表反查/种子行没有可删的持久态）
+      itemIds:
+        r.itemIds && r.itemIds.length ? r.itemIds : r.learned && r.itemId ? [r.itemId] : null,
       enableKey: r.key + 'Enabled',
       delay: { key: r.key + 'DelaySec', min: 0, step: 1 },
       limit: {
@@ -1258,6 +1271,34 @@ function buildRallyRows() {
       },
     };
   });
+}
+
+/**
+ * 面板×按钮手工删除一个自学习目标：按 itemIds 从 learnedTargets 逐个删除并覆盘。
+ * 表行/种子行不在 learnedTargets 里（删不到）；删除后除非该 itemId 再被 12003 推到、重新走 learnTarget，否则不会回来。
+ * @param {string} rowkey 行上 data-rowkey：成员 itemId 的逗号串（归并行一整族一起删）
+ */
+function deleteLearnedRow(rowkey) {
+  var ids = String(rowkey || '')
+    .split(',')
+    .filter(Boolean);
+  if (!ids.length) return;
+  var removed = 0;
+  ids.forEach(function (id) {
+    if (learnedTargets[id]) {
+      delete learnedTargets[id];
+      removed++;
+    }
+  });
+  if (!removed) {
+    // 进到这里说明面板渲染了学习行的×，但 learnedTargets 里没有该 itemId（目录与持久态失同步）：异常，留 warn 供真机定位
+    log.warn('delete requested but itemId not in learnedTargets. rowkey=%s', rowkey);
+    return;
+  }
+  catalogCache = null; // 目录即时剔除该行
+  persistTargets(); // 被删的已不在 learnedTargets，覆盘后不再写回（targetsSaving 在飞则下一笔补上，内存已删不影响面板）
+  bus.emit(EVT.UI_REFRESH, { rebuild: 'allianceRally' }); // 行集变了：重建面板 DOM 删那一行
+  log.info('learned rally target deleted by hand. itemIds=%s', rowkey);
 }
 
 /**
@@ -1296,6 +1337,8 @@ reactor.register({
       get rows() {
         return buildRallyRows();
       },
+      // 学习行×删除的回调（由 wire.js 的 .pc-rgdel 委托调用，传行上的 itemIds CSV）：表行无此按钮。
+      onDeleteRow: deleteLearnedRow,
     },
   ],
   toModuleCfg: function (c) {

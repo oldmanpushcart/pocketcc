@@ -888,6 +888,11 @@ export const tuning = {
    *   不取 100：两件之间还夹着商店补货（香肠携带上限 para1_v1=10）与手拍，留一档余量防吃频控。
    */
   bossFeedGapMs: 200,
+  /**
+   * 拍宠物（B3）：投喂路窗内预检失败（feedInfo 尚未就绪/全 0、或 nowFavor>=allFavor）时的退避间隔（毫秒）。
+   *   这类时刻发 8546 易撞服务端 `s=3`（异常操作请稍后再试）；拉长下次尝试以降频，不影响正常逐件投喂（bossFeedGapMs）。
+   */
+  bossFeedRejectMs: 1500,
   /** 拾取：被拒 dropId 的当日拉黑存活（毫秒），过期后允许再试（防永久误拉黑） */
   rejectBlacklistMs: 6 * 3600 * 1000,
   /**
@@ -1272,6 +1277,8 @@ export const tuning = {
   driveMarchPolicy: 0,
   /**
    * pilot 打野策略：0 打野优先于采井 / 1 采井优先于打野 / 2 完全不打野。
+   *   ⚠ v4.2 起面板 `driveBeast`（允许打野抓宠总闸，缺省 true）为上层开关：关时 pilot 直接把打野三档
+   *   短路（beastOff，等价本值=2），本 tuning 仅决定「开启抓宠时打野与采井的先后」。
    */
   driveBeastPolicy: 0,
   /**
@@ -1279,7 +1286,7 @@ export const tuning = {
    *   2 跳过「石头奖励已领过且我到场打过」的 / 3 跳过任何有石头记录的。
    */
   driveGuardPolicy: 0,
-  /** @type {number} pilot 打野档的最小品质（enigma_beast 行 quality ≥ 本值才去） */
+  /** @type {number} pilot 打野档的最小品质（enigma_beast 行 quality ≥ 本值才去）。v4.2 起作面板 driveBeastQuality 的回落缺省 */
   driveBeastMinQuality: 4,
   /**
    * pilot：读秒**开始前**的禁店窗（毫秒）与窗宽（毫秒）。判据
@@ -1385,6 +1392,7 @@ export const tuning = {
   /**
    * pilot：**大BOSS 开台前预置挪台窗口**（秒，对齐竞品 `plane_time`，双轨于旧 `driveBossLeadMs`）。
    *   取 60 ≡ `driveBossLeadMs:60000`；`load` 时若 storage 只有旧 ms 键则 `ms/1000` 换算入本键。
+   *   ⚠ v4.2 起本值作面板 `drivePlaneLeadSec` 的回落缺省：pilot #bossWindow lead 档优先读 cfg().drive.planeLeadSec。
    * @type {number}
    */
   drivePlaneLeadSec: 60,

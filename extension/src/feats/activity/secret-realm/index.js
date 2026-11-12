@@ -110,10 +110,10 @@ var engines = {
  *     relocate 恒关（不自动挪台）——大小BOSS 时间错开不同现，次序项不影响选目标；仅队长可发（引擎内 isTeamLeader 已闸）；
  *   shop=商店补货派生总闸 {enabled}（enabled 非用户勾选，而是 pickItems 是否存在 shop=1 项的派生态；且**只在队伍已停靠 161 商店点时**补货，见 shop.js）；
  *   warn=攻击警告应对 {enabled,mode}（mode='transfer' 立即转移（默认）/'stand' 抗争到底；默认关，自动挪队风险最高，见 warn.js；自动驾驶开启时本引擎让出转移、交 pilot.js EVADE 接管）；
- *   drive=自动驾驶 {enabled,boss,shopTime,revive,checkPower,shopDwellMs,emptyDwellMs,hopMaxSec,drivePlan}（enabled=面板 driveEnabled 总闸（默关）；boss=driveBoss 子闸——BOSS 窗开着时是否自动开往 176 平台，缺省 true；shopTime=大BOSS 前定点商店勤务开关（缺省 true）；revive=driveRevive 子闸——战败(deadType==1)且本场次数未用尽时是否代答 8552 复活，缺省 true；checkPower=driveCheckPower 子闸——受威胁时先探战力差（本队 vs 来犯队，8549），明确不亏则这一拍不逃、照常规阶梯干活（对齐竞品 option.check_power），缺省关；shopDwellMs=到店驻留毫秒（面板秒×1000，默认 25000）；emptyDwellMs=资源/掉落拿空后 settle 毫秒（默认 0=立即走）；hopMaxSec=巡航单跳车程上限秒（面板 driveHopSec，默认 10；超限不长途直冲、就近资源/平台/野怪作跳板，见 pilot.js）；drivePlan=开车方案 id（缺省 'default'，§15.8），见 pilot.js）。
+ *   drive=自动驾驶 {enabled,boss,shopTime,revive,checkPower,shopDwellMs,emptyDwellMs,hopMaxSec,beast,beastQuality,planeLeadSec,drivePlan}（enabled=面板 driveEnabled 总闸（默关）；boss=driveBoss 子闸——BOSS 窗开着时是否自动开往 176 平台，缺省 true；shopTime=大BOSS 前定点商店勤务开关（缺省 true）；revive=driveRevive 子闸——战败(deadType==1)且本场次数未用尽时是否代答 8552 复活，缺省 true；checkPower=driveCheckPower 子闸——受威胁时先探战力差（本队 vs 来犯队，8549），明确不亏则这一拍不逃、照常规阶梯干活（对齐竞品 option.check_power），缺省关；shopDwellMs=到店驻留毫秒（面板秒×1000，默认 25000）；emptyDwellMs=资源/掉落拿空后 settle 毫秒（默认 0=立即走）；hopMaxSec=巡航单跳车程上限秒（面板 driveHopSec，默认 10；超限不长途直冲、就近资源/平台/野怪作跳板，见 pilot.js）；beast=driveBeast 子闸——自动驾驶是否允许打野抓宠（缺省 true；关则全程不去 172，见 pilot.js/plans.js beastOff）；beastQuality=driveBeastQuality 抓宠最小品质闸（1~5，缺省 4，喂给 #objective('beast') 的 minQ）；planeLeadSec=drivePlaneLeadSec 大BOSS 开台前预置挪台窗口秒（夹 [0,600]，缺省 60=1 分钟，见 pilot.js #bossWindow lead 档）；drivePlan=开车方案 id（缺省 'default'，§15.8），见 pilot.js）。
  *   leave=拿满自动离场 {enabled}（enabled=面板 autoLeaveEnabled 总闸（默关）；无子开关，离场为不可逆的整场退出，见 leave.js）。
  *   scout=侦察囤情报 {enabled}（enabled=面板 scoutEnabled 总闸（**v4.1 起缺省开**：打野档品质筛选依赖其情报，关则 #pickBeast 恒按未知品质 2 处理、被 driveBeastMinQuality=4 筛成哑火）；只囤情报不派兵，花 41001 侦察野怪点品质，护栏=先 8536 免费预检/余量闸/速率闸，见 scout.js）。
- * @type {{pickItems:Object<string,{on:number,max:number,shop?:number}>, pickOrder:string[], pickRank:Object<string,number>, buffEffects:number[], heal:object, boss:object, shop:{enabled:boolean}, warn:{enabled:boolean,mode:string}, drive:{enabled:boolean,boss:boolean,shopTime:boolean,revive:boolean,checkPower:boolean,shopDwellMs:number,emptyDwellMs:number,hopMaxSec:number,drivePlan:string}}}
+ * @type {{pickItems:Object<string,{on:number,max:number,shop?:number}>, pickOrder:string[], pickRank:Object<string,number>, buffEffects:number[], heal:object, boss:object, shop:{enabled:boolean}, warn:{enabled:boolean,mode:string}, drive:{enabled:boolean,boss:boolean,shopTime:boolean,revive:boolean,checkPower:boolean,shopDwellMs:number,emptyDwellMs:number,hopMaxSec:number,beast:boolean,beastQuality:number,planeLeadSec:number,drivePlan:string}}}
  */
 /**
  * BOSS 攻打固定档（面板不给开关）：攻打/投喂/石头恒开、轮次无限、就近选档，relocate（自动挪台，风险最高）恒关。
@@ -696,6 +696,9 @@ function pickDriveRaw(c) {
     shopDwellSec: c && c.driveShopDwell != null ? c.driveShopDwell : 25,
     emptyDwellSec: c && c.driveEmptyDwell != null ? c.driveEmptyDwell : 0,
     hopSec: c && c.driveHopSec != null ? c.driveHopSec : 10,
+    beast: !(c && c.driveBeast === false),
+    beastQuality: c && c.driveBeastQuality != null ? c.driveBeastQuality : 4,
+    planeLeadSec: c && c.drivePlaneLeadSec != null ? c.drivePlaneLeadSec : 60,
     drivePlan: c && c.drivePlan != null ? String(c.drivePlan) : 'default',
   };
 }
@@ -717,6 +720,16 @@ function sanitizeDrive(raw) {
   let hs = Number(e.hopSec);
   if (!Number.isFinite(hs) || hs <= 0) hs = 10;
   else if (hs > 120) hs = 120;
+  // 抓宠品质门槛（星）：夹 [1,5] 整数，非法回 4（对齐 tuning.driveBeastMinQuality 缺省）。
+  let bq = Number(e.beastQuality);
+  if (!Number.isFinite(bq)) bq = 4;
+  else if (bq < 1) bq = 1;
+  else if (bq > 5) bq = 5;
+  bq = Math.round(bq);
+  // 大BOSS 开台前预置挪台窗口（秒）：夹 [0,600]，支持 30=半分钟等小于 1 分钟；非法回 60（对齐 drivePlaneLeadSec 缺省）。
+  let pl = Number(e.planeLeadSec);
+  if (!Number.isFinite(pl) || pl < 0) pl = 60;
+  else if (pl > 600) pl = 600;
   const plan = PLANS[e.drivePlan] ? String(e.drivePlan) : 'default';
   return {
     enabled: e.enabled === true,
@@ -727,6 +740,9 @@ function sanitizeDrive(raw) {
     shopDwellMs: sd * 1000,
     emptyDwellMs: ed * 1000,
     hopMaxSec: hs,
+    beast: e.beast !== false,
+    beastQuality: bq,
+    planeLeadSec: pl,
     drivePlan: plan,
   };
 }
@@ -910,6 +926,9 @@ reactor.register({
     driveShopDwell: 25,
     driveEmptyDwell: 0,
     driveHopSec: 10,
+    driveBeast: true,
+    driveBeastQuality: 4,
+    drivePlaneLeadSec: 60,
     drivePlan: 'default',
     autoLeaveEnabled: false,
     scoutEnabled: true,
@@ -1083,6 +1102,42 @@ reactor.register({
         return !!(cfg && cfg.driveEnabled);
       },
       hint: '需求 3：巡航选点的单跳车程上限（秒，默认 10）。丰盛井若超出本值×地图速度折算的距离则不长途直冲，改就近找一个资源点/停泊平台/攻击宠物(172)作跳板逐拍逼近（跳板只挪位、不打野）；窗内无任何落脚点则换视野探索。调大=更远也直冲、调小=更保守分步挪',
+    },
+    {
+      key: 'driveBeast',
+      type: 'checkbox',
+      label: '自动驾驶：允许打野抓宠',
+      section: '自动驾驶',
+      showIf: function (cfg) {
+        return !!(cfg && cfg.driveEnabled);
+      },
+      hint: '默认开（保持旧行为）：关后自动驾驶**不再主动派车打野/发起抓宠**（plans 打野三档全短路，等价底层 driveBeastPolicy=2），只采井/打 BOSS/回店（不动该 tuning）。注：巡航逃袭的单跳落脚位仍可能路过式站上 172，但不在此发起抓宠。实战「抓宠跑窝数分钟」（marchState=21 拍宠期方向盘无法重路由）主要因打野档默认优先，关掉本档即根除该跑窝。开启时下方品质门槛生效',
+    },
+    {
+      key: 'driveBeastQuality',
+      type: 'number',
+      label: '抓宠品质门槛(星)',
+      section: '自动驾驶',
+      min: 1,
+      max: 5,
+      step: 1,
+      showIf: function (cfg) {
+        return !!(cfg && cfg.driveEnabled && cfg.driveBeast !== false);
+      },
+      hint: '打野档最小品质闸（enigma_beast 行 quality ≥ 本值才去抓，默认 4=只抓 4 星及以上）。未侦察到的野怪按品质 2 计（依赖「侦察囤情报」囤品质，故门槛>2 时需保持 scout 开启）。调低=更激进抓宠、调高=只挑高品质',
+    },
+    {
+      key: 'drivePlaneLeadSec',
+      type: 'number',
+      label: '大BOSS 开台前提前到场(秒)',
+      section: '自动驾驶',
+      min: 0,
+      max: 600,
+      step: 1,
+      showIf: function (cfg) {
+        return !!(cfg && cfg.driveEnabled && cfg.driveBoss !== false);
+      },
+      hint: '大BOSS 开台读秒（state22）还剩多少秒时提前把队伍挪到就近可用 176 平台（默认 60=1 分钟，可填 30=半分钟，行军本身约 31~44s）。调大=更早占台、调小=更贴点开台才挪',
     },
     {
       key: 'drivePlan',

@@ -1371,6 +1371,8 @@ export class PilotEngine {
       return toNum(a && a.pos && a.pos.x) - toNum(b && b.pos && b.pos.x);
     });
     const rewardList = env.secret.getBossGuardRewardInfo();
+    // 大BOSS 开台前预置挪台窗口毫秒：优先面板 cfg().drive.planeLeadSec（可填 30=半分钟），回落 tuning.driveBossLeadMs。
+    const planeLeadMs = this.#planeLeadMs();
     let open = null;
     let openD = Infinity;
     let lead = null;
@@ -1416,7 +1418,7 @@ export class PilotEngine {
       if (st === ST_PLANE_MARCH) {
         if (!(end > 1e11)) continue; // 读不到开启时刻 → 不拿猜测赌行程
         const left = end - now;
-        if (left > tuning.driveBossLeadMs) continue; // 还不到该挪队的时刻
+        if (left > planeLeadMs) continue; // 还不到该挪队的时刻（面板 drivePlaneLeadSec 可调，见 #planeLeadMs）
         if (left > 0) {
           if (left < leadLeft) {
             leadLeft = left;
@@ -1457,6 +1459,17 @@ export class PilotEngine {
     const esrCur = curTile && curTile.esrId ? curTile.esrId : null;
     const esrB = this.#bossEsrId(win.boss);
     return !esrB || !esrCur || esrB === esrCur;
+  }
+
+  /**
+   * 大BOSS 开台前预置挪台窗口毫秒：优先面板 `cfg().drive.planeLeadSec`（秒，可填 30=半分钟），
+   *   回落 tuning `driveBossLeadMs`（旧 ms 双轨迁移入口），再缺省 60000。
+   * @returns {number}
+   */
+  #planeLeadMs() {
+    const pl = (this.#env.cfg().drive || {}).planeLeadSec;
+    if (Number.isFinite(pl) && pl >= 0) return pl * 1000;
+    return Number(tuning.driveBossLeadMs) || 60000;
   }
 
   /**
@@ -2470,13 +2483,28 @@ export class PilotEngine {
         // 在点拍宠中不赶车（同威胁块的让路语义）
       } else {
         const bp = String(this.#toXY || '').split(',');
-        this.#refreshBossState(Number(bp[0]), Number(bp[1])); // 21535 只读复拉（限速），让 BOSS 阶段态尽快转正
+        const bxy = { x: Number(bp[0]), y: Number(bp[1]) };
+        this.#refreshBossState(bxy.x, bxy.y); // 21535 只读复拉（限速），让 BOSS 阶段态尽快转正
         const why = this.#bossDwellLeave(this.#toXY);
         if (why) {
           env.log.info(
             'pilot: boss point %s %s, leave early before dwell ceiling. reason=boss_over',
             this.#toXY,
             why,
+          );
+          return { leave: true, sleep: 0 };
+        }
+        // 平台无窗即时出口（B1-3）：本拍全图判不出任何 BOSS 窗（win=null：无 open、也无本平台在等的 lead）
+        //   → 当拍离点，不等满 driveWorkDwellMs。
+        //   ⚠ 只判 win=null：win 为别区 open 时不能据此赶车（本平台正在等自己那只 lead 转正，
+        //     #bossWindow 优先返回全图最近 open会误判跨区域）——跨区域不 HOLD 的处置仍归 ④ HOLD 出口。
+        //   ⚠ win=null 不等于本点无事可做：#bossWindow 不建模投喂窗（state23）与被顺延的 state22，
+        //     本点自己那只若仍在 21/22/23（如投喂窗里有待领石头、#bossDwellLeave 判应留）则绝不据 win=null 赶车。
+        const win = this.#bossWindow(now, bxy);
+        if (!win && !this.#bossLiveHere(this.#toXY)) {
+          env.log.info(
+            'pilot: boss point %s has no open BOSS window, leave now (no dwell wait). reason=no-window',
+            this.#toXY,
           );
           return { leave: true, sleep: 0 };
         }
@@ -2559,6 +2587,26 @@ export class PilotEngine {
         return Number(s.bossId) || 0;
     }
     return 0;
+  }
+
+  /**
+   * 本点自己那只 BOSS 是否仍未终局（state 21 交战 / 22 开台读秒 / 23 投喂窗）。
+   *   供 #workTick 平台无窗出口兜闸：#bossWindow 不建模 state23、且对 state22 在 lead 窗外会 continue，
+   *   二者都会让 win=null 但本点其实还有仗要打/有石头要领——此时不得据 win=null 赶车。
+   * @param {string} key 当前驻留点键 'x,y'
+   * @returns {boolean} true=本点 BOSS 仍存活未终局
+   */
+  #bossLiveHere(key) {
+    const bid = this.#bossIdAtKey(key);
+    if (!bid) return false;
+    const list = this.#env.secret.getBossBaseInfo();
+    if (!Array.isArray(list)) return false;
+    const cur = list.find(function (s) {
+      return s && Number(s.bossId) === bid;
+    });
+    if (!cur) return false;
+    const st = Number(cur.state) || 0;
+    return st === ST_BOSS_FIGHTING || st === ST_PLANE_MARCH || st === ST_BOSS_FEED;
   }
 
   /** 本点是否处在 159995 短黑窗内（惰性过期，不单独清扫；窗口仅 paramBlacklistMs）。 */
@@ -2697,6 +2745,8 @@ export class PilotEngine {
       bossFeeding: this.#bossFeeding(),
       marchPolicy: Number(tuning.driveMarchPolicy) || 0,
       beastPolicy: Number(tuning.driveBeastPolicy) || 0,
+      // 面板抓宠总闸（driveBeast）：关时等价「完全不打野」——plans 打野三 stage 的 when 见 !c.beastOff 短路（不改 tuning 值）。
+      beastOff: b.beast === false,
       relax: !!this.#beastStageWant(now),
       beastLock: !!this.#beastLockNow(now),
       // ⚠ 纯读不起表：现状 #shouldExplore 的「未起表先起表(now)」副作用只发生在链全空走到梯尾
@@ -2770,7 +2820,10 @@ export class PilotEngine {
       case 'beast': {
         // 禁走窗（开台读秒后 0~180s 不拍野）：窗内这一档直接跳过（§5.3 L24780 提前放弃）
         if (ctx.beastLock) return null;
-        const minQ = Number(tuning.driveBeastMinQuality) || 4;
+        // 品质门槛：优先面板 cfg().drive.beastQuality（夹 [1,5]），回落 tuning.driveBeastMinQuality。
+        const bq = (this.#env.cfg().drive || {}).beastQuality;
+        const minQ =
+          Number.isFinite(bq) && bq >= 1 && bq <= 5 ? bq : Number(tuning.driveBeastMinQuality) || 4;
         const now = Date.now();
         const pts = this.#viewPointsFresh(now);
         if (pts) {
@@ -3338,6 +3391,13 @@ export class PilotEngine {
     if (this.#workMode) {
       this.#lastBranch = 'work';
       this.#stage = 'work';
+      // B4 离站后发呆：empty（资源/掉落井）相位未判空时，先以本点为中心拉一刃新鲜视口（复用 #awaitView
+      //   →  #ingestView，自带 driveViewMs 新鲜闸与 viewOff 降级）——否则只靠外部 push 刷新，一口真空的
+      //   井因快照陈旧会白等到 driveWorkMaxMs=45s ceiling。拉到新鲜数据后 #isTileEmpty 当拍即可 settle 离点。
+      if (this.#workMode === 'empty' && !this.#isTileEmpty(this.#toXY)) {
+        const ep = String(this.#toXY || '').split(',');
+        await this.#awaitView(Number(ep[0]), Number(ep[1]));
+      }
       const w = this.#workTick(now);
       if (!w.leave) {
         this.#heartbeat(now);
@@ -3376,6 +3436,10 @@ export class PilotEngine {
     if (!moored) {
       this.#lastBranch = 'not-moored';
       this.#gateState('notarrived', true, 'marchState=' + base.marchState);
+      // B5 冷启动死区：未泊靠时每拍在上方早退，走不到 #autoLeader 的 #awaitView——若此时 #tiles 为空
+      //   （开局尚无任何 push），就会「无候选→hold→直到手动发车喂进 push」长期趴窝。护栏：仅 #tiles 空且未
+      //   viewOff 时以自身为中心主动补一刃 901（#awaitView 自带新鲜闸与 driveViewOffAfter 降级），填充 #tiles。
+      if (this.#tiles.size === 0 && !this.#viewOff) await this.#awaitView(cur.x, cur.y);
       this.#heartbeat(now);
       return tuning.driveScanMs;
     }

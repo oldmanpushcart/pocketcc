@@ -234,6 +234,18 @@ export class CaptureEngine {
     const env = this.#env;
     const now = Date.now();
     if (now < this.#nextFeedAt) return false;
+    // B3 投喂窗内预检（仅降频的**软闸门**，非在位闸门）：feedInfo 尚未就绪（cap=EMPTY_CAP 全 0，窗口起点不保证带）
+    //   或本只已拍满（nowFavor>=allFavor）时发 8546 易撞服务端 s=3（异常操作）——跳过并按 bossFeedRejectMs 轻退避。
+    //   ⚠ 不违背本模块「capturingInfo 只作料源不作闸门」契约：真·在位闸门仍由 #feedState(capturingPetPos) 保证、
+    //     免费手拍⑤路不受影响；换宠时 onFeedBeast 已把 #nextFeedAt=0，故上一只残留满值最多只把新宠首件投喂延后
+    //     ≤bossFeedRejectMs，不会锁死。
+    const cap = pab.capturingInfo;
+    const allFavor = cap ? toNum(cap.allFavor) : 0;
+    const nowFavor = cap ? toNum(cap.nowFavor) : 0;
+    if (!(allFavor > 0) || nowFavor >= allFavor) {
+      this.#nextFeedAt = now + (Number(tuning.bossFeedRejectMs) || tuning.bossFeedGapMs);
+      return false;
+    }
     for (let t = 0; t < SPEC_FEED_COUNT; t++) {
       const spec = SPEC_FEED_FIRST + t;
       const row = env.l10n.tableRow(TABLE_BEAST_BEHAVE, spec);

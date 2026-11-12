@@ -41,6 +41,7 @@ import { PAB_BOSS_PLANE } from './constants.js';
  *   bossFeeding: boolean,               // 任一 BOSS state==23（开台读秒中）→ 日常车让路
  *   marchPolicy: number,                // tuning.driveMarchPolicy（2=跟人优先）
  *   beastPolicy: number,                // tuning.driveBeastPolicy（0/1/2=打野档插入位置）
+ *   beastOff: boolean,                  // 面板 driveBeast 总闸关（true=完全不打野，短路打野三档，等价 beastPolicy=2）
  *   relax: boolean,                     // #beastStageWant（百兽期＝安心抓宠，链形不同）
  *   beastLock: boolean,                 // #beastLockNow（开台读秒后 0~180s 禁走窗，窗内跳打野档）
  *   shouldExplore: boolean              // 纯读：已起表且闲逛超时（起表副作用在引擎梯尾，对齐现状 L2391/2465-2468）
@@ -62,6 +63,7 @@ export const CTX_KEYS = Object.freeze([
   'bossFeeding',
   'marchPolicy',
   'beastPolicy',
+  'beastOff',
   'relax',
   'beastLock',
   'shouldExplore',
@@ -159,7 +161,7 @@ export const PLANS = {
       {
         id: 'beastRelax',
         obj: 'beast',
-        when: (c) => c.relax && c.beastPolicy < 2 && !c.beastLock, // L2073 + 禁走窗 L2092
+        when: (c) => c.relax && c.beastPolicy < 2 && !c.beastOff && !c.beastLock, // L2073 + 禁走窗 L2092 + 总闸短路
       },
       { id: 'cruiseRelax', obj: 'resource', params: { yield: 'cruise' }, when: (c) => c.relax }, // L2074
 
@@ -167,7 +169,7 @@ export const PLANS = {
       {
         id: 'beastEarly',
         obj: 'beast',
-        when: (c) => !c.relax && c.beastPolicy === 1 && !c.beastLock, // L2076
+        when: (c) => !c.relax && c.beastPolicy === 1 && !c.beastOff && !c.beastLock, // L2076 + 总闸短路
       },
       {
         id: 'cruiseStrict',
@@ -178,7 +180,7 @@ export const PLANS = {
       {
         id: 'beastLate',
         obj: 'beast',
-        when: (c) => !c.relax && c.beastPolicy === 0 && !c.beastLock, // L2078
+        when: (c) => !c.relax && c.beastPolicy === 0 && !c.beastOff && !c.beastLock, // L2078 + 总闸短路
       },
       {
         id: 'cruiseLoose',

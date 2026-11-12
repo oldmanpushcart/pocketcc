@@ -166,6 +166,11 @@ plan() 持有 raw 完备集 #data（armyInfo[grid pos]/heroIds/formationV2/extra
 | `preset().adjust({ignoreMarched:true})`（活动） | 退回 `buildPresetRaw` 满编 | 容量校准丢失（不排除本就非 filter） |
 | `preset()` / `minimal()`（不校准） | 无降级可言（本就不依赖符号） | — |
 
+降级不再静默（两条留痕，数值口径**一字未改**）：
+
+- **warn**：`battlePreset.ok()` 为 false（subpack2 未接管 / 符号漂移）时 `noteDegrade` 打一条 `preset recalc unavailable, degraded to …`；重算器恢复后复位，故「一次异常一条」而非逐拍刷屏。旧实现这一路**一行日志都没有**（`recalcData` 首句静默 return null，ACL 层只在抛错时才 warn），所以对着被拒报文根本看不出降级发生过。
+- **`recalcDegraded:true`**：降级分支返回的 MarchData 上多带的**非报文位**（与 `presetHasHeroes` 同列；feat 都是挑固定字段拼请求，不会上线）。完备集本就无兵（预设空）的派空**不贴**此标记。调用方默认无需处理（活动口径降级=满编是既定策略）；只有「宁可不发也不能发未校准载荷」的调用方才该去判它。
+
 ## 6. 坑与边界
 
 1. **索引基差**：`plan().preset(1)` 是 1 起的队伍号，内部自动减 1 转成游戏 0 起 index。历史上函数式 `battle.buildPresetRaw(0, 0)` 需卡车 `probeSelf` 手动 `presetIdx - 1`；该函数式入口已收敛进链式，调用点不再手减。
@@ -175,6 +180,7 @@ plan() 持有 raw 完备集 #data（armyInfo[grid pos]/heroIds/formationV2/extra
 5. **卡车 probeSelf 的同源分母**：999 战力评估的输入（`plan().preset(presetIdx).build()` 满编快照，不 `adjust` 不重算）必须与掠夺出征载荷、面板展示数值同源，否则战力预估与实际不符。truck 的 `buildTroop` 现在走 `plan().preset(idx).adjust().build()`（普通派兵口径）——掠夺若实为快照战斗，两者存在「分母满编 / 载荷已排除」的口径张力；如需统一，改 `buildTroop` 为 `adjust({ignoreMarched:true})` 即可（probeSelf 保留满编 raw 作分母不受影响）。此处按目标语义单独决策，别顺手改。
 6. **默认不校准 ≠ 安全**：`.preset(n).build()` 满编直发，兵全在途时会重复派已在外的兵（服务器侧按 armyId 额度拒绝或半接受）。除非目标不占真实行军池或有意发快照，否则普通出征一律 `adjust()`。
 7. **`recalc` 是本地同步调用**，不是网络请求。「快速派兵省开销」省的是游戏重算器的聚合计算与运行时依赖面，不是 RTT——别按网络语义给它加超时/重试。
+8. **`adjust()` 不是“超库存保险”，它只在重算器在场时成立**：正常路径下 `checkArmyNum` 会三重钳制每格数（格容量 `getMaxCoutByPos` ∧ 持有数 `getArmyNumByArmyId` ∧ 从按实例展开的可派池逐只扣，跨格共享，扣光即 `num<=0` 被剔），所以「预设比实际兵多」天然不会超发。但**一旦降级到满编，这层钳制就整体消失**（活动口径降级=原样发出），发出去的正是可能超库存的满编预设。排查“param error 类”被拒时先翻日志找上面那条降级 warn，再怀疑预设本身。
 
 ## 7. 调试面
 
@@ -186,6 +192,7 @@ battle.js 不再挂 `window.pocketcc.battle`（旧 `buildPresetRaw`/`liveRecalcO
 
 | 日期 | 变更 |
 |---|---|
+| 2026-11-11 | **降级加可见性（数值口径零变更）**：`build()` 重算不可用分支补 `noteDegrade` warn（一条/次异常，重算器恢复后复位）与 `recalcDegraded:true` 非报文位标记；预设本就无兵的派空不贴标。背景：雪原列车 2367 吃 `common_159995` 事后排查时，旧实现静默降级（`recalcData` 首句 `!ok()` 直接 return null 不打日志）无法从日志排除，全天 6045 行日志 GAMEAPI 零条才能确证重算器在场。未改任何降级行为（活动口径降级=满编是既定决策）。 |
 | 2026-10-05 | **删除函数式导出面 `export const battle`**：满编快照 truck `probeSelf` 迁到 `new Battle().plan().preset(presetIdx).build()`（与原 `buildPresetRaw(presetIdx-1,0)` 等价，去掉手动 `-1`；读失败由 `null` 变 `emptyMarchData()`，被调用点 `!raw.armyListNew.length` 守卫一并吃掉）；`toBattlePos`/`liveRecalcOk` 无 feat 消费仅调试用，连同 `buildPresetRaw` 与 `window.pocketcc.battle` 注入一起删除（`toBattlePos` 降为模块内私有）。对外只剩 `Battle` 类。构建通过（content.js 851.5kb）。 |
 | 2026-10-05 | **改为「raw 数据完备集 + 单点投影」模型**：`MarchPlan` 从「`#source`/`#adjust` flag + `build()` 四路分派 + 多个独立 builder」重构为持有 `#data`（完备集，存编码前 grid pos）+ `#recalc`（校准意图）；`preset()`/`minimal()` 变覆盖式装载（`loadPreset`/`loadMinimal`），`build()` 单点投影（`projectRaw`/`recalcData`/`filterFallback`），`toBattlePos` 编码统一推迟到投影时做；`adjust()` 改为只记意图、延迟到 `build` 执行（防顺序陷阱）。删除函数式入口 `buildFromPreset`/`buildMinimal`（收敛进 `MarchPlan`），`battle` 仅留 `toBattlePos`/`buildPresetRaw`/`liveRecalcOk`。行为不变，`Battle`+`plan` 链公开契约不变，9 个 feat 调用点零改动；同步 content.entry.js 调试注释。 |
 | 2026-10-05 | **去除过度设计**：删 `adjustMinimal` 函数与 `minimal().adjust()` 组合（为「最低级 1 支恰全在外则排空」这个边角场景单独养一个绕的函数不值）；`adjust` 从此只对 `preset` 有意义（对 minimal 静默无作用）。minimal 只发最低级 1 支、不查额度（快速派兵语义）。 |

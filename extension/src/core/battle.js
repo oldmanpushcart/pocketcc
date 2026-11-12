@@ -34,6 +34,28 @@ const MINIMAL_GRID_POS = 0;
  */
 const MECHA_CAN_FIGHT = 3;
 
+/**
+ * 降级告警是否已打过（重算器恢复后复位）。
+ * 必要性：重算器符号不可用时 `build()` 会退回手写过滤/满编原样，而旧实现**一行日志都不打**
+ *   （`recalcData` 首句 `if (!battlePreset.ok()) return null` 静默，ACL 层只在**抛错**时才 warn），
+ *   事后对着被拒报文根本看不出「这份载荷没经游戏实时校准」。只警一条是防热路径（auto-farm 等逐拍造数）刷屏。
+ * @type {boolean}
+ */
+var degradeWarned = false;
+
+/**
+ * 记一条「本次投影未经游戏重算器校准」的告警（恢复后最多再一条）。
+ * @param {boolean} excludeMarched 走的哪条降级分支：true=手写过滤（仍排除在途、容量用预设 Num）/ false=满编原样
+ */
+function noteDegrade(excludeMarched) {
+  if (degradeWarned) return;
+  degradeWarned = true;
+  log.warn(
+    'preset recalc unavailable, degraded to %s (per-cell numbers NOT game-calibrated: an over-stock preset goes out as-is).',
+    excludeMarched ? 'filterFallback' : 'projectRaw',
+  );
+}
+
 // ── 战斗位编码 ──────────────────────────────────────────────────────────
 /**
  * 把预设 9 宫格索引（0..8，行优先）映射成请求里的战斗位 pos。
@@ -491,7 +513,8 @@ class MarchPlan {
   /**
    * 单点投影：把完备集转成请求 MarchData（5 字段）。未选源/读取失败 → 派空。
    * minimal 与不校准走满编原样；preset+校准走重算，符号不可用时按口径降级（普通=手写过滤，活动=满编）。
-   * @returns {object} MarchData
+   * @returns {object} MarchData；**因重算器不可用而降级**时额外带一个非报文位 `recalcDegraded:true`
+   *   （与 `presetHasHeroes` 同列，不进请求；调用方若宁可不发也要能识别。预设本就无兵的派空不贴此标记）
    */
   build() {
     var d = this.#data;
@@ -500,13 +523,19 @@ class MarchPlan {
     var excl = this.#recalc.excludeMarched;
     var out = recalcData(d, excl);
     if (out) {
+      degradeWarned = false; // 重算器已在：解锁下一条降级告警
       // 重算器不校验非法/在途军阵，排除口径下本地兜一层；活动口径不兜（名额由池来源决定）
       if (excl && out.formationV2 && isFormationMarching(out.formationV2)) {
         out.formationV2 = 0; // 军阵在途 → 置 0（活动口径 excl=false 不兜，名额由池来源决定）
       }
       return out;
     }
-    return excl ? filterFallback(d) : projectRaw(d); // 符号不可用降级：普通→手写过滤，活动→满编
+    // 有兵却没走成重算器才算真降级；完备集本就空属「无兵可派」，不贴降级标记
+    var degraded = !!(d.armyInfo && d.armyInfo.length);
+    if (degraded && !battlePreset.ok()) noteDegrade(excl); // 抛错分支已在 ACL 层 warn，此处只补「静默不可用」这一路
+    var fb = excl ? filterFallback(d) : projectRaw(d); // 符号不可用降级：普通→手写过滤，活动→满编
+    if (degraded) fb.recalcDegraded = true;
+    return fb;
   }
 }
 

@@ -39,6 +39,7 @@ function mkCtx(over) {
       bossFeeding: false,
       marchPolicy: 0,
       beastPolicy: 1,
+      beastOff: false,
       relax: false,
       beastLock: false,
       shouldExplore: false,
@@ -131,6 +132,16 @@ test('百兽期 relax + beastPolicy=1 → beastRelax 先于 cruiseRelax', () => 
 test('禁走窗(beastLock) 日常 → 跳过 beast 档，采井仍在', () => {
   const c = mkCtx({ relax: false, beastPolicy: 1, beastLock: true });
   assert.deepStrictEqual(ids(c), ['cruiseStrict', 'cruiseLoose', 'shopTail']);
+});
+
+test('总闸关(beastOff) 日常 → 短路 beast 档，采井仍在（等价 beastPolicy=2 不打野）', () => {
+  const c = mkCtx({ relax: false, beastPolicy: 1, beastOff: true });
+  assert.deepStrictEqual(ids(c), ['cruiseStrict', 'cruiseLoose', 'shopTail']);
+});
+
+test('总闸关(beastOff) 百兽期 relax → 跳 beastRelax，仅 cruiseRelax', () => {
+  const c = mkCtx({ relax: true, beastPolicy: 1, beastOff: true });
+  assert.deepStrictEqual(ids(c), ['cruiseRelax']);
 });
 
 test('shouldExplore 日常链尾追加 explore（非 terminal，排最后）', () => {
