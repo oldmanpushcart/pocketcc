@@ -50,17 +50,21 @@
  *     2) `world_130516`（行军队列已满）与 CODE_NOT_SENT（在途去重/投递抖动）= **分钟级自愈的可重试态** → 短歇重试；
  *        睡到窗末等于用一个瞬态排队问题烧掉整个 18h 上车窗。
  *     3) 其余/未知 key（窗已过、已在车上等本窗终结态）→ 睡到窗末，并留 reason 供日后录制再分档。
- *   - 编队**忠实投影、不设满编闸**：`buildTrainTroop` 走 `plan().preset(idx).adjust({ ignoreMarched: true }).build()`。
+ *   - 编队**忠实投影、不设满编闸**：`buildTrainTroop` 走 `plan().preset(idx).adjust({ ignoreMarched: true }).build()`（**上车 2367 与拦截 2370 共用同一 adjust 口径**，实测两处 troop 逐字节相同）。
  *     重算器在场时每格数被游戏侧 `checkArmyNum` 三重钳制（格容量 ∧ 该兵种持有数 ∧ 按实例展开的可派池逐只扣、跨格共享），
  *     兵不够就自然出**残阵**；重算器不可用则降级为满编原样（这层钳制整体消失，可能超库存）。两种结果**都照发**——
  *     用户决策（2026-11-11）：残阵上车也可以接受，不上车错过得更多。故此处不判 `recalcDegraded`、不加「凑不齐完整预设就顺延」，
  *     降级的可诊断性由 `core/battle.js` 那条 warn 负责，不在 feat 侧改变发送行为。
  *
- * 拦截判据刻意保守（骨架）：实测我方 14.2M 打赢 rank1=60.5M 的车、输给 rank1=139.2M 的车，
- *   说明服务器不是简单比总战力（疑涉 armyType 克制/hp 逐层），且 percent 与 rank1 战力两因子在仅 2 个样本里混淆。
- *   故：① 拦截默认关闭，勾选才生效；② 只按「货物余量 + 乘客数 + rank1 战力绝对上限」三道保守闸筛；
- *   ③ 每次攻打把决策上下文写进本地样本表（cq26Train.samples），用真人次数喂出经验门槛后再谈胜率模型；
- *   ④ 真·拒绝码（header.s≠0）目前零样本，「被拒即当日拉黑」是临时纪律，待录制细分「当日拉黑 vs 本轮跳过」；
+ * 拦截选目标：物品兴趣驱动（录制实证，uid 11981629951662 两场 4 次 2370）：
+ *   4 次攻打 `isWin` 全 false（以我方战力从未能整辆清台，真正收益是 winNum/抢到件数，每攻 0~1 件）；
+ *   rank1 战力不预测结果（486.7M 的车抢到货、139.2M 的车空手），乘客数/percent 亦无可辨规律（样本仅 4）——
+ *   故**不设 rank1/乘客数/保留次数/精判辆数 数字闸**（这些既不预测战果又属多余设置），用满每日服务器配额。
+ *   唯一可读且有用的信号是 2375 的 `truckView.lootRewardResult`（奖池 {itemId,itemCount}，2369 列表不含），
+ *   故策略为：2369 免费粗筛（canLoot/货物余量/当日拉黑）→ 按序逐个发 2375，**奖池含「关注物品」才打**、否则换下一辆（内置 PROBE_MAX 防狂刷）。
+ *   「关注物品」候选清单取自游戏「奖励预览」表（rewardPoolIds：data_config[REWARD_PREVIEW_CFG]→REWARD 行→道具清单，面板同源），非报文逆推；TRAIN_ITEM_POOL 仅表读不到时兑底。
+ *   ① 拦截默认关闭，勾选才生效；② 每次攻打把决策上下文写进本地样本表（cq26Train.samples），胜率仍靠真人次数喂出经验门槛后再谈模型；
+ *   ③ 真·拒绝码（header.s≠0）目前零样本，「被拒即当日拉黑」是临时纪律，待录制细分「当日拉黑 vs 本轮跳过」；
  *     例外已先拆一个：`world_130516`（行军队列已满）属我方自身瞬态，**不拉黑**、短歇重试（与 2367 同口径）。
  *
  * 同帧取值与写盘纪律（应答对象池化，代码级红线）：
@@ -90,7 +94,8 @@ import { storage } from '../../core/storage.js';
 import { reactor } from '../../core/reactor.js';
 import { netApi } from '../../core/net.js';
 import { Battle } from '../../core/battle.js';
-import { bits, gameData } from '../../core/game-api.js';
+import { bits, gameData, gameConf } from '../../core/game-api.js';
+import { item } from '../../core/item.js';
 import { createCycle } from '../../core/cycle.js';
 
 /** @type {ReturnType<createLog>} 模块日志器（tag=CQ26-TRAIN） */
@@ -156,6 +161,18 @@ const ERR_QUEUE_FULL = 'world_130516';
 const CARD_CACHE_TTL_MS = 10 * 60 * 1000;
 /** @type {number} 2385 每页卡位数（实测应答 pageSize=32、allRewardNum=270 即 9 页） */
 const CARD_PAGE_SIZE = 32;
+/**
+ * @type {number} 雪原列车「奖励预览」配置 id：data_config[此值] → REWARD 表行键，该行 item/num 列即列车可掠奖池物品清单。
+ * 实证 extracted/subpack/CQ26TransportData.getPreviewRewardItems（面板 CQ26TrainRewardPreviewPop.onShow 同源调用）。
+ */
+const REWARD_PREVIEW_CFG = 52000030;
+/**
+ * @type {number[]} 「关注物品」候选池的**兜底**（仅在奖励列表表读不到时启用）：录制 uid 11981629951662 奖池实证、均在 ITEM_NAMES 有登记。
+ * 权威源是 rewardPoolIds()（走游戏奖励列表）；本常量只作表缺失时的 fail-safe，不作默认判定依据。
+ */
+const TRAIN_ITEM_POOL = [820016, 820015, 69359, 2300003, 23044402, 62908];
+/** @type {number} 拦截每轮 2375 精判的内置安全上限（非面板项）：2369 返回抽样窗口且逐车 2375 数 KB，防对上百候选狂刷 */
+const PROBE_MAX = 3;
 
 /** @type {object} 择时参数（activeMs 即「刷 2369 找车」的节奏，实测真人 5 分钟发 6 次） */
 const cfg = { activeMs: 60000, idleMs: 10 * 60 * 1000, backoffMs: 20000 };
@@ -308,13 +325,13 @@ function run(ctx) {
   ctx.on.push(PUSH_TRAIN_DATA, onTrainDataPush);
   ctx.on.push(PUSH_RED_POINTS, onRedPointsPush);
   log.info(
-    'started. board=%s boardPreset=%d loot=%s lootPreset=%d settle=%s keepCards=%d',
+    'started. board=%s boardPreset=%d loot=%s lootPreset=%d lootItems=%d settle=%s',
     MCFG.boardEnabled,
     MCFG.boardPreset,
     MCFG.lootEnabled,
     MCFG.lootPreset,
+    MCFG.lootItems.length,
     MCFG.settleEnabled,
-    MCFG.keepCards,
   );
   boardCycle.kick();
   lootCycle.kick();
@@ -722,7 +739,7 @@ var boardCycle = createCycle({
   fallback: cfg.activeMs,
 });
 
-// ── lane 2：拦截（骨架）───────────────────────────────────────────────
+// ── lane 2：拦截（物品兴趣驱动）─────────────────────────────────
 /**
  * 列表项 sid 的日志形态：字段缺失时 `%d` 会输出 NaN（无法 grep 定位），统一转字符串占位。
  * @param {*} v 原始 sid
@@ -732,26 +749,72 @@ function sidOf(v) {
   return v == null ? '?' : String(v);
 }
 
+/** @type {Object<number,string>|null} 最近一次 rewardPoolIds 解析出的 itemId→展示名缓存（面板 resolve 用，可展示 ITEM_NAMES 未登记项） */
+var rewardNameCache = null;
+
 /**
- * 防守名单里 rank 最小者的战力（powerNow 优先，缺则 powerAll；Int64→num 仅用于阈值比较）。
- * @param {object[]} list truckView.selfArmyInfo
- * @returns {number} 名单缺失回 0
+ * 从游戏「奖励列表」提取雪原列车可掠物品（itemId 有序去重）：
+ *   data_config[REWARD_PREVIEW_CFG] → REWARD 行键 → gameData.rewardItems(id) 的道具清单（.id=itemId、.name=未译 loc 键）。
+ *   口径同 extracted CQ26TransportData.getPreviewRewardItems（面板奖励预览同源）。表读不到则回 TRAIN_ITEM_POOL 兑底。
+ *   顺带回填 rewardNameCache（itemId→展示名），供面板 sortlist resolve 使用。
+ * @returns {number[]} 可掠奖池的 itemId 列表（读不到时回录兑底池）
  */
-function rank1Power(list) {
-  if (!list || !list.length) return 0;
-  var best = null;
-  for (var i = 0; i < list.length; i++) {
-    var it = list[i];
-    if (!it) continue;
-    if (best === null || (Number(it.rank) || 99) < (Number(best.rank) || 99)) best = it;
+function rewardPoolIds() {
+  var out = [];
+  var names = {};
+  try {
+    var rewardId = Number(gameConf.dataConfig(REWARD_PREVIEW_CFG)) || 0;
+    var arr = rewardId > 0 ? gameData.rewardItems(rewardId) : [];
+    for (var i = 0; i < arr.length; i++) {
+      var it = arr[i];
+      var id = Number(it && it.id) || 0;
+      if (id > 0 && out.indexOf(id) < 0) {
+        out.push(id);
+        names[id] = item.label(id, it && it.name);
+      }
+    }
+  } catch (e) {
+    out = [];
   }
-  if (!best) return 0;
-  var p = bits.int64ToNum(best.powerNow != null ? best.powerNow : best.powerAll);
-  return p > 0 ? p : Number(best.powerNow || best.powerAll || 0) || 0;
+  if (!out.length) {
+    out = TRAIN_ITEM_POOL.slice();
+    for (var j = 0; j < out.length; j++) names[out[j]] = item.label(out[j]);
+  }
+  rewardNameCache = names;
+  return out;
 }
 
 /**
- * 拦截一拍：行驶段闸 → 2369（列表 + 权威配额）→ 粗筛 → Top-N 用 2375 精判 → 2370 掠夺 + 采样。
+ * 面板 sortlist resolve：优先用奖励列表解析出的名称（可展示 ITEM_NAMES 未登记项），回退 item.sortResolve。
+ * @param {number|string} itemId 道具 id
+ * @returns {Array<{id:number,name:string}>|null}
+ */
+function lootItemResolve(itemId) {
+  var id = Number(itemId);
+  var nm = rewardNameCache && rewardNameCache[id];
+  return nm ? [{ id: id, name: nm }] : item.sortResolve(id);
+}
+
+/**
+ * 奖池里是否含「关注物品」（且尚有存货 itemCount>0）；命中回该 itemId，否则回 0。
+ * 口径同卡车争夺：槽位被抢后 itemId 仍留在 lootRewardResult、只有 itemCount 归 0，空槽不算命中。
+ * @param {object[]} pool truckView.lootRewardResult
+ * @param {number[]} watch MCFG.lootItems（已勾选参与的 itemId）
+ * @returns {number} 命中的 itemId；无命中回 0
+ */
+function matchWatchedItem(pool, watch) {
+  if (!pool || !pool.length || !watch || !watch.length) return 0;
+  for (var i = 0; i < pool.length; i++) {
+    var it = pool[i];
+    if (!it) continue;
+    var id = Number(it.itemId) || 0;
+    if (id > 0 && (Number(it.itemCount) || 0) > 0 && watch.indexOf(id) >= 0) return id;
+  }
+  return 0;
+}
+
+/**
+ * 拦截一拍：行驶段闸 → 2369（列表 + 权威配额）→ 免费粗筛 → 按序逐个 2375 精判（奖池含关注物品才打）→ 2370 掠夺 + 采样。
  * @returns {Promise<number>} 下一拍睡眠毫秒
  */
 async function lootPass() {
@@ -806,13 +869,12 @@ async function lootPass() {
   var left = cap > 0 ? Math.max(0, cap - used) : 0;
   // 配额缺失（cap<=0）与配额耗尽同向处理：宁可不掠，也不能把「没读到上限」判成「无限可掠」而空烧 2375/2370；
   //   再加一道自计数闸 hitsToday>=left，防「打了不烧 lootNum」的未实证分支形成 5s 死循环。
-  if (!(cap > 0) || left <= MCFG.keepDaily || hitsToday >= left) {
+  if (!(cap > 0) || left <= 0 || hitsToday >= left) {
     log.debug(
-      'daily loot quota unavailable or exhausted (server %d/%d, hits %d, keep %d), sleep to day boundary.',
+      'daily loot quota unavailable or exhausted (server %d/%d, hits %d), sleep to day boundary.',
       used,
       cap,
       hitsToday,
-      MCFG.keepDaily,
     );
     return sleepToDailyReset();
   }
@@ -865,10 +927,9 @@ async function lootPass() {
   cands.sort(function (x, y) {
     return x.percent - y.percent || x.uidNumber - y.uidNumber;
   });
-  var probeMax = Math.max(1, MCFG.probePerRound);
   var target = null;
   var detail = null;
-  for (var j = 0; j < cands.length && j < probeMax; j++) {
+  for (var j = 0; j < cands.length && j < PROBE_MAX; j++) {
     if (!aliveFn()) return pausedExit('loot'); // 已 pause：未处理的下轮 rebuild
     var c = cands[j];
     var g = await send(CMD_INFO, { uuid: c.uuid });
@@ -889,28 +950,23 @@ async function lootPass() {
       continue;
     }
     var tv = g.data.truckView;
-    var list = Array.isArray(tv.selfArmyInfo) ? tv.selfArmyInfo : [];
-    var r1 = rank1Power(list);
     // 奖池条目数必须**同帧**拆成标量：detail 会活到 2370 应答之后才写样本表，跨拍读 tv 会取到池复用后的错值
     var poolLeft = (tv.lootRewardResult || []).length;
     var poolTaken = (tv.beLootRewardResult || []).length;
-    var capM = MCFG.maxRank1PowerM;
-    if (capM > 0 && r1 > capM * 1e6) {
-      log.debug('S%s skipped: rank1 power %dM exceeds cap %dM.', c.sid, Math.round(r1 / 1e6), capM);
-      continue;
-    }
-    if (MCFG.maxDefenders > 0 && list.length > MCFG.maxDefenders) {
-      log.debug('S%s skipped: defenders %d exceeds cap %d.', c.sid, list.length, MCFG.maxDefenders);
+    // 物品兴趣驱动：奖池含「关注物品」才打，否则换下一辆（rank1/乘客数经录制证明不预测战果，不设战力闸）
+    var matched = matchWatchedItem(tv.lootRewardResult, MCFG.lootItems);
+    if (!matched) {
+      log.debug('S%s skipped: loot pool has no watched item.', c.sid);
       continue;
     }
     target = c;
-    detail = { rank1: r1, defenders: list.length, poolLeft: poolLeft, poolTaken: poolTaken };
+    detail = { matchedItem: matched, poolLeft: poolLeft, poolTaken: poolTaken };
     break;
   }
   if (!target) {
     log.debug(
-      'no qualified target after probing %d trains, re-poll by rhythm.',
-      Math.min(cands.length, probeMax),
+      'no watched-item target after probing %d trains, re-poll by rhythm.',
+      Math.min(cands.length, PROBE_MAX),
     );
     return cfg.activeMs;
   }
@@ -1008,8 +1064,8 @@ async function loadUnflipped(s) {
   }
   var out = [];
   var pages = 0;
-  var scanMax = Math.max(1, MCFG.cardPageScan);
-  for (var p = 1; p <= scanMax; p++) {
+  // 无页数上限（用户设置已移除）：扫到奖池末尾（p >= ceil(total/size)）或够翻即停；异常/在途仍 break
+  for (var p = 1; ; p++) {
     // 第 1 页不发 pageId（实测真人就是省略，服务端默认回 pageId=1）；其余页带 {uuid,pageId,needEmpty}，与录制逐键一致
     var body =
       p === 1
@@ -1166,21 +1222,17 @@ async function settlePass() {
     log.info('2373 base reward claimed. items=%d', (rrd.rewardResult.items || []).length);
     return cfg.backoffMs; // 短歇后重入走翻卡分支
   }
-  // ② 翻卡：配额闸取服务器权威值，不靠本地计数
-  var want = s.shareHave - MCFG.keepCards;
+  // ② 翻卡：配额闸取服务器权威值，不靠本地计数（保留翻卡次数已移除，自动翻完）
+  var want = s.shareHave;
   if (want <= 0) {
-    log.debug(
-      'flip quota %d (keep %d for manual) exhausted, sleep to window end.',
-      s.shareHave,
-      MCFG.keepCards,
-    );
+    log.debug('flip quota %d exhausted, sleep to window end.', s.shareHave);
     return sleepToSettleEnd(sEnd, cfg.idleMs);
   }
   var slots = await loadUnflipped(s);
   if (!aliveFn()) return pausedExit('settle');
   var idx = slots.length ? Number(slots[0]) : 0;
   if (!idx) {
-    log.debug('no unflipped slot within %d page(s), retry by rhythm.', MCFG.cardPageScan);
+    log.debug('no unflipped slot in reward pool, retry by rhythm.');
     return cfg.activeMs;
   }
   if (cardCache && cardCache.list === slots) cardCache.list = slots.slice(1); // 先摘掉本位，防下拍重点同位或被拒后死回同一位
@@ -1311,7 +1363,7 @@ async function markBlocked(key, cmd, ret) {
  * 记一条攻打决策样本（选目标维度 + 结果维度），供事后回推胜率门槛。
  * 入参已全部是**同帧拆好的标量**：本函数会先 await 写盘闸门，任何池化应答引用都不能带进来。
  * @param {object} c 候选（2369 侧字段，uuid 已同帧克隆）
- * @param {object} det 2375 精判产出 {rank1,defenders,poolLeft,poolTaken}
+ * @param {object} det 2375 精判产出 {matchedItem,poolLeft,poolTaken}
  * @param {object} res 2370 结算标量快照 {win,winNum,lootToday,percentAfter,reportId}
  * @param {object} troop 实际发出的 troop
  * @returns {Promise<void>}
@@ -1328,8 +1380,7 @@ async function recordSample(c, det, res, troop) {
     sid: c.sid,
     percent: c.percent,
     uidNumber: c.uidNumber,
-    rank1Power: det.rank1,
-    defenders: det.defenders,
+    matchedItem: det.matchedItem,
     poolLeft: det.poolLeft,
     poolTaken: det.poolTaken,
     heroes: troop.heroList.length,
@@ -1442,13 +1493,9 @@ function buildDefaults() {
     lootEnabled: false,
     lootPreset: 1,
     maxPercent: 95,
-    maxDefenders: 0,
-    maxRank1PowerM: 80,
-    keepDaily: 0,
-    probePerRound: 1,
+    lootItems: TRAIN_ITEM_POOL.slice(),
+    lootItemsOff: [],
     settleEnabled: true,
-    keepCards: 0,
-    cardPageScan: 2,
   };
 }
 
@@ -1489,32 +1536,7 @@ function buildFields() {
       section: '到站结算',
       text:
         '实测每日到站后可翻 3 次（2385 里未翻的卡面不露奖品，属盲翻，挑哪一张期望值相同）；' +
-        '基础奖励（2373）只在未领时发一次，翻卡每 5 秒一张，不派兵也不花钻石。',
-    },
-    {
-      key: 'keepCards',
-      type: 'number',
-      section: '到站结算',
-      label: '保留翻卡次数',
-      min: 0,
-      step: 1,
-      topHint: '留给人工；实测每日上限 3 次，0=全自动翻完',
-      showIf: function (c) {
-        return !!c.settleEnabled;
-      },
-    },
-    {
-      key: 'cardPageScan',
-      type: 'number',
-      section: '到站结算',
-      label: '未翻卡位查页数上限',
-      min: 1,
-      max: 9,
-      step: 1,
-      topHint: '每页一条 2385（32 个卡位）；奖池实测 270 张=9 页，通常第 1 页就够',
-      showIf: function (c) {
-        return !!c.settleEnabled;
-      },
+        '基础奖励（2373）只在未领时发一次，翻卡每 5 秒一张、自动扫完全部奖池页，不派兵也不花钻石。',
     },
     {
       key: 'boardEnabled',
@@ -1534,15 +1556,15 @@ function buildFields() {
       key: 'lootEnabled',
       type: 'checkbox',
       section: '自动拦截',
-      label: '自动拦截（骨架）',
+      label: '自动拦截',
     },
     {
       key: '_lootNote',
       type: 'note',
       section: '自动拦截',
       text:
-        '胜率判据未定：实测我方 14.2M 打赢 rank1=60.5M、输给 rank1=139.2M，说明不是简单比战力。' +
-        '故只按保守闸筛（货余量/乘客数/rank1 战力上限），且每日保留次数可调；每次攻打写本地样本表，攒够再谈模型。',
+        '录制实证：4 次攻打 isWin 全 false，rank1 战力/乘客数/percent 都不预测战果（486.7M 的车抢到货、139.2M 的车空手），故不设这些数字闸。' +
+        '策略为物品兴趣驱动：2369 粗筛后逐辆发 2375，奖池含下方「关注物品」才打（用满每日配额）；关注物品清单取自游戏奖励预览表（data_config→REWARD），非报文逆推。每次攻打写本地样本表，攻够再谈胜率模型。',
     },
     {
       key: 'lootPreset',
@@ -1568,50 +1590,15 @@ function buildFields() {
       },
     },
     {
-      key: 'maxRank1PowerM',
-      type: 'number',
+      key: 'lootItems',
+      type: 'sortlist',
+      checkable: true,
+      offKey: 'lootItemsOff',
       section: '自动拦截',
-      label: 'rank1 战力上限（百万）',
-      min: 0,
-      step: 10,
-      topHint: '0=不限制；实测 60M 能赢、139M 输，故默认 80',
-      showIf: function (c) {
-        return !!c.lootEnabled;
-      },
-    },
-    {
-      key: 'maxDefenders',
-      type: 'number',
-      section: '自动拦截',
-      label: '乘客数上限',
-      min: 0,
-      step: 1,
-      topHint: '0=不限制；人少则防守阶梯浅',
-      showIf: function (c) {
-        return !!c.lootEnabled;
-      },
-    },
-    {
-      key: 'keepDaily',
-      type: 'number',
-      section: '自动拦截',
-      label: '每日保留次数',
-      min: 0,
-      step: 1,
-      topHint: '留给人工；上限实测 2 次',
-      showIf: function (c) {
-        return !!c.lootEnabled;
-      },
-    },
-    {
-      key: 'probePerRound',
-      type: 'number',
-      section: '自动拦截',
-      label: '每轮精判辆数',
-      min: 1,
-      max: 3,
-      step: 1,
-      topHint: '每辆要发一条 2375（数 KB），越少越省',
+      label: '关注物品（池内含这些才打）',
+      hint: '清单取自游戏「雪原列车奖励预览」（data_config→REWARD 表，与面板同源）；勾选要关注的物品，2375 的 lootRewardResult 命中其一即视为可打目标（命中任一即打、列表顺序不影响判定；全不勾=不拦）',
+      resolve: lootItemResolve,
+      all: rewardPoolIds,
       showIf: function (c) {
         return !!c.lootEnabled;
       },
@@ -1631,13 +1618,19 @@ function normalizeCfg(c) {
     lootEnabled: !!c.lootEnabled,
     lootPreset: Math.min(8, Math.max(1, Number(c.lootPreset) || 1)),
     maxPercent: Math.min(100, Math.max(1, Number(c.maxPercent) || 95)),
-    maxDefenders: Math.max(0, Number(c.maxDefenders) || 0),
-    maxRank1PowerM: Math.max(0, Number(c.maxRank1PowerM) || 0),
-    keepDaily: Math.max(0, Number(c.keepDaily) || 0),
-    probePerRound: Math.min(3, Math.max(1, Number(c.probePerRound) || 1)),
+    // sortlist：cfg.lootItems=拖拽序、cfg.lootItemsOff=未勾项；MCFG.lootItems 取「已勾且按序去重」的有效集（供 matchWatchedItem 直接消费）
+    lootItems: (function () {
+      var off = new Set((Array.isArray(c.lootItemsOff) ? c.lootItemsOff : []).map(String));
+      var arr = Array.isArray(c.lootItems) ? c.lootItems : [];
+      var out = [];
+      for (var i = 0; i < arr.length; i++) {
+        var n = Number(arr[i]);
+        if (!(n > 0) || off.has(String(n)) || out.indexOf(n) >= 0) continue;
+        out.push(n);
+      }
+      return out;
+    })(),
     settleEnabled: c.settleEnabled !== false,
-    keepCards: Math.max(0, Number(c.keepCards) || 0),
-    cardPageScan: Math.min(9, Math.max(1, Number(c.cardPageScan) || 2)),
   };
 }
 
