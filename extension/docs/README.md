@@ -21,6 +21,7 @@
 | [core/net.md](core/net.md) | `src/core/net.js` | 网络底座：双通道 hook + 三 bus 命名空间 + promise 发包 + req↔resp reqTime 配对 |
 | [core/registry.md](core/registry.md) | `src/core/registry.js` | 特征存储与运行时编排：descriptor 聚合 + 配置版本化（version/migrate/strictConfig） |
 | [core/storage.md](core/storage.md) | `src/core/storage.js` | UID 隔离存储抽象：双 blob + slot + raw 通道 + 每 blob 串行队列 + 上下文失效降级 |
+| [core/ui.md](core/ui.md) | `src/core/acl/ui.js` | 原生 UI 开关/回退：OpenUI/CloseUI 主路 + 组件 `close()` 逐层回退兜底（Esc 关窗/回退） |
 
 （规划中：core/player.md——后续同类 API 改动时补。）
 

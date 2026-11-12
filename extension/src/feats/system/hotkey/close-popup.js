@@ -1,10 +1,11 @@
 /**
- * 关闭当前弹窗快捷键 [Q]（热键注册表形态）
+ * 关闭当前弹窗快捷键 [Esc]（热键注册表形态）
  *
- * 在基地城市（Home）或大世界（NWorldMap）场景下按 [Q]，关闭当前栈顶弹窗：
- *   走 core/game-api.js 的 ui.closeTop()（游戏原生：读 UIManager.Instance().CurrentUIDataInfo，非空则 CloseUI 关掉），
- *   等价面板的 back 键 / 点遮罩关闭，只触发原生关窗，不改写游戏数据。
- *   无弹窗在场时 closeTop 返回 nothing，本功能仅记 debug 日志（与改造前一致：Q 命中即消费）。
+ * 在基地城市（Home）或大世界（NWorldMap）场景下按 [Esc]，关闭当前栈顶弹窗或回退：
+ *   走 core/acl/ui.js 的 ui.closeTop()：CurrentUIDataInfo 非空则 CloseUI（等价面板 X），
+ *   游标已空但容器面板仍在场时按渲染层序取视觉栈顶调其组件 close()（等价游戏内 `<` 回退），
+ *   只触发原生关窗/回退，不改写游戏数据。
+ *   无弹窗在场时 closeTop 返回 nothing，本功能仅记 debug 日志并返回 false（不消费，透传）。
  *
  * 打字让位 / 修饰键放行 / 场景门控 / preventDefault 由 core/hotkeys.js 注册表统一处理，本文件只声明绑定+动作。
  *
@@ -20,9 +21,9 @@ const log = createLog('CLOSE_POPUP');
 
 bind({
   id: 'closePopup',
-  keys: ['KeyQ'],
-  display: 'Q',
-  label: '关闭当前弹窗',
+  keys: ['Escape'],
+  display: 'Esc',
+  label: '关闭弹窗/回退',
   where: '基地/大世界',
   scenes: ['Home', 'NWorldMap'],
   // 与 scenes 逐字等价折算（Home→base、NWorldMap→world）；scenes 仍是 hotkeys.bindingAllow 的必要条件，
@@ -30,9 +31,12 @@ bind({
   places: ['base', 'world'],
   handler: function () {
     var r = ui.closeTop();
-    if (r.ok) log.info('popup closed. name=%s', r.name);
-    else if (r.err === 'nothing') log.debug('no popup to close.');
-    else log.warn('close popup failed. err=%s', r.err);
+    if (!r.ok) {
+      if (r.err === 'nothing') log.debug('no popup to close.');
+      else log.warn('close popup failed. err=%s', r.err);
+      return false;
+    }
+    log.info('popup closed. name=%s', r.name);
     return true;
   },
 });

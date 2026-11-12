@@ -191,7 +191,7 @@ if (!worldState.actionable(['homeland', 'kvk'])) return; // 观战/未就绪/落
 ```js
 bind({
   id: 'closePopup',
-  keys: ['KeyQ'],
+  keys: ['Escape'],
   scenes: ['Home', 'NWorldMap'],
   places: ['base', 'world'],
 });

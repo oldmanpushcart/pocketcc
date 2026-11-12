@@ -9,6 +9,37 @@ import { SYM, uiMgrClass, uiRegistry } from '../acl-engine.js';
 /** @type {ReturnType<createLog>} 沿用拆分前 tag=GAMEAPI，日志口径零漂移 */
 const log = createLog('GAMEAPI');
 
+/**
+ * 触发面板"回退"：在面板脚本组件上调用 close()（+ closeBtnClick()），
+ * 等价于用户点击游戏内 `<` 回退按钮。
+ * 实证：UIManager 层面的 CloseUI / LastCloseUI 只修改 DataPool 状态，
+ *   不会触发某些复合面板（如邮件）的内部视图切换；只有组件自身的 close 才能走完整回退链。
+ * @param {*} mgr UIManager 实例
+ * @param {string} name 面板节点名（DataPool key）
+ * @returns {boolean} 是否成功触发
+ */
+function backPanel(mgr, name) {
+  if (!mgr || !name) return false;
+  var node = mgr.DataPool && mgr.DataPool[name];
+  if (!node) return false;
+  var comps = node._components || node.components;
+  if (!comps) return false;
+  for (var i = 0; i < comps.length; i++) {
+    var comp = comps[i];
+    if (comp && typeof comp.close === 'function') {
+      try {
+        comp.close();
+        if (typeof comp.closeBtnClick === 'function') comp.closeBtnClick();
+        return true;
+      } catch (e) {
+        log.debug('backPanel comp.close(%s) failed: %s', name, e && e.message);
+        return false;
+      }
+    }
+  }
+  return false;
+}
+
 export const ui = {
   /**
    * 按语义面板名打开面板（semantic 经 SYM.uiPanels 映射到 UIDataInfo 注册表成员名）。
@@ -75,30 +106,63 @@ export const ui = {
     }
   },
   /**
-   * 关闭当前顶层弹窗（Q 键用）：读游戏原生 UIManager.Instance().CurrentUIDataInfo（最近打开、即栈顶的面板描述符），
-   * 非空则调 CloseUI(描述符)（走面板自身关闭链路，等价 back 键/点遮罩）；回退 Close(name)。
-   * 无弹窗在场（CurrentUIDataInfo 为空，如干净的大本营/世界地图）返回 {ok:false,err:'nothing'}。
+   * 关闭当前顶层弹窗或回退（Esc 键用）。
+   *
+   * 第一层：读 CurrentUIDataInfo → CloseUI（等价于点 X 关闭弹窗）。
+   *   若 CloseUI 后面板仍在 DataPool（回退型全屏面板），触发其组件 close()。
+   * 第二层：CurrentUIDataInfo 为 null（游标已清空但容器面板仍在场），
+   *   从 DataPool 取视觉栈顶面板并触发其组件 close()（等价于游戏内 `<` 回退）。
+   *
    * @returns {{ok:boolean, err?:string, name?:string}}
    */
   closeTop() {
     var C = uiMgrClass();
     var mgr = C && typeof C.Instance === 'function' ? C.Instance() : null;
-    if (!mgr || typeof mgr.CloseUI !== 'function') return { ok: false, err: 'unavailable' };
+    if (!mgr) return { ok: false, err: 'unavailable' };
+    var canCloseUI = typeof mgr.CloseUI === 'function';
+    var canClose = typeof mgr.Close === 'function';
+    if (!canCloseUI && !canClose) return { ok: false, err: 'unavailable' };
+
+    // 主路径：CurrentUIDataInfo 指向栈顶
     var cur = mgr.CurrentUIDataInfo;
-    if (!cur || !cur.name) return { ok: false, err: 'nothing' };
-    var nm = cur.name;
-    try {
-      mgr.CloseUI(cur);
-      return { ok: true, name: nm };
-    } catch (e) {
+    if (cur && cur.name) {
+      var nm = cur.name;
       try {
-        if (typeof mgr.Close === 'function') {
-          mgr.Close(nm);
-          return { ok: true, name: nm };
+        if (canCloseUI) mgr.CloseUI(cur);
+        else mgr.Close(nm);
+        // CloseUI 后检查面板是否仍在场（回退型面板不响应 CloseUI，走组件 close）
+        if (mgr.DataPool && mgr.DataPool[nm] && mgr.DataPool[nm].active !== false) {
+          if (backPanel(mgr, nm)) return { ok: true, name: nm };
         }
-      } catch (e2) {}
-      log.warn('ui.closeTop(%s) failed: %s', nm, e && e.message);
-      return { ok: false, err: 'failed' };
+        return { ok: true, name: nm };
+      } catch (e) {
+        try {
+          if (canClose) { mgr.Close(nm); return { ok: true, name: nm }; }
+        } catch (e2) {}
+        log.warn('ui.closeTop(%s) failed: %s', nm, e && e.message);
+        return { ok: false, err: 'failed' };
+      }
     }
+
+    // 兜底路径：CurrentUIDataInfo 为 null 但 DataPool 仍有在场面板
+    //   典型场景：关闭子弹窗后游标清空，但父容器面板仍在场，需要回退
+    //   策略：按渲染层序（同父下 siblingIndex 越大 = 越上层）找视觉栈顶，
+    //   然后调用其脚本组件的 close()（等价于游戏内 `<` 回退按钮）
+    var pool = mgr.DataPool;
+    if (!pool) return { ok: false, err: 'nothing' };
+    var keys = Object.keys(pool);
+    if (!keys.length) return { ok: false, err: 'nothing' };
+    // 找 active 面板中 siblingIndex 最大的（视觉栈顶）
+    var topName = null;
+    var topIdx = -1;
+    for (var ki = 0; ki < keys.length; ki++) {
+      var name = keys[ki];
+      var node = pool[name];
+      if (!node || node.active === false) continue;
+      var idx = typeof node.getSiblingIndex === 'function' ? node.getSiblingIndex() : ki;
+      if (idx > topIdx) { topIdx = idx; topName = name; }
+    }
+    if (topName && backPanel(mgr, topName)) return { ok: true, name: topName };
+    return { ok: false, err: 'nothing' };
   },
 };
