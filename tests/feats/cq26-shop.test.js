@@ -33,7 +33,7 @@ globalThis.setInterval = (fn, ms, ...rest) => {
 };
 
 const mod = await import('../../extension/src/feats/cq26/shop.js');
-const { buildCandidates, gatedPass, productStockSum } = mod;
+const { buildCandidates, gatedPass, productStockSum, boughtOfProduct } = mod;
 const { quotaText } = mod;
 const { gameData, l10n } = await import('../../extension/src/core/game-api.js');
 
@@ -119,6 +119,7 @@ function panel(o) {
       goodsOrder: [],
       quotaTotal: 5,
       dispatched: 0,
+      byProduct: {},
       cool: {},
       reject: {},
       now: 0,
@@ -161,7 +162,8 @@ function gameShopOrder(shops) {
  * 判据写成游戏源码的字面式（售罄=buy_limit_all−buyCnt、限购=selfBuyCnt<buy_limit、门槛=need_score≤cScore、
  *   营业态=status===2、货架真源=Object.keys(buyCnt)），字段名用投影后的驼峰（与表列一一对应）。
  * 商品索引同 shop.js 口径：itemId+item_num 相同即为同一商品（普通城/高级城各占一档时合成一行、共用勾选）。
- * 注：goods 只有勾选位 on——面板的「购买上限」输入已废弃，故此处也不读 g.max（残留值两侧都当看不见）。
+ * 注：goods 有勾选位 on + 逐商品本期总上限 max（0=无上限、含已抢）；cap 闸与 shop.js 同口径：
+ *   已抢(Σ全部所 selfBuyCnt，不看 status) + 在飞(byProduct) + 本批已分配 < max。
  * @param {object} s 快照
  * @param {object} rows 表行
  * @param {object} p 面板视图
@@ -194,6 +196,12 @@ function referenceCandidates(s, rows, p, goldAvail, quotaTotal) {
     if (g && g.on === false) continue;
     const cfgs = prods[key];
     if (!cfgs) continue; // 面板残留的商品键已不在表上：不猜货
+    const capN = Number(g && g.max) || 0;
+    let usedN = 0;
+    if (capN > 0) {
+      for (const sh of s.shops || []) for (const c of cfgs) usedN += Number(sh.selfBuyCnt[c]) || 0;
+      usedN += Number((p.byProduct || {})[key]) || 0;
+    }
     for (const sh of shops) {
       if (sh.status !== 2) continue; // maskNode.active = 2!==status
       for (const cfgStr of cfgs) {
@@ -205,9 +213,11 @@ function referenceCandidates(s, rows, p, goldAvail, quotaTotal) {
         if (((p.reject || {})[at] || 0) >= 3) continue;
         if (r.limitAll - (sh.buyCnt[cfgStr] || 0) <= 0) continue; // rank_shop_05 售罄
         if ((sh.selfBuyCnt[cfgStr] || 0) >= r.limit) continue; // activity95_009
+        if (capN > 0 && usedN >= capN) continue; // 逐商品本期总上限（含已抢+在飞+本批）
         if (r.score > (s.cScore || 0)) continue; // conqueror2025_city33/46
         if (spent + r.gold > budget) continue;
         spent += r.gold;
+        usedN++;
         out.push(at);
       }
     }
@@ -255,6 +265,7 @@ test('等价性：多所多件的候选全序逐条等于参照实现（种子�
     const p = panel({
       quotaTotal: 1 + Math.floor(rnd() * 6),
       goods: { [pk(2)]: { on: rnd() >= 0.5, max: Math.floor(rnd() * 3) } },
+      byProduct: rnd() < 0.3 ? { [pk(2)]: Math.floor(rnd() * 2) } : {},
       goodsOrder: rnd() < 0.5 ? [] : [pk(101), pk(5), pk(2), pk(1)],
       cool: rnd() < 0.3 ? { [shops[0].idStr + ':1']: 10 } : {},
       reject: rnd() < 0.3 ? { [shops[0].idStr + ':1']: 3 } : {},
@@ -336,6 +347,41 @@ test('闸门：本人限购已达（selfBuyCnt ≥ buy_limit）不再买同一�
   assert.equal(buildCandidates(snap(shops), defaultRows(), panel(), 0, null).length, 1);
 });
 
+test('闸门：逐商品本期总上限（含已抢）达顶即拦，0=无上限', () => {
+  const shops = [shop('1', { buyCnt: { 1: 0 }, selfBuyCnt: { 1: 1 } })];
+  const p = panel({ goods: { [pk(1)]: { on: true, max: 1 } } });
+  assert.deepEqual(buildCandidates(snap(shops), defaultRows(), p, 0, null), []); // 已抢 1 = cap 1
+  p.goods[pk(1)].max = 2;
+  assert.equal(buildCandidates(snap(shops), defaultRows(), p, 0, null).length, 1);
+  p.goods[pk(1)].max = 0; // 0=无上限（全仓约定）
+  assert.equal(buildCandidates(snap(shops), defaultRows(), p, 0, null).length, 1);
+});
+
+test('闸门：逐商品 cap 计在飞与本批分配（多所共享 cap 不超发）', () => {
+  const shops = [shop('1', { buyCnt: { 1: 0 } }), shop('2', { buyCnt: { 1: 0 } })];
+  const p = panel({ goods: { [pk(1)]: { on: true, max: 1 } } });
+  assert.equal(buildCandidates(snap(shops), defaultRows(), p, 0, null).length, 1); // 同批两所只放一件
+  p.byProduct = { [pk(1)]: 1 }; // 在飞占满 cap
+  assert.deepEqual(buildCandidates(snap(shops), defaultRows(), p, 0, null), []);
+});
+
+test('闸门：cap 跨 cfg 行共享 + 已抢跨波累计（红包期所也计）', () => {
+  // cfg1/101 同 itemId+num → 同一商品 i820001x1；shop2 红包期买不了但历史购买计 cap
+  const rows = { 1: row(1), 101: row(101, { itemId: 820001, score: 0 }) };
+  const shops = [
+    shop('1', { buyCnt: { 1: 0 } }),
+    shop('2', { buyCnt: { 101: 0 }, status: 3, selfBuyCnt: { 101: 1 } }),
+  ];
+  assert.equal(boughtOfProduct(rows, shops, 'i820001x1'), 1);
+  const p = panel({ goods: { i820001x1: { on: true, max: 1 } } });
+  assert.deepEqual(buildCandidates(snap(shops), rows, p, 0, null), []);
+  p.goods.i820001x1.max = 2;
+  assert.deepEqual(
+    buildCandidates(snap(shops), rows, p, 0, null).map((c) => c.shopIdStr + ':' + c.cfgStr),
+    ['1:1'],
+  );
+});
+
 test('闸门：积分不足（need_score > cScore）整件跳过', () => {
   const shops = [shop('1', { buyCnt: { 101: 0, 1: 0 } })];
   const list = buildCandidates(snap(shops, { cScore: 150 }), defaultRows(), panel(), 0, null);
@@ -400,11 +446,11 @@ test('面板文案 quotaText：分子是「本轮已抢」（=canBuyCnt，跟随
   assert.equal(quotaText(6, 5), '本轮已抢 5/5'); // 已用高于配置上限 → 夹住，不冒出 6/5
   assert.equal(quotaText(-1, 5), '本轮已抢 0/5'); // 异常负值 → 夹住
   assert.equal(quotaText(2, '5'), '本轮已抢 2/5'); // 配置以文本形态回来也要能算
-  assert.equal(quotaText(2, 0), '额度配置(81268)不可得'); // 没分母就不报进度
-  assert.equal(quotaText(2, undefined), '额度配置(81268)不可得');
+  assert.equal(quotaText(2, 0), '额度配置不可得'); // 没分母就不报进度
+  assert.equal(quotaText(2, undefined), '额度配置不可得');
 });
 
-test('闸门：截断只看本期剩余额度与本轮已下发数（maxPerBurst 与逐件 max 均已废弃）', () => {
+test('闸门：截断只看本期剩余额度与本轮已下发数（maxPerBurst 废弃；逐商品 max 生效）', () => {
   const shops = [shop('1', { buyCnt: { 1: 0, 2: 0 } }), shop('2', { buyCnt: { 1: 0, 2: 0 } })];
   const rows = defaultRows();
   // 额度 5 ≥ 可售 4 件 → 全部发出：面板不再有一个能把一轮截短的「单次」旋钮
@@ -414,7 +460,7 @@ test('闸门：截断只看本期剩余额度与本轮已下发数（maxPerBurst
     buildCandidates(snap(shops), rows, panel({ quotaTotal: 5, dispatched: 4 }), 0, null).length,
     1,
   );
-  // 旧存档里残留的 max=1 与已废弃的 maxPerBurst 两侧都当看不见：既不截件数也不截同件跨所
+  // 已废弃的 maxPerBurst 当看不见；逐商品 max=1 生效：商品 1 跨两所只放一件，商品 2 不受限
   const legacy = buildCandidates(
     snap(shops, { canBuyCnt: 0 }),
     rows,
@@ -429,14 +475,14 @@ test('闸门：截断只看本期剩余额度与本轮已下发数（maxPerBurst
   );
   assert.deepEqual(
     legacy.map((c) => c.key),
-    ['1:1', '2:1', '1:2', '2:2'],
+    ['1:1', '1:2', '2:2'],
   );
 });
 
 test('闸门：面板取消勾选的商品不抢；表外 cfg（行缺失）fail-closed 不买', () => {
   const shops = [shop('1', { buyCnt: { 1: 0, 2: 0 } })];
   const rows = defaultRows();
-  // goods 已由 normalizeCfg 归一为 `{on:boolean}`（旧的 max 位已废弃，toModuleCfg 直接丢弃），键是商品键
+  // goods 已由 normalizeCfg 归一为 `{on:boolean,max:number}`（max=本期总上限，0=无上限），键是商品键
   const off = buildCandidates(
     snap(shops),
     rows,

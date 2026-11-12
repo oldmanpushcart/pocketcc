@@ -46,6 +46,8 @@
  *   可买态：shop.status === 2
  *   全服库存：row.limitAll − (shop.buyCnt[cfg]||0) > 0        // ≤0 → rank_shop_05「售罄」
  *   本人限购：(shop.selfBuyCnt[cfg]||0) < row.limit            // 游戏原式无 limit>0 豁免，此处同构 → activity95_009
+ *   逐商品本期总上限：goods[商品键].max>0 时 Σ各所 selfBuyCnt + 在飞 + 本批已分配 < max（用户分配旋钮，0=无上限；
+ *     2026-11-12 恢复：两波错峰开市 + 5 次额度，第一波全押会让高级城零发包）
  *   积分门槛：row.score ≤ snap.cScore                          // 否则 conqueror2025_city33/46
  *   钻石余额：累计 need_gold ≤ resourceAmount(Gold=10，玩家侧显示为「钻石」)（竞品原式同构：A `need_gold <= gold`、B 余额减本轮累计）
  *     ——「钻石保留额」面板项已废弃，不退让到余额以下
@@ -487,12 +489,12 @@ function sortByGameOrder(shops) {
  * 纯函数：本轮应下单的有序清单（不读模块态、不摸游戏符号，闸门全部显式传参，供单测与未来对拍复用）。
  * 排序三轴：外层=面板 goods 优先级（商品键，下标即优先级）→ 中层=密所的游戏显示序（本服优先 → 城档 level 降 → id 升）
  *   → 内层=该商品在这一所的 cfg 行（同货多档时逐个判闸）→ 逐件过文件头「闸门」六条 → 截断到（剩余总次数 − 本轮已下发）。
- * 注：面板不再有「本轮该件最多买几件」这个逐件自由度（抢购迟到即无货，逐件上限无意义），
- *   下单总量**只由本期总额度一道闸**控制（maxPerBurst 面板项已废弃，与竞品B `slice(0, 额度)` 同形）；
- *   goods 只保留勾选位 on（按**商品键**登记）。
+ * 注：下单总量由本期总额度一道总闸控制（maxPerBurst 面板项已废弃，与竞品B `slice(0, 额度)` 同形）；
+ *   2026-11-12 恢复逐商品「本期总上限」分配旋钮（goods[商品键].max，含已抢、0=无上限）：
+ *   实测两波错峰开市 + 本期仅 5 次额度，第一波全押会让高级城零发包，故把分配权交给用户。
  * @param {object|null} snap 本地镜像 {shops,cScore,canBuyCnt}
  * @param {object|null} rows gameData.cq26ShopRows() 产物（null=表不可读 → 闸门不可判定 → 空清单）
- * @param {object} panel {goods,goodsOrder,quotaTotal,dispatched,spentGold,cool,reject,now}
+ * @param {object} panel {goods,goodsOrder,quotaTotal,dispatched,spentGold,byProduct,cool,reject,now}
  * @param {number} nowSec 服务器秒
  * @param {number|null} goldAvail 钻石可用额（null=无从判定 → 不拦，最终以服务器拒绝为裁决）
  * @returns {Array<{shopIdStr:string,cfgStr:string,cfgId:number,key:string,row:object,shop:object}>}
@@ -528,6 +530,10 @@ export function buildCandidates(snap, rows, panel, nowSec, goldAvail) {
     if (g && g.on === false) continue; // 面板取消勾选（未登记=默认 on）
     var prod = prods[pk];
     if (!prod) continue; // 面板残留的商品键已不在表上（换季/表变）：不猜货，直接跳过
+    // 逐商品本期总上限（0=无上限）：已抢(Σ各所 selfBuyCnt) + 在飞(byProduct) 先计，本批每分配一件再 +1
+    var capN = Number(g && g.max) || 0;
+    var usedN =
+      capN > 0 ? sumBought(snap.shops, prod.cfgs) + (Number((panel.byProduct || {})[pk]) || 0) : 0;
     for (var j = 0; j < shops.length && out.length < cap; j++) {
       var s = shops[j];
       if (s.status !== 2) continue; // 唯一可买态
@@ -543,9 +549,11 @@ export function buildCandidates(snap, rows, panel, nowSec, goldAvail) {
         if ((rej[key] || 0) >= MAX_REJECT) continue;
         if (Math.max(0, (Number(row.limitAll) || 0) - (s.buyCnt[cfgStr] || 0)) <= 0) continue; // 全服库存打满
         if ((s.selfBuyCnt[cfgStr] || 0) >= (Number(row.limit) || 0)) continue; // 本人限购
+        if (capN > 0 && usedN >= capN) continue; // 逐商品本期总上限（含已抢+在飞+本批）
         if ((Number(row.score) || 0) > (Number(snap.cScore) || 0)) continue; // 积分门槛
         if (spent + needGold > budget) continue; // 钻石预算（余额 − 本轮累计已花）
         spent += needGold;
+        usedN++;
         out.push({
           shopIdStr: s.idStr,
           cfgStr: cfgStr,
@@ -832,7 +840,7 @@ async function burst(reason, retry) {
   /** @type {Object<string,number>} key → 缺省 未碰 / 1 已发出待应答 / 2 已成交、被拒或结果未知（本轮不再碰） */
   var state = Object.create(null);
   /** @type {{dispatched:number,goldSpent:number}} 本轮已**真正上 wire** 的包数与累计钻石（未发出的退回） */
-  var stats = { dispatched: 0, goldSpent: 0 };
+  var stats = { dispatched: 0, goldSpent: 0, byProduct: Object.create(null) };
   var panel = {
     goods: MCFG.goods,
     goodsOrder: MCFG.goodsOrder,
@@ -865,6 +873,7 @@ async function burst(reason, retry) {
       // 跨重试轮累计：dispatched 约束件数、spentGold 约束金额（应答未落库时 goldBudget 读到旧余额，靠此账防砸空）
       panel.dispatched = stats.dispatched;
       panel.spentGold = stats.goldSpent;
+      panel.byProduct = stats.byProduct;
       panel.now = Date.now();
       var cands = buildCandidates(
         mirror,
@@ -881,6 +890,7 @@ async function burst(reason, retry) {
           state[cands[i].key] = 1;
           stats.dispatched++;
           stats.goldSpent += Number(cands[i].row.gold) || 0;
+          stats.byProduct[cands[i].productKey] = (stats.byProduct[cands[i].productKey] || 0) + 1;
           sendBuy(cands[i], state, stats); // 不 await：管线化，下一包不等上一包应答
           if (!aliveFn()) return;
           await sleep(BUY_GAP_MS);
@@ -902,7 +912,7 @@ async function burst(reason, retry) {
  * 发一条 2444 并就地结算（永不 reject：sendGuarded 已收口双通道失败）。
  * @param {object} c buildCandidates 产出的候选
  * @param {Object<string,number>} state 本轮 key 状态表
- * @param {{dispatched:number}} stats 本轮已下发计数（未发出时退回）
+ * @param {{dispatched:number,goldSpent:number,byProduct:Object<string,number>}} stats 本轮已下发计数（未发出时退回）
  */
 async function sendBuy(c, state, stats) {
   if (!net) return;
@@ -942,6 +952,7 @@ async function sendBuy(c, state, stats) {
       state[c.key] = 0;
       stats.dispatched = Math.max(0, stats.dispatched - 1);
       stats.goldSpent = Math.max(0, stats.goldSpent - (Number(c.row.gold) || 0));
+      stats.byProduct[c.productKey] = Math.max(0, (stats.byProduct[c.productKey] || 0) - 1);
       log.warn('2444 not sent (threw: %s). shop=%s cfg=%s', sendErr, c.shopIdStr, c.cfgId);
     }
     return;
@@ -1281,6 +1292,46 @@ function goodsStockText(key) {
 }
 
 /**
+ * Σ 指定 cfg 行集在全部所的 selfBuyCnt（本人历史购买，settled 口径）。
+ * **不看 status**：红包期/已结束的所也记着本人购买，故跨波累计（与「本轮已抢 x/y」同轮次）。
+ * @param {Array<object>|null} shops 镜像的所数组
+ * @param {string[]} cfgs 商品的 cfg 行集
+ * @returns {number}
+ */
+function sumBought(shops, cfgs) {
+  var n = 0;
+  for (var j = 0; j < (shops || []).length; j++) {
+    var s = shops[j];
+    if (!s) continue;
+    for (var m = 0; m < cfgs.length; m++) n += Number(s.selfBuyCnt[cfgs[m]]) || 0;
+  }
+  return n;
+}
+
+/**
+ * 纯函数：该商品本期已抢购次数（导出供单测钉住）——Σ 各所各 cfg 行 selfBuyCnt。
+ * @param {object|null} rows 表行
+ * @param {Array<object>|null} shops 镜像的所数组
+ * @param {string} key 商品键
+ * @returns {number} 无表/无商品 → 0
+ */
+export function boughtOfProduct(rows, shops, key) {
+  var p = productsOfRows(rows)[key];
+  return p ? sumBought(shops, p.cfgs) : 0;
+}
+
+/**
+ * 面板只读「已抢」列（fd.boughtText）：该商品本期已买次数；无快照/无表显 —（不猜数）。
+ * @param {string} key 商品键
+ * @returns {string}
+ */
+function goodsBoughtText(key) {
+  var rows = gameData.cq26ShopRows();
+  if (!mirror || !rows) return '—';
+  return String(boughtOfProduct(rows, mirror.shops, String(key)));
+}
+
+/**
  * 面板 itemlist 页脚：本轮建议准备的钻石总额（勾选变更走整块重刷，快照/额度变更走 refreshTexts 重算）。
  * 算法（用户钉的口径）：把勾选商品的可买份数按**单价降序**展开，取最贵的 N 份求和（N=本期剩余额度）：
  *   逐 (所,cfg) 的可买份数 = min(全服剩余, 本人限购余量)，并过积分门槛（买不动的件不必为它备钻）；
@@ -1288,7 +1339,7 @@ function goodsStockText(key) {
  * 尚无快照时无份数可展 → copies 当不限（即最贵单价 × N），并写明是估算；表未加载时单价不可知，不猜数。
  * 单价取表行 need_gold（游戏 ResourceType.Gold=10，玩家侧显示为「钻石」）。
  * @param {Array<{id:string,cost:number}>} items 池项（含单价）
- * @param {Object<string,{on:number}>} state 面板勾选态
+ * @param {Object<string,{on:number,max:number}>} state 面板勾选态
  * @returns {string}
  */
 function goodsSummary(items, state) {
@@ -1321,6 +1372,14 @@ function goodsSummary(items, state) {
         if ((Number(u.row.score) || 0) > (Number(mirror.cScore) || 0)) continue;
         copies += Math.min(u.all, u.self);
       }
+    }
+    // 逐商品本期总上限再夹一刀（含已抢）：备钻不高估（口径与 buildCandidates 的 max 闸同）
+    var capN = Number(e && e.max) || 0;
+    if (capN > 0) {
+      copies = Math.min(
+        copies,
+        Math.max(0, capN - (live ? boughtOfProduct(rows, mirror.shops, String(items[i].id)) : 0)),
+      );
     }
     if (copies > 0) groups.push({ price: price, copies: copies });
   }
@@ -1399,14 +1458,13 @@ function shopRows() {
 /**
  * 纯函数：面板「本轮已抢 x/y」文案。分子是**已用**（口径同 wl-mine 的「已用 x/y」、wl-chest 的「已领 x/y」），
  *   因为读的就是服务器权威的 `canBuyCnt`（本期已用次数）：它天然跟随轮次，不随页面刷新/跨天归零。
- *   旧写法是「本轮额度 剩 0/5」（分子为剩余）另加一行会话级「本会话已抢 N 件」，两行摆在一起方向相反。
  * @param {number|null} used 本期已用次数（`canBuyCnt`；null=2442 快照尚未取得）
  * @param {number} quota 本期总次数（`resolveQuota()`；<=0 = 配置 81268 不可得）
  * @returns {string}
  */
 export function quotaText(used, quota) {
   var q = Number(quota) || 0;
-  if (q <= 0) return '额度配置(81268)不可得';
+  if (q <= 0) return '额度配置不可得';
   if (used == null) return '本轮已抢 —/' + q; // 没快照就不报进度（下一行已写明「尚无快照」）
   var u = Math.min(Math.max(0, Number(used) || 0), q); // 夹进 [0, 总次数]：不冒出「已抢 6/5」
   return '本轮已抢 ' + u + '/' + q;
@@ -1421,7 +1479,7 @@ function shopInfoText() {
   if (!gameData.cq26IsOpen()) return 'CQ26 未开启';
   var lines = [];
   lines.push(quotaText(mirror ? Number(mirror.canBuyCnt) || 0 : null, resolveQuota()));
-  if (!mirror) lines.push('尚无快照（开 feat 后首轮 2442 取得）');
+  if (!mirror) lines.push('尚无快照（开启后自动取得）');
   if (lastDeal) {
     var d = new Date(lastDeal.atSec * 1000);
     lines.push(d.getHours() + ':' + String(d.getMinutes()).padStart(2, '0') + ' ' + lastDeal.text);
@@ -1435,7 +1493,7 @@ function shopInfoText() {
 
 /**
  * 面板 defaults。
- * 只留真正需要用户决定的两项（勾选/拖拽序 + 待开市快档）；其余已内化为系统值，见文件头「系统固定参数」。
+ * 只留真正需要用户决定的三项（勾选/拖拽序/逐商品本期上限 + 待开市快档）；其余已内化为系统值，见文件头「系统固定参数」。
  * @returns {object}
  */
 function buildDefaults() {
@@ -1460,19 +1518,17 @@ function buildFields() {
       type: 'infogrid',
       label: '密所状态',
       columns: [
-        { label: '归属区', title: '密所在哪个区（报文行 sid，S3281=sid 3281）；★=本服' },
-        { label: '等级', title: 'cnc_city_level.level（游戏标题「{0}级印石秘所」同式）' },
-        { label: '状态', title: '1 待开市 / 2 抢购中（唯一可买态）/ 3 红包期 / 4 已结束' },
+        { label: '归属区', title: '密所所在区；★=本服' },
+        { label: '等级', title: '秘所等级' },
+        { label: '状态', title: '待开市 / 抢购中（唯一可买态）/ 红包期 / 已结束' },
         {
           label: '状态倒计时',
           align: 'right',
-          title: 'statusEndSec − ServerTime（游戏原式：status≥4 或已过点不出）',
+          title: '当前状态剩余时间',
         },
       ],
       rows: shopRows,
-      hint:
-        '待开市那一行显示的是「最迟开市截止」（实测比真实开市早 ~3h），不是开市时刻；' +
-        '开市是城主手动动作，唯一实时信号是 push 22030（与 status 1→2 同秒），到点才翻牌。',
+      hint: '倒计时为展示截止，不是开市时刻；开市由城主手动触发，插件实时感知自动抢。',
     },
     {
       key: '_shopInfo',
@@ -1490,22 +1546,22 @@ function buildFields() {
       orderKey: 'goodsOrder',
       items: goodsPool,
       nameGrow: true,
-      // costCol：数字输入列换成红色钻石价只读列（原本的「购买上限」输入对抢购没有自由度：
-      //   一期总额度就 5 件、且开市迟到即无货，逐件上限只会误伤）
+      // costCol：红色钻石单价只读列；maxCol：数字输入列与价列共存（逐商品「本期总上限」，
+      //   含已抢、0=无上限）；boughtText：输入列前的「已抢」只读列
       costCol: true,
+      maxCol: true,
+      maxTitle: '本期总上限（含已抢），∞=不限；同商品跨普通/高级城共享',
+      maxPlaceholder: '∞', // 窄列（两位数宽）塞不下「无上限」三字，∞ 表不限
+      // 表头行：列含义自解释（已抢/上限/剩余的完整口径在各列 title 与下方 hint）
+      head: { name: '物品', cost: '单价', bought: '已抢', max: '上限', stock: '剩余' },
+      boughtText: goodsBoughtText,
+      boughtTitle: '该商品本期已买次数，成交后自动刷新',
       // stockText：末列「商品总数量」= 该商品在全部商店的剩余之和（只读数，随 2442/2443/2444 回写就地刷新）
       stockText: goodsStockText,
-      stockTitle:
-        '该商品在全部密所的剩余可买之和：逐所逐 cfg 行 max(0, buy_limit_all − buyCnt[cfg]) 相加（只算 status≤2 的所，' +
-        '红包期/已结束买不到不计）；尚未拿到快照显 —，不猜数',
+      stockTitle: '该商品在全部密所的剩余可买之和（红包期/已结束不计）',
       summary: goodsSummary,
-      topHint: '可拖拽排序，越靠前越先抢；取消勾选=不抢；💎N = 单件钻石价；末列 = 全部商店剩余之和',
-      hint:
-        '一行一个**商品**（品种+数量，如「橙色万能碎片x15」与「橙色万能碎片x3」是两个商品）；' +
-        '同一商品在普通城/高级城各占一档时合并成一行（勾选共用、剩余量相加），下单仍逐 (所,cfg 行) 发。' +
-        '行集 = 密所货架表上出现的全部商品（不分等级、不分所：普通城 1–11 / 高级城 101–111，实测每所随机缺 1–2 件）；' +
-        '红色 💎N 是单件钻石价（表行 need_gold，游戏 ResourceType.Gold 实为钻石），末列是全部商店该商品剩余之和。' +
-        '优先级只在同时可售的多件之间决定下单顺序，不改变闸门判定；下单件数只由「本期总额度」一道闸控制。',
+      topHint: '拖拽排序=优先级；取消勾选=不抢；∞=不限',
+      hint: '一行一个商品（品种+数量，如 x15 与 x3 是两件）；数字=本期总上限（含已抢），∞=不限。',
     },
     {
       key: 'nearPollSec',
@@ -1514,16 +1570,13 @@ function buildFields() {
       min: 1,
       max: 60,
       step: 1,
-      hint: '存在 status=1（待开市）的所时用此快档轮询，专门自愈漏收的开市 push；开市无可提前量，只能靠快轮询补捕（静默档固定 60s，不在面板调）',
+      hint: '仅用于待开市自检；开市后实时抢购。',
     },
     {
       // 说明行用 type:'note'（fields.js 的 renderCheckbox 不消费 topHint/hint，挂在上面会静默不渲染）
       key: '_shopNote',
       type: 'note',
-      text:
-        '开市信号只有 push 22030（实测与 status 1→2 同秒、且无可提前量：开市是城主手动动作），' +
-        '故贴脸路径为「push → 本地翻牌 + 并行一条 2443 单所快查 → 不等应答管线化下单」；轮询仅用于漏收自愈。' +
-        '下单间隔（100ms）、兜底轮询（60s）、单次下单上限（=本期剩余额度）、启用抢购与顺带领红包均为系统值，不在面板调。',
+      text: '下单节奏、本期额度、红包领取等均由系统自动控制；你只需配置优先级与逐商品上限。',
     },
   ];
 }
@@ -1537,7 +1590,8 @@ function buildFields() {
  * 存档迁移（商品化改造的兼容点）：旧存档 goods 以纯 cfg 档号（'7' / '105'）为键，这里按当前表上的商品集
  *   把它们并到商品键下——**同一商品的任一 cfg 档曾被取消勾选即整体视为取消**（AND 语义：宁可少买，
  *   不越权买用户明确关掉的货）；表不可读时 goodsPool 退成占位键，同样从同名占位/旧 cfg 键承接。
- * 注：只保留勾选位 on——旧存档里的 per-cfg `max`（已废弃的「购买上限」输入）到此直接丢弃，不再参与闸门。
+ * 注：max 只承接**商品键**登记的值（新 UI 的「本期总上限」）；旧存档 per-cfg 键下的 `max`
+ *   （已废弃的旧「购买上限」输入，语义不同）不复活，随旧键一并丢弃。
  * @param {object} c 面板合并后配置
  * @returns {object}
  */
@@ -1549,7 +1603,10 @@ function normalizeCfg(c) {
   for (var i = 0; i < pool.length; i++) {
     var pk = String(pool[i].id);
     var e = raw[pk];
-    goods[pk] = { on: e ? e.on !== 0 : !anyOff(raw, pool[i].cfgs) };
+    goods[pk] = {
+      on: e ? e.on !== 0 : !anyOff(raw, pool[i].cfgs),
+      max: Math.max(0, Math.floor(Number(e && e.max) || 0)),
+    };
   }
   return {
     goods: goods,
