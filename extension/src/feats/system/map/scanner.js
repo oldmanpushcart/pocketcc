@@ -57,15 +57,6 @@ function safeParse(s) {
 }
 
 /**
- * 扫描网格维度：定标固定格（见 map-meta.SCAN_GRID），不再按面板块尺寸均分全图。
- * 保留函数签名供旧调用点使用。
- * @returns {{nx:number, ny:number}}
- */
-export function gridDims() {
-  return { nx: SCAN_GRID.nx, ny: SCAN_GRID.ny };
-}
-
-/**
  * 构造块队列（定标固定格 SCAN_GRID）：每块同时携带 game 矩形（901 请求用）与 cell 矩形（渲染/高亮用）。
  * 缺省蛇形推进 = 行内向东、隔行反向，逐行向南；
  * 给定 startBlock{i,j} 则从该块**继续按蛇形顺序往下扫**：队列旋转到该块起始，
@@ -271,12 +262,4 @@ export function progress() {
 /** @returns {number} 本轮生效的服务器号 k（跳转时复用，0=未定） */
 export function currentK() {
   return curK;
-}
-
-/**
- * 热设视口层级（高度）：不改队列，仅影响后续块的 901 viewLevel（下一块即生效）。
- * @param {number} lv 0~4
- */
-export function setViewLevel(lv) {
-  cfg.viewLevel = Math.max(0, Math.min(4, lv | 0));
 }

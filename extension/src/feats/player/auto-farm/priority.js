@@ -414,19 +414,3 @@ export async function findUpgrade(cur, families, kinds, taken, opt) {
   }
   return null;
 }
-
-/** 取田优先级模块单例（rankOf/blacklist 已具名导出，这里只留聚合入口给探针用） */
-export const priority = {
-  rankOf,
-  FAMILY_RANK,
-  sortFamilies,
-  allowedKinds,
-  inferKind,
-  inferLevel,
-  inferFacility,
-  marchTypeOf,
-  wantsNormalProbe,
-  pickBest,
-  findUpgrade,
-  blacklist,
-};

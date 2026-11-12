@@ -94,11 +94,6 @@ export function reset() {
   memoSeq++;
 }
 
-/** 棋盘骨架是否仍在节流窗内（供 index.js 的 debug 与 stealTick 的「睡到下次刷新」判据）。 */
-export function boardFresh() {
-  return !!board && Date.now() - boardAt < BOARD_REFRESH_MS;
-}
-
 /** 当前棋盘骨架（纯读，可能为 null=尚未刷出）。 */
 export function boardState() {
   return board;

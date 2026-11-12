@@ -119,35 +119,6 @@ export const SUB_MAP = (() => {
   return m;
 })();
 
-/** @type {string[]} 全部细分类 key（声明序） */
-export const ALL_SUB_KEYS = FILTER_TREE.reduce((a, c) => {
-  for (const s of c.subs) a.push(s.key);
-  return a;
-}, []);
-
-/** @type {Object<string,{key:string,label:string,subs:Array}>} 大类 key → 大类项 */
-export const CAT_MAP = (() => {
-  const m = {};
-  for (const c of FILTER_TREE) m[c.key] = c;
-  return m;
-})();
-
-/**
- * 筛选分组（由 FILTER_TREE 派生·单一真相）：cat.key → { label, types }（组内各细分类 match.types 并集）；
- * 'other' 兑底未收录类型。与图例/面板同源，改 FILTER_TREE 自动同步，两套表不再漂移。
- * @type {Object<string,{label:string, types:number[]}>}
- */
-export const POINT_GROUPS = (() => {
-  const g = {};
-  for (const cat of FILTER_TREE) {
-    const set = new Set();
-    for (const s of cat.subs) for (const t of s.match.types || []) set.add(t);
-    g[cat.key] = { label: cat.label, types: Array.from(set) };
-  }
-  g.other = { label: '其他', types: [] };
-  return g;
-})();
-
 /**
  * pointType → 该类型候选细分类（按声明序）。classifyPoint 只遍历同类型的候选，O(命中数) 而非全树。
  * @type {Object<number, Array>}

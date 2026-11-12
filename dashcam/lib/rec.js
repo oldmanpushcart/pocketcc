@@ -45,16 +45,6 @@ export function innerOf(o) {
   return d;
 }
 
-/** long.js Int64 bits（{_low,_high}）→ double 毫秒/数值；标量原样回 Number。 */
-export function int64Num(v) {
-  if (v == null) return 0;
-  if (typeof v === 'object' && ('_low' in v || '_high' in v)) {
-    const lo = v._low < 0 ? v._low + 4294967296 : v._low || 0;
-    return (v._high || 0) * 4294967296 + lo;
-  }
-  return Number(v) || 0;
-}
-
 /** 按 'a.b[].c' 路径取标量（数组取首个命中）；取不到回 undefined。 */
 export function pickPath(obj, path) {
   const parts = String(path).split('.');

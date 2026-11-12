@@ -99,16 +99,13 @@ const log = createLog('QUICK-REPAIR');
 const CMD_GET_QUICK_REPARE = 1785;
 /** @type {number} RequestId.ARMY_HEAL_LIST，本地批量修理（服务器自动优先扣免费额度） */
 const CMD_ARMY_HEAL_LIST = 220;
-/** @type {number} RequestId.ARMY_HEAL，本地单条修理 */
-const CMD_ARMY_HEAL = 206;
 /** @type {number} RequestId.GET_CROSS_HOSPITAL_QUEUES，跨服战场医院队列权威读 */
 const CMD_GET_CROSS_HOSPITAL_QUEUES = 1426;
 /** @type {number} RequestId.ARMY_CROSS_HEAL，跨服/雷神修理（消耗材料） */
 const CMD_ARMY_CROSS_HEAL = 1427;
 /** @type {number} RequestId.ORDER_QUEUE_ING_DONE，钻石加速本地全部在修队列 */
 const CMD_ORDER_QUEUE_ING_DONE = 151;
-/** @type {number} RequestId.ORDER_QUEUE_SPEED_UP，钻石加速本地单条在修队列 */
-const CMD_ORDER_QUEUE_SPEED_UP = 124;
+// CMD_ORDER_QUEUE_SPEED_UP(124) RequestId.ORDER_QUEUE_SPEED_UP：钻石加速本地单条在修队列（本 feat 全量 151 口径，不适用单条，备查）。
 /** @type {number} RequestId.SPEEDUP_CROSS_HOSPITAL_QUEUE_BY_GOLD，钻石加速跨服队列 */
 const CMD_SPEEDUP_CROSS_GOLD = 1428;
 /** @type {number} RequestId.ITEM_USE，使用道具（医院加速道具走这一条） */
@@ -185,27 +182,13 @@ const PUSH_TM_HOSPITAL_CHANGE = 21211;
 const PUSH_MASTER_HOSPITAL_CHANGE = 21465;
 /** @type {number} push TEAM_LEGEND_HOSPITAL_CHANGE：Legend 战场医院队列变化（ResponseId 实证；成员名无 CAB 段但指向同族 handler） */
 const PUSH_LEGEND_HOSPITAL_CHANGE = 21562;
-
-/**
- * 无双模式 → 队列变化 push 号（run 期按当拍模式订阅；仅当唤醒提示，多订无副作用）。
- * @type {Object<string, number>}
- */
-const AVA_MODE_PUSH = {
-  ava: PUSH_AVA_HOSPITAL_CHANGE,
-  tm: PUSH_TM_HOSPITAL_CHANGE,
-  master: PUSH_MASTER_HOSPITAL_CHANGE,
-  legend: PUSH_LEGEND_HOSPITAL_CHANGE,
-};
+// AVA_MODE_PUSH 聚合表未使用（run 期直接 ctx.on.push 四个 PUSH_* 周flag，不需要模式→push 映射）。
+//   ava→21203 / tm→21211 / master→21465 / legend→21562（与上行同名同值，备查）。
 
 /** @type {number} ItemType.HospitalSpeedItem（ITEM 表 type 列）：医院加速道具 */
 const ITEM_TYPE_HOSPITAL_SPEED = 12;
 
-/**
- * GameDefine.ArmyType 三值（源码逐字镜像，作常量字面而不声明硬依赖——改版换值时相关分支
- * 只会退成「不带 armyType 的全量加速」，不会误发写动作）。
- * @type {{Land:number, Sea:number, Air:number}}
- */
-const ARMY_TYPE = { Land: 101, Sea: 201, Air: 301 };
+// GameDefine.ArmyType 三值（Land:101 / Sea:201 / Air:301）——本 feat 不拆军种发包（全量加速不带 armyType），仅备查。
 
 /** @type {number} 本地伤兵队列在 OrderQueues 里的 type 值（源码 getOrderQueuesByType(1)） */
 const ORDER_TYPE_HEAL = 1;
@@ -229,13 +212,6 @@ const INTER_SEND_MS = 1000;
 
 /** @type {number} 连续被服务器拒绝多少次后退巡检档 */
 const REJECT_STREAK_LIMIT = 3;
-
-/** @type {number} 快修额度的 ret[] 兵种族 id（实测 10001 陆 / 10002 海 / 10003 空） */
-const THOR_GROUP_LAND = 10001;
-/** @type {number} ret[] 海军族 id */
-const THOR_GROUP_NAVY = 10002;
-/** @type {number} ret[] 空军族 id */
-const THOR_GROUP_AIR = 10003;
 
 /**
  * 内置调优常量（面板不出这些项）
@@ -338,19 +314,6 @@ function quickFields(info) {
     airThorFreeLeft: left('airThor_max', 'airThor_use'),
     groupNum: groupNum,
   };
-}
-
-/**
- * 择时判据（源码 WareHouseControllerNew.getQuickRepairTipsType 逐字镜像）。
- * @param {number} wait 待修数量
- * @param {number} [max] 免费额度上限（undefined=取不到）
- * @param {number} [use] 已用额度（undefined=取不到）
- * @returns {string} 'NoCanRepair' | 'AllCanRepair' | 'PartCanRepair'
- */
-function tipsType(wait, max, use) {
-  if (max === undefined || use === undefined) return 'NoCanRepair';
-  if (wait <= 0 || max <= 0 || max - use <= 0) return 'NoCanRepair';
-  return max - use >= wait ? 'AllCanRepair' : 'PartCanRepair';
 }
 
 /**
@@ -799,6 +762,7 @@ function filterAffordable(costs, holdingOf) {
 
 /**
  * 挑一枚医院加速道具：只在持有量 > keepItemNum 的候选间比较，取持有最多者，并列取 id 小者（确定性）。
+ * ⚠ 面板「道具保留下限」闸门已废弃（见头部“日常任务形态”条目），生产调用恒传 0；形参与分支保留仅供测试与向后兼容。
  * @param {Array<{id:number, amount:number}>} held 候选道具（ITEM 表 type=12 的持有行）
  * @param {number} keepItemNum 保留下限（低于/等于该值不动用）
  * @returns {{itemId:number, amount:number, usable:number}|null}
@@ -840,7 +804,7 @@ function itemSpeedParam(cross, queueId, armyType) {
  * 决策一轮：按开关分层产出「要发的写动作」，不过的分支带 reason（供静默期归因）。
  * 本函数纯判据、无副作用；去重与发包在 execAction。治疗层与加速层拆开（planHealActions/planSpeedActions），
  * 便于治疗落地后在同一拍内重读在修态只补跑加速层（见 planOnce 修正十四②）。
- * @param {object} snap {quotas, commonIds, thorIds, crossIds, repairing, localQueues, crossQueues, gold, speedItem, ratePerMin, mcfg}
+ * @param {object} snap {quotas, commonIds, thorIds, crossIds, repairing, localRepairing, crossRepairing, gold, speedItem, ratePerMin, mcfg, avaMode, avaWaitIds, avaRepairingIds, …}
  * @returns {{actions:Array<{kind:string, body:object, fp:string, goldCost?:number, label:string}>, reasons:string[]}}
  */
 function planActions(snap) {
@@ -1554,27 +1518,6 @@ function prunePendingByExit(tag, activeSet) {
 // ─────────────────────────── 发包 ───────────────────────────
 
 /**
- * 从 220 治疗成功应答里提取「已清空（orderId="0"）」的队列 id 集合。
- * @param {object} ret net.sendGuarded 结果
- * @returns {Object<string,boolean>|null} id → true；无可用 queues 结构时返回 null
- */
-function healedIdsFromResp(ret) {
-  var d = parseData(ret && ret.data);
-  var qs = d && d.queues;
-  if (!Array.isArray(qs)) return null;
-  var set = null;
-  for (var i = 0; i < qs.length; i++) {
-    var q = qs[i];
-    if (!q || typeof q !== 'object') continue;
-    if (String(q.orderId) === '0') {
-      if (!set) set = Object.create(null);
-      set[String(q.id)] = true;
-    }
-  }
-  return set;
-}
-
-/**
  * 判定一个失败应答是否为治疗批量的 `param error`（common_159995）。
  * 220/1427 原子批量含无效/空槽（陈旧幻影）时整批被此码拒绝。用于触发逐 id 隔离重发与幻影延长抑制。
  * @param {object|null} ret net.sendGuarded 结果（失败态）
@@ -1595,7 +1538,8 @@ function isHealBatchCmd(cmd) {
 
 /**
  * 本地队列类动作 ⇒ 成功后需把服务器应答的权威队列回灌 `UserData`（消除幻影）。
- * 仅覆盖本地流：220（heal-local / heal-local-thor）、151（speed-gold-local）、815 param=null（speed-item-local）。
+ * 仅覆盖本地流：220（heal-local / heal-local-thor / heal-local-resource）、151 钻石全量（speed-gold-local）。
+ * 本地道具 815（speed-item-local）不在表内：其实应答仅 {itemId,amount}、不含队列，无东西可回灌，幻影靠下拍 push 10120 确认读。
  * 跨服流（heal-cross / speed-gold-cross / speed-item-cross）不回灌——战场队列由 1426/push 权威刷新。
  * @type {Object<string, true>}
  */
@@ -1604,7 +1548,6 @@ var LOCAL_SYNC_KINDS = {
   'heal-local-thor': true,
   'heal-local-resource': true,
   'speed-gold-local': true,
-  'speed-item-local': true,
 };
 
 /**
@@ -1928,7 +1871,6 @@ async function snapshot() {
     crossIds: crossIds,
     crossKeys: crossWaitKeys(crossData),
     crossSkipped: crossSkipped,
-    localQueues: queues,
     localRepairing: localRepairing,
     crossRepairing: crossRepairing,
     repairing: localRepairing + crossRepairing,
@@ -1943,7 +1885,6 @@ async function snapshot() {
     avaWaitIds: avaW,
     avaRepairingIds: avaR,
     avaRepairingLeftSec: avaRepairingLeftSec(avaList, serverTime),
-    avaBusy: avaW.length + avaR.length,
     avaGoldMult: mode ? avaGoldMultOf(mode) : 0,
     avaSpeedItem: mode ? avaSpeedItemInfo() : null,
   };
@@ -1986,7 +1927,6 @@ function speedSnapshotAfterHeal(snap) {
   var serverTime = gameData.serverTime ? gameData.serverTime() : 0;
   var local = repairingLeftSec(queues, serverTime);
   return Object.assign({}, snap, {
-    localQueues: queues,
     localRepairing: local,
     // 与 localRepairing 同源同拍重算 state1 活跃 id 集：刚治好转入 state1 的队列必须进入全量加速动作的 pendingTokens，
     //   否则成功后 markPending 漏登记它们→下拍仍见其 state1 即第二枪（双花钻石/重烧道具）。
@@ -2179,7 +2119,6 @@ reactor.register({
 export {
   normalize,
   quickFields,
-  tipsType,
   isThorArmy,
   splitWaitIds,
   localWaitTokenSet,
@@ -2189,7 +2128,6 @@ export {
   crossWaitKeySet,
   crossRepairingIds,
   crossRepairingIdSet,
-  healedIdsFromResp,
   isParamErrorRet,
   isHealBatchCmd,
   LOCAL_SYNC_KINDS,
@@ -2216,11 +2154,10 @@ export {
   cfg,
   CMD_GET_QUICK_REPARE,
   CMD_ARMY_HEAL_LIST,
-  CMD_ARMY_HEAL,
   CMD_GET_CROSS_HOSPITAL_QUEUES,
   CMD_ARMY_CROSS_HEAL,
   CMD_ORDER_QUEUE_ING_DONE,
-  CMD_ORDER_QUEUE_SPEED_UP,
+  
   CMD_SPEEDUP_CROSS_GOLD,
   CMD_ITEM_USE,
   CMD_AVA_ASK,
@@ -2246,17 +2183,14 @@ export {
   PUSH_TM_HOSPITAL_CHANGE,
   PUSH_MASTER_HOSPITAL_CHANGE,
   PUSH_LEGEND_HOSPITAL_CHANGE,
-  AVA_MODE_PUSH,
+  
   FP_FAMILY,
   isPending,
   markPending,
   prunePendingByExit,
   HEAL_LANES,
-  ARMY_TYPE,
+  
   ITEM_TYPE_HOSPITAL_SPEED,
   ORDER_TYPE_HEAL,
   CFG_GOLD_PER_MIN,
-  THOR_GROUP_LAND,
-  THOR_GROUP_NAVY,
-  THOR_GROUP_AIR,
 };

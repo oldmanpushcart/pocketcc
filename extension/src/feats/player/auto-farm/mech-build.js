@@ -100,11 +100,8 @@ const MARCH_TYPE_BUILD = 25;
 const TOWER_STATE_BUILDING = 2;
 /** @type {number} TowerState.COMPLETE：已建成（可采，也是「建成立即撤回」的触发态） */
 const TOWER_STATE_COMPLETE = 3;
-/**
- * @type {number} 建塔单兵行军「到达并开工」态（实证 10019 state 1→11→5；march.js 的 State 枚举无此项，
- * 完工判定仍以塔 st===3 为准，本常量只供探针/真机对拍引用，不参与决策）。
- */
-export const MARCH_STATE_BUILDING = 11;
+// MARCH_STATE_BUILDING(11)：建塔单兵行军「到达并开工」态（实证 10019 state 1→11→5；march.js 的 State 枚举无此项，
+//   完工判定仍以塔 st===3 为准，本常量历史上仅供探针/真机对拍引用，当前无消费者——备查）。
 /** @type {number} 实体类型：资源田（901/906 pointType=4，建塔落点必须是田点） */
 const POINT_TYPE_FIELD = 4;
 /** @type {number} 906 搜索分类 pointType：资源 tab（1野怪/2资源/3集结/4国宝），与普通田搜索同口径 */

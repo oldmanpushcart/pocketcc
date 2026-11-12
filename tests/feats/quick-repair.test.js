@@ -35,7 +35,6 @@ const mod = await import('../../extension/src/feats/player/quick-repair.js');
 const {
   normalize,
   quickFields,
-  tipsType,
   isThorArmy,
   splitWaitIds,
   localWaitTokenSet,
@@ -44,7 +43,6 @@ const {
   crossWaitKeySet,
   crossRepairingIds,
   crossRepairingIdSet,
-  healedIdsFromResp,
   isParamErrorRet,
   isHealBatchCmd,
   LOCAL_SYNC_KINDS,
@@ -157,16 +155,6 @@ test('quickFields：额度取负钳 0；非对象/键缺失返回 null', () => {
   assert.equal(quickFields({}), null); // 两个关键键都缺 → 判为不可用
 });
 
-// ─────────────────────────── tipsType（源码 getQuickRepairTipsType 镜像）───────────────────────────
-test('tipsType：wait/max/use 任一非法→NoCanRepair；max-use>=wait→AllCanRepair；否则 PartCanRepair', () => {
-  assert.equal(tipsType(0, 77, 0), 'NoCanRepair'); // wait<=0
-  assert.equal(tipsType(5, 0, 0), 'NoCanRepair'); // max<=0
-  assert.equal(tipsType(5, 10, 10), 'NoCanRepair'); // max-use<=0
-  assert.equal(tipsType(5, 10, 3), 'AllCanRepair'); // 剩 7>=5
-  assert.equal(tipsType(5, 10, 7), 'PartCanRepair'); // 剩 3<5
-  assert.equal(tipsType(5, undefined, 0), 'NoCanRepair'); // 取不到 max
-});
-
 // ─────────────────────────── isThorArmy ───────────────────────────
 test('isThorArmy：Data.thor_group>0 为雷神；拿不到部队/无 Data 保守 false（漏修不可因判据缺失）', () => {
   assert.equal(isThorArmy({ Data: { thor_group: 2 } }), true);
@@ -245,29 +233,6 @@ test('splitWaitIds：同一部队（id+orderId 相同）再次受伤（endTime �
   assert.equal(stale.commonKeys[0], first.commonKeys[0]);
 });
 
-// ─────────────────────── healedIdsFromResp（成功治疗后的空槽识别）───────────────────────
-test('healedIdsFromResp：应答 queues 里 orderId==="0" 的 id 计入已清空；非零 orderId/无结构不计', () => {
-  const ret = {
-    data: {
-      queues: [
-        { id: 'A', orderId: '0' }, // 已修→空槽
-        { id: 'B', orderId: '0' }, // 已修→空槽
-        { id: 'C', orderId: '999' }, // 仍在修，不算
-      ],
-    },
-  };
-  const set = healedIdsFromResp(ret);
-  assert.equal(set['A'], true);
-  assert.equal(set['B'], true);
-  assert.equal(set['C'], undefined);
-  // 字符串载荷也可解（JSON 串）
-  const set2 = healedIdsFromResp({ data: '{"queues":[{"id":"X","orderId":"0"}]}' });
-  assert.equal(set2['X'], true);
-  // 无 queues 结构 → null（不抛）
-  assert.equal(healedIdsFromResp(null), null);
-  assert.equal(healedIdsFromResp({ data: {} }), null);
-});
-
 // ─────────────────── isParamErrorRet / isHealBatchCmd（治疗批量 param error 隔离触发的纯判据）───────────────────
 test('isParamErrorRet：拒绝原因含 common_159995 → true（无论落在 reason 还是 data）；其他错误码/空 → false', () => {
   assert.equal(isParamErrorRet({ reason: 'common_159995' }), true);
@@ -285,13 +250,14 @@ test('isHealBatchCmd：220/1427 为原子批量治疗（需隔离）；其余写
   assert.equal(isHealBatchCmd(CMD_ORDER_QUEUE_ING_DONE), false);
 });
 
-test('LOCAL_SYNC_KINDS：仅本地队列流治疗后回灌 UpdateOrderQueues（除幻影）；跨服流不在表内', () => {
-  // 本地流：治疗 220 / 钻石加速 151 / 道具加速 815(param=null)
+test('LOCAL_SYNC_KINDS：仅本地 220/151 流回灌 UpdateOrderQueues（除幻影）；本地道具 815 应答不含队列不在表内；跨服流也不在', () => {
+  // 本地流：治疗 220 / 钻石全量加速 151
   assert.equal(LOCAL_SYNC_KINDS['heal-local'], true);
   assert.equal(LOCAL_SYNC_KINDS['heal-local-thor'], true);
   assert.equal(LOCAL_SYNC_KINDS['heal-local-resource'], true);
   assert.equal(LOCAL_SYNC_KINDS['speed-gold-local'], true);
-  assert.equal(LOCAL_SYNC_KINDS['speed-item-local'], true);
+  // 本地道具 815（speed-item-local）应答仅 {itemId,amount}、不含队列，无东西可回灌——幻影靠下拍 push 10120 确认读
+  assert.equal(LOCAL_SYNC_KINDS['speed-item-local'], undefined);
   // 跨服流：战场队列由 1426/push 权威刷新，绝不回灌本地 OrderQueues
   assert.equal(LOCAL_SYNC_KINDS['heal-cross'], undefined);
   assert.equal(LOCAL_SYNC_KINDS['speed-gold-cross'], undefined);

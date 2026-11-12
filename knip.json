@@ -1,0 +1,47 @@
+{
+  "$schema": "https://unpkg.com/knip@latest/schema.json",
+  "entry": [
+    "extension/src/content.entry.js",
+    "extension/src/background.js",
+    "extension/src/popup.js",
+    "extension/src/bridge.js",
+    "extension/src/anti-throttle.js",
+    "dashcam/server.js",
+    "dashcam/cli.js",
+    "dashcam/migrate-store.js",
+    "dashcam/repair-store.js",
+    "scripts/**/*.mjs",
+    "tests/**/*.test.js",
+    "esbuild.config.mjs"
+  ],
+  "project": [
+    "extension/src/**/*.{js,mjs}",
+    "dashcam/**/*.js",
+    "scripts/**/*.{mjs,cjs}",
+    "tests/**/*.js"
+  ],
+  "ignore": [
+    "extension/dist/**",
+    "release/**",
+    "warroom/**",
+    "references/**",
+    "tools/**",
+    ".reviewtmp/**",
+    ".replaytmp/**",
+    "dashcam/store/**",
+    "extension/src/feats/activity/secret-realm/constants.js",
+    "extension/src/feats/activity/cs-hunt/constants.js",
+    "extension/src/feats/activity/cs-hunt/skills.js",
+    "extension/src/feats/cq26/ice-shake.js",
+    "extension/src/feats/cq26/wl-beast.js",
+    "extension/src/feats/player/radar-task.js"
+  ],
+  "ignoreDependencies": [
+    "@types/chrome",
+    "jscpd"
+  ],
+  "ignoreExportsUsedInFile": true,
+  "rules": {
+    "types": "off"
+  }
+}

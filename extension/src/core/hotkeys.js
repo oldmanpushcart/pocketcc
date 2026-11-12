@@ -240,14 +240,6 @@ export function bind(binding) {
 }
 
 /**
- * 注销一条热键绑定（预留：目前热键常驻，不摘全局监听，只删该条）。
- * @param {string} id 绑定 id
- */
-export function unbind(id) {
-  bindings.delete(id);
-}
-
-/**
  * @typedef {object} HotkeyDoc 展示型键位（不参与 dispatch，仅进「快捷键一览」）
  * @property {string} id 唯一 id（与 bind 的 id 共用命名空间，避免重复展示）
  * @property {string} display 显示键名（如「F8」「Ctrl+K」）
