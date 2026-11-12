@@ -380,7 +380,10 @@ function ingestLog(headers, ndjson) {
           file = path.join(dir, `${LOG_PREFIX}${dayKey}-01.ndjson`);
         }
       } else {
-        const top = path.join(dir, `${LOG_PREFIX}${dayKey}-${String(maxSeg).padStart(2, '0')}.ndjson`);
+        const top = path.join(
+          dir,
+          `${LOG_PREFIX}${dayKey}-${String(maxSeg).padStart(2, '0')}.ndjson`,
+        );
         file =
           fs.existsSync(top) && fs.statSync(top).size > LOG_MAX_SEG && maxSeg < 99
             ? path.join(dir, `${LOG_PREFIX}${dayKey}-${String(maxSeg + 1).padStart(2, '0')}.ndjson`)

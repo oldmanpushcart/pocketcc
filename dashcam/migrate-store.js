@@ -78,13 +78,15 @@ function migrateRec() {
     const newDir = path.join(OUT, REC_SUB, uid);
     const files = fs.readdirSync(oldDir);
     const recFiles = files.filter(
-      (f) => f.endsWith('.ndjson') && f !== OLD_INDEX_NAME && !f.startsWith(REC_PREFIX)
+      (f) => f.endsWith('.ndjson') && f !== OLD_INDEX_NAME && !f.startsWith(REC_PREFIX),
     );
     const partFiles = recFiles.filter((f) => f.endsWith('.part.ndjson'));
     const bldFiles = recFiles.filter((f) => !f.endsWith('.part.ndjson'));
     const auxFiles = files.filter((f) => !f.endsWith('.ndjson'));
 
-    say(`  uid=${uid}: 定稿 ${bldFiles.length}、.part ${partFiles.length}、杂项 ${auxFiles.length}`);
+    say(
+      `  uid=${uid}: 定稿 ${bldFiles.length}、.part ${partFiles.length}、杂项 ${auxFiles.length}`,
+    );
 
     // 目标名 = REC_PREFIX + 原名（原名唯一，加前缀后仍唯一，无冲突）
     const moves = [];
@@ -175,7 +177,9 @@ function rewriteIndex(uid, oldDir, newDir, movedBld, movedPart) {
   }
   if (dropped) problems.push(`索引含 ${dropped} 条坏行已丢弃 uid=${uid}`);
   const outIdx = path.join(newDir, INDEX_NAME);
-  say(`    重写索引 → ${path.relative(OUT, outIdx)}（${rows.length} 行${movedPart ? `，含 ${movedPart.length} 个 .part 未入索引` : ''}）`);
+  say(
+    `    重写索引 → ${path.relative(OUT, outIdx)}（${rows.length} 行${movedPart ? `，含 ${movedPart.length} 个 .part 未入索引` : ''}）`,
+  );
   if (APPLY) {
     const text = rows.map((r) => JSON.stringify(r)).join('\n') + (rows.length ? '\n' : '');
     const tmp = outIdx + '.tmp';
@@ -247,7 +251,10 @@ function migrateLog() {
             roll();
             seq++;
             curBytes = 0;
-            outPath = path.join(dstDir, `${LOG_PREFIX}${day}-${String(seq).padStart(2, '0')}.ndjson`);
+            outPath = path.join(
+              dstDir,
+              `${LOG_PREFIX}${day}-${String(seq).padStart(2, '0')}.ndjson`,
+            );
             daySegs.push(outPath);
           }
           if (APPLY) {
@@ -269,14 +276,14 @@ function migrateLog() {
       uidIn += dayLines;
       stats.logDaysMerged++;
       say(
-        `    uid=${uid} ${day}: ${items.length} 段并入 → ${LOG_PREFIX}${day}${seq ? `-${String(seq).padStart(2, '0')}` : ''}.ndjson（${dayLines} 行 / ${(dayBytes / 1024 / 1024).toFixed(2)}MB）`
+        `    uid=${uid} ${day}: ${items.length} 段并入 → ${LOG_PREFIX}${day}${seq ? `-${String(seq).padStart(2, '0')}` : ''}.ndjson（${dayLines} 行 / ${(dayBytes / 1024 / 1024).toFixed(2)}MB）`,
       );
     }
     // 校验：APPLY 时回读实际写出的段文件行数（而非自比自），与源行数比对
     if (APPLY) uidOut = countNdjsonLines(outPaths);
     else uidOut = uidIn; // dry-run 预演：假设写侧不丢失
     say(
-      `  uid=${uid} 源 ${uidIn} 行 → 目标 ${uidOut} 行（${uidIn === uidOut ? '一致' : '不一致!'}${APPLY ? '' : '，预演'}）`
+      `  uid=${uid} 源 ${uidIn} 行 → 目标 ${uidOut} 行（${uidIn === uidOut ? '一致' : '不一致!'}${APPLY ? '' : '，预演'}）`,
     );
     if (uidIn !== uidOut) problems.push(`日志行数不一致 uid=${uid}：源 ${uidIn} 目标 ${uidOut}`);
     // 校验通过才删旧
@@ -334,19 +341,21 @@ function main() {
   migrateLog();
   say('\n== 汇总 ==');
   say(
-    `  报文定稿改名 ${stats.recMoved}，.part 改名 ${stats.recPartMoved}，杂项搬运 ${stats.auxMoved}，索引重写 ${stats.indexRewritten}`
+    `  报文定稿改名 ${stats.recMoved}，.part 改名 ${stats.recPartMoved}，杂项搬运 ${stats.auxMoved}，索引重写 ${stats.indexRewritten}`,
   );
   say(
-    `  日志并天段 ${stats.logDaysMerged} 天，写出段 ${stats.logSegWritten}，旧小时文件删除 ${APPLY ? stats.logFilesDeleted : '≈' + stats.logFilesDeleted + '(待删)'} `
+    `  日志并天段 ${stats.logDaysMerged} 天，写出段 ${stats.logSegWritten}，旧小时文件删除 ${APPLY ? stats.logFilesDeleted : '≈' + stats.logFilesDeleted + '(待删)'} `,
   );
   if (problems.length) {
     say(`\n⚠ 问题 ${problems.length} 条：`);
     for (const p of problems) say('  - ' + p);
     process.exitCode = 2;
   } else {
-    say('\n无冲突/异常。' + (APPLY ? '迁移完成。' : '（这是预演，实际未改动任何文件。加 --apply 执行。）'));
+    say(
+      '\n无冲突/异常。' +
+        (APPLY ? '迁移完成。' : '（这是预演，实际未改动任何文件。加 --apply 执行。）'),
+    );
   }
 }
 
 main();
-
