@@ -1713,7 +1713,7 @@ reactor.register({
       type: 'farmrules',
       familyOptions: RULE_OPTS.familyOptions,
       presetOptions: RULE_OPTS.presetOptions,
-      hint: '一行 = 一支队伍去匹配资源：优先级 种类（遗迹 > 机械 > 普通）> 家族（雷神 > 石油=粮食 > 金矿）> 资源等级 > 机械设施等级，发现更高 rank 的田会撤田换田（家族优先，故石油 5 级会让位雷神 3 级）；遗迹田一旦站上就永不撤回（也不参与抢田换田）。遗迹田由「遗迹区域刷新」邮件驱动扫图（4 小时有效期）',
+      hint: '一行=一支队伍匹配资源：优先级 种类（遗迹>机械>普通）>家族（雷神>石油=粮食>金矿）>等级；发现更优会撤田换田，遗迹田站上后永不撤回。',
     },
     {
       key: 'mechBuildEnabled',
@@ -1721,7 +1721,7 @@ reactor.register({
       type: 'checkbox',
       // 面板分段：本行与下行「建造家族」自成一块，靠 section 头的上边框与上下两块隔开
       section: '机械田自动建造',
-      hint: '同族恒保 1 座；受下田时段控制，时段外/取消勾选会先拉 1031 再对在建塔逐座 1032 取消（已建成塔保留）；建成立即撤回单兵（固定行为）。关掉整张「自动下田」卡不会取消在建',
+      hint: '同族恒保 1 座；受下田时段控制，时段外/取消勾选会撤回在建塔（已建成保留）；建成立即撤回单兵。关掉整卡不会取消在建。',
     },
     {
       key: 'mechBuildFamilies',
@@ -1731,7 +1731,7 @@ reactor.register({
       showIf: function (c) {
         return !!c.mechBuildEnabled;
       },
-      hint: '机械大师职业下可选的资源家族；每族同保 1 座，到期前自动补建。与上表「资源类型」互不牵连：建造是联盟公共福利，不按队伍走',
+      hint: '机械大师可选的资源家族；每族恒保 1 座，到期前自动补建。建造是联盟公共福利，与队伍配置互不牵连。',
     },
     {
       key: 'timeWindowEnabled',
@@ -1747,7 +1747,7 @@ reactor.register({
       showIf: function (c) {
         return !!c.timeWindowEnabled;
       },
-      hint: '仅在所列时段内下田；时段外逐条撤回机械/普通田，直到下个时段到来。遗迹田不受时段限制（既不撤回，也照常补下）。开始>结束视为跨午夜',
+      hint: '仅在所列时段内下田；时段外撤回机械/普通田，遗迹田不受限。开始>结束视为跨午夜。',
     },
   ],
   toModuleCfg: function (c) {

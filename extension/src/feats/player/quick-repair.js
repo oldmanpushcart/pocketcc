@@ -2093,19 +2093,19 @@ reactor.register({
       key: 'thorRepair',
       label: '修理雷神兵',
       type: 'checkbox',
-      hint: '雷神兵与跨服战场医院伤兵走 1427，实测伴随资源/材料扣减；本号雷神免费额度为 0，开了就是真花材料，默认关',
+      hint: '雷神兵与跨服医院伤兵：修理真花材料（无免费额度），默认关。',
     },
     {
       key: 'speedGold',
       label: '使用钻石修',
       type: 'checkbox',
-      hint: '对「修理中」队列发 151（本地）/1428（跨服）全额完成；无双战场改发 6312 {ids,useGold:1}；花费按 DATACONFIG 61017 每分钟价估算（无双再乘模式倍率 1663543 等），钻石余额不足即跳过',
+      hint: '对「修理中」队列一键全额完成；花费按每分钟价估算，钻石不足即跳过。',
     },
     {
       key: 'speedItem',
       label: '使用道具修',
       type: 'checkbox',
-      hint: '发 815 ITEM_USE（param 按源码 SpeedCDPanel 编码：本地全量 null、跨服全量 "1|0"）用医院加速道具缩短在修队列；枚数按「在修剩余秒和 ÷ 单枚秒数」一次折算发足（服务器把 amount 当时间池按队首贪心消耗），不必逐枚连点；无双战场改发 6312 {ids,itemId:15100046,num,useGold:0}；只要背包持有即动用',
+      hint: '用医院加速道具缩短在修队列：按剩余时间一次折算发足，不必逐枚连点；只要背包持有即动用。',
     },
   ],
   toModuleCfg: function (c) {
@@ -2157,7 +2157,6 @@ export {
   CMD_GET_CROSS_HOSPITAL_QUEUES,
   CMD_ARMY_CROSS_HEAL,
   CMD_ORDER_QUEUE_ING_DONE,
-  
   CMD_SPEEDUP_CROSS_GOLD,
   CMD_ITEM_USE,
   CMD_AVA_ASK,
@@ -2183,13 +2182,11 @@ export {
   PUSH_TM_HOSPITAL_CHANGE,
   PUSH_MASTER_HOSPITAL_CHANGE,
   PUSH_LEGEND_HOSPITAL_CHANGE,
-  
   FP_FAMILY,
   isPending,
   markPending,
   prunePendingByExit,
   HEAL_LANES,
-  
   ITEM_TYPE_HOSPITAL_SPEED,
   ORDER_TYPE_HEAL,
   CFG_GOLD_PER_MIN,

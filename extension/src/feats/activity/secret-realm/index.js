@@ -956,7 +956,7 @@ reactor.register({
       topHint:
         '可拖拽排序，越靠前越先拾；拾取/商店=两个渠道勾选，数字=目标持有量（0=补/拾到携带上限）',
       items: buildPickPool,
-      hint: '拾取默认生效：当前刷新点位内掉落箱物品/宠物、资源点 bag 逐项 GET（受游戏 para1_v1、dataConfig 3021/3013/3061 总量上限）；「商店」勾选=商店补货渠道（同一个目标持有量，买/拾谁先到谁停），勾上任一项即自动开启补货（仅在队伍已停靠商店点时生效，引擎不主动开车）；无掉落来源的仅商店道具「拾取」置灰，不经商店售卖的道具（如异能晶块/人造水晶等货币、宠物）「商店」置灰',
+      hint: '拾取=自动捡掉落箱/资源点；商店=停店时自动补货，两者共用目标持有量（谁先到谁停）。置灰=该渠道不可用。',
     },
     {
       key: 'buffEffects',
@@ -966,14 +966,14 @@ reactor.register({
       stack: true,
       maxSelect: BUFF_SLOT_MAX,
       options: buildBuffOptions,
-      hint: '默认生效（空=不限即六类全要）；仅队长可装，三个槽位不重复同类（同 effect_buff 只在更强时等价替换），每轮最多装一枚',
+      hint: '空=六类全要；三槽不装同类、更强自动替换，每轮最多装一枚。仅队长生效。',
     },
     {
       key: 'healEnabled',
       type: 'checkbox',
       label: '开启编队治疗',
       section: '编队治疗',
-      hint: '对受伤军队使用治疗道具（消耗秘境背包，故默认关）：8584 拉血量 → 8534 一件一件用',
+      hint: '对受伤军队自动使用治疗道具（消耗秘境背包，故默认关）。',
     },
     {
       key: 'healThreshold',
@@ -982,7 +982,7 @@ reactor.register({
       section: '编队治疗',
       min: 0,
       step: 1,
-      hint: '某支军队掉血达此百分比才用道具（与游戏血条同口径 armyPower/maxArmyPower）',
+      hint: '某支军队掉血达此百分比才用道具。',
     },
     {
       key: 'healMaxPerTick',
@@ -991,7 +991,7 @@ reactor.register({
       section: '编队治疗',
       min: 1,
       step: 1,
-      hint: '一拍只发一件（与游戏逐件点击同口径），多拍累加；本值限单拍上限，防一次把背包打空',
+      hint: '单拍最多用几件，防一次把背包打空；多拍累加。',
     },
     {
       key: 'healItems',
@@ -1000,14 +1000,14 @@ reactor.register({
       section: '编队治疗',
       stack: true,
       options: buildHealOptions,
-      hint: '选项 = 游戏自己的白名单 dataConfig(3035)（41002 急救绷带 / 41003 全科医疗包）；空=按该白名单顺序逐件用',
+      hint: '选项=游戏治疗白名单（急救绷带/全科医疗包）；空=按白名单顺序逐件用。',
     },
     {
       key: 'warnEnabled',
       type: 'checkbox',
       label: '开启攻击警告应对',
       section: '攻击警告',
-      hint: '默认关（自动挪队风险最高）：push 21534 num>0（有其他队盯上我）时按下方选项处置；游戏警告面板只画红点、无撤离/应战按钮，故两选项均我们实装',
+      hint: '默认关（自动挪队风险最高）：被其他队盯上时按下方选项处置。',
     },
     {
       key: 'warnMode',
@@ -1018,14 +1018,14 @@ reactor.register({
         { value: 'transfer', label: '立即转移（默认）' },
         { value: 'stand', label: '抗争到底' },
       ],
-      hint: '立即转移=发 8521 去就近可行军的点（173 资源/174 平台/175 营帐/172 野怪——只取 10018 视口快照里未被 PVP 的最近一个，走过去即脱离拉线、不打野；快照里无则不凭空造目标）；仅队长可发、仅在停在非BOSS点(marchState=ARRIVED)才动，转移后 45s 静默。抗争到底=不发任何转移包，原地应战',
+      hint: '立即转移=自动撤到就近安全点（不打野）；抗争到底=原地应战。仅队长、停稳时生效。',
     },
     {
       key: 'driveEnabled',
       type: 'checkbox',
       label: '自动驾驶（自动开往资源点/BOSS/商店）',
       section: '自动驾驶',
-      hint: '默认关（主动挪队伍是全 feat 风险最高的动作族，不同于「到点即干活」的默认生效三件套）：开启后由统一方向盘决定下一个去哪——受击（21534 num>0）逃就近营帐且威胁解除后自动回攻原 BOSS 平台、BOSS 窗（state21 开打 / state22 读秒最后 60s）自动上 176 平台、商店档（缺香肠 41011<10 / 大BOSS 前勤务 / 每 5min 轮巡）开车到 161 店点、空闲巡航 173 资源/163 掉落箱、长期无货朝未探索方向开一段换视野。数据源=表格商店坐标+服务器 BOSS 权威坐标+901 主动拉视口（不再依赖 10018 镜头推送）。开启时接管 warn.js 的转移与 boss.js 非 BOSS 点的攻打行军（到平台后攻打仍归 boss.js）；仅队长可发 8521',
+      hint: '默认关（风险最高）：开启后自动驾驶统一决定去向——受击逃营帐、BOSS 窗上平台、缺料去商店、空闲巡航资源/掉落箱。仅队长生效。',
     },
     {
       key: 'driveBoss',
@@ -1035,27 +1035,27 @@ reactor.register({
       showIf: function (cfg) {
         return !!(cfg && cfg.driveEnabled);
       },
-      hint: '开启后：存在 state=21 且战斗窗未散场的 BOSS 而本队不在 BOSS 点时，就近开往可用 176 平台（到达后攻打自动接棒 boss.js）；关则只巡航资源/商店、不为 BOSS 挪台',
+      hint: 'BOSS 开打且本队不在 BOSS 点时自动开往就近平台（到达后自动攻打）；关则只巡航不挪台。',
     },
     {
       key: 'driveRevive',
       type: 'checkbox',
-      label: '战败自动复活(8552)',
+      label: '战败自动复活',
       section: '自动驾驶',
       showIf: function (cfg) {
         return !!(cfg && cfg.driveEnabled);
       },
-      hint: '默认开：21521 推送里 `deadType==1` 且本场已复活次数 < 上限（dataConfig 3056）时，代答一次 8552 `{uid}` 原地复活，避免整场因一次战败停摆。上限读不到/为 0 → 一律不复活（宁不复活也不盲烧次数）；两次复活最短间隔 driveReviveGapMs。关掉则战败只挂诊断、由人自行点复活面板',
+      hint: '默认开：战败且未超本场复活上限时自动原地复活；上限读不到一律不复活。关掉则由人工复活。',
     },
     {
       key: 'driveCheckPower',
       type: 'checkbox',
-      label: '受威胁先探战力差（check_power）',
+      label: '受威胁先探战力差',
       section: '自动驾驶',
       showIf: function (cfg) {
         return !!(cfg && cfg.driveEnabled);
       },
-      hint: '默认关（对齐竞品缺省）：开启后受威胁（21534 num>0）的每一拍先按需查一次 8549「谁在打我」，本队战力取 21521 本地 members 快照、来犯战力取 8549 应答 fightTeams+waitTeams 求和；**明确不亏（差>0）则这一拍不逃**，落回常规阶梯照抢 BOSS/采集；查询失败/数据读不到一律保守照逃。结果缓存数秒（drivePowerGapTtlMs）防逐拍烧协议',
+      hint: '默认关：受威胁时先比对敌我战力，明确不亏则不逃、照常抢 BOSS/采集；数据读不到一律保守照逃。',
     },
     {
       key: 'driveShopTime',
@@ -1065,7 +1065,7 @@ reactor.register({
       showIf: function (cfg) {
         return !!(cfg && cfg.driveEnabled);
       },
-      hint: '默认开：整场约 55min，大BOSS 在 +40min 开打（按 fightBeginTime 偏移）、小BOSS +23min。开启后在 +10/15/20min（相对整场开始）任一时刻若本场还没去过商店，强制开车去就近 161 店点补一趟投喂料（到店即视作完成、本场不再重复；未到点/无候选每拍重试）。关掉则回到「仅补货有缺口时才去店」',
+      hint: '默认开：开场 10/15/20 分钟任一时刻若还没去过商店，强制去就近商店补一趟投喂料（本场一次）；关则仅补货有缺口时才去店。',
     },
     {
       key: 'driveShopDwell',
@@ -1077,7 +1077,7 @@ reactor.register({
       showIf: function (cfg) {
         return !!(cfg && cfg.driveEnabled);
       },
-      hint: '到 161 店点后驻留多久让 shop.js 逐行补货，驻留满即离店（默认 25s）。定时勤务与补货缺口两档共用本值',
+      hint: '到店后驻留多久补货，驻留满即离店（默认 25s）。',
     },
     {
       key: 'driveEmptyDwell',
@@ -1089,7 +1089,7 @@ reactor.register({
       showIf: function (cfg) {
         return !!(cfg && cfg.driveEnabled);
       },
-      hint: '资源点(173)/掉落箱(163)改为「拿空即走」：物品拾取+BUFF拾取（或物品+宠物）都空后，再多驻留本秒数才挪队（0=立即走，默认 0）。等不到拿空由内部 45s 安全上限兜底，不会死守',
+      hint: '资源点/掉落箱拿空后再驻留本秒数才挪队（0=立即走）；拿不空也有安全上限兜底，不会死守。',
     },
     {
       key: 'driveHopSec',
@@ -1101,7 +1101,7 @@ reactor.register({
       showIf: function (cfg) {
         return !!(cfg && cfg.driveEnabled);
       },
-      hint: '需求 3：巡航选点的单跳车程上限（秒，默认 10）。丰盛井若超出本值×地图速度折算的距离则不长途直冲，改就近找一个资源点/停泊平台/攻击宠物(172)作跳板逐拍逼近（跳板只挪位、不打野）；窗内无任何落脚点则换视野探索。调大=更远也直冲、调小=更保守分步挪',
+      hint: '巡航单跳车程上限（秒，默认 10）：目标超出则就近找跳板分步逼近，不长途直冲。调大=更远也直冲，调小=更保守。',
     },
     {
       key: 'driveBeast',
@@ -1111,7 +1111,7 @@ reactor.register({
       showIf: function (cfg) {
         return !!(cfg && cfg.driveEnabled);
       },
-      hint: '默认开（保持旧行为）：关后自动驾驶**不再主动派车打野/发起抓宠**（plans 打野三档全短路，等价底层 driveBeastPolicy=2），只采井/打 BOSS/回店（不动该 tuning）。注：巡航逃袭的单跳落脚位仍可能路过式站上 172，但不在此发起抓宠。实战「抓宠跑窝数分钟」（marchState=21 拍宠期方向盘无法重路由）主要因打野档默认优先，关掉本档即根除该跑窝。开启时下方品质门槛生效',
+      hint: '默认开：关后自动驾驶不再主动打野/抓宠，只采井/打 BOSS/回店。开启时下方品质门槛生效。',
     },
     {
       key: 'driveBeastQuality',
@@ -1124,7 +1124,7 @@ reactor.register({
       showIf: function (cfg) {
         return !!(cfg && cfg.driveEnabled && cfg.driveBeast !== false);
       },
-      hint: '打野档最小品质闸（enigma_beast 行 quality ≥ 本值才去抓，默认 4=只抓 4 星及以上）。未侦察到的野怪按品质 2 计（依赖「侦察囤情报」囤品质，故门槛>2 时需保持 scout 开启）。调低=更激进抓宠、调高=只挑高品质',
+      hint: '只抓不低于本星数的野怪（默认 4）；未侦察的按 2 星计，门槛>2 需保持「侦察野怪点品质」开启。',
     },
     {
       key: 'drivePlaneLeadSec',
@@ -1137,7 +1137,7 @@ reactor.register({
       showIf: function (cfg) {
         return !!(cfg && cfg.driveEnabled && cfg.driveBoss !== false);
       },
-      hint: '大BOSS 开台读秒（state22）还剩多少秒时提前把队伍挪到就近可用 176 平台（默认 60=1 分钟，可填 30=半分钟，行军本身约 31~44s）。调大=更早占台、调小=更贴点开台才挪',
+      hint: '大BOSS 开台读秒剩本秒数时提前挪到就近平台（默认 60，行军约 31~44s）。调大=更早占台，调小=更贴点。',
     },
     {
       key: 'drivePlan',
@@ -1152,21 +1152,21 @@ reactor.register({
       showIf: function (cfg) {
         return !!(cfg && cfg.driveEnabled);
       },
-      hint: '默认方案（竞品B对齐链，唯一在跑的方案）。未来新方案需先完成线上验证才能上架；切换方案后需停止再开启自动驾驶才生效（整场不热切）',
+      hint: '切换方案后需停止再开启自动驾驶才生效（整场不热切）。',
     },
     {
       key: 'autoLeaveEnabled',
       type: 'checkbox',
       label: '拿满自动离场',
       section: '拿满自动离场',
-      hint: '默认关（8589 是整场退出、不可逆，是全 feat 风险最高的一档）：开启后当宠物携带背包被高品质（quality≥4）填满时，把最好的若干只选定带出（8581）后发一次离场（8589）。仅队长可发，且只在队伍已停稳、不在行军途中、且（争夺窗已过或正停在 161 商店点）时才撤；容量/背包清单读不到一律不触发（宁可不撤，绝不误判拿满）。本场最多撤一次',
+      hint: '默认关（整场退出不可逆，风险最高）：宠物背包被高品质填满时自动带出最好的几只并离场；仅队长、停稳且安全时触发，本场最多一次；读不到背包一律不撤。',
     },
     {
       key: 'scoutEnabled',
       type: 'checkbox',
       label: '侦察野怪点品质',
       section: '侦察囤情报',
-      hint: '默认开（v4.1：打野档的品质筛选依赖本情报——关掉后 #pickBeast 对未知品质恒按 2 处理、被下限 4 筛光，打野整档哑火）：只对当前视口快照里的就近野生点（172）动手——先 8536 免费预检（若该点已被侦察过，直接囤结果、不花道具），拿不到品质才发 8537 花 1 个勘察车侦察，把 beastId→品质攒进内存缓存。**只囤情报、不会为它单独派兵/挪队**，且两次花道具之间有速率间隔、道具低于预留量即自动改走免费预检（勘察车 41001 是非商店货、只能从野怪点产出拾取，护栏防烧穿）',
+      hint: '默认开：就近野生点先免费预检品质，预检不到才花 1 个勘察车侦察并缓存；只囤情报不派兵，道具低于预留自动改走免费预检。关掉后抓宠品质筛选会失准。',
     },
   ],
   toModuleCfg: buildModuleCfg,

@@ -1534,9 +1534,7 @@ function buildFields() {
       key: '_settleNote',
       type: 'note',
       section: '到站结算',
-      text:
-        '实测每日到站后可翻 3 次（2385 里未翻的卡面不露奖品，属盲翻，挑哪一张期望值相同）；' +
-        '基础奖励（2373）只在未领时发一次，翻卡每 5 秒一张、自动扫完全部奖池页，不派兵也不花钻石。',
+      text: '到站后自动翻 3 次卡（盲翻，挑哪张期望相同）、领一次基础奖励；每 5 秒一张，不派兵也不花钻石。',
     },
     {
       key: 'boardEnabled',
@@ -1562,9 +1560,7 @@ function buildFields() {
       key: '_lootNote',
       type: 'note',
       section: '自动拦截',
-      text:
-        '录制实证：4 次攻打 isWin 全 false，rank1 战力/乘客数/percent 都不预测战果（486.7M 的车抢到货、139.2M 的车空手），故不设这些数字闸。' +
-        '策略为物品兴趣驱动：2369 粗筛后逐辆发 2375，奖池含下方「关注物品」才打（用满每日配额）；关注物品清单取自游戏奖励预览表（data_config→REWARD），非报文逆推。每次攻打写本地样本表，攻够再谈胜率模型。',
+      text: '只打奖池含下方「关注物品」的车（用满每日配额）；清单取自游戏奖励预览表。',
     },
     {
       key: 'lootPreset',
@@ -1584,7 +1580,7 @@ function buildFields() {
       min: 1,
       max: 100,
       step: 1,
-      topHint: '只打已被推进过的车；实测赢的那辆 73%',
+      topHint: '只打已被推进过的车',
       showIf: function (c) {
         return !!c.lootEnabled;
       },
@@ -1596,7 +1592,7 @@ function buildFields() {
       offKey: 'lootItemsOff',
       section: '自动拦截',
       label: '关注物品（池内含这些才打）',
-      hint: '清单取自游戏「雪原列车奖励预览」（data_config→REWARD 表，与面板同源）；勾选要关注的物品，2375 的 lootRewardResult 命中其一即视为可打目标（命中任一即打、列表顺序不影响判定；全不勾=不拦）',
+      hint: '清单取自游戏奖励预览；勾选要关注的物品，奖池命中任一即打；全不勾=不拦。',
       resolve: lootItemResolve,
       all: rewardPoolIds,
       showIf: function (c) {
