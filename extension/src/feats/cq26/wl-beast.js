@@ -645,21 +645,14 @@ function buildDefaults() {
 }
 
 /**
- * 面板 fields：1 个可调项 + 2 行只读状态（纯读内存账本与 2124 展示缓存，零额外请求）。
+ * 面板 fields：2 行只读状态置顶（纯读内存账本与 2124 展示缓存，零额外请求）+ 1 个可调项。
+ *   状态置顶是 CQ26 家族统一口径（当前状态放卡片最前边）。
  * 刻意**不列 `enabled` 字段**：功能卡片标题行已有直驱 `enabled` 的开关（口径逐字同 mammoth.js）。
  * 也**不列“单轮攻打数”**：2125 占队列且吃空闲部队，多只熊必须串行（一只打完再打下只），无可调并发度。
  * @returns {object[]}
  */
 function buildFields() {
   return [
-    {
-      key: 'preset',
-      type: 'select',
-      label: '攻打预设队伍',
-      section: '攻打（占行军队列·用空闲部队·一只打完再下一只）',
-      options: presetOptions,
-      hint: '出征前按可派容量实时校准，且排除已外派的兵（普通派兵口径）；队列满或该预设兵力都在途则等待',
-    },
     {
       key: '_today',
       type: 'text',
@@ -688,6 +681,14 @@ function buildFields() {
           })
           .join(' ｜ ');
       },
+    },
+    {
+      key: 'preset',
+      type: 'select',
+      label: '攻打预设队伍',
+      section: '攻打（占行军队列·用空闲部队·一只打完再下一只）',
+      options: presetOptions,
+      hint: '出征前按可派容量实时校准，且排除已外派的兵（普通派兵口径）；队列满或该预设兵力都在途则等待',
     },
   ];
 }

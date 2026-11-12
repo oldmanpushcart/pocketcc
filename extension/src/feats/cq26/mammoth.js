@@ -46,7 +46,8 @@
  *   4 领奖腿：`turnStatus===4`（Settlement，实证 11-08 21:52 就在此刻领）&& `selfDefTroopJoin>0` &&
  *      奖励表可读（不可读 fail-closed）&& 存在 `wave ≤ selfServerDefWave 且未领` 的行。
  *
- * 触发源：`createCycle` 档位择时（远窗长睡、窗内 20s 短巡、派兵后 30s 复核）+ `ctx.on.push(22031)` 抢跑唤醒
+ * 触发源：`createCycle` 档位择时（远窗长睡、窗内 20s 短巡、派兵后 30s 复核、领奖后 20s 补领复核）
+ *   + `ctx.on.push(22031)` 抢跑唤醒
  *   + `march.onStateChange` 的 308 边沿（返航/到家即 kick，参与还没达标就赶在 Fight 内补派）。
  *
  * 刻意不做：
@@ -126,12 +127,14 @@ var SNAP = null;
 var posCache = null;
 /** @type {Object<string,number>} `round:turn` → 本 feat 已派次数 */
 var dispatchTries = Object.create(null);
-/** @type {Object<string,boolean>} `round:turn` → 本场已发起过成功领奖（应答后服务器列表才是真相，此键只防同拍重发） */
+/** @type {Object<string,boolean>} `round:turn` → 两次权威读之间已成功领奖（只防重发；2171 读达即清除，见 applyInfo） */
 var claimDone = Object.create(null);
 /** @type {number} 派兵冷却到期时刻（Date.now() 基准） */
 var coolUntilMs = 0;
 /** @type {boolean} 本拍是否刚发出驻防（择时切到「到点复核」档） */
 var justDispatched = false;
+/** @type {boolean} 本拍是否刚领奖成功（择时切短巡：结算抢跑时旧快照 wave 可能滞后，读达后补领剩余档） */
+var justClaimed = false;
 /** @type {boolean} 派兵窗口已到且仍待动手（择时切到短巡档） */
 var pendingDispatch = false;
 /** @type {number} legs 写就的「下一次值得醒来的服务器秒」（0=无指定） */
@@ -200,6 +203,7 @@ function pause() {
   posCache = null;
   lastReadMs = 0;
   justDispatched = false;
+  justClaimed = false;
   pendingDispatch = false;
   wakeAtSec = 0;
 }
@@ -369,6 +373,9 @@ function applyInfo(d) {
     join: Number(ti.selfDefTroopJoin) || 0,
     gained: idArr(ti.selfGainWaveRewardSpecIdList),
   };
+  // 权威读达即解除重发闸：gained 已是服务器真相。若结算抢跑时首条 2178 用了滞后 wave（10s 读闸内
+  //   沿用旧快照），读达后 wave 补齐，剩余未领行必须允许再发一条，不能被幂等键锁死本场。
+  delete claimDone[SNAP.round + ':' + SNAP.turn];
 }
 
 /**
@@ -587,6 +594,7 @@ async function claimLeg() {
   var d = parseData(ret.data) || {};
   var got = idArr(d.gainWaveRewardSpecIdList);
   claimDone[key] = true;
+  if (got.length) justClaimed = true;
   // 以应答为准合并进快照（下一拍 2171 会给出服务器真相）
   for (var j = 0; j < got.length; j++)
     if (SNAP.gained.indexOf(got[j]) < 0) SNAP.gained.push(got[j]);
@@ -623,6 +631,7 @@ async function cycleRun() {
  */
 async function cyclePass() {
   justDispatched = false;
+  justClaimed = false;
   pendingDispatch = false;
   wakeAtSec = 0;
   if (!gameData.cq26IsOpen()) {
@@ -650,6 +659,8 @@ async function cyclePass() {
   if (!aliveFn()) return cfg.activeMs;
   await claimLeg();
   if (justDispatched) return cfg.arriveMs;
+  // 领奖后短巡复核：首条 2178 可能用了滞后 wave（结算推送抢跑），20s 后权威读达补领剩余档
+  if (justClaimed) return cfg.activeMs;
   if (pendingDispatch) return cfg.activeMs;
   if (wakeAtSec > nowSec) {
     var remSec = wakeAtSec - nowSec;
@@ -688,13 +699,44 @@ var presetOptions = [1, 2, 3, 4, 5, 6, 7, 8].map(function (i) {
 });
 
 /**
- * 面板 fields：4 个可调项 + 2 行只读状态（纯读 2171 快照，零额外请求）。
+ * 面板 fields：2 行只读状态置顶（纯读 2171 快照，零额外请求）+ 4 个可调项。
+ *   状态置顶是 CQ26 家族统一口径（当前状态放卡片最前边）。
  * 刻意**不列 `enabled` 字段**：功能卡片标题行已有一个直驱 `enabled` 的开关（core/ui/panel.js 的
  *   renderFeatureCard），再出一行同义 checkbox 属重复控件，两个入口易被读成两个独立闸门。
  * @returns {object[]}
  */
 function buildFields() {
   return [
+    {
+      key: '_turn',
+      type: 'text',
+      label: '本场',
+      section: '今日进度',
+      get: function () {
+        var s = SNAP;
+        if (!s) return '—';
+        // round=活动轮次（实证每天一轮、间隔数日），turn=本轮场次（实证恒 1，多场才补「第N场」）
+        var head = '第' + s.round + '轮';
+        if (s.turn > 1) head += ' 第' + s.turn + '场';
+        var txt = head + ' · ' + statusName(s.status);
+        // 突袭时刻只在「还没开打」时有意义（准备期锚定派兵窗口）；开打后是历史噪音，不再挂尾
+        if ((s.status === ST.PREVIEW || s.status === ST.PREPARE) && s.strikeStartSec) {
+          txt += '，' + strikeText(s.strikeStartSec);
+        }
+        return txt;
+      },
+    },
+    {
+      key: '_join',
+      type: 'text',
+      label: '参与 / 波数',
+      section: '今日进度',
+      get: function () {
+        var s = SNAP;
+        if (!s) return '—';
+        return (s.join > 0 ? '已参与' : '未参与') + ' · 守住 ' + s.wave + ' 波';
+      },
+    },
     {
       key: 'autoDispatch',
       type: 'checkbox',
@@ -710,7 +752,7 @@ function buildFields() {
       min: 1,
       max: 30,
       step: 1,
-      hint: '锚定 `突袭开始 − 此值`。报文实证基础行军仅 23 秒，默认 2 分钟已足够进驻；调大只会白白压队列',
+      hint: '锚定「突袭开始−此值」提前进驻；默认 2 分钟已足够，调大只会白压队列。',
     },
     {
       key: 'preset',
@@ -727,40 +769,12 @@ function buildFields() {
       section: '领奖',
       hint: '门槛 = 本服守住波数；未拿到「参与」的场次不发（服务器必拒）',
     },
-    {
-      key: '_turn',
-      type: 'text',
-      label: '本场',
-      section: '今日进度',
-      get: function () {
-        var s = SNAP;
-        if (!s) return '—';
-        return (
-          statusName(s.status) +
-          ' R' +
-          s.round +
-          ' T' +
-          s.turn +
-          (s.strikeStartSec ? ' 突袭 ' + fmtClock(s.strikeStartSec) : '')
-        );
-      },
-    },
-    {
-      key: '_join',
-      type: 'text',
-      label: '参与 / 波数',
-      section: '今日进度',
-      get: function () {
-        var s = SNAP;
-        if (!s) return '—';
-        return (s.join > 0 ? '已参与' : '未参与') + ' / 波数 ' + s.wave;
-      },
-    },
   ];
 }
 
 /**
- * 阶段号 → 中文（面板展示；未知号如实给数字，不臆造语义）。
+ * 阶段号 → 用户视角短语（面板展示；未知号如实给数字，不臆造语义）。
+ * 措辞对齐游戏主面板（CQ26DBMainComponent.refreshCdTime）：准备期=待突袭、结算=「本轮已结束」。
  * @param {number} st turnStatus
  * @returns {string}
  */
@@ -769,13 +783,13 @@ function statusName(st) {
     case ST.PREVIEW:
       return '预告';
     case ST.PREPARE:
-      return '准备';
+      return '准备中';
     case ST.FIGHT:
-      return '突袭中';
+      return '突袭进行中';
     case ST.SETTLEMENT:
-      return '结算';
+      return '突袭结束，结算中';
     case ST.OVER:
-      return '结束';
+      return '已结束';
     default:
       return '阶段' + st;
   }
@@ -793,6 +807,25 @@ function fmtClock(epochSec) {
     return (n < 10 ? '0' : '') + n;
   };
   return p(d.getHours()) + ':' + p(d.getMinutes());
+}
+
+/**
+ * 突袭时刻 → 用户视角短语（含日界限定）。准备期可跨天（实证第4轮 11/11 就在准备 11/12 的突袭），
+ * 只给 HH:mm 会把「明天 20:00」误读成今天，故按本地日历天补「今天/明天/M/D」。
+ * @param {number} epochSec 突袭开始服务器秒
+ * @returns {string} 如「20:00 突袭」「明天 20:00 突袭」「11/12 20:00 突袭」
+ */
+function strikeText(epochSec) {
+  var lead = serverNow() - (Number(epochSec) || 0);
+  var d = new Date(Date.now() - lead * 1000);
+  var now = new Date();
+  var dayNow = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+  var dayHit = new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+  var diff = Math.round((dayHit - dayNow) / 86400000);
+  var hm = fmtClock(epochSec);
+  if (diff === 0) return hm + ' 突袭';
+  if (diff === 1) return '明天 ' + hm + ' 突袭';
+  return d.getMonth() + 1 + '/' + d.getDate() + ' ' + hm + ' 突袭';
 }
 
 /**
