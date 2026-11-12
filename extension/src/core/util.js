@@ -1,5 +1,5 @@
 /**
- * 跨 feat 复用的纯函数叶子（零 import）：异步 sleep、网络应答 data 归一化、send 未发出的哨兵码、今日日期串、拒绝载荷安全序列化、JSON 安全解析、HTML 转义、服务器秒时刻归一。
+ * 跨 feat 复用的纯函数叶子（零 import）：异步 sleep、可提前结束的休眠原语 createWaker、网络应答 data 归一化、send 未发出的哨兵码、今日日期串、拒绝载荷安全序列化、JSON 安全解析、HTML 转义、服务器秒时刻归一。
  *
  * 这几样此前被逐字复制进数十个 feat 与 core（sleep 19（feats 18 + core/defense 1；core/drain 例外——它是调度原语，按 schedule-primitives-thin 刻意保持除 log.js 外零 core 依赖，保留本地裸版）/ parseData 7（feats 5 + core/map·march 各 1，其中 map.js、armory-material.js 原为无守卫变体）/ CODE_NOT_SENT 22 处 / todayStr 13（11 本地时钟 + 2 以服务器时刻为基准，收口后用可选 epochSec 参保语义）/ safeStringify 3（另 mecha-treasure 因 null→'' 口径不同保留本地）/ safeParse 4（scanner 为「非字符串原样返回」变体保留本地）/ esc 2（jump/map；另 chat-overlay 严格版拆为 escStrict=esc+补 '，与主型共用内核）/ serverTimeSec 2（floatcar/titan-blessing，收为传参版），任何口径调整
  * 都要改一片、极易漏改造成 feat 间行为漂移。收口到此单一真相后，改一处即全仓生效。
@@ -25,6 +25,43 @@ export function sleep(ms) {
   return new Promise(function (resolve) {
     setTimeout(resolve, Math.max(0, ms | 0));
   });
+}
+
+/**
+ * 可提前结束的休眠原语（边沿触发的热路径用：轮次间隔期间来了新事件，不该把动作排到下一个时间边界）。
+ * 与 sleep 的分工：sleep 表达「一定要等这么久」，pause 表达「最多等这么久，有事叫我」。
+ * 单飞约定：同一时刻只有一次等待在飞——若上一次 pause 还没醒就再 pause，先把旧的按「被叫醒」收口
+ *   （不留永挂的 Promise 与空转的 timer），调用方不应并发 pause。
+ * @returns {{pause: (ms: number) => Promise<boolean>, wake: () => boolean}}
+ *   pause(ms) 最多等 ms 毫秒，resolve 是否被提前叫醒；wake() 叫醒当前在飞的等待，resolve 是否真有人在等
+ */
+export function createWaker() {
+  /** @type {(() => void)|null} 在飞等待的提前结束句柄（null=当前没在等） */
+  var fire = null;
+  return {
+    pause: function (ms) {
+      if (fire) fire();
+      return new Promise(function (resolve) {
+        var timer = setTimeout(
+          function () {
+            fire = null;
+            resolve(false);
+          },
+          Math.max(0, ms | 0),
+        );
+        fire = function () {
+          clearTimeout(timer);
+          fire = null;
+          resolve(true);
+        };
+      });
+    },
+    wake: function () {
+      if (!fire) return false;
+      fire();
+      return true;
+    },
+  };
 }
 
 /**

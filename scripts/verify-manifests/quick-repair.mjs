@@ -32,7 +32,7 @@
  *   D11 815 枚数-持有守恒与批量度（观察）：同 itemid 相邻笔用「应答回读的剩余持有」算降幅，接受者降幅 ≥ 请求枚数；
  *      并统计 amount 区间、多枚同发笔数、最长「单枚连发」簇长度（量化“一个个加速” vs “一次发足”）
  *   D12 治疗→加速同周期节奏（观察）：每笔 220/1427 之后首笔同域加速（151/1428/医院 815）的间隔分布，
- *      ≤ INTER_SEND_MS 视为拍内同周期（修正十四②目标），≈ACTIVE_TICK_MS 视为下一拍（旧病灶）
+ *      ≤ INTER_SEND_MS 视为拍内同周期（修正十四②目标），≤ IDLE_TICK_MS 视为 push 边沿/心跳内补上（修正十八去勤扫后无 5s 勤扫档）
  *
  * 判据分级纪律（对齐 replay-conformance 技能）：退出码只对 HARD 严格。前向完备是 feat 策略、
  *   真人未必逐笔照做，故降为 SOFT（只报不 fail），避免以「真人没修满」冒充 HARD 违例；
@@ -83,9 +83,9 @@ const CMD_ITEM_USE = featNum('CMD_ITEM_USE'); // 815
 const PUSH_ORDER_QUEUES = featNum('PUSH_ORDER_QUEUES'); // 10120
 const PUSH_CROSS_QUEUE_ADD = featNum('PUSH_CROSS_QUEUE_ADD'); // 13006
 const ORDER_TYPE_HEAL = featNum('ORDER_TYPE_HEAL'); // 1
-/** 拍内逐条发包节流与勤扫拍长（D12 节奏分类阈）：取自 feat 源码，不手抄毫秒字面 */
+/** 拍内逐条发包节流与慢心跳兜底窗（D12 节奏分类阈）：取自 feat 源码，不手抄毫秒字面（修正十八已删 ACTIVE_TICK_MS 勤扫档） */
 const INTER_SEND_MS = featNumExpr('INTER_SEND_MS');
-const ACTIVE_TICK_MS = featNumExpr('ACTIVE_TICK_MS');
+const IDLE_TICK_MS = featNumExpr('IDLE_TICK_MS');
 /**
  * 815 param 必拒形态与拒因：从 feat 头部实证记载里抽（「"0|0" 被服务器拒 s=3/item_124017」），
  * 避免 manifest 与 feat 各存一份字典。
@@ -921,15 +921,13 @@ export default {
         } else {
           same.sort((a, b) => a - b);
           const inTick = same.filter((g) => g <= INTER_SEND_MS).length;
-          const nextTick = same.filter(
-            (g) => g > INTER_SEND_MS && g <= ACTIVE_TICK_MS * 1.5,
-          ).length;
+          const nextTick = same.filter((g) => g > INTER_SEND_MS && g <= IDLE_TICK_MS).length;
           const slower = same.length - inTick - nextTick;
           const med = same[Math.floor(same.length / 2)];
           const samples = [
             `间隔（ms）：min=${same[0]} 中位=${med} max=${same[same.length - 1]}；可判 ${same.length}/${heals.length} 笔（无后续同域加速 ${noSpeed}）`,
-            `拍内同周期（≤ INTER_SEND_MS=${INTER_SEND_MS}ms）${inTick}；下一拍（≤ ACTIVE_TICK_MS×1.5=${Math.round((ACTIVE_TICK_MS * 1.5) / 1000) * 1000}ms）${nextTick}；更久 ${slower}`,
-            '旧病灶：快照先读后治 → 本拍加速层被 nothing under repair 拦住，等到下拍（≈勤扫档）才发；修正十四②为治疗落地后同拍补跑加速层',
+            `拍内同周期（≤ INTER_SEND_MS=${INTER_SEND_MS}ms）${inTick}；push 边沿/心跳内（≤ IDLE_TICK_MS=${IDLE_TICK_MS}ms）${nextTick}；更久 ${slower}`,
+            '旧病灶：快照先读后治 → 本拍加速层被 nothing under repair 拦住，等到下拍才发；修正十四②为治疗落地后同拍补跑加速层，修正十八去勤扫后仅靠 push 边沿/kick 即时唤醒、慢心跳兜底',
             '真人录制的手动节奏（先修后看再点）也会计入「更久」，故只报量级不判负',
           ];
           rep.check(

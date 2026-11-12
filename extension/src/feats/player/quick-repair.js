@@ -57,15 +57,22 @@
  *     10120 ORDER_QUEUES_BATCH_INFO {orderQueues:[{id,orderId,state,itemId,type:1,endTime}]}（本地伤兵入队/改态）
  *     13006 CSB_HOSPITAL_QUEUE_ADD {queues:[{army,id,st,et}]}（跨服入队，辅以 13007 MODIFY / 13005 DELETE）
  *
- * 直发不回写 → 靠「在途指纹」防逐拍重发：本 feat 发 220/1427/151/124/1428/815 都不经游戏回调，
- *   UserData.OrderQueues 与 1426 队列要等 push/下一拍权威读才更新；无指纹即会像「账本陈旧反复派兵」
- *   那样逐拍撞同一批 ids。对策：RECENT_SEND_TTL_MS 内同一 `id|动作` 指纹只发一次，跨 TTL 后
- *   由权威读重新裁决（免费额度真没扣掉才会再发一轮）。连续被拒 3 次退巡检档。
+ * 三场景统一去重（无抑制时钟，与竞品 B 事件驱动同构）：本 feat 发 220/1427/151/1428/815/6311/6312 都不经游戏回调，
+ *   无去重即会逐拍撞同一批队列。策略：所有抑制墙钟全废（旧 speedGateMsFor 的 45s/10s 整批窗、markHealed/markDeadSlot
+ *   的 5min/30min），改为「在途令牌 pending，仅由权威读确认清除、无 TTL」。
+ *   不变式：新令牌（从没在途过的队列）即时放行；已发未确认的令牌绝不第二枪；令牌只在其「目标 state 退出权威读」时遗忘。
+ *   原语：execAction 成功后 `markPending`（逐令牌动作记实发令牌；全量 body={{}} 动作记该域活跃令牌集 pendingTokens，
+ *   任一受影响令牌仍在途即整域跳过、不拆子集）；snapshot 每拍权威读后 `prunePendingByExit(族, 活跃集)` 按族确认清除——
+ *   治疗族（lw/cw/aw）确认集=state0 待处理令牌、加速族（lr/cr/ar）确认集=state1 在修令牌（令牌口径逐族严格同形）。
+ * 节拍（去勤扫）：取消 5s 忙时勤扫，只在 push 事件（10120/13006/AVA change×4 → kick）跑一拍 + 一个很慢心跳兜底丢推；
+ *   任一写动作成功后同样 kick()，尽早拿到「确认读」缩小在途窗。连续被拒达阈时心跳×2 退避。
  *
- * 幻影回灌（quickRepair 专属例外）：本地治疗/加速（heal-local / heal-local-thor / heal-local-resource / speed-gold-local /
- *   speed-item-local）成功后，借用游戏官方应答回调同款 `UserData.UpdateOrderQueues(resp.queues)`（见源码
- *   HospitalComponentNew/HospitalArmySelectPopup 与竞品 B hospitalStart/hospitalEnd）把服务器权威队列按 id
- *   回灌本地态，从根消除「已治好槽滞留成陈旧幻影 → 下一拍重发 common_159995」。指纹抑制降为兜底（符号漂移时仍不重发）。
+ * 幻影回灌（quickRepair 专属例外，是本地流的「确认」源而非时钟）：本地治疗/钻石加速（heal-local / heal-local-thor /
+ *   heal-local-resource / speed-gold-local）成功后，借用游戏官方应答回调同款 `UserData.UpdateOrderQueues(resp.queues/orderQueues)`
+ *   （见源码 HospitalComponentNew/HospitalArmySelectPopup 与竞品 B hospitalStart/hospitalEnd；220/151 本地应答带 orderQueues，
+ *   实录 “… (queues synced)” 佐证；本地道具 815 应答仅 {itemId,amount}、不含队列，本例外不适用于它）把服务器权威队列
+ *   按 id 回灌本地态，从根消除「已治好/已加速槽滞留成陈旧幻影 → 重发 common_159995」；回灌后该队列退出 state0/state1，
+ *   正是 prunePendingByExit 遗忘其本地在途令牌的确认来源。本地道具/跨服/无双无此回灌，靠每拍 push 10120 / 1426 / 6310 权威读确认。
  *
  * 合规：全程只读游戏数据（经 game-api ACL）+ 直发上述协议。除上述「幻影回灌」借用游戏自带 UpdateOrderQueues
  *   （把服务器已下发的权威队列就地覆盖，非自造增删、不弹 UI）外，不调 StartAllQueue/OpenUI/Delete 等改写本地态
@@ -206,23 +213,9 @@ const ORDER_TYPE_HEAL = 1;
 /** @type {number} DATACONFIG 键：钻石加速每分钟单价（源码 getProfessionCDGold 同款费率） */
 const CFG_GOLD_PER_MIN = 61017;
 
-/** @type {number} 有伤兵待修时的勤扫间隔（毫秒） */
-const ACTIVE_TICK_MS = 1000 * 5;
-
-/** @type {number} 无活可干的巡检间隔下限（毫秒）；面板 pollIntervalSec 小于此值也按本值走 */
+/** @type {number} 心跳兜底巡检间隔下限（毫秒）；面板 pollIntervalSec 小于此值也按本值走。
+ *  无抑制时钟：节拍只由 push 边沿（kick）+ 本慢心跳驱动，新伤兵即时由 push 放行、丢推最坏等一个心跳。 */
 const IDLE_TICK_MS = 1000 * 60;
-
-/** @type {number} 同一 `id|动作` 指纹的去重窗口（毫秒）：窗口内不重发，跨窗口由权威读重新裁决 */
-const RECENT_SEND_TTL_MS = 1000 * 45;
-
-/**
- * 「已确认治疗成功」的 (id#orderId) 抑制延长窗口（毫秒）。
- * 220 成功应答会把已修槽回 `orderId:"0"`；但客户端本地 OrderQueues 可能滞后仍报同一
- * `id#orderId` 为待修，若按常规 45s TTL 过期后会反复去修空槽→ `common_159995` param error 死循环，
- * 且批量 220 原子性会连累同批本可修的兵一起失败（偶发漏修）。orderId 一经治疗即被消耗、新伤必为新
- * orderId，故对已修 `(id#orderId)` 延长抑制是安全的（新 orderId→新键→照常放行）。
- */
-const HEAL_STALE_SUPPRESS_MS = 1000 * 60 * 5;
 
 /**
  * 治疗批量（220/1427）被服务器整批拒绝时的固定错误码：`param error`。
@@ -230,14 +223,6 @@ const HEAL_STALE_SUPPRESS_MS = 1000 * 60 * 5;
  * 连累同批本可修的伤兵（偶发漏修）。据此码触发「逐 id 单发隔离」与确认幻影的延长抑制。
  */
 const ERR_PARAM_HEAL = 'common_159995';
-
-/**
- * 「已确认为陈旧幻影」的治疗槽延长抑制窗口（毫秒）。
- * 单条治疗（批量已是单元素，或隔离后单发）仍返回 param error ⇒ 该 id 当前确定不可修（服务器侧已空）。
- * 与“治疗后 5min 长抑”不同：这里令牌已是 `id#orderId#endTime`，若之后真正再次受伤会产生新 endTime→新令牌→即时放行，
- * 故对该确定幻影可长抑更久（30min），既压住 reload/过期后的反复重投、又绝不因此漏修。
- */
-const HEAL_DEAD_SLOT_SUPPRESS_MS = 1000 * 60 * 30;
 
 /** @type {number} 一轮内连发多包时的间隔（毫秒），避免同一宏任务撞车 */
 const INTER_SEND_MS = 1000;
@@ -278,14 +263,11 @@ var crossUtils = null;
 /** @type {boolean} install 幂等位 */
 var installed = false;
 
-/** @type {Object<string,number>} 在途指纹表：`id|动作` → 到期时刻（毫秒，绝对）；now < 到期则不重发 */
+/** @type {Object<string,number>} 在途令牌表：`动作名|去重令牌` → Infinity（无 TTL，仅由 prunePendingByExit 在目标 state 退出权威读时删除） */
 var sentFp = Object.create(null);
 
 /** @type {number} 连续被服务器拒绝次数；任一成功即清零 */
 var rejectStreak = 0;
-
-/** @type {number} 上一拍快照的无双忙碌度（待修+在修数）；供 cycleRun 择时轻量判定，免为「有没有活」再花一发 6310 */
-var lastAvaBusy = 0;
 
 /**
  * 功能是否仍在运行（cycle 与在飞流程的存活判定）
@@ -443,6 +425,51 @@ function markOf(v) {
 }
 
 /**
+ * 本地 state0 待修活跃令牌集（治疗族 lw 确认清除用）：`type===1 && orderId!=="0" && state===0` → `id#orderId#markOf(endTime)`，
+ * 与 `splitWaitIds` 的去重令牌严格同形（同一批伤兵在两处算出的令牌逐字相等）。
+ * @param {Array<object>|null} queues 本地伤兵队列
+ * @returns {Set<string>}
+ */
+function localWaitTokenSet(queues) {
+  var s = new Set();
+  if (!Array.isArray(queues)) return s;
+  for (var i = 0; i < queues.length; i++) {
+    var q = queues[i];
+    if (!q || typeof q !== 'object') continue;
+    if (Number(q.type) !== ORDER_TYPE_HEAL) continue;
+    var orderId = q.orderId == null ? '' : String(q.orderId);
+    if (!orderId || orderId === '0') continue;
+    if (Number(q.state) !== 0) continue;
+    var id = q.id == null ? '' : String(q.id);
+    if (!id) continue;
+    s.add(id + '#' + orderId + '#' + markOf(q.endTime));
+  }
+  return s;
+}
+
+/**
+ * 本地 state1 在修活跃 id 集（加速族 lr 确认清除/pendingTokens 用）：与 `repairingLeftSec` 同过滤口径
+ * （`orderId!=="0" && state===1`，tolerate 缺失 type）→ plain id。
+ * @param {Array<object>|null} queues 本地伤兵队列
+ * @returns {Set<string>}
+ */
+function localRepairingIdSet(queues) {
+  var s = new Set();
+  if (!Array.isArray(queues)) return s;
+  for (var i = 0; i < queues.length; i++) {
+    var q = queues[i];
+    if (!q || typeof q !== 'object') continue;
+    if (q.type != null && Number(q.type) !== ORDER_TYPE_HEAL) continue;
+    var orderId = q.orderId == null ? '' : String(q.orderId);
+    if (!orderId || orderId === '0') continue;
+    if (Number(q.state) !== 1) continue;
+    var id = q.id == null ? '' : String(q.id);
+    if (id) s.add(id);
+  }
+  return s;
+}
+
+/**
  * 跨服待修队列去重令牌：与 `crossWaitIds` 同序（`st===0 && id` 非空），令牌 = `id#army#et`（战场部队 uuid + 受伤时刻）。
  * @param {object|null} data 1426 应答载荷
  * @returns {string[]}
@@ -479,6 +506,43 @@ function crossWaitIds(data) {
     if (id) out.push(id);
   }
   return out;
+}
+
+/**
+ * 跨服 state0 待修活跃令牌集（治疗族 cw 确认清除用）：与 `crossWaitKeys` 同形（`id#army#et`）的 Set。
+ * @param {object|null} data 1426 应答载荷
+ * @returns {Set<string>}
+ */
+function crossWaitKeySet(data) {
+  return new Set(crossWaitKeys(data));
+}
+
+/**
+ * 跨服 state1 在修 id 集（加速族 cr 确认清除/pendingTokens 用）：1426 `queues[]` 里 `st>0`（已开修）且 id 非空 → plain id。
+ * @param {object|null} data 1426 应答载荷
+ * @returns {string[]}
+ */
+function crossRepairingIds(data) {
+  var out = [];
+  var qs = data && data.queues;
+  if (!Array.isArray(qs)) return out;
+  for (var i = 0; i < qs.length; i++) {
+    var q = qs[i];
+    if (!q || typeof q !== 'object') continue;
+    if (!(Number(q.st) > 0)) continue;
+    var id = q.id == null ? '' : String(q.id);
+    if (id) out.push(id);
+  }
+  return out;
+}
+
+/**
+ * 跨服 state1 在修 id 集（cr 确认清除用）的 Set 形式。
+ * @param {object|null} data 1426 应答载荷
+ * @returns {Set<string>}
+ */
+function crossRepairingIdSet(data) {
+  return new Set(crossRepairingIds(data));
 }
 
 /**
@@ -583,6 +647,24 @@ function avaRepairingIds(list) {
     if (id) out.push(id);
   }
   return out;
+}
+
+/**
+ * 6310 应答 list → state0 待修活跃 id 集（治疗族 aw 确认清除用）：与 `avaWaitIds` 同集（plain id）。
+ * @param {Array<object>|null} list 6310 应答 list
+ * @returns {Set<string>}
+ */
+function avaWaitIdSet(list) {
+  return new Set(avaWaitIds(list));
+}
+
+/**
+ * 6310 应答 list → state1 在修活跃 id 集（加速族 ar 确认清除用）：与 `avaRepairingIds` 同集（plain id）。
+ * @param {Array<object>|null} list 6310 应答 list
+ * @returns {Set<string>}
+ */
+function avaRepairingIdSet(list) {
+  return new Set(avaRepairingIds(list));
 }
 
 /**
@@ -886,6 +968,8 @@ function planSpeedActions(snap, m, actions, reasons) {
           cmd: CMD_ORDER_QUEUE_ING_DONE,
           body: {},
           fp: 'speed-gold-local',
+          all: true,
+          pendingTokens: snap.localRepairingIds || [],
           goldCost: lc,
           label: 'gold speed local (leftSec ' + snap.localRepairing + ')',
         });
@@ -903,6 +987,8 @@ function planSpeedActions(snap, m, actions, reasons) {
           cmd: CMD_SPEEDUP_CROSS_GOLD,
           body: {},
           fp: 'speed-gold-cross',
+          all: true,
+          pendingTokens: snap.crossRepairingIds || [],
           goldCost: cc,
           label: 'gold speed cross (leftSec ' + snap.crossRepairing + ')',
         });
@@ -943,6 +1029,8 @@ function planSpeedActions(snap, m, actions, reasons) {
             param: itemSpeedParam(x, null, -1),
           },
           fp: x ? 'speed-item-cross' : 'speed-item-local',
+          all: true,
+          pendingTokens: (x ? snap.crossRepairingIds : snap.localRepairingIds) || [],
           label:
             'item speed ' +
             (x ? 'cross' : 'local') +
@@ -979,7 +1067,11 @@ function goldPlannedFor(actions, cross) {
  * 无双（AVA 族）决策层：吃同一套面板开关（修伤兵跟 resourceRepair、加速跟 speedGold/speedItem），
  * 但走独立三件套：6311 批量修 state0、6312 钻石 {ids,useGold:1} / 道具 {ids,itemId,num,useGold:0} 加速 state1。
  * 无双无免费额度概念；余额闸用模式倍率估价（estimateAvaGold）；道具加速需持有专行 15100046 且 para1 可解。
- * 本函数纯判据、无副作用；去重与发包在 execAction（无双动作不入 LOCAL_SYNC_KINDS，靠 push 21203/下拍 6310 刷新）。
+ * 本函数纯判据、无副作用；去重与发包在 execAction（无双动作不入 LOCAL_SYNC_KINDS、不回灌，靠 push 21203/下拍 6310 刷新）。
+ * 去重口径（与本地/跨服同构、无抑制时钟）：heal-ava（state0）与 speed-gold-ava/speed-item-ava（state1）均走逐队列 id 令牌：
+ *   新令牌（从没在途过的部队）即时放行，同 id 在途未确认绝不第二枪；令牌只在其目标 state 退出 6310 权威读时由
+ *   `prunePendingByExit('aw'/'ar', …)` 遗忘（aw=state0 待修集、ar=state1 在修集）。无双 id≡orderId、state0 endTime=0，字段无法
+ *   区分再受伤、故靠“退出目标 state 即遗忘”保证同一部队修完再伤即时放行（写成功后另由 execAction 的 kick 催一次确认读）。
  * @param {object} snap 快照（含 avaMode/avaWaitIds/avaRepairingIds/avaGoldMult/avaSpeedItem 等）
  * @param {object} m 归一后的模块配置
  * @param {Array} actions 累加容器
@@ -1025,6 +1117,8 @@ function planAvaActions(snap, m, actions, reasons) {
         cmd: cmds.speed,
         body: { ids: snap.avaRepairingIds, useGold: 1 },
         fp: 'speed-gold-ava',
+        ids: snap.avaRepairingIds,
+        dedup: snap.avaRepairingIds,
         goldCost: gc,
         label:
           'gold speed ava(' +
@@ -1072,6 +1166,10 @@ function planAvaActions(snap, m, actions, reasons) {
         cmd: cmds.speed,
         body: { ids: snap.avaRepairingIds, itemId: snap.avaSpeedItem.itemId, num: num, useGold: 0 },
         fp: 'speed-item-ava',
+        ids: snap.avaRepairingIds,
+        dedup: snap.avaRepairingIds,
+        // 道具 num 按全集 Σleft 池级折算、不可拆子集：任一在途即整域跳过（否则会按全集 num 只加速部分队列→超烧非幂等道具）
+        atomic: true,
         label:
           'item speed ava(' +
           snap.avaMode +
@@ -1088,21 +1186,16 @@ function planAvaActions(snap, m, actions, reasons) {
 }
 
 /**
- * 下拍择时：有活（待修/在修）走勤扫档，静默走巡检档；被拒退避再乘一档。
- * @param {object} snap 快照（可空，表示权威读失败）
+ * 下拍择时（无抑制时钟、去勤扫）：无论忙闲一律返回慢心跳（只靠 push 边沿即时、心跳兜底丢推）；
+ * 连续被拒达阈时×2（保留退避）。snap 保留形参但不再参与判定（免为「有没有活」再花一发读）。
+ * @param {object} [snap] 快照（当前忽略，兼容调用方形态）
  * @param {object} m 归一后的模块配置
  * @param {number} streak 当前连续被拒次数
  * @returns {number} 毫秒
  */
 function nextDelayMs(snap, m, streak) {
   var idle = Math.max(IDLE_TICK_MS, (m.pollIntervalSec || 60) * 1000);
-  if (!snap) return streak >= REJECT_STREAK_LIMIT ? idle * 2 : idle;
-  var busy =
-    snap.commonIds.length + snap.thorIds.length + snap.crossIds.length > 0 ||
-    snap.repairing > 0 ||
-    Number(snap.avaBusy) > 0;
-  if (!busy) return streak >= REJECT_STREAK_LIMIT ? idle * 2 : idle;
-  return streak >= REJECT_STREAK_LIMIT ? idle : ACTIVE_TICK_MS;
+  return streak >= REJECT_STREAK_LIMIT ? idle * 2 : idle;
 }
 
 // ─────────────────────────── 游戏态只读访问（try/catch 降级） ───────────────────────────
@@ -1399,77 +1492,62 @@ function battleFieldHospitalOpen() {
   return fo === null ? true : fo;
 }
 
-// ─────────────────────────── 在途指纹 ───────────────────────────
+// ─────────────────────────── 在途令牌（无抑制时钟） ───────────────────────────
 
 /**
- * 单个指纹键是否仍在抑制窗口内（窗口内=已发过/已修，本轮跳过）；顺带惰性回收自身过期项。
- * @param {string} k 指纹键（动作名|去重令牌 或 动作名|all）
+ * 动作名 → 在途族代号（供 prunePendingByExit 按族确认清除）：
+ *   lw=本地治疗族（state0 待修令牌 `id#orderId#endTime`）；cw=跨服治疗族（state0 `id#army#et`）；
+ *   aw=无双治疗族（state0 plain id）；lr=本地加速族（state1 plain id）；cr=跨服加速族（state1 plain id）；
+ *   ar=无双加速族（state1 plain id）。治疗族确认集=该域 state0 活跃令牌，加速族确认集=该域 state1 活跃令牌。
+ * @type {Object<string, string>}
+ */
+var FP_FAMILY = {
+  'heal-local': 'lw',
+  'heal-local-thor': 'lw',
+  'heal-local-resource': 'lw',
+  'heal-cross': 'cw',
+  'heal-ava': 'aw',
+  'speed-gold-local': 'lr',
+  'speed-item-local': 'lr',
+  'speed-gold-cross': 'cr',
+  'speed-item-cross': 'cr',
+  'speed-gold-ava': 'ar',
+  'speed-item-ava': 'ar',
+};
+
+/**
+ * 在途令牌是否仍在途（无 TTL：仅当 prunePendingByExit 观测到其目标 state 退出权威读后才删除）。
+ * @param {string} k 指纹键（`动作名|去重令牌`）
  * @returns {boolean}
  */
-function fpFreshAt(k) {
-  var exp = sentFp[k];
-  if (typeof exp !== 'number') return false;
-  if (Date.now() >= exp) {
-    delete sentFp[k];
-    return false;
-  }
-  return true;
+function isPending(k) {
+  return k in sentFp;
 }
 
 /**
- * 登记在途指纹：逐令牌动作只登记实际发送的去重令牌（`id#orderId`，同槽新伤兵下一拍即放行，
- * 不再被旧伤兵的同槽键一票否决）；无令牌的全量动作登记整批键。
+ * 登记在途令牌：逐令牌动作登记实际发送的去重令牌，全量动作登记该域活跃令牌集（act.pendingTokens）。
+ * 值恒 Infinity（永不到期）；同槽再次受伤产生新令牌→新键→即时放行，旧令牌待其 state 退出时由 prune 遗忘。
  * @param {string} key 动作名
  * @param {string[]} [tokens] 去重令牌列表
  */
-function markFp(key, tokens) {
-  var exp = Date.now() + RECENT_SEND_TTL_MS;
-  if (!tokens || !tokens.length) {
-    sentFp[key + '|all'] = exp;
-    return;
-  }
-  for (var i = 0; i < tokens.length; i++) sentFp[key + '|' + tokens[i]] = exp;
-  sweepFp();
-}
-
-/**
- * 将一批去重令牌的抑制到期推到 now+ms（令牌级长抑，用于已修/已确认幻影；不含 |all）。
- * @param {string} key 动作名
- * @param {string[]} tokens 去重令牌列表
- * @param {number} ms 抑制时长（毫秒）
- */
-function suppressFp(key, tokens, ms) {
+function markPending(key, tokens) {
   if (!tokens || !tokens.length) return;
-  var exp = Date.now() + ms;
-  for (var i = 0; i < tokens.length; i++) sentFp[key + '|' + tokens[i]] = exp;
-  sweepFp();
+  for (var i = 0; i < tokens.length; i++) sentFp[key + '|' + tokens[i]] = Infinity;
 }
 
 /**
- * 治疗成功后延长抑制：对已确认清空（应答 orderId="0"）的去重令牌，把抑制推至 now+HEAL_STALE_SUPPRESS_MS，
- * 压制客户端 OrderQueues 滞后导致的“反复修空槽→ param error”死循环。
- * @param {string} key 动作名
- * @param {string[]} tokens 已修的去重令牌列表
+ * 确认清除：删除族代号 `tag` 下所有「令牌已不在当前该 state 活跃集」的在途项（目标 state 退出权威读 ⇒ 遗忘）。
+ * activeSet 为 null/无 has（读失败/形态漂移）时整体不动，宁不清不误删在途令牌。
+ * @param {string} tag FP_FAMILY 族代号（lw/cw/aw/lr/cr/ar）
+ * @param {Set<string>} activeSet 当前该 state 的活跃令牌集
  */
-function markHealed(key, tokens) {
-  suppressFp(key, tokens, HEAL_STALE_SUPPRESS_MS);
-}
-
-/**
- * 确认陈旧幻影后的长抑：单条治疗仍 param error ⇒ 该 id 不可修（服务器侧已空），令牌推至
- * now+HEAL_DEAD_SLOT_SUPPRESS_MS（30min），压住过期/reload 后的反复重投。真伤再发生→新令牌→即时可修。
- * @param {string} key 动作名
- * @param {string[]} tokens 确认幻影的去重令牌列表
- */
-function markDeadSlot(key, tokens) {
-  suppressFp(key, tokens, HEAL_DEAD_SLOT_SUPPRESS_MS);
-}
-
-/** 惰性全表回收：表规模与「一轮 ids 数 × 动作数」同阶，到期即删。 */
-function sweepFp() {
-  var now = Date.now();
+function prunePendingByExit(tag, activeSet) {
+  if (!tag || !activeSet || typeof activeSet.has !== 'function') return;
   for (var k in sentFp) {
-    if (now >= sentFp[k]) delete sentFp[k];
+    var i = k.indexOf('|');
+    if (i < 0) continue;
+    if (FP_FAMILY[k.slice(0, i)] !== tag) continue;
+    if (!activeSet.has(k.slice(i + 1))) delete sentFp[k];
   }
 }
 
@@ -1530,20 +1608,8 @@ var LOCAL_SYNC_KINDS = {
 };
 
 /**
- * 钻石全额完成类动作（语义=把在修队列直接修完）：成功后登记整批指纹（|all），
- * TTL 内不重复扣钻石（服务端结算滞后期逐拍重发是双花风险）；
- * 道具类（speed-item-*）不在此列——同一队列合法地可连续多次用道具，保留逐拍重试。
- * @type {Object<string, true>}
- */
-var GOLD_SPEED_KINDS = {
-  'speed-gold-local': true,
-  'speed-gold-cross': true,
-  'speed-gold-ava': true,
-};
-
-/**
  * 治疗类动作（产出 220/1427）：落地后触发同拍「加速二次决策」（修正十四②）——本地流成功已把权威
- * 队列回灌 UserData.OrderQueues，就地重读即能看到刚开修的队列，不必等下一拍的 5s 空转。
+ * 队列回灌 UserData.OrderQueues，就地重读即能看到刚开修的队列，不必等到下一拍。
  * 无双 heal-ava 不在此列：其队列态只能靠下拍 6310 权威读（不回灌本地队列）。
  * @type {Object<string, true>}
  */
@@ -1586,7 +1652,7 @@ function syncLocalQueues(act, ret) {
 }
 
 /**
- * 直发一个已规划动作（带在途闸门与指纹去重）；永不 reject。
+ * 直发一个已规划动作（带在途令牌闸门与确认清除去重）；永不 reject。
  * @param {object} act planActions 产出的一项
  * @returns {Promise<string>} 'sent' | 'skipped' | 'rejected' | 'not-sent'
  */
@@ -1597,14 +1663,28 @@ async function execAction(act) {
   var dedup = act.dedup || ids;
   var tokens = dedup;
   var sentIds = ids;
-  if (dedup && dedup.length) {
-    // 逐去重令牌只补发未在途项（令牌含 orderId，同一槽新进的伤兵即时放行）
+  if (act.all) {
+    // 全量不点名动作（body={} 的 151/1428/815 本地/跨服）：不可拆子集，任一受影响令牌仍在途即整域跳过（绝不第二枪）
+    var pt = act.pendingTokens || [];
+    for (var p = 0; p < pt.length; p++) {
+      if (isPending(act.fp + '|' + pt[p])) {
+        log.debug('action %s pending token %s in flight, skip whole batch.', act.kind, pt[p]);
+        return 'skipped';
+      }
+    }
+  } else if (dedup && dedup.length) {
+    // 逐去重令牌只补发未在途项（令牌含 orderId/endTime，同一槽新进的伤兵即时放行）
     var keep = [];
     for (var i = 0; i < dedup.length; i++) {
-      if (!fpFreshAt(act.fp + '|' + dedup[i])) keep.push(i);
+      if (!isPending(act.fp + '|' + dedup[i])) keep.push(i);
     }
     if (!keep.length) {
-      log.debug('action %s all in flight (fingerprint), skip.', act.kind);
+      log.debug('action %s all pending (in flight), skip.', act.kind);
+      return 'skipped';
+    }
+    // 池级折算动作（道具 num 按全集算）不可拆子集：任一在途即整域跳过，避免超烧非幂等道具（钻石 useGold 逐队列计费不受此限）
+    if (act.atomic && keep.length !== dedup.length) {
+      log.debug('action %s partially in flight (atomic pool), skip whole batch.', act.kind);
       return 'skipped';
     }
     if (keep.length !== dedup.length) {
@@ -1622,9 +1702,6 @@ async function execAction(act) {
         for (var k = 0; k < keep.length; k++) tokens.push(dedup[keep[k]]);
       }
     }
-  } else if (fpFreshAt(act.fp + '|all')) {
-    log.debug('action %s in flight (fingerprint), skip.', act.kind);
-    return 'skipped';
   }
   var ret = await net.sendGuarded(act.cmd, body, {
     onError: function (err) {
@@ -1650,16 +1727,14 @@ async function execAction(act) {
       );
       return await bisectHeal(act, sentIds, tokens);
     }
-    // 单条治疗仍 param error ⇒ 该 id 当前确定不可修（陈旧空槽）：延长抑制 30min、按 debug 记录、
-    // 不计 rejectStreak（非真业务故障，只是客户端 OrderQueues 不回写的幻影；真伤再发生→新令牌→即时放行）。
+    // 单条治疗仍 param error ⇒ 该 id 当前为陈旧幻影（客户端 OrderQueues 滞后）：依「全废时钟」不登记任何抑制，
+    // 不计 rejectStreak（非真业务故障）；回灌能确认其退出 state0 则自然遗忘，否则下次事件重试（风险已接受）。
     if (isHealBatchCmd(act.cmd) && isParamErrorRet(ret)) {
-      markDeadSlot(act.fp, tokens);
-      log.debug('cmd %d stale-phantom param error (%s); suppress dead slot.', act.cmd, act.kind);
+      log.debug('cmd %d stale-phantom param error (%s); retry on next event.', act.cmd, act.kind);
       return 'rejected';
     }
     rejectStreak++;
-    // 其余可预期业务拒绝（无伤兵/额度耗尽/材料不足）：登记常规 TTL 指纹，别逐拍撞同一批。
-    markFp(act.fp, tokens);
+    // 其余可预期业务拒绝（无伤兵/额度耗尽/材料不足）：依「全废时钟」不登记抑制，由 kick/心跳自然重试。
     log.info(
       'cmd %d rejected (%s, streak #%d). code=%s;data=%s',
       act.cmd,
@@ -1671,30 +1746,11 @@ async function execAction(act) {
     return 'rejected';
   }
   rejectStreak = 0;
-  // 治疗类（本地 220）成功：应答里 orderId 回 "0" 的即已清空槽，延长抑制那些 (id#orderId)，
-  // 压制客户端 OrderQueues 滞后反复去修空槽→ common_159995；其余仍走常规 TTL。
-  var healedTok = null;
-  var normalTok = tokens;
-  if (act.cmd === CMD_ARMY_HEAL_LIST && sentIds && tokens && tokens.length) {
-    var healed = healedIdsFromResp(ret);
-    if (healed) {
-      healedTok = [];
-      normalTok = [];
-      for (var h = 0; h < tokens.length; h++) {
-        if (healed[String(sentIds[h])]) healedTok.push(tokens[h]);
-        else normalTok.push(tokens[h]);
-      }
-    }
-  }
-  if (healedTok && healedTok.length) markHealed(act.fp, healedTok);
-  if (normalTok && normalTok.length) markFp(act.fp, normalTok);
-  // 无令牌动作（全量 151/1428/6312 钻石、以及 815 道具）成功即登记整批键 `fp|all`（TTL 45s）压住重复扣费/重复烧道具：
-  //   815 应答不含队列、本地队列态只能靠 push 10120 异步刷新，不设闸会「客户端陈旧 → 每 5s 烧一批」。
-  //   代价（刻意取舍）：45s 内新入队的伤兵拿不到道具/钻石加速，需等整批键过期后由权威读重新裁决。
-  // 带令牌的动作若仍属钻石全量类（speed-gold-ava 单条形态）也额外登记整批键，避免同一批 ids 逐拍撞。
-  if (!tokens || !tokens.length) markFp(act.fp, null);
-  else if (GOLD_SPEED_KINDS[act.kind]) markFp(act.fp, null);
-  // 破例借用游戏官方 UpdateOrderQueues 把权威队列回灌本地态（从根消除幻影）；指纹抑制降为兜底。
+  // 成功：登记在途令牌（逐令牌=已发送 tokens；全量=该域活跃令牌集 pendingTokens），待其目标 state 退出权威读时由 prunePendingByExit 遗忘。
+  if (act.all) markPending(act.fp, act.pendingTokens);
+  else markPending(act.fp, tokens);
+  // 破例借用游戏官方 UpdateOrderQueues 把权威队列回灌本地态（从根消除幻影）：本地钻石 151/治疗 220 应答带 orderQueues，
+  //   回灌成功后刚处理队列在下一读即消失，作为本地流在途令牌的「确认」源（配合 prunePendingByExit 遗忘）。
   var synced = syncLocalQueues(act, ret);
   log.info(
     '%s sent. cmd=%d;body=%s%s',
@@ -1703,15 +1759,17 @@ async function execAction(act) {
     JSON.stringify(body),
     synced ? ' (queues synced)' : '',
   );
+  // 任一写动作成功 → 催一拍尽早拿「确认读」，缩小在途窗（createCycle 单飞，kick 仅置 pending、不打断本拍连发）。
+  kick();
   return 'sent';
 }
 
 /**
  * 治疗批量被 param error 整批拒绝后的「逐 id 隔离重发」。原子 220/1427 只要混入一个无效/空槽
  * （客户端 OrderQueues 滞后产生的陈旧幻影），同批真伤会被连累一起被拒→偶发漏修。逐条单发后：
- *   - 单发成功（且应答 orderId→“0”）⇒ 真伤已治好，markHealed 延长抑制该令牌；
- *   - 单发仍 param error ⇒ 该 id 确为陈旧幻影，markHealed 延长抑制→后续拍把它过滤在批外，不再连累真伤；
- *   - 其他业务拒绝（额度/材料）⇒ 常规 TTL 指纹；没发出去（CODE_NOT_SENT）⇒ 不登记，下一拍再判。
+ *   - 单发成功 ⇒ 真伤已治好，markPending 登记该令牌（待其退出 state0 时由 prune 遗忘）；
+ *   - 单发仍 param error ⇒ 该 id 确为陈旧幻影，依「全废时钟」不登记任何抑制（下次事件重试，风险已接受）；
+ *   - 其他业务拒绝（额度/材料）⇒ 同样不登记，仅计入退避依据；没发出去（CODE_NOT_SENT）⇒ 不登记，下次再判。
  * 仅由 execAction 在批量 param error 时调用（已确认至少一个 id 无效）。
  * @param {object} act planActions 的一项（治疗批量命令）
  * @param {string[]} sentIds 实际发送过的 id 列表
@@ -1743,23 +1801,19 @@ async function bisectHeal(act, sentIds, tokens) {
     if (!aliveFn()) break;
     if (!one || !one.ok) {
       if (one && one.code === CODE_NOT_SENT) continue;
-      // 单发仍 param error ⇒ 确认幻影，死槽长抑 30min；其他业务拒绝 ⇒ 常规 TTL（计入退避依据）。
-      if (isParamErrorRet(one)) markDeadSlot(act.fp, [tok]);
-      else {
-        markFp(act.fp, [tok]);
-        sawRealReject = true;
-      }
+      // 单发仍 param error ⇒ 确认幻影，不登记抑制（下次事件重试）；其他业务拒绝 ⇒ 计入退避依据，同样不登记。
+      if (!isParamErrorRet(one)) sawRealReject = true;
       continue;
     }
     anySent = true;
     rejectStreak = 0;
-    var healed = act.cmd === CMD_ARMY_HEAL_LIST ? healedIdsFromResp(one) : null;
-    if (healed && healed[String(id)]) markHealed(act.fp, [tok]);
-    else markFp(act.fp, [tok]);
+    markPending(act.fp, [tok]);
     syncLocalQueues(act, one);
     log.info('%s sent (bisect). cmd=%d;body=%s', act.label, act.cmd, JSON.stringify({ ids: [id] }));
   }
   if (!anySent && sawRealReject) rejectStreak++;
+  // 任一单发落地 → 催一拍取确认读（回灌/prune），使真伤确认即时生效。
+  if (anySent) kick();
   return anySent ? 'sent' : 'rejected';
 }
 
@@ -1808,11 +1862,7 @@ async function snapshot() {
       },
     });
   }
-  if (!aliveFn()) {
-    // 暂停/切换时上一拍的无双忙碌度不再成立，复位避免多走一次勤扫档（run 重启也会复位，此处仅为微窗口收紧）
-    lastAvaBusy = 0;
-    return null;
-  }
+  if (!aliveFn()) return null;
   var serverTime = gameData.serverTime ? gameData.serverTime() : 0;
   var quotas = quickFields(parseData(quotaRet && quotaRet.data));
   var crossData = parseData(crossRet && crossRet.data);
@@ -1820,11 +1870,33 @@ async function snapshot() {
   var crossIds = crossWaitIds(crossData);
   var localRepairing = repairingLeftSec(queues, serverTime);
   var crossRepairing = crossRepairingLeftSec(crossData, serverTime);
+  // queues 非有效数组（游戏态未就绪）时不置空集（会误清全部本地在途），置 null 供下方门控：
+  var localWaitTokens = Array.isArray(queues) ? localWaitTokenSet(queues) : null;
+  var localRepairingSet = Array.isArray(queues) ? localRepairingIdSet(queues) : new Set();
+  var localRepairingIds = Array.from(localRepairingSet);
+  var crossRepairingIdArr = crossRepairingIds(crossData);
   var avaData = avaRet && avaRet.ok ? parseData(avaRet.data) : null;
   var avaList = avaData && Array.isArray(avaData.list) ? avaData.list : null;
+  // 6310 应答 OK 但 list 缺席/非数组（形态漂移或空医院省略键）：不 prune（宁不整清、避免误删在途令牌），无双层由 avaReadOk=false 自然静默；待下一次有效读回归时再观测离队。
+  if (mode && avaRet && avaRet.ok && avaData && !Array.isArray(avaData.list)) {
+    log.debug('ava 6310 ok but list absent/not-array (mode %s); skip prune this tick.', mode);
+  }
   var avaW = avaWaitIds(avaList);
   var avaR = avaRepairingIds(avaList);
-  lastAvaBusy = mode ? avaW.length + avaR.length : 0;
+  // 确认清除（无抑制时钟）：各场景按「目标 state 退出权威读」遗忘在途令牌——治疗族确认集=state0、加速族确认集=state1。
+  //   本地：queues 为有效数组才 prune；跨服：1426 读 OK 且未门控跳过才 prune；无双：6310 list 为有效数组才 prune。
+  if (localWaitTokens) {
+    prunePendingByExit('lw', localWaitTokens);
+    prunePendingByExit('lr', localRepairingSet);
+  }
+  if (crossRet && crossRet.ok && !crossSkipped) {
+    prunePendingByExit('cw', crossWaitKeySet(crossData));
+    prunePendingByExit('cr', new Set(crossRepairingIdArr));
+  }
+  if (avaList) {
+    prunePendingByExit('aw', avaWaitIdSet(avaList));
+    prunePendingByExit('ar', avaRepairingIdSet(avaList));
+  }
   // 「用资源续修」仅在开关开、免费额度耗尽且有普通待修时预算：逐伤兵取 repair_cost，按累计持有量筛可负担集（同竞品 B）。
   var payIds = null;
   var payKeys = null;
@@ -1860,6 +1932,8 @@ async function snapshot() {
     localRepairing: localRepairing,
     crossRepairing: crossRepairing,
     repairing: localRepairing + crossRepairing,
+    localRepairingIds: localRepairingIds,
+    crossRepairingIds: crossRepairingIdArr,
     gold: goldBalance(),
     ratePerMin: goldRatePerMin(),
     speedItem: hospitalSpeedItemInfo(),
@@ -1914,6 +1988,9 @@ function speedSnapshotAfterHeal(snap) {
   return Object.assign({}, snap, {
     localQueues: queues,
     localRepairing: local,
+    // 与 localRepairing 同源同拍重算 state1 活跃 id 集：刚治好转入 state1 的队列必须进入全量加速动作的 pendingTokens，
+    //   否则成功后 markPending 漏登记它们→下拍仍见其 state1 即第二枪（双花钻石/重烧道具）。
+    localRepairingIds: Array.from(localRepairingIdSet(queues)),
     repairing: local + (Number(snap.crossRepairing) || 0),
   });
 }
@@ -1955,31 +2032,15 @@ async function planOnce() {
 }
 
 /**
- * cycle 单轮：跑一拍，再按下拍择时返回毫秒。next-check 日志由 cycle 驱动器统一输出。
+ * cycle 单轮：跑一拍，再返下拍慢心跳（去勤扫：节拍只靠 push 边沿 kick + 心跳兜底）。next-check 日志由 cycle 驱动器统一输出。
+ * 在飞期间攒下的触发（写成功后的通用 kick、10120/13006/AVA change push）是权威信号：读 cycle.pending 立即补一拍取确认读、缩小在途窗（createCycle 合并语义，不自激：补扫里同令牌已被 isPending 挡成 skipped）。
  * @returns {Promise<number>} 下一拍间隔（毫秒）
  */
 async function cycleRun() {
-  var sent = await planOnce();
+  await planOnce();
   if (!aliveFn()) return 0;
-  var queues = healQueues();
-  var snap = queues
-    ? {
-        commonIds: [],
-        thorIds: [],
-        crossIds: [],
-        repairing: repairingLeftSec(queues, gameData.serverTime ? gameData.serverTime() : 0),
-        avaBusy: lastAvaBusy,
-      }
-    : { commonIds: [], thorIds: [], crossIds: [], repairing: 0, avaBusy: lastAvaBusy };
-  if (!sent) {
-    // 无动作落地时再补一次「有没有活」的轻量判定：本地待修在场就勤扫，否则巡检档
-    if (snap) {
-      var split = splitWaitIds(queues, thorOfOrderId);
-      snap.commonIds = split.commonIds;
-      snap.thorIds = split.thorIds;
-    }
-  }
-  return nextDelayMs(snap, MCFG, rejectStreak);
+  if (cycle.pending) return 0;
+  return nextDelayMs(null, MCFG, rejectStreak);
 }
 
 const cycle = createCycle({ log: log, alive: aliveFn, run: cycleRun, fallback: IDLE_TICK_MS });
@@ -2033,7 +2094,6 @@ function run(ctx) {
   ctxRef = ctx;
   rejectStreak = 0;
   sentFp = Object.create(null);
-  lastAvaBusy = 0;
   ctx.on.push(PUSH_ORDER_QUEUES, kick);
   ctx.on.push(PUSH_CROSS_QUEUE_ADD, kick);
   // 无双四模式队列变化 push 全订（仅唤醒提示、载荷不入状态，非本场模式的号不会到达，多订无副作用）：
@@ -2122,8 +2182,13 @@ export {
   tipsType,
   isThorArmy,
   splitWaitIds,
+  localWaitTokenSet,
+  localRepairingIdSet,
   crossWaitIds,
   crossWaitKeys,
+  crossWaitKeySet,
+  crossRepairingIds,
+  crossRepairingIdSet,
   healedIdsFromResp,
   isParamErrorRet,
   isHealBatchCmd,
@@ -2133,6 +2198,8 @@ export {
   pickAvaMode,
   avaWaitIds,
   avaRepairingIds,
+  avaWaitIdSet,
+  avaRepairingIdSet,
   avaRepairingLeftSec,
   estimateAvaGold,
   speedItemNum,
@@ -2180,7 +2247,10 @@ export {
   PUSH_MASTER_HOSPITAL_CHANGE,
   PUSH_LEGEND_HOSPITAL_CHANGE,
   AVA_MODE_PUSH,
-  GOLD_SPEED_KINDS,
+  FP_FAMILY,
+  isPending,
+  markPending,
+  prunePendingByExit,
   HEAL_LANES,
   ARMY_TYPE,
   ITEM_TYPE_HOSPITAL_SPEED,
@@ -2189,5 +2259,4 @@ export {
   THOR_GROUP_LAND,
   THOR_GROUP_NAVY,
   THOR_GROUP_AIR,
-  RECENT_SEND_TTL_MS,
 };
