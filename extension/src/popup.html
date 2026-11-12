@@ -161,6 +161,28 @@
             opacity: 0.55;
         }
 
+        /* 拖放区：把凭证 JSON 文件从资源管理器拖进来（不弹原生对话框，popup 不会因失焦被销毁） */
+        .drop {
+            margin-top: 8px;
+            padding: 10px;
+            border-radius: 8px;
+            border: 1px dashed var(--line-strong);
+            background: var(--fill);
+            text-align: center;
+            font-size: 12px;
+            color: var(--muted);
+            transition:
+                border-color 0.15s,
+                background 0.15s,
+                color 0.15s;
+        }
+
+        .drop.over {
+            border-color: var(--focus);
+            background: rgba(120, 180, 255, 0.12);
+            color: var(--head);
+        }
+
         .result {
             margin-top: 8px;
             font-size: 12px;
@@ -205,11 +227,9 @@
     <div class="sec">
         <div class="sec-title">导入</div>
         <div class="hint">
-            选择凭证文件，或把 JSON 粘贴到下框。写入成功后自动刷新游戏页，由免扫码链路重放登录。
+            把凭证 JSON 文件拖进下方虚线框（会自动填入粘贴框），或直接粘贴 JSON。写入成功后自动刷新游戏页，由免扫码链路重放登录。
         </div>
-        <div class="row">
-            <button id="btn-import-file">选择文件…</button>
-        </div>
+        <div class="drop" id="drop">把凭证 JSON 文件拖到这里…</div>
         <textarea id="paste" placeholder='{"topwar_app_serverToken":"…"}' spellcheck="false"></textarea>
         <div class="row">
             <button id="btn-import-paste" class="primary">导入粘贴内容</button>

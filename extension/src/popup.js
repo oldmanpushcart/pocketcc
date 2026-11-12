@@ -204,41 +204,6 @@ async function saveText(text) {
   }
 }
 
-/**
- * 读用户选中的文件文本（showOpenFilePicker 优先，退 input[file]）
- * @returns {Promise<string|null>} 文件内容；用户取消返回 null
- */
-async function pickFileText() {
-  if (self.showOpenFilePicker) {
-    try {
-      const [h] = await self.showOpenFilePicker({
-        types: [{ description: 'JSON', accept: { 'application/json': ['.json'] } }],
-      });
-      const f = await h.getFile();
-      return await f.text();
-    } catch (e) {
-      if (e && e.name === 'AbortError') return null;
-      // 其余异常落到 input 兜底
-    }
-  }
-  return new Promise((resolve) => {
-    const inp = document.createElement('input');
-    inp.type = 'file';
-    inp.accept = '.json,application/json';
-    inp.onchange = () => {
-      const f = inp.files && inp.files[0];
-      if (!f) return resolve(null);
-      const r = new FileReader();
-      r.onload = () => resolve(String(r.result));
-      r.onerror = () => resolve(null);
-      r.readAsText(f);
-    };
-    // 取消选文件不触发 change（只有 cancel，Chrome 113+）：不接住就会永久悬挂
-    inp.addEventListener('cancel', () => resolve(null));
-    inp.click();
-  });
-}
-
 /** @param {string} msg 展示到状态行 @param {boolean} [warn] 未就绪/异常态转警色（同面板 .pc-world.warn 口径） */
 function setStatus(msg, warn) {
   const el = document.getElementById('status');
@@ -393,14 +358,6 @@ document.getElementById('btn-export-copy').addEventListener('click', async () =>
     showResult('复制失败：' + String(e.message || e), false);
   }
 });
-document.getElementById('btn-import-file').addEventListener('click', async () => {
-  try {
-    const text = await pickFileText();
-    if (text != null) await doImport(text);
-  } catch (e) {
-    showResult('读取文件失败：' + String(e && e.message), false);
-  }
-});
 document.getElementById('btn-import-paste').addEventListener('click', async () => {
   const text = document.getElementById('paste').value;
   if (!text.trim()) {
@@ -408,6 +365,45 @@ document.getElementById('btn-import-paste').addEventListener('click', async () =
     return;
   }
   await doImport(text);
+});
+
+// 拖放导入：把凭证 JSON 文件从资源管理器拖进虚线框，读出文本自动填入粘贴框。
+// 为什么用拖拽而不是 <input type=file> / showOpenFilePicker：原生文件对话框会抢走焦点，
+// 导致 action popup 被销毁、await 后续永不执行（旧「选择文件…」按钮「选了没反应」的根因）；
+// 拖拽不弹任何原生窗，popup 全程存活，读完即可回填。
+const dropEl = document.getElementById('drop');
+const pasteEl = document.getElementById('paste');
+/** @param {boolean} on 拖拽悬停时高亮虚线框 */
+const hiDrop = (on) => dropEl.classList.toggle('over', on);
+dropEl.addEventListener('dragenter', (e) => {
+  e.preventDefault();
+  hiDrop(true);
+});
+dropEl.addEventListener('dragover', (e) => {
+  e.preventDefault();
+  hiDrop(true);
+});
+dropEl.addEventListener('dragleave', (e) => {
+  e.preventDefault();
+  hiDrop(false);
+});
+dropEl.addEventListener('drop', async (e) => {
+  e.preventDefault();
+  hiDrop(false);
+  const f = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
+  if (!f) {
+    showResult('没拖到文件。', false);
+    return;
+  }
+  let text;
+  try {
+    text = await f.text();
+  } catch (err) {
+    showResult('读取文件失败：' + String(err && err.message), false);
+    return;
+  }
+  pasteEl.value = text;
+  showResult('已把文件「' + f.name + '」载入粘贴框，点「导入粘贴内容」完成写入。', true);
 });
 
 document.getElementById('foot').textContent =
