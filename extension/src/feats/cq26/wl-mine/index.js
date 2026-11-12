@@ -16,18 +16,25 @@
  *   单拍最多 MAX_ZONES_PER_TICK 个区。绝不存在「先扫完全部候选区再统一判断」的路径（survey.js 连批量入口都不提供）。
  *   一拍最坏 1+3×3=10 只读，命中即停时 1+3=4 只读。
  *
- * 额度唯一权威 = 22072 快照（`gameData.cq26WlInfo()`，每拍现读）：**零本地记账**。
+ * 额度唯一权威 = 22072 快照（`gameData.cq26WlInfo()`，每拍现读）：服务器额度**零本地记账**。
  *   写动作应答里那份 `remainStealNum/remainGuardNum` 只进日志，不落地（ACL 坑 3）。
  *   面板分母（16h / 3 / 3）来自「观测到的最大值」自校正 —— 22072 不带上限字段，且不得为此额外发包。
+ *   分矿种「最低可盗/协量」是选点门槛（items.js），不是额度记账：只滤点、不计次，日次数总额看「今日进度」。
  *
  * fail-closed 三处（宁不动作也不猜）：
  *   身份三元组（`cq26StarLandStatus`/`cq26StarLandSelf`/`cq26OriginServerId`）任一不可得 → 三腿全停；
  *   `conf(52000364)`（单点名额上限）/`conf(52000367)`（安全期秒）不可读 → 依赖它的腿停；
  *   22072 快照未达 → 本拍不动作（「还没推」≠「额度 0」）。
  *
+ * 闸门序有一条方向性铁律（与 docs/feat-荒芜冰原-采集.md §4.5 的阶段闸同律）：**额度闸只决定「要不要再开新一轮」，
+ *   绝不挡「外面那一趟的认领与召回」**。`todayCanGatherTime` 归零恰是最该收兵的时刻——在采那一趟已不再产出，
+ *   多留一分钟只是白占行军队列，并把已过成熟线的点整段挂在「可被盗」那侧（实录 11-12：旧序把认领挡在额度闸之后，
+ *   14:29 引擎离场错过 16:21 的召回点，重开后直到 18:49 那条 315 行军仍没人收）。
+ *
  * 与计划书的两处实测偏离（详见 docs/feat-荒芜冰原-采集.md §3.6 与本目录 march-loop.js 文件头）：
  *   · marchId **不来自 2114 应答**（应答只有 `{isOk}`），由 901 `marchList` 探针 + 10007/10019 推送认领；
- *   · 矿种多选控件用仓内既有的 `multiopts`（计划书写的 `tripick` 是三态单选控件，与「4501/4502 可并选」不符）。
+ *   · 矿种控件：采集腿用 `multiopts`（计划书写的 `tripick` 是三态单选，与「4501/4502 可并选」不符）；
+ *     盗采/协助腿 v3 起用 `itemlist`（勾选 + 分矿种最低量门槛合一，旧白名单/全局门槛由 migrate 折算）。
  *
  * 合规红线：只读游戏数据 + 发包（2201/2120/901/2114/2115/2116/2121），不调任何游戏 Update/Delete 改写本地数据。
  */
@@ -61,6 +68,7 @@ import {
   PUSH_LAND_LIST,
   PUSH_MARCH,
   PUSH_WL_INFO,
+  RECALL_MARGIN_SEC,
   REJECT_COOL_MS,
   STEAL_DAILY_MAX,
   TAIL_MIN_SEC,
@@ -78,6 +86,7 @@ import {
   rankByValue,
   stageGate,
 } from './legs.js';
+import { MINE_POOL, legPlan, migrateItemLists, normalizeItemState } from './items.js';
 import { dispatchGather, doHelp, doSteal, readReward } from './act.js';
 import {
   boardState,
@@ -324,10 +333,11 @@ function commonGate() {
  */
 function rollover(nowSec) {
   var d = todayStr(nowSec);
-  if (d === rejectDay) return;
-  rejectDay = d;
-  rejectCount = Object.create(null);
-  coolUntil = Object.create(null);
+  if (d !== rejectDay) {
+    rejectDay = d;
+    rejectCount = Object.create(null);
+    coolUntil = Object.create(null);
+  }
 }
 
 /**
@@ -403,8 +413,9 @@ function stageHoldMs(g, idleMs) {
 // ── 扫描与选点公共件 ──────────────────────────────────────────────────
 /**
  * RESOURCE 表回查采集速率（`m` 块不带 `gatherSpeed`，游戏弹窗也是回表兜底，ACL §4.4）。
+ * 只随归一点携带供观测参考：采集腿**不按速率设门槛**（11-12 废弃 `gatherMinSpeed`），选点只看矿种白名单与离主城距离。
  * @param {number} itemId 点的 `m.itemId`
- * @returns {number|null} 表不可读回 null（判据侧按「无从判定」挡掉，不当 0 速率）
+ * @returns {number|null} 表不可读回 null（不当 0 速率）
  */
 function speedOf(itemId) {
   var r = gameData.cq26WlResource(itemId);
@@ -570,7 +581,8 @@ function writeGapOk(nowMs) {
 
 // ── 采集腿 ────────────────────────────────────────────────────────────
 /**
- * 采集腿一拍：额度闸 → 在途则推进安全期状态机 → 空闲则选最近空闲点派兵。
+ * 采集腿一拍：在途则推进安全期状态机 → 服务器上那一趟先认领 → 额度够才选最近空闲点派兵。
+ * 序不得改：额度闸只挡「再开一轮」，不挡认领/召回（见本文件头「闸门序铁律」）。
  * 选点两阶段：① 只吃新鲜 memo（零请求，跨分区取最近）；② 无一候选才逐区精扫，扫出一颗即停手。
  * @returns {Promise<number>} 下拍延迟毫秒
  */
@@ -603,6 +615,39 @@ async function gatherTick() {
   // 一轮 = 一个安全期；剩余额度塞不满一轮时不是「睡到日切」，而是把尾轮窗长压成剩余额度。
   //   旧口径每天最多白丢一个完整安全期（实测最坏 7199s ≈ 2h）：零头本就是要作废的，短窗召回仍早于成熟线。
   var windowSec = roundWindowSec(g);
+  // 服务器说本人已有采集行军在场（手操 / 上一段遗留 / pause 期间派出），本机状态机不知情。
+  //   绝不无脑重复派兵，但也不能只 hold：`isGathering` 只由 22072 刷新，而 22072 仅在点写入与到家两个时刻下发
+  //   （2121 召回不触发），所以 reload / 手操召回 / 分区翻 OPENED 之后它会长期停在 1，把整条采集腿锁死。
+  // 【序不得改】这一段必须在额度闸之前跑完：额度归零时唯一该做的事就是把外面那一趟收回来，
+  //   旧写法在这里直接 `return 睡到日切`，于是 `todayCanGatherTime=0` 反而把认领路径杀了（事故实录见文件头）。
+  var probing = false;
+  if (g.info.isGathering) {
+    var claim = await claimInFlightRound(g);
+    // 认领命中 = 状态机已进 GATHERING（额度已尽时窗长取「下一拍即召回」档）：按 chainMs 立刻推进召回
+    if (claim.claimed) return claim.delayMs;
+    if (!claim.stale) {
+      // 本拍没命中也没判陈旧（节流未到 / 棋盘不可得 / 覆盖未全）：额度已尽时不必逐拍空转，
+      //   按认领自己的节奏睡 —— 中间那些拍在 `claimInFlightRound` 首句就被拦下，本来就零请求。
+      return windowSec ? claim.delayMs : Math.max(claim.delayMs, CLAIM_GAP_MS);
+    }
+    // 陈旧嫌疑的「试探派兵」本身就是再开一轮：额度已尽 ⇒ 无窗可下（也无需再派，真在采那趟靠上面的认领逐拍收敛），
+    //   不试探也不记拒绝账，下一拍照认领节奏再来。
+    if (!windowSec) {
+      log.debug(
+        'stale isGathering suspect but quota left %ds below the tail minimum %ds, probe withheld; claim retried each %ds.',
+        g.info.todayCanGatherTime,
+        TAIL_MIN_SEC,
+        CLAIM_GAP_MS / 1000,
+      );
+      return CLAIM_GAP_MS;
+    }
+    // 陈旧嫌疑：走一次受退避约束的试探派兵（真在采会被 `isOk:0` 拒，不扣额度也不丢产出）
+    if (g.nowMs < probeNextAtMs) return claim.delayMs;
+    probing = true;
+  } else {
+    resetStaleClaim();
+  }
+  // 额度闸（只管新一轮）：上面两条在途路径都已跑完，此刻确实没有任何东西替我们收兵，才允许睡到日界。
   if (!windowSec) {
     log.debug(
       'gather quota left %ds below the tail minimum %ds, sleep to daily boundary.',
@@ -611,19 +656,6 @@ async function gatherTick() {
     );
     var until = dayBoundaryMs();
     return until > 0 ? until : D.gatherIdleMs;
-  }
-  // 服务器说本人已有采集行军在场（手操 / 上一段遗留 / pause 期间派出），本机状态机不知情。
-  //   绝不无脑重复派兵，但也不能只 hold：`isGathering` 只由 22072 刷新，而 22072 仅在点写入与到家两个时刻下发
-  //   （2121 召回不触发），所以 reload / 手操召回 / 分区翻 OPENED 之后它会长期停在 1，把整条采集腿锁死。
-  var probing = false;
-  if (g.info.isGathering) {
-    var claim = await claimInFlightRound(g);
-    if (!claim.stale) return claim.delayMs;
-    // 陈旧嫌疑：走一次受退避约束的试探派兵（真在采会被 `isOk:0` 拒，不扣额度也不丢产出）
-    if (g.nowMs < probeNextAtMs) return claim.delayMs;
-    probing = true;
-  } else {
-    resetStaleClaim();
   }
   // 赛季阶段闸：「等待下次开荒 / 已结束」不再扫棋盘、不再派新兵（实录：stage=2 期间 9380 个 316 点全部无主、零写动作）。
   //   刻意放在两条在途路径之后 —— marchBusy() 的召回推进与 isGathering 的认领都必须照常走，
@@ -712,7 +744,6 @@ async function pickGatherPoint(g, zones) {
   var ctx = {
     originSid: g.originSid,
     whitelist: MCFG.gatherItemWhitelist,
-    minSpeed: MCFG.gatherMinSpeed,
   };
   lastCandidate.gather = false;
   var blocked = [];
@@ -751,14 +782,17 @@ var claimAtMs = 0;
  *   不设上限就是把这条腿锁到下一次 22072 —— 而 22072 只在点写入与到家两个时刻下发，两者都以「我们先动」为前提，
  *   构成自锁（实录：一次自锁连走 21 条 hold、白等 1h48m，靠扩展 reload 才脱困）。
  * @param {object} g commonGate 产出
- * @returns {Promise<{delayMs:number, stale:boolean}>} `stale=true` = 建议上层走一次试探派兵
+ * @returns {Promise<{delayMs:number, stale:boolean, claimed:boolean}>} `claimed=true` = 已接管那颗点并进 GATHERING（上层必须立刻按 `delayMs` 推进召回）；
+ *   `stale=true` = 建议上层走一次试探派兵（额度已尽时这一发无窗可下，调用方不得试探）
  */
 async function claimInFlightRound(g) {
-  if (Date.now() - claimAtMs < CLAIM_GAP_MS) return { delayMs: D.gatherIdleMs, stale: false };
+  if (Date.now() - claimAtMs < CLAIM_GAP_MS) {
+    return { delayMs: D.gatherIdleMs, stale: false, claimed: false };
+  }
   claimAtMs = Date.now();
   var board = await ensureBoard(g);
-  if (!aliveFn()) return { delayMs: D.gatherIdleMs, stale: false };
-  if (!board) return { delayMs: D.boardWaitMs, stale: false };
+  if (!aliveFn()) return { delayMs: D.gatherIdleMs, stale: false, claimed: false };
+  if (!board) return { delayMs: D.boardWaitMs, stale: false, claimed: false };
   var zones = ownGatherZones(board);
   if (!zones.length) {
     // 不谎报陈旧：本服已无采集分区（翻 OPENED / 赛季换阶段）时选点也无从下手，
@@ -767,7 +801,7 @@ async function claimInFlightRound(g) {
       'server reports isGathering=1 while no own OPENING gather zone on board (regions=%d) - hold.',
       board.regionCount,
     );
-    return { delayMs: D.gatherIdleMs, stale: false };
+    return { delayMs: D.gatherIdleMs, stale: false, claimed: false };
   }
   // ① 先吃新鲜 memo（零请求）；② 再逐区现扫，扫出一颗即停手
   var mine = nearestOwnPoint(zones, g);
@@ -776,7 +810,7 @@ async function claimInFlightRound(g) {
     for (var i = 0; i < zones.length && scanned < MAX_ZONES_PER_TICK; i++) {
       if (memoGet(zoneKey(zones[i]), g.nowMs)) continue;
       var res = await scanZone(net, zones[i], { speedOf: speedOf, nowMs: g.nowMs });
-      if (!aliveFn()) return { delayMs: D.gatherIdleMs, stale: false };
+      if (!aliveFn()) return { delayMs: D.gatherIdleMs, stale: false, claimed: false };
       if (!res.joined) scanned++;
       if (!res.ok) continue;
       mine = nearestOwnPoint([zones[i]], g);
@@ -792,7 +826,7 @@ async function claimInFlightRound(g) {
       zones.length,
       Object.keys(staleCovered).length,
     );
-    return { delayMs: D.gatherIdleMs, stale: noteStaleClaim(excludedAll) };
+    return { delayMs: D.gatherIdleMs, stale: noteStaleClaim(excludedAll), claimed: false };
   }
   resetStaleClaim();
   // `gst` 缺失时把召回点往前压（早召回只多付一趟 ETA；晚召回是把这一段的产出送给偷的人 ——
@@ -802,8 +836,11 @@ async function claimInFlightRound(g) {
     { x: mine.x, y: mine.y, k: mine.k, specIndex: mine.specIndex },
     g.nowSec,
     // 本趟是什么时候派的、用的多长窗根本不知情（纯手操 / 上一日遗留），故取「不晚于成熟线」的准则：
-    //   额度只剩零头时用尾轮窗长；连零头都不剩时用 `TAIL_MIN_SEC` 叠加一个已过期的 arrive ⇒ 下一拍即召回。
-    roundWindowSec(g) || TAIL_MIN_SEC,
+    //   额度还剩一轮以上 ⇒ 完整安全期；只剩零头 ⇒ 尾轮窗长；
+    //   连零头都不剩（事故现场）⇒ `RECALL_MARGIN_SEC`，使 recallAt = arrive（已过或将过）⇒ 下一拍即发 2121。
+    //     旧值 `TAIL_MIN_SEC` 只在 `gst` 已过期时才恰好退化成即刷；万一那一趟刚开始几分钟，它会把已不再产出的在采
+    //     多留近 9 分钟，方向上虽不致被盗，但白占行军队列 —— 而日额度归零后这一分钟本来就换不到任何产出。
+    roundWindowSec(g) || RECALL_MARGIN_SEC,
     '',
     arriveAt,
   );
@@ -814,7 +851,7 @@ async function claimInFlightRound(g) {
     mine.zoneTag || '-',
     arriveAt,
   );
-  return { delayMs: D.chainMs, stale: false };
+  return { delayMs: D.chainMs, stale: false, claimed: true };
 }
 
 /**
@@ -937,6 +974,12 @@ async function stealTick() {
     var until = dayBoundaryMs();
     return until > 0 ? until : D.instantIdleMs;
   }
+  // 矿种清单闸：全不勾 = 盗采腿不动（分矿种最低量门槛在 canSteal 谓词里逐点滤）
+  var plan = legPlan(MCFG.stealItems);
+  if (!plan.whitelist.length) {
+    log.debug('steal leg: no mine type enabled, hold.');
+    return D.instantIdleMs;
+  }
   if (typeof g.quotaMax !== 'number' || typeof g.matureSec !== 'number') {
     log.debug(
       'steal leg halted: conf %d/%d unreadable (quota/mature unknown).',
@@ -960,8 +1003,8 @@ async function stealTick() {
     nowSec: g.nowSec,
     matureSec: g.matureSec,
     quotaMax: g.quotaMax,
-    whitelist: MCFG.stealItemWhitelist,
-    minONum: MCFG.stealMinONum,
+    whitelist: plan.whitelist,
+    mins: plan.mins,
   };
   // 只排序，绝不触发扫描（惰性扫描纪律的落点）
   var cands = pickStealZones(board.stealZones, {
@@ -986,13 +1029,14 @@ async function stealTick() {
     if (!res.fromMemo && !res.joined) scanned++;
     if (!res.ok || !res.entry) continue;
     var pool = pointsFromMemo([c.zone], g.nowMs, ctx, canSteal, blocked);
-    var target = bestActionable(pool, g, 'steal');
-    if (!target) {
-      // 只有「本区确实没有可盗点」才进黑名单（TTL 内 pickStealZones 不再把它排进候选）；
-      //   「有目标、只是我们自己在冷却/当日拉黑」不能拉黑，否则一次网络抖动就把一个肥区挡掉整个 TTL。
-      if (!pool.length) noteZoneStealable(c.key, false);
+    // 只有「本区确实没有可盗点」才进黑名单（TTL 内 pickStealZones 不再把它排进候选）；
+    //   「有目标、只是我们自己在冷却/当日拉黑」不能拉黑，否则一次网络抖动就把一个肥区挡掉整个 TTL。
+    if (!pool.length) {
+      noteZoneStealable(c.key, false);
       continue;
     }
+    var target = bestActionable(pool, g, 'steal');
+    if (!target) continue;
     var ret = await doSteal(net, target);
     if (!aliveFn()) return D.chainMs;
     settleWrite(target, ret, 'steal ' + CMD_STEAL, true);
@@ -1024,6 +1068,12 @@ async function helpTick() {
     var until = dayBoundaryMs();
     return until > 0 ? until : D.instantIdleMs;
   }
+  // 矿种清单闸：全不勾 = 协助腿不动（分矿种最低量门槛在 canHelp 谓词里逐点滤）
+  var plan = legPlan(MCFG.helpItems);
+  if (!plan.whitelist.length) {
+    log.debug('help leg: no mine type enabled, hold.');
+    return D.instantIdleMs;
+  }
   if (typeof g.quotaMax !== 'number' || typeof g.matureSec !== 'number') {
     log.debug(
       'help leg halted: conf %d/%d unreadable (quota/mature unknown).',
@@ -1045,8 +1095,8 @@ async function helpTick() {
     nowSec: g.nowSec,
     matureSec: g.matureSec,
     quotaMax: g.quotaMax,
-    whitelist: MCFG.helpItemWhitelist,
-    minONum: MCFG.helpMinONum,
+    whitelist: plan.whitelist,
+    mins: plan.mins,
   };
   var blocked = [];
   lastCandidate.help = false;
@@ -1217,25 +1267,22 @@ const helpCycle = createCycle({
 });
 
 // ── 面板 ──────────────────────────────────────────────────────────────
-/** 矿种选项（4501 雷神矿脉 / 4502 矿山；itemId 即 RESOURCE 表主键，实测只有这两档在冰原出）。 */
-const MINE_OPTIONS = [
-  { value: ITEM_THOR_MINE, label: '雷神矿脉' },
-  { value: ITEM_MINE, label: '矿山' },
-];
+/** 采集腿 multiopts 选项（与盗采/协助的 itemlist 共用同一份矿种池 MINE_POOL，单一真相）。 */
+const MINE_OPTIONS = MINE_POOL.map(function (it) {
+  return { value: it.id, label: it.label };
+});
 
 /**
  * 面板 defaults（三腿各一组矿种/门槛，一个总开关；无子开关）。
+ *   stealItems/helpItems 空对象 = 全矿种默认勾选 + 无门槛（itemlist「未登记 = on/min 0」语义）。
  * @returns {object}
  */
 function buildDefaults() {
   return {
     enabled: false,
     gatherItemWhitelist: [ITEM_THOR_MINE, ITEM_MINE],
-    gatherMinSpeed: 0,
-    stealItemWhitelist: [ITEM_THOR_MINE, ITEM_MINE],
-    stealMinONum: 0,
-    helpItemWhitelist: [ITEM_THOR_MINE, ITEM_MINE],
-    helpMinONum: 0,
+    stealItems: {},
+    helpItems: {},
     actGapMs: ACT_GAP_MS,
   };
 }
@@ -1253,71 +1300,12 @@ function fmtHM(sec) {
 }
 
 /**
- * 面板 fields：7 个可调项 + 3 行额度进度（纯读 22072 快照，零额外请求）。
+ * 面板 fields：4 行只读状态置顶（纯读 22072 快照与行军快照，零额外请求）+ 说明横幅 + 5 个可调项。
+ *   状态置顶是 CQ26 家族统一口径（当前状态放卡片最前边）。
  * @returns {object[]}
  */
 function buildFields() {
   return [
-    {
-      // 总开关不在这里再划一行 checkbox：面板卡片头部的 pc-en（ui/panel.js）已直驱同一个 configs[fid].enabled。
-      //   说明行用 type:'note'（fields.js 的 renderCheckbox 不消费 hint，挂在开关上会静默不渲染）。
-      key: '_legsNote',
-      type: 'note',
-      text:
-        '一条总闸管三条腿（采集派兵 / 盗采 / 协助，开关在卡片头部）；' +
-        '三腿无子开关，各自受自己的每日额度与赛季阶段约束。',
-    },
-    {
-      key: 'gatherItemWhitelist',
-      type: 'multiopts',
-      label: '采集矿种',
-      section: '采集腿（派兵，8 轮 × 安全期）',
-      options: MINE_OPTIONS,
-      hint: '勾选要派兵开采的矿种；全不勾 = 不限矿种。采集腿按「离主城最近」选点，好压进行军 ETA 以便一天塞满 8 轮',
-    },
-    {
-      key: 'gatherMinSpeed',
-      type: 'number',
-      label: '采集最低速率',
-      section: '采集腿（派兵，8 轮 × 安全期）',
-      min: 0,
-      step: 100,
-      hint: '低于此采集速率的点不派兵（0 = 不限）。速率取自 RESOURCE 表（地块报文不带该字段）',
-    },
-    {
-      key: 'stealItemWhitelist',
-      type: 'multiopts',
-      label: '盗采矿种',
-      section: '盗采腿（外服，即时结算）',
-      options: MINE_OPTIONS,
-      hint: '只偷外服「已过安全期且仍有存量」的点；全不勾 = 不限矿种。逐区惰性精扫、找到一个目标就动手，单拍最多精扫 3 个分区',
-    },
-    {
-      key: 'stealMinONum',
-      type: 'number',
-      label: '盗采最低可盗量',
-      section: '盗采腿（外服，即时结算）',
-      min: 0,
-      step: 1,
-      hint: '点的可盗量 oNum 低于此值不偷（0 = 不限）。日额度只有 3 次，门槛用来把额度花在肥点上',
-    },
-    {
-      key: 'helpItemWhitelist',
-      type: 'multiopts',
-      label: '协助矿种',
-      section: '协助腿（本服他人采点）',
-      options: MINE_OPTIONS,
-      hint: '给本服他人正在开采的点加保护并即时领奖励（不扣对方的采集量）；全不勾 = 不限矿种',
-    },
-    {
-      key: 'helpMinONum',
-      type: 'number',
-      label: '协助最低可协量',
-      section: '协助腿（本服他人采点）',
-      min: 0,
-      step: 1,
-      hint: '点的可获量 oNum 低于此值不协（0 = 不限）',
-    },
     {
       key: '_gatherQuota',
       type: 'text',
@@ -1370,6 +1358,53 @@ function buildFields() {
         );
       },
     },
+    {
+      // 总开关不在这里再划一行 checkbox：面板卡片头部的 pc-en（ui/panel.js）已直驱同一个 configs[fid].enabled。
+      //   说明行用 type:'note'（fields.js 的 renderCheckbox 不消费 hint，挂在开关上会静默不渲染）。
+      key: '_legsNote',
+      type: 'note',
+      text:
+        '一条总闸管三条腿（采集派兵 / 盗采 / 协助，开关在卡片头部）；' +
+        '三腿无子开关，各自受自己的每日额度、矿种清单与赛季阶段约束。',
+    },
+    {
+      key: 'gatherItemWhitelist',
+      type: 'multiopts',
+      label: '采集矿种',
+      section: '采集腿（派兵，8 轮 × 安全期）',
+      options: MINE_OPTIONS,
+      hint: '勾选要派兵开采的矿种；全不勾 = 不限矿种。采集腿按「离主城最近」选点，好压进行军 ETA 以便一天塞满 8 轮',
+    },
+    {
+      key: 'stealItems',
+      type: 'itemlist',
+      label: '盗采矿种',
+      section: '盗采腿（外服，即时结算）',
+      items: MINE_POOL,
+      nameGrow: true,
+      numKey: 'min',
+      chkTitle: '是否自动盗采该矿种',
+      numPlaceholder: '不限',
+      numTitle: '该矿种最低可盗量（oNum），低于此值的点不盗；0=不限',
+      head: { name: '矿种', num: '最低可盗量' },
+      topHint: '取消勾选=不盗该矿种；最低可盗量 0=不限；全不勾=盗采腿不动',
+      hint: '只偷外服「已过安全期且仍有存量」的点；可盗量低于该矿种门槛的点不偷，把每日 3 次额度花在肥点上',
+    },
+    {
+      key: 'helpItems',
+      type: 'itemlist',
+      label: '协助矿种',
+      section: '协助腿（本服他人采点）',
+      items: MINE_POOL,
+      nameGrow: true,
+      numKey: 'min',
+      chkTitle: '是否自动协助该矿种',
+      numPlaceholder: '不限',
+      numTitle: '该矿种最低可协量（oNum），低于此值的点不协；0=不限',
+      head: { name: '矿种', num: '最低可协量' },
+      topHint: '取消勾选=不协该矿种；最低可协量 0=不限；全不勾=协助腿不动',
+      hint: '给本服他人正在开采的点加保护并即时领奖励（不扣对方的采集量）；可获量低于该矿种门槛的点不协',
+    },
   ];
 }
 
@@ -1399,7 +1434,8 @@ function fmtClock(epochSec) {
 // ── 注册 ──────────────────────────────────────────────────────────────
 /**
  * 面板 cfg → 运行时 cfg（硬契约：`core/registry.js` 对每个 reactor 功能无条件调它）。
- * 白名单做数值化 + 去重 + 剔除非正数；未声明键不透传（历史残留不进运行时）。
+ * 采集白名单做数值化 + 去重 + 剔除非正数；盗采/协助清单状态只收池内矿种（normalizeItemState）；
+ * 未声明键不透传（历史残留不进运行时）。
  * @param {object} c 面板合并后配置
  * @returns {object}
  */
@@ -1408,11 +1444,8 @@ function normalizeCfg(c) {
   return {
     enabled: !!o.enabled,
     gatherItemWhitelist: idList(o.gatherItemWhitelist),
-    gatherMinSpeed: Number(o.gatherMinSpeed) || 0,
-    stealItemWhitelist: idList(o.stealItemWhitelist),
-    stealMinONum: Number(o.stealMinONum) || 0,
-    helpItemWhitelist: idList(o.helpItemWhitelist),
-    helpMinONum: Number(o.helpMinONum) || 0,
+    stealItems: normalizeItemState(o.stealItems),
+    helpItems: normalizeItemState(o.helpItems),
     actGapMs: Number(o.actGapMs) > 0 ? Number(o.actGapMs) : ACT_GAP_MS,
   };
 }
@@ -1451,7 +1484,8 @@ reactor.register({
   defaults: buildDefaults(),
   fields: buildFields(),
   toModuleCfg: normalizeCfg,
-  version: 1,
+  version: 3,
+  migrate: migrateItemLists,
   install: install,
   configure: configure,
   run: run,

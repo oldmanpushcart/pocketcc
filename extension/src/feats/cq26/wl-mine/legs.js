@@ -68,7 +68,7 @@ function quotaRoom(point, ctx) {
  * 非客户端谓词（游戏侧没有 canGather），是我们自己的选点口径；额度与「本人是否已有采集行军」
  *   由 index.js 的闸门负责，本函数只管「这个点能不能采」。
  * @param {object} point 归一点
- * @param {object} ctx `{originSid:number|null, whitelist:number[], minSpeed:number}`
+ * @param {object} ctx `{originSid:number|null, whitelist:number[]}`
  * @returns {{ok:boolean, why:string}}
  */
 export function canGather(point, ctx) {
@@ -82,15 +82,13 @@ export function canGather(point, ctx) {
   // 缺 specIndex 即 2114 的 wastelandIndex 无从取值（游戏 clickCQ26WLGather 直接 return）
   if (point.specIndex == null) return { ok: false, why: WHY_NO_SPEC_INDEX };
   if (!inWhitelist(ctx.whitelist, point.itemId)) return { ok: false, why: WHY_ITEM_FILTERED };
-  var min = Number(ctx.minSpeed) || 0;
-  if (min > 0 && !(point.gatherSpeed >= min)) return { ok: false, why: 'slow' };
   return { ok: true, why: '' };
 }
 
 /**
  * 盗采腿：外服、已过安全期、本人未偷过、名额未满。
  * @param {object} point 归一点
- * @param {object} ctx `{me:string, originSid:number|null, nowSec:number, matureSec:number|null, quotaMax:number|null, whitelist:number[], minONum:number}`
+ * @param {object} ctx `{me:string, originSid:number|null, nowSec:number, matureSec:number|null, quotaMax:number|null, whitelist:number[], mins:Object<number,number>}`
  * @returns {{ok:boolean, why:string}}
  */
 export function canSteal(point, ctx) {
@@ -106,7 +104,8 @@ export function canSteal(point, ctx) {
   if (!(point.gNum > 0)) return { ok: false, why: 'nothing-to-take' };
   if (!inWhitelist(ctx.whitelist, point.itemId)) return { ok: false, why: WHY_ITEM_FILTERED };
   if (point.oNum == null) return { ok: false, why: 'no-onum' };
-  var min = Number(ctx.minONum) || 0;
+  // 分矿种最低可盗量门槛（items.js legPlan 的 mins）：存量低于该矿种门槛不出手，0=不限
+  var min = Number(ctx.mins && ctx.mins[point.itemId]) || 0;
   if (min > 0 && point.oNum < min) return { ok: false, why: 'onum-below-min' };
   return { ok: true, why: '' };
 }
@@ -114,7 +113,7 @@ export function canSteal(point, ctx) {
 /**
  * 协助腿：本服、他人正在采、本人未协过、名额未满。
  * @param {object} point 归一点
- * @param {object} ctx 同 canSteal（whitelist/minONum 换成本腿取值）
+ * @param {object} ctx 同 canSteal（whitelist/mins 换成本腿取值）
  * @returns {{ok:boolean, why:string}}
  */
 export function canHelp(point, ctx) {
@@ -134,7 +133,8 @@ export function canHelp(point, ctx) {
     return { ok: false, why: 'immature' };
   if (!inWhitelist(ctx.whitelist, point.itemId)) return { ok: false, why: WHY_ITEM_FILTERED };
   if (point.oNum == null) return { ok: false, why: 'no-onum' };
-  var min = Number(ctx.minONum) || 0;
+  // 分矿种最低可协量门槛（同盗采腿口径）
+  var min = Number(ctx.mins && ctx.mins[point.itemId]) || 0;
   if (min > 0 && point.oNum < min) return { ok: false, why: 'onum-below-min' };
   return { ok: true, why: '' };
 }
@@ -196,7 +196,7 @@ export function rankByValue(points) {
 
 /**
  * 采集腿选点序：取最近空闲点。
- * 安全期套利把 16h 额度切成 8 轮，行军 ETA 直接吃掉轮次预算，故近家优先（速率次之——同一分区内速率档位差别远小于来回耗时差别）。
+ * 安全期套利把 16h 额度切成 8 轮，行军 ETA 直接吃掉轮次预算，故近家优先（速率不参与判据，11-12 废弃门槛）。
  * @param {object[]} points 已过 canGather 的点
  * @param {number|null} homeX 本人基地世界 x（取不到传 null，退化为不排序）
  * @param {number|null} homeY 本人基地世界 y

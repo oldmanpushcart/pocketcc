@@ -1,5 +1,6 @@
 // cq26-wl-mine（CQ26 荒芜冰原矿区）纯函数单测：三腿谓词闸序、选点排序、2201 棋盘桶化、
-// 901 地块归一与分区精扫（含去重/黑名单/惰性扫描纪律）、被动嗅探增量、安全期召回时刻、315 行军认领。
+// 901 地块归一与分区精扫（含去重/黑名单/惰性扫描纪律）、被动嗅探增量、安全期召回时刻、315 行军认领、
+// 分矿种最低量门槛（items.js：清单语义 / 门槛计划 / v1+v2→v3 迁移）。
 // 全部不摸游戏符号（除 `march.State` 常量），也不发真包：网络一律走桩 net。
 // feat 模块 import 链会触到浏览器全局，故先最小桩化 window/document/chrome，再动态 import（同 cq26-wl-chest 口径）。
 import { test } from 'node:test';
@@ -36,6 +37,7 @@ const survey = await import('../../extension/src/feats/cq26/wl-mine/survey.js');
 const marchLoop = await import('../../extension/src/feats/cq26/wl-mine/march-loop.js');
 const { march } = await import('../../extension/src/core/march.js');
 const C = await import('../../extension/src/feats/cq26/wl-mine/constants.js');
+const items = await import('../../extension/src/feats/cq26/wl-mine/items.js');
 
 /** 基准时刻：服务器秒 / 本地毫秒（以真实墙钟为基准，memo TTL 用的是 Date.now()，两者必须同轴） */
 const NOW_MS = Date.now();
@@ -130,8 +132,8 @@ function marchRaw(o) {
 }
 
 // ── legs.js：采集腿 ───────────────────────────────────────────────────
-test('canGather: 本服无主点放行，缺 originSid / 有主 / 外服 / 矿种 / 低速 / 无 specIndex 逐闸挡下', () => {
-  const ctx = { originSid: ORIGIN_SID, whitelist: [C.ITEM_THOR_MINE, C.ITEM_MINE], minSpeed: 0 };
+test('canGather: 本服无主点放行，缺 originSid / 有主 / 外服 / 矿种 / 无 specIndex 逐闸挡下', () => {
+  const ctx = { originSid: ORIGIN_SID, whitelist: [C.ITEM_THOR_MINE, C.ITEM_MINE] };
   assert.equal(legs.canGather(point(), ctx).ok, true);
   // fail-closed：originSid 不可得（null）不得退化成「和 0 比较」
   assert.equal(legs.canGather(point(), { ...ctx, originSid: null }).why, 'no-origin-sid');
@@ -140,11 +142,11 @@ test('canGather: 本服无主点放行，缺 originSid / 有主 / 外服 / 矿�
   assert.equal(legs.canGather(point({ initSid: FOREIGN }), ctx).why, 'not-own-server');
   assert.equal(legs.canGather(point({ specIndex: null }), ctx).why, 'no-spec-index');
   assert.equal(legs.canGather(point({ itemId: 4600 }), ctx).why, 'item-filtered');
-  assert.equal(legs.canGather(point({ gatherSpeed: 10 }), { ...ctx, minSpeed: 100 }).why, 'slow');
+  // 速率不参与判据（11-12 废弃 gatherMinSpeed 门槛）：低速 / 速率不可得都照常放行
+  assert.equal(legs.canGather(point({ gatherSpeed: 10 }), ctx).ok, true);
+  assert.equal(legs.canGather(point({ gatherSpeed: null }), ctx).ok, true);
   // 白名单空数组 = 不限矿种（面板全不勾的语义）
   assert.equal(legs.canGather(point({ itemId: 4600 }), { ...ctx, whitelist: [] }).ok, true);
-  // 速率不可得（RESOURCE 表读空回 null）时 minSpeed=0 仍放行，设了门槛就挡
-  assert.equal(legs.canGather(point({ gatherSpeed: null }), { ...ctx, minSpeed: 1 }).why, 'slow');
 });
 
 // ── legs.js：盗采腿 ───────────────────────────────────────────────────
@@ -156,7 +158,7 @@ test('canSteal: 外服已过安全期且有存量放行；成熟判定 gst+7200 
     matureSec: MATURE_SEC,
     quotaMax: QUOTA_MAX,
     whitelist: [C.ITEM_THOR_MINE],
-    minONum: 0,
+    mins: {},
   };
   const foreign = { initSid: FOREIGN };
   assert.equal(legs.canSteal(point(foreign), ctx).ok, true);
@@ -182,8 +184,31 @@ test('canSteal: 外服已过安全期且有存量放行；成熟判定 gst+7200 
   assert.equal(legs.canSteal(point(foreign), { ...ctx, quotaMax: null }).why, 'point-quota-full');
   assert.equal(legs.canSteal(point({ ...foreign, oNum: null }), ctx).why, 'no-onum');
   assert.equal(
-    legs.canSteal(point({ ...foreign, oNum: 5 }), { ...ctx, minONum: 10 }).why,
+    legs.canSteal(point({ ...foreign, oNum: 5 }), { ...ctx, mins: { [C.ITEM_THOR_MINE]: 10 } }).why,
     'onum-below-min',
+  );
+  // 分矿种门槛（用户口径实例：雷神矿脉 1400、矿山 78）：各矿种只跟自己的门槛比，达标即放行
+  const perType = {
+    ...ctx,
+    whitelist: [C.ITEM_THOR_MINE, C.ITEM_MINE],
+    mins: { [C.ITEM_THOR_MINE]: 1400, [C.ITEM_MINE]: 78 },
+  };
+  const mine = { ...foreign, itemId: C.ITEM_MINE };
+  assert.equal(
+    legs.canSteal(point({ ...foreign, oNum: 1500 }), perType).ok,
+    true,
+    '雷神 1500 ≥ 1400',
+  );
+  assert.equal(
+    legs.canSteal(point({ ...foreign, oNum: 1000 }), perType).why,
+    'onum-below-min',
+    '雷神 1000 < 1400 挡下（矿山门槛不适用它）',
+  );
+  assert.equal(legs.canSteal(point({ ...mine, oNum: 100 }), perType).ok, true, '矿山 100 ≥ 78');
+  assert.equal(
+    legs.canSteal(point({ ...mine, oNum: 50 }), perType).why,
+    'onum-below-min',
+    '矿山 50 < 78 挡下',
   );
 });
 
@@ -196,7 +221,7 @@ test('canHelp: 本服他人正采放行；自己的点/未协过/名额；未开
     matureSec: MATURE_SEC,
     quotaMax: QUOTA_MAX,
     whitelist: [C.ITEM_THOR_MINE],
-    minONum: 0,
+    mins: {},
   };
   const other = { ownerId: '11999999999999' };
   assert.equal(legs.canHelp(point(other), ctx).ok, true);
@@ -208,6 +233,16 @@ test('canHelp: 本服他人正采放行；自己的点/未协过/名额；未开
   // 源码原文：gatherStartTime 未起也放行（与盗采腿刻意不对称，不得对齐）
   assert.equal(legs.canHelp(point({ ...other, gst: 0 }), ctx).ok, true);
   assert.equal(legs.canHelp(point({ ...other, gst: NOW_SEC - 10 }), ctx).why, 'immature');
+  // 分矿种最低可协量门槛（同盗采腿口径）：本点矿种不在 mins 里 = 不限
+  assert.equal(
+    legs.canHelp(point({ ...other, oNum: 5 }), { ...ctx, mins: { [C.ITEM_THOR_MINE]: 10 } }).why,
+    'onum-below-min',
+  );
+  assert.equal(
+    legs.canHelp(point({ ...other, oNum: 100 }), { ...ctx, mins: { [C.ITEM_MINE]: 78 } }).ok,
+    true,
+    '雷神点不吃矿山门槛',
+  );
 });
 
 test('rankByValue: oNum 降序、缺失沉底、不改入参', () => {
@@ -410,7 +445,7 @@ test('ingestResourcePoints: 只留 316、按 specIndex 精筛，m 块拆成标�
 // ── survey.js：L1+L2 精扫（桩 net，逐区惰性）───────────────────────────
 /**
  * 造一个只认 2120 / 901 的桩 net。
- * @param {{anchor?:object, windows?:object[]}} h 各协议应答
+ * @param {{anchor?:object, windows?:object[], recallOk?:boolean}} h 各协议应答（`recallOk` 缺省 false = 2121 被拒）
  * @param {{calls:object}} [sink] 记录出网次数
  * @returns {object} net 桩
  */
@@ -426,6 +461,7 @@ function stubNet(h, sink) {
       calls.guarded.push({ cmd, body });
       if (cmd === C.CMD_NWL_POS) return { ok: true, code: 0, data: h.anchor || { pos: null } };
       if (cmd === C.CMD_MAP_SINGLE) return { ok: true, code: 0, data: h.board || {} };
+      if (cmd === C.CMD_RECALL && h.recallOk) return { ok: true, code: 0, data: {} };
       return { ok: false, code: 9, data: null };
     },
     async send(cmd, body) {
@@ -743,4 +779,132 @@ test('尾轮短窗属于本轮：arrive 被推送校准后仍按短窗重算 rec
     'reset 后本轮窗长清零，回落 conf 现读值',
   );
   marchLoop.reset('test end');
+});
+
+test('零额度认领下发的窗长 = RECALL_MARGIN_SEC：recallAt 落在过去，首拍即 2121', async () => {
+  // 事故现场（11-12）：日额度归零后重启，认领命中一颗早已过成熟线的点。`index.js` 此刻下发
+  //   `RECALL_MARGIN_SEC`（窗长 = 余量 ⇒ recallAt = arrive），不再是 `TAIL_MIN_SEC`。
+  //   本条只锁定状态机端的后果：无论 `gst` 距今多久，都不存在「再等几分钟才收兵」的空窗。
+  marchLoop.setMatureSec(MATURE_SEC);
+  marchLoop.reset('test init');
+  const net = stubNet({ recallOk: true });
+  const arrive = NOW_SEC - 2 * MATURE_SEC;
+  marchLoop.beginRound(
+    { x: 188, y: 182, k: 14011512, specIndex: 9 },
+    NOW_SEC,
+    C.RECALL_MARGIN_SEC,
+    '12345',
+    arrive,
+  );
+  assert.equal(marchLoop.snapshot().recallAtSec, arrive, '窗长=余量 ⇒ recallAt 恰等于 arrive');
+  assert.ok(arrive + MATURE_SEC < NOW_SEC, '前置：该点已过成熟线（可被盗侧）');
+  assert.equal(
+    await marchLoop.advance(net, { alive: () => true, nowSec: NOW_SEC, nowMs: NOW_MS }),
+    'recalled',
+    '首拍即召回，不排任何等待',
+  );
+  assert.equal(net.calls.guarded.filter((c) => c.cmd === C.CMD_RECALL).length, 1);
+  assert.equal(marchLoop.snapshot().phase, marchLoop.PHASE_RECALLING);
+  // 旧值的真实缺陷在「那一趟刚开始几分钟」时：零产出却把兵留到 +9min（已不再花额度，白占行军队列）
+  const fresh = NOW_SEC - 120;
+  assert.equal(
+    marchLoop.computeRecallAt(fresh, C.RECALL_MARGIN_SEC),
+    fresh,
+    '新口径：下一拍即召回',
+  );
+  assert.ok(
+    marchLoop.computeRecallAt(fresh, C.TAIL_MIN_SEC) > NOW_SEC,
+    '旧口径：召回被排到未来（本例 +7min）',
+  );
+  marchLoop.reset('test end');
+});
+
+// ── 分矿种最低量门槛（items.js 纯策略层）──────────────────────────────
+
+test('normalizeItemState：只收池内矿种，on/min 归一，未登记项不落键', () => {
+  assert.deepEqual(items.normalizeItemState(null), {});
+  assert.deepEqual(items.normalizeItemState([C.ITEM_THOR_MINE]), {}, '数组不是清单状态');
+  assert.deepEqual(items.normalizeItemState({ 9999: { on: 0, min: 5 } }), {}, '池外 id 丢弃');
+  assert.deepEqual(
+    items.normalizeItemState({ 4501: { on: 0, min: '1400' }, 4502: { on: 1, min: -3 } }),
+    { 4501: { on: 0, min: 1400 }, 4502: { on: 1, min: 0 } },
+  );
+});
+
+test('legPlan：未登记 = 默认勾选 + 不限；取消勾选 = 排除；全不勾 = 空白名单', () => {
+  const all = items.legPlan({});
+  assert.deepEqual(all.whitelist, [C.ITEM_THOR_MINE, C.ITEM_MINE]);
+  assert.equal(all.mins[C.ITEM_THOR_MINE], 0);
+  assert.equal(all.mins[C.ITEM_MINE], 0);
+  const partial = items.legPlan({ 4502: { on: 0, min: 0 }, 4501: { on: 1, min: 1400 } });
+  assert.deepEqual(partial.whitelist, [C.ITEM_THOR_MINE]);
+  assert.equal(partial.mins[C.ITEM_THOR_MINE], 1400);
+  const none = items.legPlan({ 4501: { on: 0, min: 0 }, 4502: { on: 0, min: 0 } });
+  assert.deepEqual(none.whitelist, [], '全不勾 = 腿不动（不得喂给 inWhitelist 当「不限」）');
+});
+
+test('migrateItemLists：v1 白名单 + 全局门槛 → 分矿种 {on,min}，旧键删除', () => {
+  const v1 = {
+    enabled: true,
+    gatherItemWhitelist: [C.ITEM_THOR_MINE, C.ITEM_MINE],
+    stealItemWhitelist: [C.ITEM_THOR_MINE],
+    helpItemWhitelist: [],
+    stealMinONum: 78,
+    helpMinONum: 0,
+  };
+  const out = items.migrateItemLists(v1, 1);
+  // 旧全局门槛是「所有矿种共用」，折算成每个矿种的初始门槛（被排除矿种也带上，重新勾选即恢复旧行为）
+  assert.deepEqual(out.stealItems, {
+    4501: { on: 1, min: 78 },
+    4502: { on: 0, min: 78 },
+  });
+  assert.deepEqual(out.helpItems, {}, '旧「空=不限」+ 门槛 0 折算为全默认 on + 不限');
+  assert.equal(out.stealItemWhitelist, undefined, '旧键删除');
+  assert.equal(out.helpItemWhitelist, undefined);
+  assert.equal(out.stealMinONum, undefined);
+  assert.equal(out.helpMinONum, undefined);
+  assert.deepEqual(out.gatherItemWhitelist, [C.ITEM_THOR_MINE, C.ITEM_MINE], '采集腿不动');
+  assert.equal(out.enabled, true);
+  // 迁移后行为与旧配置逐字等价：只偷 4501 且门槛 78、协助不限矿种
+  const plan = items.legPlan(out.stealItems);
+  assert.deepEqual(plan.whitelist, [C.ITEM_THOR_MINE]);
+  assert.equal(plan.mins[C.ITEM_THOR_MINE], 78);
+  assert.deepEqual(items.legPlan(out.helpItems).whitelist, [C.ITEM_THOR_MINE, C.ITEM_MINE]);
+  assert.deepEqual(v1.stealItemWhitelist, [C.ITEM_THOR_MINE], '入参不被改动');
+});
+
+test('migrateItemLists：v2 {on,max} + 全局门槛 → {on,min}（max 丢弃），重跑收敛', () => {
+  const v2 = {
+    stealItems: { 4501: { on: 1, max: 2 }, 4502: { on: 0, max: 5 } },
+    helpItems: {},
+    stealMinONum: 78,
+    helpMinONum: 30,
+  };
+  const out = items.migrateItemLists(v2, 2);
+  assert.deepEqual(out.stealItems, { 4501: { on: 1, min: 78 }, 4502: { on: 0, min: 78 } });
+  assert.deepEqual(
+    out.helpItems,
+    { 4501: { on: 1, min: 30 }, 4502: { on: 1, min: 30 } },
+    'v2 空清单 + 旧全局门槛 30 → 两矿种默认勾选 + 门槛 30',
+  );
+  assert.equal(out.stealItems['4501'].max, undefined, 'v2 每日上限语义丢弃');
+  assert.equal(out.stealMinONum, undefined);
+  assert.equal(out.helpMinONum, undefined);
+  assert.deepEqual(items.migrateItemLists(out, 2), out, '重跑收敛（registry 落盘前每次读盘重跑）');
+});
+
+test('migrateItemLists：幂等（落盘前每次读盘重跑收敛同一结果）；v3 存档不再动', () => {
+  const v1 = {
+    stealItemWhitelist: [C.ITEM_MINE],
+    helpItemWhitelist: [C.ITEM_THOR_MINE, C.ITEM_MINE],
+  };
+  const once = items.migrateItemLists(v1, 0);
+  assert.deepEqual(items.migrateItemLists(once, 0), once, '重复迁移收敛同一结果');
+  const v3 = {
+    stealItems: { 4501: { on: 1, min: 1400 }, 4502: { on: 1, min: 78 } },
+    helpItems: {},
+  };
+  assert.deepEqual(items.migrateItemLists(v3, 3), v3, 'v3 存档原样透传');
+  const noOld = { stealItems: { 4501: { on: 0, min: 0 } }, helpItems: {} };
+  assert.deepEqual(items.migrateItemLists(noOld, 1), noOld, '旧键缺席时不触碰新键');
 });

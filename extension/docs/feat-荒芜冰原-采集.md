@@ -99,12 +99,12 @@ wastelandType === 3 (GATHER)
 
 ### 3.2 额度权威：22072 push
 
-| 字段                 | 语义                               | feat 用法                                                      |
-| -------------------- | ---------------------------------- | -------------------------------------------------------------- |
+| 字段                 | 语义                               | feat 用法                                                         |
+| -------------------- | ---------------------------------- | ----------------------------------------------------------------- |
 | `todayCanGatherTime` | 今日剩余采集秒数（57600=16h 满额） | 采集腿本轮窗长 `roundWindowSec`（满额=一个安全期，零头=尾轮短窗） |
-| `remainStealNum`     | 今日剩余盗采次数（上限 3）         | 盗采腿闸门 `> 0`                                               |
-| `remainHelpNum`      | 今日剩余协助次数（上限 3）         | 协助腿闸门 `> 0`                                               |
-| `isGathering`        | 本人是否已有采集行军在场（0/1）    | 采集腿：1 时先走认领，不无脑重复派兵                           |
+| `remainStealNum`     | 今日剩余盗采次数（上限 3）         | 盗采腿闸门 `> 0`                                                  |
+| `remainHelpNum`      | 今日剩余协助次数（上限 3）         | 协助腿闸门 `> 0`                                                  |
+| `isGathering`        | 本人是否已有采集行军在场（0/1）    | 采集腿：1 时先走认领，不无脑重复派兵                              |
 
 - 每次 2114/2115/2116 后同秒必伴 22072。
 - 2121(召回)/2123(加速) **不触发** 22072。
@@ -160,7 +160,7 @@ L2: 901 {x, y, k:wkid, width, height, viewLevel} → pointList[pointType=316] �
 | 安全期时长 | 7200s (2h)                                  | `conf(52000367)`          |
 | 每日额度   | 57600s (16h)                                | `todayCanGatherTime` 满值 |
 | 每日轮次   | 8 次                                        | 57600 / 7200              |
-| 撤回时机   | `marchArrive + 本轮窗长 - 60`                   | 留 60s 余量               |
+| 撤回时机   | `marchArrive + 本轮窗长 - 60`               | 留 60s 余量               |
 | 派下一轮   | 收到 10007 `state=4` (ARRIVED_HOME) 后 kick | 行军回城事件              |
 
 **设计含义**：
@@ -209,15 +209,15 @@ L2: 901 {x, y, k:wkid, width, height, viewLevel} → pointList[pointType=316] �
 
 ### 3.8 三腿 cycle 拆分
 
-| Cycle    | 扫描对象                               | 节奏                         | 触发闸门                                     |
-| -------- | -------------------------------------- | ---------------------------- | -------------------------------------------- |
+| Cycle    | 扫描对象                               | 节奏                         | 触发闸门                                                      |
+| -------- | -------------------------------------- | ---------------------------- | ------------------------------------------------------------- |
 | **采集** | 本服 OPENING 分区空闲点                | 8 轮/日，每轮 ~2h + 行军     | `todayCanGatherTime >= 600` 且（`!isGathering` 或认领判陈旧） |
-| **盗采** | 外服 OPENING/OPENED 分区已过安全期的点 | ≤ 3 次/日，canSteal 满足即偷 | `remainStealNum > 0`                         |
-| **协助** | 本服他人正在采的点                     | ≤ 3 次/日                    | `remainHelpNum > 0`                          |
+| **盗采** | 外服 OPENING/OPENED 分区已过安全期的点 | ≤ 3 次/日，canSteal 满足即偷 | `remainStealNum > 0`                                          |
+| **协助** | 本服他人正在采的点                     | ≤ 3 次/日                    | `remainHelpNum > 0`                                           |
 
 - 采集 + 协助可共用一次本服分区扫描（同一批 901 结果按 ownerId 分派）。
 - 盗采独立扫外服分区，按 mSid 分桶 + memo 缓存减少重复请求。
-- 三腿不单独开关，统一由总开关控制；各腿是否执行完全由额度闸门自然决定。
+- 三腿不单独开关，统一由总开关控制；各腿是否执行由额度闸门与矿种清单自然决定。
 
 ### 3.9 stealCycle 无目标时的重试策略
 
@@ -229,7 +229,7 @@ L2: 901 {x, y, k:wkid, width, height, viewLevel} → pointList[pointType=316] �
 3. 按优先级排序：
    上次有 canSteal 产出的 > 从未扫过的 > 黑名单刚过期的
 4. 取 top-1 分区 → 2120 + 2×901 → canSteal 过滤
-5. 有结果 → 偷 oNum 最大且 >= stealMinONum 的点 → 结束本拍
+5. 有结果 → 偷 oNum 最大且 ≥ 该矿种最低可盗量的点 → 结束本拍
    无结果 → 该分区标记 stealable=false(5min) → 取 top-2 再试
 6. 单拍最多试 MAX_ZONES_PER_TICK = 3 个分区
 7. 3 个都无目标 → 本拍退出，nextCheckAt = 下次棋盘刷新
@@ -274,6 +274,35 @@ L2: 901 {x, y, k:wkid, width, height, viewLevel} → pointList[pointType=316] �
 单测只能覆盖第 4 条里 `march-loop` 那一半（`roundMatureSec` 定格，见「尾轮短窗属于本轮」）；降级路径本身在 `index.js` 私有层，
 靠录制回放核对：日志锚点 `(stale isGathering probe)` 与 `excluded=%d`。
 
+### 3.11 额度闸只挡「再开一轮」，绝不挡认领与召回（11-12 事故）
+
+**缺陷形态**：当日 `todayCanGatherTime` 已耗尽，外面那条 315 行军却没人召回 —— 点早过了成熟线，产出整段挂在「可被盗」那侧，
+行军队列还被一支不再花额度的兵白占着。日志里既没有 warn 也没有 recall failed，看上去像「引擎知情却不撤矿」。
+
+**链路**：旧 `gatherTick` 的序是 `windowSec = roundWindowSec(g)` → `!windowSec` 就地 `return 睡到日界`，**然后**才轮到 `isGathering` 的认领段。
+于是「额度归零」这个恰恰最该收兵的信号，反而把唯一能收兵的路径杀了：重启后 `march-loop` 模块态清零 ⇒ `marchBusy()=false`（推进召回那条路不存在了），
+认领那条又被额度闸挡在门外，整条采集腿一路睡到次日 0 点。
+
+**实录证据**（uid 11981629951662 / 20261112）：14:22:08 派出一轮 `recallAt=1794471669`（=16:21:09）；14:29:08 打出 `next check at [14:30:08]` 后浏览器被硬关
+（13:28 的会话停在 `.part` 未定稿），预定的召回无人执行；18:39 重开至 18:49，CQ26-MINE / -MARCH / -SURVEY 三件套**零日志**、2121 出网数为 0。
+那颗点 (188,182)：itemId 4502、`gatherStartTime=1794464908`（14:28:28）、成熟线 16:28:28，18:49:01 仍 `ownerId=本人` 且 `stealUidList` 空 —— 已过成熟线 2h20m 挂在可被盗侧。
+当日额度最后可见值 `todayCanGatherTime=11545`（14:22 的 22072），按在采秒数推算归零 ≈ 17:40:53。
+
+**落地口径**（`index.js` 的 `gatherTick` / `claimInFlightRound`，与 §4.5 第 3 条同律）：
+
+1. 认领段整体前移到额度闸**之前**；命中即 `return D.chainMs`（`claimInFlightRound` 为此新增 `claimed` 返回字段），让下一拍去推进召回。
+2. 认领「未命中也未判陈旧」时：额度已尽 ⇒ 按 `max(delayMs, CLAIM_GAP_MS)` 睡，不在零收益的空拍上逐拍空转（中间那些拍在 `claimInFlightRound` 首句就被节流拦下，本就零请求）。
+3. 判陈旧但额度已尽 ⇒ **不放行试探派兵**：试探本身就是「再开一轮」，已无窗可下；打 `probe withheld` debug 后按认领节奏重来，也不记拒绝账。
+4. 额度闸本身（`!windowSec → 睡到日界`）挪到认领段之后：此刻确实没有任何东西替我们收兵，才允许睡到明天。
+5. 认领命中的窗长取 `roundWindowSec(g) || RECALL_MARGIN_SEC`：连零头都不剩时 `recallAt = arrive`（已过或将过）⇒ 下一拍即发 2121。
+   旧值 `TAIL_MIN_SEC` 只在 `gst` 已过期时才恰好退化成即刷；万一那一趟刚开始几分钟，它会把已不再产出的在采多留近 9 分钟（方向上不致被盗，但白占队列）。
+
+单测覆盖第 5 条的状态机端（`tests/feats/cq26-wl-mine.test.js` 的「零额度认领下发的窗长 = RECALL_MARGIN_SEC」）；第 1~4 条是 `index.js` 私有层的闸门序，
+不可直接单测，靠日志锚点核对：`claimed in-flight own gather march` → `2121 recalled at mature margin`，以及额度已尽时的 `probe withheld`。
+
+**实测前提**：整条认领路径的数据源是 `gameData.cq26WlInfo()` 的 22072 快照。若重开后从没进过荒芜冰原界面、快照未达，`commonGate` 会停在
+`no 22072 snapshot yet`（fail-closed：「还没推」不得读成「额度 0」），此时需要进一次界面取快照，召回才会启动。
+
 ---
 
 ## 4. 数据流总图
@@ -282,7 +311,7 @@ L2: 901 {x, y, k:wkid, width, height, viewLevel} → pointList[pointType=316] �
 总开关 enabled
 │
 ├─ gatherCycle (每轮 ≈ 2h + 行军时间)
-│   1. 读 cq26WlInfo() → 窗长 roundWindowSec(剩余额度)；isGathering 则先走认领/陈旧降级
+│   1. 读 cq26WlInfo() → 窗长 roundWindowSec(剩余额度)；isGathering 则**先**走认领/陈旧降级（额度闸在其后，§3.11）
 │   2. 发 2201 → 本服 OPENING 分区
 │   3. 发 2120 + 2×901 → 空闲点 (ownerId=0)
 │   4. 选最近可采点 → 发 2114
@@ -293,7 +322,7 @@ L2: 901 {x, y, k:wkid, width, height, viewLevel} → pointList[pointType=316] �
 │   1. 读 cq26WlInfo() → remainStealNum > 0?
 │   2. 发 2201 → 外服 OPENING/OPENED 分区
 │   3. 排除黑名单 + 按优先级排序 → 取 top-N (≤3)
-│   4. 2120 + 2×901 → canSteal 过滤 → oNum >= stealMinONum
+│   4. 2120 + 2×901 → canSteal 过滤 → oNum ≥ 该矿种最低可盗量
 │   5. 有目标 → 偷 oNum 最大 → 22072 push 刷新额度
 │   6. 无目标 → 标记该分区 stealable=false → 试下一个
 │   7. 全部无目标 → 睡到下次棋盘刷新
@@ -314,6 +343,7 @@ L2: 901 {x, y, k:wkid, width, height, viewLevel} → pointList[pointType=316] �
 1. **只有 `curStage===1` 出新网**（派兵 / 盗采 / 协助）。阶段 2/3 睡到 `curStageEndTime`（服务器秒差换算本地毫秒，实测见 21h+；22072 push 到货会 `kickAll()` 提前复查，故不需要给这段睡眠另设上限）。
 2. **`curStage` 未知不挡**：快照在场但缺 `curStage` 键时 ACL 回 `null`（不得 `||0` 折成 0——枚举里没有 0，折出来会被判成「已结束」而整族停摆），`stageGate` 回 `{actionable:true, why:'unknown'}`，退回既有分区 `status` 判据继续跑。
 3. **闸门排在两条在途路径之后**：采集腿的 `marchBusy()`（推进召回）与 `isGathering` 认领（`claimInFlightRound`）都在阶段闸之前跑完 —— 阶段跳变那一刻还在外面采的那一趟必须照常收回来，否则成熟产出裸奔给别人偷。盗采/协助是即时写、无在途账，阶段闸放在腿首。
+   同一方向性铁律也约束**额度闸**（`todayCanGatherTime` 不够一轮）：它只决定「要不要再开新一轮」，不挡认领与召回，理由与实录见 §3.11。
 
 判据是 `legs.js` 里的纯函数 `stageGate`（阈值由 `constants.js` 的 `WL_STAGE_*` 注入，保持 legs 层零符号耦合），单测见 `tests/feats/cq26-wl-mine.test.js` 的「只有开荒中(1) 放行」一条。
 
@@ -321,7 +351,7 @@ L2: 901 {x, y, k:wkid, width, height, viewLevel} → pointList[pointType=316] �
 
 ## 5. 用户配置项（采集区域）
 
-只有一个总开关，采集/盗采/协助三腿不单独开关——各腿是否执行由额度闸门自然决定（额度=0 则自动跳过）。
+只有一个总开关，采集/盗采/协助三腿不单独开关——各腿是否执行由额度闸门与矿种清单自然决定（额度=0 或清单全不勾则自动跳过）。
 
 ### 面板配置
 
@@ -333,28 +363,37 @@ L2: 901 {x, y, k:wkid, width, height, viewLevel} → pointList[pointType=316] �
 | 盗采额度 | `已用 1/3`          | 同上                  |
 | 协助额度 | `已用 0/3`          | 同上                  |
 
-| 配置                  | 控件     | 默认      | 说明                                                   |
-| --------------------- | -------- | --------- | ------------------------------------------------------ |
-| `enabled`             | checkbox | off       | 总开关                                                 |
-| `gatherItemWhitelist` | tripick  | 4501+4502 | 采集腿矿种白名单                                       |
-| `gatherMinSpeed`      | number   | 0         | 采集腿最低 gatherSpeed（低于此值不派兵，0=不限制）     |
-| `stealItemWhitelist`  | tripick  | 4501+4502 | 盗采腿矿种白名单                                       |
-| `stealMinONum`        | number   | 0         | 盗采腿最低 oNum 阈值（可偷量低于此值不偷，0=不限制）   |
-| `helpItemWhitelist`   | tripick  | 4501+4502 | 协助腿矿种白名单                                       |
-| `helpMinONum`         | number   | 0         | 协助腿最低 oNum 阈值（保护价值低于此值不协，0=不限制） |
+| 配置                  | 控件     | 默认        | 说明                                                                            |
+| --------------------- | -------- | ----------- | ------------------------------------------------------------------------------- |
+| `enabled`             | checkbox | off         | 总开关                                                                          |
+| `gatherItemWhitelist` | tripick  | 4501+4502   | 采集腿矿种白名单                                                                |
+| `stealItems`          | itemlist | 全勾选+不限 | 盗采腿矿种清单：勾选=要偷，逐矿种最低可盗量（oNum 门槛，0=不限，全不勾=腿不动） |
+| `helpItems`           | itemlist | 全勾选+不限 | 协助腿矿种清单：同上（最低可协量）                                              |
+
+采集腿**不设速率门槛**（11-12 废弃 `gatherMinSpeed`，用户口径：多余）：选点只过矿种白名单 + 本服无主 + 离主城最近，
+`gatherSpeed` 不再参与任何判据（归一点仍携带该字段供观测，`canGather` 不读它）。旧存储里残留的 `gatherMinSpeed` 键由
+`normalizeCfg` 的「未声明键不透传」自然丢弃，无需迁移。
+
+### 分矿种最低量门槛（v3）
+
+用户口径（11-12 纠正）：盗采/协助要的是**分矿种最低可盗/协量**（例：雷神矿脉 1400、矿山 78，点存量 oNum 达标才出手），不是分矿种每日次数预算。次数总额看「今日进度」的 `已用 x/3`（22072 快照，零本地记账）；逐矿种列「今日已用/每日上限」无必要，已撤。门槛是选点策略不是记账：只滤点、不计次，方向安全（只做「少动」），服务器共享总额度闸始终兜底。
+
+- **控件**：盗采/协助腿的矿种清单（`itemlist`），每行 `[矿种] [最低量输入] [☑]`；未登记 = 默认勾选 + 不限（0），取消勾选 = 排除该矿种，**全不勾 = 该腿不动**（与采集腿 multiopts「空 = 不限」刻意不同）。采集腿仍 multiopts。数值列由 core itemlist 的 `numKey:'min'` 通用化承载（缺省 'max'，商店/秘境不受影响）。
+- **闸门序**：服务器总额度闸 → 矿种清单闸（全不勾=腿不动）→ 游戏谓词（`canSteal/canHelp` 内按 `ctx.mins[itemId]` 逐点滤，归因 `onum-below-min`）。全区点都低于门槛 → pool 空 → 分区进 stealable=false 黑名单（与旧全局门槛行为一致）。纯推导在 `items.js`（`legPlan` → `{whitelist, mins}`）。
+- **迁移**：`version 3`，`migrateItemLists` 同时折算 v1（白名单数组 + 全局 `stealMinONum/helpMinONum`）与 v2（`{on,max}` + 全局门槛，未发布但可能已本地落盘）：on 取已有条目 > 旧白名单 > 默认全勾；min 取条目自带值，否则取旧全局门槛（旧语义所有矿种共用 → 折算为每矿种初始门槛，行为等价）；v2 的 max 丢弃；四个旧键删除。幂等（落盘前每次读盘重跑收敛同一结果）。
 
 ### 内置常量（不暴露为面板配置）
 
-| 常量                 | 值  | 语义                                                                                                                                    |
-| -------------------- | --- | --------------------------------------------------------------------------------------------------------------------------------------- |
-| `CLAIM_GAP_MS`         | 300s | 「标志说在采」时主动认领在途 315 行军的尝试间隔（认领要现扫分区，不能逐拍扫） |
-| `CLAIM_STALE_MAX_MS`   | 15min | 认领连续失败多久即把 `isGathering` 判为陈旧值（见 §3.10） |
-| `PROBE_GAP_MS` / `PROBE_GAP_MAX_MS` | 10min / 60min | 试探派兵的初始间隔与退避天花板（防废券风暴） |
-| `TAIL_MIN_SEC`         | 600  | 尾轮最少可采秒数：剩余额度低于此就不派了（见 §3.6） |
-| `BOARD_REFRESH_SEC`  | 300 | 2201 棋盘刷新周期（外部开分区无 push，纯轮询）                                                                                          |
-| `RECALL_MARGIN_SEC`  | 60  | 安全期撤回余量：在 `marchArrive + 7200 - 60` 发 2121，给网络延迟 + cycle 调度抖动留缓冲，防止点刚进入“可被偷”窗口时召回还没被服务器处理 |
-| `MAX_ZONES_PER_TICK` | 3   | stealCycle 单拍最多试几个分区                                                                                                           |
-| `ZONE_MEMO_TTL_SEC`  | 300 | 分区扫描结果缓存有效期（也是 stealable=false 黑名单时长）                                                                               |
+| 常量                                | 值            | 语义                                                                                                                                    |
+| ----------------------------------- | ------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
+| `CLAIM_GAP_MS`                      | 300s          | 「标志说在采」时主动认领在途 315 行军的尝试间隔（认领要现扫分区，不能逐拍扫）                                                           |
+| `CLAIM_STALE_MAX_MS`                | 15min         | 认领连续失败多久即把 `isGathering` 判为陈旧值（见 §3.10）                                                                               |
+| `PROBE_GAP_MS` / `PROBE_GAP_MAX_MS` | 10min / 60min | 试探派兵的初始间隔与退避天花板（防废券风暴）                                                                                            |
+| `TAIL_MIN_SEC`                      | 600           | 尾轮最少可采秒数：剩余额度低于此就不派了（见 §3.6）                                                                                     |
+| `BOARD_REFRESH_SEC`                 | 300           | 2201 棋盘刷新周期（外部开分区无 push，纯轮询）                                                                                          |
+| `RECALL_MARGIN_SEC`                 | 60            | 安全期撤回余量：在 `marchArrive + 7200 - 60` 发 2121，给网络延迟 + cycle 调度抖动留缓冲，防止点刚进入“可被偷”窗口时召回还没被服务器处理 |
+| `MAX_ZONES_PER_TICK`                | 3             | stealCycle 单拍最多试几个分区                                                                                                           |
+| `ZONE_MEMO_TTL_SEC`                 | 300           | 分区扫描结果缓存有效期（也是 stealable=false 黑名单时长）                                                                               |
 
 ---
 
