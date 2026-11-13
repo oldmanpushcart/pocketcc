@@ -42,6 +42,9 @@ const DEFAULT_W = 380;
 /** @type {number} 默认高度（px） */
 const DEFAULT_H = 480;
 
+/** @type {string} 菜单项选择器（更多/@/名字/消息菜单共用） */
+const POP_ITEM_SEL = '.pcw-popitem';
+
 /**
  * Shadow DOM 内样式：.pcw- 前缀，全部规则与游戏隔离
  * @type {string}
@@ -49,7 +52,7 @@ const DEFAULT_H = 480;
 const CSS = `
   *{box-sizing:border-box;}
   .pcw-win{position:fixed;display:flex;flex-direction:column;overflow:hidden;
-    border-radius:10px;background:rgba(18,22,30,.72);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);
+    border-radius:10px;background:rgba(18,22,30,.92);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);
     border:1px solid rgba(255,255,255,.16);color:#e8eef7;
     font:13px/1.55 system-ui,-apple-system,"Segoe UI",sans-serif;
     box-shadow:0 10px 36px rgba(0,0,0,.55);z-index:2147483640;}
@@ -61,10 +64,10 @@ const CSS = `
   .pcw-title{font-size:12px;font-weight:600;color:#cfe8ff;flex:1;min-width:0;
     white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
   .pcw-close{border:none;background:transparent;color:#e8eef7;font:inherit;font-size:14px;
-    cursor:pointer;padding:0 4px;opacity:.7;}
+    cursor:pointer;padding:2px 5px;opacity:.7;}
   .pcw-close:hover{opacity:1;}
   .pcw-chips{display:flex;align-items:center;gap:4px;margin-top:2px;
-    overflow-x:auto;scrollbar-width:none;padding:8px 0 6px;}
+    overflow-x:auto;overscroll-behavior:contain;scrollbar-width:none;padding:8px 0 6px;}
   .pcw-chips::-webkit-scrollbar{display:none;}
   .pcw-chip{position:relative;flex:0 0 auto;border:1px solid rgba(255,255,255,.16);border-radius:12px;
     background:transparent;color:#cdd8e6;font:inherit;font-size:12px;padding:2px 10px;cursor:pointer;
@@ -75,7 +78,7 @@ const CSS = `
     padding:0 3px;border-radius:8px;background:#e0463b;color:#fff;font-size:10px;font-weight:600;text-align:center;}
   /* 主体：左会话列表（微信 PC 风，仅私聊/跨服家族视图时显）+ 可拖分隔条 + 右聊天列 */
   .pcw-body{flex:1 1 auto;min-height:0;display:flex;}
-  .pcw-side{flex:0 0 auto;width:170px;min-height:0;overflow-y:auto;
+  .pcw-side{flex:0 0 auto;width:170px;min-height:0;overflow-y:auto;overscroll-behavior:contain;
     padding:4px;display:none;scrollbar-width:thin;}
   .pcw-side.show{display:block;}
   .pcw-sdrag{flex:0 0 5px;cursor:col-resize;touch-action:none;display:none;
@@ -86,48 +89,51 @@ const CSS = `
   .pcw-side::-webkit-scrollbar-thumb{background:rgba(255,255,255,.14);border-radius:3px;}
   .pcw-main{flex:1 1 auto;min-width:0;display:flex;flex-direction:column;position:relative;}
   .pcw-loadtip{flex:0 0 auto;text-align:center;font-size:11px;color:#8b98a9;padding:5px 0;letter-spacing:.5px;}
-  .pcw-newmsg{position:absolute;left:50%;bottom:12px;transform:translateX(-50%);z-index:6;background:rgba(30,40,55,.94);color:#cfe3ff;border:1px solid rgba(120,160,220,.42);border-radius:14px;padding:4px 12px;font-size:12px;line-height:1.4;font-family:inherit;outline:none;cursor:pointer;box-shadow:0 2px 8px rgba(0,0,0,.35);white-space:nowrap;}
+  .pcw-newmsg{position:absolute;left:50%;bottom:12px;transform:translateX(-50%);z-index:6;background:rgba(30,40,55,.94);color:#cfe3ff;border:1px solid rgba(120,160,220,.42);border-radius:14px;padding:4px 12px;font-size:12px;line-height:1.4;font-family:inherit;cursor:pointer;box-shadow:0 2px 8px rgba(0,0,0,.35);white-space:nowrap;}
   .pcw-newmsg:hover{background:rgba(48,64,86,.96);}
   .pcw-conv{position:relative;padding:5px 6px;border-radius:6px;cursor:pointer;margin:1px 0;display:flex;align-items:center;gap:7px;}
-  .pcw-convtc{flex:1 1 auto;min-width:0;}
-  .pcw-convav{flex:0 0 auto;cursor:pointer;}
+  .pcw-convtc{flex:1 1 auto;min-width:0;border:none;background:transparent;padding:0;font:inherit;text-align:left;cursor:pointer;}
+  .pcw-convav{flex:0 0 auto;border:none;background:transparent;padding:0;font:inherit;cursor:pointer;}
   .pcw-convav .pcw-avimg,.pcw-convav .pcw-avph{width:34px;height:34px;font-size:15px;border-radius:7px;}
   .pcw-conv:hover{background:rgba(255,255,255,.07);}
   .pcw-conv.active{background:rgba(70,140,255,.24);}
-  .pcw-convt{font-size:12px;font-weight:600;color:#dbe6f3;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
-  .pcw-convs{font-size:11px;color:#8b98a9;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+  .pcw-convt{display:block;font-size:12px;font-weight:600;color:#dbe6f3;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+  .pcw-convs{display:block;font-size:11px;color:#9fb6d4;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
   .pcw-convb{position:absolute;top:2px;right:3px;min-width:15px;height:15px;line-height:15px;
     padding:0 3px;border-radius:8px;background:#e0463b;color:#fff;font-size:10px;font-weight:600;text-align:center;}
   /* 消息区（游戏页面的 user-select:none 会继承进 shadow，需显式放开文本选择） */
-  .pcw-msgs{flex:1 1 auto;min-height:0;overflow-y:auto;padding:2px 8px;scrollbar-gutter:stable;
+  .pcw-msgs{flex:1 1 auto;min-height:0;overflow-y:auto;overscroll-behavior:contain;padding:2px 8px;scrollbar-gutter:stable;
     user-select:text;-webkit-user-select:text;}
   .pcw-msgs::-webkit-scrollbar{width:7px;}
   .pcw-msgs::-webkit-scrollbar-thumb{background:rgba(255,255,255,.16);border-radius:4px;}
   .pcw-row{padding:2px 4px;border-radius:5px;margin:1px 0;overflow-wrap:break-word;line-height:1.6;}
   .pcw-row:hover{background:rgba(255,255,255,.05);}
+  .pcw-row:focus-visible{outline:2px solid rgba(120,170,255,.8);outline-offset:-2px;}
   .pcw-row.mention{background:rgba(255,190,60,.12);border-left:2px solid rgba(255,190,60,.7);}
-  .pcw-time{color:#8b98a9;font-size:11px;margin-right:5px;font-variant-numeric:tabular-nums;}
+  .pcw-time{color:#a9b6c6;font-size:11px;margin-right:5px;font-variant-numeric:tabular-nums;}
   .pcw-name{color:#7fd08a;font-weight:600;}
   .pcw-name.self{color:#9ecbff;}
-  .pcw-name.other{cursor:pointer;}
+  .pcw-name.other{border:none;background:transparent;padding:0;font:inherit;font-weight:600;cursor:pointer;}
   .pcw-name.other:hover{color:#a9e7b4;}
   .pcw-at{color:#ffd77a;font-weight:600;}
-  .pcw-chiplink{display:inline;color:#7fc4ff;border-bottom:1px dashed rgba(127,196,255,.45);cursor:pointer;}
+  .pcw-chiplink{display:inline;border:none;background:transparent;padding:0;font:inherit;color:#7fc4ff;border-bottom:1px dashed rgba(127,196,255,.45);cursor:pointer;}
   .pcw-chiplink:hover{color:#b4dcff;}
     .pcw-chiplink.jump{color:#7fe0a8;border-bottom-color:rgba(127,224,168,.5);font-weight:600;}
     .pcw-chiplink.jump:hover{color:#b6f2ce;}
-  .pcw-quote{margin:1px 0 1px 12px;padding:2px 6px;border-left:2px solid rgba(255,255,255,.28);
-    background:rgba(255,255,255,.05);color:#a9b6c6;font-size:12px;cursor:pointer;border-radius:0 4px 4px 0;
-    white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:95%;}
+  .pcw-quote{display:block;width:fit-content;max-width:95%;margin:1px 0 1px 12px;padding:2px 6px;border:none;border-left:2px solid rgba(255,255,255,.28);
+    background:rgba(255,255,255,.05);color:#a9b6c6;font:inherit;font-size:12px;text-align:left;cursor:pointer;border-radius:0 4px 4px 0;
+    white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
   .pcw-quote:hover{color:#d3deea;}
-  .pcw-empty{color:#7c8896;text-align:center;padding:16px 0;font-size:12px;}
+  .pcw-empty{color:#8b98a9;text-align:center;padding:16px 0;font-size:12px;}
+  .pcw-empty-sub{display:block;margin-top:4px;font-size:11px;}
+  .pcw-empty-act{border:none;background:transparent;padding:4px;font:inherit;font-size:12px;color:#9fb6d4;text-decoration:underline;cursor:pointer;}
   /* 引用条 + 输入区 */
   .pcw-qbar{flex:0 0 auto;display:flex;align-items:center;gap:6px;margin:0 8px;padding:3px 8px;
     border-radius:6px;background:rgba(255,255,255,.07);border-left:2px solid rgba(127,196,255,.6);
     font-size:12px;color:#a9b6c6;}
   .pcw-qbar[hidden]{display:none;}
   .pcw-qtext{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
-  .pcw-qx{border:none;background:transparent;color:#a9b6c6;font:inherit;cursor:pointer;padding:0 2px;}
+  .pcw-qx{border:none;background:transparent;color:#a9b6c6;font:inherit;cursor:pointer;padding:4px 6px;}
   .pcw-inputrow{flex:0 0 auto;display:flex;gap:6px;padding:6px 8px 4px;align-items:flex-end;}
   .pcw-input{flex:1;min-width:0;padding:5px 8px;border-radius:6px;font:inherit;color:#e8eef7;
     border:1px solid rgba(255,255,255,.22);background:rgba(0,0,0,.35);
@@ -137,9 +143,9 @@ const CSS = `
     color:#cdd8e6;font:inherit;font-size:12px;padding:5px 8px;cursor:pointer;white-space:nowrap;}
   .pcw-tool:hover{background:rgba(255,255,255,.14);}
   .pcw-tool[disabled]{opacity:.45;cursor:default;}
-  .pcw-tool.send{background:rgba(70,140,255,.25);border-color:rgba(120,170,255,.45);color:#dbeaff;font-weight:600;}
+  .pcw-tool.send{background:rgba(70,140,255,.25);border-color:rgba(120,170,255,.45);color:#dbeaff;font-weight:600;font-variant-numeric:tabular-nums;}
   /* 浮层：@选人 / 更多菜单 / toast */
-  .pcw-pop{position:absolute;left:8px;right:8px;bottom:64px;max-height:180px;overflow-y:auto;
+  .pcw-pop{position:absolute;left:8px;right:8px;bottom:64px;max-height:180px;overflow-y:auto;overscroll-behavior:contain;
     border-radius:8px;background:rgba(14,18,26,.96);border:1px solid rgba(255,255,255,.18);
     box-shadow:0 6px 20px rgba(0,0,0,.5);z-index:2;padding:4px;}
   .pcw-pop[hidden]{display:none;}
@@ -148,7 +154,10 @@ const CSS = `
     font:inherit;font-size:12px;padding:5px 8px;border-radius:5px;cursor:pointer;
     white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
   .pcw-popitem:hover{background:rgba(70,140,255,.22);}
-  .pcw-atuid{color:#9fd0ff;font-size:11px;margin-left:4px;cursor:pointer;}
+  /* @ 候选行：主按钮（插入 @）+ UID 复制按钮并列（原生 button 不可嵌套，拆为兄弟） */
+  .pcw-poprow{display:flex;align-items:center;gap:2px;}
+  .pcw-poprow .pcw-popitem{flex:1 1 auto;width:auto;min-width:0;}
+  .pcw-atuid{flex:0 0 auto;border:none;background:transparent;padding:4px;font:inherit;font-size:11px;color:#9fd0ff;cursor:pointer;}
   .pcw-atuid::after{content:' ⧉';opacity:.7;}
   .pcw-atuid:hover{color:#cfe6ff;}
   .pcw-popfilter{display:block;width:100%;box-sizing:border-box;margin:0 0 4px;padding:4px 8px;
@@ -164,9 +173,9 @@ const CSS = `
   .pcw-inforow{font-size:12px;color:#d6dde8;line-height:1.75;word-break:break-all;
       /* 游戏页的 user-select:none 会继承进 shadow，信息行显式放开供手动选中 */
       user-select:text;-webkit-user-select:text;}
-  .pcw-jumplink{color:#7fe0a8;font-weight:600;cursor:pointer;border-bottom:1px dashed rgba(127,224,168,.5);}
+  .pcw-jumplink{border:none;background:transparent;padding:0;font:inherit;font-weight:600;color:#7fe0a8;cursor:pointer;border-bottom:1px dashed rgba(127,224,168,.5);}
   .pcw-jumplink:hover{color:#b6f2ce;}
-  .pcw-copylink{color:#9fd0ff;font-weight:600;cursor:pointer;border-bottom:1px dashed rgba(159,208,255,.5);}
+  .pcw-copylink{border:none;background:transparent;padding:0;font:inherit;font-weight:600;color:#9fd0ff;cursor:pointer;border-bottom:1px dashed rgba(159,208,255,.5);}
   .pcw-copylink:hover{color:#cfe6ff;}
   .pcw-copylink::after{content:' ⧉';font-weight:400;opacity:.7;}
   .pcw-avimg,.pcw-avph{border-radius:8px;object-fit:cover;flex:0 0 auto;}
@@ -210,7 +219,8 @@ function avInner(av) {
   if (av && av.url) {
     return `<img class="pcw-avimg" src="${esc(av.url)}" data-avph="${esc(av.initial || '?')}" style="--h:${av.hue | 0}" alt="">`;
   }
-  return `<div class="pcw-avph" style="--h:${av ? av.hue | 0 : 210}">${esc((av && av.initial) || '?')}</div>`;
+  // 占位用 span（button 内只允许 phrasing content；display:grid 由 CSS 提供，块级观感不变）
+  return `<span class="pcw-avph" style="--h:${av ? av.hue | 0 : 210}">${esc((av && av.initial) || '?')}</span>`;
 }
 
 /**
@@ -221,7 +231,7 @@ function avInner(av) {
 function bindAvFallback(scope) {
   scope.querySelectorAll('.pcw-avimg').forEach((el) => {
     el.addEventListener('error', () => {
-      const d = document.createElement('div');
+      const d = document.createElement('span');
       d.className = 'pcw-avph';
       d.style.setProperty('--h', el.style.getPropertyValue('--h') || '210');
       d.textContent = el.getAttribute('data-avph') || '?';
@@ -322,6 +332,7 @@ export class ChatOverlay {
   /** @type {Map<string, number>} 未读角标 key->count */ #unread = new Map();
   /** @type {Array<{key:string,label:string}>} 快捷频道定义缓存 */ #quickDefs = [];
   /** @type {Array<{key:string,label:string}>} 更多菜单定义缓存 */ #moreDefs = [];
+  /** @type {HTMLElement|null} 打开浮层前的焦点元素（hide 时归还，2.4.3） */ #prevFocus = null;
 
   /**
    * 挂载浮层（幂等）。事件在 win 上冒泡阶段 stopPropagation，防止误触游戏画布；
@@ -343,7 +354,7 @@ export class ChatOverlay {
     win.innerHTML =
       `<div class="pcw-head">` +
       `<div class="pcw-titlebar"><span class="pcw-grip">⠿</span><span class="pcw-title">聊天</span>` +
-      `<button class="pcw-close" title="关闭 (Ctrl+K)">✕</button></div>` +
+      `<button class="pcw-close" title="关闭 (Ctrl+K)" aria-label="关闭">✕</button></div>` +
       `<div class="pcw-chips"></div></div>` +
       `<div class="pcw-body">` +
       `<div class="pcw-side"></div>` +
@@ -352,9 +363,9 @@ export class ChatOverlay {
       `<div class="pcw-loadtip" hidden></div>` +
       `<div class="pcw-msgs"></div>` +
       `<button class="pcw-newmsg" type="button" hidden></button>` +
-      `<div class="pcw-qbar" hidden><span class="pcw-qtext"></span><button class="pcw-qx">✕</button></div>` +
+      `<div class="pcw-qbar" hidden><span class="pcw-qtext"></span><button class="pcw-qx" aria-label="取消引用">✕</button></div>` +
       `<div class="pcw-inputrow">` +
-      `<textarea class="pcw-input" rows="1" placeholder="输入消息，Enter 发送，Shift+Enter 换行"></textarea>` +
+      `<textarea class="pcw-input" rows="1" aria-label="消息输入" placeholder="输入消息，Enter 发送，Shift+Enter 换行"></textarea>` +
       `<button class="pcw-tool btn-at" title="@人">@</button>` +
       `<button class="pcw-tool btn-pos" title="输入 x,y 后分享地图坐标">坐标</button>` +
       `<button class="pcw-tool send">发送</button></div>` +
@@ -365,7 +376,7 @@ export class ChatOverlay {
       `<div class="pcw-pop pcw-namepop" hidden></div>` +
       `<div class="pcw-pop pcw-namepop pcw-msgpop" hidden></div>` +
       `<div class="pcw-pop infopop pcw-infopop" hidden></div>` +
-      `<div class="pcw-toast"></div>` +
+      `<div class="pcw-toast" role="status" aria-live="polite"></div>` +
       `<div class="pcw-rz" data-dir="l"></div>` +
       `<div class="pcw-rz" data-dir="r"></div>` +
       `<div class="pcw-rz" data-dir="b"></div>` +
@@ -459,12 +470,9 @@ export class ChatOverlay {
   toggle() {
     if (!this.#win) this.mount();
     const vis = this.#win.hidden;
-    this.#win.hidden = !vis;
-    if (vis) {
-      this.#autoGrow();
-      this.#scrollBottom();
-      this.#notify('onVisibleChange', true);
-    } else this.#notify('onVisibleChange', false);
+    // 统一走 show/hide：焦点记录与归还（2.4.3）只维护一份
+    if (vis) this.show();
+    else this.hide();
     return vis;
   }
 
@@ -480,6 +488,7 @@ export class ChatOverlay {
   show() {
     if (!this.#win) this.mount();
     if (this.#win.hidden) {
+      this.#prevFocus = document.activeElement;
       this.#win.hidden = false;
       this.#autoGrow(); // 隐藏期 mount 时测量被守卫跳过，亮窗后补测一次收回默认高
       this.#scrollBottom();
@@ -487,11 +496,20 @@ export class ChatOverlay {
     }
   }
 
-  /** 隐藏浮层 */
+  /** 隐藏浮层（焦点归还给打开前的元素，2.4.3） */
   hide() {
     if (this.#win && !this.#win.hidden) {
       this.#win.hidden = true;
       this.#notify('onVisibleChange', false);
+      const pf = this.#prevFocus;
+      this.#prevFocus = null;
+      if (pf && pf.isConnected && typeof pf.focus === 'function') {
+        try {
+          pf.focus();
+        } catch (e) {
+          /* 元素不可聚焦则放弃归还 */
+        }
+      }
     }
   }
 
@@ -516,31 +534,29 @@ export class ChatOverlay {
         (c, i) =>
           `<div class="pcw-conv${c.key === active ? ' active' : ''}" data-i="${i}">` +
           (c.avatar
-            ? `<div class="pcw-convav" title="查看玩家信息">${avInner(c.avatar)}</div>`
+            ? `<button class="pcw-convav" title="查看玩家信息" aria-label="查看玩家信息：${esc(c.title)}">${avInner(c.avatar)}</button>`
             : '') +
-          `<div class="pcw-convtc">` +
-          `<div class="pcw-convt">${esc(c.title)}</div>` +
-          `<div class="pcw-convs">${esc(c.sub || '')}</div>` +
-          `</div>` +
+          `<button class="pcw-convtc" title="${esc(c.title + (c.sub ? ' · ' + c.sub : ''))}">` +
+          `<span class="pcw-convt">${esc(c.title)}</span>` +
+          `<span class="pcw-convs">${esc(c.sub || '')}</span>` +
+          `</button>` +
           (c.unread ? `<span class="pcw-convb">${c.unread > 99 ? '99+' : c.unread}</span>` : '') +
           `</div>`,
       )
       .join('');
     bindAvFallback(this.#side);
+    // 行级单一委托：头像按钮弹玩家信息，标题/副标题按钮切会话（原生 button，键盘天然可达）
     Array.from(this.#side.querySelectorAll('.pcw-conv')).forEach((el) => {
-      el.addEventListener('click', () => {
+      el.addEventListener('click', (ev) => {
         const c = items[+el.dataset.i];
-        if (c) this.#notify('onSideSelect', c.key);
-      });
-      const avEl = el.querySelector('.pcw-convav');
-      if (avEl)
-        avEl.addEventListener('click', (ev) => {
-          ev.stopPropagation(); // 点头像只弹信息，不触发整行切会话
-          const c = items[+el.dataset.i];
-          if (!c) return;
+        if (!c) return;
+        if (/** @type {HTMLElement} */ (ev.target).closest('.pcw-convav')) {
           const uid = c.key.indexOf('pm:') === 0 ? c.key.slice(3) : c.key;
           this.#notify('onNameInfo', { uid: uid, name: c.title, self: false });
-        });
+          return;
+        }
+        this.#notify('onSideSelect', c.key);
+      });
     });
     this.#side.style.width = this.#sideW + 'px';
     this.#side.classList.add('show');
@@ -599,6 +615,7 @@ export class ChatOverlay {
     for (const def of this.#quickDefs) {
       const b = document.createElement('button');
       b.className = 'pcw-chip' + (def.key === this.#activeKey ? ' active' : '');
+      b.setAttribute('aria-pressed', String(def.key === this.#activeKey));
       b.textContent = def.label;
       const n = this.#unread.get(def.key) || 0;
       if (n > 0) {
@@ -632,8 +649,10 @@ export class ChatOverlay {
         return `<button class="pcw-popitem" data-key="${esc(def.key)}">${esc(def.label)}${n > 0 ? ' (' + (n > 99 ? '99+' : n) + ')' : ''}</button>`;
       })
       .join('');
-    this.#morePop.innerHTML = items || '<div class="pcw-empty">暂无其他会话</div>';
-    this.#morePop.querySelectorAll('.pcw-popitem').forEach((b) => {
+    this.#morePop.innerHTML =
+      items ||
+      '<div class="pcw-empty">暂无其他会话<span class="pcw-empty-sub">发起私聊后，会话会出现在这里</span></div>';
+    this.#morePop.querySelectorAll(POP_ITEM_SEL).forEach((b) => {
       b.addEventListener('click', () => {
         this.#morePop.hidden = true;
         this.#notify('onChannelSelect', b.dataset.key);
@@ -656,7 +675,7 @@ export class ChatOverlay {
     if (!frag.childNodes.length) {
       const tip = document.createElement('div');
       tip.className = 'pcw-empty';
-      tip.textContent = '暂无消息';
+      tip.innerHTML = '暂无消息<span class="pcw-empty-sub">在下方输入框发送第一条消息</span>';
       frag.appendChild(tip);
     }
     this.#msgs.replaceChildren(frag);
@@ -772,8 +791,13 @@ export class ChatOverlay {
     row.className = 'pcw-row' + (e.mention ? ' mention' : '');
     row.dataset.id = String(e.id == null ? '' : e.id);
     row._entry = e; // 右键菜单取回条目（DOM 自定义属性存不了对象）
+    // 键盘等价（2.1.1）：行可聚焦，Enter 引用、菜单键开操作菜单（与双击/右键同路径）
+    row.tabIndex = 0;
+    row.setAttribute('role', 'group');
+    row.setAttribute('aria-label', '消息来自 ' + (e.name || '') + (e.pmDir ? ' ' + e.pmDir : ''));
+    row.title = '回车引用 · 菜单键更多操作';
     if (e.quote) {
-      const q = document.createElement('div');
+      const q = document.createElement('button');
       q.className = 'pcw-quote';
       q.textContent = '引用 ' + (e.quote.name || '') + ': ' + (e.quote.msg || '');
       q.title = '定位原消息';
@@ -785,12 +809,18 @@ export class ChatOverlay {
     time.className = 'pcw-time';
     time.textContent = e.timeStr || '';
     line.appendChild(time);
-    const nameEl = document.createElement('span');
+    const nameEl = document.createElement(e.self ? 'span' : 'button');
     nameEl.className = 'pcw-name' + (e.self ? ' self' : ' other');
     nameEl.textContent = (e.name || '') + (e.pmDir ? ' ' + e.pmDir : '') + ':';
     if (!e.self) {
       nameEl.title = '操作菜单';
-      nameEl.addEventListener('click', (ev) => this.openNameMenu(e, ev));
+      nameEl.addEventListener('click', (ev) => {
+        // 键盘激活（detail=0）无坐标：以名字按钮自身位置构造定位点
+        if (ev.detail === 0) {
+          const r = nameEl.getBoundingClientRect();
+          this.openNameMenu(e, { clientX: r.left + 10, clientY: r.bottom, target: nameEl });
+        } else this.openNameMenu(e, ev);
+      });
     }
     line.appendChild(nameEl);
     for (const seg of e.segments || [{ type: 'text', s: '' }]) {
@@ -800,7 +830,7 @@ export class ChatOverlay {
         at.textContent = seg.s;
         line.appendChild(at);
       } else if (seg.type === 'chip') {
-        const chip = document.createElement('span');
+        const chip = document.createElement('button');
         const jumpable = !!seg.action;
         chip.className = 'pcw-chiplink' + (jumpable ? ' jump' : '');
         chip.textContent = seg.s;
@@ -823,6 +853,17 @@ export class ChatOverlay {
     }
     row.appendChild(line);
     row.addEventListener('dblclick', () => this.#notify('onQuote', e));
+    row.addEventListener('keydown', (ev) => {
+      if (ev.target !== row) return; // 行内按钮的 Enter 由其自身处理，不重复触发
+      if (ev.key === 'Enter') {
+        ev.preventDefault();
+        this.#notify('onQuote', e);
+      } else if (ev.key === 'ContextMenu' || (ev.key === 'F10' && ev.shiftKey)) {
+        ev.preventDefault();
+        const r = row.getBoundingClientRect();
+        this.#openMsgMenu(e, { clientX: r.left + 10, clientY: r.top + 10 }, row);
+      }
+    });
     return row;
   }
 
@@ -931,7 +972,7 @@ export class ChatOverlay {
     this.#atAllowAll = !!allowAll;
     this.#atFilter = '';
     this.#atPop.innerHTML =
-      `<input class="pcw-popfilter" type="text" placeholder="输入关键字过滤" />` +
+      `<input class="pcw-popfilter" type="text" aria-label="过滤 @ 候选" placeholder="输入关键字过滤" />` +
       `<div class="pcw-atitems"></div>`;
     const filter = this.#atPop.querySelector('.pcw-popfilter');
     filter.addEventListener('input', () => {
@@ -973,22 +1014,22 @@ export class ChatOverlay {
         list.push(s);
       if (list.length >= 500) break; // 渲染上限（500 覆盖现实联盟规模，仍设上界防大列表卡 DOM）
     }
+    // 行 = 主按钮（插入 @）+ UID 复制按钮并列（原生 button 不可嵌套，拆为 .pcw-poprow 内兄弟）
     box.innerHTML =
       list
         .map(
           (s, i) =>
-            `<button class="pcw-popitem" data-i="${i}">${esc('@' + s.name)}${
-              s.uid
-                ? '<span class="pcw-atuid" data-copy="' +
-                  esc(String(s.uid)) +
-                  '">(' +
-                  esc(String(s.uid)) +
-                  ')</span>'
-                : ''
-            }</button>`,
+            `<div class="pcw-poprow"><button class="pcw-popitem" data-i="${i}">${esc('@' + s.name)}</button>` +
+            (s.uid
+              ? `<button class="pcw-atuid" data-copy="${esc(String(s.uid))}" title="复制 UID">(${esc(String(s.uid))})</button>`
+              : '') +
+            `</div>`,
         )
-        .join('') || '<div class="pcw-empty">无匹配对象</div>';
-    Array.from(box.querySelectorAll('.pcw-popitem')).forEach((b) => {
+        .join('') ||
+      (q
+        ? `<div class="pcw-empty">无匹配「${esc(this.#atFilter.trim())}」的对象<button class="pcw-empty-act">清除过滤</button></div>`
+        : '<div class="pcw-empty">暂无 @ 候选对象</div>');
+    Array.from(box.querySelectorAll(POP_ITEM_SEL)).forEach((b) => {
       b.addEventListener('click', () => {
         const s = list[+b.dataset.i];
         this.#atPop.hidden = true;
@@ -996,24 +1037,34 @@ export class ChatOverlay {
         this.#insertAt(s);
       });
     });
-    // UID 仅展示：点击只复制、不触发所在行的 @ 插入（stopPropagation 挡住冒泡到 button）
+    // UID 按钮只复制、不触发 @ 插入（兄弟按钮，无冒泡干扰）
     Array.from(box.querySelectorAll('.pcw-atuid')).forEach((el) => {
-      el.addEventListener('click', (ev) => {
-        ev.stopPropagation();
+      el.addEventListener('click', () => {
         this.#copyText(el.dataset.copy || '');
       });
     });
+    // 过滤空态出口：清过滤词重渲，焦点还给过滤框
+    const clearBtn = box.querySelector('.pcw-empty-act');
+    if (clearBtn)
+      clearBtn.addEventListener('click', () => {
+        const filter = this.#atPop.querySelector('.pcw-popfilter');
+        if (filter) filter.value = '';
+        this.#atFilter = '';
+        this.#renderAtItems();
+        if (filter) filter.focus();
+      });
   }
 
   /**
    * 名字操作菜单：@ 此人 / 发起私聊 /（非好友时）加好友。
    * 好友判定暂无内存数据源（游戏好友面板按需协议拉取），entry.friend 未提供时两项都展示。
    * @param {object} e 消息条目
-   * @param {MouseEvent} ev 点击事件（定位菜单）
+   * @param {MouseEvent} ev 点击事件（定位菜单；键盘路径构造伪坐标）
    * @returns {void}
    */
   openNameMenu(e, ev) {
     if (!this.#namePop || !this.#win || e.self) return;
+    this.#namePop._srcEl = (ev && ev.target) || null; // Escape 关菜单时焦点归还源
     // 好友关系由业务层同步判定（null=判不出，私聊/加好友两项并列）
     const friend = this.#notify('onCheckFriend', e);
     const acts = [
@@ -1026,7 +1077,7 @@ export class ChatOverlay {
     this.#namePop.innerHTML = acts
       .map((a, i) => `<button class="pcw-popitem" data-i="${i}">${esc(a.label)}</button>`)
       .join('');
-    Array.from(this.#namePop.querySelectorAll('.pcw-popitem')).forEach((b) => {
+    Array.from(this.#namePop.querySelectorAll(POP_ITEM_SEL)).forEach((b) => {
       b.addEventListener('click', () => {
         this.#namePop.hidden = true;
         const a = acts[+b.dataset.i];
@@ -1045,6 +1096,8 @@ export class ChatOverlay {
     this.#infoPop.hidden = true;
     this.#atPop.hidden = true;
     this.#morePop.hidden = true;
+    const first = this.#namePop.querySelector(POP_ITEM_SEL);
+    if (first) first.focus();
   }
 
   /**
@@ -1063,10 +1116,10 @@ export class ChatOverlay {
       .map((ln) => {
         const it = ln && typeof ln === 'object' ? ln : { s: String(ln == null ? '' : ln) };
         if (it.copy)
-          return `<div class="pcw-inforow"><span class="pcw-copylink" data-copy="${esc(String(it.copy))}">${esc(it.s)}</span></div>`;
+          return `<div class="pcw-inforow"><button class="pcw-copylink" data-copy="${esc(String(it.copy))}">${esc(it.s)}</button></div>`;
         if (!it.action) return `<div class="pcw-inforow">${esc(it.s)}</div>`;
         const idx = jumpActs.push(it.action) - 1;
-        return `<div class="pcw-inforow"><span class="pcw-jumplink" data-jump="${idx}">${esc(it.s)}</span></div>`;
+        return `<div class="pcw-inforow"><button class="pcw-jumplink" data-jump="${idx}">${esc(it.s)}</button></div>`;
       })
       .join('');
     this.#infoPop.innerHTML =
@@ -1125,7 +1178,10 @@ export class ChatOverlay {
   setOpacity(pct) {
     if (!this.#win) return;
     const a = Math.max(0.3, Math.min(1, (pct || 75) / 100));
-    this.#win.style.background = `rgba(18,22,30,${(a * 0.96).toFixed(2)})`;
+    // 对比度保护（1.4.3）：α 映射到 [0.84,0.96]（默认 75→0.92），保证白底合成下次级文本 ≥4.5:1；
+    // 滑条仍线性调节相对不透明度，最低档对比度下降属用户显式选择
+    const alpha = (0.84 + ((a - 0.3) / 0.7) * 0.12).toFixed(2);
+    this.#win.style.background = `rgba(18,22,30,${alpha})`;
     this.#win.style.borderColor = `rgba(255,255,255,${(a * 0.22).toFixed(2)})`;
   }
 
@@ -1278,7 +1334,7 @@ export class ChatOverlay {
       if (!entry) return; // 空白处不拦默认行为
       ev.preventDefault();
       ev.stopPropagation(); // 不冒到游戏/窗口其他层
-      this.#openMsgMenu(entry, ev);
+      this.#openMsgMenu(entry, ev, row);
     });
     this.#msgs.addEventListener('scroll', () => {
       const el = this.#msgs;
@@ -1310,6 +1366,25 @@ export class ChatOverlay {
         if (this.#infoPop) this.#infoPop.hidden = true;
         if (this.#msgPop) this.#msgPop.hidden = true;
       }
+    });
+    // 焦点在菜单内时 Escape 到不了输入框：各浮层自挂监听，关闭并归还焦点给触发源（2.4.3）
+    const escPop = (pop, srcKey) => {
+      if (!pop) return;
+      pop.addEventListener('keydown', (ev) => {
+        if (ev.key !== 'Escape') return;
+        pop.hidden = true;
+        ev.stopPropagation();
+        const src = pop[srcKey];
+        if (src && src.isConnected && typeof src.focus === 'function') src.focus();
+      });
+    };
+    escPop(this.#namePop, '_srcEl');
+    escPop(this.#msgPop, '_srcRow');
+    this.#atPop.addEventListener('keydown', (ev) => {
+      if (ev.key !== 'Escape') return;
+      this.#atPop.hidden = true;
+      ev.stopPropagation();
+      this.focusInput();
     });
     this.#sendBtn.addEventListener('click', () => this.#doSend());
     this.#win.querySelector('.btn-at').addEventListener('click', () => {
@@ -1424,11 +1499,13 @@ export class ChatOverlay {
   /**
    * 消息右键菜单：引用（所有消息）/ 撤回（仅自己的，时限与协议在业务层）
    * @param {object} e 消息条目
-   * @param {MouseEvent} ev 右键事件（定位菜单）
+   * @param {MouseEvent} ev 右键事件（定位菜单；键盘路径构造伪坐标）
+   * @param {HTMLElement} [srcRow] 触发行（Escape 关菜单时焦点归还）
    * @returns {void}
    */
-  #openMsgMenu(e, ev) {
+  #openMsgMenu(e, ev, srcRow) {
     if (!this.#msgPop || !this.#win) return;
+    this.#msgPop._srcRow = srcRow || null;
     // 复制源：消息区内有选中则取选中文本，否则整条消息正文
     let selText = '';
     try {
@@ -1449,7 +1526,7 @@ export class ChatOverlay {
     this.#msgPop.innerHTML = acts
       .map((a, i) => `<button class="pcw-popitem" data-i="${i}">${esc(a.label)}</button>`)
       .join('');
-    Array.from(this.#msgPop.querySelectorAll('.pcw-popitem')).forEach((b) => {
+    Array.from(this.#msgPop.querySelectorAll(POP_ITEM_SEL)).forEach((b) => {
       b.addEventListener('click', () => {
         this.#msgPop.hidden = true;
         const a = acts[+b.dataset.i];
@@ -1464,6 +1541,8 @@ export class ChatOverlay {
     this.#msgPop.hidden = false;
     if (this.#namePop) this.#namePop.hidden = true;
     if (this.#infoPop) this.#infoPop.hidden = true;
+    const first = this.#msgPop.querySelector(POP_ITEM_SEL);
+    if (first) first.focus();
   }
 
   /**

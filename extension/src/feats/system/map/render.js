@@ -102,6 +102,24 @@ export class MapView {
     this.gridNy = this._gg.ny;
     /** @type {boolean} 扫描进行中（决定是否逐帧脉动动画） */
     this.scanning = false;
+    // reduced-motion 门控（2.3.3，与 panel-css 的 @media 范式同源）：系统要求减少动效时
+    // 扫波不再逐帧追赶/余晖不再播，改为块到达即静态 snap（数据更新仍由事件驱动重绘）
+    /** @type {boolean} 是否处于减少动效偏好 */
+    this._reduceMotion = false;
+    /** @type {MediaQueryList|null} reduced-motion 媒体查询（destroy 时解绑 change 监听） */
+    this._motionMql = null;
+    /** @type {?Function} reduced-motion 偏好变化回调 */
+    this._onMotionPref = null;
+    try {
+      this._motionMql = window.matchMedia('(prefers-reduced-motion: reduce)');
+      this._reduceMotion = this._motionMql.matches;
+      this._onMotionPref = () => {
+        this._reduceMotion = this._motionMql.matches;
+        if (this._reduceMotion) this._waveFrac = this._targetFrac; // 切到 reduce：波前立即对齐进度
+        this.invalidate();
+      };
+      this._motionMql.addEventListener('change', this._onMotionPref);
+    } catch (e) {}
     /** @type {number|null} rAF 句柄 */
     this._raf = null;
     /** @type {{x:number,y:number,moved:boolean}|null} 拖拽态 */
@@ -391,6 +409,13 @@ export class MapView {
       cancelAnimationFrame(this._raf);
       this._raf = null;
     }
+    if (this._motionMql && this._onMotionPref) {
+      try {
+        this._motionMql.removeEventListener('change', this._onMotionPref);
+      } catch (e) {}
+      this._motionMql = null;
+      this._onMotionPref = null;
+    }
     this._unbind();
   }
 
@@ -434,7 +459,8 @@ export class MapView {
     this._drawRadar(ctx, s, tl);
 
     // 续帧：扫描中，或尚有余晖拖尾在播（停扫后动画自然收束，由过期修剪后停止）
-    if (this.scanning || this._trail.length) this.invalidate();
+    // reduced-motion 时不续帧：扫波静态 snap，重绘只由块到达/交互事件驱动
+    if (!this._reduceMotion && (this.scanning || this._trail.length)) this.invalidate();
   }
 
   /** 当前视图签名（缩放/平移/尺寸）——变化即需重建实体屏幕缓存 */
@@ -641,15 +667,16 @@ export class MapView {
         ctx.restore();
       }
     }
-    // 2) 已扫块余晖拖尾（1.2s 内 alpha .12→0，过期即剪）
+    // 2) 已扫块余晖拖尾（1.2s 内 alpha .12→0，过期即剪；reduced-motion 时不播淡出动画）
     while (this._trail.length && now - this._trail[0].t > 1200) this._trail.shift();
-    for (const tr of this._trail) {
-      const k = 1 - (now - tr.t) / 1200;
-      if (k <= 0) continue;
-      const r = this._blockRectPx(tr.i, tr.j, s, tl);
-      ctx.fillStyle = `rgba(90,200,255,${(0.12 * k).toFixed(3)})`;
-      ctx.fillRect(r.x, r.y, r.w, r.h);
-    }
+    if (!this._reduceMotion)
+      for (const tr of this._trail) {
+        const k = 1 - (now - tr.t) / 1200;
+        if (k <= 0) continue;
+        const r = this._blockRectPx(tr.i, tr.j, s, tl);
+        ctx.fillStyle = `rgba(90,200,255,${(0.12 * k).toFixed(3)})`;
+        ctx.fillRect(r.x, r.y, r.w, r.h);
+      }
     // 3) 雷达扫波：波前以「实测块间隔 EMA」为速度匀速追赶完成进度（偶数行→，奇数行←）。
     //    单块网络慢时波只是减速接近块边而非驻停卡死；网络快时持续前行不跳位，视觉全程丝滑。
     if (this.scanning && this._waveRow >= 0) {
@@ -662,20 +689,27 @@ export class MapView {
       const ry = Math.max(tl.y + sp.top * s, tl.y + g.offY * s + j * bhpx); // 裁剪界=网格顶（含 padding）
       const rh = Math.min(bhpx, tl.y + sp.bot * s - ry);
       if (rh > 0) {
-        const dt = this._waveLastT ? Math.max(0, Math.min(250, now - this._waveLastT)) : 16;
-        this._waveLastT = now;
-        const period = Math.max(300, this._blockEma || this._dwellMs); // 波速 = 1 块 / 实测间隔
-        const lag = this._targetFrac - this._waveFrac;
-        if (lag > 0)
-          this._waveFrac = Math.min(
-            this._targetFrac,
-            this._waveFrac + (dt / period) * (1 + Math.max(0, lag - 1) * 1.5),
-          );
+        if (this._reduceMotion) {
+          // 减少动效：波前直接对齐完成进度（静态 snap，不做 dt 积分追赶）
+          this._waveFrac = this._targetFrac;
+        } else {
+          const dt = this._waveLastT ? Math.max(0, Math.min(250, now - this._waveLastT)) : 16;
+          this._waveLastT = now;
+          const period = Math.max(300, this._blockEma || this._dwellMs); // 波速 = 1 块 / 实测间隔
+          const lag = this._targetFrac - this._waveFrac;
+          if (lag > 0)
+            this._waveFrac = Math.min(
+              this._targetFrac,
+              this._waveFrac + (dt / period) * (1 + Math.max(0, lag - 1) * 1.5),
+            );
+        }
         // 波前跨块边线才释放显示：已入库但未被波扫过的块暂藏在实体缓存外（不提前穿帮）
         const shown = Math.floor(this._waveFrac);
         if (shown > this._waveShown) {
           this._waveShown = shown;
           this._entityDirty = true;
+          // reduce 时无续帧循环：实体层已标脏但本帧早于雷达层绘制，补一次重绘让数据即刻现身
+          if (this._reduceMotion) this.invalidate();
         }
         const east = !(j & 1); // 蛇形推进方向：偶数行→（自左而右），奇数行←
         const p = Math.max(0, Math.min(nx, east ? this._waveFrac : nx - this._waveFrac)); // 推进量折为自西向东坐标

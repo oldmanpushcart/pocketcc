@@ -44,7 +44,7 @@ const OWN_MODES = [
 const CSS = `
   *{box-sizing:border-box;}
   .pcg-win{position:fixed;display:flex;flex-direction:column;overflow:hidden;border-radius:10px;
-    background:rgba(18,22,30,.78);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);
+    background:rgba(18,22,30,.92);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);
     border:1px solid rgba(255,255,255,.16);color:#e8eef7;
     font:13px/1.55 system-ui,-apple-system,"Segoe UI",sans-serif;
     box-shadow:0 10px 36px rgba(0,0,0,.55);z-index:2147483640;}
@@ -73,9 +73,7 @@ const CSS = `
   .pcg-prog{flex:1;min-width:80px;display:flex;align-items:center;gap:8px;font-size:11px;color:#8b98a9;}
   .pcg-track{flex:1;height:5px;border-radius:3px;background:rgba(255,255,255,.12);overflow:hidden;}
   .pcg-fill{height:100%;width:0;background:linear-gradient(90deg,#4a9fff,#5be0a0);transition:width .2s;}
-  .pcg-legend{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:7px 0 3px;}
-  .pcg-lg{display:flex;align-items:center;gap:4px;font-size:11px;cursor:pointer;user-select:none;}
-  .pcg-lg input{width:13px;height:13px;cursor:pointer;}
+  .pcg-legend{position:relative;display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:7px 0 3px;}
   .pcg-dot{width:9px;height:9px;border-radius:2px;display:inline-block;}
   .pcg-body{flex:1 1 auto;min-height:0;display:flex;background:#0c0f14;}
   .pcg-cwrap{flex:1 1 auto;min-width:0;position:relative;}
@@ -94,7 +92,6 @@ const CSS = `
   .pcg-rz[data-dir="br"]{right:0;bottom:0;width:16px;height:16px;cursor:nwse-resize;
     background:linear-gradient(315deg,transparent 50%,rgba(255,255,255,.35) 50%);border-radius:0 0 10px 0;}
   /* P1 图例（行2）：四大类 chip + 归属分段合并同一行（pop 锚定于此，需 position:relative；垂直居中对齐 chip 与归属） */
-  .pcg-legend{position:relative;align-items:center;}
   /* 归属：不再 width:100% 另起一行——靠 margin-left:auto 推到图例行右端，左侧竖线分隔与 chip 分组；窄窗无位时随 flex-wrap 换行 */
   .pcg-own{display:flex;align-items:center;gap:4px;flex-wrap:wrap;font-size:11px;margin-left:auto;padding-left:10px;border-left:1px solid rgba(255,255,255,.14);}
   /* 行3 玩家筛选（仅玩家城池）：标题 + 护盾组（独立 panel）+ 等级组（≥N） */
@@ -115,23 +112,27 @@ const CSS = `
     background:rgba(255,255,255,.06);color:#e8eef7;font:inherit;font-size:12px;}
   .pcg-shield-num::-webkit-inner-spin-button{opacity:.4;}
   .pcg-own .seg,.pcg-shield .seg{border:1px solid rgba(255,255,255,.18);border-radius:5px;background:rgba(255,255,255,.06);
-    color:#cdd8e6;font:inherit;font-size:11px;padding:1px 7px;cursor:pointer;}
+    color:#cdd8e6;font:inherit;font-size:11px;padding:3px 7px;cursor:pointer;}
   .pcg-own .seg:hover,.pcg-shield .seg:hover{background:rgba(255,255,255,.14);}
   .pcg-own .seg.on,.pcg-shield .seg.on{background:rgba(70,140,255,.3);border-color:rgba(120,170,255,.5);color:#dbeaff;font-weight:600;}
   /* 四大类 chip + POP 细分类浮层（pop 绝对定位脱离 flex 流，不顶开工具栏/图例） */
   .pcg-cats{display:flex;align-items:center;gap:6px;flex-wrap:wrap;}
-  .pcg-chip{display:flex;align-items:center;gap:3px;font-size:11px;cursor:pointer;user-select:none;
+  .pcg-chip{display:flex;align-items:center;gap:3px;min-height:24px;font-size:11px;cursor:pointer;user-select:none;
     border:1px solid rgba(255,255,255,.16);border-radius:12px;padding:1px 7px;background:rgba(255,255,255,.05);}
   .pcg-chip:hover{background:rgba(255,255,255,.12);}
   .pcg-chip .pcg-dot{width:9px;height:9px;border-radius:2px;flex:0 0 auto;}
   .pcg-chip input{width:12px;height:12px;cursor:pointer;margin:0;}
   .pcg-chip .caret{font-size:9px;opacity:.65;margin-left:1px;}
+  /* checkbox 本体 12×12，外包 24×24 label 命中区（2.5.8；input 不支持伪元素，用 label 扩）；文字/色点区为原生按钮（键盘可开 POP） */
+  .pcg-cbwrap{display:inline-flex;flex:0 0 auto;align-items:center;justify-content:center;width:24px;height:24px;cursor:pointer;}
+  .pcg-chipbtn{display:flex;align-items:center;gap:3px;border:none;background:transparent;padding:4px 2px;
+    font:inherit;font-size:11px;color:inherit;cursor:pointer;}
   .pcg-pop{position:absolute;top:100%;left:8px;display:none;flex-direction:column;gap:3px;min-width:132px;max-width:230px;
     padding:6px 9px;margin-top:2px;background:rgba(12,16,22,.97);border:1px solid rgba(255,255,255,.2);border-radius:8px;
     box-shadow:0 8px 22px rgba(0,0,0,.5);z-index:6;}
   .pcg-pop.show{display:flex;}
   .pcg-pop-hd{font-size:11px;color:#8b98a9;}
-  .pcg-pop-row{display:flex;align-items:center;gap:6px;font-size:11px;cursor:pointer;user-select:none;}
+  .pcg-pop-row{display:flex;align-items:center;gap:6px;font-size:11px;cursor:pointer;user-select:none;padding:4px 0;}
   .pcg-pop-row input{width:13px;height:13px;cursor:pointer;margin:0;}
   .pcg-swatch{width:11px;height:11px;border-radius:2px;display:inline-block;flex:0 0 auto;border:1px solid rgba(255,255,255,.28);}
   /* 右侧坐标列表侧栏（搜索 + 计数 + 滚动行） */
@@ -141,19 +142,22 @@ const CSS = `
   .pcg-lsearch{margin:6px 6px 3px;padding:3px 7px;border:1px solid rgba(255,255,255,.18);border-radius:5px;
     background:rgba(255,255,255,.06);color:#e8eef7;font:inherit;font-size:11px;}
   .pcg-lcount{padding:0 8px 3px;font-size:10px;color:#8b98a9;flex:0 0 auto;}
-  .pcg-lrows{flex:1 1 auto;overflow-y:auto;min-height:0;padding:0 4px 6px;}
-  .pcg-lrow{display:flex;align-items:center;gap:5px;padding:3px 5px;border-radius:5px;cursor:pointer;font-size:11px;color:#c9d6e6;}
+  .pcg-lrows{flex:1 1 auto;overflow-y:auto;overscroll-behavior:contain;min-height:0;padding:0 4px 6px;}
+  .pcg-lrow{display:flex;align-items:center;gap:5px;width:100%;padding:3px 5px;border:none;border-radius:5px;background:transparent;
+    font:inherit;font-size:11px;color:#c9d6e6;text-align:left;cursor:pointer;}
   .pcg-lrow:hover{background:rgba(255,255,255,.08);}
   .pcg-lrow.on{background:rgba(70,140,255,.22);}
   .pcg-lsw{width:8px;height:8px;border-radius:2px;flex:0 0 auto;}
   .pcg-lmain{flex:1 1 auto;min-width:0;display:flex;flex-direction:column;line-height:1.25;}
   .pcg-lname{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
-  .pcg-lcoord{font-size:10px;color:#8fa3bb;}
+  .pcg-lcoord{font-size:10px;color:#9fb0c2;}
   .pcg-lshield{font-size:10px;color:#ffcf8f;}
-  .pcg-lshield.none{color:#7d8ea3;}
+  .pcg-lshield.none{color:#9fb0c2;}
   .pcg-lmeta{font-size:10px;color:#9fb6d4;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
   .pcg-lk{flex:0 0 auto;font-size:9px;color:#ffd98a;background:rgba(255,200,80,.14);border-radius:6px;padding:0 4px;}
   .pcg-lempty{padding:10px;font-size:11px;color:#8b98a9;text-align:center;}
+  .pcg-lempty-sub{display:block;margin-top:4px;}
+  .pcg-lempty-act{border:none;background:transparent;padding:4px;font:inherit;font-size:11px;color:#9fb6d4;text-decoration:underline;cursor:pointer;}
 `;
 
 /** @type {number} 列表一次最多渲染的行数（超出提示用搜索缩小范围，防 DOM 膨胀） */
@@ -248,15 +252,16 @@ export class MapOverlay extends OverlayShell {
       const anyOn = cat.subs.some((s) => inS(s.key));
       return (
         `<div class="pcg-chip" data-cat="${cat.key}">` +
-        `<input type="checkbox" data-catcb="${cat.key}"${anyOn ? ' checked' : ''}>` +
+        `<label class="pcg-cbwrap"><input type="checkbox" data-catcb="${cat.key}"${anyOn ? ' checked' : ''} aria-label="${cat.label}：全选/取消"></label>` +
+        `<button class="pcg-chipbtn" aria-expanded="false" title="展开${cat.label}细分类">` +
         `<span class="pcg-dot" style="background:${CAT_COLOR[cat.key]}"></span>${cat.label}` +
-        `<span class="caret">▾</span></div>`
+        `<span class="caret">▾</span></button></div>`
       );
     }).join('');
     const otherChip =
-      `<div class="pcg-chip" data-other="1">` +
-      `<input type="checkbox" data-g="other"${this._showOther ? ' checked' : ''}>` +
-      `<span class="pcg-dot" style="background:#8a93a6"></span>其他</div>`;
+      `<label class="pcg-chip" data-other="1">` +
+      `<input type="checkbox" data-g="other"${this._showOther ? ' checked' : ''} aria-label="其他：未归类点位">` +
+      `<span class="pcg-dot" style="background:#8a93a6"></span>其他</label>`;
     const popsHtml = FILTER_TREE.map((cat) => {
       const rows = cat.subs
         .map(
@@ -273,7 +278,7 @@ export class MapOverlay extends OverlayShell {
       `<div class="pcg-own"><span class="pcg-lbl">归属</span>` +
       OWN_MODES.map(
         (o) =>
-          `<button class="seg${this._owner === o[0] ? ' on' : ''}" data-own="${o[0]}">${o[1]}</button>`,
+          `<button class="seg${this._owner === o[0] ? ' on' : ''}" data-own="${o[0]}" aria-pressed="${this._owner === o[0]}">${o[1]}</button>`,
       ).join('') +
       `</div>` +
       popsHtml;
@@ -282,15 +287,15 @@ export class MapOverlay extends OverlayShell {
       `<div class="pcg-shield"><span class="pcg-lbl">玩家</span>` +
       `<span class="pcg-pf-shield"><span class="pcg-lbl">护盾</span>` +
       `<span class="pcg-shield-modes">` +
-      `<button class="seg smode on" data-smode="off">不限</button>` +
-      `<button class="seg smode" data-smode="none">无盾</button>` +
-      `<button class="seg smode" data-smode="has">有盾</button></span>` +
+      `<button class="seg smode on" data-smode="off" aria-pressed="true">不限</button>` +
+      `<button class="seg smode" data-smode="none" aria-pressed="false">无盾</button>` +
+      `<button class="seg smode" data-smode="has" aria-pressed="false">有盾</button></span>` +
       `<span class="pcg-shield-thr" hidden><span class="pcg-lbl">剩余≤</span>` +
-      `<input class="pcg-shield-num" type="number" min="0" step="1" placeholder="不限">` +
-      `<select class="pcg-sel pcg-shield-unit"><option value="h">小时</option><option value="m">分钟</option></select></span>` +
+      `<input class="pcg-shield-num" type="number" min="0" step="1" placeholder="不限" aria-label="护盾剩余时间阈值">` +
+      `<select class="pcg-sel pcg-shield-unit" aria-label="护盾时间单位"><option value="h">小时</option><option value="m">分钟</option></select></span>` +
       `</span>` +
       `<span class="pcg-pf-level"><span class="pcg-lbl">等级≥</span>` +
-      `<input class="pcg-level-num" type="number" min="0" max="100" step="1" placeholder="不限"></span>` +
+      `<input class="pcg-level-num" type="number" min="0" max="100" step="1" placeholder="不限" aria-label="玩家等级下限"></span>` +
       `</div>`;
 
     const win = this._mountWindow({
@@ -301,22 +306,22 @@ export class MapOverlay extends OverlayShell {
         `<div class="pcg-head">` +
         `<div class="pcg-titlebar"><span class="pcg-grip">⠿</span><span class="pcg-title">全局地图</span>` +
         `<span class="pcg-srvbadge" hidden></span><span class="pcg-tspacer"></span>` +
-        `<button class="pcg-close" title="关闭">✕</button></div>` +
+        `<button class="pcg-close" title="关闭" aria-label="关闭">✕</button></div>` +
         `<div class="pcg-bar">` +
         `<button class="pcg-btn primary act-scan">开始扫描</button>` +
         `<button class="pcg-btn warn act-stop" hidden>停止扫描</button>` +
         `<button class="pcg-btn act-fit">复位</button>` +
-        `<button class="pcg-btn act-zin">＋</button>` +
-        `<button class="pcg-btn act-zout">－</button>` +
-        `<button class="pcg-btn act-grid" title="切换坐标网格">网格</button>` +
+        `<button class="pcg-btn act-zin" title="放大" aria-label="放大">＋</button>` +
+        `<button class="pcg-btn act-zout" title="缩小" aria-label="缩小">－</button>` +
+        `<button class="pcg-btn act-grid" title="切换坐标网格" aria-pressed="true">网格</button>` +
         `<button class="pcg-btn act-clear" title="清空本区已扫点位（含持久数据，不动其他区）">清空</button>` +
         `<span class="pcg-prog"><span class="pcg-text">未扫描</span><span class="pcg-track"><span class="pcg-fill"></span></span></span>` +
         `</div>` +
         `<div class="pcg-legend">${legend}</div>` +
         shield +
         `</div>` +
-        `<div class="pcg-body"><div class="pcg-cwrap"><canvas class="pcg-canvas"></canvas><div class="pcg-status" hidden></div><div class="pcg-toast"></div></div>` +
-        `<div class="pcg-list"${this._listOpen ? '' : ' hidden'}><input class="pcg-lsearch" type="text" placeholder="搜索坐标/名称/类型">` +
+        `<div class="pcg-body"><div class="pcg-cwrap"><canvas class="pcg-canvas"></canvas><div class="pcg-status" hidden></div><div class="pcg-toast" role="status" aria-live="polite"></div></div>` +
+        `<div class="pcg-list"${this._listOpen ? '' : ' hidden'}><input class="pcg-lsearch" type="text" aria-label="搜索坐标列表" placeholder="搜索坐标/名称/类型">` +
         `<div class="pcg-lcount"></div><div class="pcg-lrows"></div></div></div>` +
         `<div class="pcg-rz" data-dir="l"></div><div class="pcg-rz" data-dir="r"></div>` +
         `<div class="pcg-rz" data-dir="b"></div><div class="pcg-rz" data-dir="bl"></div>` +
@@ -481,7 +486,8 @@ export class MapOverlay extends OverlayShell {
     const cnt = this._win.querySelector('.pcg-lcount');
     if (!rows || !cnt) return;
     const inp = this._win.querySelector('.pcg-lsearch');
-    const q = ((inp && inp.value) || '').trim().toLowerCase();
+    const qRaw = ((inp && inp.value) || '').trim();
+    const q = qRaw.toLowerCase();
     const all = this._listItems;
     const list = !q
       ? all
@@ -497,7 +503,9 @@ export class MapOverlay extends OverlayShell {
       ? `命中 ${list.length} · 桶内共 ${this._listTotal} 点`
       : `最新 ${all.length} / 共 ${this._listTotal} 点`;
     if (!shown.length) {
-      rows.innerHTML = `<div class="pcg-lempty">${q ? '无匹配点位' : '暂无点位'}</div>`;
+      rows.innerHTML = q
+        ? `<div class="pcg-lempty">无匹配「${esc(qRaw)}」的点位<button class="pcg-lempty-act">清除搜索</button></div>`
+        : `<div class="pcg-lempty">暂无点位<span class="pcg-lempty-sub">点「开始扫描」采集本区点位</span></div>`;
       return;
     }
     const now = Date.now();
@@ -522,11 +530,11 @@ export class MapOverlay extends OverlayShell {
                 : `<span class="pcg-lshield none">护盾：无</span>`;
           }
           return (
-            `<div class="pcg-lrow" data-n="${n}">` +
+            `<button class="pcg-lrow" data-n="${n}">` +
             `<span class="pcg-lsw" style="background:${it.color}"></span>` +
             `<span class="pcg-lmain"><span class="pcg-lname" title="${esc(it.sub || '')} · (${coord})">${esc(it.name || it.sub || '未知点')}</span><span class="pcg-lcoord">(${coord})</span>${metaLine}${shieldLine}</span>` +
             (it.cross ? `<span class="pcg-lk" title="跨区点：属区 ${it.k}">区${it.k}</span>` : '') +
-            `</div>`
+            `</button>`
           );
         })
         .join('') +
@@ -573,8 +581,9 @@ export class MapOverlay extends OverlayShell {
     this._win.querySelector('.act-zout').addEventListener('click', () => {
       if (this.view) this.view.zoomBy(1 / 1.3);
     });
-    this._win.querySelector('.act-grid').addEventListener('click', () => {
-      if (this.view) this.view.toggleGrid();
+    const gridBtn = this._win.querySelector('.act-grid');
+    gridBtn.addEventListener('click', () => {
+      if (this.view) gridBtn.setAttribute('aria-pressed', String(this.view.toggleGrid()));
     });
     // 坐标列表改为常驻（_listOpen 恒 true），无「列表」开关按钮；业务层始终供数。
     // 高度已固定为「近」(viewLevel=1)，不再提供工具栏下拉（旧 .act-level 已移除）。
@@ -606,22 +615,19 @@ export class MapOverlay extends OverlayShell {
     }
   }
 
-  /**
-   * 同步工具栏「高度层级」下拉选中值（不触发 change 回调，供业务层初始化/面板回填用）。
-   * @param {number} lv 0~4
-   */
-  setViewLevel(lv) {
-    if (!this._win) return;
-    const sel = this._win.querySelector('.act-level');
-    if (sel) sel.value = String(Math.max(0, Math.min(4, lv | 0)));
-  }
-
   /** 坐标列表侧栏：行点击（委托）跳转 + 搜索防抖过滤 */
   _wireList() {
     const win = this._win;
     const rows = win.querySelector('.pcg-lrows');
     if (rows) {
       rows.addEventListener('click', (e) => {
+        if (e.target.closest('.pcg-lempty-act')) {
+          // 过滤空态的「清除搜索」出口：清空查询词并重绘
+          const si = win.querySelector('.pcg-lsearch');
+          if (si) si.value = '';
+          this._paintList();
+          return;
+        }
         const el = e.target.closest('.pcg-lrow');
         if (!el) return;
         const it = this._paintIdx && this._paintIdx[+el.dataset.n];
@@ -647,7 +653,7 @@ export class MapOverlay extends OverlayShell {
     // 大类 chip：点文字/色点区→开合该类 POP；点 checkbox → 全选/取消该类
     win.querySelectorAll('.pcg-chip[data-cat]').forEach((chip) => {
       chip.addEventListener('click', (e) => {
-        if (e.target && e.target.tagName === 'INPUT') return; // checkbox 由 change 处理
+        if (e.target.closest('input') || e.target.closest('.pcg-cbwrap')) return; // checkbox 由 change 处理（含 label 命中区）
         this._togglePop(chip);
       });
     });
@@ -685,12 +691,24 @@ export class MapOverlay extends OverlayShell {
     win.querySelectorAll('.pcg-own .seg').forEach((btn) => {
       btn.addEventListener('click', () => {
         this._owner = btn.dataset.own || 'all';
-        win.querySelectorAll('.pcg-own .seg').forEach((b) => b.classList.toggle('on', b === btn));
+        win.querySelectorAll('.pcg-own .seg').forEach((b) => {
+          const on = b === btn;
+          b.classList.toggle('on', on);
+          b.setAttribute('aria-pressed', String(on));
+        });
         this._emitFilter();
       });
     });
     // 点画布（拖拽/点击）时收起 POP（shadow 内直接监听，避免 document 重定向问题）
     if (this._canvas) this._canvas.addEventListener('pointerdown', () => this._closePop());
+    // Escape 收起 POP（APG disclosure 键盘范式），焦点归还触发的 chip 按钮
+    win.addEventListener('keydown', (e) => {
+      if (e.key !== 'Escape' || !this._openCat) return;
+      const btn = win.querySelector('.pcg-chip[data-cat="' + this._openCat + '"] .pcg-chipbtn');
+      this._closePop();
+      if (btn) btn.focus();
+      e.stopPropagation();
+    });
   }
 
   /** 行3 玩家筛选接线：护盾组（不限/有盾/无盾 三态 + 时间阈值仅「有盾」）→ onShieldFilter；等级组（≥N）→ onLevelFilter */
@@ -713,7 +731,11 @@ export class MapOverlay extends OverlayShell {
       this._notify('onShieldFilter', st.mode, ms);
     };
     const sync = () => {
-      modes.forEach((b) => b.classList.toggle('on', b.dataset.smode === st.mode));
+      modes.forEach((b) => {
+        const on = b.dataset.smode === st.mode;
+        b.classList.toggle('on', on);
+        b.setAttribute('aria-pressed', String(on));
+      });
       if (thr) thr.hidden = st.mode !== 'has'; // 无盾/不限隐时间输入；有盾才显
       if (num) num.disabled = st.mode !== 'has';
       if (unit) unit.disabled = st.mode !== 'has';
@@ -754,6 +776,8 @@ export class MapOverlay extends OverlayShell {
       pop.style.left = Math.max(4, chip.offsetLeft) + 'px';
       pop.classList.add('show');
       this._openCat = key;
+      const btn = chip.querySelector('.pcg-chipbtn');
+      if (btn) btn.setAttribute('aria-expanded', 'true');
     }
   }
 
@@ -761,6 +785,9 @@ export class MapOverlay extends OverlayShell {
   _closePop() {
     if (!this._win) return;
     this._win.querySelectorAll('.pcg-pop.show').forEach((p) => p.classList.remove('show'));
+    this._win
+      .querySelectorAll('.pcg-chipbtn[aria-expanded="true"]')
+      .forEach((b) => b.setAttribute('aria-expanded', 'false'));
     this._openCat = null;
   }
 

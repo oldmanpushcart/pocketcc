@@ -506,7 +506,6 @@ function install(ctx) {
   overlay = new MapOverlay(makeHandlers());
   // 尺寸以 SERVER（本服可扫范围 408×952）为准，与扫描/网格/底图一致；不用 worldMap.size()（202 含边境带 568）
   overlay.mount(mapStore, { cols: SERVER.cols, rows: SERVER.rows });
-  overlay.setViewLevel(cfg.viewLevel);
   overlay.setSubs(cfg.subs);
   if (overlay.view) {
     overlay.view.setClassifyCtx(classifyCtx());

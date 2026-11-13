@@ -40,7 +40,7 @@ const DEFAULT_H = 360;
 const CSS = `
   *{box-sizing:border-box;}
   .pcj-win{position:fixed;display:flex;flex-direction:column;overflow:hidden;border-radius:10px;
-    background:rgba(18,22,30,.8);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);
+    background:rgba(18,22,30,.92);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);
     border:1px solid rgba(255,255,255,.16);color:#e8eef7;
     font:13px/1.55 system-ui,-apple-system,"Segoe UI",sans-serif;
     box-shadow:0 10px 30px rgba(0,0,0,.5);z-index:2147483640;}
@@ -57,8 +57,8 @@ const CSS = `
   .pcj-input{width:100%;min-height:52px;max-height:140px;resize:none;padding:5px 8px;border-radius:7px;
     border:1px solid rgba(255,255,255,.18);background:rgba(255,255,255,.06);color:#e8eef7;font:inherit;font-size:12px;
     line-height:1.4;overflow-y:auto;}
-  .pcj-input::placeholder{color:#6b7a8d;}
-  .pcj-hint{margin-top:3px;font-size:10px;color:#7d8ea3;line-height:1.35;}
+  .pcj-input::placeholder{color:#9fb0c2;}
+  .pcj-hint{margin-top:3px;font-size:10px;color:#8b98a9;line-height:1.35;}
   .pcj-bar{flex:0 0 auto;display:flex;align-items:center;gap:6px;padding:6px 8px;}
   .pcj-btn{border:1px solid rgba(255,255,255,.18);border-radius:6px;background:rgba(255,255,255,.06);
     color:#cdd8e6;font:inherit;font-size:12px;padding:3px 12px;cursor:pointer;white-space:nowrap;}
@@ -67,30 +67,34 @@ const CSS = `
   .pcj-btn.warn{background:rgba(224,70,59,.2);border-color:rgba(255,120,100,.4);}
   .pcj-btn[disabled]{opacity:.45;cursor:default;}
   .pcj-count{flex:1 1 auto;text-align:right;font-size:11px;color:#8b98a9;}
-  .pcj-list{flex:1 1 auto;min-height:0;overflow-y:auto;padding:0 6px 6px;border-top:1px solid rgba(255,255,255,.08);}
+  .pcj-list{flex:1 1 auto;min-height:0;overflow-y:auto;overscroll-behavior:contain;padding:0 6px 6px;border-top:1px solid rgba(255,255,255,.08);}
   .pcj-row{display:flex;align-items:center;gap:6px;margin-top:5px;padding:5px 7px;border-radius:6px;cursor:pointer;
     background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.08);}
   .pcj-row:hover{background:rgba(70,140,255,.18);border-color:rgba(120,170,255,.4);}
   .pcj-row.on{background:rgba(70,140,255,.28);}
-  .pcj-coord{flex:1 1 auto;min-width:0;font-size:12px;color:#dbe6f2;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
-  .pcj-loc{font-size:11px;color:#8fa3bb;margin-left:5px;}
+  .pcj-coord{flex:1 1 auto;min-width:0;border:none;background:transparent;padding:0;font:inherit;font-size:12px;color:#dbe6f2;
+    text-align:left;cursor:pointer;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+  .pcj-loc{font-size:11px;color:#a9b6c6;margin-left:5px;}
   .pcj-k{flex:0 0 auto;font-size:10px;color:#ffd98a;background:rgba(255,200,80,.14);border:1px solid rgba(255,200,80,.28);
     border-radius:6px;padding:0 5px;white-space:nowrap;}
   .pcj-k.self{color:#8fd6a0;background:rgba(90,200,130,.12);border-color:rgba(120,220,150,.28);}
-  .pcj-empty{padding:16px 8px;font-size:12px;color:#7d8ea3;text-align:center;}
+  .pcj-empty{padding:16px 8px;font-size:12px;color:#8b98a9;text-align:center;}
+  .pcj-empty-sub{display:block;margin-top:4px;font-size:11px;}
   .pcj-toast{position:absolute;left:50%;top:46%;transform:translateX(-50%);max-width:86%;padding:5px 12px;
     border-radius:6px;background:rgba(8,10,14,.92);border:1px solid rgba(255,255,255,.2);color:#ffd0b8;
     font-size:12px;pointer-events:none;opacity:0;transition:opacity .2s;z-index:3;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
   .pcj-toast.show{opacity:1;}
   .pcj-rz{position:absolute;right:0;bottom:0;width:16px;height:16px;cursor:nwse-resize;z-index:2;touch-action:none;
     background:linear-gradient(315deg,transparent 50%,rgba(255,255,255,.35) 50%);border-radius:0 0 10px 0;}
-  /* 每行分享控件：checkbox（仅分享态显）+ 分享按钮（仅普通态显） */
-  .pcj-cb{display:none;width:15px;height:15px;flex:0 0 auto;cursor:pointer;margin:0;accent-color:#4a9fff;}
+  /* 每行分享控件：checkbox（仅分享态显）+ 分享按钮（仅普通态显）。
+     checkbox 本体 15×15，外包 24×24 label 命中区（2.5.8；input 不支持伪元素，用 label 扩） */
+  .pcj-cbwrap{display:none;flex:0 0 auto;align-items:center;justify-content:center;width:24px;height:24px;margin:-4px 0;cursor:pointer;}
+  .pcj-cb{width:15px;height:15px;cursor:pointer;margin:0;accent-color:#4a9fff;}
   .pcj-share{flex:0 0 auto;border:1px solid rgba(255,255,255,.18);border-radius:5px;background:rgba(255,255,255,.06);
-    color:#cdd8e6;font:inherit;font-size:11px;padding:1px 8px;cursor:pointer;}
+    color:#cdd8e6;font:inherit;font-size:11px;padding:3px 8px;cursor:pointer;}
   .pcj-share:hover{background:rgba(70,140,255,.22);}
   .pcj-del{flex:0 0 auto;border:1px solid rgba(255,255,255,.14);border-radius:5px;background:transparent;
-    color:#9fb0c2;font:inherit;font-size:12px;line-height:1;padding:2px 6px;cursor:pointer;}
+    color:#9fb0c2;font:inherit;font-size:12px;line-height:1;padding:5px 6px;cursor:pointer;}
   .pcj-del:hover{background:rgba(224,70,59,.24);color:#ffd8d2;border-color:rgba(255,120,100,.4);}
   .pcj-list.share-mode .pcj-del{display:none;}
   .pcj-btn.danger{background:rgba(224,70,59,.2);border-color:rgba(255,120,100,.4);color:#ffdad4;}
@@ -98,7 +102,7 @@ const CSS = `
   /* 工具栏「删除选中」：仅分享态显（与清空记录同款两步确认防误删） */
   .act-del-sel{display:none;}
   .pcj-win.share-on .act-del-sel{display:inline-block;}
-  .pcj-list.share-mode .pcj-cb{display:inline-block;}
+  .pcj-list.share-mode .pcj-cbwrap{display:inline-flex;}
   .pcj-list.share-mode .pcj-share{display:none;}
   .pcj-row.checked{background:rgba(70,140,255,.22);border-color:rgba(120,170,255,.45);}
   /* 分享页脚（仅分享态显）：已选计数 + 两个目的频道 + 取消 */
@@ -185,9 +189,9 @@ export class JumpOverlay extends OverlayShell {
       innerHTML:
         `<div class="pcj-titlebar"><span class="pcj-grip">⠿</span><span class="pcj-title">镜头跳转</span>` +
         `<span class="pcj-srvbadge" hidden></span><span class="pcj-tspacer"></span>` +
-        `<button class="pcj-close" title="关闭 (Ctrl+G)">✕</button></div>` +
+        `<button class="pcj-close" title="关闭 (Ctrl+G)" aria-label="关闭">✕</button></div>` +
         `<div class="pcj-inputwrap">` +
-        `<textarea class="pcj-input" rows="2" spellcheck="false" placeholder="粘贴坐标，支持：S4251 343,471 / 343,471@4251 / 343:471 / 343,471（可多行，行尾可带 #备注）"></textarea>` +
+        `<textarea class="pcj-input" rows="2" spellcheck="false" aria-label="跳转坐标输入" placeholder="粘贴坐标，支持：S4251 343,471 / 343,471@4251 / 343:471 / 343,471（可多行，行尾可带 #备注）"></textarea>` +
         `<div class="pcj-hint">只给坐标默认跳本区；带区号（S4251 或 @4251）跨区跳转。行尾「#文字」为分享备注（缺省「坐标分享」）。回车跳转，Shift+回车换行。</div>` +
         `</div>` +
         `<div class="pcj-bar">` +
@@ -197,7 +201,7 @@ export class JumpOverlay extends OverlayShell {
         `<button class="pcj-btn warn act-clear">清空记录</button>` +
         `<span class="pcj-count"></span>` +
         `</div>` +
-        `<div class="pcj-list"><div class="pcj-empty">暂无跳转记录</div></div>` +
+        `<div class="pcj-list"><div class="pcj-empty">暂无跳转记录<span class="pcj-empty-sub">在上方粘贴坐标并回车，跳转后会在此留下记录</span></div></div>` +
         `<div class="pcj-footer" hidden>` +
         `<span class="pcj-selinfo">已选 0</span>` +
         `<button class="pcj-btn act-sel-all" title="选中全部记录">全选</button>` +
@@ -206,7 +210,7 @@ export class JumpOverlay extends OverlayShell {
         `<select class="pcj-chsel" title="分享目的频道"></select>` +
         `<button class="pcj-btn pcj-send" title="把选中坐标分享到下拉选中的频道">分享到</button>` +
         `</div>` +
-        `<div class="pcj-toast"></div><div class="pcj-rz"></div>`,
+        `<div class="pcj-toast" role="status" aria-live="polite"></div><div class="pcj-rz"></div>`,
     }).win;
     this._input = win.querySelector('.pcj-input');
     this._list = win.querySelector('.pcj-list');
@@ -273,7 +277,8 @@ export class JumpOverlay extends OverlayShell {
     if (this._countEl)
       this._countEl.textContent = this._items.length ? '共 ' + this._items.length + ' 条' : '';
     if (!this._items.length) {
-      this._list.innerHTML = '<div class="pcj-empty">暂无跳转记录</div>';
+      this._list.innerHTML =
+        '<div class="pcj-empty">暂无跳转记录<span class="pcj-empty-sub">在上方粘贴坐标并回车，跳转后会在此留下记录</span></div>';
       return;
     }
     this._list.innerHTML = this._items
@@ -284,13 +289,14 @@ export class JumpOverlay extends OverlayShell {
             ? `<span class="pcj-k${cross ? '' : ' self'}" title="${cross ? '跨区目标' : '本区'}">区 ${esc(it.server)}</span>`
             : `<span class="pcj-k self" title="跳本区">本区</span>`;
         const sel = this._selected.has(n);
+        const full = '(' + it.x + ',' + it.y + ')' + (it.note ? ' ' + it.note : '');
         return (
           `<div class="pcj-row${sel ? ' checked' : ''}" data-n="${n}">` +
-          `<input class="pcj-cb" type="checkbox" data-n="${n}"${sel ? ' checked' : ''}>` +
-          `<span class="pcj-coord">(${esc(it.x)},${esc(it.y)})${it.note ? '<span class="pcj-loc">' + esc(it.note) + '</span>' : ''}</span>` +
+          `<label class="pcj-cbwrap"><input class="pcj-cb" type="checkbox" data-n="${n}"${sel ? ' checked' : ''} aria-label="选择记录 (${esc(it.x)},${esc(it.y)})"></label>` +
+          `<button class="pcj-coord" data-n="${n}" title="${esc(full)}">(${esc(it.x)},${esc(it.y)})${it.note ? '<span class="pcj-loc">' + esc(it.note) + '</span>' : ''}</button>` +
           kTag +
           `<button class="pcj-share" data-n="${n}" title="分享此坐标到频道">分享</button>` +
-          `<button class="pcj-del" data-n="${n}" title="删除此记录">✕</button>` +
+          `<button class="pcj-del" data-n="${n}" title="删除此记录" aria-label="删除此记录">✕</button>` +
           `</div>`
         );
       })
@@ -417,7 +423,7 @@ export class JumpOverlay extends OverlayShell {
         if (dit) this._notify('onDelete', [dit]);
         return;
       }
-      if (e.target.closest('.pcj-cb')) return; // 勾选由 change 事件处理
+      if (e.target.closest('.pcj-cb') || e.target.closest('.pcj-cbwrap')) return; // 勾选由 change 事件处理（含 label 命中区）
       const el = e.target.closest('.pcj-row');
       if (!el) return;
       const n = +el.dataset.n;

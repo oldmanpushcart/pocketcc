@@ -74,6 +74,8 @@ export class OverlayShell {
     this._resizeHandler = null;
     /** @type {?number} resize 防抖定时器 */
     this._resizeTimer = null;
+    /** @type {?HTMLElement} 打开前的焦点元素（关闭时归还，2.4.3 焦点顺序） */
+    this._prevFocus = null;
   }
 
   // ─── 子类可覆盖的空钩子 ───
@@ -158,17 +160,24 @@ export class OverlayShell {
   show() {
     if (!this._win) return;
     if (this._win.hidden) {
+      // 记录打开前的焦点（多为游戏画布/body），关闭时归还，避免键盘用户焦点丢回文档顶
+      this._prevFocus = /** @type {HTMLElement} */ (document.activeElement);
       this._win.hidden = false;
       this._callHook('_afterShow');
       this._notify('onVisibleChange', true);
     }
   }
 
-  /** 隐藏。 */
+  /** 隐藏（焦点归还打开前的元素，仍在文档中且可聚焦时）。 */
   hide() {
     if (this._win && !this._win.hidden) {
       this._win.hidden = true;
       this._notify('onVisibleChange', false);
+      const pf = this._prevFocus;
+      this._prevFocus = null;
+      try {
+        if (pf && pf.isConnected && typeof pf.focus === 'function') pf.focus();
+      } catch (e) {}
     }
   }
 
