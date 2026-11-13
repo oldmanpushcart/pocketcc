@@ -136,7 +136,7 @@ export const MENU = [
     label: CATEGORIES.cq26,
     gate: 'cq26Open', // 赛季活动：未开启（含符号投影不可得）时整个 TAB 不可点，与 cq26 各 feat 的活动闸同口径
     children: [
-      // CQ26 玩法：无可调参数、只出开关的三项收进基础设置组（组内子项 inlineStatus 将只读状态值内联到开关行）；
+      // CQ26 玩法：无可调参数、只出开关的四项收进基础设置组（组内子项 inlineStatus 将只读状态值内联到开关行）；
       //   带独立参数的（雪原列车/霜之密所抢购/荒芜冰原矿区/猛犸突袭）保持与本组平级的 feature 卡片
       {
         id: 'cq26Basics',
@@ -148,7 +148,7 @@ export const MENU = [
           { id: 'cq26Excav', kind: 'feature', label: '战区宝藏', inlineStatus: true },
           { id: 'cq26WlChest', kind: 'feature', label: '遗失之箱', inlineStatus: true },
           { id: 'cq26EnergyConvoy', kind: 'feature', label: '能量补充车队', inlineStatus: true },
-          { id: 'cq26IceShake', kind: 'feature', label: '开荒摇一摇', inlineStatus: true },
+          { id: 'cq26IceShake', kind: 'feature', label: '开荒融冰', inlineStatus: true },
         ],
       },
       { id: 'cq26Train', kind: 'feature', label: '雪原列车', showFields: true },
@@ -157,6 +157,8 @@ export const MENU = [
       { id: 'cq26Mammoth', kind: 'feature', label: '猛犸突袭', showFields: true },
       { id: 'cq26WlBeast', kind: 'feature', label: '冰原巨熊', showFields: true },
       { id: 'cq26ArkEnergy', kind: 'feature', label: '保卫能量', showFields: true },
+      // 巨兽盛宴：三腿开关 + 物品白名单 + 多行状态行属独立参数，group 子项不渲染详细参数（panel.js renderGroupCard），故平级卡片
+      { id: 'cq26Feast', kind: 'feature', label: '巨兽盛宴', showFields: true },
     ],
   },
   {

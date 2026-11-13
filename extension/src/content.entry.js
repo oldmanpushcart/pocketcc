@@ -21,6 +21,7 @@ import './feats/cq26/shop.js';
 import './feats/cq26/wl-chest.js';
 import './feats/cq26/energy-convoy.js';
 import './feats/cq26/ice-shake.js';
+import './feats/cq26/feast.js';
 import './feats/cq26/wl-mine/index.js';
 import './feats/cq26/mammoth.js';
 import './feats/cq26/ark-energy.js';

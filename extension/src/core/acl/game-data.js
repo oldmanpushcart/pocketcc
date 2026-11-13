@@ -1673,6 +1673,120 @@ export const gameData = {
     };
   },
 
+  // ── CQ26 印石·巨兽盛宴（BWL 线，push 22032 阶段机 + 22073 玩家快照）──────────────
+  // 探针实证访问链：CQ26Controller.getInstance()（复用 `_cq26()`）→ ctrl.beastData
+  //   （RealCQ26Controller 构造逐字 `this.beastData = new CQ26BeastData()`，**无条件构造**，故 ctrl 在场即 bd 在场）。
+  //   bd.feastPhase ← push 22032（CQ26Response Handler 逐字 `beastData.feastPhase = o.feastPhase`，构造初值 null）；
+  //   bd.myFeastInfo ← push 22073（updateMyBattleBeastFeastInfo 逐字 `this._myFeastInfo = e.player`）；
+  //   bd.bwlPos ← resp 2101（requestBattleBeastMainInfo 逐字 `i.pos && (t._bwlPos = i.pos)`）。
+  // 只读+发包红线：本区段只读 bd/techData 的标量投影，绝不调用其任何 send*/update*/request* 方法。
+
+  /**
+   * 巨兽盛宴数据侧探针（复用 `_cq26()` 已缓存的控制器单例；CQ26Controller 无 purge，缓存实例无害，
+   *   同 `_cq26WasteLand` 口径；beastData 每次现读，其上的快照随推送整体替换）。
+   * @returns {{ctrl:object, bd:object}|null} 符号漂移/子包未加载回 null
+   */
+  _cq26Beast() {
+    var p = this._cq26();
+    var bd = p && p.ctrl ? p.ctrl.beastData : null;
+    if (!bd || typeof bd !== 'object') return null;
+    return { ctrl: p.ctrl, bd: bd };
+  },
+  /**
+   * 盛宴阶段快照（push 22032 的游戏内存投影；阶段机 CQ26BeastFeastPhase NONE=0/GATHER=1/FEED=2/SHOW=3/END=4）。
+   * 刻意返回新建标量对象、不外泄游戏 feastPhase 引用（池化/跨帧红线，同 cq26TrainMainData 口径）。
+   * @returns {{state:number,gatherTime:number,beginTime:number,endTime:number,displayEndTime:number}|null}
+   *   **快照未达（feastPhase==null）回 null** —— 调用方须本拍跳过并 debug，绝不把 null 当 NONE 而永久静默；
+   *   快照在场时 state 缺键按 0（=NONE，各阶段闸都不认，方向 fail-closed）
+   */
+  cq26FeastPhase() {
+    var p = this._cq26Beast();
+    var fp = p ? p.bd.feastPhase : null;
+    if (!fp || typeof fp !== 'object') return null;
+    return {
+      state: Number(fp.state) || 0,
+      // 时间戳量纲（<2^53），裸数字/Long 形态统一走 bits 兜底（同 cq26ArkState.endTimeSec 口径）
+      gatherTime: bits.int64ToNum(fp.gatherTime),
+      beginTime: bits.int64ToNum(fp.beginTime),
+      endTime: bits.int64ToNum(fp.endTime),
+      displayEndTime: bits.int64ToNum(fp.displayEndTime),
+    };
+  },
+  /**
+   * 盛宴玩家快照（push 22073 `player` 的游戏内存投影：礼盒/密礼额度与已领列表）。
+   * @returns {{giftCount:number,blue:number,feedCount:number,claimedIndexList:number[],secretGiftCount:number}|null}
+   *   快照未达（myFeastInfo==null）回 **null**（调用方本拍跳过）；快照在场时缺键按 0/空表
+   *   （同游戏 hasGetBattleBeastGiftBox 的 `claimedIndexList?.includes ?? false` 口径）
+   */
+  cq26FeastPlayer() {
+    var p = this._cq26Beast();
+    var mi = p ? p.bd.myFeastInfo : null;
+    if (!mi || typeof mi !== 'object') return null;
+    var list = Array.isArray(mi.claimedIndexList) ? mi.claimedIndexList : [];
+    return {
+      giftCount: Number(mi.giftCount) || 0,
+      blue: Number(mi.blue) || 0,
+      feedCount: Number(mi.feedCount) || 0,
+      claimedIndexList: list.map(function (v) {
+        return Number(v) || 0;
+      }),
+      secretGiftCount: Number(mi.secretGiftCount) || 0,
+    };
+  },
+  /**
+   * 巨兽（BWL）锚点坐标（resp 2101 `pos` 的游戏内存投影；定向 901 窗心与 2101 补读用）。
+   * @returns {{x:number,y:number,k:number}|null} 未达/坐标非正回 **null**（调用方须先补读一发 2101，不得拿 0 窗心发包）
+   */
+  cq26BwlPos() {
+    var p = this._cq26Beast();
+    var pos = p ? p.bd.bwlPos : null;
+    if (!pos || typeof pos !== 'object') return null;
+    var x = Number(pos.x) || 0;
+    var y = Number(pos.y) || 0;
+    if (!(x > 0) || !(y > 0)) return null;
+    return { x: x, y: y, k: Number(pos.k) || 0 };
+  },
+  /**
+   * 个人科技派系（`techData.getFaction()` 只读投影；源码逐字 `this._faction || CQ26TechFaction.NONE`）。
+   * 礼盒腿前置闸：NONE=0 = 未加入派系（游戏此时弹派系选择面板，自动化不代选）。
+   * @returns {number|null} 0=NONE 未加入；正数=派系枚举；符号不可用回 **null**（未知≠未加入，调用方本拍跳过）
+   */
+  cq26Faction() {
+    var p = this._cq26();
+    var td = p && p.ctrl ? p.ctrl.techData : null;
+    if (!td || typeof td.getFaction !== 'function') return null;
+    try {
+      var f = td.getFaction();
+      return f == null ? null : Number(f) || 0;
+    } catch (_) {
+      return null;
+    }
+  },
+  /**
+   * 冰原/盛宴配置**全段**读数（`TableUtils.getDataConfigData` 按 `|`/`,` 拆成数值数组）。
+   * 与 cq26WlConf（只取首段）的差异：52000359 是**逐冰等级火种消耗数组**，只取首段会把高等级冰
+   *   全按 1 级消耗求值 ⇒ 预算闸失守。任一段非数值即整体回 null（fail-closed，宁停腿不猜）。
+   * @param {number} id 配置号
+   * @returns {number[]|null} 模块不可读/缺配/任一段非数值回 **null**（调用方停整腿）
+   */
+  cq26WlConfList(id) {
+    var raw;
+    try {
+      raw = gameConf.dataConfig(id);
+    } catch (e) {
+      return null;
+    }
+    if (raw == null || raw === '') return null;
+    var parts = String(raw).split(/[|,]/);
+    var out = [];
+    for (var i = 0; i < parts.length; i++) {
+      var n = Number(parts[i]);
+      if (!isFinite(n)) return null;
+      out.push(n);
+    }
+    return out.length ? out : null;
+  },
+
   // ── CQ26 印石·猛犸突袭（防守 BOSS 线，塔 id=2 = CQ26TOWERID.DEFENSE_BOSS）──────
   // 探针实证访问链：CQ26Controller.getInstance()（复用 `_cq26()`）→ ctrl.info（应答 22002
   //   SERIES_FROST_INIT 的 initInfoData → updateInfoData 逐字 `this.info = e.info`；push 22031 的

@@ -1,5 +1,5 @@
 /**
- * CQ26 开荒摇一摇 feat · 录制仿真对拍 Manifest（第六个消费者 / 「被动接应答→单发结算」lane 首次建基线）。
+ * CQ26 开荒融冰 feat · 录制仿真对拍 Manifest（融冰腿 2103 + 摇一摇腿 2129 两腿合一）。
  *
  * 与 cq26-wl-beast / cq26-train 同层：只声明本 feat 的协议号、触发源与闸门规则，
  * 读录制、二分回溯、Int64 归一、应答配对、报告打印、退出码全交给 scripts/replay/。
@@ -34,6 +34,11 @@
  *   通道（HARD）：2129/2117/2103 req 恒 dir='req:sendPBV2'
  *   真人档位（SOFT）：真人可择机选中低档，与仿真只报差异不判负
  *   2103 盛宴线（无样本记 skip）：本场录制零条 2103 ⇒ 该路只有约束力、无区分度，如实标注
+ *   融冰腿 2103 出网（HARD，从 feast 迁来）：① 载荷逐键 {x,y} + 通道 sendPBV2；② 仿真侧候选分线过滤
+ *     （重建冰缓存喂 pickIce，BWL specIndex=0 才入 ready、level 升序，NWL 零入视野）；③ 真人 2103 目标
+ *     在重建冰缓存里皆 specIndex=0（游戏按 specIndex===0 分叉到 2103 的真值）。消耗/预算/TTL/冷却闸不在
+ *     录制里 → 离线无从判定，由单测覆盖（三态纪律）。阶段分布只作 OBSERVATION：feat 只在 GATHER 融（比真人
+ *     保守，真人 FEED 期仍融），不拿「真人非 GATHER 也融」判负。
  *   应答与收益（OBSERVATION）：配对率、2129 code、index↔奖励项数（档位收益证据）、直接给奖那一支的
  *     items、触发→提交延迟、wastelandIndex 与坐标。
  *
@@ -121,15 +126,27 @@ const {
   planSubmit,
   shouldResubmit,
   rewardPanelArgs,
+  // 融冰腿（2103）字典与纯函数：从 feast 迁来，与摇一摇腿共用同一份 feat 导出面
+  CMD_BWL_INFO,
+  CMD_WORLD_INFO,
+  PUSH_PHASE,
+  PUSH_TILE,
+  PHASE_GATHER,
+  ingestIceList,
+  iceCost,
+  pickIce,
 } = C;
 if (
   typeof readMiniGameId !== 'function' ||
   typeof planSubmit !== 'function' ||
   typeof shouldResubmit !== 'function' ||
-  typeof rewardPanelArgs !== 'function'
+  typeof rewardPanelArgs !== 'function' ||
+  typeof ingestIceList !== 'function' ||
+  typeof iceCost !== 'function' ||
+  typeof pickIce !== 'function'
 ) {
   throw new Error(
-    'feat 导出面缺 readMiniGameId/planSubmit/shouldResubmit/rewardPanelArgs（判据字典与 feat 分叉，直接报错退出）',
+    'feat 导出面缺 readMiniGameId/planSubmit/shouldResubmit/rewardPanelArgs/ingestIceList/iceCost/pickIce（判据字典与 feat 分叉，直接报错退出）',
   );
 }
 if (TIER_LABELS == null || TIER_LABELS[TIER_HIGH] == null) {
@@ -137,6 +154,8 @@ if (TIER_LABELS == null || TIER_LABELS[TIER_HIGH] == null) {
 }
 /** 两路融冰应答（NWL 荒芜冰原 / BWL 巨熊盛宴）——本 feat 的唯一触发源 */
 const FIRE_CMDS = new Set([CMD_FIRE_NWL, CMD_FIRE_BWL]);
+/** 本 feat 的写动作：融冰腿 2103（BWL）+ 摇一摇腿 2129；2117 是真人 NWL 线，feat 不主动发，不计写 */
+const WRITE_CMDS = new Set([CMD_FIRE_BWL, CMD_MINI_GAME]);
 /** 合法档位域：取自 feat 自己的档位表，不硬编码 0/1/2 */
 const TIER_DOMAIN = new Set(Object.keys(TIER_LABELS).map(Number));
 
@@ -186,6 +205,18 @@ function median(arr) {
 }
 
 /**
+ * 众数（老家服号取 iceList initSid 的多数派；与 cq26-feast manifest 同口径）。
+ * @param {Map<number,number>} votes 值 → 票数
+ * @returns {number|null} 空表回 null
+ */
+function modeOf(votes) {
+  let best = null;
+  let bestN = -1;
+  for (const [v, n] of votes) if (n > bestN) ((best = v), (bestN = n));
+  return best;
+}
+
+/**
  * 取该笔 2129 之前（**含同一毫秒**）最近的一枚同 id 触发源。
  * 为什么是 `<=` 而不是 `<`：录制时间戳是 Date.now() 的毫秒，代摇在应答落地同一拍同步出网，
  *   两侧会拿到同一个毫秒值（实证 dashcam-rec-20261112T021006…：2117 resp 与 2129 req 同为 +77.103s）；
@@ -220,16 +251,60 @@ export default {
     const triggers = [];
     /** 融冰应答里「直接给奖」那一支（无小游戏）：{ts,src,items} —— 只作档位收益对照 */
     const directRewards = [];
-    /** 融冰发包（真人点的块）：{t,cmd,dir,bodyKeys,wa,x,y} */
+    /** 融冰发包（真人点的块）：{t,cmd,dir,bodyKeys,wa,x,y,phase,iceSpec,iceLevel} */
     const fireReqs = [];
     /** 2129 写视图：reqTs -> {t,dir,bodyKeys,idStr,idObj,index,code,items} */
     const submitPending = new Map();
+    /** 冰缓存（键 x_y）：由 901 resp / 10018 push 的 iceList 经 feat ingestIceList 重建 */
+    const iceCache = Object.create(null);
+    /** 老家服号投票（iceList initSid 众数） */
+    const sidVotes = new Map();
+    /** 22032 阶段时间线：{ts,state}（融冰腿只在 GATHER 期发 2103） */
+    const phases = [];
+    /** 2101 巨兽锚点 pos 快照（探针窗心，只作观察）：{ts,x,y,k} */
+    const bwlPosSnaps = [];
+    /** 发包那一刻的阶段号（running，随 22032 更新） */
+    let curPhase = null;
 
     const { writes, respByReqTs, total, parseErr, minTs, maxTs, dirCounts } = await scanNDJSON(
       recPath,
       {
-        isWrite: (e) => e.cmd === CMD_MINI_GAME,
+        isWrite: (e) => WRITE_CMDS.has(e.cmd),
         onEntry: (e) => {
+          // ⓐ 冰缓存重建：901 只在 resp 带 iceList、10018 在 push（dir 分支互斥坑）；feat 自己的 ingestIceList 并入
+          if (
+            (e.cmd === CMD_WORLD_INFO && e.dir === 'resp') ||
+            (e.cmd === PUSH_TILE && e.dir === 'push')
+          ) {
+            const b = e.body || {};
+            for (const r of b.iceList || [])
+              if (r && r.initSid != null)
+                sidVotes.set(Number(r.initSid), (sidVotes.get(Number(r.initSid)) || 0) + 1);
+            ingestIceList(b.iceList, Number(b.k) || 0, iceCache, e.ts);
+            return;
+          }
+          // ⓑ 阶段机：融冰腿只在 GATHER 期发 2103（feat 比真人保守，FEED 期不融）
+          if (e.cmd === PUSH_PHASE && e.dir === 'push') {
+            const fp = (e.body || {}).feastPhase;
+            if (fp && typeof fp === 'object') {
+              curPhase = Number(fp.state) || 0;
+              phases.push({ ts: e.ts, state: curPhase });
+            }
+            return;
+          }
+          // ⓒ 巨兽锚点 pos（2101 只读补读，探针窗心；只作观察，不判负）
+          if (e.cmd === CMD_BWL_INFO && e.dir === 'resp') {
+            const b = e.body || {};
+            const pos = b.pos && typeof b.pos === 'object' ? b.pos : b;
+            if (pos && pos.x != null)
+              bwlPosSnaps.push({
+                ts: e.ts,
+                x: Number(pos.x),
+                y: Number(pos.y),
+                k: Number(pos.k) || 0,
+              });
+            return;
+          }
           // ① 触发源：只看 resp（`header.s` 交给 feat 自己的 reader 当闸，本 manifest 不另判）
           if (FIRE_CMDS.has(e.cmd) && e.dir === 'resp') {
             const head = e.header || (e.outer && e.outer.header) || null;
@@ -249,9 +324,10 @@ export default {
             }
             return;
           }
-          // ② 融冰那一发（feat 不发，只作现场记录与通道判据）
+          // ② 融冰那一发（2103 是融冰腿出网、2117 是真人 NWL 线 feat 不发；均作现场记录与通道判据）
           if (FIRE_CMDS.has(e.cmd) && e.dir.startsWith('req')) {
             const b = e.body || {};
+            const tile = iceCache[Number(b.x) + '_' + Number(b.y)];
             fireReqs.push({
               t: e.ts,
               cmd: e.cmd,
@@ -260,6 +336,10 @@ export default {
               wa: Number(b.wastelandIndex),
               x: Number(b.x),
               y: Number(b.y),
+              // 发包那一刻的现场态：阶段号 + 该格冰快照（分线/阶段判据用；视口外格为 null）
+              phase: curPhase,
+              iceSpec: tile ? tile.specIndex : null,
+              iceLevel: tile ? tile.level : null,
             });
             return;
           }
@@ -312,6 +392,10 @@ export default {
       directRewards,
       fireReqs,
       submits,
+      iceCache,
+      phases,
+      bwlPosSnaps,
+      originSid: modeOf(sidVotes),
     };
   },
 
@@ -327,6 +411,7 @@ export default {
     const D8 = '应答与收益（观察）';
     const D9 = '不重投契约';
     const D10 = '奖励展示前提';
+    const D11 = '融冰腿（2103 出网）';
 
     // D9a（HARD，不依赖样本）feat 侧重投契约：在途闸挡下的不重投，只有发送抛错才重投。
     //   与录制无关的纯函数契约，故放在「无样本闸门」之前；把 `!!sendErr &&` 抹成 `true` 必须在此 FAIL。
@@ -372,6 +457,145 @@ export default {
         0,
         bad,
       );
+    }
+
+    // D11 融冰腿（2103 出网）：melt 从 feast 迁来，独立于摇一摇触发源，故放在无样本闸门之前。
+    //   feat 比真人保守（只在 GATHER 期融，真人 FEED 期仍融）⇒ 阶段分布只作观察，不拿「真人非 GATHER 也融」判负。
+    {
+      const melts = S.fireReqs.filter((w) => w.cmd === CMD_FIRE_BWL);
+
+      // D11a（HARD）载荷逐键形态 + 通道：真人 2103 body == {x,y}，恒 sendPBV2
+      if (!melts.length) {
+        rep.check('本场无 2103 融冰写样本，载荷形态不判定', D11, 0, 0, 1, []);
+      } else {
+        let pass = 0;
+        let fail = 0;
+        const samples = [];
+        for (const w of melts) {
+          const bad = [];
+          if (w.bodyKeys !== 'x|y') bad.push('键集=' + w.bodyKeys + '（应 x|y）');
+          if (w.dir !== 'req:sendPBV2') bad.push('通道=' + w.dir);
+          if (bad.length) {
+            fail++;
+            if (samples.length < 6) samples.push('t=' + w.t + ' ' + bad.join('；'));
+          } else pass++;
+        }
+        rep.check('真人 2103={x,y} 通道恒 sendPBV2（融冰腿出网形态）', D11, pass, fail, 0, samples);
+      }
+
+      // D11b（HARD，仿真侧）候选分线过滤：重建冰缓存喂 pickIce，BWL(specIndex=0) 才入 ready，NWL 一律 not-bwl。
+      //   离线不考消耗/新鲜度（cost/budget/TTL 闸由单测覆盖）：costTable 全 0、fireAmount=Infinity、ttlMs=Infinity 隔离出分线闸。
+      {
+        const keys = Object.keys(S.iceCache);
+        const bwlKeys = keys.filter((k) => S.iceCache[k].specIndex === 0);
+        const nwlKeys = keys.filter((k) => S.iceCache[k].specIndex > 0);
+        if (!bwlKeys.length) {
+          rep.check('本场重建冰缓存无 BWL(specIndex=0) 冰格，分线过滤不判定', D11, 0, 0, 1, []);
+        } else {
+          let maxLv = 1;
+          for (const k of keys) maxLv = Math.max(maxLv, S.iceCache[k].level);
+          const picked = pickIce(S.iceCache, {
+            costTable: new Array(maxLv).fill(0),
+            fireAmount: Infinity,
+            originSid: S.originSid,
+            now: S.maxTs,
+            ttlMs: Infinity,
+            coolUntil: {},
+            rejectCount: {},
+          });
+          const bad = [];
+          if (!picked.ready.length) bad.push('BWL 冰格 ' + bwlKeys.length + ' 格却选不出候选');
+          for (const c of picked.ready)
+            if (S.iceCache[c.key].specIndex !== 0) bad.push('ready 混入非 BWL 冰格 ' + c.key);
+          const readyKeys = new Set(picked.ready.map((c) => c.key));
+          for (const k of nwlKeys)
+            if (readyKeys.has(k)) bad.push('NWL 冰格 ' + k + ' 入了融冰视野（应归 2117）');
+          for (let i = 1; i < picked.ready.length; i++)
+            if (picked.ready[i].level < picked.ready[i - 1].level)
+              bad.push('ready 未按 level 升序（先便宜）');
+          rep.check(
+            '仿真侧：冰缓存 BWL×' +
+              bwlKeys.length +
+              ' / NWL×' +
+              nwlKeys.length +
+              ' → ready ' +
+              picked.ready.length +
+              ' 全 specIndex=0、level 升序，NWL 零入视野',
+            D11,
+            bad.length ? 0 : 1,
+            bad.length,
+            0,
+            bad,
+          );
+        }
+      }
+
+      // D11c（HARD，真值）真人 2103 目标皆 BWL 冰格：发包那一刻冰缓存里该格 specIndex===0
+      //   （游戏 CQ26WasteLandData.meltIce 按 specIndex===0 分叉到 2103）。视口外格不在重建缓存 → skip，不拿缺证判负。
+      {
+        let pass = 0;
+        let fail = 0;
+        let skip = 0;
+        const samples = [];
+        for (const w of melts) {
+          if (w.iceSpec == null) {
+            skip++;
+            continue;
+          }
+          if (w.iceSpec === 0) pass++;
+          else {
+            fail++;
+            if (samples.length < 6)
+              samples.push(
+                '2103 (' +
+                  w.x +
+                  ',' +
+                  w.y +
+                  ') 冰格 specIndex=' +
+                  w.iceSpec +
+                  '（应 0=BWL）t=' +
+                  w.t,
+              );
+          }
+        }
+        if (!melts.length) rep.check('本场无 2103 样本，分线真值不判定', D11, 0, 0, 1, []);
+        else
+          rep.check(
+            '真人 2103 目标在重建冰缓存里皆 specIndex=0（BWL 线分叉真值）',
+            D11,
+            pass,
+            fail,
+            skip,
+            samples,
+          );
+      }
+
+      // D11d（OBSERVATION）阶段分布：feat 只在 GATHER 融（保守），真人 GATHER/FEED 都融 ⇒ 只报量级，不判负。
+      {
+        if (!melts.length) {
+          rep.check('本场无 2103 样本，融冰阶段分布无从统计', D11, 0, 0, 1, []);
+        } else {
+          const dist = new Map();
+          for (const w of melts) dist.set(w.phase, (dist.get(w.phase) || 0) + 1);
+          const gatherN = dist.get(PHASE_GATHER) || 0;
+          rep.check(
+            '真人 2103 阶段分布 ' +
+              [...dist.entries()]
+                .map(([k, v]) => (k == null ? '未知' : 'phase' + k) + '×' + v)
+                .join(' ') +
+              '｜feat 只在 GATHER(' +
+              PHASE_GATHER +
+              ') 融 ⇒ 覆盖其中 ' +
+              gatherN +
+              ' 发（保守策略，FEED 期不融，只报不判负）',
+            D11,
+            0,
+            0,
+            1,
+            [],
+          );
+        }
+      }
     }
 
     // 仿真侧：把每枚真人拿到的句柄按「收到即提交」（pump 在同一拍出网，age≈0）喂回 feat 规则

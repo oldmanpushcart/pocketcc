@@ -422,6 +422,8 @@ function persistDaily() {
   dailyStateSaving = true;
   var seq = ++saveSeq;
   var snapshot = { date: dailyState.date, counts: Object.assign({}, dailyState.counts) };
+  // 看门狗刻意不托管：一次性自清 latch 守卫，pause 后到点仅复位闸门无写动作；
+  //   若托管被 pause 清掉、save Promise 又悬跨 pause，latch 反会卡死（同 alliance-rally 口径）。
   var watchdog = setTimeout(function () {
     log.warn('daily state save pending over %dms, reset latch.', SAVE_STUCK_MS);
     releaseSaveLatch(seq);
@@ -573,15 +575,22 @@ async function openRefugeeCamp(seg, taken) {
   );
   var pos = await new Promise(function (resolve) {
     var timer = 0;
+    var signal = ctxRef ? ctxRef.signal : null;
     var wrapper = function (p) {
-      clearTimeout(timer);
-      resolve(p);
-    };
-    timer = setTimeout(function () {
+      ctxRef.clearTimeout(timer);
+      if (signal) signal.removeEventListener('abort', onAbort);
       var idx = refugeeWaiters.indexOf(wrapper);
       if (idx >= 0) refugeeWaiters.splice(idx, 1);
-      resolve(null);
+      resolve(p);
+    };
+    // pause → abort 早醒收口（回 null，与超时路径同构）：不可只靠托管清 timer——Promise 永挂会卡死 cycle 单飞
+    function onAbort() {
+      wrapper(null);
+    }
+    timer = ctxRef.setTimeout(function () {
+      wrapper(null);
     }, cfg.refugeeWaitMs);
+    if (signal) signal.addEventListener('abort', onAbort, { once: true });
     refugeeWaiters.push(wrapper);
     net.send(CMD_ITEM_USE, { itemid: letter, amount: 1 }).catch(function (err) {
       log.warn('815 refugee letter use threw. %s', err && err.message);
@@ -804,7 +813,7 @@ async function cyclePass() {
         errKey || '-',
       );
     }
-    if (free > 0) await sleep(cfg.marchInterval); // 逐条之间休眠，防 marches 入表延迟超发 + 规避行军时间限流
+    if (free > 0) await sleep(cfg.marchInterval, ctxRef && ctxRef.signal); // 逐条之间休眠，防 marches 入表延迟超发 + 规避行军时间限流；pause 早醒（循环内 aliveFn 闸门兜住不多发包）
   }
   // 游标后移一位：把「优先补派」权轮给下一行，跨拍均摊（n<=0 时保持 0）
   if (n > 0) rrCursor = (rrCursor + 1) % n;
@@ -878,9 +887,9 @@ function onHuntMarchHome(m) {
   if (!aliveFn()) return;
   var mt = m && m.type | 0;
   if (mt !== MT_ATTACK && mt !== MT_COMBO && mt !== MT_RALLY) return;
-  setTimeout(function () {
+  ctxRef.setTimeout(function () {
     if (aliveFn()) pushWake();
-  }, 1500);
+  }, 1500); // 托管：pause 自动清，不再留空转 timer（回调内 aliveFn 保留作双保险）
 }
 
 /**
@@ -950,7 +959,8 @@ function run(ctx) {
 }
 
 /**
- * 停用：收 march.onHomeReturn 常驻复播句柄（非 ctx 级、框架不代退）；cycle 靠 alive() 自然停摆，无需显式收定时器。
+ * 停用：收 march.onHomeReturn 常驻复播句柄与镜头抑制（非 ctx 级、框架不代退）；cycle 靠 alive() 自然停摆。
+ * 生命周期定时器（1500ms 唤醒/难民营等待）已 ctx 托管由框架代清，难民营等待另经 signal abort 早醒收口。
  */
 function pause() {
   if (offHomeReturn) {
@@ -962,7 +972,8 @@ function pause() {
     offCamPre = null;
   }
   nav.camGuard.uninstall(); // 摘镜头抑制：还原游戏跳转方法
-  // 收摊时唤醒所有在途「等 10802」的 resolver（回 null），避免 openRefugeeCamp 挂到超时才醒
+  // 兜底唤醒在途「等 10802」的 resolver（回 null）：主路径是 signal abort 早醒（wrapper 自摘），
+  //   这里再扫一遍防漏（正常时列表已空，空操作）
   var ws = refugeeWaiters;
   refugeeWaiters = [];
   for (var wi = 0; wi < ws.length; wi++) ws[wi](null);

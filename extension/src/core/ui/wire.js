@@ -67,8 +67,10 @@ export function wirePanel(panel) {
       if (!tabs.length) return;
       const cur = tabs.findIndex((t) => t.classList.contains('active'));
       let next;
-      if (e.key === 'ArrowDown' || e.key === 'ArrowRight') next = (cur + 1 + tabs.length) % tabs.length;
-      else if (e.key === 'ArrowUp' || e.key === 'ArrowLeft') next = (cur - 1 + tabs.length) % tabs.length;
+      if (e.key === 'ArrowDown' || e.key === 'ArrowRight')
+        next = (cur + 1 + tabs.length) % tabs.length;
+      else if (e.key === 'ArrowUp' || e.key === 'ArrowLeft')
+        next = (cur - 1 + tabs.length) % tabs.length;
       else if (e.key === 'Home') next = 0;
       else if (e.key === 'End') next = tabs.length - 1;
       else return;

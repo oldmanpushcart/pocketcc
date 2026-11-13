@@ -8,13 +8,13 @@
 
 **管什么**：
 
-- **生命周期三段**：`install`（只做一次的挂钩，可重复挂载）→ `configure`（每次推配置）→ `run`（只挂触发器）。`pause` 不卸载，统一摘除 `ctx.on.*` 登记的触发器，在飞流程靠 `ctx.alive()` 自行退出，并给 per-feat `pause(ctx)` 钩子一次自我收尾的机会。
-- **注入 `ctx` 这一唯一外部接触面**：`ctx.net/ctx.chat`（ESM 导入，见 §3）、`ctx.game/ctx.bus`、`ctx.alive()`、`ctx.on.push/resp/req/chat/event`（退订自动登记，pause 统一摘除）。
+- **生命周期三段**：`install`（只做一次的挂钩，可重复挂载）→ `configure`（每次推配置）→ `run`（只挂触发器）。`pause` 不卸载，统一摘除 `ctx.on.*` 登记的触发器、abort `ctx.signal` 并清掉托管定时器，在飞流程靠 `ctx.alive()` 自行退出，并给 per-feat `pause(ctx)` 钩子一次自我收尾的机会。
+- **注入 `ctx` 这一唯一外部接触面**：`ctx.net/ctx.chat`（ESM 导入，见 §3）、`ctx.game/ctx.bus`、`ctx.alive()`、`ctx.signal` 与托管定时器 `ctx.setTimeout/setInterval/clearTimeout/clearInterval`、`ctx.on.push/resp/req/chat/event`（退订自动登记，pause 统一摘除）。
 - **门控重算**：`mode.change` / `world.change` 任一翻转 → `recomputeAll()`；`registerGate` 后立即全量重算。
 
 **不管什么**（铁律）：
 
-- **不拥有 feat 自建定时器/引擎实例**：`run()` 里 `new` 出来的东西归 feat，resume 后拿陈旧快照的风险由 spec 声明 `pause` 钩子自收（见 §6）。
+- **不拥有 feat 自建引擎实例与绕过 ctx 的裸定时器**：`run()` 里 `new` 出来的东西归 feat，裸 `setTimeout`/在飞循环不受托管，resume 后拿陈旧快照的风险由 spec 声明 `pause` 钩子自收（见 §6）。生命周期类定时器应优先走 `ctx.setTimeout/setInterval` 托管（pause 自动清）。
 - **不解读配置字段含义**：`setConfig` 只透传 `{enabled, ...}` 给 `configure`；字段演化与迁移属 [`registry.js`](registry.js)。
 - **不反向依赖 feats**：依赖方向 `feats → core` 不可逆，由 `npm run arch` 强制。
 
@@ -23,6 +23,7 @@
 - **说明书（spec）而非注册回调**：功能把「我是谁、我要什么游戏符号、怎么起停、面板长啥样」一次性声明，框架据此统一装配、门控、渲染面板、落盘。好处是新增 feat 只需 `register` + 挂菜单 + entry import，无需改 core。
 - **门控可扩展、字段默认放行**：`gates` 是 `{id, ok(spec)}` 表，功能未声明的字段（无 kinds/places）默认通过；新增一种门控只 `registerGate` 一次，不改既有功能。
 - **`ctx.on.*` 集中托管退订**：feat 不必自己记 `off`，pause 时 `entry.triggers.forEach(unsub)` 一把摘干净——从根上消灭「订阅泄漏」。`req` 订阅特殊：必须经 `net.onReq`（按需拉起发送 hook），直接 `bus.on('net.req.…')` 会订到永不派发的空事件。
+- **取消语义（signal + 托管定时器）**：每次 activate 新建 `AbortController`，pause 主动 abort 并按 kind 清掉全部托管定时器，再摘触发器、最后跑 per-feat pause 钩子。`sleep(ms, ctx.signal)` abort 时**早 resolve 不 reject**——在飞流程保持「await 回来判 alive()」习语，零新增 catch 路径。已 abort 的 controller 保留到下次 activate 整体替换（在飞流程仍可读 `signal.aborted`）；signal 每次 run 内现读，不跨 pause 缓存。托管是 opt-in 而非强制：cycle/drain/createWaker 薄契约不动（已有 alive 闸门自然停摆），引擎/裸定时器仍归 feat 自收。
 - **懒取 → ESM 直取（本轮改造）**：早先 `ctx.net/event` 通过 `window.pocketcc.*` 懒取以规避安装时序，代价是变成 dependency-cruiser 看不见的「影子依赖」。现已改为 `import { netApi/eventApi/chatApi }`，装配期即就绪，`window.pocketcc` 降为纯调试面。
 
 ## 3. API 契约
@@ -45,12 +46,13 @@ reactor.isRunning(id);                  // 调试：某功能是否激活
 reactor.list();                         // 已注册 spec 数组（registry/面板据此渲染、收集存储与默认值）
 ```
 
-**`ctx` 成员**：`net / chat`（ESM 底座，`null` 表示尚未就绪）、`game / bus`、`alive()`、`on.push(cmd,h) / on.resp(cmd,h) / on.req(cmd,h) / on.chat(type,h) / on.event(name,h)`（均返回退订函数并自动登记）。`on.chat` 的 `type` 为 `push|pm|update|del|reconnect`，由 chat 底座直连聊天 socket 并对 socket 实例更替自愈重挂（见 core/chat.js `SOCKET_MAP`）。
+**`ctx` 成员**：`net / chat`（ESM 底座，`null` 表示尚未就绪）、`game / bus`、`alive()`、`signal`（本次激活的 AbortSignal，首次激活前 null；pause 后 aborted，resume 全新）、`setTimeout(fn,ms) / setInterval(fn,ms)`（托管：pause 自动清、timeout fire 自移除、非激活态 no-op 返 -1）、`clearTimeout(id) / clearInterval(id)`（未知 id 静默 no-op，feat 的 stop 函数无需关心框架是否已代清）、`on.push(cmd,h) / on.resp(cmd,h) / on.req(cmd,h) / on.chat(type,h) / on.event(name,h)`（均返回退订函数并自动登记）。`on.chat` 的 `type` 为 `push|pm|update|del|reconnect`，由 chat 底座直连聊天 socket 并对 socket 实例更替自愈重挂（见 core/chat.js `SOCKET_MAP`）。配套：`util.sleep(ms, signal?)` 传 `ctx.signal` 可被 pause 早醒（早 resolve 不 reject）。
 
 ## 4. 场景用法
 
-- **推送驱动型**（如联盟集结）：`run(ctx)` 里 `ctx.on.push(12003, h)` 挂订阅，`h` 内先判 `ctx.alive()` 再处理；`on.event` 兜游戏事件面，聊天推送走 `on.chat`。
-- **周期调和型**（如 auto-farm）：`run(ctx)` 建 `createCycle({alive: ctx.alive, ...})` 并 `kick()` 点火；`pause(ctx)` 里停 cycle/收引擎。
+- **推送驱动型**（如联盟集结）：`run(ctx)` 里 `ctx.on.push(12003, h)` 挂订阅，`h` 内先判 `ctx.alive()` 再处理；错峰/去抖延迟用 `ctx.setTimeout`（pause 自动清）；`on.event` 兜游戏事件面，聊天推送走 `on.chat`。
+- **周期调和型**（如 auto-farm）：`run(ctx)` 建 `createCycle({alive: ctx.alive, ...})` 并 `kick()` 点火；轮内休眠用 `sleep(ms, ctx.signal)` 早醒；`pause(ctx)` 里收引擎/非 ctx 级句柄。
+- **可见性驱动型**（如全局地图）：轮询 interval 用 `ctx.setInterval` 托管兜底，start/stop 仍由可见性回调驱动；spec 声明 `pause` 钩子复位模块句柄（否则幂等守卫拿陈旧句柄挡住 resume 重启）。
 - **门控下线**：`mode.installModeGate()` 注册 `combat && spec.offInCombat` 门控；`scene-watcher` 把场景信号归一进 `world-state`，`world.change` 驱动 `recomputeAll`。
 
 ## 5. 数据流与降级
@@ -60,8 +62,8 @@ register(spec) ──▶ entries.set(id)（此时不 install、不 run）
 setConfig(id,cfg) ─▶ enabled 翻真且未装：missingSymbols 自检 → install(ctx)
                    ─▶ 已装：configure(cfg)
                    ─▶ recompute(entry)：shouldRun(installed&&enabled&&全部门控放行)?
-                          ├─ true  ─▶ activate → running=true → spec.run(ctx)
-                          └─ false ─▶ pause → running=false → 摘除 triggers → spec.pause(ctx)
+                          ├─ true  ─▶ activate → running=true → 新建 AbortController → spec.run(ctx)
+                          └─ false ─▶ pause → running=false → abort(signal) → 清托管定时器 → 摘除 triggers → spec.pause(ctx)
 mode.change / world.change / registerGate ──▶ recomputeAll()
 ```
 
@@ -69,7 +71,9 @@ mode.change / world.change / registerGate ──▶ recomputeAll()
 
 ## 6. 坑与边界
 
-- **`run()` 里新建的引擎/定时器必须存模块级引用并声明 `pause`**：触发器摘除管不到 feat 自建的 `setTimeout`/在飞 await；不显式收，resume 后会拿陈旧快照继续发写请求。
+- **生命周期定时器优先 `ctx.setTimeout/setInterval` 托管**：pause 自动清，不留空转 timer。绕过 ctx 的裸 `setTimeout`/在飞 await 循环/`new` 出的引擎仍归 feat：必须存模块级引用并声明 `pause`，否则 resume 后会拿陈旧快照继续发写请求。在飞休眠用 `sleep(ms, ctx.signal)` 早醒，醒来仍须判 `alive()`。
+- **托管 Promise 等待必须带 abort 收口路径**：只把 timer 托管清掉而 Promise 不 resolve，会永挂卡死 cycle 单飞（实证口径：auto-hunt 难民营等待的 abort 监听走超时同构路径回 null）。一次性自清 latch 守卫（如 daily-state 看门狗）刻意不托管：pause 清掉它反而可能让 latch 悬跨暂停卡死。
+- **signal 不跨 pause 缓存**：每次 activate 是全新 AbortController，run/await 回来现读 `ctx.signal`；缓存旧信号会在 resume 后拿到已 aborted 的死信号。
 - **`req` 只能走 `ctx.on.req`**：内部经 `net.onReq` 按需拉起发送 hook；绕过它 `bus.on('net.req.…')` 是空订阅。
 - **pause 后 `alive()` 立即为 false**：在飞 await 回来靠它自然退出；但「已发出的请求收不回」是物理事实，feat 不要假设有事务级回滚。
 - **`register` 幂等保护**：重复 id 拒绝并 warn；缺 label/storageKey/defaults 拒绝——开发期 F5 即暴露，不静默。
@@ -82,5 +86,6 @@ mode.change / world.change / registerGate ──▶ recomputeAll()
 
 ## 8. 变更记录
 
+- **2026-11-13（取消语义补全，线2 第①刀）**：Entry 增 `controller`（每次 activate 新建 AbortController）与 `timers` 托管表；ctx 新增 `signal` getter 与 `setTimeout/setInterval/clearTimeout/clearInterval` 托管定时器（非激活态 no-op 返 -1、timeout fire 自移除、clear 未知 id 静默 no-op）；pause 顺序改为 running=false → abort → 清托管定时器 → 摘 triggers → spec.pause。`util.sleep(ms, signal?)` 支持 abort 早 resolve（绝不 reject，零新增 catch 路径）。试点迁移：global-map（两个可见性 interval 托管 + 补 pause 钩子复位句柄）、auto-hunt（marchInterval sleep 传 signal、难民营等待托管 + abort 收口、1500ms 唤醒托管）、alliance-rally（scheduleJoin 托管）；两处 daily-state 看门狗刻意不托管（latch 守卫边界）。cycle/drain/createWaker 薄契约不动。契约单测：tests/core/reactor.test.js + util.test.js sleep 用例。
 - **2026-10-31（架构审视轮）**：`ctx.net/event` 由 `window.pocketcc.*` 懒取改为 ESM 直取（`netApi/eventApi`），新增 `ctx.chat`（`chatApi`）；`on.req/on.event` 内部同样改走 ESM。配合 `.dependency-cruiser.cjs` 新增 core 内部分层规则与 ESLint `no-restricted-syntax`（禁 feats 摸 `window.pocketcc.*`），把「影子总线」这一腐蚀轴从文档约定升级为可执行闸门。register spec 文档补 `version/migrate/strictConfig` 可选字段（由 registry 消费）。
 - **2026-10-31（聊天收信改直连 socket）**：新增 `ctx.on.chat(type,h)`，聊天四类推送不再经 EventCenter，改由 chat 底座直连 `chatpush/chatpushpm/chatupdate/chatdel`（游戏侧为逐字透传，载荷同一引用），并以「包 `connectSocket` + 包 `client._io` 工厂 + 15s 实例身份自检兜底」自愈重挂（工厂包装零延迟捕获 connect_timeout 故障转移建出的新实例，微任务重挂保证我们仍排在游戏之后）；消费方为 chat-window / floatcar / imperial-decree。

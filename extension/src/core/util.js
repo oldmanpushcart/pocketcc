@@ -1,5 +1,5 @@
 /**
- * 跨 feat 复用的纯函数叶子（零 import）：异步 sleep、可提前结束的休眠原语 createWaker、网络应答 data 归一化、send 未发出的哨兵码、今日日期串、拒绝载荷安全序列化、JSON 安全解析、HTML 转义、服务器秒时刻归一。
+ * 跨 feat 复用的纯函数叶子（零 import）：异步 sleep（可选 AbortSignal 早醒）、可提前结束的休眠原语 createWaker、网络应答 data 归一化、send 未发出的哨兵码、今日日期串、拒绝载荷安全序列化、JSON 安全解析、HTML 转义、服务器秒时刻归一。
  *
  * 这几样此前被逐字复制进数十个 feat 与 core（sleep 19（feats 18 + core/defense 1；core/drain 例外——它是调度原语，按 schedule-primitives-thin 刻意保持除 log.js 外零 core 依赖，保留本地裸版）/ parseData 7（feats 5 + core/map·march 各 1，其中 map.js、armory-material.js 原为无守卫变体）/ CODE_NOT_SENT 22 处 / todayStr 13（11 本地时钟 + 2 以服务器时刻为基准，收口后用可选 epochSec 参保语义）/ safeStringify 3（另 mecha-treasure 因 null→'' 口径不同保留本地）/ safeParse 4（scanner 为「非字符串原样返回」变体保留本地）/ esc 2（jump/map；另 chat-overlay 严格版拆为 escStrict=esc+补 '，与主型共用内核）/ serverTimeSec 2（floatcar/titan-blessing，收为传参版），任何口径调整
  * 都要改一片、极易漏改造成 feat 间行为漂移。收口到此单一真相后，改一处即全仓生效。
@@ -16,14 +16,34 @@ export const CODE_NOT_SENT = -1;
 
 /**
  * 等待毫秒（负值/NaN 经 `|0` 与 `Math.max` 钳到 0）。
+ * 可选 signal（典型传 ctx.signal）：等待期间 abort → 提前 resolve（**绝不 reject**，调用方保持
+ * 「await 回来判 alive()」习语，零新增 catch 路径）；传入时已 aborted 则立即 resolve。
+ * 不传 signal 行为不变。与 createWaker 的分工：sleep 表达「一定要等这么久（除非被取消）」，
+ * pause 表达「最多等这么久，有事叫我」。
  * 边界：`ms` ≥ 2^31 毫秒（≈24.8 天）或 `Infinity` 经 `|0` 回绕为 ≤0 亦钳到 0（立即 resolve）；
  * 小数毫秒向下截断。调用方实参均为毫秒级常量/小整数，此边界不可达。
  * @param {number} ms 时长（毫秒）
+ * @param {AbortSignal} [signal] 取消信号：abort 时早 resolve（不抛异常）
  * @returns {Promise<void>}
  */
-export function sleep(ms) {
+export function sleep(ms, signal) {
   return new Promise(function (resolve) {
-    setTimeout(resolve, Math.max(0, ms | 0));
+    if (signal && signal.aborted) {
+      resolve();
+      return;
+    }
+    var timer = setTimeout(
+      function () {
+        if (signal) signal.removeEventListener('abort', onAbort);
+        resolve();
+      },
+      Math.max(0, ms | 0),
+    );
+    function onAbort() {
+      clearTimeout(timer);
+      resolve();
+    }
+    if (signal) signal.addEventListener('abort', onAbort, { once: true });
   });
 }
 

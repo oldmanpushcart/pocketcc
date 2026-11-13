@@ -43,7 +43,7 @@ background.js(SW) 仅做 dashcam fetch 转发
   - req 事件名是**逻辑 cmd**、resp 是**线上 cmd**：主通道有 `msgIdReplaceMap`/`getOldCmd` 换号，换号时两者不同名（次通道 NetMgrSimple 无换号表）。
 - 两条发送通道都要当回事：主通道 `NetMgr.NET` 实例 + 次通道 `NetMgrSimple.prototype`（秘境/观战走另一条 websocket，`TMWatchNetMgr.sendPBV2` 在 `isPabBattleMap` 时分叉到它）。次通道挂点探不到会**整局降级且不重试**（两个类同在 Script bundle，不存在“还没加载”的时序窗口），状态查 `pocketcc.net.secondaryStatus()`（`pending|ok|missing`），改版当天 `pocketcc.net.reprobeSecondary()` 重探即可，不必刷页。
 - 心跳不进观测面：`core/net.js` 的 `hbCodes` 集合滤掉两条通道心跳（主 0/NO_QUEUE_HEART、次 6385/TM_WATCH_HEART，次通道号由发送 wrapper 自学习登记；入站在 NetReciver 单点、认不出通道归属，所以必须用集合），因此 **dashcam 录音与 `collecting()` 里没心跳行**，对拍时别当成漏采。
-- `run()` 里 `new` 出的引擎/带定时器对象**必须存模块级引用**，并在 spec 声明 `pause(ctx)`：reactor 的触发器摘除管不到 feat 自建的 `setTimeout`、在飞 `await` 循环与配对队列，不显式收就会在 resume 后拿陈旧快照继续发写请求（`pause` 钩子现由 `core/reactor.js` 的 `pause()` 末尾调用）。
+- 生命周期类定时器（唤醒去抖/错峰延迟/可见性轮询）优先 `ctx.setTimeout/setInterval` 托管（pause 自动清、非激活态 no-op 返 -1、clear 未知句柄安全）；在飞休眠用 `sleep(ms, ctx.signal)` 早醒（早 resolve 不 reject，醒来仍判 alive）。托管的 Promise 等待必须带 abort 收口路径（否则永挂卡死 cycle 单飞）；signal 每次 run 内现读不跨 pause 缓存。`run()` 里 `new` 出的引擎与绕过 ctx 的裸定时器仍归 feat：**必须存模块级引用**并在 spec 声明 `pause(ctx)` 自收，不显式收就会在 resume 后拿陈旧快照继续发写请求（`pause` 钩子由 `core/reactor.js` 的 `pause()` 末尾调用，跑在 abort/清托管定时器/摘触发器之后）。一次性自清 latch 守卫（如 daily-state 看门狗）刻意不托管。
 - 存储只走 `core/storage.js` 入口（UID 命名空间 + 双 blob + per-blob 串行队列），MAIN 侧禁止直接 `chrome.storage`（那是 bridge 的事）。detail-hidden 功能的详细参数不落盘、只持久化 enabled/intentEnabled。
 - 报文对照：发请求的字段形态须与 dashcam 录制报文**逐键一致**，不靠猜；注释里用「报文实证 dashcam <会话文件名>」标注证据来源。
 
@@ -91,5 +91,5 @@ debug 故障可诊断条款：
 - [ ] 新 feat 在面板出现且开关生效（install/run/pause 走 reactor）
 - [ ] 未直接触碰游戏符号名/`game.get`（走了 ACL）
 - [ ] 报文订阅经 `ctx.on.push/resp/req`，退订由 reactor 托管；req↔resp 配对按 `Event.reqTime` 而非顺序猜测
-- [ ] `run()` 里新建的引擎实例已存引用，并有 `pause` 钩子收自建的定时器/队列
+- [ ] 生命周期定时器走 `ctx.setTimeout/setInterval` 托管、在飞休眠传 `ctx.signal`；`run()` 里新建的引擎实例/裸定时器已存引用，并有 `pause` 钩子收尾
 - [ ] 关键决策与协议形态在文件头注释标注了报文实证来源

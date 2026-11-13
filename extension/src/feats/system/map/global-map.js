@@ -41,9 +41,9 @@ var installed = false;
 var cfg = Object.assign({}, DEFAULTS, { subs: DEFAULTS.subs.slice() });
 /** @type {number} 当前视角桶服号（0=未知） */
 var lastVk = 0;
-/** @type {?number} 可见期视角轮询定时器（兜底：SERVER_VIEW_CHANGE 常量取不到/事件漏收） */
+/** @type {?number} 可见期视角轮询定时器（ctx 托管句柄；兜底：SERVER_VIEW_CHANGE 常量取不到/事件漏收） */
 var pollTimer = null;
-/** @type {?number} 护盾过滤激活期的实体重建定时器（每分钟重判跨档） */
+/** @type {?number} 护盾过滤激活期的实体重建定时器（ctx 托管句柄；每分钟重判跨档） */
 var shieldTimer = null;
 /** @type {?{i:number,j:number}} 起扫块（右键选中，扫描从该块环扩；null=全图蛇形） */
 var startBlock = null;
@@ -133,37 +133,37 @@ function onViewChange(k) {
   if (dataBooted && nk) ensureBucket(nk);
 }
 
-/** 可见期视角轮询（2s）：面板开着时才能看见地图，此刻才需跟随 */
+/** 可见期视角轮询（2s）：面板开着时才能看见地图，此刻才需跟随。ctx 托管：pause 自动清兜底 */
 function startVkPoll() {
-  if (pollTimer) return;
-  pollTimer = setInterval(() => {
+  if (pollTimer || !ctxRef) return;
+  pollTimer = ctxRef.setInterval(() => {
     try {
       const vk = activeVk();
       if (vk && vk !== lastVk) onViewChange(vk);
     } catch (e) {}
   }, 2000);
 }
-/** 停轮询 */
+/** 停轮询（pause 时框架已代清，ctx.clearInterval 对未知句柄 no-op，这里只复位模块引用） */
 function stopVkPoll() {
   if (pollTimer) {
-    clearInterval(pollTimer);
+    ctxRef.clearInterval(pollTimer);
     pollTimer = null;
   }
 }
 
-/** 护盾过滤激活期：每分钟重建实体缓存（护盾随时间流逝跨档，否则筛出的「剩余 ≤ 阈值」会僵住不更新）。 */
+/** 护盾过滤激活期：每分钟重建实体缓存（护盾随时间流逝跨档，否则筛出的「剩余 ≤ 阈值」会僵住不更新）。ctx 托管同上。 */
 function startShieldTimer() {
-  if (shieldTimer) return;
-  shieldTimer = setInterval(() => {
+  if (shieldTimer || !ctxRef) return;
+  shieldTimer = ctxRef.setInterval(() => {
     if (!overlay || !overlay.view) return;
     overlay.view.markEntitiesDirty();
     refreshList();
   }, 60000);
 }
-/** 停护盾重建定时器 */
+/** 停护盾重建定时器（口径同 stopVkPoll） */
 function stopShieldTimer() {
   if (shieldTimer) {
-    clearInterval(shieldTimer);
+    ctxRef.clearInterval(shieldTimer);
     shieldTimer = null;
   }
 }
@@ -573,6 +573,16 @@ function run(ctx) {
   buildTerrainBase();
 }
 
+/**
+ * 暂停：复位两个托管定时器的模块句柄。定时器本体已由 reactor 代清（ctx.clearInterval 对已清句柄 no-op），
+ * 这里必须置 null——否则 startVkPoll/startShieldTimer 的幂等守卫会拿陈旧句柄挡住 resume 后重启。
+ * 可见性驱动的 start/stop 语义不变，托管只是 pause 兜底（离开世界态时 onVisibleChange 未必触发）。
+ */
+function pause() {
+  stopVkPoll();
+  stopShieldTimer();
+}
+
 reactor.register({
   id: 'globalMap',
   kinds: ['homeland'],
@@ -628,4 +638,5 @@ reactor.register({
   install: install,
   configure: configure,
   run: run,
+  pause: pause,
 });

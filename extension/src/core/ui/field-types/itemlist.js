@@ -43,7 +43,8 @@ function orderPoolItems(arr, order) {
  * `fd.stockText(key, item)` 存在时在输入列之后多一枚**只读总数量列**（.pc-istock，如密所「全部商店该商品剩余之和」）：
  *   它是「随数据变、但不重建行」的格，故与怪物清单「已打」同一通路——挂 .pc-fval + data-istock，由 refreshTexts 就地改文本，
  *   绝不走 refreshFieldBox（那会 innerHTML 覆盖整块、把 mountItemList 绑好的拖拽/勾选监听全拆掉）。
- * 状态 cfg[fd.key] 形如 `{ [idStr]: { on: 0|1, [numKey]: number } }`，未登记的项视为默认（on=1、数值=0）。
+ * 状态 cfg[fd.key] 形如 `{ [idStr]: { on: 0|1, [numKey]: number } }`，未登记的项视为默认（on=1、数值=0；
+ *   `fd.defaultOff` 时默认 on=0=不勾，供白名单「全不勾=不过滤/全领」语义）。`fd.hideNumCol` 隐藏数字输入列（只勾选、无数量语义）。
  *   数值列的键由 `fd.numKey` 指定（缺省 'max'=目标持有量/上限；矿区盗采/协助用 'min'=最低量门槛），
  *   列标题/占位/悬停用 `fd.numTitle`/`fd.numPlaceholder`/`head.num`（各自回退旧的 maxTitle/maxPlaceholder/head.max）。
  * 池由 fd.items（数组或 fn(cfg)）提供，每项 `{id, label, cap?, pickDisabled?, channel2Disabled?}`；id 可为字符串（如 'item:41009'）避免跨池数字碰撞。
@@ -79,6 +80,11 @@ function itemListInnerHTML(items, state, fd, order, cfgForSummary, fid) {
   //   （.pc-imax 委托照旧生效）；缺省 maxCol 时行内无输入节点，委托自然落空，无需额外闸门。
   const costCol = !!(fd && fd.costCol);
   const maxCol = !!(fd && fd.maxCol);
+  // fd.defaultOff：未登记项默认**不勾**（on=0）而非默认勾（on=1）——白名单类「全不勾=全领/不过滤」语义用；
+  //   缺省 false 保持既有清单（秘境/矿区/密所）默认全勾行为不变。
+  const defaultOff = !!(fd && fd.defaultOff);
+  // fd.hideNumCol：隐藏数字输入列（白名单只勾选、无目标数量语义时用）；与 costCol/maxCol 正交，缺省 false 行为不变。
+  const hideNumCol = !!(fd && fd.hideNumCol);
   // 数值列的键（缺省 'max'）：矿区盗采/协助用 'min' 表「最低量门槛」，与持有量/上限语义区分
   const numKey = (fd && fd.numKey) || 'max';
   const boughtOf = fd && typeof fd.boughtText === 'function' ? fd.boughtText : null;
@@ -96,7 +102,7 @@ function itemListInnerHTML(items, state, fd, order, cfgForSummary, fid) {
       const label = it.label || key;
       // 两渠道可得性：置灰=渲染未勾+禁选（陈旧存储值不展示）；行灰化只看可用渠道
       const pickOff = !!it.pickDisabled;
-      const on = pickOff ? false : s ? s.on !== 0 : true;
+      const on = pickOff ? false : s ? s.on !== 0 : !defaultOff;
       const ch2Off = !!(ch2 && (ch2.disabledOf ? ch2.disabledOf(it) : it.channel2Disabled));
       const ch2On = ch2 && !ch2Off && s ? Number(s[ch2.key]) === 1 : false;
       const rowOff = pickOff && !ch2 ? !on : pickOff ? !ch2On : ch2 ? !on && !ch2On : !on;
@@ -116,7 +122,7 @@ function itemListInnerHTML(items, state, fd, order, cfgForSummary, fid) {
           : '<span class="pc-icost pc-icostunk" title="单件钻石价（配置表尚未加载，暂不可知）">—</span>'
         : '';
       const inputCell =
-        !costCol || maxCol
+        (!costCol || maxCol) && !hideNumCol
           ? `<input type="number" class="pc-imax${maxCol ? ' pc-imaxcap' : ''}" data-ik="${escAttr(key)}" min="0" step="1"` +
             (cap > 0 ? ` max="${cap}" data-cap="${cap}"` : '') +
             ` value="${num > 0 ? num : ''}" placeholder="${cap > 0 ? cap : (fd && (fd.numPlaceholder || fd.maxPlaceholder)) || '无上限'}"` +
@@ -180,7 +186,7 @@ function itemListInnerHTML(items, state, fd, order, cfgForSummary, fid) {
       (boughtOf
         ? `<span class="pc-fval pc-ibought" title="${escAttr(boughtTitle)}">${escAttr(head.bought || '已抢')}</span>`
         : '') +
-      (!costCol || maxCol
+      ((!costCol || maxCol) && !hideNumCol
         ? `<span class="pc-imax${maxCol ? ' pc-imaxcap' : ''}" title="${escAttr((fd && (fd.numTitle || fd.maxTitle)) || '')}">${escAttr(head.num || head.max || '上限')}</span>`
         : '') +
       (stockOf
@@ -203,7 +209,9 @@ function itemListInnerHTML(items, state, fd, order, cfgForSummary, fid) {
           ? stockOf
             ? '取消勾选=不抢；红色数字 = 单件钻石价；末列 = 全部商店剩余之和'
             : '取消勾选=不抢；红色数字 = 单件钻石价'
-          : '取消勾选=不拾；数字=背包上限，0=无上限；行内 ≤N = 游戏自身上限'),
+          : hideNumCol
+            ? '取消勾选=不拾'
+            : '取消勾选=不拾；数字=背包上限，0=无上限；行内 ≤N = 游戏自身上限'),
     )}</span>` +
     `</div>` +
     headHtml +
@@ -265,9 +273,11 @@ function mountItemList(box, ctx) {
   const order = okey ? c[okey] : null;
   // 数值列的键（缺省 'max'）：与 itemListInnerHTML 同口径，矿区盗采/协助用 'min'
   const numKey = (fd && fd.numKey) || 'max';
+  // 未登记项的默认勾选态：与 itemListInnerHTML 同口径（fd.defaultOff 时默认不勾）
+  const defaultOff = !!(fd && fd.defaultOff);
 
   const ensureEntry = (key) => {
-    if (!state[key]) state[key] = { on: 1, [numKey]: 0 };
+    if (!state[key]) state[key] = { on: defaultOff ? 0 : 1, [numKey]: 0 };
     return state[key];
   };
 

@@ -1064,6 +1064,8 @@ function persistDaily() {
   dailyStateSaving = true;
   var seq = ++saveSeq;
   var snapshot = { date: dailyState.date, counts: Object.assign({}, dailyState.counts) };
+  // 看门狗刻意不托管：一次性自清 latch 守卫，pause 后到点仅复位闸门无写动作；
+  //   若托管被 pause 清掉、save Promise 又悬跨 pause，latch 反会卡死（同 auto-hunt 口径）。
   var watchdog = setTimeout(function () {
     log.warn('daily state save pending over %dms, reset latch.', SAVE_STUCK_MS);
     releaseSaveLatch(seq);
@@ -1089,13 +1091,14 @@ function releaseSaveLatch(seq) {
 
 /**
  * 延迟入队：joinDelayMs 后执行加入。0 也走 setTimeout，让同步栈先落地。
+ * ctx 托管：pause 自动清，不再留暂停后到点空转的 timer（joinFlow 头部 aliveFn 闸门保留作双保险）。
  * @param {string} key 目标 key
  * @param {string} teamId 集结队伍 id
  * @param {number} delayMs 延迟毫秒
  * @param {number} expireTime 集结过期时间戳（秒）
  */
 function scheduleJoin(key, teamId, delayMs, expireTime) {
-  setTimeout(
+  ctxRef.setTimeout(
     function () {
       joinFlow(key, teamId, expireTime).catch(function (err) {
         log.warn('join flow threw!', err);

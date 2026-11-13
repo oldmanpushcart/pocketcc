@@ -139,11 +139,12 @@ export function attachRowMove(opt) {
     box.querySelectorAll(opt.rowSel).forEach((row) => {
       const up = row.querySelector(opt.upSel);
       const down = row.querySelector(opt.downSel);
-      if (up) up.addEventListener('click', (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        move(row, -1);
-      });
+      if (up)
+        up.addEventListener('click', (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          move(row, -1);
+        });
       if (down)
         down.addEventListener('click', (e) => {
           e.preventDefault();
