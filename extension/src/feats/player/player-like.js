@@ -5,7 +5,7 @@
  *   （最多 10 个，动态增删，添加方式同城市技能：UID 复合行 + 失焦用 PLAYER_INFO(630) 反查名字），
  *   功能每天 0 点次数重置后按清单循环逐个点赞，直到当日次数用尽。
  *
- * 网络一律走 promise 封装 window.pocketcc.net：sendPBV2(cmd, data) → Promise<Ret{code,data,ok}>，
+ * 网络一律走 reactor 注入的 ctx.net（promise 封装）：sendPBV2(cmd, data) → Promise<Ret{code,data,ok}>，
  *   isSending(cmd) 查在途。三条协议铁律（target=null、ensureServerResponse=false、无 clickInfo）由 net
  *   封装内部固定，这里不再关心。注意：ret.data 可能是原始 JSON 字符串，也可能已是对象，需兜底 parse。
  *
@@ -260,6 +260,8 @@ function persistDaily() {
   dailySaving = true;
   var seq = ++saveSeq;
   var snapshot = { date: daily.date, used: daily.used | 0 };
+  // 刻意不托管：一次性自清 latch 守卫（同 auto-hunt/alliance-rally 看门狗判据）——
+  // 若托管被 pause 清掉、save Promise 又悬跨 pause，latch 反会卡死；到点仅复位 latch 无写动作。
   var watchdog = setTimeout(function () {
     log.warn('daily state save pending over %dms, reset latch.', SAVE_STUCK_MS);
     releaseSaveLatch(seq);

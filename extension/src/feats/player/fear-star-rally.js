@@ -539,7 +539,7 @@ function onFearStarMarchEdge(m) {
   var mt = m && m.type | 0;
   if (mt !== MT_ATTACK && mt !== MT_RALLY) return;
   if (m.state !== march.State.ARRIVED_HOME) return; // onStateChange 未带 to 过滤，回家判据在此自过滤
-  setTimeout(function () {
+  ctxRef.setTimeout(function () {
     if (aliveFn()) pushWake();
   }, 1500);
 }

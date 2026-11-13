@@ -408,7 +408,16 @@ function buildEnv() {
     cfg: function () {
       return modCfg;
     },
-    secret: secretRealm,
+    // 发包两口薄包装：自动注入宿主当前取消信号（每次 activate 新建），pause 后在飞守卫 abort 早收口，
+    //   不再白等满 4s 超时窗；其余只读方法原样透传。引擎侧 18 处调用点零改动。
+    secret: Object.assign({}, secretRealm, {
+      sendSecret: function (cmd, data) {
+        return secretRealm.sendSecret(cmd, data, ctxRef && ctxRef.signal);
+      },
+      sendSecretJson: function (cmd, data) {
+        return secretRealm.sendSecretJson(cmd, data, ctxRef && ctxRef.signal);
+      },
+    }),
     gameData: gameData,
     gameConf: gameConf,
     l10n: l10n,

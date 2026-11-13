@@ -177,6 +177,10 @@ const cfg = {
 var gateAlive = function () {
   return false;
 };
+/** @type {function():(AbortSignal|null)} 宿主取消信号取值器（每次 activate 新建，install 注入；未注入返 null） */
+var signalFn = function () {
+  return null;
+};
 /**
  * @type {{active: function():boolean, isIn: function():boolean, msToStart: function():number}}
  * 「下田时段」闸回调（宿主 autoFarm 注入）：active()=时段是否生效，isIn()=当前是否落在时段内，msToStart()=距下个时段起点毫秒。
@@ -1066,7 +1070,7 @@ async function cancelAllBuilds(serverSec) {
           tries,
         );
       }
-      if (c < jobs.length - 1) await sleep(1000 * 2);
+      if (c < jobs.length - 1) await sleep(1000 * 2, signalFn()); // pause 早醒由循环头 alive 闸兜住
       continue;
     }
     n++; // 只统计受理成功的（未发出/被拒已在上面分支continue）
@@ -1080,7 +1084,7 @@ async function cancelAllBuilds(serverSec) {
       job.towerId || '-',
       job.marchId || '-',
     );
-    if (c < jobs.length - 1) await sleep(1000 * 2);
+    if (c < jobs.length - 1) await sleep(1000 * 2, signalFn()); // pause 早醒由循环头 alive 闸兜住
   }
   return n;
 }
@@ -1335,9 +1339,9 @@ function cycleRun() {
 }
 
 /**
- * 安装（宿主 autoFarm 在 install 中调用）：注入网络底座、运行态探针 alive、下田时段闸 gate。
+ * 安装（宿主 autoFarm 在 install 中调用）：注入网络底座、运行态探针 alive、宿主取消信号取值器、下田时段闸 gate。
  * 缺 net 即失败（不激活）；alive/gate 缺失时回退默认（恒不在场 / 全天在窗）。
- * @param {{net:object, alive:function():boolean, gate?:{active:Function,isIn:Function,msToStart:Function}}} o
+ * @param {{net:object, alive:function():boolean, signal?:function():(AbortSignal|null), gate?:{active:Function,isIn:Function,msToStart:Function}}} o
  * @returns {boolean}
  */
 function install(o) {
@@ -1348,6 +1352,7 @@ function install(o) {
   }
   net = o.net;
   if (typeof o.alive === 'function') gateAlive = o.alive;
+  if (typeof o.signal === 'function') signalFn = o.signal;
   if (o.gate) {
     if (typeof o.gate.active === 'function') gate.active = o.gate.active;
     if (typeof o.gate.isIn === 'function') gate.isIn = o.gate.isIn;

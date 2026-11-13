@@ -134,6 +134,10 @@ var net = null;
 var aliveFn = function () {
   return false;
 };
+/** @type {function():(AbortSignal|null)} 宿主取消信号取值器（每次 activate 新建，install 注入；未注入返 null） */
+var signalFn = function () {
+  return null;
+};
 
 /**
  * 候选池：坐标键 "x,y" → {x,y,family,level:6,ownerId,expireTime,ts(墙上毫秒),probedAt(墙上毫秒),
@@ -463,7 +467,7 @@ async function scanPass(wanted) {
     });
     if (r.ok) hits += ingestPoints(r.points);
     else failed++; // 单窗失败不致命：田低频，下次刷新邮件再扫自愈
-    if (wi < WINDOWS.length - 1) await sleep(SCAN_GAP_MS); // 窗间串行，免瞬时并发对服务器加压
+    if (wi < WINDOWS.length - 1) await sleep(SCAN_GAP_MS, signalFn()); // 窗间串行，免瞬时并发对服务器加压；pause 早醒由循环头 alive 闸兜住
   }
   prunePool();
   scanned[key] = { at: Date.now(), anchor: entry.anchor, family: entry.family, hits: hits };
@@ -689,7 +693,7 @@ async function pick(family, taken, isBlocked) {
     if (wall - (e.probedAt || 0) >= REPROBE_MS) {
       if (probed >= PROBE_CAP) break; // 本轮探针额度用尽，缺位留 active 档下拍续
       probed++;
-      if (probed > 1) await sleep(PROBE_GAP_MS); // 见 PROBE_GAP_MS：免把连发的 901 送进 cdTime 黑洞
+      if (probed > 1) await sleep(PROBE_GAP_MS, signalFn()); // 见 PROBE_GAP_MS：免把连发的 901 送进 cdTime 黑洞；pause 早醒由睡后 alive 闸兜住
       var pr = await probePoint(e);
       if (!aliveFn()) return null;
       if (pr.status === 'gone') continue;
@@ -826,12 +830,13 @@ function describe(family) {
 }
 
 /**
- * 安装：绑定网络底座与运行态闸门。
- * @param {{net:object, alive:function():boolean}} o
+ * 安装：绑定网络底座、运行态闸门与宿主取消信号取值器。
+ * @param {{net:object, alive:function():boolean, signal?:function():(AbortSignal|null)}} o
  */
 function install(o) {
   net = o.net;
   aliveFn = o.alive;
+  if (typeof o.signal === 'function') signalFn = o.signal;
 }
 
 /** run 复位：清空内存池/去重表/待扫队列（盘上数据由 load() 重新回填）；速度标定也归零，由 load 从盘取回 */

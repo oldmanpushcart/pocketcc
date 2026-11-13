@@ -31,7 +31,7 @@
  *   高影响（自动耗盾/迁城卡、自动迁走主城）：面板默认关闭 + 逐条策略开关。
  */
 import { createLog } from '../../core/log.js';
-import { safeParse } from '../../core/util.js';
+import { safeParse, sleep } from '../../core/util.js';
 import { game } from '../../core/game.js';
 import { gameData, l10n, march as marchApi, nav, worldMap } from '../../core/game-api.js';
 import { reactor } from '../../core/reactor.js';
@@ -292,9 +292,7 @@ async function waitLanded(x, y) {
     if (!aliveFn()) return false;
     var p = gameData.myWorldPos();
     if (p && (p.x | 0) === (x | 0) && (p.y | 0) === (y | 0)) return true;
-    await new Promise(function (r) {
-      setTimeout(r, LAND_POLL_MS);
-    });
+    await sleep(LAND_POLL_MS, ctxRef && ctxRef.signal); // pause 早醒，循环头 aliveFn 闸门回 false
   }
   // 末次再判一次（覆盖睡眠期间的更新）
   var pf = gameData.myWorldPos();

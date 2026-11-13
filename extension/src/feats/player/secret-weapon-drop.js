@@ -363,13 +363,13 @@ async function cycleRun() {
         lastCnt = use.cnt;
         bus.emit(EVT.UI_REFRESH);
         log.info('air drop used. spot=(%s);remaining=%d.', lastSpot, use.cnt);
-        await sleep(DROP_SETTLE_MS);
+        await sleep(DROP_SETTLE_MS, ctxRef && ctxRef.signal);
         await collectPending();
         if (use.cnt <= 0) {
           exhausted = true;
           break;
         } // 这一发把次数用尽 → 出 CD
-        await sleep(DRAIN_GAP_MS); // 还有剩余次数，短间隔接着投
+        await sleep(DRAIN_GAP_MS, ctxRef && ctxRef.signal); // 还有剩余次数，短间隔接着投
         delay = DRAIN_GAP_MS;
       } else if (use.noSpace) {
         log.debug(

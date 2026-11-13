@@ -619,7 +619,7 @@ async function donateFlow(boss, preloaded) {
       );
     }
     if (plan <= 0) return;
-    await sleep(DONATE_GAP_MS); // 同 cmd 连发会撞频控
+    await sleep(DONATE_GAP_MS, ctxRef && ctxRef.signal); // 同 cmd 连发会撞频控；pause 早醒由下方 aliveFn 闸门收手
     if (!aliveFn()) return;
   }
 

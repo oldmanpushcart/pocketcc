@@ -85,7 +85,7 @@
  *   生命周期由 reactor 托管：places base/world、kinds homeland、不行军不参战故 offInCombat:false；
  *   pause 后 ctx.alive()=false，cycle 与在飞 await 自然停摆。
  */
-import { CODE_NOT_SENT, parseData, rejectText } from '../../core/util.js';
+import { CODE_NOT_SENT, parseData, rejectText, sleep } from '../../core/util.js';
 import { createLog } from '../../core/log.js';
 import { game } from '../../core/game.js';
 import { l10n, gameData } from '../../core/game-api.js';
@@ -1725,9 +1725,7 @@ async function bisectHeal(act, sentIds, tokens) {
   for (var i = 0; i < sentIds.length; i++) {
     if (!aliveFn()) break;
     if (i > 0) {
-      await new Promise(function (r) {
-        setTimeout(r, INTER_SEND_MS);
-      });
+      await sleep(INTER_SEND_MS, ctxRef && ctxRef.signal); // pause 早醒，下方 aliveFn 闸门兜住不再出网
     }
     if (!aliveFn()) break;
     var id = sentIds[i];
@@ -1907,10 +1905,7 @@ async function execActions(actions) {
       out.aborted = true;
       return out;
     }
-    if (j < actions.length - 1)
-      await new Promise(function (r) {
-        setTimeout(r, INTER_SEND_MS);
-      });
+    if (j < actions.length - 1) await sleep(INTER_SEND_MS, ctxRef && ctxRef.signal); // pause 早醒，下轮 execAction 前 aliveFn 闸门兜住
   }
   return out;
 }

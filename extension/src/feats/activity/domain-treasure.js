@@ -1,7 +1,7 @@
 /**
  * 领域夺宝-挖矿功能（reactor 说明书形态）
  *
- * 网络一律走 promise 封装 window.pocketcc.net：send/sendPBV2(cmd, data) → Promise<Ret{code,data,ok}>，isSending(cmd) 查在途。
+ * 网络一律走 reactor 注入的 ctx.net（promise 封装）：send/sendPBV2(cmd, data) → Promise<Ret{code,data,ok}>，isSending(cmd) 查在途。
  * 三条协议铁律（target=null、ensureServerResponse=false、无 clickInfo）由 net 封装内部固定，这里不再关心。
  *
  * 生产端有三个触发源：
@@ -215,7 +215,7 @@ async function consume() {
       log.warn('dig flow threw.', err);
     }
     if (queue.length && aliveFn()) {
-      await sleep(cfg.digInterval);
+      await sleep(cfg.digInterval, ctxRef && ctxRef.signal);
     }
   }
 }

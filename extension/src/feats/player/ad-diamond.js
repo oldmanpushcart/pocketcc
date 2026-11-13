@@ -352,7 +352,7 @@ async function cycleRun() {
     if (slotState(list[i], now).state !== 'ready') continue;
     // 同轮连领须隔过游戏侧 9707 的 cdTime 频率闸（见 CLAIM_SEND_GAP_MS 注释），否则第二条直接发不出去
     if (sentThisRound) {
-      await sleep(CLAIM_SEND_GAP_MS);
+      await sleep(CLAIM_SEND_GAP_MS, ctxRef && ctxRef.signal);
       if (!aliveFn()) return 0;
     }
     sentThisRound = true;

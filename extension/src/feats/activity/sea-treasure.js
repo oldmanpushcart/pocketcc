@@ -4,7 +4,7 @@
  * 海上夺宝即"打航母"活动（ActivityShowUIType.FightAircraftCarrier），世界地图上刷出可攻打的 boss，
  * 每条 boss 有独立坐标与"我剩余攻打次数"（myLeftAttackTimes）。脚本自动找到并派兵攻打。
  *
- * 网络一律走 promise 封装 window.pocketcc.net：send/sendPBV2(cmd, data) → Promise<Ret{code,data,ok}>，isSending(cmd) 查在途。
+ * 网络一律走 reactor 注入的 ctx.net（promise 封装）：send/sendPBV2(cmd, data) → Promise<Ret{code,data,ok}>，isSending(cmd) 查在途。
  * 三条协议铁律（target=null、ensureServerResponse=false、无 clickInfo）由 net 封装内部固定，这里不再关心。
  *
  * 三条协议（见 references/历史文档/海上夺宝.md）：
@@ -182,7 +182,7 @@ async function consume() {
       log.warn('attack flow threw.', err);
     }
     if (queue.length && aliveFn()) {
-      await sleep(cfg.marchInterval);
+      await sleep(cfg.marchInterval, ctxRef && ctxRef.signal);
     }
   }
 }

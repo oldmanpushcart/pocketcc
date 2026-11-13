@@ -1,7 +1,7 @@
 /**
  * 联盟帮助（reactor 说明书形态）
  *
- * 网络一律走 promise 封装 window.pocketcc.net：send(cmd, data) → Promise<Ret{code,data,ok}>，isSending(cmd) 查在途。
+ * 网络一律走 reactor 注入的 ctx.net（promise 封装）：send(cmd, data) → Promise<Ret{code,data,ok}>，isSending(cmd) 查在途。
  * 三条协议铁律（target=null、ensureServerResponse=false、无 clickInfo）由 net 封装内部固定，这里不再关心。
  *
  * 架构：
@@ -20,7 +20,7 @@
  * 协议出处与设计台账见本文件行内各源码锚点（早期整理的《联盟帮助资料整理》笔记未入库）。
  *
  * 生命周期由 reactor 托管：install/configure/run 三个钩子。无推送，run 直接点火自重排定时器；
- *   定时器是功能内部的生产逻辑，pause 后 alive()=false，挂着的定时器到点空转一次不再自重排，resume 时 run 重新点火。
+ *   定时器是功能内部的生产逻辑（ctx 托管），pause 后被 reactor 自动清，resume 时 run 重新点火。
  *   未声明 scenes → scene 门控默认放行，任何场景都跑（与重构前一致）。
  */
 import { CODE_NOT_SENT, todayStr, rejectText } from '../../core/util.js';
@@ -172,8 +172,8 @@ var drain = createDrain({
  */
 function scheduling(delay, fn) {
   if (!aliveFn()) return false;
-  if (timer) clearTimeout(timer);
-  timer = setTimeout(
+  if (timer) ctxRef.clearTimeout(timer);
+  timer = ctxRef.setTimeout(
     function () {
       timer = null;
       if (!aliveFn()) return;

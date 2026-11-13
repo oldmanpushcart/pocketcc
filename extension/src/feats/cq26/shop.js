@@ -169,6 +169,8 @@ const OFF_ACTIVITY_MS = 5 * 60 * 1000;
 var MCFG = buildDefaults();
 /** @type {object|null} net 实例 */
 var net = null;
+/** @type {object|null} reactor ctx 引用（取每次 activate 新建的取消信号） */
+var ctxRef = null;
 /** @type {boolean} 安装标志 */
 var installed = false;
 /** @type {{shops:Array<object>,cScore:number,endSec:number,canBuyCnt:number,atSec:number}|null}
@@ -212,6 +214,7 @@ var lastDeal = null;
  */
 function install(ctx) {
   if (installed) return true;
+  ctxRef = ctx;
   net = ctx.net;
   if (!net.install()) {
     net = null;
@@ -893,7 +896,7 @@ async function burst(reason, retry) {
           stats.byProduct[cands[i].productKey] = (stats.byProduct[cands[i].productKey] || 0) + 1;
           sendBuy(cands[i], state, stats); // 不 await：管线化，下一包不等上一包应答
           if (!aliveFn()) return;
-          await sleep(BUY_GAP_MS);
+          await sleep(BUY_GAP_MS, ctxRef && ctxRef.signal); // pause 早醒，下一轮循环头 alive 闸兜住不再出网
         }
       } else if (round === 1 || !retry) break;
       if (Date.now() >= deadline || !aliveFn()) break;

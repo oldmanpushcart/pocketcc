@@ -399,7 +399,7 @@ async function donateLoop(o) {
       }
       break; // 任一枚被拒即收手，交下轮/排程
     }
-    if (i < loopMax - 1) await sleep(SCIENCE_DONATE_GAP_MS);
+    if (i < loopMax - 1) await sleep(SCIENCE_DONATE_GAP_MS, ctxRef && ctxRef.signal);
   }
   if (done > 0) {
     log.info(
@@ -542,7 +542,7 @@ async function donateRelic() {
       res.payload.curPoint,
       !!res.payload.crit,
     );
-    if (i < energy.point - 1) await sleep(RELIC_GAP_MS);
+    if (i < energy.point - 1) await sleep(RELIC_GAP_MS, ctxRef && ctxRef.signal);
   }
   if (done > 0) {
     log.info(

@@ -1,7 +1,7 @@
 /**
  * 联盟礼物-自动领取（reactor 说明书形态）
  *
- * 网络一律走 promise 封装 window.pocketcc.net：send(cmd, data) → Promise<Ret{code,data,ok}>，isSending(cmd) 查在途。
+ * 网络一律走 reactor 注入的 ctx.net（promise 封装）：send(cmd, data) → Promise<Ret{code,data,ok}>，isSending(cmd) 查在途。
  * 三条协议铁律（target=null、ensureServerResponse=false、无 clickInfo）由 net 封装内部固定，这里不再关心。
  *
  * 判据（口径同游戏面板 updatePageRedPoint / onReceiveBoxClick，见 references/历史文档/联盟礼物.md、AllianceGiftPanel.js）：
@@ -29,7 +29,7 @@
  *      被拒不记闸门、下轮可重试。
  *
  * 重入闸门：单定时器 + claiming 标志保证同一时刻只有一轮检查在飞（含 1177 await）；
- *   pause 后 alive()=false，挂着的定时器到点空转一次不再自重排，resume 时 run 复位并重新点火。
+ *   pause 后 alive()=false，托管定时器被 reactor 自动清，resume 时 run 复位并重新点火。
  *
  * 生命周期由 reactor 托管：install/configure/run 三个钩子。纯协议领取（不派行军、不抢行军队列），
  *   故不声明 places、不声明 offInCombat（战斗态下继续跑）；但声明了 kinds:['homeland']（A 档）：
@@ -103,7 +103,7 @@ var data;
 /** @type {object|null} reactor 注入的上下文；alive() 反映运行态，pause 后置否让定时器与在飞检查自然退出 */
 var ctxRef = null;
 
-/** @type {number|null} 单定时器句柄；pause 后到点空转一次不再自重排 */
+/** @type {number|null} 单定时器句柄（ctx 托管，pause 自动清；陈旧句柄由 schedule 先 clear 再 set 自然替换） */
 var timer = null;
 
 /** @type {boolean} 检查闸门：同时只跑一轮 tick（含 1177 await），防重入 */
@@ -180,9 +180,9 @@ function countOf(red, type) {
  */
 function schedule(delay, mode) {
   if (!aliveFn()) return;
-  if (timer) clearTimeout(timer);
+  if (timer) ctxRef.clearTimeout(timer);
   timerMode = mode;
-  timer = setTimeout(
+  timer = ctxRef.setTimeout(
     function () {
       timer = null;
       timerMode = null;
@@ -230,7 +230,7 @@ async function tick() {
     if (cfg.normal.enabled && countOf(red, GIFT_TYPE_NORMAL) > 0) {
       if (await claimType(GIFT_TYPE_NORMAL, 'normal')) {
         didClaim = true;
-        await sleep(CLAIM_GAP_MS);
+        await sleep(CLAIM_GAP_MS, ctxRef && ctxRef.signal);
         if (!aliveFn()) return;
       }
     }
@@ -240,7 +240,7 @@ async function tick() {
     if (cfg.rare.enabled && countOf(red, GIFT_TYPE_RARE) > 0) {
       if (await claimType(GIFT_TYPE_RARE, 'rare')) {
         didClaim = true;
-        await sleep(CLAIM_GAP_MS);
+        await sleep(CLAIM_GAP_MS, ctxRef && ctxRef.signal);
         if (!aliveFn()) return;
       }
     }
@@ -383,7 +383,7 @@ function install(ctx) {
 
 /**
  * 运行：复位闸门，挂 10442 唤醒，立即查一次（之后由推送 / 两档定时驱动）。
- * reactor pause 会自动摘除此处登记的触发器并置 alive=false，定时器自然停摆；resume 重新点火。
+ * reactor pause 会自动摘除此处登记的触发器并置 alive=false，托管定时器被自动清；resume 重新点火。
  * @param {object} ctx reactor 上下文
  */
 function run(ctx) {

@@ -355,7 +355,7 @@ async function claimSite(site) {
       await rejectToday(wonderId);
       return;
     }
-    if (slots > 0) await sleep(CLAIM_GAP_MS);
+    if (slots > 0) await sleep(CLAIM_GAP_MS, ctxRef && ctxRef.signal);
   }
 }
 

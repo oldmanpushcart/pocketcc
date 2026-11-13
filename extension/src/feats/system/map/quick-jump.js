@@ -21,7 +21,7 @@
  * 红线：只调用游戏原生导航 nav.flyTo（只读 + 导航）与原生气泡聊天 sharePos（只发包 670），
  *   不改写游戏本地数据；历史/几何走 UID 隔离存储。
  *
- * 分享（单条/批量）：调 window.pocketcc.chat.sharePos(x,y,{channel,z}) 发游戏原生坐标链接（m="link"+llm，
+ * 分享（单条/批量）：调 core/chat 的 chatApi.sharePos(x,y,{channel,z}) 发游戏原生坐标链接（m="link"+llm，
  *   统一发文字卡形态 st:5（systemFont 组，能正常渲染中文标题）+ s=备注 + icon=坐标语义图标（image/NChat/chat_v3_share_icon_pos5），
  *   卡片即「坐标图标 + 文字说明 + 自动的 S:区号 X/Y 行」；行内无 `#备注` 时用默认文字「坐标分享」；别的玩家点击均可跳转；
  *   目的频道做成下拉：固定项 = 世界(world)/联盟(alliance)，动态项从游戏频道头 chatHeads() 发现

@@ -816,7 +816,7 @@ async function recallAllFarms(marches, allow) {
     // 撤回成功即钉「待归队」：时段外豁免分支撤完接着就算缺位重派（同一拍），英雄未释放必撞互斥
     if (rr && rr.ok) markRecalled(m.marchId);
     log.info('out-of-window recall. marchId=%s kind=%s x=%d y=%d', m.marchId, kind, m.x, m.y);
-    if (i < marches.length - 1) await sleep(cfg.recallInterval);
+    if (i < marches.length - 1) await sleep(cfg.recallInterval, ctxRef && ctxRef.signal);
   }
   return n;
 }
@@ -1053,10 +1053,10 @@ async function dispatchRows(rows, allow, taken) {
       }
       // 续抢下一点：拉开间隔同逐条派兵口径（免把重试打成 902 全局限流）
       log.debug('row=%d relic point lost, grab next. attempt=%d', idx, att + 1);
-      await sleep(cfg.marchInterval);
+      await sleep(cfg.marchInterval, ctxRef && ctxRef.signal);
     }
     if (stopRows) break;
-    if (t < rows.length - 1 && free > 0) await sleep(cfg.marchInterval);
+    if (t < rows.length - 1 && free > 0) await sleep(cfg.marchInterval, ctxRef && ctxRef.signal);
   }
   return dispatched;
 }
@@ -1484,7 +1484,7 @@ function onFarmMarchHome(m) {
   }
   // 撤回的那支到家 = 英雄真释放了，此刻摘掉「待归队」占位，该行才算真缺位（比等 856 缺席+超时快一大拍）
   releaseRecallSlot(m.id);
-  setTimeout(function () {
+  ctxRef.setTimeout(function () {
     if (aliveFn()) pushWake('march home (id=' + ((m && m.id) || '?') + ')');
   }, 1500);
 }
@@ -1523,7 +1523,13 @@ function install(ctx) {
     return false;
   }
   net = ctx.net;
-  var base = { net: ctx.net, alive: aliveFn };
+  var base = {
+    net: ctx.net,
+    alive: aliveFn,
+    signal: function () {
+      return ctxRef && ctxRef.signal;
+    },
+  };
   relic.install(base);
   tower.install(base);
   normal.install(ctx.net);
@@ -1531,6 +1537,9 @@ function install(ctx) {
   mechBuild.install({
     net: ctx.net,
     alive: aliveFn,
+    signal: function () {
+      return ctxRef && ctxRef.signal;
+    },
     gate: {
       active: windowActive,
       isIn: inFarmWindow,

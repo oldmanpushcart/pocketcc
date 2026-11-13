@@ -266,7 +266,7 @@ async function tickBody() {
       );
       break;
     }
-    if (i < loopMax - 1) await sleep(DONATE_GAP_MS);
+    if (i < loopMax - 1) await sleep(DONATE_GAP_MS, ctxRef && ctxRef.signal);
   }
   return {
     donated: donated > 0,

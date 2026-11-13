@@ -1,7 +1,7 @@
 /**
  * 泰坦祝福（泰坦藏宝图）-空投拾取功能（reactor 说明书形态）
  *
- * 网络一律走 promise 封装 window.pocketcc.net：send/sendPBV2(cmd, data) → Promise<Ret{code,data,ok}>，isSending(cmd) 查在途。
+ * 网络一律走 reactor 注入的 ctx.net（promise 封装）：send/sendPBV2(cmd, data) → Promise<Ret{code,data,ok}>，isSending(cmd) 查在途。
  * 三条协议铁律（target=null、ensureServerResponse=false、无 clickInfo）由 net 封装内部固定，这里不再关心。
  *
  * 报文事实（实录报文实证 + 客户端 WorldTiTanBlessingTreasurePop / NWorldMapTileClickUtils）：
@@ -37,7 +37,7 @@
  *   run 挂 10904/13226/13227/13228 监听；reactor pause 时摘监听、置 alive=false，队列保留，恢复后续跑。
  */
 import { createLog } from '../../core/log.js';
-import { serverTimeSec as utilServerTimeSec } from '../../core/util.js';
+import { sleep, serverTimeSec as utilServerTimeSec } from '../../core/util.js';
 import { createDrain } from '../../core/drain.js';
 import { reactor } from '../../core/reactor.js';
 import { getUid } from '../../core/player.js';
@@ -572,9 +572,7 @@ async function waitArriveDrop(marchIdStr, prevArrive) {
     DEADLINE_MS = 6000;
   var end = Date.now() + DEADLINE_MS;
   while (Date.now() < end) {
-    await new Promise(function (r) {
-      setTimeout(r, POLL_MS);
-    });
+    await sleep(POLL_MS, ctxRef && ctxRef.signal); // pause 早醒，下方 aliveFn 闸门回 prevArrive
     if (!aliveFn()) return prevArrive;
     var a = await pickupArriveSec(marchIdStr);
     if (!(a > 0)) return a; // 行军已从快照消失

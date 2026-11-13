@@ -4,7 +4,7 @@
  * 两个橙色城市皮肤技能：玫花幽香(skinId 1771000) / 芳心萌动(skinId 1772000)。冷却到点后，
  *   可向用户输入的指定 UID 玩家赠送物品（USE_CITY_SKILL 1753）。两个技能各自独立开关、可赠不同的人。
  *
- * 网络一律走 promise 封装 window.pocketcc.net：send(cmd, data) → Promise<Ret{code,data,ok}>，isSending(cmd) 查在途。
+ * 网络一律走 reactor 注入的 ctx.net（promise 封装）：send(cmd, data) → Promise<Ret{code,data,ok}>，isSending(cmd) 查在途。
  *   三条协议铁律（target=null、ensureServerResponse=false、无 clickInfo）由 net 封装内部固定，这里不再关心。
  *   注意：net.send 的 ret.data 是原始 JSON 字符串 d（Ret 不再自动 parse），需自行 JSON.parse。
  *
@@ -233,7 +233,7 @@ async function tick() {
       now = Date.now();
       if (r === 'ok') {
         didGift = true;
-        await sleep(GIFT_GAP_MS);
+        await sleep(GIFT_GAP_MS, ctxRef && ctxRef.signal);
         if (!aliveFn()) return 0;
         now = Date.now();
         serverTime = (data && data.ServerTime) || serverTime;

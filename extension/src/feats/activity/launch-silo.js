@@ -407,7 +407,7 @@ async function recallGarrisonMarches() {
   for (var j = 0; j < ids.length; j++) {
     if (!aliveFn()) return -1; // pause 中途：未撤完不谎报成功，下轮重读接着撤
     await sendRecall(ids[j]);
-    if (j < ids.length - 1) await sleep(cfg.recallInterval);
+    if (j < ids.length - 1) await sleep(cfg.recallInterval, ctxRef && ctxRef.signal);
   }
   return ids.length;
 }
@@ -438,7 +438,7 @@ async function claimRewards() {
     } else {
       log.info('claim rejected. score=%d;code=%d;data=%s', num, ret.code, rejectText(ret) || '-');
     }
-    if (i < thresholds.length - 1) await sleep(cfg.claimInterval);
+    if (i < thresholds.length - 1) await sleep(cfg.claimInterval, ctxRef && ctxRef.signal);
   }
   // 判定积分刷满：total≥最高档 且 所有档位均已领 → 本期个人刷分结束（下轮 cycleRun 撤军收尾）
   var maxT = thresholds.length ? thresholds[thresholds.length - 1] : 0;
@@ -526,7 +526,8 @@ async function garrisonPass(list) {
         ret.data,
       );
     }
-    if (garrisonQueue.length && march.freeSlots() > 0) await sleep(cfg.marchInterval);
+    if (garrisonQueue.length && march.freeSlots() > 0)
+      await sleep(cfg.marchInterval, ctxRef && ctxRef.signal);
   }
 
   // 2) 仍有待驻但无空闲名额：撤 1 条田腾位（优先去程在途），其到家时由快路径抢空窗补驻。

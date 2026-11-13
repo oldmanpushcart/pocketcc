@@ -84,7 +84,7 @@
  * 触发源（run 点火 / 雷达推送 / 10021 体力回升 / 配置变更 / 兜底定时）全部汇入 cycle.kick，在飞合并为一次补扫。
  * 配置链路：registry 把 {enabled, ...toModuleCfg(c)} 推给 reactor.setConfig → configure（整体赋值、绝不二次归一）。
  */
-import { parseData, CODE_NOT_SENT } from '../../core/util.js';
+import { parseData, CODE_NOT_SENT, sleep } from '../../core/util.js';
 import { createLog } from '../../core/log.js';
 import { reactor } from '../../core/reactor.js';
 import { bus, EVT } from '../../core/bus.js';
@@ -968,24 +968,13 @@ async function claimFinished() {
     } else {
       log.debug('3508 not sent (in-flight gate). id=%s', t.id);
     }
-    if (i < n - 1) await sleepMs(cfg.claimGapMs);
+    if (i < n - 1) await sleep(cfg.claimGapMs, ctxRef && ctxRef.signal); // pause 早醒，循环头 aliveFn 闸门兜住
   }
   var left = 0;
   tasks.forEach(function (t) {
     if (t.state === ST_FINISH) left++;
   });
   return { claimed: claimed, left: left };
-}
-
-/**
- * 定长睡眠（仅供 3508 串行间隔；alive 期间无外部定时器需登记，在飞 await 由 alive() 截断）。
- * @param {number} ms
- * @returns {Promise<void>}
- */
-function sleepMs(ms) {
-  return new Promise(function (res) {
-    setTimeout(res, ms);
-  });
 }
 
 // ── 单飞锁维护 ──────────────────────────────────────────────────────

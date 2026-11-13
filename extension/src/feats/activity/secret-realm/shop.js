@@ -75,6 +75,8 @@ export class ShopEngine {
   #env;
   /** @type {{kick:Function}|null} */
   #cycle = null;
+  /** @type {number|null} 首扫延迟定时器句柄（stop 自收，免 pause 后留孤儿到点空转） */
+  #firstKickTimer = null;
   /** @type {boolean} 引擎存活位（stop 置 false 后旧 cycle 定时器到点即终止） */
   #active = false;
   /** @type {boolean} 是否有一条 85xx 在途（串行闸，配合 isSecretSending） */
@@ -946,7 +948,8 @@ export class ShopEngine {
       fallback: tuning.shopSweepMs,
     });
     // 首次扫店延迟：太早会撞玩家自己的商店操作窗（面板也发 8540，会互刷 getTime 基准）
-    setTimeout(function () {
+    this.#firstKickTimer = setTimeout(function () {
+      self.#firstKickTimer = null;
       if (self.#active && env.alive()) self.#cycle.kick();
     }, tuning.shopFirstDelayMs);
     env.log.info('shop engine started (only restocks when parked at a shop point 161).');
@@ -961,9 +964,13 @@ export class ShopEngine {
     if (this.#active && this.#cycle) this.#cycle.kick();
   }
 
-  /** 停止：置死 #active、摘除 cycle 哨兵。 */
+  /** 停止：置死 #active、摘除 cycle 哨兵、收首扫延迟定时器。 */
   stop() {
     this.#active = false;
+    if (this.#firstKickTimer != null) {
+      clearTimeout(this.#firstKickTimer);
+      this.#firstKickTimer = null;
+    }
     this.#gates.reset();
     if (this.#cycle) this.#cycle.dispose();
     this.#cycle = null;

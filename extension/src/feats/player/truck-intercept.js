@@ -905,7 +905,7 @@ async function lootFlow(cand) {
       );
     }
     if (!aliveFn()) return 'done';
-    await sleep(cfg.lootGap);
+    await sleep(cfg.lootGap, ctxRef && ctxRef.signal);
   }
   return 'done';
 }

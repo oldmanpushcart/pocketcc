@@ -394,7 +394,7 @@ export class TeamEngine {
 
   /**
    * 供 FlowEngine 使用的运行底座：把本引擎的实时态、sendPB 幂等发包、频道 17 聊天收发暴露给它，
-   *   避免流程引擎自摸 net/reactor/chat 或重复订阅（chat 底座懒取 window.pocketcc.chat，install 可能早于其就绪）。
+   *   避免流程引擎自摸 net/reactor/chat 或重复订阅（chat 底座取 core/chat 的 chatApi，install 可能早于其就绪）。
    * @returns {object} FlowHost
    */
   #flowHost() {

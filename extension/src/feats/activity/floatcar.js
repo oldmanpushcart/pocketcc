@@ -24,7 +24,7 @@
  *   把查询打到别的行军上——全链路只以 string 传递（8852 请求体的字段名本身就是 marchIdStr）。
  *   游戏还会把活动行军的 uid 改写成 `uid+marchId` 字符串，所以按 marchId 对账在途行军要用它判等。
  *
- * 网络一律走 promise 封装 window.pocketcc.net：send/sendPBV2(cmd, data) → Promise<Ret{code,data,ok}>。
+ * 网络一律走 reactor 注入的 ctx.net（promise 封装）：send/sendPBV2(cmd, data) → Promise<Ret{code,data,ok}>。
  * 三条协议铁律（target=null、ensureServerResponse=false、无 clickInfo）由 net 封装内部固定，这里不再关心。
  * 8852 应答：net 封装已剥到内层，ret.data 就是 {x,y}；"无箱"有两种服务器口径（s!=0 被拒 / s=0 但 {x:0,y:0}）。
  * 902 应答：受理时回整份 marchInfo（字符串 marchId + marchStartTime/marchArrive；返程两字段此刻必为 0，
@@ -36,7 +36,12 @@
  *   当场收掉同类型全部流程 + 滤掉同类型待派项，后续该类型的发车卡不再建流程（跨类型互不影响，跨日自动失效）。
  * 被拒退避："目标被占/限流"类拒绝按指数退避再试（队满与上限各有专路、不走这里），否则会被拒的坐标每秒重派一遍。
  */
-import { CODE_NOT_SENT, todayStr, serverTimeSec as utilServerTimeSec } from '../../core/util.js';
+import {
+  CODE_NOT_SENT,
+  sleep,
+  todayStr,
+  serverTimeSec as utilServerTimeSec,
+} from '../../core/util.js';
 import { createLog } from '../../core/log.js';
 import { game } from '../../core/game.js';
 import { reactor } from '../../core/reactor.js';
@@ -237,7 +242,7 @@ var heap = createEventHeap();
 /** @type {number} 全局 pickup 串行闸门：上一条 902 发出时刻，条间 ≥cfg.retryMs 防限流 */
 var lastPickupAt = 0;
 
-/** @type {number|null} 唯一 driver 定时器（睡到堆顶事件时刻，封顶 tickMs；pause/堆空即熄火） */
+/** @type {number|null} 唯一 driver 定时器（ctx 托管，睡到堆顶事件时刻，封顶 tickMs；pause 自动清/堆空即熄火） */
 var driverTimer = null;
 
 /** @type {number} 下一次 driver 唤醒的目标本地时刻（bump 判是否需提前重排用） */
@@ -384,7 +389,7 @@ function startDriver() {
  */
 function stopDriver() {
   if (driverTimer == null) return;
-  clearTimeout(driverTimer);
+  ctxRef.clearTimeout(driverTimer);
   driverTimer = null;
 }
 
@@ -393,14 +398,14 @@ function stopDriver() {
  */
 function scheduleDriver() {
   if (driverTimer != null) {
-    clearTimeout(driverTimer);
+    ctxRef.clearTimeout(driverTimer);
     driverTimer = null;
   }
   if (!aliveFn() || !heap.size()) return;
   var now = Date.now();
   var delta = Math.min(Math.max(0, heap.peek().atMs - now), cfg.tickMs);
   driverWakeAt = now + delta;
-  driverTimer = setTimeout(onDriverWake, delta);
+  driverTimer = ctxRef.setTimeout(onDriverWake, delta);
 }
 
 /**
@@ -1477,9 +1482,7 @@ async function waitArriveDrop(marchIdStr, prevArrive) {
     DEADLINE_MS = 6000;
   var end = Date.now() + DEADLINE_MS;
   while (Date.now() < end) {
-    await new Promise(function (r) {
-      setTimeout(r, POLL_MS);
-    });
+    await sleep(POLL_MS, ctxRef && ctxRef.signal); // pause 早醒，下方 aliveFn 闸门回 prevArrive
     if (!aliveFn()) return prevArrive;
     var a = await pickupArriveSec(marchIdStr);
     if (!(a > 0)) return a; // 行军已从快照消失
@@ -1641,6 +1644,15 @@ function run(ctx) {
 }
 
 /**
+ * 停用：托管 driver 定时器已被 reactor 清掉，这里只复位模块句柄——
+ * 否则 startDriver 的 `driverTimer != null` 幂等守卫会拿陈旧句柄挡住 resume 重启。
+ * flows/pending/堆原地保留，resume 续跑（陈旧事件由 passGuard 作废）。
+ */
+function pause() {
+  stopDriver();
+}
+
+/**
  * 向 reactor 注册本功能说明书：地图限定 base/world（Home/NWorldMap），战斗模式暂停（offInCombat）。
  * 面板只出启用开关，探测节奏全部为 cfg 内置常量。
  */
@@ -1681,4 +1693,5 @@ reactor.register({
   configure: configure,
   install: install,
   run: run,
+  pause: pause,
 });

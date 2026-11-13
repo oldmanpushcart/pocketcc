@@ -637,7 +637,7 @@ async function claimRewards(mainList, myUid, nowSec) {
     else if (ret.code !== CODE_NOT_SENT)
       log.info('claim rejected. uid=%s;code=%d;data=%s', uid, ret.code, rejectText(ret));
     sent++;
-    if (j < targets.length - 1) await sleep(cfg.applyIntervalMs);
+    if (j < targets.length - 1) await sleep(cfg.applyIntervalMs, ctxRef && ctxRef.signal);
   }
 
   if (breedData && (breedData.helpBornRewardCnt | 0) > 0 && aliveFn()) {
@@ -741,7 +741,7 @@ async function agreeApplies(applyList, mainSet) {
       );
       break; // 同一原因大概率会连着拒绝整批：本轮整段收手，下轮再试（不拉黑申请人）
     }
-    await sleep(cfg.applyIntervalMs);
+    await sleep(cfg.applyIntervalMs, ctxRef && ctxRef.signal);
   }
   return done;
 }
@@ -784,7 +784,7 @@ async function helpBreeding(visit, myUid) {
       log.info('help rejected. uid=%s;code=%d;data=%s', uid, ret.code, rejectText(ret));
       break;
     }
-    await sleep(cfg.applyIntervalMs);
+    await sleep(cfg.applyIntervalMs, ctxRef && ctxRef.signal);
   }
   return done;
 }
@@ -919,7 +919,7 @@ async function cancelStaleApplies(inflight, nowMs) {
     } else if (ret.code !== CODE_NOT_SENT) {
       log.info('withdraw rejected. uid=%s;code=%d;data=%s', it.uid, ret.code, rejectText(ret));
     }
-    await sleep(cfg.applyIntervalMs);
+    await sleep(cfg.applyIntervalMs, ctxRef && ctxRef.signal);
   }
   return n;
 }
@@ -1018,7 +1018,7 @@ async function applyNewBeasts(beasts, visit, inflight, nowSec, nowMs) {
       }
       inflightUids.add(target); // 本轮不再撞同一目标（不做按 uid 拉黑，下拍重读 1585 再判）
     }
-    await sleep(cfg.applyIntervalMs);
+    await sleep(cfg.applyIntervalMs, ctxRef && ctxRef.signal);
   }
   // 指定模式下「名单里全忙/在途」是随名额释放自愈的「当前不可动作」→ debug（勿当 warn 刷屏）；
   // 随机模式回退后仍空往往意味着过滤口径过严，保留 warn 供排查。

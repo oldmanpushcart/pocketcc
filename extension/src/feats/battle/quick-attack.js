@@ -414,7 +414,7 @@ async function attackFlow(spec, target, planList) {
     }
 
     if (i < planList.length - 1) {
-      await sleep(cfg.tripleIntervalMs);
+      await sleep(cfg.tripleIntervalMs, ctxRef && ctxRef.signal);
     }
   }
 }

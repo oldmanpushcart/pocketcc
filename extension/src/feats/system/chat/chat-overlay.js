@@ -75,7 +75,7 @@ const CSS = `
   .pcw-chip:hover{background:rgba(255,255,255,.08);}
   .pcw-chip.active{background:rgba(70,140,255,.28);border-color:rgba(120,170,255,.5);color:#fff;font-weight:600;}
   .pcw-badge{position:absolute;top:-6px;right:-4px;min-width:15px;height:15px;line-height:15px;
-    padding:0 3px;border-radius:8px;background:#e0463b;color:#fff;font-size:10px;font-weight:600;text-align:center;}
+    padding:0 3px;border-radius:8px;background:#d63c33;color:#fff;font-size:10px;font-weight:600;text-align:center;}
   /* 主体：左会话列表（微信 PC 风，仅私聊/跨服家族视图时显）+ 可拖分隔条 + 右聊天列 */
   .pcw-body{flex:1 1 auto;min-height:0;display:flex;}
   .pcw-side{flex:0 0 auto;width:170px;min-height:0;overflow-y:auto;overscroll-behavior:contain;
@@ -100,7 +100,7 @@ const CSS = `
   .pcw-convt{display:block;font-size:12px;font-weight:600;color:#dbe6f3;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
   .pcw-convs{display:block;font-size:11px;color:#9fb6d4;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
   .pcw-convb{position:absolute;top:2px;right:3px;min-width:15px;height:15px;line-height:15px;
-    padding:0 3px;border-radius:8px;background:#e0463b;color:#fff;font-size:10px;font-weight:600;text-align:center;}
+    padding:0 3px;border-radius:8px;background:#d63c33;color:#fff;font-size:10px;font-weight:600;text-align:center;}
   /* 消息区（游戏页面的 user-select:none 会继承进 shadow，需显式放开文本选择） */
   .pcw-msgs{flex:1 1 auto;min-height:0;overflow-y:auto;overscroll-behavior:contain;padding:2px 8px;scrollbar-gutter:stable;
     user-select:text;-webkit-user-select:text;}
@@ -295,6 +295,10 @@ export class ChatOverlay {
   #cooldownLeft;
   #cooldownTimer;
   #toastTimer;
+  /** @type {Function|null} resize 监听句柄（unmount 摘除，防 mount/unmount 循环累积） */ #onResize =
+    null;
+  /** @type {Function|null} resize 防抖定时器清理器（闭包持局部 timer，unmount 调用） */ #clearResizeTimer =
+    null;
   #pinned;
   #topGate;
   #newMsgCount;
@@ -424,7 +428,8 @@ export class ChatOverlay {
     // 宽度变化时按旧右距重算 x（浮层跟着右缘走），y 不变；持续缓存 lastVW 供计算旧右距
     let resizeTimer = null;
     let lastVW = window.innerWidth;
-    window.addEventListener('resize', () => {
+    // 存句柄供 unmount 摘除：匿名监听不摘会随 mount/unmount 循环累积，闭包又钉住旧实例
+    this.#onResize = () => {
       if (resizeTimer) clearTimeout(resizeTimer);
       resizeTimer = setTimeout(() => {
         resizeTimer = null;
@@ -438,13 +443,26 @@ export class ChatOverlay {
         this.#applyGeom();
         this.#notify('onGeomChange', this.getGeom()); // x 语义已随视口平移，同步存档
       }, 120);
-    });
+    };
+    this.#clearResizeTimer = () => {
+      if (resizeTimer) clearTimeout(resizeTimer);
+      resizeTimer = null;
+    };
+    window.addEventListener('resize', this.#onResize);
     // 挂载即隐藏：可见性统一由 show/hide/toggle 控制（chat-window 决定首次展示时机）
     win.hidden = true;
   }
 
-  /** 卸载浮层（移除 host，冷却/toast 定时器一并清理） */
+  /** 卸载浮层（移除 host，冷却/toast/resize 定时器与 resize 监听一并清理） */
   unmount() {
+    if (this.#onResize) {
+      window.removeEventListener('resize', this.#onResize);
+      this.#onResize = null;
+    }
+    if (this.#clearResizeTimer) {
+      this.#clearResizeTimer();
+      this.#clearResizeTimer = null;
+    }
     if (this.#cooldownTimer) {
       clearInterval(this.#cooldownTimer);
       this.#cooldownTimer = null;

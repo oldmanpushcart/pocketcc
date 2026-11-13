@@ -189,9 +189,10 @@ export const secretRealm = {
    * 永不 reject：未就绪/发送异常/超时无应答均回 Ret(code=SECRET_NOT_SENT)。
    * @param {number} cmd 命令号（秘境 85xx）
    * @param {object|null} data 载荷（逐键对齐录制/源码；Int64 按字符串透传）
+   * @param {AbortSignal} [signal] 宿主取消信号：abort 即收口回哨兵（不等满超时窗），收口后移除监听
    * @returns {Promise<object>} Ret 形结果
    */
-  sendSecret(cmd, data) {
+  sendSecret(cmd, data, signal) {
     var mgr = watchNetMgr();
     if (!mgr) return Promise.resolve(secretRet(SECRET_NOT_SENT, null, null));
     // 就绪预检：门面 是 `isPabBattleMap ? (this._socket&&this._isConnect&&this._isLogin&&this._socket.sendPBV2(…)) : NET.sendPBV2(…)`。
@@ -220,12 +221,26 @@ export const secretRealm = {
       var timer = setTimeout(function () {
         if (settled) return;
         settled = true;
+        if (signal) signal.removeEventListener('abort', onAbort);
         resolve(secretRet(SECRET_NOT_SENT, null, null));
       }, SECRET_TIMEOUT_MS);
+      // abort 收口：pause 后不再白等满超时窗；哨兵语义与超时同口径（未发出，可重试）
+      var onAbort = function () {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        if (signal) signal.removeEventListener('abort', onAbort);
+        resolve(secretRet(SECRET_NOT_SENT, null, null));
+      };
+      if (signal) {
+        if (signal.aborted) return onAbort();
+        signal.addEventListener('abort', onAbort, { once: true });
+      }
       var done = function (code, d, reason) {
         if (settled) return;
         settled = true;
         clearTimeout(timer);
+        if (signal) signal.removeEventListener('abort', onAbort);
         resolve(secretRet(code, d, reason));
       };
       try {
@@ -265,9 +280,10 @@ export const secretRealm = {
    *   回调形如 `{s, d}`（d 是 JSON 字符串），s!==0 或超时回 null。
    * @param {number} cmd 命令号（秘境里用于 901 等 JSON 协议）
    * @param {object|null} data 载荷
+   * @param {AbortSignal} [signal] 宿主取消信号：abort 即收口回 null（不等满超时窗），收口后移除监听
    * @returns {Promise<object|null>} 解析后的应答体；未就绪/失败/超时一律 null（永不 reject）
    */
-  sendSecretJson(cmd, data) {
+  sendSecretJson(cmd, data, signal) {
     var mgr = watchNetMgr();
     if (!mgr || typeof mgr.send !== 'function') return Promise.resolve(null);
     return new Promise(function (resolve) {
@@ -275,12 +291,26 @@ export const secretRealm = {
       var timer = setTimeout(function () {
         if (settled) return;
         settled = true;
+        if (signal) signal.removeEventListener('abort', onAbort);
         resolve(null);
       }, SECRET_TIMEOUT_MS);
+      // abort 收口：与 sendSecret 同口径（pause 早收，不白等超时窗）
+      var onAbort = function () {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        if (signal) signal.removeEventListener('abort', onAbort);
+        resolve(null);
+      };
+      if (signal) {
+        if (signal.aborted) return onAbort();
+        signal.addEventListener('abort', onAbort, { once: true });
+      }
       var done = function (v) {
         if (settled) return;
         settled = true;
         clearTimeout(timer);
+        if (signal) signal.removeEventListener('abort', onAbort);
         resolve(v);
       };
       try {

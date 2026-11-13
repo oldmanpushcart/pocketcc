@@ -7,7 +7,7 @@
  *   → 奖励由服务端直接走邮件下发（mail_title_3289「攻击重装母舰使徒奖励」），没有任何领奖请求。
  * 本 feat 只做这条「攻打世界使徒领奖」链路：不抽奖（消耗抽券，属资源支出）、不领 8801 进度奖励。
  *
- * 网络一律走 promise 封装 window.pocketcc.net：send/sendPBV2(cmd, data) → Promise<Ret{code,data,ok}>，isSending(cmd) 查在途。
+ * 网络一律走 reactor 注入的 ctx.net（promise 封装）：send/sendPBV2(cmd, data) → Promise<Ret{code,data,ok}>，isSending(cmd) 查在途。
  *
  * 三条协议（实录报文实证）：
  *   1) req sendPBV2 8802（PINK_MECHA_MONSTER_LIST）{aid, type}：type=1 → data.myMonsters（我自己发现的），
@@ -320,7 +320,7 @@ async function consume() {
       log.warn('attack flow threw.', err);
     }
     if (queue.length && aliveFn()) {
-      await sleep(cfg.marchInterval);
+      await sleep(cfg.marchInterval, ctxRef && ctxRef.signal);
     }
   }
 }
