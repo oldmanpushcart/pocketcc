@@ -1,12 +1,13 @@
 // 面板骨架：菜单树 → 卡片/pane 的渲染，以及只读文本刷新 / 全量控件回写 / 条件字段显隐 / 菜单树查询。
-// 从 core/ui.js 迁出。字段 HTML 委托给 fields，动态控件装配委托给 widgets。
+// 从 core/ui.js 迁出。字段 HTML 委托给 fields，动态控件装配委托给 field-types 各 module（assemble/sync 钩子，widgets.js T5 退役）。
 import { configs, findFeature } from '../registry.js';
 import { MENU } from '../menu.js';
 import { list as hotkeyList } from '../hotkeys.js';
 import { gameData } from '../game-api.js';
-import { escAttr } from './dom.js';
-import { cardHead, buildFieldsHTML, findFieldDescriptor, refreshFieldBox } from './fields.js';
-import { mountUidList, mountSortList, mountItemList } from './widgets.js';
+import { escAttr, findFieldDescriptor } from './dom.js';
+import { cardHead, buildFieldsHTML, refreshFieldBox } from './fields.js';
+import { getTypeModule, assembleTypeModules, syncTypeModules } from './field-types/index.js';
+import { assembleCtx } from './field-types/ctx.js';
 
 /**
  * 左 TAB 的活动闸门注册表：menu.js 类别节点的 `gate` 名 -> 判据（返回假则该 TAB 不可点）。
@@ -113,7 +114,7 @@ export function refreshFieldVisibility(root) {
  */
 function renderGroupCard(node) {
   const gc = configs[node.id] || { enabled: false };
-  const chk = `<input type="checkbox" class="pc-gen" data-gid="${node.id}" ${gc.enabled ? 'checked' : ''}>`;
+  const chk = `<input type="checkbox" class="pc-gen" data-gid="${node.id}" aria-label="启用 ${escAttr(node.label)}（自动化组总开关）" ${gc.enabled ? 'checked' : ''}>`;
   const rows = (node.children || [])
     .map((ch) => {
       const c = configs[ch.id] || { enabled: false };
@@ -163,8 +164,9 @@ function renderFeatureCard(node) {
   const c = configs[fid] || { enabled: false };
   const f = findFeature(fid);
   const expandable = !!node.showFields && !!f;
-  const chk = `<input type="checkbox" class="pc-en" data-id="${fid}" ${c.enabled ? 'checked' : ''}>`;
-  const head = cardHead(node.label || (f && f.label) || fid, chk, expandable);
+  const label = node.label || (f && f.label) || fid;
+  const chk = `<input type="checkbox" class="pc-en" data-id="${fid}" aria-label="启用 ${escAttr(label)}" ${c.enabled ? 'checked' : ''}>`;
+  const head = cardHead(label, chk, expandable);
   if (!expandable) return `<div class="pc-sec" data-fid="${fid}">${head}</div>`;
   const fields = buildFieldsHTML(fid, f);
   return (
@@ -229,8 +231,10 @@ function renderCategoryPane(cat, active) {
     )
     .join('');
   const extra =
-    cat.id === LOGOUT_PANE_ID ? `<button class="pc-btn" id="pc-logout">登出 / 换号</button>` : '';
-  return `<div class="pc-pane" data-pane="${cat.id}"${active ? '' : ' hidden'}>${cards || '<div class="pc-empty">无内容</div>'}${extra}</div>`;
+    cat.id === LOGOUT_PANE_ID
+      ? `<button class="pc-btn pc-btn-danger" id="pc-logout">登出 / 换号</button>`
+      : '';
+  return `<div class="pc-pane" id="pc-pane-${cat.id}" role="tabpanel" aria-labelledby="pc-tab-${cat.id}" tabindex="0" data-pane="${cat.id}"${active ? '' : ' hidden'}>${cards || '<div class="pc-empty">无内容</div>'}${extra}</div>`;
 }
 
 /**
@@ -240,7 +244,7 @@ function renderCategoryPane(cat, active) {
 export function buildPanelHTML() {
   const tabs = MENU.map(
     (c, i) =>
-      `<button class="pc-tab${i === 0 ? ' active' : ''}" data-tab="${c.id}">${c.label}</button>`,
+      `<button class="pc-tab${i === 0 ? ' active' : ''}" id="pc-tab-${c.id}" data-tab="${c.id}" role="tab" aria-controls="pc-pane-${c.id}" aria-selected="${i === 0 ? 'true' : 'false'}" tabindex="${i === 0 ? 0 : -1}">${c.label}</button>`,
   ).join('');
   const panes = MENU.map((c, i) => renderCategoryPane(c, i === 0)).join('');
   return `
@@ -248,7 +252,7 @@ export function buildPanelHTML() {
       <div class="pc-world" id="pc-world"></div>
       <label class="pc-mode"><span>战斗模式</span><input type="checkbox" id="pc-combat"></label>
       <div class="pc-tabs">
-        <div class="pc-tabbar">${tabs}</div>
+        <div class="pc-tabbar" role="tablist" aria-orientation="vertical" aria-label="功能分类">${tabs}</div>
         <div class="pc-tabpanes">${panes}</div>
       </div>`;
 }
@@ -260,9 +264,12 @@ export function buildPanelHTML() {
  * @param {string} id 类别 id（menu.js category.id）
  */
 export function activateTab(panel, id) {
-  panel
-    .querySelectorAll('.pc-tab')
-    .forEach((t) => t.classList.toggle('active', t.dataset.tab === id));
+  panel.querySelectorAll('.pc-tab').forEach((t) => {
+    const on = t.dataset.tab === id;
+    t.classList.toggle('active', on);
+    t.setAttribute('aria-selected', on ? 'true' : 'false');
+    t.tabIndex = on ? 0 : -1; // 漫游 tabindex：同一时刻只有当前 TAB 可 Tab 到（方向键在其间移动）
+  });
   panel.querySelectorAll('.pc-pane').forEach((p) => {
     p.hidden = p.dataset.pane !== id;
   });
@@ -332,9 +339,8 @@ export function rerenderFeatureCard(root, fid, rewire) {
   if (typeof rewire === 'function') {
     rewire(body);
   } else {
-    body.querySelectorAll('.pc-ulist').forEach(mountUidList);
-    body.querySelectorAll('.pc-slist').forEach(mountSortList);
-    body.querySelectorAll('.pc-ilist').forEach(mountItemList);
+    // 兜底：没给 rewire 时只装配有状态清单/标量 UID（注册表 assemble 钩子），无状态控件靠面板级委托
+    assembleTypeModules(body, assembleCtx);
   }
   refreshFieldVisibility(card); // 条件字段显隐随新行集重算
   refreshTexts(card);
@@ -342,11 +348,11 @@ export function rerenderFeatureCard(root, fid, rewire) {
 }
 
 /**
- * 刷新面板内所有只读字段：type:'text' 按 descriptor.get() 重算当前值；type:'infogrid' 行集来自 fd.rows，
- * 整块重刷（与首次渲染同一渲染器，靠容器 data-id/data-fkey 反查）。
- * 另特处理两个清单内的只读格：怪物清单（huntlist）「已打」（.pc-hlstat[data-hlstat] ← fd.todayText(key)）与
- * 物品清单（itemlist）「总数量」（.pc-istock[data-istock] ← fd.stockText(key)）、「已抢」（.pc-ibought[data-ibought] ← fd.boughtText(key)），以及清单页脚汇总
- *   （.pc-isummary[data-isummary] ← fd.summary(items,state,cfg)，汇总跟快照/额度走同一条通路）。
+ * 刷新面板内所有只读字段：type:'infogrid' 行集来自 fd.rows，整块重刷（与首次渲染同一渲染器，靠容器 data-id/data-fkey 反查）。
+ * .pc-fval 只读格全走类型 module 的 refreshText 钩子就地改文本（T5 终态）：text 按 fd.get(cfg)、huntlist「已打」
+ *   （.pc-hlstat ← fd.todayText）、itemlist「总数量/已抢」（.pc-istock/.pc-ibought ← fd.stockText/boughtText）各由所属 module 自持；
+ *   无 module/无钩子的子描述符（ctrlrow text cell 走 text module、rallygrid count 无 type）落 fd.get 兜底。
+ * 清单页脚汇总（.pc-isummary ← fd.summary(items,state,cfg)）单列一条通路（汇总跟快照/额度走）。
  * 这些都是「值随数据变、行结构不变」的格：只改文本，绝不整块重刷（itemlist 的拖拽/勾选监听绑在行节点上）。
  * 面板打开 / 卡片展开 / 切 TAB / 功能侧 ui.refresh 时调用，无需定时器（避免常驻轮询）。
  * @param {Element} root 扫描范围（面板或单个 pane/body）
@@ -359,26 +365,18 @@ export function refreshTexts(root) {
     // 行内只读格的 data-fkey 未必是顶层 fd.key，需下探子描述符（rallygrid 行内计数格 / ctrlrow 的 cell，口径见 findFieldDescriptor）
     const fd = findFieldDescriptor(f, span.dataset.fkey);
     if (!fd) return;
-    let next;
-    if (span.dataset.hlstat != null) {
-      // 怪物清单「已打」格：值按行 key 从 fd.todayText 取（无则不刷）
-      if (typeof fd.todayText !== 'function') return;
-      next = String(fd.todayText(span.dataset.hlstat) || '');
-    } else if (span.dataset.istock != null) {
-      // 物品清单「总数量」格：值按行 key 从 fd.stockText 取（无则不刷）
-      if (typeof fd.stockText !== 'function') return;
-      next = String(fd.stockText(span.dataset.istock) || '');
-    } else if (span.dataset.ibought != null) {
-      // 物品清单「已抢」格：值按行 key 从 fd.boughtText 取（无则不刷）
-      if (typeof fd.boughtText !== 'function') return;
-      next = String(fd.boughtText(span.dataset.ibought) || '');
-    } else {
-      if (!fd.get) return;
-      next = String(fd.get(configs[f.id]) || '');
+    // T5 终态：只读格全走 module.refreshText 钩子（text/huntlist hlstat/itemlist istock·ibought 各自就地改文本）；
+    //   无 module 或无钩子的子描述符（rallygrid count 无 type）落 fd.get 兜底。
+    const mod = getTypeModule(fd.type);
+    if (mod && typeof mod.refreshText === 'function') {
+      mod.refreshText(span, { f, fd, c: configs[f.id] });
+      return;
     }
+    if (!fd.get) return;
+    const next = String(fd.get(configs[f.id]) || '');
     if (span.textContent !== next) span.textContent = next;
   });
-  // 清单页脚汇总：快照/额度变了就要重算（勾选变更时 widgets.js 走同一个 fd.summary，两条通路同口径）
+  // 清单页脚汇总：快照/额度变了就要重算（勾选变更时 itemlist module 走同一个 fd.summary，两条通路同口径）
   root.querySelectorAll('.pc-isummary').forEach((div) => {
     if (div.dataset.isummary == null) return;
     const f = findFeature(div.dataset.fid);
@@ -422,26 +420,18 @@ export function syncControls(panel) {
     const v = configs[input.dataset.id][input.dataset.key];
     if (v !== undefined) input.value = v;
   });
-  // UID 复合行：若当前处于显示态，按最新 configs 回写名字/UID（输入态下不打断用户编辑）
-  // 好友清单的行（.pc-uli）不在此列：它们随下方 .pc-ulist 整块重刷，避免重复回写
-  panel.querySelectorAll('.pc-uidwrap').forEach((w) => {
-    if (!w.classList.contains('pc-uli') && w.__pcUidRefresh) w.__pcUidRefresh();
-  });
-  // 容器型字段（区间规则 / 多选开关组 / 采集规则 / 下田规则 / 下田时段）：整块重刷内层。
-  // 这类字段行数可增可减、选项由配置表运行时枚举，不能只回写单个值；重刷与首次渲染走同一张 FIELD_BOXES
-  // 渲染表（refreshFieldBox 靠容器上的 data-id + data-fkey 反查 descriptor），不再逐类抄一份同形块。
+  // 容器型字段（区间规则 / 多选开关组 / 采集规则 / 下田规则 / 下田时段 / 信息格）：整块重刷内层。
+  // 这类字段行数可增可减、选项由配置表运行时枚举，不能只回写单个值；重刷与首次渲染走同一 module 注册表
+  // （refreshFieldBox 靠容器上的 data-id + data-fkey 反查 descriptor），不再逐类抄一份同形块。
   // 注意：重刷会重建种类多选下拉的 DOM，展开态随之收起（只在配置补载后发生，可接受）
   panel
     .querySelectorAll('.pc-rng, .pc-mopts, .pc-mrule, .pc-frule, .pc-trule, .pc-igraphbox')
     .forEach((box) => {
       refreshFieldBox(box);
     });
-  // 好友清单：整块重刷 + 重绑（同 ranges，行数可增删）
-  panel.querySelectorAll('.pc-ulist').forEach(mountUidList);
-  // 领取优先级清单：整块重刷 + 重绑（行不可增删但 ↑/↓ 交换后序号/disabled 态会变）
-  panel.querySelectorAll('.pc-slist').forEach(mountSortList);
-  // 物品清单（type:'itemlist'）：整块重刷 + 重绑（行不可增删，池由 fd.items 动态枚举）
-  panel.querySelectorAll('.pc-ilist').forEach(mountItemList);
+  // 有状态控件回写（T5 终态，注册表 sync 钩子）：好友/优先级/物品三清单整块重刷 + 重绑（sync=mount*），
+  //   标量 UID 行只回显示态名字/UID（__pcUidRefresh，输入态下不打断编辑、绝不重绑）。四者 DOM 集互斥，序无关。
+  syncTypeModules(panel, assembleCtx);
   refreshTexts(panel);
 }
 

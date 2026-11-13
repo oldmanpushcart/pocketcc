@@ -19,14 +19,12 @@ export const PANEL_CSS = `
       background:radial-gradient(circle closest-side,
         rgba(110,190,255,0) 0 50%, rgba(110,190,255,.7) 70%,
         rgba(140,205,255,1) 82%, rgba(110,190,255,0) 100%);
-      filter:blur(6px);
-      animation:pc-breathe-daily 3.4s ease-out infinite;}
+      filter:blur(6px);}
     .pc-icon.combat .pc-halo{
       background:radial-gradient(circle closest-side,
         rgba(255,95,65,0) 0 50%, rgba(255,95,65,.75) 70%,
         rgba(255,130,100,1) 82%, rgba(255,95,65,0) 100%);
-      filter:blur(7px);
-      animation:pc-breathe-combat 1.1s ease-out infinite;}
+      filter:blur(7px);}
     @keyframes pc-breathe-daily{
       0%{transform:translate(-50%,-50%) scale(.9);opacity:0;}
       18%{opacity:1;}
@@ -35,6 +33,11 @@ export const PANEL_CSS = `
       0%{transform:translate(-50%,-50%) scale(.9);opacity:0;}
       14%{opacity:1;}
       100%{transform:translate(-50%,-50%) scale(1.38);opacity:0;}}
+    /* 光晕呼吸只在用户不排斥动效时运行（2.2.2 / prefers-reduced-motion）；reduced-motion 下停为静态光晕（元素仍在，用自身默认 opacity） */
+    @media (prefers-reduced-motion: no-preference){
+      .pc-halo{animation:pc-breathe-daily 3.4s ease-out infinite;}
+      .pc-icon.combat .pc-halo{animation:pc-breathe-combat 1.1s ease-out infinite;}
+    }
     .pc-mode{display:flex;align-items:center;justify-content:space-between;gap:8px;
       margin:2px 0 10px;padding:8px 10px;border-radius:8px;cursor:pointer;
       border:1px solid rgba(255,120,90,.35);background:rgba(255,90,60,.10);}
@@ -48,14 +51,14 @@ export const PANEL_CSS = `
     .pc-world .pc-wp{opacity:.9;}
     .pc-world .pc-wdot{opacity:.45;}
     .pc-world.warn{color:#ffd0b8;border-color:rgba(255,150,90,.42);background:rgba(255,120,60,.14);}
-    .pc-panel{position:fixed;width:${PANEL_W}px;border-radius:12px;
-      background:rgba(18,22,30,.6);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);
+    .pc-panel{position:fixed;width:${PANEL_W}px;max-width:calc(100vw - 16px);border-radius:12px;
+      background:rgba(18,22,30,.86);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);
       border:1px solid rgba(255,255,255,.16);color:#e8eef7;
       font:13px/1.6 system-ui,-apple-system,"Segoe UI","Microsoft YaHei UI","Microsoft YaHei","PingFang SC","Noto Sans SC",sans-serif;
       -webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility;
       box-shadow:0 10px 36px rgba(0,0,0,.55);padding:14px;z-index:2147483646;box-sizing:border-box;
       /* 卡片多/视口矮时面板自身可滞：fixed 元素不会撑出页面滚动条，不封高度则底部内容直接不可达（placePanel 会跟着把 top 钉回可见区） */
-      max-height:calc(100vh - 16px);overflow-y:auto;scrollbar-gutter:stable;}
+      max-height:calc(100vh - 16px);overflow-y:auto;overscroll-behavior:contain;scrollbar-gutter:stable;}
     .pc-panel[hidden]{display:none;}
     .pc-panel h3{margin:0 0 8px;font-size:14px;font-weight:600;letter-spacing:.5px;color:#cfe8ff;}
     .pc-sub{margin-left:8px;font-size:10px;font-weight:400;opacity:.6;letter-spacing:1.5px;}
@@ -72,7 +75,7 @@ export const PANEL_CSS = `
     .pc-tab:disabled{opacity:.4;cursor:not-allowed;}
     .pc-tab:disabled:hover{background:transparent;}
     .pc-tabpanes{flex:1;min-width:0;}
-    .pc-pane{max-height:56vh;overflow-y:auto;scrollbar-gutter:stable;padding-right:2px;}
+    .pc-pane{max-height:56vh;overflow-y:auto;overscroll-behavior:contain;scrollbar-gutter:stable;padding-right:2px;}
     /* 固定滞动条槽宽度 + 细滑动条：避免内容超高时滞动条出现/消失导致面板横向跳动 */
     .pc-pane::-webkit-scrollbar{width:8px;}
     .pc-pane::-webkit-scrollbar-track{background:transparent;}
@@ -81,9 +84,12 @@ export const PANEL_CSS = `
     /* 卡片：组 / 功能共用外壳。 */
     .pc-sec{border:1px solid rgba(255,255,255,.12);border-radius:8px;margin:0 0 8px;overflow:hidden;}
     .pc-sec:last-child{margin-bottom:0;}
-    .pc-sec-head{display:flex;align-items:center;gap:8px;padding:8px 10px;cursor:pointer;
+    .pc-sec-head{display:flex;align-items:center;gap:8px;padding:8px 10px;
       background:rgba(255,255,255,.04);transition:background .15s;}
     .pc-sec-head:hover{background:rgba(255,255,255,.09);}
+    /* 可展开卡片的折叠标题做成 button：清掉 UA 按钮外观、铺满标题区（chev+标题走它），checkbox 作兄弟不被包住 */
+    .pc-sec-toggle{appearance:none;-webkit-appearance:none;display:flex;align-items:center;gap:8px;flex:1;min-width:0;
+      margin:0;padding:0;border:none;background:transparent;font:inherit;color:inherit;text-align:left;cursor:pointer;}
     .pc-chev{font-size:10px;opacity:.65;transition:transform .15s;}
     .pc-chev.invisible{visibility:hidden;}
     .pc-sec.open > .pc-sec-head .pc-chev{transform:rotate(90deg);}
@@ -100,21 +106,22 @@ export const PANEL_CSS = `
     .pc-row input[type=number]{width:96px;flex:0 0 auto;padding:3px 6px;border-radius:6px;box-sizing:border-box;
       border:1px solid rgba(255,255,255,.14);background:rgba(255,255,255,.06);color:#e8eef7;font:inherit;
       font-variant-numeric:tabular-nums;}
-    .pc-row input[type=number]:focus{outline:none;border-color:rgba(120,180,255,.55);background:rgba(120,180,255,.10);}
+    .pc-row input[type=number]:focus{outline:none;border-color:rgba(150,205,255,.95);box-shadow:0 0 0 2px rgba(90,160,255,.5);background:rgba(120,180,255,.10);}
     /* placeholder（如 0=不限 的「不限」提示）：与打野 .pc-hln 同款亮色，避免浏览器默认浅灰看不清；聚焦时隐去 */
     .pc-row input[type=number]::placeholder{color:#cfe3ff;opacity:1;}
     .pc-row input[type=number]:focus::placeholder{color:transparent;}
     .pc-row input[type=text].pc-fstr{width:140px;flex:0 0 auto;padding:3px 6px;border-radius:6px;box-sizing:border-box;
       border:1px solid rgba(255,255,255,.14);background:rgba(255,255,255,.06);color:#e8eef7;font:inherit;
       font-variant-numeric:tabular-nums;}
-    .pc-row input[type=text].pc-fstr:focus{outline:none;border-color:rgba(120,180,255,.55);background:rgba(120,180,255,.10);}
+    .pc-row input[type=text].pc-fstr:focus{outline:none;border-color:rgba(150,205,255,.95);box-shadow:0 0 0 2px rgba(90,160,255,.5);background:rgba(120,180,255,.10);}
     /* UID 控件（城市技能）：显示态「✎ 玩家名」可点→输入态；失焦反查名字，失败留框+红字 */
     .pc-uidwrap{width:100%;}
     .pc-uidwrap .pc-row>span:first-of-type{flex:0 0 auto;}
     /* 显示态做成与输入态同宽同框的「字段」外观（150px 定宽 + 边框 + 内边距），切换不跳版 */
     .pc-udisp{flex:0 0 150px;width:150px;box-sizing:border-box;display:flex;align-items:center;justify-content:flex-start;gap:4px;
       padding:3px 6px;border-radius:6px;border:1px solid rgba(255,255,255,.14);background:rgba(255,255,255,.06);cursor:pointer;
-      color:#9ecbff;white-space:nowrap;overflow:hidden;transition:border-color .15s,background .15s;}
+      color:#9ecbff;white-space:nowrap;overflow:hidden;transition:border-color .15s,background .15s;
+      appearance:none;-webkit-appearance:none;font-family:inherit;font-size:inherit;text-align:left;}
     /* display:flex 会盖过 UA 的 [hidden]{display:none}，enterEdit 里 disp.hidden=true 失效导致 ✎ Label 与输入框并存、行宽溢出：显式补一条 */
     .pc-udisp[hidden]{display:none;}
     .pc-udisp:hover{border-color:rgba(120,180,255,.55);background:rgba(120,180,255,.10);}
@@ -124,7 +131,7 @@ export const PANEL_CSS = `
     .pc-row input[type=text].pc-uinput{width:150px;flex:0 0 auto;padding:3px 6px;border-radius:6px;box-sizing:border-box;
       border:1px solid rgba(255,255,255,.14);background:rgba(255,255,255,.06);color:#e8eef7;font:inherit;
       font-variant-numeric:tabular-nums;}
-    .pc-row input[type=text].pc-uinput:focus{outline:none;border-color:rgba(120,180,255,.55);background:rgba(120,180,255,.10);}
+    .pc-row input[type=text].pc-uinput:focus{outline:none;border-color:rgba(150,205,255,.95);box-shadow:0 0 0 2px rgba(90,160,255,.5);background:rgba(120,180,255,.10);}
     .pc-row input[type=text].pc-uinput.pc-uerr{border-color:rgba(255,95,95,.85);}
     .pc-uhint{font-size:11px;color:#ff8a8a;text-align:right;margin:1px 0 2px;}
     /* 好友清单字段（type:'uidlist'，玩家点赞）：动态增删的 UID 行列表，行本身复用上面的 .pc-uidwrap 视觉。
@@ -153,12 +160,18 @@ export const PANEL_CSS = `
     .pc-srank{flex:0 0 auto;width:18px;text-align:right;opacity:.6;font-variant-numeric:tabular-nums;}
     .pc-sname{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:left;
       padding:3px 6px;border-radius:6px;border:1px solid rgba(255,255,255,.12);background:rgba(255,255,255,.05);color:#e8eef7;}
+    /* 行序 ↑↓ 按钮（拖拽之外的键盘/单指针替代，见 attachRowMove）：行尾两个小方块。
+       gap=4px 使 20px 按钮 + 4px 间距 = 24px 节距，与 ::before 的 24px 命中区恰好边贴边不重叠（2.5.8） */
+    .pc-rmvgrp{flex:0 0 auto;display:inline-flex;gap:4px;}
+    .pc-rmv{appearance:none;-webkit-appearance:none;position:relative;flex:0 0 auto;width:20px;height:20px;padding:0;border-radius:5px;cursor:pointer;
+      border:1px solid rgba(255,255,255,.22);background:transparent;color:#cfe8ff;font:inherit;font-size:13px;line-height:18px;}
+    .pc-rmv:hover{background:rgba(255,255,255,.1);}
+    .pc-rmv:disabled{opacity:.3;cursor:default;}
     /* checkable sortlist（卡车争夺）：每行行首一枚 checkbox 控制该物品是否参与匹配，取消勾选整行置灰但仍可拖拽排序 */
     .pc-scheck{flex:0 0 auto;width:15px;height:15px;margin:0;cursor:pointer;accent-color:#4aa3ff;}
     .pc-srow.pc-srowoff .pc-sname{opacity:.42;}
     .pc-srow.pc-srowoff .pc-srank{opacity:.3;}
-    .pc-smove{flex:0 0 auto;width:22px;height:22px;padding:0;border-radius:6px;cursor:pointer;
-      border:1px solid rgba(255,255,255,.22);background:transparent;color:#cfe8ff;font:inherit;font-size:14px;line-height:20px;}
+    /* 领取优先级清单：整池奖励只能整行拖拽调序，无独立移动按钮（↑/↓ 已退役，见 mountSortList） */
     /* 物品清单字段（type:'itemlist'，秘境拾取）：行不可增删，每行 [拖拽 序号] 名称 [数字(0=占位显示上限/无上限)] [拾] [店]。
        容器不单独限高/滚动（整块随面板 .pc-pane 统一滞动），避免清单内嵌滞动条。 */
     .pc-ilist{display:flex;flex-direction:column;gap:4px;width:100%;margin:2px 0 6px;}
@@ -225,8 +238,6 @@ export const PANEL_CSS = `
     .pc-igright{text-align:right;}
     .pc-ighead-cell{color:#9ecbff;font-size:11px;opacity:.85;}
     .pc-ignone{grid-column:1/-1;color:#8b97a8;}
-    .pc-smove:hover{background:rgba(255,255,255,.1);}
-    .pc-smove:disabled{opacity:.3;cursor:default;}
     .pc-row input[type=checkbox]{width:16px;height:16px;cursor:pointer;flex:0 0 auto;}
     /* 联盟集结目标紧凑表（type:'rallygrid'）：一行一目标的多行表 [目标名][延迟入队(秒)输入][每日上限输入][今日已打文本][启用checkbox]，
        列头与数据行共用同一 5 列 CSS Grid（行包 div 靠 display:contents 将子格直接挂到父栅格），窄面板下输入框弹性收缩、标签只占必要宽度；
@@ -243,7 +254,7 @@ export const PANEL_CSS = `
     .pc-rgrow > .pc-rgcell input[type=number].pc-rgin{width:100%;min-width:0;padding:2px 4px;border-radius:5px;
       box-sizing:border-box;border:1px solid rgba(255,255,255,.14);background:rgba(255,255,255,.06);
       color:#e8eef7;font:inherit;font-variant-numeric:tabular-nums;}
-    .pc-rgrow > .pc-rgcell input[type=number].pc-rgin:focus{outline:none;border-color:rgba(120,180,255,.55);
+    .pc-rgrow > .pc-rgcell input[type=number].pc-rgin:focus{outline:none;border-color:rgba(150,205,255,.95);box-shadow:0 0 0 2px rgba(90,160,255,.5);
       background:rgba(120,180,255,.10);}
     .pc-rgrow > .pc-rgcell input[type=number].pc-rgin::placeholder{color:#cfe3ff;opacity:1;}
     .pc-rgrow > .pc-rgcell input[type=number].pc-rgin:focus::placeholder{color:transparent;}
@@ -285,7 +296,7 @@ export const PANEL_CSS = `
     .pc-rngrow input[type=number]{flex:1 1 0;min-width:0;width:auto;padding:3px 5px;border-radius:6px;box-sizing:border-box;
       border:1px solid rgba(255,255,255,.14);background:rgba(255,255,255,.06);color:#e8eef7;font:inherit;
       font-variant-numeric:tabular-nums;text-align:right;appearance:textfield;-moz-appearance:textfield;}
-    .pc-rngrow input[type=number]:focus{outline:none;border-color:rgba(120,180,255,.55);background:rgba(120,180,255,.10);}
+    .pc-rngrow input[type=number]:focus{outline:none;border-color:rgba(150,205,255,.95);box-shadow:0 0 0 2px rgba(90,160,255,.5);background:rgba(120,180,255,.10);}
     .pc-rngrow input[type=number]::-webkit-inner-spin-button,
     .pc-rngrow input[type=number]::-webkit-outer-spin-button{-webkit-appearance:none;margin:0;}
     /* 括号 / 波浪号 / 箭头：不参与伸缩，也不给数字框抢宽 */
@@ -322,7 +333,9 @@ export const PANEL_CSS = `
       font-size:12px;font-weight:600;color:#cfe8ff;letter-spacing:.5px;}
     .pc-fsec:first-child{margin-top:2px;padding-top:0;border-top:none;}
     /* 可折叠子分组（如卡车拦截「拦截判定」默认收起）：标题行带箭头可点展开/收起，箭头随开合旋转 */
-    .pc-fsectoggle{display:flex;align-items:center;gap:6px;cursor:pointer;user-select:none;}
+    .pc-fsectoggle{display:flex;align-items:center;gap:6px;cursor:pointer;user-select:none;
+      appearance:none;-webkit-appearance:none;width:100%;text-align:left;background:transparent;font-family:inherit;color:inherit;box-sizing:border-box;
+      border-right:0;border-bottom:0;border-left:0;}
     .pc-fsectoggle:hover{color:#eaf4ff;}
     .pc-fsecchev{font-size:9px;opacity:.6;transition:transform .15s;}
     .pc-fsectoggle.open .pc-fsecchev{transform:rotate(90deg);}
@@ -344,13 +357,16 @@ export const PANEL_CSS = `
       background:linear-gradient(180deg,rgba(255,255,255,.18),rgba(255,255,255,.05));
       border:1px solid rgba(255,255,255,.24);border-bottom-width:2px;box-shadow:0 1px 0 rgba(0,0,0,.35);}
     .pc-hkrow .pc-hkl{flex:1 1 auto;min-width:0;}
-    .pc-hkrow .pc-hkw{flex:0 0 auto;font-size:10px;opacity:.5;text-align:right;background:rgba(255,255,255,.06);border-radius:10px;padding:1px 8px;}
+    .pc-hkrow .pc-hkw{flex:0 0 auto;font-size:11px;opacity:.5;text-align:right;background:rgba(255,255,255,.06);border-radius:10px;padding:1px 8px;}
     .pc-hkgrp{font-size:11px;opacity:.55;letter-spacing:.5px;margin:8px 0 2px;padding:0 6px;}
     .pc-hkgrp:first-child{margin-top:2px;}
     .pc-btn{margin-top:10px;width:100%;padding:7px 0;border-radius:8px;cursor:pointer;
       border:1px solid rgba(255,255,255,.2);background:rgba(255,255,255,.08);color:#e8eef7;
       font:inherit;transition:background .15s;}
     .pc-btn:hover{background:rgba(255,255,255,.16);}
+    /* 账号级破坏性动作（登出/换号）：危险色区分（红边 + 红字），与常规 .pc-btn 拉开 */
+    .pc-btn-danger{border-color:rgba(255,95,65,.55);background:rgba(255,60,48,.16);color:#ffcabf;}
+    .pc-btn-danger:hover{background:rgba(255,60,48,.28);}
     /* 采集规则字段（type:'minerules'，次元矿洞：每条=矿种下拉 + 等级下拉 + 星级★点选，可动态增删）。
        每条规则单行：盒子 flex:1 撑满整行（矿种/等级左侧簇集、星级靠右），× 删除按钮留在最右与标题行的＋对齐，盒与×靠 row gap 拉开固定间隔。行可增删，交互走面板级事件委托（见 wirePanel）。 */
     .pc-mrule{display:flex;flex-direction:column;gap:6px;width:100%;margin:2px 0 6px;}
@@ -368,7 +384,7 @@ export const PANEL_CSS = `
     .pc-mrdel{flex:0 0 auto;width:22px;height:24px;padding:0;border:none;background:transparent;
       color:#ff9c9c;font:inherit;font-size:16px;line-height:24px;cursor:pointer;text-align:center;}
     .pc-mrdel:hover{color:#ff6b6b;}
-    .pc-mrcap{flex:0 0 auto;margin-left:auto;font-size:10px;line-height:1;color:#8fa6c4;letter-spacing:.5px;}
+    .pc-mrcap{flex:0 0 auto;margin-left:auto;font-size:11px;line-height:1;color:#8fa6c4;letter-spacing:.5px;}
     .pc-mrstars{display:inline-flex;gap:3px;flex:0 0 auto;}
     .pc-mrstar{font-size:15px;line-height:1;cursor:pointer;color:rgba(255,255,255,.3);transition:transform .1s,color .1s;}
     .pc-mrstar.on{color:#ffcf4d;text-shadow:0 0 6px rgba(255,207,77,.5);}
@@ -384,7 +400,7 @@ export const PANEL_CSS = `
     .pc-frbox{display:flex;flex:1 1 auto;flex-wrap:wrap;align-items:center;gap:4px;min-width:0;padding:6px 7px;
       border:1px solid rgba(255,255,255,.12);border-radius:8px;background:rgba(255,255,255,.03);}
     /* 目标/部队 分组小标签 + 中间竖分隔线：把“采集什么田”与“派哪支部队”在视觉上分成两段 */
-    .pc-frcap{flex:0 0 auto;font-size:10px;line-height:1;color:#8fa6c4;letter-spacing:.5px;}
+    .pc-frcap{flex:0 0 auto;font-size:11px;line-height:1;color:#8fa6c4;letter-spacing:.5px;}
     .pc-frdiv{flex:0 0 auto;width:1px;align-self:stretch;margin:1px 2px;background:rgba(255,255,255,.22);}
     .pc-frsel{padding:3px 5px;border-radius:6px;border:1px solid rgba(255,255,255,.25);
       background:rgba(20,26,38,.9);color:#e8eef7;font:inherit;min-width:0;}
@@ -430,7 +446,7 @@ export const PANEL_CSS = `
     .pc-trow{display:flex;align-items:center;gap:8px;}
     .pc-tinp{flex:0 1 auto;min-width:0;padding:3px 6px;border-radius:6px;border:1px solid rgba(255,255,255,.25);
       background:rgba(20,26,38,.9);color:#e8eef7;font:inherit;font-variant-numeric:tabular-nums;}
-    .pc-tinp:focus{outline:none;border-color:rgba(120,180,255,.55);}
+    .pc-tinp:focus{outline:none;border-color:rgba(150,205,255,.95);box-shadow:0 0 0 2px rgba(90,160,255,.5);}
     .pc-tdash{flex:0 0 auto;opacity:.55;font-size:12px;}
     .pc-tdel{flex:0 0 auto;width:22px;height:24px;padding:0;border:none;background:transparent;
       color:#ff9c9c;font:inherit;font-size:16px;line-height:24px;cursor:pointer;text-align:center;}
@@ -453,7 +469,7 @@ export const PANEL_CSS = `
     .pc-hln{width:100%;min-width:0;box-sizing:border-box;padding:3px 2px;border-radius:5px;
       border:1px solid rgba(255,255,255,.14);background:rgba(255,255,255,.06);color:#e8eef7;font:inherit;
       font-size:12px;font-variant-numeric:tabular-nums;text-align:center;appearance:textfield;-moz-appearance:textfield;}
-    .pc-hln:focus{outline:none;border-color:rgba(120,180,255,.55);background:rgba(120,180,255,.10);}
+    .pc-hln:focus{outline:none;border-color:rgba(150,205,255,.95);box-shadow:0 0 0 2px rgba(90,160,255,.5);background:rgba(120,180,255,.10);}
     .pc-hln::-webkit-inner-spin-button,.pc-hln::-webkit-outer-spin-button{-webkit-appearance:none;margin:0;}
     .pc-hln::placeholder{color:#cfe3ff;opacity:1;font-size:11px;}
     .pc-hln:focus::placeholder{color:transparent;}
@@ -480,4 +496,8 @@ export const PANEL_CSS = `
     select.pc-hlmode,.pc-ppsel{padding:2px 4px;border-radius:6px;border:1px solid rgba(255,255,255,.25);
       background:rgba(20,26,38,.9);color:#e8eef7;font:inherit;font-size:12px;min-width:0;width:100%;box-sizing:border-box;}
     .pc-ppsel{flex:1 1 auto;}
+    /* 2.5.8 最小命中区：把 <24px 的图标按钮（增/删档、删除行、＋添加）用居中伪元素扩到 24×24，
+       视觉尺寸与占位不变（flex 基宽不动），扩出的 3px 落在行间 gap 内，不抢相邻目标 */
+    .pc-rngdel,.pc-rngadd,.pc-udel,.pc-rgdel,.pc-ppdel,.pc-ulistadd,.pc-mradd,.pc-fradd,.pc-tradd,.pc-ppadd,.pc-mrdel,.pc-frdel,.pc-tdel,.pc-rmv{position:relative;}
+    .pc-rngdel::before,.pc-rngadd::before,.pc-udel::before,.pc-rgdel::before,.pc-ppdel::before,.pc-ulistadd::before,.pc-mradd::before,.pc-fradd::before,.pc-tradd::before,.pc-ppadd::before,.pc-mrdel::before,.pc-frdel::before,.pc-tdel::before,.pc-rmv::before{content:'';position:absolute;left:50%;top:50%;width:24px;height:24px;transform:translate(-50%,-50%);}
   `;

@@ -39,9 +39,12 @@ export async function mountUI() {
   style.textContent = PANEL_CSS;
   root.appendChild(style);
 
-  const icon = document.createElement('div');
+  // 浮动图标做成真实 button：键盘可聚焦、Enter/Space 可开合面板（2.1.1 指针路径皆需键盘等价）。
+  const icon = document.createElement('button');
+  icon.type = 'button';
   icon.className = 'pc-icon';
   icon.title = '口袋控制中心';
+  icon.setAttribute('aria-label', '口袋控制中心');
 
   /** 图标随战斗态切换：换 SVG（冷/热）+ 切 .combat 类（光晕节奏/配色、外发光跟随）。 */
   function renderIcon() {
@@ -184,9 +187,10 @@ export async function mountUI() {
    */
   function placePanel() {
     const rect = icon.getBoundingClientRect();
-    let left = rect.right - PANEL_W;
+    const pw = Math.min(PANEL_W, window.innerWidth - 16); // 与 CSS max-width:calc(100vw-16px) 同式，窄视口下面板已收窄
+    let left = rect.right - pw;
     if (left < 8) left = 8;
-    if (left + PANEL_W > window.innerWidth - 8) left = window.innerWidth - PANEL_W - 8;
+    if (left + pw > window.innerWidth - 8) left = Math.max(8, window.innerWidth - pw - 8);
     panel.style.left = `${left}px`;
     panel.style.visibility = 'hidden';
     panel.hidden = false;
@@ -216,6 +220,7 @@ export async function mountUI() {
 
   let dragging = false;
   let moved = false;
+  let suppressClick = false;
   let startX = 0;
   let startY = 0;
   let originX = 0;
@@ -248,9 +253,17 @@ export async function mountUI() {
     icon.releasePointerCapture(e.pointerId);
     if (moved) {
       storage.set(POS_KEY, pos);
-    } else {
-      panel.hidden ? openPanel() : closePanel();
+      suppressClick = true; // 拖拽收尾会紧跟一次 click，须吞掉，免得拖完顺手把面板开关翻了
     }
+  });
+
+  // 开合走 click：鼠标点击与键盘 Enter/Space 都汇入这里（pointerup 只管落位，不再直接翻面板）
+  icon.addEventListener('click', () => {
+    if (suppressClick) {
+      suppressClick = false;
+      return;
+    }
+    panel.hidden ? openPanel() : closePanel();
   });
 
   // 点击外部收起：shadow DOM 内事件在 document 上 target 被重定向为 host

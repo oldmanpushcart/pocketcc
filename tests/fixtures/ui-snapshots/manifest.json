@@ -1,0 +1,31 @@
+{
+  "cases": [
+    "ranges.html",
+    "uidlist.html",
+    "sortlist.html",
+    "multiopts.html",
+    "itemlist.html",
+    "infogrid.html",
+    "minerules.html",
+    "farmrules.html",
+    "timeranges.html",
+    "huntlist.html",
+    "presetpool.html",
+    "checkbox.html",
+    "note.html",
+    "text.html",
+    "select.html",
+    "tripick.html",
+    "ctrlrow.html",
+    "string.html",
+    "uid.html",
+    "button.html",
+    "rallygrid.html",
+    "number-fallback.html",
+    "card-controls.html",
+    "card-containers.html",
+    "card-lists.html",
+    "card-sections.html",
+    "feat-alliance-boss-ranges.html"
+  ]
+}
