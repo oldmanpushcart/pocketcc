@@ -65,7 +65,7 @@ const GIFT_KEY_BIG = 'big';
 const CLAIM_GAP_MS = 1000 * 2;
 
 /** @type {number} 推送 10442 到点复查的去抖窗口：礼物风暴期多条推送合并成一次检查 */
-const PUSH_DEBOUNCE_MS = 1000 * 2;
+const WAKE_DEBOUNCE_MS = 1000 * 2;
 
 /**
  * 内置调优常量（面板仅出启用开关，不暴露这些项）
@@ -207,7 +207,7 @@ function onGiftInfoPush() {
   if (timerMode === 'busy' && Date.now() - lastCheckAt < cfg.busyInterval) return;
   // idle 长眠中或从未检查过：提前到 debounce 点；busy 档超期兜底：回到常规 busy 节奏
   schedule(
-    timerMode === 'idle' ? PUSH_DEBOUNCE_MS : cfg.busyInterval,
+    timerMode === 'idle' ? WAKE_DEBOUNCE_MS : cfg.busyInterval,
     timerMode === 'busy' ? 'busy' : 'wake',
   );
 }

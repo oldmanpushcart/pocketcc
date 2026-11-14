@@ -4,7 +4,7 @@
 //   2) 代码 ⊆ 注册表：extension/src 每处 CMD_/PUSH_ 定义都能按号查到且 usages 收录该定义；
 //   3) 注册表 ⊆ 代码：无陈旧 usage（常量删除/搬家后须重跑 extract 同步）；
 //   4) manifests ⊆ 注册表：verify-manifests 本地数字定义按号可查、featNum 名存在于 usages。
-// 失配修法：node scripts/protocol/extract.mjs 增量合并（人工标注 dir/note/src 保留）。
+// 失配修法：node scripts/protocol/extract.mjs 增量合并（人工标注 dir/note/src/fields 保留）。
 // 纯 node 模块直驱，无浏览器桩、不发包、不摸游戏符号。
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -27,6 +27,7 @@ test('注册表自洽：号唯一、dir 合法、usages 非空', () => {
     assert.ok(Array.isArray(e.usages) && e.usages.length > 0, `${e.cmd} usages 为空`);
     assert.equal(typeof e.note, 'string');
     assert.equal(typeof e.src, 'string');
+    assert.equal(typeof e.fields, 'string');
   }
   // 按号升序（index 契约）
   for (let i = 1; i < entries.length; i++) assert.ok(entries[i - 1].cmd < entries[i].cmd);
@@ -81,5 +82,8 @@ test('查询 interface 冒烟：byCmd / byFeat', () => {
   assert.ok(byFeat('secret-realm').some((e) => e.cmd === 8521));
   // 10019 人工实证标注：CMD_ 前缀的推送
   assert.equal(byCmd(10019).dir, 'S2C');
+  // fields 字段典：manifest 覆盖号已标注（6312 宝箱开启），未覆盖号为空串
+  assert.ok(byCmd(6312).fields.length > 0);
+  assert.equal(byCmd(10019).fields, '');
   assert.equal(byCmd(999999), null);
 });

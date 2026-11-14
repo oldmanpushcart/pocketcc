@@ -49,7 +49,8 @@ const ALLY_DEGRADE_FACTOR = 1.5;
 const ALLY_PROBE_MAX = 8;
 // 自矿信息(7428)独立节奏：脏(push/自身动作后)或超过最长复用期才重取，否则复用缓存。
 const SELF_MAX_AGE_MS = 300_000;
-const PUSH_DEBOUNCE_MS = 3000;
+// 推送唤醒去抖窗口：多条矿洞变更推送合并成一次扫描。
+const WAKE_DEBOUNCE_MS = 3000;
 
 /**
  * @typedef {Object} MineEngineEnv 两引擎共享的运行环境（由 index.js 注入）
@@ -756,7 +757,7 @@ export class MiningEngine {
     this.#pushTimer = setTimeout(() => {
       this.#pushTimer = null;
       if (this.#env.alive()) this.#triggerScan();
-    }, PUSH_DEBOUNCE_MS);
+    }, WAKE_DEBOUNCE_MS);
   }
 }
 

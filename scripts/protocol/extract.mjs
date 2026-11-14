@@ -6,7 +6,7 @@
  *
  * 合并语义：
  * - 机器字段（usages、域归属）每次全量重建——以源码扫描为准；
- * - 人工字段（dir/note/src）按协议号从旧表保留，新条目 dir 走启发式
+ * - 人工字段（dir/note/src/fields）按协议号从旧表保留，新条目 dir 走启发式
  *   （PUSH_ 前缀或 CMD_PUSH_ → 'S2C'，其余 null 待渐进标注）；
  * - 源码已删除的号：条目移除并打印清单（人工标注随之丢弃，需要时先备份）；
  * - 域归属：号仅在一个 feat 域定义 → 该域分片；跨域或 core 基础设施 → shared。
@@ -24,11 +24,12 @@ const REG_DIR = path.join(HERE, 'registry');
 const DOMAINS = ['shared', 'activity', 'alliance', 'battle', 'cq26', 'player', 'system'];
 
 // ── 读旧表（首次运行无 registry/ 时为空）──────────────────────────────
-/** @type {Map<number, {dir: 'C2S'|'S2C'|null, note: string, src: string}>} */
+/** @type {Map<number, {dir: 'C2S'|'S2C'|null, note: string, src: string, fields: string}>} */
 const old = new Map();
 try {
   const mod = await import('./index.mjs');
-  for (const e of mod.all()) old.set(e.cmd, { dir: e.dir, note: e.note, src: e.src });
+  for (const e of mod.all())
+    old.set(e.cmd, { dir: e.dir, note: e.note, src: e.src, fields: e.fields });
 } catch {
   // 首次生成：无旧表
 }
@@ -74,6 +75,7 @@ for (const [cmd, ds] of [...byCmd].sort((a, b) => a[0] - b[0])) {
     dir,
     note: prev ? prev.note : '',
     src: prev ? prev.src : '',
+    fields: prev ? prev.fields : '',
     usages,
   });
 }
@@ -82,7 +84,7 @@ const removed = [...old.keys()].filter((c) => !byCmd.has(c)).sort((a, b) => a - 
 // ── 写分片（JSON 序列化，prettier 收尾统一风格）──────────────────────
 mkdirSync(REG_DIR, { recursive: true });
 const HEADER =
-  '// 协议注册表 · {D} 域 —— 机械抽取 + 人工标注（dir/note/src 重跑保留，usages 重跑重建）。\n' +
+  '// 协议注册表 · {D} 域 —— 机械抽取 + 人工标注（dir/note/src/fields 重跑保留，usages 重跑重建）。\n' +
   '// 生成：node scripts/protocol/extract.mjs；闸门：tests/protocol-registry.test.js（npm test）。\n' +
   '// 条目键 = 协议号；名字是 feat 局部别名（同名异号是局部命名，非漂移）。只链不搬：src 指 references/ 出处。\n';
 for (const [dom, entries] of files) {

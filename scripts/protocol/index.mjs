@@ -11,7 +11,7 @@
  * 在不同 feat 指向不同协议是局部命名而非语义漂移，故语义名走人工 note 标注。
  *
  * 维护：node scripts/protocol/extract.mjs 增量合并——机器字段（usages/域归属）
- * 全量重建，人工字段（dir/note/src）按号保留。数据文件在 registry/ 按业务域分片，
+ * 全量重建，人工字段（dir/note/src/fields）按号保留。数据文件在 registry/ 按业务域分片，
  * 跨域共享号与 core 基础设施号归 registry/shared.mjs。
  *
  * @typedef {object} ProtoUsage
@@ -24,6 +24,7 @@
  * @property {'C2S'|'S2C'|null} dir 方向（人工标注，渐进；null=未标注）
  * @property {string} note 语义名/说明（人工标注，渐进）
  * @property {string} src 逆向出处链接（人工标注，references/ 相对路径，只链不搬）
+ * @property {string} fields 载荷字段典（人工标注，manifest 覆盖协议渐进；空=未标注）
  * @property {ProtoUsage[]} usages feat 局部常量用法清单（机器维护，重跑重建）
  */
 import shared from './registry/shared.mjs';
