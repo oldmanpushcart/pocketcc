@@ -48,9 +48,10 @@
  *     leaderUid, leaderName, targetPos, leaderPos, level, waitTime, …}；marchType 8=ALLIANCE_RALLY_BATTLE、
  *     10=ALLIANCE_SUPER_RALLY_BATTLE（两者都用 1204 加入，只是成员上限取不同 data_config），9=ALLIANCE_RALLY_ASSEMBLY 是加入请求自己的 marchType。
  *   行军闸门（同竞对 canMarch 口径）：UserData.myMarchNumMAX - myMarchNum >= 1。
- *   去重：pendingTeamIds 防同一集结重复加入。过期检查：expireTime 已过的集结直接跳过。
+ *   去重与过期：快照池（createSnapshotPool）键控去重防同一集结重复加入，expireTime 到点惰性剔除；
+ *     joinDelayMs 错峰是池内 wake.at，pause 清定时器保留条目、resume 重排续跑。
  *   每目标可配每日参与上限（0=无限），跨日自动清零，持久化到 pocketcc.feat.allianceRally.daily。
- *   延迟期内 reactor pause → alive=false → 到点自然放弃；信号包络只存标量。
+ *   延迟期内 reactor pause → 托管定时器被清、池条目保留，resume 重排续跑；信号包络只存标量。
  */
 import { todayStr, rejectText } from '../../core/util.js';
 import { createLog } from '../../core/log.js';
@@ -61,6 +62,7 @@ import { storage } from '../../core/storage.js';
 import { bus, EVT } from '../../core/bus.js';
 import { Battle } from '../../core/battle.js';
 import { march } from '../../core/march.js';
+import { createSnapshotPool } from '../../core/snapshot-pool.js';
 
 /** @type {ReturnType<createLog>} 模块日志器（tag=ALLIANCE_RALLY） */
 const log = createLog('ALLIANCE_RALLY');
@@ -696,7 +698,7 @@ var net;
 /** @type {object|null} DataCenter.DATA（行军上限/自发集结/过期时间） */
 var dataCenter;
 
-/** @type {object|null} reactor 注入的上下文；alive() 反映运行态，pause 后置否让延迟到点的加入自然放弃 */
+/** @type {object|null} reactor 注入的上下文；alive() 反映运行态，pause 清快照池托管定时器（条目保留，resume 重排续跑） */
 var ctxRef = null;
 
 /**
@@ -731,9 +733,6 @@ var saveSeq = 0;
  */
 var limitAnnounced = new Set();
 
-/** @type {Set<string>} 已安排加入（定时在飞 / 请求在途）的 teamId 集合，防同一条集结重复加入 */
-var pendingTeamIds = new Set();
-
 /**
  * 本轮运行内「已勾选集结目标但本人不在盟而跳过」是否已提示过一次（逐次推送重演同一条件会刷屏，故 once 闸门）。
  * @type {boolean}
@@ -750,6 +749,25 @@ var installed = false;
 function aliveFn() {
   return ctxRef ? ctxRef.alive() : false;
 }
+
+/**
+ * 集结快照池（D 原语）：过闸后的 12003 快照按 teamId 入池，joinDelayMs 错峰唤醒后一次性消耗调 joinFlow。
+ * 同键拒入不续命（重复 push 不重置延迟）；expireTime 到点惰性剔除；pause 清定时器保留条目，
+ * resume 由 run() 调 reschedule() 重排未过期条目（旧 run 清池放弃已延迟集结的口径改为续跑，属有意增强）。
+ * @type {ReturnType<createSnapshotPool>}
+ */
+const pool = createSnapshotPool({
+  log: log,
+  alive: aliveFn,
+  ctx: function () {
+    return ctxRef;
+  },
+  onWake: function (key, payload) {
+    return joinFlow(payload.key, key, payload.expireTime).catch(function (err) {
+      log.warn('join flow threw!', err);
+    });
+  },
+});
 
 /**
  * 注入面板配置（秒→毫秒在 registry.toModuleCfg 完成）
@@ -940,8 +958,16 @@ function onAssemblyCreated(ev) {
     return;
   }
 
-  if (pendingTeamIds.has(teamId)) return;
-  pendingTeamIds.add(teamId);
+  // 入池即去重（同 teamId 在池期间重复 push 拒入不续命）；wake.at=joinDelayMs 错峰，TTL=expireTime
+  var accepted = pool.offer(
+    teamId,
+    { key: target.key, expireTime: d.expireTime },
+    {
+      wakeAt: Date.now() + Math.max(0, tcfg.joinDelayMs | 0),
+      expireAt: d.expireTime > 0 ? d.expireTime * 1000 : 0,
+    },
+  );
+  if (!accepted) return;
 
   log.info(
     'rally push. target=%s;teamId=%s;leader=%s;delay=%dms',
@@ -950,7 +976,6 @@ function onAssemblyCreated(ev) {
     d.leaderName,
     tcfg.joinDelayMs,
   );
-  scheduleJoin(target.key, teamId, tcfg.joinDelayMs, d.expireTime);
 }
 
 /**
@@ -1090,81 +1115,59 @@ function releaseSaveLatch(seq) {
 }
 
 /**
- * 延迟入队：joinDelayMs 后执行加入。0 也走 setTimeout，让同步栈先落地。
- * ctx 托管：pause 自动清，不再留暂停后到点空转的 timer（joinFlow 头部 aliveFn 闸门保留作双保险）。
- * @param {string} key 目标 key
- * @param {string} teamId 集结队伍 id
- * @param {number} delayMs 延迟毫秒
- * @param {number} expireTime 集结过期时间戳（秒）
- */
-function scheduleJoin(key, teamId, delayMs, expireTime) {
-  ctxRef.setTimeout(
-    function () {
-      joinFlow(key, teamId, expireTime).catch(function (err) {
-        log.warn('join flow threw!', err);
-      });
-    },
-    Math.max(0, delayMs | 0),
-  );
-}
-
-/**
- * 单次加入流程：过期检查 → 行军检查 → 最小部队 → 发 1204。永不 reject。
+ * 单次加入流程（快照池 onWake 回调）：过期复查 → 行军复查 → 最小部队 → 发 1204。永不 reject。
+ * 去重/到期剔除/一次性出池已由快照池兜住；这里的 expireTime 复查留作双保险（时钟漂移边界）。
  * @param {string} key 目标 key
  * @param {string} teamId 集结队伍 id
  * @param {number} expireTime 集结过期时间戳（秒）
  * @returns {Promise<void>}
  */
 async function joinFlow(key, teamId, expireTime) {
-  try {
-    if (!aliveFn()) return;
+  if (!aliveFn()) return;
 
-    // 过期检查：集结已开始（expireTime 已过）则放弃
-    if (expireTime && Date.now() / 1000 > expireTime) {
-      log.info('rally expired, abandon. target=%s;teamId=%s', key, teamId);
-      return;
-    }
+  // 过期检查：集结已开始（expireTime 已过）则放弃
+  if (expireTime && Date.now() / 1000 > expireTime) {
+    log.info('rally expired, abandon. target=%s;teamId=%s', key, teamId);
+    return;
+  }
 
-    // 行军闸门复查
-    if (!march.canMarch()) {
-      log.info('no march slot (recheck), abandon. target=%s;teamId=%s', key, teamId);
-      return;
-    }
+  // 行军闸门复查
+  if (!march.canMarch()) {
+    log.info('no march slot (recheck), abandon. target=%s;teamId=%s', key, teamId);
+    return;
+  }
 
-    var marchData = new Battle().plan().minimal().build();
-    if (!marchData.armyListNew.length) {
-      log.info('no army available, abandon. target=%s;teamId=%s', key, teamId);
-      return;
-    }
+  var marchData = new Battle().plan().minimal().build();
+  if (!marchData.armyListNew.length) {
+    log.info('no army available, abandon. target=%s;teamId=%s', key, teamId);
+    return;
+  }
 
-    // 发送前复查每日上限（延迟期间可能上一刚刚发成一条，同目标计数会变）
-    if (isDailyLimitReached(key)) {
-      log.info('daily limit reached (recheck), abandon. target=%s;teamId=%s', key, teamId);
-      return;
-    }
+  // 发送前复查每日上限（延迟期间可能上一刚刚发成一条，同目标计数会变）
+  if (isDailyLimitReached(key)) {
+    log.info('daily limit reached (recheck), abandon. target=%s;teamId=%s', key, teamId);
+    return;
+  }
 
-    var ret = await sendJoin(teamId, marchData);
-    if (ret.ok) {
-      bumpDailyCount(key);
-      log.info(
-        'join ok. target=%s;teamId=%s;armyId=%d;today=%d',
-        key,
-        teamId,
-        marchData.armyListNew[0].armyId,
-        dailyState.counts[key] | 0,
-      );
-    } else {
-      // 加入被拒（目标已满/已过期/不可加入等 code=3）属预期业务态，非错误：降为 info（真实网络失败另由 sendJoin 的 join send error warn 兜底）
-      log.info(
-        'join rejected. target=%s;teamId=%s;code=%d;data=%s',
-        key,
-        teamId,
-        ret.code,
-        rejectText(ret) || '-',
-      );
-    }
-  } finally {
-    pendingTeamIds.delete(teamId);
+  var ret = await sendJoin(teamId, marchData);
+  if (ret.ok) {
+    bumpDailyCount(key);
+    log.info(
+      'join ok. target=%s;teamId=%s;armyId=%d;today=%d',
+      key,
+      teamId,
+      marchData.armyListNew[0].armyId,
+      dailyState.counts[key] | 0,
+    );
+  } else {
+    // 加入被拒（目标已满/已过期/不可加入等 code=3）属预期业务态，非错误：降为 info（真实网络失败另由 sendJoin 的 join send error warn 兜底）
+    log.info(
+      'join rejected. target=%s;teamId=%s;code=%d;data=%s',
+      key,
+      teamId,
+      ret.code,
+      rejectText(ret) || '-',
+    );
   }
 }
 
@@ -1234,7 +1237,7 @@ function install(ctx) {
  */
 function run(ctx) {
   ctxRef = ctx;
-  pendingTeamIds.clear();
+  pool.reschedule(); // pause 保留的未过期条目重排唤醒（wakeAt 已过→立即）；首轮池空 no-op
   noAllianceNoted = false; // 刷屏闸门每轮运行复位（退盟/入盟状态变化后需要重新能提一次）
   ensureTargetsLoaded(); // 读回后把盘上已学的目标（如 94/95）补进目录，面板当场多行
   ensureDailyLoaded();

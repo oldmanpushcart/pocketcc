@@ -78,8 +78,8 @@ module.exports = {
       name: 'schedule-primitives-thin',
       severity: 'error',
       comment:
-        '调度原语 cycle.js/drain.js 保持薄契约：除 log.js 外不得依赖其它 core 模块（退避/冷却/DSL 一律留给调用方）',
-      from: { path: '^extension/src/core/(cycle|drain)\\.js$' },
+        '调度原语 cycle.js/drain.js/snapshot-pool.js 保持薄契约：除 log.js 外不得依赖其它 core 模块（退避/冷却/DSL 一律留给调用方）',
+      from: { path: '^extension/src/core/(cycle|drain|snapshot-pool)\\.js$' },
       to: { path: '^extension/src/core/', pathNot: ['^extension/src/core/log\\.js$'] },
     },
     {

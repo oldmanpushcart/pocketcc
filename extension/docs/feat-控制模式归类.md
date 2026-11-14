@@ -73,7 +73,7 @@ Q3 错过这次触发，下一轮全量重读能补回吗？
 | **alliance-science 联盟科技** | 已迁 createCycle：`nextTickDelay(snap)` 返 delay，`rejectStreak`/`honorCappedDay`/`relicBanUntil` 留 feat 侧 | ✅ 已迁：旧 `triggerTick/tickOnce/tickTimer/ticking` 全删；run 点火与 push 10021 回升均 `cycle.kick()` | **P1** |
 | **city-skill 城市技能** | 已迁 createCycle：`tick()` 直接作为 run，尾部 `didGift/wakes/idle` 三分支搬至返回值 | ✅ 已迁：“绝对点仍属 A”判据活教材（`wakes.push(now+(endTime-serverTime)*1000+CD_BUFFER)` → `min(wakes)-now`）；旧 `schedule/timer/ticking` 全删 | **P1** |
 | **player-like 玩家点赞** | 已迁 createCycle：`tick()` 作为 run，尾部 8 处 `schedule(…)` 全换为 `return …` | ✅ 已迁：daily 落盘闸门（`dailyLoaded/dailySaving/LOAD_STUCK_MS`）与调度无关、保留 feat 侧；旧 `schedule/timer/ticking` 全删 | **P1** |
-| **alliance-help 联盟帮助** | 生产 `runTick` busy/idle（A）+ 消费 `createDrain`（B） | **半迁**：producer 换 cycle，drain 不动 | **P1** |
+| **alliance-help 联盟帮助** | 生产 `runTick` busy/idle（A）+ 消费 `createDrain`（B） | ✅ 已半迁：producer 换 cycle（`cycleRun` 返 busy/idle 择时，pending 补扫返 0），drain 不动；push 10446/10453 与 run 点火均 `cycle.kick()` | **P1** |
 | **source-of-war 战争之源** | 固定窗口 4/12/20 + 每日 5 次配额 | **P2 核实**：有可重放读→A(delay=窗口−now)；队长侧状态别名才涉 workflow | **P2** |
 | **alliance-gift 联盟礼物** | 触发形态待核 | **P2 核实**后归类（疑 A 或 D） | **P2** |
 
@@ -90,7 +90,7 @@ Q3 错过这次触发，下一轮全量重读能补回吗？
 |---|---|---|
 | **floatcar 花车空投** | 已 `createEventHeap`，每台一 flow 各自 30s 网格 | **维持 C**；硬套 A 会丢可回放性 + RTT 叠拍 |
 | **mine-cave 次元矿洞** | 裂隙广场 `nextWorldCheckAt/RefreshAt` 绝对时刻 + 冷热加权 | **P1 大改单列**：裂隙检测/刷新=C(wake.at)，下矿/偷/封配额=A-ish，两引擎拆开 |
-| **alliance-rally 联盟集结** | `12003` 快照观测(无重放读)+`joinDelayMs` wakeAt+`pendingTeamIds` 消耗池 | D+C 样板；是抽「**快照池原语**」(入池带 TTL+一次性消耗)的首个消费者，不迁 A |
+| **alliance-rally 联盟集结** | ✅ 已迁快照池：`12003` 快照过闸后 `pool.offer`（teamId 键控 + expireTime TTL + joinDelayMs wake.at），onWake 一次性消耗调 joinFlow | ✅ D 原语 `createSnapshotPool` 首个消费者（2026-11-14）；不迁 A |
 
 ### E 族（模型外，别套 reconcile）
 
@@ -102,16 +102,16 @@ Q3 错过这次触发，下一轮全量重读能补回吗？
 
 ## 4. 建议重构顺序（按收益/风险）
 
-> **进度（2026-10-06，新一批后）**：第 1–7 步（P0 四家 + P1 八家 relic/alliance-boss/truck-intercept/alliance-science/city-skill/player-like）**已全部落地**，`npm run build` 三 bundle 通过（content 从 859.5kb → **856.8kb**）。第 8 步 alliance-help 半迁（producer 换 cycle、drain 保留）为待做的户后收尾项；mine-cave（拆两引擎）、source-of-war/alliance-gift（P2 核实形态）仍待评估。
+> **进度（2026-11-14，快照池落地后）**：第 1–8 步（P0 四家 + P1 八家 + alliance-help 半迁 + 快照池原语与 rally 迁移）**已全部落地**；mine-cave（拆两引擎）、source-of-war/alliance-gift（P2 核实形态）仍待评估；createEventHeap 提取另立任务（本轮定稿不同刀）。
 
 1. **落地 `core/cycle.js`**（cycle.md §3）+ **auto-farm 参照迁移**（零行为改动，`npm run build` + 「下田和撤田」ndjson 回放对拍）。 ✅ 已完成
 2. **launch-silo**（P0，骨架与 auto-farm 逐字相同，几乎复制粘贴）。 ✅ 已完成
 3. **domain-treasure → sea-treasure**（P0，同 `triggerScan` 家族）。 ✅ 已完成
 4. **relic-reward → alliance-boss**（P1，单飞简化版）。 ✅ 已完成
 5. **truck-intercept**（P1，先解双闸门坑）。 ✅ 已完成（双闸门坑经证实为伪坑，与 domain/sea 同构折叠）
-6. **alliance-help 半迁**（P1，producer 换 cycle，drain 保留）。
+6. **alliance-help 半迁**（P1，producer 换 cycle，drain 保留）。 ✅ 已完成（2026-11-14）
 7. **city-skill / player-like**（P1，示范「绝对点仍属 A」——用它们做判据回归测试）。 ✅ 已完成（一并迁了 alliance-science）
-8. **抽「快照池原语」**（C/D，由 alliance-rally 驱动，A 之外的下一个 core）。
+8. **抽「快照池原语」**（C/D，由 alliance-rally 驱动，A 之外的下一个 core）。 ✅ 已完成（2026-11-14，`createSnapshotPool` + rally 迁移，详设 [`docs/core/snapshot-pool.md`](core/snapshot-pool.md)；EventHeap 提取不同刀另立任务）
 9. **mine-cave / source-of-war / alliance-gift**（P1/P2，先核实形态再动）。
 
 **红线**（继承框架 ADR）：迁移中不得在 cycle 内引入流程 DSL；不为单一实现套 `BackoffStrategy`/`DelayPolicy` 接口；floatcar/titan/rally **不因「看起来也是周期跑」而被误迁 A**。
@@ -126,6 +126,10 @@ Q3 错过这次触发，下一轮全量重读能补回吗？
 - **D + C**（alliance-rally）：push 入池是快照观测，`joinDelayMs` 错峰是 action 级 wakeAt。
 
 ## 6. 变更记录
+
+- **2026-11-14**：**快照池原语落地（P3②，D 原语首例，grilling 两轮定稿）**——新增 `core/snapshot-pool.js`（`createSnapshotPool`），只兜四件不变量：键控去重（同键拒入**不续命**）/ TTL 惰性过期（无后台扫子）/ wake.at 托管唤醒（每条目一个 ctx.setTimeout）/ 一次性消耗（onWake 前出池，抛错也出池）。首个消费者 alliance-rally：删 `pendingTeamIds` Set + `scheduleJoin` + joinFlow 尾部 finally 清标记，过闸后 `pool.offer(teamId, {key, expireTime}, {wakeAt, expireAt})`，joinFlow 改 onWake 回调（expireTime 复查留双保险），run() 调 `pool.reschedule()`。行为增强：pause 清定时器保留条目、resume 重排续跑（旧 run 清池放弃已延迟集结的口径改为续跑，与 titan/floatcar 同口径）。定稿要点：池+唤醒一体（纯键控池太浅被否）/ rally 单消费者（titan 台账不同形不双迁）/ 模块级创建+ctx getter（同 createCycle 形态）/ EventHeap 不同刀（floatcar 降回归面）。arch 规则 schedule-primitives-thin 扩名覆盖；契约测试 8 例（mock timers 含 Date）+ 源码守卫 1 例，详设 [`docs/core/snapshot-pool.md`](core/snapshot-pool.md)。lint/arch/build/509 例全绿。
+
+- **2026-11-14**：**alliance-help 半迁落地（P1 收尾，A 产 B 消复合形态首例）**——producer 手写单定时器样板（`scheduling/timer/runTick`）全删，换 `createCycle`：`cycleRun` 一轮 = 准入闸→produce 入队→drain.consume 点火→返 `nextInterval()`（busy/idle 两档择时留 feat 侧）；在飞 push 置 `cycle.pending` → 返 0 立即补扫（等价旧 scheduling(0) 抢跑，发包节奏仍由 drain 的 consumeInterval 独立守着，无 alliance-science 那样的捐链突发风险故不需封顶）。push 10446/10453 与 run 点火统一 `cycle.kick()`；drain/队列/签名去重/配额闸全部不动。行为差异同 P0 批：run 抛异常由旧 catch 重排→cycle 按 fallback（busyInterval）重排；准入闸（screen）不过由旧「停链」改「静默睡闲档」（与 mech-build 同口径，不设限包永不命中）；额外获得看门狗孤儿链自愈。lint/arch/build/500 例全绿。
 
 - **2026-11-06**：**truck-intercept 刷新时刻表双刷订正（录制对拍定位）**——真人上送日志（当日 00–15 时实录）显示 cap=5000 在一个游戏日 14:15 就触顶（`reason=budget`），逐小时实测次数 = 计划次数的 **1.34~1.71 倍**，且超额量与「`delay≤4s` 而 `step≥10s`」的补刷条目逐格吻合。根因：格点数学走 `serverNowMs()`（秒级截断）而休眠走本地 `setTimeout`，唤醒常落在格点前零点几秒 → `ceil` 重新命中**同一格点**、`delay` 落到亚秒级被 `planNextRefresh` 抬到 `cfg.reloadGap` 地板；而地板与 `doScan` 的节流闸门**同名同值（3000ms）**，补刷在 3.1s 处刚好越过闸门照计 `refreshUsed` → 一个格点吃两次配额。修法：`nextGridPointAbs(nowMs, counts, dayStart, minLeadMs)` 把探测时刻带 `reloadGap` 领先量（落点恒领先 now 一个 reloadGap，同一格点至多消费一次），并删除 `planNextRefresh` 里的 `delay < reloadGap → reloadGap` 地板；极端密格（格内间隔 < reloadGap）由“贴地板超支”改为“跳点欠耗”。新增 `tests/feats/truck-intercept-grid.test.js`（13 例，含“每格实际 ≤ 计划”的整天仿真）；`allocateSlots`/`nextGridPointAbs`/`REFRESH`/`REFRESH_PRESETS` 导出供单测直驱。面板 `refreshCap` hint 同步校准（旧文案的 2.4/4.6 分钟与当前权重不符，实为 1.5/3.5/4.6/15 分钟）并补上“cap 即一个游戏日总量 + 收益瓶颈是 `loot_num_max_daily`”的提醒。83 例全过、lint/arch/build 均绿。（同日 CodeReview 复查发现该批单测只直驱纯函数、未过 `planNextRefresh`，同时挖出第二条超支通道——见下条。）
 
