@@ -715,6 +715,65 @@ export default {
         ]),
       );
 
+      // HARD：159995 短黑窗内不得重发同点 8521（四-3）。
+      // 规则与 feat 同源：拒因取 C.REJ_PARAM_ERROR、窗长取 tuning.paramBlacklistMs，
+      // pilot/boss 两引擎的 #paramBlack/#target 短黑都以此为准（rejects.js 共享真相表）。
+      // 窗口起点用拒答对应请求的 ts（内核 respByReqTs 只存 {s,d}，RTT 远小于 60s 窗，口径保守安全）。
+      // 无 159995 样本 → 无法判定（skip 不判负，不做「空集即通过」的伪 PASS）。
+      {
+        const win = Number(tuning.paramBlacklistMs) || 0;
+        const rejections = []; // {t, x, y} 159995 拒答事件（按请求 ts）
+        for (const w of writes) {
+          if (w.cmd !== CMD_MARCH_MOVE) continue;
+          const r = S.respByReqTs.get(w.t);
+          if (!r || r.s !== 3 || r.d !== C.REJ_PARAM_ERROR) continue;
+          const x = Number(w.req && w.req.x);
+          const y = Number(w.req && w.req.y);
+          if (Number.isFinite(x) && Number.isFinite(y)) rejections.push({ t: w.t, x, y });
+        }
+        if (!rejections.length || win <= 0) {
+          rep.check(
+            `159995 短黑窗(${Math.round(win / 1000)}s)内不重发同点 8521 [HARD]`,
+            '拒绝码/时序',
+            0,
+            0,
+            1,
+            ['本场无 159995 拒答样本，无法判定'],
+          );
+        } else {
+          let ok = 0;
+          let bad = 0;
+          const fails = [];
+          for (const e of rejections) {
+            let hit = null;
+            for (const w of writes) {
+              if (w.cmd !== CMD_MARCH_MOVE || w.t <= e.t || w.t - e.t > win) continue;
+              const x = Number(w.req && w.req.x);
+              const y = Number(w.req && w.req.y);
+              if (x === e.x && y === e.y) {
+                hit = w;
+                break;
+              }
+            }
+            if (hit) {
+              bad++;
+              if (fails.length < 3)
+                fails.push(
+                  `(${e.x},${e.y}) 159995@+${e.t - S.minTs}ms 后 ${hit.t - e.t}ms 重发同点 8521（窗 ${win}ms）`,
+                );
+            } else ok++;
+          }
+          rep.check(
+            `159995 短黑窗(${Math.round(win / 1000)}s)内不重发同点 8521 [HARD]`,
+            '拒绝码/时序',
+            ok,
+            bad,
+            0,
+            fails,
+          );
+        }
+      }
+
       const pairRate = writes.length ? S.pairedResp / writes.length : 0;
       rep.check(
         '写动作应答配对覆盖率(rt===req.ts)',
