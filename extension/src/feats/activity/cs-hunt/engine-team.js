@@ -53,6 +53,7 @@ import {
   ACK_SEARCH_TEAM_LIST,
   ACK_TEAM_CREATE,
   CMD_ITEM_USE,
+  CMD_PLAYER_INFO,
   FIELD_APPLY_CHANGE,
   FIELD_HUNT_INFO_CHANGE,
   FIELD_HURT_MARCH_SIZE,
@@ -102,8 +103,6 @@ const INFO_REFRESH_MS = 90000;
 const TEAM_POLL_MS = 20000;
 /** @type {number} 队长兜底拉申请池（7528）的最小间隔（毫秒）：审批主路是 21374 推送，此仅节流补漏，杜绝逐拍刷屏（真机实录曾 3 秒内 95 次 7528） */
 const APPLY_LIST_POLL_MS = 20000;
-/** @type {number} 630 PLAYER_INFO：按 uid 查玩家昵称（陪跑按名搜队用；业务强相关报文，收口本 feat，不入通用 net.js） */
-const CMD_PLAYER_INFO = 630;
 /** @type {number} 预警式防御 630 敌战力缓存鲜度窗（毫秒）：窗内同 uid 不重查，免每拍打 630；查无/异常亦缓存 0 防同一无果 uid 反复打网络 */
 const POWER_CACHE_MS = 60000;
 /** @type {number} 无队找队时按名搜队（630→7530→7522）每拍只搜 1 个池成员的最小间隔（毫秒）：游标轮转，杜绝一趟连打整池网络（2026-10-25 定 5s：单拍只发 1 次 7530，8 人池扫一圈 ~40s） */

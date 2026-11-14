@@ -394,3 +394,6 @@ export const LUCKY_GIFTS = [
   { id: 1000007, name: '钻石100', scenes: ['pickReward'] },
   { id: 10000015, name: '钻石1000', scenes: ['rollDice'] },
 ];
+
+/** @type {number} 630 PLAYER_INFO：按 uid 查玩家昵称（陪跑按名搜队用；业务强相关报文，收口本 feat，不入通用 net.js） */
+export const CMD_PLAYER_INFO = 630;

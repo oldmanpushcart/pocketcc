@@ -26,14 +26,10 @@ import { Battle } from '../../../core/battle.js';
 import { march } from '../../../core/march.js';
 import { todayStr, safeStringify } from './util.js';
 
+import { CMD_GET_BOSS_INFO_V2, CMD_MARCH_WORLD_POINT } from './constants.js';
+
 /** @type {ReturnType<createLog>} 模块日志器（tag 与领奖链一致，便于聚合阅读） */
 const log = createLog('SOURCE-OF-WAR');
-
-/** @type {number} RequestId.GET_BOSS_INFO_V2，查询当前战争之源 BOSS（旧 JSON send）→ {bossId,id,x,y,reason} */
-const CMD_GET_BOSS_INFO_V2 = 9956;
-
-/** @type {number} RequestId.MARCH_WORLD_POINT，世界地图行军；仅用于发攻前的同 cmd 在途频控（发送走 core/march.attack） */
-const CMD_MARCH_WORLD_POINT = 902;
 
 /**
  * 行军类型：ATTACK_WORLD_BOSS_V2（战争之源二期世界 BOSS）

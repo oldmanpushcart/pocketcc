@@ -1116,7 +1116,7 @@ export const gameData = {
     return out;
   },
 
-  // ─────────────────────── 遗迹奖励领取（只读，供 feats/alliance/relic-reward.js） ───────────────────────
+  // ─────────────────────── 遗迹奖励领取（只读，供 feats/alliance/relic-reward/index.js） ───────────────────────
   /**
    * 奖励配置 id → 道具清单（只读，经 RewardController.Instance.getRewardsArrById 实时解析，与游戏面板同源）。
    * RewardController 是 ES 命名空间具名导出（exports.RewardController=类，无 .default），故不能 ns() 解包；
@@ -1626,7 +1626,7 @@ export const gameData = {
       var r = raw[i] || {};
       // 报文实证 22077 行**只有** x/y/k 三键（无 wastelandIndex）：k=房间号，与分区号不是 1:1
       //   （实证：`2120{9}` 的锚点 k 与同房间 315 地块的 `m.specIndex=11` 不等）⇒ 分区号只能取地块 `m.specIndex`，
-      //   由 feats/cq26/wl-chest.js 经 901/10018 嗅探与定向单窗查询获得，本投影只如实给出三键。
+      //   由 feats/cq26/wl-chest/index.js 经 901/10018 嗅探与定向单窗查询获得，本投影只如实给出三键。
       out.push({ x: Number(r.x) || 0, y: Number(r.y) || 0, k: Number(r.k) || 0 });
     }
     return out;
@@ -1880,7 +1880,7 @@ export const gameData = {
 };
 
 // cq26NeutralCtrl 住在共享区段：经引擎插槽注册给 CAPS.cq26NeutralCtrl（引擎不反向 import 本文件），
-//   供 feats/cq26/excav.js 在安装期自检该控制器单例是否在场（拿不到则降级为「只信 22062/22063 推送」）。
+//   供 feats/cq26/excav/index.js 在安装期自检该控制器单例是否在场（拿不到则降级为「只信 22062/22063 推送」）。
 setSharedCapsProbe('cq26NeutralCtrl', () => gameData._cq26Neutral());
 // 荒芜冰原数据侧（遗失之箱/采集/巨兽共同依赖的 wasteLandData 单例）：同为软依赖能力键，
 //   取不到只让 feat 降级为「只信自订 push 的标量副本」，不阻断安装（feat 声明 'cq26WasteLand?'）。

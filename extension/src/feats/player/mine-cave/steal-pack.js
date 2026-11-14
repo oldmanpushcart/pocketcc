@@ -16,16 +16,13 @@ import { storage } from '../../../core/storage.js';
 import { idKey, int64ToNum, rejectText } from './util.js';
 import { activeRules, matchSpec, specStar } from './match.js';
 
+import { CMD_WORLD_INFO, CMD_STEAL, CMD_HELP_PACK, CMD_HELP } from './constants.js';
+
 const log = createLog('MINE-CAVE/STEAL');
 
 /** @type {string} 当日「偷取线已处理矿」拉黑持久数据键（storage.data blob 内逻辑名，按自然日落盘）*/
 const STEAL_BLOCKED_NAME = 'mineCave.stealBlocked';
 
-// ── ② 盗窃封存：本引擎独占的协议号（无跨文件复用，故就近私有）──
-const CMD_WORLD_INFO = 7415; // 裂隙矿场（refresh:0 读 / refresh:1 换矿）
-const CMD_STEAL = 7419; // 偷取
-const CMD_HELP_PACK = 7420; // 封存/帮打包
-const CMD_HELP = 7418; // 加速帮忙
 const ACTION_GAP_MS = 1200; // drain 相邻两次动作的最小间隔（本引擎发送节奏，与 ① 各自独立）
 
 // ── ② 专属调度阈值 ──

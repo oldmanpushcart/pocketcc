@@ -31,7 +31,7 @@ globalThis.setInterval = (fn, ms, ...rest) => {
   return h;
 };
 
-const mod = await import('../../extension/src/feats/player/radar-task.js');
+const mod = await import('../../extension/src/feats/player/radar-task/index.js');
 const {
   normalize,
   applyEventTo,

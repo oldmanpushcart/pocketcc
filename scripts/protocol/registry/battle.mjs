@@ -12,7 +12,7 @@ export default [
       {
         name: 'CMD_PEACE_SHIELD',
         feat: 'auto-defense',
-        file: 'feats/battle/auto-defense.js',
+        file: 'feats/battle/auto-defense/constants.js',
       },
     ],
   },
@@ -26,7 +26,7 @@ export default [
       {
         name: 'CMD_MOVE_CITY_POSITION',
         feat: 'auto-defense',
-        file: 'feats/battle/auto-defense.js',
+        file: 'feats/battle/auto-defense/constants.js',
       },
     ],
   },
@@ -40,7 +40,7 @@ export default [
       {
         name: 'CMD_PUSH_ATTACK_ARMIES',
         feat: 'auto-defense',
-        file: 'feats/battle/auto-defense.js',
+        file: 'feats/battle/auto-defense/constants.js',
       },
     ],
   },

@@ -13,7 +13,7 @@ export default [
       {
         name: 'CMD_FIRE_BWL',
         feat: 'ice-shake',
-        file: 'feats/cq26/ice-shake.js',
+        file: 'feats/cq26/ice-shake/constants.js',
       },
     ],
   },
@@ -27,7 +27,7 @@ export default [
       {
         name: 'CMD_GET_CHEST',
         feat: 'feast',
-        file: 'feats/cq26/feast.js',
+        file: 'feats/cq26/feast/constants.js',
       },
     ],
   },
@@ -41,7 +41,7 @@ export default [
       {
         name: 'CMD_OPENED_LIST',
         feat: 'feast',
-        file: 'feats/cq26/feast.js',
+        file: 'feats/cq26/feast/constants.js',
       },
     ],
   },
@@ -55,7 +55,7 @@ export default [
       {
         name: 'CMD_GET_GIFT',
         feat: 'feast',
-        file: 'feats/cq26/feast.js',
+        file: 'feats/cq26/feast/constants.js',
       },
     ],
   },
@@ -69,7 +69,7 @@ export default [
       {
         name: 'CMD_SECRET_GIFT',
         feat: 'feast',
-        file: 'feats/cq26/feast.js',
+        file: 'feats/cq26/feast/constants.js',
       },
     ],
   },
@@ -84,7 +84,7 @@ export default [
       {
         name: 'CMD_WORLD_INFO',
         feat: 'wl-beast',
-        file: 'feats/cq26/wl-beast.js',
+        file: 'feats/cq26/wl-beast/constants.js',
       },
     ],
   },
@@ -141,7 +141,7 @@ export default [
       {
         name: 'CMD_FIRE_NWL',
         feat: 'ice-shake',
-        file: 'feats/cq26/ice-shake.js',
+        file: 'feats/cq26/ice-shake/constants.js',
       },
     ],
   },
@@ -155,7 +155,7 @@ export default [
       {
         name: 'CMD_GET_CHEST',
         feat: 'wl-chest',
-        file: 'feats/cq26/wl-chest.js',
+        file: 'feats/cq26/wl-chest/constants.js',
       },
     ],
   },
@@ -197,7 +197,7 @@ export default [
       {
         name: 'CMD_INFO',
         feat: 'wl-beast',
-        file: 'feats/cq26/wl-beast.js',
+        file: 'feats/cq26/wl-beast/constants.js',
       },
     ],
   },
@@ -212,7 +212,7 @@ export default [
       {
         name: 'CMD_ATTACK',
         feat: 'wl-beast',
-        file: 'feats/cq26/wl-beast.js',
+        file: 'feats/cq26/wl-beast/constants.js',
       },
     ],
   },
@@ -227,7 +227,7 @@ export default [
       {
         name: 'CMD_MINI_GAME',
         feat: 'ice-shake',
-        file: 'feats/cq26/ice-shake.js',
+        file: 'feats/cq26/ice-shake/constants.js',
       },
     ],
   },
@@ -241,7 +241,7 @@ export default [
       {
         name: 'CMD_INFO',
         feat: 'mammoth',
-        file: 'feats/cq26/mammoth.js',
+        file: 'feats/cq26/mammoth/constants.js',
       },
     ],
   },
@@ -255,7 +255,7 @@ export default [
       {
         name: 'CMD_CLAIM',
         feat: 'mammoth',
-        file: 'feats/cq26/mammoth.js',
+        file: 'feats/cq26/mammoth/constants.js',
       },
     ],
   },
@@ -283,7 +283,7 @@ export default [
       {
         name: 'CMD_CLAIM',
         feat: 'energy-convoy',
-        file: 'feats/cq26/energy-convoy.js',
+        file: 'feats/cq26/energy-convoy/constants.js',
       },
     ],
   },
@@ -298,7 +298,7 @@ export default [
       {
         name: 'CMD_OPEN',
         feat: 'train',
-        file: 'feats/cq26/train.js',
+        file: 'feats/cq26/train/constants.js',
       },
     ],
   },
@@ -313,7 +313,7 @@ export default [
       {
         name: 'CMD_MARCH',
         feat: 'train',
-        file: 'feats/cq26/train.js',
+        file: 'feats/cq26/train/constants.js',
       },
     ],
   },
@@ -327,7 +327,7 @@ export default [
       {
         name: 'CMD_LIST',
         feat: 'train',
-        file: 'feats/cq26/train.js',
+        file: 'feats/cq26/train/constants.js',
       },
     ],
   },
@@ -341,7 +341,7 @@ export default [
       {
         name: 'CMD_LOOT',
         feat: 'train',
-        file: 'feats/cq26/train.js',
+        file: 'feats/cq26/train/constants.js',
       },
     ],
   },
@@ -355,7 +355,7 @@ export default [
       {
         name: 'CMD_REWARD',
         feat: 'train',
-        file: 'feats/cq26/train.js',
+        file: 'feats/cq26/train/constants.js',
       },
     ],
   },
@@ -369,7 +369,7 @@ export default [
       {
         name: 'CMD_INFO',
         feat: 'train',
-        file: 'feats/cq26/train.js',
+        file: 'feats/cq26/train/constants.js',
       },
     ],
   },
@@ -384,7 +384,7 @@ export default [
       {
         name: 'CMD_CARD_LIST',
         feat: 'train',
-        file: 'feats/cq26/train.js',
+        file: 'feats/cq26/train/constants.js',
       },
     ],
   },
@@ -399,7 +399,7 @@ export default [
       {
         name: 'CMD_CARD_FLIP',
         feat: 'train',
-        file: 'feats/cq26/train.js',
+        file: 'feats/cq26/train/constants.js',
       },
     ],
   },
@@ -413,7 +413,7 @@ export default [
       {
         name: 'CMD_RED_PACK',
         feat: 'shop',
-        file: 'feats/cq26/shop.js',
+        file: 'feats/cq26/shop/constants.js',
       },
     ],
   },
@@ -427,7 +427,7 @@ export default [
       {
         name: 'CMD_GET_INFO',
         feat: 'shop',
-        file: 'feats/cq26/shop.js',
+        file: 'feats/cq26/shop/constants.js',
       },
     ],
   },
@@ -441,7 +441,7 @@ export default [
       {
         name: 'CMD_SINGLE',
         feat: 'shop',
-        file: 'feats/cq26/shop.js',
+        file: 'feats/cq26/shop/constants.js',
       },
     ],
   },
@@ -455,7 +455,7 @@ export default [
       {
         name: 'CMD_BUY',
         feat: 'shop',
-        file: 'feats/cq26/shop.js',
+        file: 'feats/cq26/shop/constants.js',
       },
     ],
   },
@@ -469,7 +469,7 @@ export default [
       {
         name: 'CMD_CLAIM',
         feat: 'excav',
-        file: 'feats/cq26/excav.js',
+        file: 'feats/cq26/excav/constants.js',
       },
     ],
   },
@@ -483,7 +483,7 @@ export default [
       {
         name: 'PUSH_SELF_INFO',
         feat: 'energy-convoy',
-        file: 'feats/cq26/energy-convoy.js',
+        file: 'feats/cq26/energy-convoy/constants.js',
       },
     ],
   },
@@ -497,7 +497,7 @@ export default [
       {
         name: 'PUSH_ARK_STATUS',
         feat: 'ark-energy',
-        file: 'feats/cq26/ark-energy.js',
+        file: 'feats/cq26/ark-energy/constants.js',
       },
     ],
   },
@@ -511,7 +511,7 @@ export default [
       {
         name: 'PUSH_RED_POINTS',
         feat: 'train',
-        file: 'feats/cq26/train.js',
+        file: 'feats/cq26/train/constants.js',
       },
     ],
   },
@@ -525,7 +525,7 @@ export default [
       {
         name: 'PUSH_SHOP_ICON',
         feat: 'shop',
-        file: 'feats/cq26/shop.js',
+        file: 'feats/cq26/shop/constants.js',
       },
     ],
   },
@@ -539,7 +539,7 @@ export default [
       {
         name: 'PUSH_DB_INFO',
         feat: 'mammoth',
-        file: 'feats/cq26/mammoth.js',
+        file: 'feats/cq26/mammoth/constants.js',
       },
     ],
   },
@@ -553,7 +553,7 @@ export default [
       {
         name: 'PUSH_PHASE',
         feat: 'feast',
-        file: 'feats/cq26/feast.js',
+        file: 'feats/cq26/feast/constants.js',
       },
     ],
   },
@@ -567,7 +567,7 @@ export default [
       {
         name: 'PUSH_OPEN_LIST',
         feat: 'excav',
-        file: 'feats/cq26/excav.js',
+        file: 'feats/cq26/excav/constants.js',
       },
     ],
   },
@@ -581,7 +581,7 @@ export default [
       {
         name: 'PUSH_SELF',
         feat: 'excav',
-        file: 'feats/cq26/excav.js',
+        file: 'feats/cq26/excav/constants.js',
       },
     ],
   },
@@ -595,7 +595,7 @@ export default [
       {
         name: 'PUSH_SECRET',
         feat: 'feast',
-        file: 'feats/cq26/feast.js',
+        file: 'feats/cq26/feast/constants.js',
       },
     ],
   },
@@ -609,7 +609,7 @@ export default [
       {
         name: 'PUSH_LAND_LIST',
         feat: 'wl-chest',
-        file: 'feats/cq26/wl-chest.js',
+        file: 'feats/cq26/wl-chest/constants.js',
       },
       {
         name: 'PUSH_LAND_LIST',
@@ -628,12 +628,12 @@ export default [
       {
         name: 'PUSH_WL_INFO',
         feat: 'feast',
-        file: 'feats/cq26/feast.js',
+        file: 'feats/cq26/feast/constants.js',
       },
       {
         name: 'PUSH_WL_INFO',
         feat: 'wl-chest',
-        file: 'feats/cq26/wl-chest.js',
+        file: 'feats/cq26/wl-chest/constants.js',
       },
       {
         name: 'PUSH_WL_INFO',
@@ -653,7 +653,7 @@ export default [
       {
         name: 'PUSH_PLAYER',
         feat: 'feast',
-        file: 'feats/cq26/feast.js',
+        file: 'feats/cq26/feast/constants.js',
       },
     ],
   },
@@ -668,7 +668,7 @@ export default [
       {
         name: 'PUSH_GIFT_REWARD',
         feat: 'feast',
-        file: 'feats/cq26/feast.js',
+        file: 'feats/cq26/feast/constants.js',
       },
     ],
   },
@@ -682,7 +682,7 @@ export default [
       {
         name: 'PUSH_CHEST_POS',
         feat: 'wl-chest',
-        file: 'feats/cq26/wl-chest.js',
+        file: 'feats/cq26/wl-chest/constants.js',
       },
     ],
   },
@@ -696,7 +696,7 @@ export default [
       {
         name: 'PUSH_TRAIN_INFO',
         feat: 'train',
-        file: 'feats/cq26/train.js',
+        file: 'feats/cq26/train/constants.js',
       },
     ],
   },
@@ -711,7 +711,7 @@ export default [
       {
         name: 'PUSH_TRAIN_DATA',
         feat: 'train',
-        file: 'feats/cq26/train.js',
+        file: 'feats/cq26/train/constants.js',
       },
     ],
   },

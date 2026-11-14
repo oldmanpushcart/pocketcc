@@ -32,7 +32,7 @@ globalThis.setInterval = (fn, ms, ...rest) => {
   return h;
 };
 
-const mod = await import('../../extension/src/feats/cq26/shop.js');
+const mod = await import('../../extension/src/feats/cq26/shop/index.js');
 const { buildCandidates, gatedPass, productStockSum, boughtOfProduct } = mod;
 const { quotaText } = mod;
 const { gameData, l10n } = await import('../../extension/src/core/game-api.js');

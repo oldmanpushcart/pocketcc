@@ -31,7 +31,7 @@ globalThis.setInterval = (fn, ms, ...rest) => {
   return h;
 };
 
-const mod = await import('../../extension/src/feats/cq26/wl-chest.js');
+const mod = await import('../../extension/src/feats/cq26/wl-chest/index.js');
 const { iconShow, reconcileQuota, pickChests, chestBlockReason, ingestChestTiles } = mod;
 const { cancelQuotaDebt, needOptimisticDeduct, quotaText } = mod;
 

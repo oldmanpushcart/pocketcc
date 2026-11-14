@@ -32,7 +32,7 @@ globalThis.setInterval = (fn, ms, ...rest) => {
   return h;
 };
 
-const mod = await import('../../extension/src/feats/cq26/feast.js');
+const mod = await import('../../extension/src/feats/cq26/feast/index.js');
 const {
   mergeClaimed,
   pickGiftIndex,

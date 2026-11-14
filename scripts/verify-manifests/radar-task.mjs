@@ -29,7 +29,7 @@ import { scanNDJSON, snapshotAt } from '../replay/reader.mjs';
 import { toNum, isInt64Obj } from '../replay/int64.mjs';
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
-const FEAT = path.join(ROOT, 'extension/src/feats/player/radar-task.js');
+const FEAT = path.join(ROOT, 'extension/src/feats/player/radar-task/index.js');
 
 // ── 最小桩化浏览器全局（feat import 期需要，判据函数体不触碰）────────────
 globalThis.window = globalThis.window || {

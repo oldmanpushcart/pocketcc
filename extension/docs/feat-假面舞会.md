@@ -125,10 +125,10 @@ push 10018 PUSH_TILEINFO             该城 p.cityReward.num 由 26 → 27
 
 客户端发这条卡的入口有两个，**都不带 pid**（源码实证）：
 
-| 入口 | 频道 args[0] | `p` 来源 | `expireTime` | `jumpServerId` |
-| --- | --- | --- | --- | --- |
-| `UserItemCityRewardPanel.shareCtrl`（未领玩家点「分享」） | `"1"` | 分享者自己的 `UserData.WorldCoord` | `ServerTime + cruis_times` | `UserData.OriginServerId` |
-| `UserItemCityRewardBtn.awardClick` 已领分支（领过再分享） | `"2"` | 舞会所在瓦片 `tileX/tileY` | `endTimeMilli/1000` | `extData.w` |
+| 入口                                                      | 频道 args[0] | `p` 来源                           | `expireTime`               | `jumpServerId`            |
+| --------------------------------------------------------- | ------------ | ---------------------------------- | -------------------------- | ------------------------- |
+| `UserItemCityRewardPanel.shareCtrl`（未领玩家点「分享」） | `"1"`        | 分享者自己的 `UserData.WorldCoord` | `ServerTime + cruis_times` | `UserData.OriginServerId` |
+| `UserItemCityRewardBtn.awardClick` 已领分支（领过再分享） | `"2"`        | 舞会所在瓦片 `tileX/tileY`         | `endTimeMilli/1000`        | `extData.w`               |
 
 > **这就是本轮「派对卡没触发领取」的根因**：旧实现把 `llm.pid` 当入队前置条件，而 t=48 卡结构上就没有
 > pid；又因为远处的城不在 10018 视口推送范围内（10018 只覆盖当前视口），一次性聊天卡往往是唯一发现源
@@ -172,19 +172,19 @@ if (!NET.checkRequestIdNoRes(NRequestIdV2.DANCE_GET_REWARD))
 
 ## 4. 运行时缺口（探针负责坐实）
 
-| #   | 缺口                                                                                                      | 状态                                       |
-| --- | --------------------------------------------------------------------------------------------------------- | ------------------------------------------ |
-| 1   | 2503 是否有距离闸门（远处基地能否领）                                                                     | 待探针 §4（若拒则拿到拒因键）            |
-| 2   | 登录期 `10053` 是否全量下发 `danceRec`/`myReceiveDance`；`UserData` 上的 getter 名                        | **字段名已由源码解决**，下发时机仍待探针 §1 §3 |
-| 3   | `2504 DANCE_GET_LIST` 应答形状：`danceList[]` 是否含 `instanceId`/坐标/`pid`/`received`/`expireTimeMilli` | 待探针 §5                                  |
-| 4   | `mask_mystery_party` 整表：`item_id`/`daily_limit`/`reward_num`/`cruis_times`/`msg_type` **实值**          | **列名已由源码坐实**（feat 直接按这些列读），行实值与派对新道具号仍待探针 §2 |
-| 5   | 活动 `38015600` 的 `type_para7`（= 2504 请求的 itemId）                                                   | 待探针 §2                                  |
+| #   | 缺口                                                                                                      | 状态                                                                         |
+| --- | --------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------- |
+| 1   | 2503 是否有距离闸门（远处基地能否领）                                                                     | 待探针 §4（若拒则拿到拒因键）                                                |
+| 2   | 登录期 `10053` 是否全量下发 `danceRec`/`myReceiveDance`；`UserData` 上的 getter 名                        | **字段名已由源码解决**，下发时机仍待探针 §1 §3                               |
+| 3   | `2504 DANCE_GET_LIST` 应答形状：`danceList[]` 是否含 `instanceId`/坐标/`pid`/`received`/`expireTimeMilli` | 待探针 §5                                                                    |
+| 4   | `mask_mystery_party` 整表：`item_id`/`daily_limit`/`reward_num`/`cruis_times`/`msg_type` **实值**         | **列名已由源码坐实**（feat 直接按这些列读），行实值与派对新道具号仍待探针 §2 |
+| 5   | 活动 `38015600` 的 `type_para7`（= 2504 请求的 itemId）                                                   | 待探针 §2                                                                    |
 
 > 表行实值拿不到的原因：配置表数据不在分包 JS 里（`extracted/resources` 只有 `manifest.json`，行数据是
 > 运行时加载的表资源），所以只能从源码拿到**列名与用法**，拿不到**具体数字**。feat 已设成「表就绪则全自动
 > 适配来年换皮号，表未就绪则兜底 10 次/天 + 已知道具族」，不依赖人工回填。
 
-## 5. feat 实现（`feats/activity/mask-dance.js`）
+## 5. feat 实现（`feats/activity/mask-dance/index.js`）
 
 **双输入通道 → 一条候选队列 → 逐条排空**：
 
@@ -224,7 +224,7 @@ if (!NET.checkRequestIdNoRes(NRequestIdV2.DANCE_GET_REWARD))
 8. `reward_num - num <= 0` → 该舞会名额已被盟友好领完，跳过（先到先得，对齐花车共享次数教训）。
 9. 2503 在途（`net.isSending(2503)`）→ 回填本候选等下一拍，不就地丢弃。
 10. **不做本地射程闸门**：服务端是否校距离未实证，索性交服务器裁决；真超距收到业务拒即当日拉黑该舞会实例，
-   **一个实例最多撞一次墙**，不会逐拍重发刷日志（探针 §4 一旦证实「远处不能领」，再考虑把闸门加回来）。
+    **一个实例最多撞一次墙**，不会逐拍重发刷日志（探针 §4 一旦证实「远处不能领」，再考虑把闸门加回来）。
 
 cycle 的长睡判据是「**全族皆满**」（`allItemsCapped`：每一个能读到 `daily_limit` 的道具都已撞顶）——
 逐道具口径下「某个道具撞顶」推不出「这个箱子不能领」；一条限额都读不到（表未就绪）时返回 false，

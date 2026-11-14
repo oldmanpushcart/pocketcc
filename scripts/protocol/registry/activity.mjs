@@ -12,7 +12,7 @@ export default [
       {
         name: 'CMD_GET_GUN_FIGHT_INFO',
         feat: 'launch-silo',
-        file: 'feats/activity/launch-silo.js',
+        file: 'feats/activity/launch-silo/constants.js',
       },
     ],
   },
@@ -26,7 +26,7 @@ export default [
       {
         name: 'CMD_GET_GUN_FIGHT_USER_INFO',
         feat: 'launch-silo',
-        file: 'feats/activity/launch-silo.js',
+        file: 'feats/activity/launch-silo/constants.js',
       },
     ],
   },
@@ -40,7 +40,7 @@ export default [
       {
         name: 'CMD_GET_GUN_FIGHT_USER_REWARD',
         feat: 'launch-silo',
-        file: 'feats/activity/launch-silo.js',
+        file: 'feats/activity/launch-silo/constants.js',
       },
     ],
   },
@@ -54,7 +54,7 @@ export default [
       {
         name: 'CMD_DANCE_GET_REWARD',
         feat: 'mask-dance',
-        file: 'feats/activity/mask-dance.js',
+        file: 'feats/activity/mask-dance/constants.js',
       },
     ],
   },
@@ -68,7 +68,7 @@ export default [
       {
         name: 'CMD_QUERY_WORLD_BOSS',
         feat: 'sea-treasure',
-        file: 'feats/activity/sea-treasure.js',
+        file: 'feats/activity/sea-treasure/constants.js',
       },
     ],
   },
@@ -435,7 +435,7 @@ export default [
       {
         name: 'CMD_GET_KUANG_LIST',
         feat: 'domain-treasure',
-        file: 'feats/activity/domain-treasure.js',
+        file: 'feats/activity/domain-treasure/constants.js',
       },
     ],
   },
@@ -449,7 +449,7 @@ export default [
       {
         name: 'CMD_MONSTER_LIST',
         feat: 'mecha-treasure',
-        file: 'feats/activity/mecha-treasure.js',
+        file: 'feats/activity/mecha-treasure/constants.js',
       },
     ],
   },
@@ -463,7 +463,7 @@ export default [
       {
         name: 'CMD_FLOAT_PARADE_QUERY_CAN_REWARD_BAG',
         feat: 'floatcar',
-        file: 'feats/activity/floatcar.js',
+        file: 'feats/activity/floatcar/constants.js',
       },
     ],
   },
@@ -477,7 +477,7 @@ export default [
       {
         name: 'CMD_HERO_EQUIP_WISH_FIND_BOX',
         feat: 'titan-blessing',
-        file: 'feats/activity/titan-blessing.js',
+        file: 'feats/activity/titan-blessing/constants.js',
       },
     ],
   },
@@ -491,7 +491,7 @@ export default [
       {
         name: 'PUSH_GUN_FIGHT_REWARD_INFO',
         feat: 'launch-silo',
-        file: 'feats/activity/launch-silo.js',
+        file: 'feats/activity/launch-silo/constants.js',
       },
     ],
   },
@@ -505,7 +505,7 @@ export default [
       {
         name: 'PUSH_USER_DATA_COMMON',
         feat: 'mask-dance',
-        file: 'feats/activity/mask-dance.js',
+        file: 'feats/activity/mask-dance/constants.js',
       },
     ],
   },
@@ -519,7 +519,7 @@ export default [
       {
         name: 'CMD_PUSH_ONE_ACTIVITY',
         feat: 'titan-blessing',
-        file: 'feats/activity/titan-blessing.js',
+        file: 'feats/activity/titan-blessing/constants.js',
       },
     ],
   },
@@ -533,17 +533,17 @@ export default [
       {
         name: 'CMD_PUSH_ONE_ACTIVITY_EXTRA',
         feat: 'domain-treasure',
-        file: 'feats/activity/domain-treasure.js',
+        file: 'feats/activity/domain-treasure/constants.js',
       },
       {
         name: 'CMD_PUSH_ONE_ACTIVITY_EXTRA',
         feat: 'mecha-treasure',
-        file: 'feats/activity/mecha-treasure.js',
+        file: 'feats/activity/mecha-treasure/constants.js',
       },
       {
         name: 'CMD_PUSH_ONE_ACTIVITY_EXTRA',
         feat: 'sea-treasure',
-        file: 'feats/activity/sea-treasure.js',
+        file: 'feats/activity/sea-treasure/constants.js',
       },
     ],
   },
@@ -557,7 +557,7 @@ export default [
       {
         name: 'PUSH_GUN_FIGHT_INFO',
         feat: 'launch-silo',
-        file: 'feats/activity/launch-silo.js',
+        file: 'feats/activity/launch-silo/constants.js',
       },
     ],
   },
@@ -571,7 +571,7 @@ export default [
       {
         name: 'CMD_PUSH_GIFT',
         feat: 'titan-blessing',
-        file: 'feats/activity/titan-blessing.js',
+        file: 'feats/activity/titan-blessing/constants.js',
       },
     ],
   },
@@ -585,7 +585,7 @@ export default [
       {
         name: 'CMD_PUSH_REWARD_GET',
         feat: 'titan-blessing',
-        file: 'feats/activity/titan-blessing.js',
+        file: 'feats/activity/titan-blessing/constants.js',
       },
     ],
   },
@@ -599,7 +599,7 @@ export default [
       {
         name: 'CMD_PUSH_GIFT_CLEAR',
         feat: 'titan-blessing',
-        file: 'feats/activity/titan-blessing.js',
+        file: 'feats/activity/titan-blessing/constants.js',
       },
     ],
   },

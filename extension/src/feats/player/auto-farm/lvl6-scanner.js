@@ -34,11 +34,11 @@ import { map } from '../../../core/map.js';
 import { march } from '../../../core/march.js';
 import { getUid } from '../../../core/player.js';
 
+import { PUSH_SINGLE_MAIL } from './constants.js';
+
 /** @type {ReturnType<typeof createLog>} 模块日志器（tag=AUTO-FARM） */
 const log = createLog('AUTO-FARM');
 
-/** @type {number} push PUSH_SINGLE_MAIL：单封邮件推送（「遗迹区域刷新」开田信号，载荷是邮件本体） */
-const PUSH_SINGLE_MAIL = 10264;
 /** @type {number} 901 pointType=38 要塞/遗迹资源点（王者遗迹刷新出的 6 级田，r 载荷带 itemId） */
 const POINT_TYPE_FORTRESS_RES = 38;
 /** @type {Array<{x:number,y:number}>} 两个王者遗迹锚点（刷新邮件正文坐标必落此二者之一） */

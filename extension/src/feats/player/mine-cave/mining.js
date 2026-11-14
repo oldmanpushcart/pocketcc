@@ -16,20 +16,21 @@ import { gameData } from '../../../core/game-api.js';
 import { idKey, rejectText } from './util.js';
 import { activeRules, matchSpec, specStar } from './match.js';
 
-const log = createLog('MINE-CAVE/MINE');
+import {
+  CMD_SELF_INFO2,
+  CMD_REFRESH,
+  CMD_OCCUPY,
+  CMD_SINGLE_INFO,
+  CMD_CHECK_SHARE,
+  CMD_OTHER_INFO2,
+  CMD_OTHER_INFO,
+  CMD_REWARD,
+  CMD_OTHER_GATHER_REWARD,
+  CMD_ALLIANCE_REWARD,
+  PUSH_MINE_CAVE_CHANGE,
+} from './constants.js';
 
-// ── ① 挖矿：本引擎独占的协议号 / 状态枚举（无跨文件复用，故就近私有）──
-const CMD_SELF_INFO2 = 7428; // 自矿聚合（SELF_MINE_CAVE_INFO2）
-const CMD_REFRESH = 7416; // 能量裂隙探测换矿
-const CMD_OCCUPY = 7417; // 占领/下矿
-const CMD_SINGLE_INFO = 7421; // 单矿详情（布阵前置查询）
-const CMD_CHECK_SHARE = 7427; // 盟友矿可占校验
-const CMD_OTHER_INFO2 = 7425; // 盟友矿概览列表
-const CMD_OTHER_INFO = 7414; // 单个盟友矿详情
-const CMD_REWARD = 7422; // 采集/行军产出领取
-const CMD_OTHER_GATHER_REWARD = 7424; // 他人来采我的产出领取
-const CMD_ALLIANCE_REWARD = 7429; // 联盟矿洞产出领取
-const PUSH_MINE_CAVE_CHANGE = 21351; // 单矿变更推送（自矿/行军）
+const log = createLog('MINE-CAVE/MINE');
 
 const STATE_NO_GATHER = 1; // 有矿、无人采（可占领/可分享）
 const STATE_GATHERING = 2; // 正在被采集

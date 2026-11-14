@@ -544,7 +544,7 @@ const CASES = [
 // ───────────── 真实 feat descriptor 对拍（T1+）：只提取目标类型字段单独渲染，避开同卡其他字段的游戏副作用 ─────────────
 // 联盟机甲代捐档位（ranges）：import alliance-boss 注册 descriptor，提取 ranges 字段（纯函数渲染），
 // 核对真实 cols/hint/section 在 module 路径下等价。不做全卡 import（text 字段 get 调游戏 API，副作用脆）。
-await import('../extension/src/feats/alliance/alliance-boss.js');
+await import('../extension/src/feats/alliance/alliance-boss/index.js');
 const bossRangesFd = findFeature('allianceBoss').fields.find((x) => x.type === 'ranges');
 CASES.push({
   name: 'feat-alliance-boss-ranges',

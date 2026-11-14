@@ -12,17 +12,17 @@ export default [
       {
         name: 'CMD_PLAYER_INFO',
         feat: 'auto-defense',
-        file: 'feats/battle/auto-defense.js',
+        file: 'feats/battle/auto-defense/constants.js',
       },
       {
         name: 'CMD_PLAYER_INFO',
         feat: 'chat',
-        file: 'feats/system/chat/context.js',
+        file: 'feats/system/chat/constants.js',
       },
       {
         name: 'CMD_PLAYER_INFO',
         feat: 'cs-hunt',
-        file: 'feats/activity/cs-hunt/engine-team.js',
+        file: 'feats/activity/cs-hunt/constants.js',
       },
       {
         name: 'CMD_PLAYER_INFO',
@@ -42,7 +42,7 @@ export default [
       {
         name: 'CMD_ITEM_USE',
         feat: 'auto-hunt',
-        file: 'feats/player/auto-hunt.js',
+        file: 'feats/player/auto-hunt/constants.js',
       },
       {
         name: 'CMD_ITEM_USE',
@@ -52,7 +52,7 @@ export default [
       {
         name: 'CMD_ITEM_USE',
         feat: 'quick-repair',
-        file: 'feats/player/quick-repair.js',
+        file: 'feats/player/quick-repair/constants.js',
       },
     ],
   },
@@ -81,7 +81,7 @@ export default [
       {
         name: 'CMD_WORLD_INFO',
         feat: 'feast',
-        file: 'feats/cq26/feast.js',
+        file: 'feats/cq26/feast/constants.js',
       },
       {
         name: 'CMD_GET_WORLD_INFO',
@@ -91,7 +91,7 @@ export default [
       {
         name: 'CMD_WORLD_INFO',
         feat: 'wl-chest',
-        file: 'feats/cq26/wl-chest.js',
+        file: 'feats/cq26/wl-chest/constants.js',
       },
       {
         name: 'CMD_WORLD_INFO',
@@ -111,37 +111,37 @@ export default [
       {
         name: 'CMD_MARCH_WORLD_POINT',
         feat: 'alliance-boss',
-        file: 'feats/alliance/alliance-boss.js',
+        file: 'feats/alliance/alliance-boss/constants.js',
       },
       {
         name: 'CMD_MARCH_WORLD_POINT',
         feat: 'auto-defense',
-        file: 'feats/battle/auto-defense.js',
+        file: 'feats/battle/auto-defense/constants.js',
       },
       {
         name: 'CMD_MARCH_WORLD_POINT',
         feat: 'auto-farm',
-        file: 'feats/player/auto-farm/index.js',
+        file: 'feats/player/auto-farm/constants.js',
       },
       {
         name: 'CMD_MARCH_WORLD_POINT',
         feat: 'auto-hunt',
-        file: 'feats/player/auto-hunt.js',
+        file: 'feats/player/auto-hunt/constants.js',
       },
       {
         name: 'CMD_MARCH_WORLD_POINT',
         feat: 'domain-treasure',
-        file: 'feats/activity/domain-treasure.js',
+        file: 'feats/activity/domain-treasure/constants.js',
       },
       {
         name: 'CMD_MARCH_WORLD_POINT',
         feat: 'imperial-decree',
-        file: 'feats/battle/imperial-decree.js',
+        file: 'feats/battle/imperial-decree/constants.js',
       },
       {
         name: 'CMD_MARCH_WORLD_POINT',
         feat: 'launch-silo',
-        file: 'feats/activity/launch-silo.js',
+        file: 'feats/activity/launch-silo/constants.js',
       },
       {
         name: 'CMD_MARCH_WORLD_POINT',
@@ -151,27 +151,27 @@ export default [
       {
         name: 'CMD_MARCH_WORLD_POINT',
         feat: 'mecha-treasure',
-        file: 'feats/activity/mecha-treasure.js',
+        file: 'feats/activity/mecha-treasure/constants.js',
       },
       {
         name: 'CMD_MARCH_WORLD_POINT',
         feat: 'quick-attack',
-        file: 'feats/battle/quick-attack.js',
+        file: 'feats/battle/quick-attack/constants.js',
       },
       {
         name: 'CMD_MARCH_POINT',
         feat: 'radar-task',
-        file: 'feats/player/radar-task.js',
+        file: 'feats/player/radar-task/constants.js',
       },
       {
         name: 'CMD_MARCH_WORLD_POINT',
         feat: 'sea-treasure',
-        file: 'feats/activity/sea-treasure.js',
+        file: 'feats/activity/sea-treasure/constants.js',
       },
       {
         name: 'CMD_MARCH_WORLD_POINT',
         feat: 'source-of-war',
-        file: 'feats/player/source-of-war/attack.js',
+        file: 'feats/player/source-of-war/constants.js',
       },
     ],
   },
@@ -247,12 +247,12 @@ export default [
       {
         name: 'PUSH_TILE',
         feat: 'feast',
-        file: 'feats/cq26/feast.js',
+        file: 'feats/cq26/feast/constants.js',
       },
       {
         name: 'PUSH_TILEINFO',
         feat: 'mask-dance',
-        file: 'feats/activity/mask-dance.js',
+        file: 'feats/activity/mask-dance/constants.js',
       },
       {
         name: 'PUSH_TILE_INFO',
@@ -262,7 +262,7 @@ export default [
       {
         name: 'PUSH_TILE',
         feat: 'wl-chest',
-        file: 'feats/cq26/wl-chest.js',
+        file: 'feats/cq26/wl-chest/constants.js',
       },
     ],
   },
@@ -281,7 +281,7 @@ export default [
       {
         name: 'CMD_USER_MARCH_INFO',
         feat: 'mecha-treasure',
-        file: 'feats/activity/mecha-treasure.js',
+        file: 'feats/activity/mecha-treasure/constants.js',
       },
     ],
   },
@@ -295,27 +295,27 @@ export default [
       {
         name: 'CMD_PUSH_ENERGY',
         feat: 'alliance-behemoth',
-        file: 'feats/alliance/alliance-behemoth.js',
+        file: 'feats/alliance/alliance-behemoth/constants.js',
       },
       {
         name: 'CMD_PUSH_ENERGY',
         feat: 'alliance-science',
-        file: 'feats/alliance/alliance-science.js',
+        file: 'feats/alliance/alliance-science/constants.js',
       },
       {
         name: 'PUSH_ENERGY',
         feat: 'auto-hunt',
-        file: 'feats/player/auto-hunt.js',
+        file: 'feats/player/auto-hunt/constants.js',
       },
       {
         name: 'PUSH_ENERGY',
         feat: 'fear-star-rally',
-        file: 'feats/player/fear-star-rally.js',
+        file: 'feats/player/fear-star-rally/constants.js',
       },
       {
         name: 'PUSH_ENERGY',
         feat: 'radar-task',
-        file: 'feats/player/radar-task.js',
+        file: 'feats/player/radar-task/constants.js',
       },
     ],
   },

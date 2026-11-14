@@ -56,7 +56,7 @@ import { scanNDJSON } from '../replay/reader.mjs';
 import { isInt64Obj } from '../replay/int64.mjs';
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
-const FEAT = path.join(ROOT, 'extension/src/feats/cq26/feast.js');
+const FEAT = path.join(ROOT, 'extension/src/feats/cq26/feast/index.js');
 /** 默认录制所在目录（uid 目录；uid 从录制目录名取，不钉账号） */
 const REC_DIR = path.join(ROOT, 'dashcam/store/rec/11981629951662');
 

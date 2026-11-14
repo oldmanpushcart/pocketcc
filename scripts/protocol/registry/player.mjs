@@ -12,7 +12,7 @@ export default [
       {
         name: 'CMD_GET_ORDER',
         feat: 'auto-coin-collect',
-        file: 'feats/player/auto-coin-collect.js',
+        file: 'feats/player/auto-coin-collect/constants.js',
       },
     ],
   },
@@ -26,7 +26,7 @@ export default [
       {
         name: 'CMD_ORDER_QUEUE_ING_DONE',
         feat: 'quick-repair',
-        file: 'feats/player/quick-repair.js',
+        file: 'feats/player/quick-repair/constants.js',
       },
     ],
   },
@@ -40,7 +40,7 @@ export default [
       {
         name: 'CMD_ARMY_HEAL_LIST',
         feat: 'quick-repair',
-        file: 'feats/player/quick-repair.js',
+        file: 'feats/player/quick-repair/constants.js',
       },
     ],
   },
@@ -54,7 +54,7 @@ export default [
       {
         name: 'CMD_GET_TIME_REWARD',
         feat: 'daily-supply',
-        file: 'feats/player/daily-supply.js',
+        file: 'feats/player/daily-supply/constants.js',
       },
     ],
   },
@@ -68,7 +68,7 @@ export default [
       {
         name: 'CMD_REPORT',
         feat: 'truck-intercept',
-        file: 'feats/player/truck-intercept.js',
+        file: 'feats/player/truck-intercept/constants.js',
       },
     ],
   },
@@ -82,7 +82,7 @@ export default [
       {
         name: 'CMD_POWER',
         feat: 'truck-intercept',
-        file: 'feats/player/truck-intercept.js',
+        file: 'feats/player/truck-intercept/constants.js',
       },
     ],
   },
@@ -96,7 +96,7 @@ export default [
       {
         name: 'CMD_GET_JION_ALL_RCTIME',
         feat: 'fear-star-rally',
-        file: 'feats/player/fear-star-rally.js',
+        file: 'feats/player/fear-star-rally/constants.js',
       },
     ],
   },
@@ -110,7 +110,7 @@ export default [
       {
         name: 'CMD_GET_TOWER_LIST',
         feat: 'auto-farm',
-        file: 'feats/player/auto-farm/mech-build.js',
+        file: 'feats/player/auto-farm/constants.js',
       },
     ],
   },
@@ -124,7 +124,7 @@ export default [
       {
         name: 'CMD_TOWER_REMOVE',
         feat: 'auto-farm',
-        file: 'feats/player/auto-farm/mech-build.js',
+        file: 'feats/player/auto-farm/constants.js',
       },
     ],
   },
@@ -138,7 +138,7 @@ export default [
       {
         name: 'CMD_MARCH_WORLD_BUILD',
         feat: 'auto-farm',
-        file: 'feats/player/auto-farm/mech-build.js',
+        file: 'feats/player/auto-farm/constants.js',
       },
     ],
   },
@@ -152,12 +152,7 @@ export default [
       {
         name: 'CMD_GET_TOWERINFO',
         feat: 'auto-farm',
-        file: 'feats/player/auto-farm/mech-build.js',
-      },
-      {
-        name: 'CMD_GET_TOWERINFO',
-        feat: 'auto-farm',
-        file: 'feats/player/auto-farm/tower-scanner.js',
+        file: 'feats/player/auto-farm/constants.js',
       },
     ],
   },
@@ -171,7 +166,7 @@ export default [
       {
         name: 'CMD_ALLIANCE_RECORD_DATA',
         feat: 'auto-farm',
-        file: 'feats/player/auto-farm/tower-scanner.js',
+        file: 'feats/player/auto-farm/constants.js',
       },
     ],
   },
@@ -186,17 +181,17 @@ export default [
       {
         name: 'CMD_CREATE_RALLY',
         feat: 'auto-hunt',
-        file: 'feats/player/auto-hunt.js',
+        file: 'feats/player/auto-hunt/constants.js',
       },
       {
         name: 'CMD_CREATE_RALLY',
         feat: 'fear-star-rally',
-        file: 'feats/player/fear-star-rally.js',
+        file: 'feats/player/fear-star-rally/constants.js',
       },
       {
         name: 'CMD_CREATE_RALLY',
         feat: 'radar-task',
-        file: 'feats/player/radar-task.js',
+        file: 'feats/player/radar-task/constants.js',
       },
     ],
   },
@@ -210,7 +205,7 @@ export default [
       {
         name: 'CMD_INFO',
         feat: 'potion-craft',
-        file: 'feats/player/potion-craft.js',
+        file: 'feats/player/potion-craft/constants.js',
       },
     ],
   },
@@ -224,7 +219,7 @@ export default [
       {
         name: 'CMD_MAKE',
         feat: 'potion-craft',
-        file: 'feats/player/potion-craft.js',
+        file: 'feats/player/potion-craft/constants.js',
       },
     ],
   },
@@ -238,7 +233,7 @@ export default [
       {
         name: 'CMD_CLAIM',
         feat: 'potion-craft',
-        file: 'feats/player/potion-craft.js',
+        file: 'feats/player/potion-craft/constants.js',
       },
     ],
   },
@@ -252,7 +247,7 @@ export default [
       {
         name: 'CMD_GET_CROSS_HOSPITAL_QUEUES',
         feat: 'quick-repair',
-        file: 'feats/player/quick-repair.js',
+        file: 'feats/player/quick-repair/constants.js',
       },
     ],
   },
@@ -266,7 +261,7 @@ export default [
       {
         name: 'CMD_ARMY_CROSS_HEAL',
         feat: 'quick-repair',
-        file: 'feats/player/quick-repair.js',
+        file: 'feats/player/quick-repair/constants.js',
       },
     ],
   },
@@ -280,7 +275,7 @@ export default [
       {
         name: 'CMD_SPEEDUP_CROSS_GOLD',
         feat: 'quick-repair',
-        file: 'feats/player/quick-repair.js',
+        file: 'feats/player/quick-repair/constants.js',
       },
     ],
   },
@@ -294,7 +289,7 @@ export default [
       {
         name: 'CMD_GET_INFO',
         feat: 'beast-breed',
-        file: 'feats/player/beast-breed.js',
+        file: 'feats/player/beast-breed/constants.js',
       },
     ],
   },
@@ -308,7 +303,7 @@ export default [
       {
         name: 'CMD_MAIN_SET',
         feat: 'beast-breed',
-        file: 'feats/player/beast-breed.js',
+        file: 'feats/player/beast-breed/constants.js',
       },
     ],
   },
@@ -322,7 +317,7 @@ export default [
       {
         name: 'CMD_OTHER_APPLY',
         feat: 'beast-breed',
-        file: 'feats/player/beast-breed.js',
+        file: 'feats/player/beast-breed/constants.js',
       },
     ],
   },
@@ -336,7 +331,7 @@ export default [
       {
         name: 'CMD_OTHER_APPLY_OP',
         feat: 'beast-breed',
-        file: 'feats/player/beast-breed.js',
+        file: 'feats/player/beast-breed/constants.js',
       },
     ],
   },
@@ -350,7 +345,7 @@ export default [
       {
         name: 'CMD_OTHER_APPLY_LIST',
         feat: 'beast-breed',
-        file: 'feats/player/beast-breed.js',
+        file: 'feats/player/beast-breed/constants.js',
       },
     ],
   },
@@ -364,7 +359,7 @@ export default [
       {
         name: 'CMD_MAIN_LIST',
         feat: 'beast-breed',
-        file: 'feats/player/beast-breed.js',
+        file: 'feats/player/beast-breed/constants.js',
       },
     ],
   },
@@ -378,7 +373,7 @@ export default [
       {
         name: 'CMD_BREEDING_BORN',
         feat: 'beast-breed',
-        file: 'feats/player/beast-breed.js',
+        file: 'feats/player/beast-breed/constants.js',
       },
     ],
   },
@@ -392,7 +387,7 @@ export default [
       {
         name: 'CMD_VISIT_LIST',
         feat: 'beast-breed',
-        file: 'feats/player/beast-breed.js',
+        file: 'feats/player/beast-breed/constants.js',
       },
     ],
   },
@@ -406,7 +401,7 @@ export default [
       {
         name: 'CMD_BREEDING_HELP',
         feat: 'beast-breed',
-        file: 'feats/player/beast-breed.js',
+        file: 'feats/player/beast-breed/constants.js',
       },
     ],
   },
@@ -420,7 +415,7 @@ export default [
       {
         name: 'CMD_HELP_BORN_REWARD',
         feat: 'beast-breed',
-        file: 'feats/player/beast-breed.js',
+        file: 'feats/player/beast-breed/constants.js',
       },
     ],
   },
@@ -434,7 +429,7 @@ export default [
       {
         name: 'CMD_PRODUCE',
         feat: 'armory-material',
-        file: 'feats/player/armory-material.js',
+        file: 'feats/player/armory-material/constants.js',
       },
     ],
   },
@@ -448,7 +443,7 @@ export default [
       {
         name: 'CMD_PRODUCE_GET',
         feat: 'armory-material',
-        file: 'feats/player/armory-material.js',
+        file: 'feats/player/armory-material/constants.js',
       },
     ],
   },
@@ -462,7 +457,7 @@ export default [
       {
         name: 'CMD_GET_CITY_SKILL_DATA',
         feat: 'city-skill',
-        file: 'feats/player/city-skill.js',
+        file: 'feats/player/city-skill/constants.js',
       },
     ],
   },
@@ -476,7 +471,7 @@ export default [
       {
         name: 'CMD_USE_CITY_SKILL',
         feat: 'city-skill',
-        file: 'feats/player/city-skill.js',
+        file: 'feats/player/city-skill/constants.js',
       },
     ],
   },
@@ -490,7 +485,7 @@ export default [
       {
         name: 'CMD_GET_QUICK_REPARE',
         feat: 'quick-repair',
-        file: 'feats/player/quick-repair.js',
+        file: 'feats/player/quick-repair/constants.js',
       },
     ],
   },
@@ -505,7 +500,7 @@ export default [
       {
         name: 'CMD_GET_INFO',
         feat: 'radar-task',
-        file: 'feats/player/radar-task.js',
+        file: 'feats/player/radar-task/constants.js',
       },
     ],
   },
@@ -519,7 +514,7 @@ export default [
       {
         name: 'CMD_START_TASK',
         feat: 'radar-task',
-        file: 'feats/player/radar-task.js',
+        file: 'feats/player/radar-task/constants.js',
       },
     ],
   },
@@ -533,7 +528,7 @@ export default [
       {
         name: 'CMD_GET_REWARD',
         feat: 'radar-task',
-        file: 'feats/player/radar-task.js',
+        file: 'feats/player/radar-task/constants.js',
       },
     ],
   },
@@ -547,7 +542,7 @@ export default [
       {
         name: 'CMD_DEFEND',
         feat: 'radar-task',
-        file: 'feats/player/radar-task.js',
+        file: 'feats/player/radar-task/constants.js',
       },
     ],
   },
@@ -561,7 +556,7 @@ export default [
       {
         name: 'CMD_BLESS',
         feat: 'birthday-bless',
-        file: 'feats/player/birthday-bless.js',
+        file: 'feats/player/birthday-bless/constants.js',
       },
     ],
   },
@@ -576,7 +571,7 @@ export default [
       {
         name: 'CMD_INFO_OPEN',
         feat: 'birthday-bless',
-        file: 'feats/player/birthday-bless.js',
+        file: 'feats/player/birthday-bless/constants.js',
       },
     ],
   },
@@ -590,7 +585,7 @@ export default [
       {
         name: 'CMD_LIKE_OTHER',
         feat: 'player-like',
-        file: 'feats/player/player-like.js',
+        file: 'feats/player/player-like/constants.js',
       },
     ],
   },
@@ -604,7 +599,7 @@ export default [
       {
         name: 'CMD_COLLECT',
         feat: 'secret-weapon-drop',
-        file: 'feats/player/secret-weapon-drop.js',
+        file: 'feats/player/secret-weapon-drop/constants.js',
       },
     ],
   },
@@ -618,7 +613,7 @@ export default [
       {
         name: 'CMD_SKILL_INFO',
         feat: 'secret-weapon-drop',
-        file: 'feats/player/secret-weapon-drop.js',
+        file: 'feats/player/secret-weapon-drop/constants.js',
       },
     ],
   },
@@ -632,7 +627,7 @@ export default [
       {
         name: 'CMD_USE_SKILL',
         feat: 'secret-weapon-drop',
-        file: 'feats/player/secret-weapon-drop.js',
+        file: 'feats/player/secret-weapon-drop/constants.js',
       },
     ],
   },
@@ -646,7 +641,7 @@ export default [
       {
         name: 'CMD_INFO',
         feat: 'one-click-claim',
-        file: 'feats/player/one-click-claim.js',
+        file: 'feats/player/one-click-claim/constants.js',
       },
     ],
   },
@@ -660,7 +655,7 @@ export default [
       {
         name: 'CMD_REWARD',
         feat: 'one-click-claim',
-        file: 'feats/player/one-click-claim.js',
+        file: 'feats/player/one-click-claim/constants.js',
       },
     ],
   },
@@ -675,7 +670,7 @@ export default [
       {
         name: 'CMD_AVA_ASK',
         feat: 'quick-repair',
-        file: 'feats/player/quick-repair.js',
+        file: 'feats/player/quick-repair/constants.js',
       },
     ],
   },
@@ -689,7 +684,7 @@ export default [
       {
         name: 'CMD_AVA_CURE',
         feat: 'quick-repair',
-        file: 'feats/player/quick-repair.js',
+        file: 'feats/player/quick-repair/constants.js',
       },
     ],
   },
@@ -703,7 +698,7 @@ export default [
       {
         name: 'CMD_AVA_SPEED',
         feat: 'quick-repair',
-        file: 'feats/player/quick-repair.js',
+        file: 'feats/player/quick-repair/constants.js',
       },
     ],
   },
@@ -717,7 +712,7 @@ export default [
       {
         name: 'CMD_TM_ASK',
         feat: 'quick-repair',
-        file: 'feats/player/quick-repair.js',
+        file: 'feats/player/quick-repair/constants.js',
       },
     ],
   },
@@ -731,7 +726,7 @@ export default [
       {
         name: 'CMD_TM_CURE',
         feat: 'quick-repair',
-        file: 'feats/player/quick-repair.js',
+        file: 'feats/player/quick-repair/constants.js',
       },
     ],
   },
@@ -745,7 +740,7 @@ export default [
       {
         name: 'CMD_TM_SPEED',
         feat: 'quick-repair',
-        file: 'feats/player/quick-repair.js',
+        file: 'feats/player/quick-repair/constants.js',
       },
     ],
   },
@@ -759,7 +754,7 @@ export default [
       {
         name: 'CMD_OPEN',
         feat: 'truck-intercept',
-        file: 'feats/player/truck-intercept.js',
+        file: 'feats/player/truck-intercept/constants.js',
       },
     ],
   },
@@ -773,7 +768,7 @@ export default [
       {
         name: 'CMD_RELOAD',
         feat: 'truck-intercept',
-        file: 'feats/player/truck-intercept.js',
+        file: 'feats/player/truck-intercept/constants.js',
       },
     ],
   },
@@ -787,7 +782,7 @@ export default [
       {
         name: 'CMD_LOOT',
         feat: 'truck-intercept',
-        file: 'feats/player/truck-intercept.js',
+        file: 'feats/player/truck-intercept/constants.js',
       },
     ],
   },
@@ -801,7 +796,7 @@ export default [
       {
         name: 'CMD_REFRESH',
         feat: 'truck-intercept',
-        file: 'feats/player/truck-intercept.js',
+        file: 'feats/player/truck-intercept/constants.js',
       },
     ],
   },
@@ -815,7 +810,7 @@ export default [
       {
         name: 'CMD_OTHER_INFO',
         feat: 'mine-cave',
-        file: 'feats/player/mine-cave/mining.js',
+        file: 'feats/player/mine-cave/constants.js',
       },
     ],
   },
@@ -829,7 +824,7 @@ export default [
       {
         name: 'CMD_WORLD_INFO',
         feat: 'mine-cave',
-        file: 'feats/player/mine-cave/steal-pack.js',
+        file: 'feats/player/mine-cave/constants.js',
       },
     ],
   },
@@ -843,7 +838,7 @@ export default [
       {
         name: 'CMD_REFRESH',
         feat: 'mine-cave',
-        file: 'feats/player/mine-cave/mining.js',
+        file: 'feats/player/mine-cave/constants.js',
       },
     ],
   },
@@ -857,7 +852,7 @@ export default [
       {
         name: 'CMD_OCCUPY',
         feat: 'mine-cave',
-        file: 'feats/player/mine-cave/mining.js',
+        file: 'feats/player/mine-cave/constants.js',
       },
     ],
   },
@@ -871,7 +866,7 @@ export default [
       {
         name: 'CMD_HELP',
         feat: 'mine-cave',
-        file: 'feats/player/mine-cave/steal-pack.js',
+        file: 'feats/player/mine-cave/constants.js',
       },
     ],
   },
@@ -885,7 +880,7 @@ export default [
       {
         name: 'CMD_STEAL',
         feat: 'mine-cave',
-        file: 'feats/player/mine-cave/steal-pack.js',
+        file: 'feats/player/mine-cave/constants.js',
       },
     ],
   },
@@ -899,7 +894,7 @@ export default [
       {
         name: 'CMD_HELP_PACK',
         feat: 'mine-cave',
-        file: 'feats/player/mine-cave/steal-pack.js',
+        file: 'feats/player/mine-cave/constants.js',
       },
     ],
   },
@@ -913,7 +908,7 @@ export default [
       {
         name: 'CMD_SINGLE_INFO',
         feat: 'mine-cave',
-        file: 'feats/player/mine-cave/mining.js',
+        file: 'feats/player/mine-cave/constants.js',
       },
     ],
   },
@@ -927,7 +922,7 @@ export default [
       {
         name: 'CMD_REWARD',
         feat: 'mine-cave',
-        file: 'feats/player/mine-cave/mining.js',
+        file: 'feats/player/mine-cave/constants.js',
       },
     ],
   },
@@ -941,7 +936,7 @@ export default [
       {
         name: 'CMD_OTHER_GATHER_REWARD',
         feat: 'mine-cave',
-        file: 'feats/player/mine-cave/mining.js',
+        file: 'feats/player/mine-cave/constants.js',
       },
     ],
   },
@@ -955,7 +950,7 @@ export default [
       {
         name: 'CMD_OTHER_INFO2',
         feat: 'mine-cave',
-        file: 'feats/player/mine-cave/mining.js',
+        file: 'feats/player/mine-cave/constants.js',
       },
     ],
   },
@@ -969,7 +964,7 @@ export default [
       {
         name: 'CMD_CHECK_SHARE',
         feat: 'mine-cave',
-        file: 'feats/player/mine-cave/mining.js',
+        file: 'feats/player/mine-cave/constants.js',
       },
     ],
   },
@@ -983,7 +978,7 @@ export default [
       {
         name: 'CMD_SELF_INFO2',
         feat: 'mine-cave',
-        file: 'feats/player/mine-cave/mining.js',
+        file: 'feats/player/mine-cave/constants.js',
       },
     ],
   },
@@ -997,7 +992,7 @@ export default [
       {
         name: 'CMD_ALLIANCE_REWARD',
         feat: 'mine-cave',
-        file: 'feats/player/mine-cave/mining.js',
+        file: 'feats/player/mine-cave/constants.js',
       },
     ],
   },
@@ -1011,7 +1006,7 @@ export default [
       {
         name: 'CMD_MASTER_ASK',
         feat: 'quick-repair',
-        file: 'feats/player/quick-repair.js',
+        file: 'feats/player/quick-repair/constants.js',
       },
     ],
   },
@@ -1025,7 +1020,7 @@ export default [
       {
         name: 'CMD_MASTER_CURE',
         feat: 'quick-repair',
-        file: 'feats/player/quick-repair.js',
+        file: 'feats/player/quick-repair/constants.js',
       },
     ],
   },
@@ -1039,7 +1034,7 @@ export default [
       {
         name: 'CMD_MASTER_SPEED',
         feat: 'quick-repair',
-        file: 'feats/player/quick-repair.js',
+        file: 'feats/player/quick-repair/constants.js',
       },
     ],
   },
@@ -1053,7 +1048,7 @@ export default [
       {
         name: 'CMD_LEGEND_ASK',
         feat: 'quick-repair',
-        file: 'feats/player/quick-repair.js',
+        file: 'feats/player/quick-repair/constants.js',
       },
     ],
   },
@@ -1067,7 +1062,7 @@ export default [
       {
         name: 'CMD_LEGEND_CURE',
         feat: 'quick-repair',
-        file: 'feats/player/quick-repair.js',
+        file: 'feats/player/quick-repair/constants.js',
       },
     ],
   },
@@ -1081,7 +1076,7 @@ export default [
       {
         name: 'CMD_LEGEND_SPEED',
         feat: 'quick-repair',
-        file: 'feats/player/quick-repair.js',
+        file: 'feats/player/quick-repair/constants.js',
       },
     ],
   },
@@ -1095,7 +1090,7 @@ export default [
       {
         name: 'CMD_WATCH_INFO',
         feat: 'ad-diamond',
-        file: 'feats/player/ad-diamond.js',
+        file: 'feats/player/ad-diamond/constants.js',
       },
     ],
   },
@@ -1109,7 +1104,7 @@ export default [
       {
         name: 'CMD_WATCH_REWARD',
         feat: 'ad-diamond',
-        file: 'feats/player/ad-diamond.js',
+        file: 'feats/player/ad-diamond/constants.js',
       },
     ],
   },
@@ -1123,7 +1118,7 @@ export default [
       {
         name: 'CMD_GET_FREE_REWARD',
         feat: 'daily-deal',
-        file: 'feats/player/daily-deal.js',
+        file: 'feats/player/daily-deal/constants.js',
       },
     ],
   },
@@ -1137,7 +1132,7 @@ export default [
       {
         name: 'CMD_CLAIM_ATTACK_REWARD',
         feat: 'source-of-war',
-        file: 'feats/player/source-of-war/reward.js',
+        file: 'feats/player/source-of-war/constants.js',
       },
     ],
   },
@@ -1151,7 +1146,7 @@ export default [
       {
         name: 'CMD_GET_BOSS_INFO_V2',
         feat: 'source-of-war',
-        file: 'feats/player/source-of-war/attack.js',
+        file: 'feats/player/source-of-war/constants.js',
       },
     ],
   },
@@ -1166,7 +1161,7 @@ export default [
       {
         name: 'PUSH_ORDER_QUEUES',
         feat: 'quick-repair',
-        file: 'feats/player/quick-repair.js',
+        file: 'feats/player/quick-repair/constants.js',
       },
     ],
   },
@@ -1180,7 +1175,7 @@ export default [
       {
         name: 'PUSH_BEAST_CHANGE',
         feat: 'beast-breed',
-        file: 'feats/player/beast-breed.js',
+        file: 'feats/player/beast-breed/constants.js',
       },
     ],
   },
@@ -1194,7 +1189,7 @@ export default [
       {
         name: 'PUSH_BREEDING_CHANGE',
         feat: 'beast-breed',
-        file: 'feats/player/beast-breed.js',
+        file: 'feats/player/beast-breed/constants.js',
       },
     ],
   },
@@ -1208,7 +1203,7 @@ export default [
       {
         name: 'PUSH_OTHER_BREEDING',
         feat: 'beast-breed',
-        file: 'feats/player/beast-breed.js',
+        file: 'feats/player/beast-breed/constants.js',
       },
     ],
   },
@@ -1222,7 +1217,7 @@ export default [
       {
         name: 'CMD_PUSH_TOWER',
         feat: 'auto-farm',
-        file: 'feats/player/auto-farm/mech-build.js',
+        file: 'feats/player/auto-farm/constants.js',
       },
     ],
   },
@@ -1236,7 +1231,7 @@ export default [
       {
         name: 'PUSH_SINGLE_MAIL',
         feat: 'auto-farm',
-        file: 'feats/player/auto-farm/lvl6-scanner.js',
+        file: 'feats/player/auto-farm/constants.js',
       },
     ],
   },
@@ -1250,12 +1245,12 @@ export default [
       {
         name: 'CMD_PUSH_ALLIANCE_RECORD',
         feat: 'auto-farm',
-        file: 'feats/player/auto-farm/mech-build.js',
+        file: 'feats/player/auto-farm/constants.js',
       },
       {
         name: 'PUSH_ALLIANCE_RECORD',
         feat: 'auto-farm',
-        file: 'feats/player/auto-farm/tower-scanner.js',
+        file: 'feats/player/auto-farm/constants.js',
       },
     ],
   },
@@ -1269,7 +1264,7 @@ export default [
       {
         name: 'PUSH_MAKE',
         feat: 'potion-craft',
-        file: 'feats/player/potion-craft.js',
+        file: 'feats/player/potion-craft/constants.js',
       },
     ],
   },
@@ -1283,7 +1278,7 @@ export default [
       {
         name: 'PUSH_FIND_REFUGEECAMP',
         feat: 'auto-hunt',
-        file: 'feats/player/auto-hunt.js',
+        file: 'feats/player/auto-hunt/constants.js',
       },
     ],
   },
@@ -1297,7 +1292,7 @@ export default [
       {
         name: 'PUSH_CROSS_QUEUE_ADD',
         feat: 'quick-repair',
-        file: 'feats/player/quick-repair.js',
+        file: 'feats/player/quick-repair/constants.js',
       },
     ],
   },
@@ -1311,7 +1306,7 @@ export default [
       {
         name: 'PUSH_STATUS_CHANGE',
         feat: 'radar-task',
-        file: 'feats/player/radar-task.js',
+        file: 'feats/player/radar-task/constants.js',
       },
     ],
   },
@@ -1325,7 +1320,7 @@ export default [
       {
         name: 'PUSH_ADD_ONE_TASK',
         feat: 'radar-task',
-        file: 'feats/player/radar-task.js',
+        file: 'feats/player/radar-task/constants.js',
       },
     ],
   },
@@ -1339,7 +1334,7 @@ export default [
       {
         name: 'PUSH_OTHER_DATA',
         feat: 'radar-task',
-        file: 'feats/player/radar-task.js',
+        file: 'feats/player/radar-task/constants.js',
       },
     ],
   },
@@ -1353,7 +1348,7 @@ export default [
       {
         name: 'PUSH_SIGN',
         feat: 'radar-task',
-        file: 'feats/player/radar-task.js',
+        file: 'feats/player/radar-task/constants.js',
       },
     ],
   },
@@ -1367,7 +1362,7 @@ export default [
       {
         name: 'PUSH_RING_CHANGE',
         feat: 'radar-task',
-        file: 'feats/player/radar-task.js',
+        file: 'feats/player/radar-task/constants.js',
       },
     ],
   },
@@ -1381,7 +1376,7 @@ export default [
       {
         name: 'PUSH_DAYGROUP_CHANGE',
         feat: 'radar-task',
-        file: 'feats/player/radar-task.js',
+        file: 'feats/player/radar-task/constants.js',
       },
     ],
   },
@@ -1395,7 +1390,7 @@ export default [
       {
         name: 'PUSH_AVA_HOSPITAL_CHANGE',
         feat: 'quick-repair',
-        file: 'feats/player/quick-repair.js',
+        file: 'feats/player/quick-repair/constants.js',
       },
     ],
   },
@@ -1409,7 +1404,7 @@ export default [
       {
         name: 'PUSH_TM_HOSPITAL_CHANGE',
         feat: 'quick-repair',
-        file: 'feats/player/quick-repair.js',
+        file: 'feats/player/quick-repair/constants.js',
       },
     ],
   },
@@ -1423,7 +1418,7 @@ export default [
       {
         name: 'PUSH_MINE_CAVE_CHANGE',
         feat: 'mine-cave',
-        file: 'feats/player/mine-cave/mining.js',
+        file: 'feats/player/mine-cave/constants.js',
       },
     ],
   },
@@ -1437,7 +1432,7 @@ export default [
       {
         name: 'PUSH_MASTER_HOSPITAL_CHANGE',
         feat: 'quick-repair',
-        file: 'feats/player/quick-repair.js',
+        file: 'feats/player/quick-repair/constants.js',
       },
     ],
   },
@@ -1451,7 +1446,7 @@ export default [
       {
         name: 'CMD_REFRESH_PUSH',
         feat: 'truck-intercept',
-        file: 'feats/player/truck-intercept.js',
+        file: 'feats/player/truck-intercept/constants.js',
       },
     ],
   },
@@ -1465,7 +1460,7 @@ export default [
       {
         name: 'PUSH_LEGEND_HOSPITAL_CHANGE',
         feat: 'quick-repair',
-        file: 'feats/player/quick-repair.js',
+        file: 'feats/player/quick-repair/constants.js',
       },
     ],
   },
@@ -1479,7 +1474,7 @@ export default [
       {
         name: 'PUSH_SOW_ATTACK_COUNT_UPDATE',
         feat: 'source-of-war',
-        file: 'feats/player/source-of-war/reward.js',
+        file: 'feats/player/source-of-war/constants.js',
       },
     ],
   },
@@ -1493,7 +1488,7 @@ export default [
       {
         name: 'PUSH_SOW_DAY_RESET',
         feat: 'source-of-war',
-        file: 'feats/player/source-of-war/reward.js',
+        file: 'feats/player/source-of-war/constants.js',
       },
     ],
   },

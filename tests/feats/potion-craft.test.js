@@ -31,7 +31,7 @@ globalThis.setInterval = (fn, ms, ...rest) => {
   return h;
 };
 
-const mod = await import('../../extension/src/feats/player/potion-craft.js');
+const mod = await import('../../extension/src/feats/player/potion-craft/index.js');
 const {
   readQueue,
   isExpired,

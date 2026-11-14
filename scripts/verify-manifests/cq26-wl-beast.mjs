@@ -35,7 +35,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { scanNDJSON, snapshotAt } from '../replay/reader.mjs';
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
-const FEAT = path.join(ROOT, 'extension/src/feats/cq26/wl-beast.js');
+const FEAT = path.join(ROOT, 'extension/src/feats/cq26/wl-beast/index.js');
 
 // ── 最小桩化浏览器全局（feat import 期需要，判据函数体不触碰）────────────
 globalThis.window = globalThis.window || {

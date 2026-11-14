@@ -2,7 +2,7 @@
  * core/defense.js —— 自动防御的行为/查询层（薄，与 march.js/item.js 同侧的协议就近模块）
  *
  * 职责边界：
- *   - 收口自动防御三策略共用的「道具选择 + 迁城落点搜索」两块重活，供 feats/battle/auto-defense.js 消费；
+ *   - 收口自动防御三策略共用的「道具选择 + 迁城落点搜索」两块重活，供 feats/battle/auto-defense/index.js 消费；
  *   - 护盾/迁城卡的 itemId 是稳定服务器内容常量（发协议就近定义，同 march.js 的 520001/520002），不归 core/item.js；
  *   - 迁城落点合法性走「四闸联合、逐 footprint 格」（对齐服务端 911，真机 + extracted 源码双重实证）：
  *     ① 地形/王座/已加载实体：游戏权威 gameData.canMoveCity(x,y)===true（false 必拦、null 无从判定）；其内部 checkIsPlainTileBySize 已逐 footprint 格判障碍+他人城皮，但 ignoreSelf=true 会放行「压自己城」的格；

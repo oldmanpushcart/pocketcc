@@ -31,7 +31,7 @@ globalThis.setInterval = (fn, ms, ...rest) => {
   return h;
 };
 
-const mod = await import('../../extension/src/feats/cq26/wl-beast.js');
+const mod = await import('../../extension/src/feats/cq26/wl-beast/index.js');
 const { candidateBeasts, pickBeasts, toTroop } = mod;
 const { CMD_ATTACK, CMD_INFO, CMD_WORLD_INFO, POINT_TYPE_BEAST } = mod;
 

@@ -36,7 +36,7 @@ import { scanNDJSON, snapshotAt } from '../replay/reader.mjs';
 import { toNum, isInt64Obj } from '../replay/int64.mjs';
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
-const FEAT = path.join(ROOT, 'extension/src/feats/cq26/train.js');
+const FEAT = path.join(ROOT, 'extension/src/feats/cq26/train/index.js');
 
 // ── 协议字典：从 feat 源码文本取常量（单一真相源，缺符号即抛）──────────────
 const SRC = fs.readFileSync(FEAT, 'utf8');

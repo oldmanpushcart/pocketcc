@@ -32,9 +32,9 @@
     "extension/src/feats/activity/secret-realm/constants.js",
     "extension/src/feats/activity/cs-hunt/constants.js",
     "extension/src/feats/activity/cs-hunt/skills.js",
-    "extension/src/feats/cq26/ice-shake.js",
-    "extension/src/feats/cq26/wl-beast.js",
-    "extension/src/feats/player/radar-task.js"
+    "extension/src/feats/cq26/ice-shake/index.js",
+    "extension/src/feats/cq26/wl-beast/index.js",
+    "extension/src/feats/player/radar-task/index.js"
   ],
   "ignoreDependencies": ["@types/chrome", "jscpd"],
   "ignoreExportsUsedInFile": true,

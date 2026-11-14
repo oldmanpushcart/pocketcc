@@ -6,16 +6,8 @@ import { safeParse } from '../../../core/util.js';
 import { gameData, gameConf, bits } from '../../../core/game-api.js';
 import { chatApi } from '../../../core/chat.js';
 import { netApi } from '../../../core/net.js';
-import {
-  S,
-  log,
-  bufOf,
-  syncRoomIds,
-  AT_ALL_TOKEN,
-  COOLDOWN_MS,
-  CHAN_DEFS,
-  CMD_RECALL_CHAT,
-} from './context.js';
+import { S, log, bufOf, syncRoomIds, AT_ALL_TOKEN, COOLDOWN_MS, CHAN_DEFS } from './context.js';
+import { CMD_RECALL_CHAT } from './constants.js';
 import { familyOf, chanOfKey, myUid, hhmm, locText, decodeAtCodes } from './normalize.js';
 
 /**

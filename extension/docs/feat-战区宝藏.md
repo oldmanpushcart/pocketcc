@@ -1,6 +1,6 @@
 # feat · CQ26 战区宝藏（`cq26Excav`）
 
-> 代码：`extension/src/feats/cq26/excav.js` · ACL：`core/acl/game-data.js`（`_cq26Neutral` / `cq26ExcavSites` / `cq26ExcavIconOn`）
+> 代码：`extension/src/feats/cq26/excav/index.js` · ACL：`core/acl/game-data.js`（`_cq26Neutral` / `cq26ExcavSites` / `cq26ExcavIconOn`）
 > 面板：CQ26 印石 → 基础设置 → 战区宝藏 · 形态：`createCycle` 电平调和 + 推送 kick，**零扫描、零主动拉取**
 
 只做一件事：世界地图那个宝藏 icon 亮着的时候，替玩家点一下「开采」。

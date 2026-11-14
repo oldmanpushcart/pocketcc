@@ -12,7 +12,7 @@ export default [
       {
         name: 'CMD_DONATE_RELIC',
         feat: 'alliance-science',
-        file: 'feats/alliance/alliance-science.js',
+        file: 'feats/alliance/alliance-science/constants.js',
       },
     ],
   },
@@ -26,7 +26,7 @@ export default [
       {
         name: 'CMD_ALLIANCE_HELP_APPLY',
         feat: 'alliance-help',
-        file: 'feats/alliance/alliance-help.js',
+        file: 'feats/alliance/alliance-help/constants.js',
       },
     ],
   },
@@ -40,7 +40,7 @@ export default [
       {
         name: 'CMD_ALLIANCE_HELP_RECEIVE',
         feat: 'alliance-help',
-        file: 'feats/alliance/alliance-help.js',
+        file: 'feats/alliance/alliance-help/constants.js',
       },
     ],
   },
@@ -54,7 +54,7 @@ export default [
       {
         name: 'CMD_DONATE',
         feat: 'alliance-science',
-        file: 'feats/alliance/alliance-science.js',
+        file: 'feats/alliance/alliance-science/constants.js',
       },
     ],
   },
@@ -68,7 +68,7 @@ export default [
       {
         name: 'CMD_GET_INFO',
         feat: 'alliance-boss',
-        file: 'feats/alliance/alliance-boss.js',
+        file: 'feats/alliance/alliance-boss/constants.js',
       },
     ],
   },
@@ -82,7 +82,7 @@ export default [
       {
         name: 'CMD_DONATE',
         feat: 'alliance-boss',
-        file: 'feats/alliance/alliance-boss.js',
+        file: 'feats/alliance/alliance-boss/constants.js',
       },
     ],
   },
@@ -96,7 +96,7 @@ export default [
       {
         name: 'CMD_RECEIVE_GIFT_ALL',
         feat: 'alliance-gift',
-        file: 'feats/alliance/alliance-gift.js',
+        file: 'feats/alliance/alliance-gift/constants.js',
       },
     ],
   },
@@ -110,7 +110,7 @@ export default [
       {
         name: 'CMD_RECEIVE_GIFT_BIG',
         feat: 'alliance-gift',
-        file: 'feats/alliance/alliance-gift.js',
+        file: 'feats/alliance/alliance-gift/constants.js',
       },
     ],
   },
@@ -124,7 +124,7 @@ export default [
       {
         name: 'CMD_HELP_ALL_ALLIANCE_MEMBERS',
         feat: 'alliance-help',
-        file: 'feats/alliance/alliance-help.js',
+        file: 'feats/alliance/alliance-help/constants.js',
       },
     ],
   },
@@ -138,7 +138,7 @@ export default [
       {
         name: 'CMD_ASSEMBLY_JOIN',
         feat: 'alliance-rally',
-        file: 'feats/alliance/alliance-rally.js',
+        file: 'feats/alliance/alliance-rally/constants.js',
       },
     ],
   },
@@ -152,7 +152,7 @@ export default [
       {
         name: 'CMD_QUERY',
         feat: 'relic-reward',
-        file: 'feats/alliance/relic-reward.js',
+        file: 'feats/alliance/relic-reward/constants.js',
       },
     ],
   },
@@ -166,7 +166,7 @@ export default [
       {
         name: 'CMD_CLAIM',
         feat: 'relic-reward',
-        file: 'feats/alliance/relic-reward.js',
+        file: 'feats/alliance/relic-reward/constants.js',
       },
     ],
   },
@@ -180,7 +180,7 @@ export default [
       {
         name: 'CMD_DONATE',
         feat: 'alliance-behemoth',
-        file: 'feats/alliance/alliance-behemoth.js',
+        file: 'feats/alliance/alliance-behemoth/constants.js',
       },
     ],
   },
@@ -194,7 +194,7 @@ export default [
       {
         name: 'CMD_PUSH_ALLIANCE_BOSS',
         feat: 'alliance-boss',
-        file: 'feats/alliance/alliance-boss.js',
+        file: 'feats/alliance/alliance-boss/constants.js',
       },
     ],
   },
@@ -208,7 +208,7 @@ export default [
       {
         name: 'CMD_PUSH_ALLIANCE_GIFT_INFO',
         feat: 'alliance-gift',
-        file: 'feats/alliance/alliance-gift.js',
+        file: 'feats/alliance/alliance-gift/constants.js',
       },
     ],
   },
@@ -222,7 +222,7 @@ export default [
       {
         name: 'PUSH_ALLIANCE_SELF_HELP',
         feat: 'alliance-help',
-        file: 'feats/alliance/alliance-help.js',
+        file: 'feats/alliance/alliance-help/constants.js',
       },
     ],
   },
@@ -236,7 +236,7 @@ export default [
       {
         name: 'PUSH_ALLIANCE_HELP_REGET',
         feat: 'alliance-help',
-        file: 'feats/alliance/alliance-help.js',
+        file: 'feats/alliance/alliance-help/constants.js',
       },
     ],
   },
@@ -250,7 +250,7 @@ export default [
       {
         name: 'CMD_PUSH_ASSEMBLY_CREATED',
         feat: 'alliance-rally',
-        file: 'feats/alliance/alliance-rally.js',
+        file: 'feats/alliance/alliance-rally/constants.js',
       },
     ],
   },

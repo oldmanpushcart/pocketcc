@@ -1,6 +1,6 @@
 # feat · 机械制药（`potionCraft`）
 
-> 代码：`extension/src/feats/player/potion-craft.js` · 面板：玩家 → 机械制药 · 形态：`createCycle` 电平调和 + 每拍全量重读（与 `armory-material` 同族）
+> 代码：`extension/src/feats/player/potion-craft/index.js` · 面板：玩家 → 机械制药 · 形态：`createCycle` 电平调和 + 每拍全量重读（与 `armory-material` 同族）
 
 只做**制药 lane**（`traps_and_potions` 那条单槽队列）：**一次只做一个药水**——面板单选一个目标（`formula`，0=未选），
 排产前先把「职业 / 科技 / 材料」三道限制过一次，不过就原地等，**绝不擅自换配方**。运行时态一律不落盘：1387 应答恒含 `{making, unlock}`，

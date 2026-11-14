@@ -48,7 +48,7 @@ import { fileURLToPath } from 'node:url';
 import { scanNDJSON } from '../replay/reader.mjs';
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
-const FEAT = path.join(ROOT, 'extension/src/feats/player/quick-repair.js');
+const FEAT = path.join(ROOT, 'extension/src/feats/player/quick-repair/index.js');
 const SRC = fs.readFileSync(FEAT, 'utf8');
 
 /**

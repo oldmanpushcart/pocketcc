@@ -81,21 +81,18 @@ import { gameData, gameConf, l10n, checkCap } from '../../../core/game-api.js';
 import { map } from '../../../core/map.js';
 import { resource } from '../../../core/resource.js';
 
+import {
+  CMD_GET_TOWER_LIST,
+  CMD_GET_TOWERINFO,
+  CMD_MARCH_WORLD_BUILD,
+  CMD_TOWER_REMOVE,
+  CMD_PUSH_TOWER,
+  CMD_PUSH_ALLIANCE_RECORD,
+} from './constants.js';
+
 /** @type {ReturnType<typeof createLog>} 模块日志器（tag=MECH-BUILD） */
 const log = createLog('MECH-BUILD');
 
-/** @type {number} RequestId.GET_TOWER_LIST：本人机械设施权威列表（应答 {list:[塔对象]}，pid=自己 UID 字符串） */
-const CMD_GET_TOWER_LIST = 1031;
-/** @type {number} RequestId.GET_TOWERINFO：单塔详情（{id:"塔实例id 字符串"}，防 Int64 截断） */
-const CMD_GET_TOWERINFO = 1034;
-/** @type {number} RequestId.MARCH_WORLD_Build：建塔行军（V1 net.send，非 PB） */
-const CMD_MARCH_WORLD_BUILD = 1033;
-/** @type {number} RequestId.TOWER_REMOVE：销毁塔（{id:"塔实例id 字符串"}，应答 {}）——本引擎只用它取消**在建**（st=2）的塔 */
-const CMD_TOWER_REMOVE = 1032;
-/** @type {number} push PUSH_MY_PROFESSIONAL_TOWERS：本人塔对象整份推送（派建即 st=2，入塔转 st=3） */
-const CMD_PUSH_TOWER = 10182;
-/** @type {number} push PUSH_ALLIANCE_RECORD：联盟记录增量（建塔/毁塔事件），仅作 1031 重拉 kick 源 */
-const CMD_PUSH_ALLIANCE_RECORD = 10452;
 /** @type {number} 行军类型：建塔（NMarchType 里的 BUILD 语义，实证 1033/10019 都是 25） */
 const MARCH_TYPE_BUILD = 25;
 /** @type {number} TowerState.BUILDING：施工中（尚未可采） */

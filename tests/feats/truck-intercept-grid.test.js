@@ -35,7 +35,7 @@ globalThis.setInterval = (fn, ms, ...rest) => {
   return h;
 };
 
-const mod = await import('../../extension/src/feats/player/truck-intercept.js');
+const mod = await import('../../extension/src/feats/player/truck-intercept/index.js');
 const { allocateSlots, nextGridPointAbs, planRefresh, REFRESH, REFRESH_PRESETS } = mod;
 
 const SLOT = REFRESH.slotMs; // 3600000：一格 = 1 小时

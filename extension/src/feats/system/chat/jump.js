@@ -6,7 +6,8 @@
 import { safeParse } from '../../../core/util.js';
 import { nav } from '../../../core/game-api.js';
 import { netApi } from '../../../core/net.js';
-import { S, log, CMD_MAIL_QUERY } from './context.js';
+import { S, log } from './context.js';
+import { CMD_MAIL_QUERY } from './constants.js';
 import { pickField } from './normalize.js';
 
 /**

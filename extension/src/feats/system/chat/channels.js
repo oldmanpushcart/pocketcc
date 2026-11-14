@@ -19,9 +19,8 @@ import {
   PM_INFO_GAP_MS,
   MEMBERS_TTL_MS,
   CHAN_DEFS,
-  CMD_ALLIANCE_MEMBERS,
-  CMD_PLAYER_INFO,
 } from './context.js';
+import { CMD_ALLIANCE_MEMBERS, CMD_PLAYER_INFO } from './constants.js';
 import {
   buildEntry,
   insertOrdered,

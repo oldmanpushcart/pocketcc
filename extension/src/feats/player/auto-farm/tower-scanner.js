@@ -34,15 +34,11 @@ import { createLog } from '../../../core/log.js';
 import { storage } from '../../../core/storage.js';
 import { map } from '../../../core/map.js';
 
+import { CMD_ALLIANCE_RECORD_DATA, CMD_GET_TOWERINFO, PUSH_ALLIANCE_RECORD } from './constants.js';
+
 /** @type {ReturnType<typeof createLog>} 模块日志器（tag=AUTO-FARM） */
 const log = createLog('AUTO-FARM');
 
-/** @type {number} RequestId.ALLIANCE_RECORD_DATA：全量拉联盟记录（含「建筑」机械田建造事件，视口无关） */
-const CMD_ALLIANCE_RECORD_DATA = 1193;
-/** @type {number} RequestId.GET_TOWERINFO：查资源塔详情（应答 army_size=当前驻军兵力） */
-const CMD_GET_TOWERINFO = 1034;
-/** @type {number} push PUSH_ALLIANCE_RECORD：联盟记录增量推送（新建成机械田即时并入活表） */
-const PUSH_ALLIANCE_RECORD = 10452;
 /** @type {number} 实体类型：资源塔（NWorldMapEntityType.ResourceTower = 901 pointType = 24） */
 const POINT_TYPE_TOWER = 24;
 /** @type {number} TowerState.COMPLETE：塔建造完成、可采集 */

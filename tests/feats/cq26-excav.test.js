@@ -31,7 +31,7 @@ globalThis.setInterval = (fn, ms, ...rest) => {
   return h;
 };
 
-const mod = await import('../../extension/src/feats/cq26/excav.js');
+const mod = await import('../../extension/src/feats/cq26/excav/index.js');
 const { pickOpen, orderLikeGame } = mod;
 const { gameData } = await import('../../extension/src/core/game-api.js');
 const { game } = await import('../../extension/src/core/game.js');

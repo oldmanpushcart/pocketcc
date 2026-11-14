@@ -31,7 +31,7 @@ globalThis.setInterval = (fn, ms, ...rest) => {
   return h;
 };
 
-const mod = await import('../../extension/src/feats/player/quick-repair.js');
+const mod = await import('../../extension/src/feats/player/quick-repair/index.js');
 const {
   normalize,
   quickFields,

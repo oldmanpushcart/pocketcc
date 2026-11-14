@@ -92,11 +92,11 @@ import { tower } from './tower-scanner.js';
 import { normal } from './normal-scan.js';
 import { mechBuild, normalizeMechFamilies, familyOptions } from './mech-build.js';
 
+import { CMD_MARCH_WORLD_POINT } from './constants.js';
+
 /** @type {ReturnType<typeof createLog>} 模块日志器（tag=AUTO-FARM） */
 const log = createLog('AUTO-FARM');
 
-/** @type {number} RequestId.MARCH_WORLD_POINT：世界地图行军（下田 902） */
-const CMD_MARCH_WORLD_POINT = 902;
 /**
  * @type {string} 902 拒绝载荷里「操作过快」的服务器全局限流文案键（march_time_control_info001）。
  * 与「点被抢/已失效」的真拒不同：田点本身有效，不应拉黑；命中即中止本轮剩余行、按指数退避重排下轮。

@@ -10,7 +10,7 @@ import { fileURLToPath } from 'node:url';
 
 const rallyPath = path.join(
   path.dirname(fileURLToPath(import.meta.url)),
-  '../../extension/src/feats/alliance/alliance-rally.js',
+  '../../extension/src/feats/alliance/alliance-rally/index.js',
 );
 
 test('alliance-rally.js 无 legacy 去重/延迟样板残留（pendingTeamIds/scheduleJoin）', () => {
@@ -22,7 +22,7 @@ test('alliance-rally.js 无 legacy 去重/延迟样板残留（pendingTeamIds/sc
     );
   }
   assert.ok(
-    src.includes("import { createSnapshotPool } from '../../core/snapshot-pool.js'"),
+    src.includes("import { createSnapshotPool } from '../../../core/snapshot-pool.js'"),
     'alliance-rally.js 必须经 core/snapshot-pool.js 入池（不得自持去重池）',
   );
   assert.ok(

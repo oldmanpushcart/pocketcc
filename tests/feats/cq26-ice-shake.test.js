@@ -33,7 +33,7 @@ globalThis.setInterval = (fn, ms, ...rest) => {
   return h;
 };
 
-const mod = await import('../../extension/src/feats/cq26/ice-shake.js');
+const mod = await import('../../extension/src/feats/cq26/ice-shake/index.js');
 const {
   readMiniGameId,
   tierText,

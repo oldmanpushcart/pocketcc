@@ -22,16 +22,8 @@ import { reactor } from '../../../core/reactor.js';
 import { chatApi } from '../../../core/chat.js';
 import { netApi } from '../../../core/net.js';
 import { ChatOverlay } from './chat-overlay.js';
-import {
-  S,
-  log,
-  bufOf,
-  syncRoomIds,
-  GEOM_KEY,
-  CMD_ADD_FRIEND,
-  CMD_PLAYER_INFO,
-  CMD_CHAT_INFO_LIST,
-} from './context.js';
+import { S, log, bufOf, syncRoomIds, GEOM_KEY } from './context.js';
+import { CMD_ADD_FRIEND, CMD_PLAYER_INFO, CMD_CHAT_INFO_LIST } from './constants.js';
 import { familyOf, myUid, myStrUid, hhmm, locText } from './normalize.js';
 import { jumpTo } from './jump.js';
 // 业务切片：仅为触发其对 S.fns 的登记（本层通过 S.fns 调用其函数，不直接 import 其符号）

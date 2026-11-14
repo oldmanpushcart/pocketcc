@@ -12,7 +12,7 @@ export default [
       {
         name: 'CMD_RECALL_CHAT',
         feat: 'chat',
-        file: 'feats/system/chat/context.js',
+        file: 'feats/system/chat/constants.js',
       },
     ],
   },
@@ -26,7 +26,7 @@ export default [
       {
         name: 'CMD_ADD_FRIEND',
         feat: 'chat',
-        file: 'feats/system/chat/context.js',
+        file: 'feats/system/chat/constants.js',
       },
     ],
   },
@@ -40,7 +40,7 @@ export default [
       {
         name: 'CMD_MAIL_QUERY',
         feat: 'chat',
-        file: 'feats/system/chat/context.js',
+        file: 'feats/system/chat/constants.js',
       },
     ],
   },
@@ -54,7 +54,7 @@ export default [
       {
         name: 'CMD_ALLIANCE_MEMBERS',
         feat: 'chat',
-        file: 'feats/system/chat/context.js',
+        file: 'feats/system/chat/constants.js',
       },
     ],
   },
@@ -68,7 +68,7 @@ export default [
       {
         name: 'CMD_CHAT_INFO_LIST',
         feat: 'chat',
-        file: 'feats/system/chat/context.js',
+        file: 'feats/system/chat/constants.js',
       },
     ],
   },

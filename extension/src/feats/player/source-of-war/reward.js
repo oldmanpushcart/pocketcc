@@ -24,25 +24,14 @@ import { bus, EVT } from '../../../core/bus.js';
 import { gameConf } from '../../../core/game-api.js';
 import { todayStr, safeStringify } from './util.js';
 
+import {
+  CMD_CLAIM_ATTACK_REWARD,
+  PUSH_SOW_ATTACK_COUNT_UPDATE,
+  PUSH_SOW_DAY_RESET,
+} from './constants.js';
+
 /** @type {ReturnType<createLog>} 模块日志器（tag 与攻打链一致） */
 const log = createLog('SOURCE-OF-WAR');
-
-/**
- * 攻击次数奖励领取（sendPBV2）：请求 {attackCount:门槛}，应答 data={attackCount,reward}。
- * 定义：NRequestIdV2.WORLD_BOSS_V2_CLAIM_ATTACK_COUNT_REWARD = 9952（真机录像实证 1/3/5 三档逐个发出）
- * @type {number}
- */
-const CMD_CLAIM_ATTACK_REWARD = 9952;
-
-/**
- * push WORLD_BOSS_V2_ATTACK_COUNT_UPDATE：今日攻打次数更新（源码实证只 updateAttackBossCnt，不带已领列表）。
- * 定义：NResponseIdV2（游戏 PushResponse nm 处理器）
- * @type {number}
- */
-const PUSH_SOW_ATTACK_COUNT_UPDATE = 21923;
-
-/** @type {number} push WORLD_BOSS_V2_DAY_RESET：每日重置/登录全量（覆写 attackCount + claimedAttackCountRewardList），唤醒重判即自愈 */
-const PUSH_SOW_DAY_RESET = 21924;
 
 /** @type {number} DataConfig：攻击次数奖励档位表 "门槛|道具;门槛|道具;门槛|道具"（游戏面板同键取法） */
 const CFG_KEY_REWARD_TIERS = 82000001;

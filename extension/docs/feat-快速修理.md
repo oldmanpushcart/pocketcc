@@ -1,6 +1,6 @@
 # feat · 快速修理（`quickRepair`）
 
-> 代码：[`src/feats/player/quick-repair.js`](../src/feats/player/quick-repair.js)（单文件）· 面板：玩家设置 → **快速修理** · 形态：`createCycle` 电平调和 + push 即时唤醒（与 `armory-material` / `potion-craft` 同族「只读+发包」日常 feat）。
+> 代码：[`src/feats/player/quick-repair/index.js`](../src/feats/player/quick-repair/index.js)（单文件）· 面板：玩家设置 → **快速修理** · 形态：`createCycle` 电平调和 + push 即时唤醒（与 `armory-material` / `potion-craft` 同族「只读+发包」日常 feat）。
 > 报文实证：印石日常真人实录·清批场（普通医院·真人一笔 `amount=9` 清空 15 条在修）· 印石日常真人实录·逐枚场（逐笔 1 枚 ×34，10120 队列 endTime 差分坐实时间池）· 印石日常真人实录·跨服场（`510000 amount=43 param:"1|0"`）· 普通无双真人实录（无双战场）。
 
 ---
