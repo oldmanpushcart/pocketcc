@@ -1,6 +1,6 @@
 # net.js — 网络底座（三 bus 命名空间 + 双通道 hook + promise 发包）
 
-> 源码：[`src/core/net.js`](../../src/core/net.js)　·　日志 tag：`[POCKETCC://NET]`　·　具名导出：`netApi`
+> 源码：[`src/core/net.js`](../../src/core/net.js) + [`src/core/net-observe.js`](../../src/core/net-observe.js)（观测面）　·　日志 tag：`[POCKETCC://NET]`　·　具名导出：`netApi`
 
 ## 1. 职责与边界
 
@@ -12,7 +12,7 @@
 - **三条 bus 命名空间**：`net.<cmd>`（推送）、`net.resp.<cmd>`（应答）、`net.req.<cmd>`（本端发包，经 `onReq` 按需拉起）。
 - **双通道观测**：主通道 `NetMgr.NET` 实例 + 次通道 `NetMgrSimple.prototype` 各挂发送 hook；入站在 `NetReciver.getInstance().onMessage` 单点覆盖两条通道。
 - **心跳过滤**：`hbCodes` 集合滤掉两条通道心跳（主 0/NO_QUEUE_HEART、次 6385/TM_WATCH_HEART），不入日志/采集/dashcam。
-- **采集面**：`collecting()` 环形缓冲 + 过滤谓词链 + 实时 tap；`stream/isStreaming` 流式观测。
+- **采集面**：`collecting()` 环形缓冲 + 过滤谓词链 + 实时 tap；`stream/isStreaming` 流式观测。观测面实现（Event 归一化/cmd 名表/日志打印/采集/快照）在 `net-observe.js`，net.js 经 `createObserve(deps)` 窄接口驱动。
 
 **不管什么**（铁律）：
 
@@ -27,21 +27,22 @@
 - **次通道只包原型不包门面**：`NetMgrSimple.prototype` 与 `_socket` 销毁重建无关，一次挂钩长期有效；包 `TMWatchNetMgr` 门面会让同一条包记两次（门面在地图外转调 NET）。
 - **心跳用集合而非单值**：入站认不出报文来自哪条通道，拿主通道号去滤会让次通道心跳应答整族漏进日志/采集。实录报文实证：1177 行里 68 行是 cmd 6385 心跳（占 5.8%）。
 - **被拒静默不抛异常**：游戏两条通道在 needDisable / MsgIDSettings / `cdTime` 太频繁 / encode 失败处 `return!1`，无异常；被拒语义用 `CODE_NOT_SENT` 等哨兵码表达，不用异常控制流。
+- **观测面拆出（B5）**：net.js 留 hook 装配 + 入站路由 + 发送 seam；Event 归一化/名表/日志打印/collecting/stream/快照迁 `net-observe.js`（零 import 工厂，deps 注入 game/log/isInstalled/hbCodes/syncSendHooks，假 deps 可直驱单测）。对外 api 面与行为不变；`hbCodes` 传同一 Set 引用（wrapSend 自学习次通道号）。双口径闸门：`recording()` 长度口径（热路径 recordSend/recordInbound 闸）与 `active()` 非 null 口径（wantSendHooks 用，空数组也算需求，避免采集空档期误摘 hook）。
 
 ## 3. API 契约
 
 ```js
-import { netApi } from '../../core/net.js';   // 装配期已就绪；feat 一般经 ctx.net 取用
+import { netApi } from '../../core/net.js'; // 装配期已就绪；feat 一般经 ctx.net 取用
 
-netApi.install();                 // boot 登录成功后调，挂入站/发送 hook
-netApi.send(cmd, data);           // → Promise<Ret>，主通道
-netApi.sendPBV2(cmd, data);       // → Promise<Ret>，PBV2（两条通道按 isPabBattleMap 分叉）
-netApi.isSending(cmd);            // 在途查询（net.checkRequestIdNoRes）
-netApi.onReq(handler);            // 本端发包 hook：req 仅在包真上线后派发
-netApi.secondaryStatus();         // 'pending' | 'ok' | 'missing' —— 次通道挂点探测态
-netApi.reprobeSecondary();        // 改版当天清负缓存重探，无需刷页
-netApi.setLog(bool) / isLogging();// 发送 hook + 入站打印总开关
-netApi.collecting() / stream;     // 采集环形缓冲 / 流式观测
+netApi.install(); // boot 登录成功后调，挂入站/发送 hook
+netApi.send(cmd, data); // → Promise<Ret>，主通道
+netApi.sendPBV2(cmd, data); // → Promise<Ret>，PBV2（两条通道按 isPabBattleMap 分叉）
+netApi.isSending(cmd); // 在途查询（net.checkRequestIdNoRes）
+netApi.onReq(handler); // 本端发包 hook：req 仅在包真上线后派发
+netApi.secondaryStatus(); // 'pending' | 'ok' | 'missing' —— 次通道挂点探测态
+netApi.reprobeSecondary(); // 改版当天清负缓存重探，无需刷页
+netApi.setLog(bool) / isLogging(); // 发送 hook + 入站打印总开关
+netApi.collecting() / stream; // 采集环形缓冲 / 流式观测
 // Ret：{ code, data, ok(code===0), reason(PBV2 拒绝多语言 key，仅 s≠0 带 key 时非空) }
 ```
 
@@ -83,4 +84,5 @@ netApi.collecting() / stream;     // 采集环形缓冲 / 流式观测
 
 ## 8. 变更记录
 
+- **2026-11-14（B5 观测面拆分）**：观测面（Event/名表/日志打印/collecting/stream/快照，约 660 行）verbatim 迁出至 `net-observe.js`，`createObserve(deps)` 工厂 seam 装配；net.js 1392→约 740 行，留 hook 装配 + 入站路由 + 发送 seam。api 面与热路径行为逐字节不变（双口径闸门 recording/active 区分长度与非 null 需求）；新增 tests/core/net-observe.test.js 24 项契约单测（假 deps 直驱，零浏览器桩）。
 - **2026-10-31（架构审视轮）**：新增具名导出 `export let netApi`（IIFE 内 api 构造完成后回赋值），供 reactor/feat 走 ESM import，替代 `window.pocketcc.net` 全局摸取；`window.pocketcc.net` 降为纯调试面。配合 ESLint `no-restricted-syntax` 禁 feats 摸 `window.pocketcc.*` 与 `.dependency-cruiser.cjs` core 分层规则，把影子总线腐蚀轴升级为可执行闸门。
