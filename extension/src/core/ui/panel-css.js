@@ -48,8 +48,15 @@ export const PANEL_CSS = `
       border:1px solid rgba(255,120,90,.35);background:rgba(255,90,60,.10);}
     .pc-mode span{font-weight:600;font-size:13px;color:#ffd0b8;}
     .pc-mode input{width:16px;height:16px;cursor:pointer;}
+    /* 头部行：世界态胶囊左 + 钻石胶囊右（钻石纯本地读数，开面板期间 2s 轻刷） */
+    .pc-headrow{display:flex;align-items:center;justify-content:space-between;gap:8px;margin:0 0 8px;}
+    /* 钻石胶囊：当前余额 + 背包钻石道具货值，悬停 title 看拆解 */
+    .pc-gem{display:inline-flex;align-items:center;padding:3px 10px;border-radius:999px;
+      font-size:12px;line-height:1.5;color:#c9f3ff;cursor:default;white-space:nowrap;
+      border:1px solid rgba(120,220,255,.30);background:rgba(70,190,220,.12);
+      font-variant-numeric:tabular-nums;}
     /* 世界态胶囊：展示当前 Kind(场景)·Place(地图)，随 world.change 刷新；unknown/off 转警色 */
-    .pc-world{display:inline-flex;align-items:center;gap:6px;margin:0 0 8px;padding:3px 10px;
+    .pc-world{display:inline-flex;align-items:center;gap:6px;margin:0;padding:3px 10px;
       border-radius:999px;font-size:12px;line-height:1.5;color:#bfe3ff;cursor:default;
       border:1px solid rgba(120,190,255,.28);background:rgba(70,140,220,.12);}
     .pc-world .pc-wk{font-weight:600;}

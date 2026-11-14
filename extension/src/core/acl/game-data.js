@@ -125,6 +125,34 @@ const GAME_DAY_RESET_OFFSET = 57600;
  */
 const SCIENCE_SID_EXCLUDE_DONATE = 10900;
 
+/** 钻石资源号（GameDefine ResourceType.Gold=10；ResourceNameConst[10]=loc 100017=「钻石」，枚举名 Gold 具误导，玩家侧实为钻石） */
+const RES_DIAMOND = 10;
+/** 背包钻石道具译名模式（「钻石N」，N 即单件货值，如 钻石100×2=200；锚定全串避免误命中「幸运钻石福袋」等） */
+const DIAMOND_ITEM_RE = /^钻石(\d+)$/;
+/** @type {Map<number,number>|null} itemId→单件货值（ITEM 表静态配置，会话内扫一次缓存；null=尚未扫成，下次重扫） */
+let diamondItemFaceCache = null;
+
+/**
+ * 扫 ITEM 表登记背包钻石道具（译名「钻石N」→ 货值 N）。纯本地读，零网络请求。
+ * 表未就绪回 null（下次自愈）；表就绪但无钻石行缓存空 Map（不重扫）。
+ * @returns {Map<number,number>|null}
+ */
+function diamondItemFaces() {
+  if (diamondItemFaceCache) return diamondItemFaceCache;
+  if (!l10n.tableReady()) return null;
+  var rows = l10n.tableRows('ITEM');
+  if (!rows || !rows.length) return null;
+  var m = new Map();
+  for (var i = 0; i < rows.length; i++) {
+    var r = rows[i];
+    if (!r || r.id == null || !r.name) continue;
+    var hit = DIAMOND_ITEM_RE.exec(l10n.text(String(r.name)));
+    if (hit) m.set(Number(r.id), Number(hit[1]) || 0);
+  }
+  diamondItemFaceCache = m;
+  return m;
+}
+
 export const gameData = {
   /** 当前服务器时间（秒），实时取值不缓存；取不到返回 0 */
   serverTime() {
@@ -1018,6 +1046,23 @@ export const gameData = {
     }
     var n = Number(v);
     return isFinite(n) && n >= 0 ? n : 0;
+  },
+  /**
+   * 钻石总量（纯本地只读，零网络请求）：当前余额（ResourceType.Gold=10）
+   *   + 背包「钻石N」道具 Σ 单件货值×持有量（getItemAmount）。
+   * 三态：余额读不到 → total=null（UI 显 —，不拿 0 冒充）；背包部分表未就绪/读不到按 0（余额仍如实展示）。
+   * @returns {{base:number|null, bag:number, total:number|null}} base=当前余额，bag=背包道具货值，total=两者之和
+   */
+  diamondTotal() {
+    var base = gameData.resourceAmount(RES_DIAMOND);
+    var bag = 0;
+    var faces = diamondItemFaces();
+    if (faces) {
+      faces.forEach(function (face, id) {
+        bag += face * gameData.itemAmount(id);
+      });
+    }
+    return { base: base, bag: bag, total: base == null ? null : base + bag };
   },
   /**
    * 制药 lane 的已解锁配方 id 清单（读游戏本地缓存 `UserData.ProductingData.getProductData(true).UnlockList`，只读）。

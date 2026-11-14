@@ -6,6 +6,7 @@ import { storage } from '../storage.js';
 import { bus, EVT } from '../bus.js';
 import { getUid } from '../player.js';
 import { configs, findFeature, applyFeature } from '../registry.js';
+import { gameData } from '../game-api.js';
 import { iconSVG } from './icon-svg.js';
 import { isCombat, setCombatMode } from '../mode.js';
 import { ICON_SIZE, PANEL_W, POS_KEY } from './consts.js';
@@ -19,6 +20,7 @@ import {
   rerenderFeatureCard,
   syncControls,
   buildWorldStatus,
+  buildDiamondStatus,
 } from './panel.js';
 import { wirePanel, wireControls } from './wire.js';
 import { worldState } from '../world/state.js';
@@ -89,6 +91,19 @@ export async function mountUI() {
   }
   renderWorldStatus();
   bus.on(EVT.WORLD_CHANGE, renderWorldStatus);
+
+  // 钻石胶囊：纯本地读（余额 + 背包钻石道具货值），零网络请求。数值变化无广播源，
+  // 故展开期间 2s 轻刷（与世界态兜底轮询同频），收起零轮询；展开/世界态翻转时立即现读兜底。
+  let gemTimer = null;
+  function renderDiamonds() {
+    const el = panel.querySelector('#pc-gem');
+    if (!el) return;
+    const s = buildDiamondStatus(gameData.diamondTotal());
+    el.textContent = s.text;
+    el.title = s.title;
+  }
+  renderDiamonds();
+  bus.on(EVT.WORLD_CHANGE, renderDiamonds);
   // F8 热键：战斗 / 日常 切换（setCombatMode 广播 mode.change → 图标/复选框/reactor 门控重算自动跟进）。
   // 必须用 window 捕获阶段（capture:true）：游戏自己也会处理 keydown 并在冒泡阶段 stopPropagation，
   // 导致面板收起（焦点在画布）时挂 document 冒泡监听收不到；捕获阶段先于游戏处理且不受焦点/stopPropagation 影响。
@@ -217,6 +232,8 @@ export async function mountUI() {
     refreshTexts(panel);
     refreshTabGates(panel); // 活动开/退常在面板收起期间发生，展开时按实时判据回算左 TAB 可点态
     renderWorldStatus(); // 展开时再核一次世界态（订阅已常驻，此处兜住极早期 world.change 先于挂订阅的窗口）
+    renderDiamonds();
+    if (gemTimer == null) gemTimer = setInterval(renderDiamonds, 2000);
     // 焦点移入面板首个可见可聚焦控件（键盘用户不必从图标一路 Tab 进来）；
     // 漫游 tabindex 的 inactive TAB（-1）与隐藏 pane 里的控件都跳过，preventScroll 免得带动游戏页滚动。
     for (const el of panel.querySelectorAll('button, input, select, textarea, [tabindex]')) {
@@ -229,6 +246,10 @@ export async function mountUI() {
   function closePanel() {
     panel.hidden = true;
     icon.setAttribute('aria-expanded', 'false');
+    if (gemTimer != null) {
+      clearInterval(gemTimer);
+      gemTimer = null;
+    }
   }
 
   // Esc 收起面板：监听在 shadow root（图标/面板内的事件都冒到这里）。

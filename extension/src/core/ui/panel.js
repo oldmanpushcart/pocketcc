@@ -69,6 +69,18 @@ export function buildWorldStatus(st) {
 }
 
 /**
+ * 由钻石总量快照算头部钻石胶囊的展示数据（纯函数，不碰 DOM）。
+ * total=null（余额读不到）显 —，不拿 0 冒充；title 悬停展示「余额 + 背包道具」拆解。
+ * @param {{base:number|null, bag:number, total:number|null}} d gameData.diamondTotal() 快照
+ * @returns {{text:string, title:string}}
+ */
+export function buildDiamondStatus(d) {
+  const text = d.total == null ? '钻石：—' : `钻石：${d.total}`;
+  const title = d.base == null ? '钻石余额未就绪' : `当前余额 ${d.base} + 背包钻石道具 ${d.bag}`;
+  return { text, title };
+}
+
+/**
  * 重算条件字段（fd.showIf）的显隐：只切 hidden 属性，不重建 DOM（结构不变 → 控件已绑的事件与草稿态全存活）。
  * 一个分组下的字段全被隐藏时，其 .pc-fsec 小标题一起收起；可折叠子分组的字段包在 .pc-fsec-body 里，
  * 不是标题的弟弟元素，故保守当「有内容」不收标题。
@@ -249,7 +261,10 @@ export function buildPanelHTML() {
   const panes = MENU.map((c, i) => renderCategoryPane(c, i === 0)).join('');
   return `
       <h3>口袋控制中心<span class="pc-sub">POCKETCC</span></h3>
-      <div class="pc-world" id="pc-world"></div>
+      <div class="pc-headrow">
+        <div class="pc-world" id="pc-world"></div>
+        <div class="pc-gem" id="pc-gem"></div>
+      </div>
       <label class="pc-mode"><span>战斗模式</span><input type="checkbox" id="pc-combat"></label>
       <div class="pc-tabs">
         <div class="pc-tabbar" role="tablist" aria-orientation="vertical" aria-label="功能分类">${tabs}</div>
