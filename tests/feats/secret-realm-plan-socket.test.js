@@ -154,6 +154,25 @@ test('未注册方案 id 时引擎按 default 回落（配置面缺键前向兼�
   assert.deepEqual(plansMod.matchStages({ stages: [] }, {}), []);
 });
 
+// ── P2 双轨收一轨：legacy 选点器不得回潮 ────────────────────────────────
+// 动机：shop/beast/resource 三 objective 已收进 pilot-select 窄筛唯一选点路，料源不可用时
+//   本轮不选（落链后续档）；若有人把读累积 #tiles 池的老选点器加回来当兜底，会静默换回
+//   「降级时另一套筛子」语义（rTime/consumed/当日拉黑三闸回潮）——源码层直接卡死。
+test('pilot.js 无 legacy 选点器残留（#pickShop/#pickBeast/#pickResource/#nearestShopA）', () => {
+  const src = readFileSync(pilotPath, 'utf8');
+  for (const name of ['#pickShop(', '#pickBeast(', '#pickResource(', '#nearestShopA(']) {
+    assert.ok(
+      !src.includes(name),
+      'legacy 选点器回潮：pilot.js 出现 ' + name + '（窄筛唯一选点路，兜底=本轮不选）',
+    );
+  }
+  // resolveHop 只该在 pilot-select 内部用（pickResource 自己调），引擎不再直接 import
+  assert.ok(
+    !src.includes('resolveHop'),
+    'pilot.js 重新引用 resolveHop（单跳裁决已收进 pilot-select）',
+  );
+});
+
 // ── STAGE_DIAG 不存孤儿：key 必须是方案阶段 id 之一 ──────────────────────
 test('STAGE_DIAG 无孤儿 key；terminal 档全登记（wait 例外）', () => {
   const keys = engineStageDiagKeys();

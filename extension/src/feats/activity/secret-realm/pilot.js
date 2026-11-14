@@ -7,11 +7,11 @@
  *   • BOSS：服务器权威坐标 `bossBaseInfo[].pos`。
  *   • 资源/平台：901 GET_WORLD_INFO 每 `tuning.driveViewMs`(3s) 以自己（或开台中的 BOSS）为中心主动拉
  *     `{x,y,k,rid:0,width:20,height:30,marchInfo:true}`，结果并入 `#tiles`（`src:'v'` 覆盖 push 的旧值）；
- *     连续失败 `driveViewOffAfter` 次 → `#viewOff` 降级（仍可开商店/BOSS，巡航退回 push+探索），`driveViewRetryMs`(60s) 后重试。
+ *     连续失败 `driveViewOffAfter` 次 → `#viewOff` 降级（仍可开商店/BOSS，巡航选点本轮停选等快照恢复），`driveViewRetryMs`(60s) 后重试。
  *   push 10018 是「镜头扫过才推」的增量包，只作兜底——候选池若只靠它，会被镜头位置限死在 2~3 个点上。
  *
  * 四层：S0 数据 `#syncAnchors`/`#awaitView`(串行 await 901→`#ingestView` 落账) → S1 阶段 `#bossWindow`（21 开打 / 22 开台读秒）/`#shopWant`
- *   → S2 动作 `#pickBoss`/`#pickShop`/`#pickPlane`/`#pickResource`/`#pickExplore` → `#dispatch`
+ *   → S2 动作 pilot-select 窄筛（`pickShop`/`pickBeast`/`pickResource`）/`#pickPlane`/`#pickFollow`/`#explorePoint` → `#dispatch`
  *   → S3 到点 `#enterWork`（161 驻留让 shop.js 买货；173/163 拿空即走；176/177 交给 boss.js）。
  *
  * 阶段网关链（互斥短路）：收场/拍宠高光窗去店 → 跟人 → 打野 → 采井（严格/宽松）→ 链尾兜底去店。
@@ -26,12 +26,12 @@
  *   `fightBegin+start` 的点不算候选；别人的在途行军（`marchList[].state==1`，`march_policy==1` 时不查）指向的点不算候选；
  *   BOSS 候选过 `guard_policy` 四档过滤，到场打过即记账（本场不再选），巡航的 BOSS 引力锚恒取「第一个石头奖励还没人领的
  *   BOSS」；野怪品质取 scout.js 情报账，未侦察到按 2 计；严格档产出下限 `driveResourceMinYield(5) + ceil(队伍人数/2)`、
- *   距离上限 100；巡航评分 `iNum − 距起点/2 − 距无香肠店/5`，商店引力锚取「还没买过香肠的店里最近的一家」，
+ *   距离上限 100；巡航评分 `iNum − 距起点/2 − 距未领奖BOSS/5 − 距无香肠店/6`（pilot-select 窄筛），商店引力锚取「还没买过香肠的店里最近的一家」（空则不挂锚），
  *   已派车的点 `driveMarchedTtlMs`(60s) 内不再选。
  *   成本项缺锚时必须算 **0**（`Infinity / 5` 仍是 Infinity 且 truthy，`|| 0` 不生效 → score 恒 -Infinity，一个点都选不中）。
  *
  * 每店账本（点位键 → `{time 秒, sausage, piece}`，跨场保留）：`stage` 档的 gap 从到店那一刻重算，选店先选没买过香肠的；
- *   访问记忆三道闸 = 60s 防手抖 + `max(3000, driveShopStayMs)` 同点去重 + 「每家店都已试过却仍缺料」的白跑惩罚。
+ *   访问记忆 = 窄筛 pickShop 三连前置（暖机 63s / 全店共享 3s 到店冷却 / 已在 161 不重派）+ `max(3000, driveShopStayMs)` 路由锁 + 「每家店都已试过却仍缺料」的白跑惩罚。
  *   到点驻留：172 → `driveStayMonsterMs` 等拍宠/交战结算；173/163 → 拿空即走，地板 `min(res_stay_time, 未拿件数×0.8+1.1)` 秒；
  *   161 → `driveShopStayMs` 让 shop.js 逐行买货。
  *
@@ -53,7 +53,6 @@ import { tileKey as utilTileKey, dist as utilDist } from './util.js';
 import { PLANS, matchStages, validatePlan, validateCtxKeys } from './plans.js';
 import {
   pickResource,
-  resolveHop,
   pickBeast,
   pickShop,
   pickHopTile,
@@ -82,7 +81,6 @@ import {
   PAB_BOSS_PLANE,
   PAB_BOSS,
   PAB_BOSS_GUARD,
-  ST_NORMAL,
   ST_PVP_READY,
   ST_PVP_FIGHTING,
   ST_BOSS_FIGHTING,
@@ -632,7 +630,7 @@ export class PilotEngine {
     if (p.piece != null) cur.piece = Number(p.piece) || 0;
     if (p.sausageShelf != null) cur.sausageShelf = Number(p.sausageShelf) ? 1 : 0;
     this.#shopLedger.set(key, cur);
-    // 账本变更留痕：#shopAllTried（白跑惩罚长冷却）与 #pickShop 的 prefer 排序都吃这几个位，
+    // 账本变更留痕：#shopAllTried（白跑惩罚长冷却）与窄筛 pickShop 的 prefer 排序都吃这几个位，
     //   事后能回答「已知这家不卖香肠/都试过了，为什么还（不）去商店」。
     this.#env.log.debug(
       'pilot: shop ledger %s -> time=%d visited=%d sausage=%d piece=%d shelf=%d.',
@@ -828,7 +826,7 @@ export class PilotEngine {
     for (let i = 0; i < out.length; i++) {
       const sk = tileKey(out[i].x, out[i].y);
       if (sk && !this.#shopLedger.has(sk)) {
-        // visited=0：只用于 #shopStageWant 的全局 gap 基准，不参与 #pickShop 的 revisit 闸（否则开局 8min 进不了任何店）
+        // visited=0：只用于 #shopStageWant 的全局 gap 基准，不参与窄筛 pickShop 的到店冷却闸（否则开局 8min 进不了任何店）
         this.#shopLedger.set(sk, { time: sec, sausage: 0, piece: 0, visited: 0, sausageShelf: 0 });
       }
     }
@@ -1005,7 +1003,7 @@ export class PilotEngine {
   /**
    * 窄筛料源新鲜度闸（§3.1「决策只吃本应答快照」）：901 降级（`#viewOff`）/从未起过/
    *   快照超期（阀值取 `max(driveViewMs*3, driveMarchStaleMs)`，与在途过滤同尺）时回 null
-   *   → 调用方降级走老 `#pickResource`（读累积 `#tiles` 池）。非 null 时是**原样** pointList。
+   *   → 调用方本轮不选（落链后续档，等快照恢复，不再退回累积池换语义）。非 null 时是**原样** pointList。
    * @param {number} now 毫秒
    * @returns {Array|null}
    */
@@ -1591,156 +1589,6 @@ export class PilotEngine {
   // ══════════════════════════════════════════════════════════════════════
 
   /**
-   * 选一家商店（**表锚点优先**，锚点缺失才退回视口里的 161）。
-   *   排序口径：`e && i.sausage - a.sausage || dist(i) - dist(a)`——
-   *   即「高光窗/轮巡档（e=1）」先选**本店还没买过香肠**的，同档才比距离；纯应急去店（e 未传）只看距离。
-   * ⚠ 访问记忆闸（本函数必须自带记忆，否则会反复敲最近那一家）：
-   *   已派车（#marched）/ 已消费（#consumed，离店即记 driveConsumedTtlMs）/ 真服务过且仍在 revisit 窗内的店
-   *   先跳过，试下一家；四家都在闸内时自然回 null → 链尾不拦路，交给巡航/探索
-   *   （去店理由走链尾兜底，所以必须自己记住访问过哪家：driveShopRevisitMs）。
-   * @param {string} curKey 当前点键
-   * @param {{x:number,y:number}} cur 当前坐标
-   * @param {boolean} [bySausage=false] 按香肠账排序
-   * @param {boolean} [urgent=false] 收场档：不吃 #consumed/revisit 长记忆，
-   *   只留 60s 的 #marched 防手抖（收场本来就该反复回店拿货）
-   * @returns {{x:number,y:number}|null}
-   */
-  #pickShop(curKey, cur, bySausage, urgent) {
-    const now = Date.now();
-    const stay = Math.max(3000, Number(tuning.driveShopStayMs) || 0);
-    const revisit = Number(tuning.driveShopRevisitMs) || 0;
-    const revisitWin = revisit > 0 ? Math.max(revisit, stay) : stay;
-    let best = null;
-    let bestS = 1;
-    let bestD = Infinity;
-    for (let i = 0; i < this.#shops.length; i++) {
-      const s = this.#shops[i];
-      const k = tileKey(s.x, s.y);
-      if (!k) continue;
-      if (this.#dayBlack[k]) continue;
-      if (k === curKey) return { x: s.x, y: s.y }; // 已在店里 → 同点短路，直接进 WORK
-      const cu = this.#consumed.get(k);
-      if (cu != null && (cu === -1 || (!urgent && cu > now))) continue;
-      const ma = this.#marched.get(k);
-      if (ma != null && ma > now) continue;
-      const led = this.#shopLedger.get(k);
-      if (!urgent && led && led.visited) {
-        const lt = Number(led.time) || 0;
-        if (lt > 0 && now < lt * 1000 + revisitWin) continue;
-      }
-      const sa = bySausage && led && Number(led.sausage) > 0 ? 1 : 0;
-      const d = dist(cur.x, cur.y, s.x, s.y);
-      const better = bySausage ? sa < bestS || (sa === bestS && d < bestD) : d < bestD;
-      if (better) {
-        bestS = sa;
-        bestD = d;
-        best = { x: s.x, y: s.y };
-      }
-    }
-    if (best) return best;
-    // 退路：视口里出现过的 161（表未下发/无本组行时才走到这里）——同样过访问记忆闸
-    const self = this;
-    this.#tiles.forEach(function (t) {
-      if (t.pt !== PAB_SHOP) return;
-      if (self.#dayBlack[t.k]) return;
-      const cu = self.#consumed.get(t.k);
-      if (cu != null && (cu === -1 || (!urgent && cu > now))) return;
-      const ma = self.#marched.get(t.k);
-      if (ma != null && ma > now) return;
-      const d = dist(cur.x, cur.y, t.x, t.y);
-      if (d < bestD) {
-        bestD = d;
-        best = { x: t.x, y: t.y };
-      }
-    });
-    return best;
-  }
-
-  /**
-   * 打野档：172 野怪点，回合已开门 + 空闲置 + 没被别人的在途行军指向（`march_policy==1` 不查）
-   *   + 不是别人的集结兽（`callTId`）+ 情报品质≥minQ + 距 0<d≤maxDist；
-   *   排序：品质降序→距离升序。品质口径：**未侦察到回 2**，所以
-   *   `driveBeastMinQuality` 默认 4 意味着**没囤到情报的野怪不去**（这就是 scout.js 存图的下游）。
-   * @param {string} curKey 当前点键
-   * @param {{x:number,y:number}} cur 当前坐标
-   * @param {number} minQ 最小品质
-   * @param {number} maxDist 距离上限（99999=不限）
-   * @returns {{x:number,y:number}|null}
-   */
-  #pickBeast(curKey, cur, minQ, maxDist) {
-    const env = this.#env;
-    const now = Date.now();
-    const self = this;
-    const base = env.secret.getRoomBaseInfo();
-    const myTeam = base && base.teamId != null ? toNum(base.teamId) : 0;
-    const dbg = {
-      seen: 0,
-      type: 0,
-      closed: 0,
-      round: 0,
-      busy: 0,
-      march: 0,
-      poor: 0,
-      far: 0,
-      pass: 0,
-      best: '',
-    };
-    let best = null;
-    let bestQ = -1;
-    let bestD = Infinity;
-    this.#tiles.forEach(function (t) {
-      dbg.seen++;
-      if (t.pt !== PAB_MONSTER) {
-        dbg.type++;
-        return;
-      }
-      if (!self.#roundOpen(t.esrId)) {
-        dbg.round++;
-        return;
-      }
-      if (t.k === curKey || self.#dayBlack[t.k]) {
-        dbg.closed++;
-        return;
-      }
-      const cu = self.#consumed.get(t.k);
-      const ma = self.#marched.get(t.k);
-      if ((cu != null && (cu === -1 || cu > now)) || (ma != null && ma > now)) {
-        dbg.closed++;
-        return;
-      }
-      // 只去空闲野怪（`state == 0 && teams.length == 0`）且不是别人的集结目标
-      if (t.state !== ST_NORMAL || t.teams > 0 || (t.callTId && myTeam && t.callTId !== myTeam)) {
-        dbg.busy++;
-        return;
-      }
-      if (self.#marchBlocked(t.x, t.y)) {
-        dbg.march++;
-        return;
-      }
-      const qRaw = typeof env.scoutQuality === 'function' ? env.scoutQuality(t.x, t.y) : null;
-      const q = Number.isFinite(qRaw) ? Number(qRaw) : 2; // 未知品质当 2（默认闸 4 就筛掉）
-      if (q < minQ) {
-        dbg.poor++;
-        return;
-      }
-      const d = dist(t.x, t.y, cur.x, cur.y);
-      if (!(d > 0) || d > maxDist) {
-        dbg.far++;
-        return;
-      }
-      dbg.pass++;
-      if (q > bestQ || (q === bestQ && d < bestD)) {
-        bestQ = q;
-        bestD = d;
-        best = { x: t.x, y: t.y };
-      }
-    });
-    if (best) dbg.best = tileKey(best.x, best.y) + ' q=' + bestQ + ' d=' + bestD.toFixed(1);
-    this.#pickDbg = dbg;
-    return best;
-  }
-
-  /**
    * 跟人档：在 173 井 / 172 野怪里找**已有人驻军、或有人在途飞向它**
    *   且距本点不为 0 的最近一个（摇人/跟队语义：往扎堆的地方靠，不自己探新点）。
    *   `march_policy==2`（摇人优先）时在日常链最前面试这一档。
@@ -1841,193 +1689,9 @@ export class PilotEngine {
   }
 
   /**
-   * 巡航选点（评分制）：
-   *   `score = iNum − 距当前点/2 − 距 BOSS 引力锚/5 − 距香肠没买过的店/6`，取最高。
-   *   过滤：只看 173/163；已消费/已派车/本场拉黑的剔除；`state` 非 0（非空闲）或 `teams>0`（有队伍）剔除；
-   *   回合已开门（`#roundOpen(esrId)`）、没被别人的在途行军指向（`#marchBlocked`）；
-   *   173 还要求 `iNum >= minNum` 且 `rTime` 不在未来（井已被抽空、正在刷新）；距当前点 ∈ (0, maxDist]。
-   * @param {string} curKey 当前点键
-   * @param {{x:number,y:number}} cur 当前坐标
-   * @param {{x:number,y:number}|null} bossA BOSS 引力锚（由调用方传 `#bossScoutAnchor()`）
-   * @param {number} [minNum=0] 最小产出（严格档 `5 + ceil(队伍人数/2)`）
-   * @param {number} [maxDist=99999] 距离上限（严格档 100）
-   * @param {number} [hopMaxDist=Infinity] 单跳车程上限折算的距离格（需求 B：超出则就近跳板逼近，不长途直冲）；缺省/非正=不封顶
-   * @returns {object|null}
-   */
-  #pickResource(curKey, cur, bossA, minNum, maxDist, hopMaxDist) {
-    const now = Date.now();
-    const minYield = Number.isFinite(minNum) && minNum > 0 ? minNum : 0;
-    const maxD = Number.isFinite(maxDist) && maxDist > 0 ? maxDist : 99999;
-    const shopA = this.#shops.length ? this.#nearestShopA(cur) : null;
-    const dbg = {
-      seen: 0,
-      cur: 0,
-      type: 0,
-      pvp: 0,
-      empty: 0,
-      black: 0,
-      consumed: 0,
-      bad: 0,
-      round: 0,
-      march: 0,
-      far: 0,
-      pass: 0,
-      best: '',
-      anchors: (bossA ? 'B' : '-') + (shopA ? 'S' : '-'),
-    };
-    const self = this;
-    const cands = [];
-    const hopMaxD = Number.isFinite(hopMaxDist) && hopMaxDist > 0 ? hopMaxDist : Infinity;
-    this.#tiles.forEach(function (t) {
-      dbg.seen++;
-      if (t.pt !== PAB_RESOURCE && t.pt !== PAB_DROP) {
-        dbg.type++;
-        return;
-      }
-      if (t.k === curKey) {
-        dbg.cur++;
-        return;
-      }
-      if (self.#dayBlack[t.k]) {
-        dbg.black++;
-        return;
-      }
-      const cu = self.#consumed.get(t.k);
-      if (cu != null && (cu === -1 || cu > now)) {
-        dbg.consumed++;
-        return;
-      }
-      const ma = self.#marched.get(t.k);
-      if (ma != null && ma > now) {
-        dbg.consumed++;
-        return;
-      }
-      if (t.state === ST_PVP_READY || t.state === ST_PVP_FIGHTING) {
-        dbg.pvp++;
-        return;
-      }
-      if (t.state !== ST_NORMAL) {
-        dbg.bad++;
-        return;
-      }
-      if (t.teams > 0) {
-        dbg.bad++;
-        return;
-      }
-      if (t.pt === PAB_RESOURCE) {
-        if (t.rTime > now) {
-          dbg.empty++;
-          return;
-        }
-        if (t.iNum != null && t.iNum < minYield) {
-          dbg.empty++;
-          return;
-        }
-      } else if (t.iNum != null && t.iNum <= 0) {
-        dbg.empty++;
-        return;
-      }
-      // 回合开门闸：未刷出来的区域不算候选
-      if (!self.#roundOpen(t.esrId)) {
-        dbg.round++;
-        return;
-      }
-      // 别人的在途行军已飞向该点 → 不抢（`march_policy==1` 时不查）
-      if (self.#marchBlocked(t.x, t.y)) {
-        dbg.march++;
-        return;
-      }
-      const d0 = dist(t.x, t.y, cur.x, cur.y);
-      if (d0 > maxD) {
-        dbg.far++;
-        return;
-      }
-      dbg.pass++;
-      const gain = t.iNum == null ? 0 : t.iNum;
-      const dCur = d0;
-      // ⚠ 成本项缺锚时必须算 **0**，不能拿 Infinity 去参与减法：`Infinity / 5` 仍是 Infinity、且是 truthy，
-      //   `|| 0` 不生效 → score 会被污染成 -Infinity，丰景点也选不中。
-      const dBoss = bossA ? dist(t.x, t.y, bossA.x, bossA.y) : NaN;
-      const dShop = shopA ? dist(t.x, t.y, shopA.x, shopA.y) : NaN;
-      const score =
-        gain -
-        dCur / 2 -
-        (Number.isFinite(dBoss) ? dBoss / 5 : 0) -
-        (Number.isFinite(dShop) ? dShop / 6 : 0);
-      cands.push({
-        x: t.x,
-        y: t.y,
-        k: t.k,
-        at: t.at,
-        d0,
-        gain,
-        score,
-        tier: self.#roundTier(t.esrId),
-      });
-    });
-    if (!cands.length) {
-      this.#pickDbg = dbg;
-      return null;
-    }
-    // goal = 打分最优（平手取更新鲜到点的，沿用旧口径）
-    let goal = cands[0];
-    for (const c of cands) {
-      if (c.score > goal.score || (c.score === goal.score && c.at > goal.at)) goal = c;
-    }
-    // 强区优先（需求 2）：开关开启且候选里存在「更高档位（tier=maxTier>0）」时，goal 收敛到该最高档位里打分最优的；
-    //   只有微区开放时 maxTier=微档位且全部候选同档 → goal 等价打分最优（无误牵引）。实际移动仍由 resolveHop 逐跳逼近。
-    let maxTier = 0;
-    for (const c of cands) if (c.tier > maxTier) maxTier = c.tier;
-    if (Number(tuning.driveStrongPull) && maxTier > 0) {
-      let sg = null;
-      for (const c of cands) {
-        if (c.tier !== maxTier) continue;
-        if (!sg || c.score > sg.score || (c.score === sg.score && c.at > sg.at)) sg = c;
-      }
-      if (sg) goal = sg;
-    }
-    // 单跳车程封顶：目标太远则就近跳板逼近（见 resolveHop），窗内无落脚就不发这趟长途
-    const chosen = resolveHop(cands, goal, hopMaxD);
-    dbg.hopMaxDist = hopMaxD;
-    dbg.tier = 'max=' + maxTier + ' goal=' + goal.tier;
-    dbg.best = chosen
-      ? chosen.k + ' score=' + chosen.score.toFixed(2) + (chosen.waypoint ? ' via→' + goal.k : '')
-      : '';
-    this.#pickDbg = dbg;
-    if (!chosen) return null;
-    return { x: chosen.x, y: chosen.y };
-  }
-
-  /**
-   * 评分用的商店引力锚：取**「还没买过香肠的店里最近的一家」**
-   *   （`shops.filter(s => s.sausage == 0).sort(dist)[0]`）——于是车会往「还有香肠可拿」的店那边靠。
-   *   香肠账全 >0（或锚点未建账）时退化为全体最近的一家。
-   * @param {{x:number,y:number}} cur 当前坐标
-   * @returns {{x:number,y:number}|null}
-   */
-  #nearestShopA(cur) {
-    const self = this;
-    let best = null;
-    let bestD = Infinity;
-    let bestS = 1;
-    this.#shops.forEach(function (s) {
-      const k = tileKey(s.x, s.y);
-      const led = k ? self.#shopLedger.get(k) : null;
-      const sa = led && Number(led.sausage) > 0 ? 1 : 0;
-      const d = dist(cur.x, cur.y, s.x, s.y);
-      if (sa < bestS || (sa === bestS && d < bestD)) {
-        bestS = sa;
-        bestD = d;
-        best = s;
-      }
-    });
-    return best;
-  }
-
-  /**
-   * 窄筛（§5.1）用的商店引力锚：取**「还没买过香肠的店里最近的一家」**，与 `#nearestShopA` 的
-   *   关键差异 = **空则不回退**（竞品 L24718 `t.filter(e=>0==sausage).sort(byDist)[0]`：无一家免香肠店就
-   *   不挂锚（成本项计 0），而 `#nearestShopA` 会退化成「全体最近一家」）。未建账的店视为 sausage=0（还没买过）。
+   * 窄筛（§5.1）用的商店引力锚：取**「还没买过香肠的店里最近的一家」**，
+   *   **空则不回退**（竞品 L24718 `t.filter(e=>0==sausage).sort(byDist)[0]`：无一家免香肠店就
+   *   不挂锚，成本项计 0）。未建账的店视为 sausage=0（还没买过）。
    * @param {{x:number,y:number}} cur 当前坐标
    * @returns {{x:number,y:number}|null}
    */
@@ -2268,7 +1932,7 @@ export class PilotEngine {
         }
         if (rej === REJ_PARAM_ERROR) {
           // common_159995（该点当前不可打）：阶段态、窗过即可打 → 与 boss.js 攻打档同口径只做 60s 短黑，
-          //   但用**专表 #paramBlack**（#marched 的消费者只有 #pickShop/#pickBeast/#pickFollow/#pickResource，
+          //   但用**专表 #paramBlack**（#marched 的消费者只有 #pickFollow 与 #marchedListArr（喂窄筛 marchedList），
           //   #pickPlane 扫 #tiles、bossFight 直取权威坐标都不读它——写 marched 对这两档无消费者，5s 循环不断）。
           //   不写 #dayBlack（权威坐标不因拒绝码拉黑 BOSS 本体）。
           self.#paramBlack[self.#toXY] = Date.now() + tuning.paramBlacklistMs;
@@ -2389,7 +2053,7 @@ export class PilotEngine {
         sausageShelf: 0,
       };
       led.time = Math.floor(now / 1000);
-      led.visited = 1; // 真到店（锚点建账播的初值不算）→ #pickShop 的 revisit 闸从这里开始生效
+      led.visited = 1; // 真到店（锚点建账播的初值不算）→ 窄筛 pickShop 的全店共享到店冷却（time+3s）从这里开始生效
       this.#shopLedger.set(key, led);
       // 去重窗 + 路由锁：到店后 driveShopStayMs 内整条链不重评，取 max(3000, driveShopStayMs)。
       this.#shopCoolUntil = now + Math.max(3000, Number(tuning.driveShopStayMs) || 0);
@@ -2410,7 +2074,7 @@ export class PilotEngine {
    * 账本口径的「白跑惩罚」：锚点里**每家店都已试过**却仍判「缺香肠」
    *   → 说明缺口补不满（买不起/额度买完/缺刷新币），商店档先进长冷却（driveShopGapCooldownMs）；
    *   否则会形成「离店→缺口仍在→又开回同一家店」的永动。
-   * 旧的判据是「每家 `sausage>0`」（四家都真买到过香肠），因 #pickShop 当时不换店而**永不成立**（根因 D）；
+   * 旧的判据是「每家 `sausage>0`」（四家都真买到过香肠），因老选店当时不换店而**永不成立**（根因 D）；
    *   现按「去过了就算试过」算：真服务过（visited）且（买到过 或 货单上根本没香肠）。
    * @returns {boolean}
    */
@@ -2757,8 +2421,8 @@ export class PilotEngine {
   }
 
   /**
-   * 目标原语 `Objectives[obj]`：把方案里的目标名翻成**选点调用**（B1 仍包老的 #pickX，
-   * resource/beast/shop 换成 pilot-select 真窄筛是下一拍的事）。纯选择：不发 8521、
+   * 目标原语 `Objectives[obj]`：把方案里的目标名翻成**选点调用**（resource/beast/shop 一律走
+   * pilot-select 窄筛，料源不可用时本轮不选，不再回退累积池老语义）。纯选择：不发 8521、
    * 不记账、不设冷却——那些一律留在引擎解释器里，保证「方案层可离线换方案」时引擎侧口径不变。
    * ⚠ 本 switch 的 case 名清单 = plans.js `OBJECTIVES`。新增/删除 case 请同步该清单，
    *   首拍 validatePlan 会卡住不一致的修改（违例 → #tick 头部拒发车）。
@@ -2786,7 +2450,7 @@ export class PilotEngine {
         const p = params || {};
         // 优先级：exit（收场只拿货）=不优先香肠 / preferNoSausage（高光）=优先 / 链尾兜底=有去店理由时优先。
         const prefer = p.exit ? false : p.preferNoSausage ? true : !!ctx.shopWhy;
-        // 商店坐标来自权威表（非 901 快照）→ 不受新鲜度闸限；表未下发时才退老路（视口 161 兜底）。
+        // 商店坐标来自权威表（非 901 快照）→ 不受新鲜度闸限；表未下发 → 本轮不选，等表下发（不再退视口 161 兜底）。
         if (this.#shops.length) {
           const now = Date.now();
           const self = this;
@@ -2815,7 +2479,8 @@ export class PilotEngine {
           };
           return sel ? { x: sel.x, y: sel.y } : null;
         }
-        return this.#pickShop(snap.curKey, snap.cur, prefer, !!p.exit);
+        // 权威表未下发：本轮不选，落链后续档等表（不再读累积 #tiles 池换语义）
+        return null;
       }
       case 'beast': {
         // 禁走窗（开台读秒后 0~180s 不拍野）：窗内这一档直接跳过（§5.3 L24780 提前放弃）
@@ -2850,7 +2515,8 @@ export class PilotEngine {
           };
           return sel ? { x: sel.x, y: sel.y } : null;
         }
-        return this.#pickBeast(snap.curKey, snap.cur, minQ, 99999);
+        // 901 快照不可用（降级/未起/超期）：本轮不选，落链后续档等快照恢复
+        return null;
       }
       case 'resource': {
         const bossA = this.#bossScoutAnchor() || snap.boss || null;
@@ -2875,9 +2541,9 @@ export class PilotEngine {
           ? dCfg.hopMaxSec
           : Number(tuning.driveHopMaxSec) || 10;
         const hopMaxDist = hopSec * (Number(tuning.driveMapUPS) || 2.8);
-        // 窄筛（§5.1 四道闸）优先：本刀 901 快照新鲜时只吃这份原样信封，不再读累积 `#tiles` 池，
+        // 窄筛（§5.1 四道闸）唯一选点路：只吃本刀 901 原样快照，不读累积 `#tiles` 池，
         //   也**不**看 `rTime>now` 判空 / `consumed` 10min 黑名单 / 当日拉黑（竞品无此三闸，§5.1 实证）。
-        //   快照不可用（901 降级/未起/超期）→ 降级走老 `#pickResource`（读累积 `#tiles` 池，保留 push 兑底）。
+        //   快照不可用（901 降级/未起/超期）→ 本轮不选，落链后续档等快照恢复。
         const now = Date.now();
         const pts = this.#viewPointsFresh(now);
         if (pts) {
@@ -2925,32 +2591,7 @@ export class PilotEngine {
           }
           return null;
         }
-        const legacy = this.#pickResource(
-          snap.curKey,
-          snap.cur,
-          bossA,
-          minNum,
-          maxDist,
-          hopMaxDist,
-        );
-        if (legacy) return legacy;
-        const legacyFar = this.#pickResource(
-          snap.curKey,
-          snap.cur,
-          bossA,
-          minNum,
-          maxDist,
-          Infinity,
-        );
-        if (legacyFar) {
-          const hop = this.#hopTowardGoal(
-            snap.curKey,
-            snap.cur,
-            { x: legacyFar.x, y: legacyFar.y },
-            hopMaxDist,
-          );
-          if (hop) return { x: hop.x, y: hop.y };
-        }
+        // 901 快照不可用（降级/未起/超期）：本轮不选，落链后续档等快照恢复
         return null;
       }
       case 'follow':
@@ -3464,7 +3105,10 @@ export class PilotEngine {
           Math.round(stuck / 1000),
         );
         this.#inflightStuckSince = 0;
-        const probe = this.#pickResource(curKey, cur, null) || this.#explorePoint(cur);
+        // 探测包目标走窄筛唯一选点路（快照不可用时只剩探索落点）——只为清幽灵在途标记，不挑丰景
+        const probe =
+          this.#objective('resource', undefined, { snap: { cur: cur, curKey: curKey } }) ||
+          this.#explorePoint(cur);
         this.#dispatch('cruise', probe, true);
         this.#heartbeat(now);
         return this.#sleepAfterDispatch();
@@ -3809,7 +3453,7 @@ export class PilotEngine {
       this.#planIdUsed || '-',
     );
     // 梯尾空派发拍（= 全链无候选）补一行筛除普查：字段名直接从 #pickDbg 的键取，
-    //   因 beast/资源/商店三套计数键集不同，硬编会漏。
+    //   窄筛统一形状 {src,seen,best,hopMaxDist?,hop?}，泛型遍历兼容后续加键。
     if (this.#lastBranch === 'cruise') {
       const dbg = this.#pickDbg;
       if (dbg) {

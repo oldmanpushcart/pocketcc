@@ -112,7 +112,7 @@ var engines = {
  *   warn=攻击警告应对 {enabled,mode}（mode='transfer' 立即转移（默认）/'stand' 抗争到底；默认关，自动挪队风险最高，见 warn.js；自动驾驶开启时本引擎让出转移、交 pilot.js EVADE 接管）；
  *   drive=自动驾驶 {enabled,boss,shopTime,revive,checkPower,shopDwellMs,emptyDwellMs,hopMaxSec,beast,beastQuality,planeLeadSec,drivePlan}（enabled=面板 driveEnabled 总闸（默关）；boss=driveBoss 子闸——BOSS 窗开着时是否自动开往 176 平台，缺省 true；shopTime=大BOSS 前定点商店勤务开关（缺省 true）；revive=driveRevive 子闸——战败(deadType==1)且本场次数未用尽时是否代答 8552 复活，缺省 true；checkPower=driveCheckPower 子闸——受威胁时先探战力差（本队 vs 来犯队，8549），明确不亏则这一拍不逃、照常规阶梯干活（对齐竞品 option.check_power），缺省关；shopDwellMs=到店驻留毫秒（面板秒×1000，默认 25000）；emptyDwellMs=资源/掉落拿空后 settle 毫秒（默认 0=立即走）；hopMaxSec=巡航单跳车程上限秒（面板 driveHopSec，默认 10；超限不长途直冲、就近资源/平台/野怪作跳板，见 pilot.js）；beast=driveBeast 子闸——自动驾驶是否允许打野抓宠（缺省 true；关则全程不去 172，见 pilot.js/plans.js beastOff）；beastQuality=driveBeastQuality 抓宠最小品质闸（1~5，缺省 4，喂给 #objective('beast') 的 minQ）；planeLeadSec=drivePlaneLeadSec 大BOSS 开台前预置挪台窗口秒（夹 [0,600]，缺省 60=1 分钟，见 pilot.js #bossWindow lead 档）；drivePlan=开车方案 id（缺省 'default'，§15.8），见 pilot.js）。
  *   leave=拿满自动离场 {enabled}（enabled=面板 autoLeaveEnabled 总闸（默关）；无子开关，离场为不可逆的整场退出，见 leave.js）。
- *   scout=侦察囤情报 {enabled}（enabled=面板 scoutEnabled 总闸（**v4.1 起缺省开**：打野档品质筛选依赖其情报，关则 #pickBeast 恒按未知品质 2 处理、被 driveBeastMinQuality=4 筛成哑火）；只囤情报不派兵，花 41001 侦察野怪点品质，护栏=先 8536 免费预检/余量闸/速率闸，见 scout.js）。
+ *   scout=侦察囤情报 {enabled}（enabled=面板 scoutEnabled 总闸（**v4.1 起缺省开**：打野档品质筛选依赖其情报，关则窄筛 pickBeast 恒按未知品质 2 处理、被 driveBeastMinQuality=4 筛成哑火）；只囤情报不派兵，花 41001 侦察野怪点品质，护栏=先 8536 免费预检/余量闸/速率闸，见 scout.js）。
  * @type {{pickItems:Object<string,{on:number,max:number,shop?:number}>, pickOrder:string[], pickRank:Object<string,number>, buffEffects:number[], heal:object, boss:object, shop:{enabled:boolean}, warn:{enabled:boolean,mode:string}, drive:{enabled:boolean,boss:boolean,shopTime:boolean,revive:boolean,checkPower:boolean,shopDwellMs:number,emptyDwellMs:number,hopMaxSec:number,beast:boolean,beastQuality:number,planeLeadSec:number,drivePlan:string}}}
  */
 /**
@@ -876,7 +876,7 @@ function run(ctx) {
   //   纯电平轮询无 push 订阅，仅队长可发、多重 fail-safe（容量/背包读不到即不撤），一场最多一次，见 leave.js 文件头
   engines.leave = new LeaveEngine(env);
   engines.leave.start(ctx);
-  // 侦察囤情报引擎（scoutEnabled，v4.1 起缺省开——打野档品质闸 #pickBeast 读它的情报缓存，关则打野恒按未知品质 2 处理被 minQ=4 筛成哑火）：对 10018 快照里就近野生点（172）先 8536 免费预检、无 beastId 且道具/冷却允许才 8537 花 41001 侦察；
+  // 侦察囤情报引擎（scoutEnabled，v4.1 起缺省开——打野档品质闸（窄筛 pickBeast）读它的情报缓存，关则打野恒按未知品质 2 处理被 minQ=4 筛成哑火）：对 10018 快照里就近野生点（172）先 8536 免费预检、无 beastId 且道具/冷却允许才 8537 花 41001 侦察；
   //   品质攒进内存缓存、不改变任何行车/攻打行为（172 不在巡航档）；订阅 10018 需 ctx，仅本人背包动作不要求队长，见 scout.js 文件头
   engines.scout = new ScoutEngine(env);
   engines.scout.start(ctx);

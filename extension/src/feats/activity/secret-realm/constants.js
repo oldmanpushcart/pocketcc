@@ -1114,22 +1114,20 @@ export const tuning = {
   /**
    * 驾驶：**缺口未补时的续留上限**（毫秒）。WORK 相位到点但 `#shopWant` 仍返回 sausage（缺口未补）时，
    *   在 `#workUntil` 之上最多再延本值后强制离店（防新永动：仍受 `#shopAllTried` + `driveShopStayMs`
-   *   全局路由锁 + `driveShopRevisitMs` 三重闸约束）。
+   *   全局路由锁 + 窄筛 pickShop 到店冷却约束）。
    */
   driveShopExtraMs: 20000,
   /**
    * 驾驶：**到店即锁路由**的时长（毫秒）——这是一道**全局路由锁**：停靠期内阶段网关链一次都跑不到日常档，
    *   于是「在店里把货扫完」不会被下一拍的选点逻辑打断，离店后还额外有 15s 不许再被拉回任何店。
-   *   取 15000（同时用作 #pickShop 的每店去重窗、#enterWork 的 shopCoolUntil 下限）：只靠 3s 同点去重时，
+   *   取 15000（同时用作 #enterWork 的 shopCoolUntil 下限）：只靠 3s 同点去重时，
    *   25s 驻留满即完全解锁 → 表现为「自己不出来、手动拉出去又自动回商店」，一局能回同一家店 11 次。
    */
   driveShopStayMs: 15000,
   /**
    * 驾驶：**同一家店两次到店的**最小间隔（毫秒）。
-   *   「缺香肠」这类纯电平理由会每拍把车开回最近的那家（一次能连敲 (95,163) 11 回，另三家从未访问），
-   *   所以 #pickShop 必须自带访问记忆（#consumed / #marched / 账本 time）。
-   *   取 8 分钟：与 `driveShopIntervalMs` 同量级，只在**真到店服务过**的店上生效
-   *   （锚点建账播的 time 不吃本闸，见 #shopLedger 的 `visited` 位）。
+   *   ⚠ P2 双轨收一轨后无代码消费者（老 #pickShop 的 revisit 闸已删）：窄筛 pickShop 用全店共享
+   *   3s 到店冷却 + `driveShopIntervalMs` 节拍，不再吃每店 revisit 窗。保留键位防面板/存档引用断裂。
    */
   driveShopRevisitMs: 480000,
   /**

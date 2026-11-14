@@ -135,14 +135,14 @@ export const PLANS = {
         id: 'shopExit',
         obj: 'shop',
         terminal: true,
-        params: { exit: true }, // #pickShop(…, preferNoSausage=false, exit=true)
+        params: { exit: true }, // 窄筛 pickShop（preferNoSausage=false，收场只拿货）
         when: (c) => c.shopWhy === 'exit', // L2043
       },
       {
         id: 'shopStage',
         obj: 'shop',
         terminal: true,
-        params: { preferNoSausage: true }, // #pickShop(…, preferNoSausage=true)
+        params: { preferNoSausage: true }, // 窄筛 pickShop（preferNoSausage=true）
         when: (c) => c.shopWhy === 'stage', // L2043
       },
 
