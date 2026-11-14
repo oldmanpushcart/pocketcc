@@ -69,18 +69,15 @@ import {
   ST_BOSS_FEED,
   ST_PLANE_MARCH,
   REJ_BOSS_AREA,
-  REJ_NEED_PLANE,
-  REJ_NOT_ARRIVED,
-  REJ_ALREADY_THERE,
-  REJ_NO_MARCH_TARGET,
   REJ_RETRY,
   REJ_STONE_USED_UP,
   REJ_NOT_IN_FIGHT,
-  REJ_PARAM_ERROR,
+  // 攻打拒码处置走 rejects.js 共享真相表（与 pilot 行军档同源），不再直引其余 REJ_*
   CODE_NOT_SENT,
   tuning,
 } from './constants.js';
 import { GateStateLog } from './gate-log.js';
+import { matchReject } from './rejects.js';
 
 /** @type {number} 只在攻打档认的 BOSS 本体瓦片类型（177 大 / 178 小）；其余瓦片条目对本引擎无意义 */
 const BOSS_TILE_TYPES = [PAB_BOSS, PAB_BOSS_GUARD];
@@ -799,96 +796,55 @@ export class BossEngine {
   }
 
   /**
-   * 攻打拒绝码处置（详见文件头）。核心差异：**142 只降级区域闸、不拉黑 bossId；163 才拉黑坐标**。
-   * 进入即写 `#cooldownUntil`（`tuning.rejectBackoffMs`，141 专用 `tuning.planeRefreshMs`）：
+   * 攻打拒绝码处置（三-3 表化）：读 rejects.js 共享真相表的 boss 列，与 pilot.#applyReject 同源。
+   *   核心差异（表内定稿）：**142 只降级区域闸、不拉黑 bossId；163 才拉黑坐标（6h）**；
+   *   159995 与 pilot 同口径短黑 paramBlacklistMs(60s)。
+   * 进入即写 `#cooldownUntil`（`tuning.rejectBackoffMs`，141 表内专用 `tuning.planeRefreshMs`）：
    *   被拒那一刻本地闸已不可信，不进退避就会以 ≈5 条/秒重发同一条 8521（162 的一次递归重试不走 #attackTick，
-   *   因此不受该冷却影响）。
+   *   因此不受该冷却影响）。表未登记的码 → 兜底：烧区域试探 + 首见 info/再次 debug。
    * @param {{bossId:number,x:number,y:number,platEsr:number|null}} t 目标
    * @param {object} r Ret
    * @param {object} b 面板 boss 配置
    */
   #handleMarchReject(t, r, b) {
-    const env = this.#env;
     const rej = (r && r.reason) || '';
     const tag = 'boss' + t.bossId + '@(' + t.x + ',' + t.y + ')';
-    this.#cooldownUntil = Date.now() + tuning.rejectBackoffMs;
-    if (rej === REJ_NOT_ARRIVED) {
-      // 158 = 小队尚未抵达（行军态未 ARRIVED 就发攻打）：不是区域错、也不是目标失效，
-      //   不烧配对试探额度（不 #noteArea(false)）、不拉黑坐标；只退回避，等 push 21529 TEAM_ARRIVE 解除后重跑。
-      const akey = 'arrive158|' + tag;
-      if (!this.#toldReject[akey]) {
-        this.#toldReject[akey] = 1;
-        env.log.info(
-          'boss attack: %s rejected %s (team not arrived) → backoff %dms, will resume on push 21529, NOT probing/blacklisting.',
-          tag,
-          rej,
-          tuning.rejectBackoffMs,
-        );
-      } else {
-        env.log.debug('boss attack: %s still rejected %s (waiting 21529).', tag, rej);
-      }
+    const rule = matchReject(rej);
+    const p = (rule && rule.boss) || null;
+    this.#cooldownUntil = Date.now() + Number(tuning[(p && p.backoff) || 'rejectBackoffMs']);
+    const vals = {
+      tag: tag,
+      rej: rej,
+      codeOrRej: rej || 'code ' + (r && r.code),
+      platEsr: String(t.platEsr),
+      rejectBackoffMs: tuning.rejectBackoffMs,
+      planeRefreshMs: tuning.planeRefreshMs,
+      paramBlacklistMs: tuning.paramBlacklistMs,
+    };
+    if (p && p.keepPhase) {
+      // 158 = 小队尚未抵达：不烧配对试探额度、不拉黑坐标；只退回避，等 push 21529 解除后重跑
+      this.#rejectLog(p.log, vals);
       return;
     }
-    if (rej === REJ_BOSS_AREA) {
+    if (p && p.area === 'demote') {
       this.#markWrongArea(t);
-      env.log.info(
-        'boss attack: %s rejected %s (platform area esr=%s != boss area) → pair demoted, boss NOT blacklisted.',
-        tag,
-        rej,
-        String(t.platEsr),
-      );
+      this.#rejectLog(p.log, vals);
       return;
     }
-    if (rej === REJ_NEED_PLANE) {
-      // 141 = 服务端认为我不在 176 平台上，而本地 roomBaseInfo 只能靠 push 21521 刷正（一场 ≈17s 一条）
-      //   → 退一个推送周期再评，期间绝不重发；首见 info 说明在等什么，之后降 debug（循环态）
-      this.#cooldownUntil = Date.now() + tuning.planeRefreshMs;
-      const pkey = 'plane141|' + tag;
-      if (!this.#toldReject[pkey]) {
-        this.#toldReject[pkey] = 1;
-        env.log.info(
-          'boss attack: %s rejected %s (server says not on 176 plane) → idle %dms waiting for push 21521 to refresh roomBaseInfo, NOT resending.',
-          tag,
-          rej,
-          tuning.planeRefreshMs,
-        );
-      } else {
-        env.log.debug('boss attack: %s still rejected %s (waiting 21521).', tag, rej);
-      }
-      return;
-    }
-    if (rej === REJ_ALREADY_THERE) {
-      // 目标点==当前点：正常语义（例如已在 BOSS 上），静默处理；不拉黑也不烧试探额度
+    if (p && p.area === 'ok') {
+      // 目标点==当前点：正常语义，不拉黑也不烧试探额度
       this.#noteArea(t, true);
-      env.log.debug('boss attack: %s rejected %s (already there).', tag, rej);
+      this.#rejectLog(p.log, vals);
       return;
     }
-    if (rej === REJ_NO_MARCH_TARGET) {
-      this.#targetBlack[tileKey(t.x, t.y)] = Date.now() + tuning.rejectBlacklistMs;
-      env.log.info('boss attack: %s rejected %s → target blacklisted.', tag, rej);
+    if (p && p.black === 'target') {
+      this.#targetBlack[tileKey(t.x, t.y)] = Date.now() + Number(tuning[p.ttl]);
+      this.#rejectLog(p.log, vals);
       return;
     }
-    if (rej === REJ_PARAM_ERROR) {
-      // common_159995 在攻打档的语义是「该点当前不可打」（见文件头§拒绝码清单），**不是包形态错**（req 恒 `{x,y}`）
-      //   → 短拉黑该坐标（覆盖整窗投喂期），不烧配对试探额度（它不是区域错）、不拉黑 bossId
-      this.#targetBlack[tileKey(t.x, t.y)] = Date.now() + tuning.paramBlacklistMs;
-      const mkey = 'param159995|' + tag;
-      if (!this.#toldReject[mkey]) {
-        this.#toldReject[mkey] = 1;
-        env.log.info(
-          'boss attack: %s rejected %s (point not attackable now) → target blacklisted %dms, area probe NOT burned.',
-          tag,
-          rej,
-          tuning.paramBlacklistMs,
-        );
-      } else {
-        env.log.debug('boss attack: %s still rejected %s (waiting blacklist to expire).', tag, rej);
-      }
-      return;
-    }
-    if (rej === REJ_RETRY && !this.#marchRetried[t.bossId] && (!b || b.enabled)) {
+    if (p && p.retryOnce && !this.#marchRetried[t.bossId] && (!b || b.enabled)) {
       this.#marchRetried[t.bossId] = 1;
-      env.log.debug('boss attack: %s rejected %s, retry once.', tag, rej);
+      this.#rejectLog(p.log, vals);
       this.#sendAttack(t, b);
       return;
     }
@@ -896,10 +852,34 @@ export class BossEngine {
     const key = t.x + ',' + t.y + '|' + t.bossId;
     if (!this.#toldReject[key]) {
       this.#toldReject[key] = 1;
-      env.log.info('boss attack: %s rejected (%s).', tag, rej || 'code ' + (r && r.code));
+      this.#env.log.info('boss attack: %s rejected (%s).', tag, vals.codeOrRej);
     } else {
-      env.log.debug('boss attack: %s rejected again (%s).', tag, rej || 'code ' + (r && r.code));
+      this.#env.log.debug('boss attack: %s rejected again (%s).', tag, vals.codeOrRej);
     }
+  }
+
+  /**
+   * 拒码日志模板渲染（rejects.js 表内文案逐字保留）：edge 非空走首见/再次边沿（键 = edge|tag），
+   *   否则按 lvl 直出；token 实参由调用方备好的 vals 映射。
+   * @param {object|null} spec RejectLogSpec
+   * @param {Object<string,*>} vals token → 实参
+   */
+  #rejectLog(spec, vals) {
+    if (!spec) return;
+    const toks = spec.args || [];
+    const args = [];
+    for (let i = 0; i < toks.length; i++) args.push(vals[toks[i]]);
+    if (spec.edge) {
+      const k = spec.edge + '|' + vals.tag;
+      if (!this.#toldReject[k]) {
+        this.#toldReject[k] = 1;
+        this.#env.log[spec.lvl](spec.tpl, ...args);
+      } else {
+        this.#env.log.debug(spec.again, ...args);
+      }
+      return;
+    }
+    this.#env.log[spec.lvl](spec.tpl, ...args);
   }
 
   /**
