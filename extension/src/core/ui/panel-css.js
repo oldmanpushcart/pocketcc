@@ -198,9 +198,12 @@ export const PANEL_CSS = `
     .pc-iname{flex:0 0 66px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px;color:#e8eef7;}
     /* fd.nameGrow：名称列改弹性填充（长物品名不截断，同行数字/勾选仍右对齐成列）；类写在 .pc-iname 之后靠源码顺序决胜特异度 */
     .pc-iname.pc-namegrow{flex:1 1 auto;min-width:0;}
-    /* 行内角标：池项带 cap（游戏自身硬上限，如秘境 ITEM.para1_v1）时标 ≤N，提醒超出会被自动修正 */
-    .pc-icap{flex:0 0 auto;padding:0 4px;border-radius:4px;font-size:11px;color:#9ecbff;
+    /* 行内角标：池项带 cap（游戏自身硬上限，如秘境 ITEM.para1_v1）时标 ≤N，提醒超出会被自动修正。
+       固定宽列（32px border-box）：无 cap 行由 itemlist 渲染同宽隐形占位（.pc-icapna），各行总宽一致，
+       右侧渠道组 margin-left:auto 恒有余量右对齐；角标按内容宽只加宽部分行会顶偏成 ragged */
+    .pc-icap{flex:0 0 32px;box-sizing:border-box;padding:0 3px;border-radius:4px;font-size:11px;color:#9ecbff;text-align:center;
       background:rgba(74,163,255,.12);border:1px solid rgba(74,163,255,.22);}
+    .pc-icap.pc-icapna{visibility:hidden;}
     .pc-imax{flex:0 0 auto;width:64px;padding:2px 4px;border-radius:4px;
       border:1px solid rgba(255,255,255,.15);background:rgba(0,0,0,.25);color:#e8eef7;font:inherit;font-size:12px;
       appearance:textfield;-moz-appearance:textfield;}
@@ -211,6 +214,10 @@ export const PANEL_CSS = `
     /* fd.maxCol 的窄输入列（抢购类「本期总上限」，顶多两位数）：border-box 30px + 居中，
        把宽度让给名称列；placeholder 由 fd.maxPlaceholder 给短符号（如 ∞），「无上限」三字塞不下 */
     .pc-imax.pc-imaxcap{box-sizing:border-box;width:30px;padding:2px 2px;text-align:center;}
+    /* cap 行清单（pc-hascap，仅池含 cap 行时启用）数字列收窄：48px border-box 给 32px 角标列让宽，
+       保证最宽行（角标+↑↓组）在 PANEL_W=520 卡片可用宽内不溢出；无 cap 清单保持 64px 不变。
+       48px 内容区 38px 仍容「无上限」三字占位（36px） */
+    .pc-irow.pc-hascap .pc-imax{box-sizing:border-box;width:48px;}
     /* itemlist 表头行（fd.head）：与数据行同 .pc-irow 骨架逐列对齐；去行底/输入框外观，淡蓝小字区别于数据 */
     .pc-ihead{background:none;color:#9ecbff;font-size:11px;}
     .pc-ihead .pc-iname,.pc-ihead .pc-fval,.pc-ihead .pc-icost,.pc-ihead .pc-ichklbl{color:#9ecbff;}

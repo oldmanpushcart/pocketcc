@@ -53,6 +53,8 @@ function orderPoolItems(arr, order) {
  *   两渠道各自可置灰：主勾选看池项 `pickDisabled`（如仅商店在售、无掉落来源的道具不可拾），第二渠道经 `ch2.disabledOf`（缺省看 `item.channel2Disabled`）；
  *   置灰的勾选渲染为未勾+禁选（存储里的陈旧值不生效也不展示）。行灰化（pc-irowoff）在可用渠道全部关时才生效。
  *   排版：[拖拽手柄][序号] [主勾选] [名称(+≤cap 角标)] [数字输入] [第二渠道勾选]（数量紧跟名称、渠道勾选居右成列）。
+ *   ≤cap 角标是**固定宽列**：池里有 cap 行（hasCap）时无 cap 行渲染同宽隐形占位（.pc-icapna），表头同口径——
+ *   角标若按内容宽只加宽部分行，flex 余量耗尽后 margin-left:auto 失效，右侧渠道组会逐行顶偏成 ragged。
  * `fd.sortable`（配 fd.orderKey）时每行行首多一个拖拽手柄 + 序号，展示序按 order 排（下标即优先级，越靠前越先拾）。
  * `fd.chkTitle` 定制主勾选的 title（缺省「是否自动拾取」；非拾取用途的清单——如矿区盗采/协助——必须覆盖，避免误导）。
  * `cap>0` 表示游戏**自身已有一道硬上限**（如秘境道具的 ITEM.para1_v1）：行内标 `≤cap`、输入框带 max/data-cap，
@@ -85,6 +87,11 @@ function itemListInnerHTML(items, state, fd, order, cfgForSummary, fid) {
   const defaultOff = !!(fd && fd.defaultOff);
   // fd.hideNumCol：隐藏数字输入列（白名单只勾选、无目标数量语义时用）；与 costCol/maxCol 正交，缺省 false 行为不变。
   const hideNumCol = !!(fd && fd.hideNumCol);
+  // 数字列可见性（inputCell 与表头共用口径）
+  const numColVisible = (!costCol || maxCol) && !hideNumCol;
+  // 池含 cap 行（目前仅秘境持有清单）：≤cap 角标固定宽列 + 无 cap 行同宽隐形占位，保证各行总宽一致、
+  //   右侧「拾取/商店/↑↓」组 margin-left:auto 恒有余量右对齐成列；无 cap 的清单（矿区/密所）不占位、行为不变。
+  const hasCap = numColVisible && arr.some((it) => Math.floor(Number(it.cap) || 0) > 0);
   // 数值列的键（缺省 'max'）：矿区盗采/协助用 'min' 表「最低量门槛」，与持有量/上限语义区分
   const numKey = (fd && fd.numKey) || 'max';
   const boughtOf = fd && typeof fd.boughtText === 'function' ? fd.boughtText : null;
@@ -121,21 +128,22 @@ function itemListInnerHTML(items, state, fd, order, cfgForSummary, fid) {
           ? `<span class="pc-icost" title="单件钻石价">${Math.floor(Number(it.cost))}</span>`
           : '<span class="pc-icost pc-icostunk" title="单件钻石价（配置表尚未加载，暂不可知）">—</span>'
         : '';
-      const inputCell =
-        (!costCol || maxCol) && !hideNumCol
-          ? `<input type="number" class="pc-imax${maxCol ? ' pc-imaxcap' : ''}" data-ik="${escAttr(key)}" min="0" step="1"` +
-            (cap > 0 ? ` max="${cap}" data-cap="${cap}"` : '') +
-            ` value="${num > 0 ? num : ''}" placeholder="${cap > 0 ? cap : (fd && (fd.numPlaceholder || fd.maxPlaceholder)) || '无上限'}"` +
-            ` title="${escAttr(
-              (fd && (fd.numTitle || fd.maxTitle)) ||
-                (cap > 0
-                  ? '目标持有量，0=补/拾到上限 ' + cap + '（超出会被自动修正）'
-                  : '目标持有量，0=无上限'),
-            )}">` +
-            (cap > 0
-              ? `<span class="pc-icap" title="游戏自身持有上限 ${cap}，填写超出会被自动修正">≤${cap}</span>`
+      const inputCell = numColVisible
+        ? `<input type="number" class="pc-imax${maxCol ? ' pc-imaxcap' : ''}" data-ik="${escAttr(key)}" min="0" step="1"` +
+          (cap > 0 ? ` max="${cap}" data-cap="${cap}"` : '') +
+          ` value="${num > 0 ? num : ''}" placeholder="${cap > 0 ? cap : (fd && (fd.numPlaceholder || fd.maxPlaceholder)) || '无上限'}"` +
+          ` title="${escAttr(
+            (fd && (fd.numTitle || fd.maxTitle)) ||
+              (cap > 0
+                ? '目标持有量，0=补/拾到上限 ' + cap + '（超出会被自动修正）'
+                : '目标持有量，0=无上限'),
+          )}">` +
+          (cap > 0
+            ? `<span class="pc-icap" title="游戏自身持有上限 ${cap}，填写超出会被自动修正">≤${cap}</span>`
+            : hasCap
+              ? '<span class="pc-icap pc-icapna" aria-hidden="true"></span>'
               : '')
-          : '';
+        : '';
       // 只读已抢列（值每次渲染现取，数据变化由 refreshTexts 就地回写，与 stockText 同通路）
       const boughtCell = boughtOf
         ? `<span class="pc-fval pc-ibought" data-fid="${escAttr(String(fid || ''))}" data-fkey="${escAttr(
@@ -160,7 +168,7 @@ function itemListInnerHTML(items, state, fd, order, cfgForSummary, fid) {
           `</span>`
         : '';
       return (
-        `<div class="pc-irow${rowOff ? ' pc-irowoff' : ''}" data-ikey="${escAttr(key)}">` +
+        `<div class="pc-irow${rowOff ? ' pc-irowoff' : ''}${hasCap ? ' pc-hascap' : ''}" data-ikey="${escAttr(key)}">` +
         (sortable ? `<span class="pc-shandle" title="按住拖拽调整拾取优先级">⣿</span>` : '') +
         `<span class="pc-iname${nameGrow ? ' pc-namegrow' : ''}" title="${escAttr(label)}">${escAttr(label)}</span>` +
         costCell +
@@ -179,16 +187,18 @@ function itemListInnerHTML(items, state, fd, order, cfgForSummary, fid) {
   //   放在 .pc-irows 外：renderRows 整块重画只换数据行不抹表头；不挂 data-ikey/data-ibought 钩子，拖拽/刷新逻辑不认它
   const head = fd && fd.head;
   const headHtml = head
-    ? `<div class="pc-irow pc-ihead">` +
+    ? `<div class="pc-irow pc-ihead${hasCap ? ' pc-hascap' : ''}">` +
       (sortable ? '<span class="pc-shandle"></span>' : '') +
       `<span class="pc-iname${nameGrow ? ' pc-namegrow' : ''}">${escAttr(head.name || '物品')}</span>` +
       (costCol ? `<span class="pc-icost">${escAttr(head.cost || '单价')}</span>` : '') +
       (boughtOf
         ? `<span class="pc-fval pc-ibought" title="${escAttr(boughtTitle)}">${escAttr(head.bought || '已抢')}</span>`
         : '') +
-      ((!costCol || maxCol) && !hideNumCol
+      (numColVisible
         ? `<span class="pc-imax${maxCol ? ' pc-imaxcap' : ''}" title="${escAttr((fd && (fd.numTitle || fd.maxTitle)) || '')}">${escAttr(head.num || head.max || '上限')}</span>`
         : '') +
+      // cap 固定宽列的表头占位（与数据行 .pc-icapna 同宽）：缺它表头右侧组比数据行宽出一个角标列
+      (hasCap ? '<span class="pc-icap pc-icapna" aria-hidden="true"></span>' : '') +
       (stockOf
         ? `<span class="pc-fval pc-istock" title="${escAttr(stockTitle)}">${escAttr(head.stock || '剩余')}</span>`
         : '') +
