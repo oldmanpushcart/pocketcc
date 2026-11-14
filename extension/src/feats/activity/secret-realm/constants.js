@@ -1196,6 +1196,13 @@ export const tuning = {
    */
   driveViewMs: 3000,
   /**
+   * pilot：**空闲态 901 拉视口的放宽间隔**（毫秒，四-1 自适应降频）。
+   * WORK 驻留/bossWait 让路/无候选静默期不做选点决策，每 3s 一刀纯属烧查询
+   *   （24 场实证整场 900~1075 次）→ 这些拍放宽到 12s；决策拍仍走 driveViewMs，
+   *   外部事件 kick 经 #viewKick 位立即恢复常规口径（判据见 view-throttle.js）。
+   */
+  driveViewIdleMs: 12000,
+  /**
    * pilot：901 连续失败多少次后判定「秘境里这条通道不可用」，退回 push+锚点模式（仍能开商店/BOSS）。
    * 退避重试间隔 driveViewRetryMs（不因一次抖动就永久关掉）。
    */
@@ -1433,6 +1440,13 @@ export const tuning = {
    *   本预算只是防「余额充足却永不刷新」的兜底上限，本身不是成本闸门。
    */
   driveSausageRefreshMax: 12,
+  /**
+   * shop：香肠刷店**连续未命中止损**（四-2）：连续这么多次 8543 刷新后货单上仍无香肠货位
+   *   → 本店本场不再刷并通知 pilot 提前离店（实证 11-07 场 (154,314) refresh=6 buys=0：
+   *   货单随机不含目标品时逐次刷纯烧币）。命中（刷出香肠货位）即清零重计；0=关止损。
+   *   与 driveSausageRefreshMax 总量闸互补：总量闸防「刷到买满」无限刷，本闸防「永不命中」白刷。
+   */
+  driveSausageRefreshMissMax: 3,
   /**
    * pilot：两次复活的最小间隔（毫秒）。8552 应答可能迟到，本值防同一次死亡反复消耗复活次数。
    */

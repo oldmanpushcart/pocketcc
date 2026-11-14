@@ -7,6 +7,7 @@
  *   • BOSS：服务器权威坐标 `bossBaseInfo[].pos`。
  *   • 资源/平台：901 GET_WORLD_INFO 每 `tuning.driveViewMs`(3s) 以自己（或开台中的 BOSS）为中心主动拉
  *     `{x,y,k,rid:0,width:20,height:30,marchInfo:true}`，结果并入 `#tiles`（`src:'v'` 覆盖 push 的旧值）；
+ *     空闲态（WORK 驻留/bossWait 让路/无候选）自适应降频到 `driveViewIdleMs`(12s)，kick 唤醒立即恢复（四-1，判据见 view-throttle.js）；
  *     连续失败 `driveViewOffAfter` 次 → `#viewOff` 降级（仍可开商店/BOSS，巡航选点本轮停选等快照恢复），`driveViewRetryMs`(60s) 后重试。
  *   push 10018 是「镜头扫过才推」的增量包，只作兜底——候选池若只靠它，会被镜头位置限死在 2~3 个点上。
  *
@@ -30,7 +31,7 @@
  *   已派车的点 `driveMarchedTtlMs`(60s) 内不再选。
  *   成本项缺锚时必须算 **0**（`Infinity / 5` 仍是 Infinity 且 truthy，`|| 0` 不生效 → score 恒 -Infinity，一个点都选不中）。
  *
- * 每店账本（点位键 → `{time 秒, sausage, piece}`，跨场保留）：`stage` 档的 gap 从到店那一刻重算，选店先选没买过香肠的；
+ * 每店账本（点位键 → `{time 秒, sausage, piece}`，按场计、换场清账）：`stage` 档的 gap 从到店那一刻重算，选店先选没买过香肠的；
  *   访问记忆 = 窄筛 pickShop 三连前置（暖机 63s / 全店共享 3s 到店冷却 / 已在 161 不重派）+ `max(3000, driveShopStayMs)` 路由锁 + 「每家店都已试过却仍缺料」的白跑惩罚。
  *   到点驻留：172 → `driveStayMonsterMs` 等拍宠/交战结算；173/163 → 拿空即走，地板 `min(res_stay_time, 未拿件数×0.8+1.1)` 秒；
  *   161 → `driveShopStayMs` 让 shop.js 逐行买货。
@@ -50,6 +51,10 @@
 import { createCycle } from '../../../core/cycle.js';
 import { bits } from '../../../core/game-api.js';
 import { tileKey as utilTileKey, dist as utilDist } from './util.js';
+import { TtlLedger } from './ledger.js';
+import { matchReject } from './rejects.js';
+import { enter as workEnter, tick as workTick } from './work-mode.js';
+import { viewIdleNow, viewWaitMs, viewFreshWinMs } from './view-throttle.js';
 import { PLANS, matchStages, validatePlan, validateCtxKeys } from './plans.js';
 import {
   pickResource,
@@ -88,16 +93,7 @@ import {
   ST_BOSS_FEED,
   ST_BOSS_FIGHTING_END,
   ST_BOSS_DEAD_END,
-  REJ_ALREADY_THERE,
-  REJ_NOT_ARRIVED,
-  REJ_NO_MARCH_TARGET,
-  REJ_BATTLEFIELD_CLOSING,
-  REJ_POINT_NOT_EXIST,
-  REJ_NEED_PLANE,
-  REJ_BOSS_AREA,
-  REJ_PLANE_TAKEN,
-  REJ_SAME_AREA_PLANE,
-  REJ_PARAM_ERROR,
+  // 拒码常量不再直引：处置全走 rejects.js 共享真相表（码义/拉黑/TTL/退避/日志模板）
   CODE_NOT_SENT,
   TABLE_BUILDING,
   TABLE_ITEM,
@@ -271,8 +267,9 @@ export class PilotEngine {
    * @type {Map<string,{time:number,sausage:number,piece:number,visited:number,sausageShelf:number}>}
    * 每店账本（点位键 → 该店记录）：
    *   `time`=最近一次到店（毫秒，定期轮巡与 3s 去重基准）、`sausage`/`piece`=该店货单上香肠/百兽箱货位的
-   *   `getTime`（已购次数，>0 = 这家已经买过）。**跨场保留**（账本落盘持久化，只在为空时重建），
-   *   因为百兽箱是 type3 全场共享额度，换场不会把已买记录洗掉。
+   *   `getTime`（已购次数，>0 = 这家已经买过）。**按场计**：锚点装载时为空则建账（`#syncAnchors`），
+   *   换场/引擎重启经 `#resetMatch` 整体清账——百兽箱 type3 全场共享额度的「本场已买」位（`isBoxBought`）
+   *   也因此只在本场内有效，换场后按未买保守处理。
    *   两个访问记忆字段（去店理由走链尾兜底，必须自带防重复）：`visited`=真到店服务过
    *   （0=锚点建账时播的初值，不吃 revisit 闸）；
    *   `sausageShelf`=本次货单上到底有没有香肠货位（1/0，供 #shopAllTried 判「已知不卖」）。
@@ -284,6 +281,8 @@ export class PilotEngine {
   #group = 0;
   /** @type {number} 最近一次 901 的**发起**时刻（节流基准） */
   #viewAt = 0;
+  /** @type {boolean} 外部事件 kick 唤醒位（四-1）：下一刀 #awaitView 绕过空闲降频闸立即恢复 driveViewMs 口径，消费即清 */
+  #viewKick = false;
   /** @type {boolean} 901 在途 */
   #viewBusy = false;
   /** @type {number} 901 连续无应答次数（达 tuning.driveViewOffAfter 即降级） */
@@ -328,10 +327,10 @@ export class PilotEngine {
   #toTag = '';
   /** @type {number} 本笔 8521 发出时刻 */
   #toAt = 0;
-  /** @type {Map<string,number>} 已派过车的点 → 解禁时刻（driveMarchedTtlMs） */
-  #marched = new Map();
-  /** @type {Map<string,number>} 消费账：点位键 → 解禁时刻（driveConsumedTtlMs） */
-  #consumed = new Map();
+  /** @type {TtlLedger} 已派过车的点 → 解禁时刻（driveMarchedTtlMs） */
+  #marched = new TtlLedger();
+  /** @type {TtlLedger} 消费账：点位键 → 解禁时刻（driveConsumedTtlMs；-1=永久黑哨兵） */
+  #consumed = new TtlLedger();
   /**
    * @type {Map<number,number>} esrId → realm.roundid（区域档位，静态配置表）memo；
    *   供 #roundTier 区分「强异能区（开放回合更晚、更靠地图中心）vs 普通/微异能区」。
@@ -342,15 +341,15 @@ export class PilotEngine {
    *   服务器看仍非空、rTime 不在未来，但我不会再来拿）。仅作 WORK「即时离站」用（喂 #isTileEmpty），
    *   **不**参与选点——防重派由离站时既有的 #consume 记账负责。每次 #enterWork 到点清该键，换场/停机整体清空。
    */
-  #exhausted = new Set();
+  #exhausted = new TtlLedger();
   /**
    * @type {Object<string,number>} cd 账（毫秒时刻，与全局 Date.now 同口径；E 阶段迁 serverTime 时一并换）：
    *   `march`=行军最小间隔（竞品 cd_time.march：L24974 决策前 +3s，§2.3 唯一的「TO 锁」），
    *   `boss`/`beast`=对应 901 查询节流（§2.3）。闸门走 #can、记账走 #setCd，**一律先记后动**。
    */
   #cd = {};
-  /** @type {Object<string,1>} 当日/本场拉黑的点（159 点不存在 / 平台被占 141/142/252）；163/209 不在此列（走 marched 60s） */
-  #dayBlack = {};
+  /** @type {TtlLedger} 当日/本场拉黑的点（159 点不存在 / 平台被占 141/142/252）；163/209 不在此列（走 marched 60s） */
+  #dayBlack = new TtlLedger();
   /** @type {number} 被拒退避截止时刻 */
   #cooldownUntil = 0;
   /** @type {boolean} 战场已封闭（服务端 `enigma_realm17`）→ 本场停手，换场自动解开 */
@@ -407,12 +406,12 @@ export class PilotEngine {
    *   与 #marched 分表：#pickPlane 逐块扫 #tiles、bossFight 直取权威坐标，两者都不读 #marched，
    *   共用会把「开车成本 60s」的 marched 语义扩散到平台点；本表只被 #paramBlocked 消费。
    */
-  #paramBlack = {};
+  #paramBlack = new TtlLedger();
   /**
-   * @type {Object<number,1>} 本场已到场打过的 BOSS（21521 落地时用 `targetPoint` 对上
-   *   `bossBaseInfo[].pos` 记账，供 `guard_policy==2` 过滤）。
+   * @type {TtlLedger} 本场已到场打过的 BOSS（21521 落地时用 `targetPoint` 对上
+   *   `bossBaseInfo[].pos` 记账，供 `guard_policy==2` 过滤；键为 bossId 字符串）。
    */
-  #bossDone = {};
+  #bossDone = new TtlLedger();
   /** @type {number} 上次发 8552 复活的时刻（毫秒，driveReviveGapMs 基准） */
   #lastReviveAt = 0;
   /** @type {boolean} 8552 在途（防同一次死亡反复消耗复活次数） */
@@ -429,8 +428,10 @@ export class PilotEngine {
   #workDeadline = 0;
   /** @type {number} 进入 WORK 驻留时的点型（`#enterWork` 记录，供 `#workTick` 稳定判 BOSS/商店相位，不依赖实时 pointType） */
   #workPt = 0;
-  /** @type {Map<string,{kind:string,bagFree:number,buffFree:number,dropFree:number,beastFree:number,at:number}>} */
-  #change = new Map();
+  /** @type {boolean} 刷店止损信号（四-2，仅本次 WORK）：shop.js 连续刷不中目标品 → 截短驻留且缺口不续留，当拍离店 */
+  #shopGiveUp = false;
+  /** @type {TtlLedger} 21522/21532 按点空位数账：点键 → {kind,bagFree,buffFree,dropFree,beastFree,at}（无 TTL 载荷） */
+  #change = new TtlLedger();
 
   // ── 诊断面（不参与任何判定）─────────────────────────────────────────
   /** @type {number} */
@@ -445,6 +446,8 @@ export class PilotEngine {
   #lastDispatch = '';
   /** @type {object|null} 最近一次选点的筛除计数 */
   #pickDbg = null;
+  /** @type {number} 本场 march_timeout 兜底次数（四-4：8521 无应答/未抵达超时账，只观测不判定，换场清零） */
+  #marchTimeouts = 0;
   /** @type {string} 本次 start 锁定的开车方案 id（§15.10 P2：首拍读 config.drive.drivePlan，整场不热切；未知 id 回落 'default'） */
   #planIdUsed = '';
   /** @type {string} 上次心跳落日志时的分支（分支跳变当拍立刻补一条，防 30s 采样漏掉相位跳变） */
@@ -473,6 +476,16 @@ export class PilotEngine {
     this.#env = env;
   }
 
+  /**
+   * 统一唤醒入口（四-1）：kick 一拍 + 置 901 降频旁路位——外部事件（威胁/到达/BOSS 态/拒码…）
+   *   唤醒后下一刀 #awaitView 立即恢复 driveViewMs 常规口径，不被空闲放宽闸拦住。
+   *   引擎内部自唤醒（WORK empty 判空 kick 等）也走这里，多置一次旁路位无害（empty 相位本就不降频）。
+   */
+  #kick() {
+    this.#viewKick = true;
+    if (this.#cycle) this.#cycle.kick();
+  }
+
   // ══════════════════════════════════════════════════════════════════════
   // 推送落地（只记账 + kick；业务态一律重读 ACL / 主动查询）
   // ══════════════════════════════════════════════════════════════════════
@@ -486,7 +499,7 @@ export class PilotEngine {
     const num = Number(d.num) || 0;
     if (num > 0) {
       this.#threat = true;
-      if (this.#cycle) this.#cycle.kick();
+      this.#kick();
     } else {
       this.#threat = false;
       // 威胁解除 → 复位扎营位：下次再被盯上重新先扎一次营（v4.1 边避边工的周期单位=一次威胁窗）
@@ -499,7 +512,7 @@ export class PilotEngine {
   /** push 21529/21521：只 kick（到达最终判据是 `startPoint` 复核，不信事件时序）。 */
   onArriveWake() {
     if (!this.#env.alive()) return;
-    if (this.#cycle) this.#cycle.kick();
+    this.#kick();
   }
 
   /**
@@ -527,8 +540,8 @@ export class PilotEngine {
             if (!s || !s.pos) continue;
             if (Math.floor(toNum(s.pos.x)) === tx && Math.floor(toNum(s.pos.y)) === ty) {
               const bid = Number(s.bossId) || 0;
-              if (bid && !this.#bossDone[bid]) {
-                this.#bossDone[bid] = 1;
+              if (bid && !this.#bossDone.has(String(bid))) {
+                this.#bossDone.mark(String(bid));
                 env.log.info(
                   'pilot: BOSS %d arrived on site, counted in skip ledger (guard_policy).',
                   bid,
@@ -542,7 +555,7 @@ export class PilotEngine {
     }
     // ② 战败自动复活
     this.#maybeRevive(base, ev);
-    if (this.#cycle) this.#cycle.kick();
+    this.#kick();
   }
 
   /**
@@ -653,14 +666,32 @@ export class PilotEngine {
   markTileExhausted(key) {
     if (!key) return;
     if (!this.#exhausted.has(key)) {
-      this.#exhausted.add(key);
+      this.#exhausted.mark(key);
       this.#env.log.debug(
         'pilot: point %s marked exhausted (nothing left for me), leave ASAP.',
         key,
       );
     }
     // 当前正停靠在该点且处于「拿空即走」相位 → 踢一拍让它立刻走 empty 分支，不等 45s 兑底天花板。
-    if (this.#workMode === 'empty' && key === this.#toXY && this.#cycle) this.#cycle.kick();
+    if (this.#workMode === 'empty' && key === this.#toXY) this.#kick();
+  }
+
+  /**
+   * 商店引擎→方向盘的「刷店止损，提前离店」口（四-2，零引用红线：shop 不 import pilot，经 env 惰性回调）。
+   *   连续 driveSausageRefreshMissMax 次 8543 刷不出香肠货位 → 本店本场不再刷；若正驻留该店，
+   *   截短驻留并置 shopGiveUp（缺口也不续留）当拍离店。防重派靠离站时既有的 #consume（10min），
+   *   「已知不卖」账本位（sausageShelf=0）由 shop.js #markLedger 按应答回写，喂 #shopAllTried 白跑惩罚。
+   * @param {string} key 点位键
+   */
+  shopRefreshGiveUp(key) {
+    if (!key || key !== this.#toXY || !this.#workMode) return;
+    this.#shopGiveUp = true;
+    this.#workUntil = Math.min(this.#workUntil || Date.now(), Date.now());
+    this.#env.log.info(
+      'pilot: shop %s refresh miss-stop acknowledged, cut dwell and leave now. reason=refresh_miss_stop',
+      key,
+    );
+    this.#kick();
   }
 
   /**
@@ -698,7 +729,7 @@ export class PilotEngine {
       beastFree: 0,
       at: Date.now(),
     });
-    if (this.#workMode === 'empty' && k === this.#toXY && this.#cycle) this.#cycle.kick();
+    if (this.#workMode === 'empty' && k === this.#toXY) this.#kick();
   }
 
   /**
@@ -717,7 +748,7 @@ export class PilotEngine {
       beastFree: freeCount(e.dropBeastInfo),
       at: Date.now(),
     });
-    if (this.#workMode === 'empty' && k === this.#toXY && this.#cycle) this.#cycle.kick();
+    if (this.#workMode === 'empty' && k === this.#toXY) this.#kick();
   }
 
   // ══════════════════════════════════════════════════════════════════════
@@ -886,7 +917,8 @@ export class PilotEngine {
   /**
    * 主动拉视口（**await 串行**，§0 竞品的灵魂）：以 (cx,cy) 为中心发 901，**拉完才回**，
    *   使紧随其后的 #runStages/#marchX 决策吃的是本应答快照，而非上一拍旧池（修旧「同拍 fire-and-forget 决策吃陈旧池」）。
-   *   已在 `driveViewMs` 窗口内且未降级时**跳过重复查询**（心跳比窗口慢，正常每拍都会查；kick 抢拍则复用刚落料）。
+   *   已在新鲜闸窗口内且未降级时**跳过重复查询**（窗口常规 driveViewMs；空闲态放宽到 driveViewIdleMs，
+   *   kick 唤醒位强制恢复常规口径——四-1 自适应降频，判据见 view-throttle.js；心跳比窗口慢，正常每拍都会查；kick 抢拍则复用刚落料）。
    *   失败达 `driveViewOffAfter` 次 → 降级 `#viewOff`（`#viewPointsFresh` 随之回 null，选点自动退老 `#pickX` 池），`driveViewRetryMs` 后重试。
    * @param {number} cx 中心 x
    * @param {number} cy 中心 y
@@ -895,8 +927,17 @@ export class PilotEngine {
     const env = this.#env;
     if (!(cx > 0) || !(cy > 0)) return;
     const now = Date.now();
-    // 未降级 & 视口仍新鲜（≤driveViewMs）→ 不重复撞 901；降级期到 driveViewRetryMs 才重试一刀
-    if (!this.#viewOff && this.#viewAt && now - this.#viewAt < (Number(tuning.driveViewMs) || 3000))
+    // 四-1 自适应降频：空闲态（WORK 驻留/bossWait/无候选）放宽新鲜闸；kick 唤醒位消费即清、强制常规口径
+    const idle = viewIdleNow({
+      workMode: this.#workMode,
+      bossFeeding: this.#bossFeeding(),
+      teamType: Number(tuning.driveTeamType) || 0,
+      idleSince: this.#idleSince,
+    });
+    const forced = this.#viewKick;
+    this.#viewKick = false;
+    // 未降级 & 视口仍新鲜（≤窗口）→ 不重复撞 901；降级期到 driveViewRetryMs 才重试一刀
+    if (!this.#viewOff && this.#viewAt && now - this.#viewAt < viewWaitMs(tuning, idle, forced))
       return;
     if (
       this.#viewOff &&
@@ -1002,7 +1043,7 @@ export class PilotEngine {
 
   /**
    * 窄筛料源新鲜度闸（§3.1「决策只吃本应答快照」）：901 降级（`#viewOff`）/从未起过/
-   *   快照超期（阀值取 `max(driveViewMs*3, driveMarchStaleMs)`，与在途过滤同尺）时回 null
+   *   快照超期（窗口见 view-throttle.viewFreshWinMs：盖得住空闲降频后的最老快照，与在途过滤同尺起步）时回 null
    *   → 调用方本轮不选（落链后续档，等快照恢复，不再退回累积池换语义）。非 null 时是**原样** pointList。
    * @param {number} now 毫秒
    * @returns {Array|null}
@@ -1010,10 +1051,7 @@ export class PilotEngine {
   #viewPointsFresh(now) {
     if (this.#viewOff) return null;
     if (!this.#viewPointsAt) return null;
-    const win = Math.max(
-      (Number(tuning.driveViewMs) || 3000) * 3,
-      Number(tuning.driveMarchStaleMs) || 15000,
-    );
+    const win = viewFreshWinMs(tuning);
     if (now - this.#viewPointsAt > win) return null;
     return this.#viewPoints;
   }
@@ -1312,7 +1350,7 @@ export class PilotEngine {
     if (!hasReward) return true;
     if (policy === 3) return false;
     if (tuning.driveBossDedupe === false) return false;
-    return !this.#bossDone[bid];
+    return !this.#bossDone.has(String(bid));
   }
 
   /**
@@ -1603,7 +1641,7 @@ export class PilotEngine {
     let bestD = Infinity;
     this.#tiles.forEach(function (t) {
       if (t.pt !== PAB_RESOURCE && t.pt !== PAB_MONSTER) return;
-      if (t.k === curKey || self.#dayBlack[t.k]) return;
+      if (t.k === curKey || self.#dayBlack.has(t.k)) return;
       const cu = self.#consumed.get(t.k);
       const ma = self.#marched.get(t.k);
       if (cu != null && (cu === -1 || cu > now)) return;
@@ -1648,7 +1686,7 @@ export class PilotEngine {
     let anyScore = -Infinity;
     this.#tiles.forEach(function (t) {
       if (t.pt !== PAB_BOSS_PLANE) return;
-      if (self.#dayBlack[t.k]) return;
+      if (self.#dayBlack.has(t.k)) return;
       if (self.#paramBlocked(t.k)) return; // 159995 短黑窗内的平台不再选（该点当前不可打，窗过自然恢复）
       if (t.k === curKey) return; // 同点短路由 #dispatch 处理，这里只需给出目标
       // 占用三筛：policy==1（硬占派）整体短路（竞品 L24867 同位；到达可能撞 252/217 拒码，由拒码分流兜底）
@@ -1726,7 +1764,7 @@ export class PilotEngine {
       const y = Math.round(cur.y + Math.sin((sec * Math.PI) / 4) * step);
       if (x < 1 || x > 1023 || y < 1 || y > 1023) continue;
       const k = tileKey(x, y);
-      if (!k || this.#tiles.has(k) || this.#dayBlack[k]) continue;
+      if (!k || this.#tiles.has(k) || this.#dayBlack.has(k)) continue;
       return { x: x, y: y };
     }
     return null;
@@ -1844,7 +1882,7 @@ export class PilotEngine {
     const self = this;
     const myKey = this.#toXY;
     const wake = function () {
-      if (self.#cycle) self.#cycle.kick();
+      self.#kick();
     };
     ret
       .then(function (r) {
@@ -1854,119 +1892,8 @@ export class PilotEngine {
         const ok = r && (r.ok === undefined ? Number(r.code) === 0 : !!r.ok);
         if (ok) return; // 上线成功：推进交给到达复核/超时兜底
         const rej = String((r && r.reason) || '');
-        if (rej.indexOf(REJ_BATTLEFIELD_CLOSING) >= 0) {
-          self.#realmClosed = true;
-          self.#clearTo();
-          self.#note(
-            'realm-closed',
-            'pilot: realm entered closing phase (server returned ' +
-              REJ_BATTLEFIELD_CLOSING +
-              ' "battlefield closing soon"), all marches rejected, this match stops driving. reason=realm_closed',
-          );
-          wake();
-          return;
-        }
-        if (rej === REJ_ALREADY_THERE) {
-          self.#enterWork(self.#toXY);
-          wake();
-          return;
-        }
-        if (rej === REJ_NOT_ARRIVED) {
-          // §11 158 在途未到=正常形态（上一笔 8521 还没落地，服务端拒绝新指令）：不记退避、不改相位，下一拍自然重评。
-          return;
-        }
-        if (rej === REJ_POINT_NOT_EXIST) {
-          // 目标点不存在（数据陈旧）→ 拉黑该点；若是商店锚点则一并脱表，下次选别家
-          //   ⚠ BOSS 本体坐标来自权威态，撞 159 并不代表「BOSS 不存在」→ 只黑平台/巡航点，不黑 BOSS
-          if (self.#toTag !== 'boss') self.#dayBlack[self.#toXY] = 1;
-          self.#dropShopAt(self.#toXY);
-          env.log.info(
-            'pilot: (%s) target point not exist (159), blacklisted for this match.',
-            self.#toXY,
-          );
-          self.#clearTo();
-          self.#cooldownUntil = Date.now() + tuning.rejectBackoffMs;
-          wake();
-          return;
-        }
-        if (rej === REJ_NO_MARCH_TARGET) {
-          // §11 163 不可行军：竞品语义「写 cd + 60s marched 冷却」而非“本场拉黑”。
-          //   #marched 已在 #dispatch 前写入（L2002），60s 内自然不重选同点；不再写 #dayBlack。
-          env.log.info(
-            'pilot: (%s) cannot march (163), no re-pick for %ds.',
-            self.#toXY,
-            Math.round(tuning.driveMarchedTtlMs / 1000),
-          );
-          self.#clearTo();
-          self.#cooldownUntil = Date.now() + tuning.rejectBackoffMs;
-          wake();
-          return;
-        }
-        if (rej === REJ_SAME_AREA_PLANE) {
-          // §11 209「同一区域核心停泊平台之间不允许相互行军」：拒绝情境取决于**本队当前停泊位**，不是目标点固有属性。
-          //   真机报文：998.7s (230,226) 吃 209 → 挪到 (238,216) → 1010.2s **同点行军成功**，
-          //   故与 163 同档「60s marched 冷却」（#marched 已在派发前写入）而非本场拉黑；
-          //   #pickPlane 只滤「与 BOSS 不同区域」，不防「与当前停泊同区域」，拉黑会白丢一个稍后即可用的平台。
-          env.log.info(
-            'pilot: (%s) same-area platform move forbidden (209), no re-pick for %ds (not blacklisted, may turn favorable after moving).',
-            self.#toXY,
-            Math.round(tuning.driveMarchedTtlMs / 1000),
-          );
-          self.#clearTo();
-          self.#cooldownUntil = Date.now() + tuning.rejectBackoffMs;
-          wake();
-          return;
-        }
-        if (rej === REJ_NEED_PLANE || rej === REJ_BOSS_AREA || rej === REJ_PLANE_TAKEN) {
-          // 平台侧问题：不黑 BOSS 本体，只黑这个平台，下一拍会选另一个平台
-          if (self.#toTag === KIND_BOSS_PLANE) self.#dayBlack[self.#toXY] = 1;
-          env.log.info(
-            'pilot: (%s) platform unavailable (%s), blacklist this platform for this match, pick another.',
-            self.#toXY,
-            rej,
-          );
-          self.#clearTo();
-          self.#cooldownUntil = Date.now() + tuning.rejectBackoffMs;
-          wake();
-          return;
-        }
-        if (rej === REJ_PARAM_ERROR) {
-          // common_159995（该点当前不可打）：阶段态、窗过即可打 → 与 boss.js 攻打档同口径只做 60s 短黑，
-          //   但用**专表 #paramBlack**（#marched 的消费者只有 #pickFollow 与 #marchedListArr（喂窄筛 marchedList），
-          //   #pickPlane 扫 #tiles、bossFight 直取权威坐标都不读它——写 marched 对这两档无消费者，5s 循环不断）。
-          //   不写 #dayBlack（权威坐标不因拒绝码拉黑 BOSS 本体）。
-          self.#paramBlack[self.#toXY] = Date.now() + tuning.paramBlacklistMs;
-          // 服务端已判该点不可打 → 回攻不成立（不清 #returnPending 就会「每 5s 重敲 return|同点」死循环）。
-          if (self.#toTag === 'return') {
-            self.#returnPending = false;
-            self.#escapeFrom = null;
-          }
-          // return 档被拒这一路触发 21535 主动复拉（限速），让 BOSS 阶段态尽快转正
-          const tp = String(self.#toXY || '').split(',');
-          self.#refreshBossState(Number(tp[0]), Number(tp[1]));
-          // info 首见一次（#note 边沿；key 带坐标，不同点各自报一次），后续同点重复不再刷屏
-          self.#note(
-            'param-error|' + self.#toXY,
-            'pilot: (' +
-              self.#toXY +
-              ') target not attackable now (159995), short-blacklist ' +
-              Math.round(tuning.paramBlacklistMs / 1000) +
-              's, switch target. reason=param_error',
-          );
-          self.#clearTo();
-          self.#cooldownUntil = Date.now() + tuning.rejectBackoffMs;
-          wake();
-          return;
-        }
-        env.log.info(
-          'pilot: goto %s rejected (%s), re-evaluate after %ds.',
-          self.#toKind,
-          rej || 'code ' + (r && r.code),
-          Math.round(tuning.rejectBackoffMs / 1000),
-        );
-        self.#clearTo();
-        self.#cooldownUntil = Date.now() + tuning.rejectBackoffMs;
-        wake();
+        // 拒码处置表化（三-3）：码义与处置参数见 rejects.js 共享真相表，与 boss.js 攻打档同源
+        self.#applyReject(rej, r);
       })
       .catch(function (e) {
         env.log.warn('pilot: 8521 ack threw: %s', (e && e.message) || e);
@@ -1976,6 +1903,117 @@ export class PilotEngine {
         }
         wake();
       });
+  }
+
+  /**
+   * 拒码处置解释器（三-3）：读 rejects.js 共享真相表的 pilot 列，逐位执行旧 if 链的处置。
+   *   顺序契约：拉黑/脱表 → 副作用（清回攻/复拉 BOSS 态）→ 日志 → 清相位 → 退避 → kick；
+   *   158 keepPhase 不 kick（在途正常形态，下一拍自然重评）；157 直接进 WORK。
+   *   表未登记的码 → 兜底：info + 清相位 + rejectBackoffMs 退避。
+   * @param {string} rej 服务端 reason
+   * @param {object} r Ret（兜底日志取 code 用）
+   */
+  #applyReject(rej, r) {
+    const env = this.#env;
+    const self = this;
+    const wake = function () {
+      self.#kick();
+    };
+    const rule = matchReject(rej);
+    const p = rule && rule.pilot;
+    if (!p) {
+      env.log.info(
+        'pilot: goto %s rejected (%s), re-evaluate after %ds.',
+        this.#toKind,
+        rej || 'code ' + (r && r.code),
+        Math.round(tuning.rejectBackoffMs / 1000),
+      );
+      this.#clearTo();
+      this.#cooldownUntil = Date.now() + tuning.rejectBackoffMs;
+      wake();
+      return;
+    }
+    if (p.stopMatch) this.#realmClosed = true;
+    if (p.enterWork) {
+      this.#enterWork(this.#toXY);
+      wake();
+      return;
+    }
+    if (p.keepPhase) return;
+    // 拉黑分流：day=本场黑（onlyTag/unlessTag 按 #toTag 闸）；param=159995 专表短黑（只被 #paramBlocked 消费，
+    //   不写 marched：#pickPlane/bossFight 不读它，写进去无消费者会 5s 循环不断）
+    if (p.black === 'day') {
+      const tagOk = p.onlyTag
+        ? this.#toTag === p.onlyTag
+        : p.unlessTag
+          ? this.#toTag !== p.unlessTag
+          : true;
+      if (tagOk) this.#dayBlack.mark(this.#toXY);
+    }
+    if (p.black === 'param') this.#paramBlack.set(this.#toXY, Date.now() + tuning.paramBlacklistMs);
+    if (p.dropShop) this.#dropShopAt(this.#toXY);
+    if (p.clearReturn && this.#toTag === 'return') {
+      this.#returnPending = false;
+      this.#escapeFrom = null;
+    }
+    if (p.refreshBoss) {
+      const tp = String(this.#toXY || '').split(',');
+      this.#refreshBossState(Number(tp[0]), Number(tp[1]));
+    }
+    if (p.log) this.#rejectLog(p.log, rej, r);
+    if (p.clearTo) this.#clearTo();
+    if (p.backoff) this.#cooldownUntil = Date.now() + Number(tuning[p.backoff]);
+    wake();
+  }
+
+  /**
+   * 拒码日志模板渲染（表内文案逐字保留，dashcam grep 契约）：
+   *   note 档走 #told 一次性边沿（固定键或前缀拼 toXY），其余按 lvl 直出。
+   * @param {object} spec rejects.js 的 RejectLogSpec
+   * @param {string} rej 服务端 reason
+   * @param {object} r Ret
+   */
+  #rejectLog(spec, rej, r) {
+    const toks = spec.args || [];
+    const args = [];
+    for (let i = 0; i < toks.length; i++) args.push(this.#rejectToken(toks[i], rej, r));
+    if (spec.lvl === 'note') {
+      const key = spec.keyPrefix ? spec.keyPrefix + this.#toXY : spec.key;
+      if (!this.#told[key]) {
+        this.#told[key] = 1;
+        this.#env.log.info(spec.tpl, ...args);
+      }
+      return;
+    }
+    this.#env.log[spec.lvl](spec.tpl, ...args);
+  }
+
+  /**
+   * 拒码日志 token → 实参（未知 token 原样返回，不静默吞）。
+   * @param {string} tok token 名
+   * @param {string} rej 服务端 reason
+   * @param {object} r Ret
+   * @returns {*}
+   */
+  #rejectToken(tok, rej, r) {
+    switch (tok) {
+      case 'xy':
+        return this.#toXY;
+      case 'kind':
+        return this.#toKind;
+      case 'rej':
+        return rej;
+      case 'codeOrRej':
+        return rej || 'code ' + (r && r.code);
+      case 'marchedSec':
+        return Math.round(tuning.driveMarchedTtlMs / 1000);
+      case 'paramSec':
+        return Math.round(tuning.paramBlacklistMs / 1000);
+      case 'backoffSec':
+        return Math.round(tuning.rejectBackoffMs / 1000);
+      default:
+        return tok;
+    }
   }
 
   /**
@@ -2009,61 +2047,35 @@ export class PilotEngine {
     this.#toKind = '';
     this.#toXY = key;
     this.#toAt = 0;
-    this.#workEmptyAt = 0;
-    this.#workDeadline = 0;
     // 到点重评：清掉上一站的「对我已采完」标记（若因面板/上限变了这次可能又要采），
     //   未清前不会被重选（离站已 #consume 10min），故只影响真重访这一次。
     this.#exhausted.delete(key);
     const env = this.#env;
     const base = env.secret.getRoomBaseInfo();
     const pt = Number((base && base.pointType) || 0);
-    const d = env.cfg().drive || {};
     const now = Date.now();
     this.#workPt = pt; // 驻留相位锁存点型，#workTick 据此判 BOSS/商店相位（不依赖实时 pointType）
-    if (pt === PAB_MONSTER) {
-      // 到 172 后本拍不重路由，等拍宠/交战把点数结算完
-      this.#workMode = 'dwell';
-      this.#workUntil = now + (Number(tuning.driveStayMonsterMs) || 0);
-    } else if (pt === PAB_RESOURCE || pt === PAB_DROP) {
-      this.#workMode = 'empty';
-      this.#workUntil = pt === PAB_RESOURCE ? this.#resDwellMs(key) : 0;
-      this.#workDeadline = now + tuning.driveWorkMaxMs;
-    } else if (pt === PAB_SHOP) {
-      // 驻留时长按缺口动态放宽：`max(基墙, 待补件数 × driveShopUnitMs)`。
-      //   香肠 `buy_times=1`、一根一刷，买满 10 根需 ≈9 刷——固定 25s 盖不住（实证只买到 7 根）。
-      const baseMs = Number.isFinite(d.shopDwellMs) ? d.shopDwellMs : tuning.driveShopDwellMs;
-      const target = Number(tuning.driveSausageTarget) || 0;
-      const have = env.secret.getItemNumById(ITEM_SAUSAGE) || 0;
-      const need = Math.max(0, target - have);
-      // 动态驻留套总天花板 `基墙 + driveShopExtraMs`：target 被配大时不致线性失控久停
-      const ms = Math.min(
-        Math.max(baseMs, need * (Number(tuning.driveShopUnitMs) || 0)),
-        baseMs + (Number(tuning.driveShopExtraMs) || 0),
-      );
-      this.#workMode = 'dwell';
-      this.#workUntil = now + ms;
-      this.#shopErrandDone = true;
-      this.#shopLastAt = now;
-      // 账本：到店就记 `time`（秒）——到店节拍的 gap 就从这一刻重算
-      const led = this.#shopLedger.get(key) || {
-        time: 0,
-        sausage: 0,
-        piece: 0,
-        visited: 0,
-        sausageShelf: 0,
-      };
-      led.time = Math.floor(now / 1000);
-      led.visited = 1; // 真到店（锚点建账播的初值不算）→ 窄筛 pickShop 的全店共享到店冷却（time+3s）从这里开始生效
-      this.#shopLedger.set(key, led);
-      // 去重窗 + 路由锁：到店后 driveShopStayMs 内整条链不重评，取 max(3000, driveShopStayMs)。
-      this.#shopCoolUntil = now + Math.max(3000, Number(tuning.driveShopStayMs) || 0);
-      // 到店第一件事：**把商店引擎从 10 分钟轮巡里叫醒**。它只在被唤醒时才看「现在是否在店里」，
-      //   而本车只停 driveShopDwellMs（默认 25s）——不叫醒就是「到店也不买货」。
-      if (typeof env.kickShop === 'function') env.kickShop();
-    } else {
-      this.#workMode = 'dwell';
-      this.#workUntil = now + tuning.driveWorkDwellMs;
-    }
+    // 点型策略纯决策（三-4，work-mode.js）：状态补丁逐位应用，副作用（账本/冷却/kickShop）随后执行
+    const patch = workEnter(pt, {
+      now: now,
+      key: key,
+      d: env.cfg().drive || {},
+      t: tuning,
+      change: this.#change.get(key) || null,
+      tile: this.#tiles.get(key) || null,
+      sausageHave: env.secret.getItemNumById(ITEM_SAUSAGE) || 0,
+      shopLedgerEntry: this.#shopLedger.get(key) || null,
+    });
+    this.#workMode = patch.workMode;
+    this.#workUntil = patch.workUntil;
+    this.#workEmptyAt = patch.workEmptyAt;
+    this.#workDeadline = patch.workDeadline;
+    this.#shopGiveUp = false; // 新一次驻留不带上一站的止损信号
+    if (patch.shopErrandDone) this.#shopErrandDone = true;
+    if (patch.shopLastAt) this.#shopLastAt = patch.shopLastAt;
+    if (patch.shopLedgerEntry) this.#shopLedger.set(key, patch.shopLedgerEntry);
+    if (patch.shopCoolUntil) this.#shopCoolUntil = patch.shopCoolUntil;
+    if (patch.kickShop && typeof env.kickShop === 'function') env.kickShop();
     if (this.#escapeFrom && key === tileKey(this.#escapeFrom.x, this.#escapeFrom.y)) {
       this.#escapeFrom = null;
     }
@@ -2092,115 +2104,54 @@ export class PilotEngine {
   }
 
   /**
-   * 173 井的最短驻留地板（`min(res_stay_time, 未拿件数 × 0.8 + 1.1)` 秒）：
-   *   「未拿件数」优先取 21522 按点记账的空位数（bagFree+buffFree），没记账就用快照 iNum 兜底。
-   *   我方主判据仍是「拿空即走」，本值作**最短驻留**（给 8527/8538 应答落地留时间），
-   *   并以 driveWorkMaxMs 为天花板，避免「到点秒走 → 拾取动作还没发出就离点」。
-   * @param {string} key 点位键
-   * @returns {number} 毫秒（0=不加下限）
-   */
-  #resDwellMs(key) {
-    let n = 0;
-    const c = this.#change.get(key);
-    if (c) n = Math.max(0, (Number(c.bagFree) || 0) + (Number(c.buffFree) || 0));
-    if (!n) {
-      const t = this.#tiles.get(key);
-      n = t && t.iNum != null ? Math.max(0, Number(t.iNum) || 0) : 0;
-    }
-    const dyn =
-      n * (Number(tuning.driveResStayPerBagMs) || 0) + (Number(tuning.driveResStayBaseMs) || 0);
-    const cap = Number(tuning.driveResStayMaxMs) || 0;
-    const ms = cap > 0 ? Math.max(cap, dyn) : dyn;
-    return Math.max(0, Math.min(tuning.driveWorkMaxMs, ms));
-  }
-
-  /**
-   * WORK 相位一拍推进。
+   * WORK 相位一拍推进：事实预采（判空/拍宠让路/BOSS 提前离点判据）→ work-mode.js 纯决策 → 补丁/日志落地。
    * @param {number} now 毫秒
    * @returns {{leave:boolean,sleep:number}}
    */
   #workTick(now) {
     const env = this.#env;
-    if (this.#workMode === 'empty') {
-      if (this.#isTileEmpty(this.#toXY)) {
-        if (!this.#workEmptyAt) this.#workEmptyAt = now;
-        const d = env.cfg().drive || {};
-        const settle = Number.isFinite(d.emptyDwellMs) ? d.emptyDwellMs : tuning.driveEmptyDwellMs;
-        // 动态驻留作**地板**：拿空了也至少给 8527/8538 把这一批结算完
-        const readyAt = Math.max(this.#workEmptyAt + settle, this.#workUntil || 0);
-        if (now >= readyAt) return { leave: true, sleep: 0 };
-        return { leave: false, sleep: readyAt - now };
-      }
-      this.#workEmptyAt = 0;
-      if (now >= this.#workDeadline) {
-        env.log.info(
-          'pilot: %s scouted empty, hit fallback ceiling, leave point. reason=empty_ceiling',
-          this.#toXY,
-        );
-        return { leave: true, sleep: 0 };
-      }
-      return { leave: false, sleep: Math.min(tuning.driveScanMs, this.#workDeadline - now) };
-    }
-    // dwell 相位：BOSS 点提前离点（不等满驻留）——现场瓦片判死或投喂窗且无石头可领
-    if (isBossish(this.#workPt)) {
-      if (this.#captureBusy()) {
-        // 在点拍宠中不赶车（同威胁块的让路语义）
-      } else {
+    const pt = this.#workPt;
+    const f = {
+      now: now,
+      key: this.#toXY,
+      d: env.cfg().drive || {},
+      t: tuning,
+      isEmpty: this.#workMode === 'empty' ? this.#isTileEmpty(this.#toXY) : false,
+      captureBusy: false,
+      bossLeaveWhy: null,
+      bossWin: null,
+      bossLiveHere: false,
+      sausageHave: env.secret.getItemNumById(ITEM_SAUSAGE) || 0,
+      shopGiveUp: this.#shopGiveUp,
+    };
+    if (this.#workMode !== 'empty' && isBossish(pt)) {
+      f.captureBusy = this.#captureBusy();
+      if (!f.captureBusy) {
         const bp = String(this.#toXY || '').split(',');
         const bxy = { x: Number(bp[0]), y: Number(bp[1]) };
         this.#refreshBossState(bxy.x, bxy.y); // 21535 只读复拉（限速），让 BOSS 阶段态尽快转正
-        const why = this.#bossDwellLeave(this.#toXY);
-        if (why) {
-          env.log.info(
-            'pilot: boss point %s %s, leave early before dwell ceiling. reason=boss_over',
-            this.#toXY,
-            why,
-          );
-          return { leave: true, sleep: 0 };
+        f.bossLeaveWhy = this.#bossDwellLeave(this.#toXY);
+        if (!f.bossLeaveWhy) {
+          f.bossWin = this.#bossWindow(now, bxy);
+          f.bossLiveHere = this.#bossLiveHere(this.#toXY);
         }
-        // 平台无窗即时出口（B1-3）：本拍全图判不出任何 BOSS 窗（win=null：无 open、也无本平台在等的 lead）
-        //   → 当拍离点，不等满 driveWorkDwellMs。
-        //   ⚠ 只判 win=null：win 为别区 open 时不能据此赶车（本平台正在等自己那只 lead 转正，
-        //     #bossWindow 优先返回全图最近 open会误判跨区域）——跨区域不 HOLD 的处置仍归 ④ HOLD 出口。
-        //   ⚠ win=null 不等于本点无事可做：#bossWindow 不建模投喂窗（state23）与被顺延的 state22，
-        //     本点自己那只若仍在 21/22/23（如投喂窗里有待领石头、#bossDwellLeave 判应留）则绝不据 win=null 赶车。
-        const win = this.#bossWindow(now, bxy);
-        if (!win && !this.#bossLiveHere(this.#toXY)) {
-          env.log.info(
-            'pilot: boss point %s has no open BOSS window, leave now (no dwell wait). reason=no-window',
-            this.#toXY,
-          );
-          return { leave: true, sleep: 0 };
-        }
-      }
-      // 分段轮询而非一次睡满：21535 阶段切换不推、10018 到达也不 kick，睡满整个驻留窗就没人来判「提前离点」
-      if (this.#workUntil && now < this.#workUntil) {
-        return { leave: false, sleep: Math.min(tuning.driveScanMs, this.#workUntil - now) };
-      }
-    } else if (this.#workUntil && now < this.#workUntil) {
-      return { leave: false, sleep: this.#workUntil - now };
-    }
-    // 商店缺口续留：到点但香肠仍未补满 → 最多再延 driveShopExtraMs 后强制离店（仍受三重永动闸约束）
-    if (this.#workPt === PAB_SHOP) {
-      const target = Number(tuning.driveSausageTarget) || 0;
-      const have = env.secret.getItemNumById(ITEM_SAUSAGE) || 0;
-      if (have < target) {
-        const extra = Number(tuning.driveShopExtraMs) || 0;
-        const ceiling = (this.#workUntil || now) + extra;
-        // 同 BOSS 窗：分段轮询，补满当拍即可离店，不空等到 ceiling
-        if (now < ceiling) {
-          return { leave: false, sleep: Math.min(tuning.driveScanMs, ceiling - now) };
-        }
-        env.log.info(
-          'pilot: shop %s sausage still short (%d/%d) after extra %ds, force leave. reason=shop_extra_ceiling',
-          this.#toXY,
-          have,
-          target,
-          Math.round(extra / 1000),
-        );
       }
     }
-    return { leave: true, sleep: 0 };
+    const r = workTick(
+      pt,
+      {
+        workMode: this.#workMode,
+        workUntil: this.#workUntil,
+        workEmptyAt: this.#workEmptyAt,
+        workDeadline: this.#workDeadline,
+      },
+      f,
+    );
+    if (r.patch) {
+      if (r.patch.workEmptyAt !== undefined) this.#workEmptyAt = r.patch.workEmptyAt;
+    }
+    if (r.log) env.log.info(r.log.tpl, ...r.log.args);
+    return { leave: r.leave, sleep: r.sleep };
   }
 
   /**
@@ -2273,13 +2224,13 @@ export class PilotEngine {
     return st === ST_BOSS_FIGHTING || st === ST_PLANE_MARCH || st === ST_BOSS_FEED;
   }
 
-  /** 本点是否处在 159995 短黑窗内（惰性过期，不单独清扫；窗口仅 paramBlacklistMs）。 */
+  /** 本点是否处在 159995 短黑窗内（TtlLedger 惰性过期模板：读时判、到期删，不单独清扫；窗口仅 paramBlacklistMs）。 */
   #paramBlocked(key) {
     if (!key) return false;
-    const until = this.#paramBlack[key];
+    const until = this.#paramBlack.get(key);
     if (!(until > 0)) return false;
     if (Date.now() >= until) {
-      delete this.#paramBlack[key];
+      this.#paramBlack.delete(key);
       return false;
     }
     return true;
@@ -2317,7 +2268,7 @@ export class PilotEngine {
       if (ret && typeof ret.then === 'function') {
         const self = this;
         ret.then(function () {
-          if (self.#cycle) self.#cycle.kick();
+          self.#kick();
         });
       }
     } catch (e) {
@@ -2659,20 +2610,14 @@ export class PilotEngine {
     const plan = PLANS[this.#planIdUsed] || PLANS.default;
     this.#lastStageIds = [];
     // 现状只有真走到⑥⑦日常链的那拍才落 stage='cruise/beast-stage' + why（L2082-2083）；
-    //   BOSS 档/①②独占/读秒让路/lead短睡全程不碰。标志位把这条「到哪拍才赋值」的时序保住。
+    //   BOSS 档/①②独占/读秒让路/lead短睡全程不碰。链成员资格由 stage.chain 声明（三-5 下沉，
+    //   plans.js 契约 4），标志位把这条「到哪拍才赋值」的时序保住。
     let chainMarked = false;
     const list = matchStages(plan, ctx);
     for (let i = 0; i < list.length; i++) {
       const s = list[i];
       const dg = STAGE_DIAG[s.id] || null;
-      const isChain =
-        !dg &&
-        (s.obj === 'follow' ||
-          s.obj === 'beast' ||
-          s.obj === 'resource' ||
-          s.obj === 'explore' ||
-          (s.obj === 'shop' && !s.terminal));
-      if (isChain && !chainMarked) {
+      if (s.chain && !chainMarked) {
         this.#stage = ctx.relax ? 'beast-stage' : 'cruise';
         this.#stageWhy = ctx.relax ? 'beastStage' : 'daily';
         chainMarked = true;
@@ -2696,24 +2641,21 @@ export class PilotEngine {
         if (s.terminal) {
           // ①②收场/高光独占拍：选不到店也不回落采井打野，只记防重评（L2043-2051）；
           //   BOSS 开打拍：找不到平台也发一笔 `boss-plane|none` 记账就终拍（L2357-2364），
-          //   两者都不清零闲逛计时。
-          if (s.obj === 'shop') this.#shopLastAt = now;
+          //   两者都不清零闲逛计时。空候选处置由 stage 属性声明（三-5）：
+          //   emptyShopMark=记到店防重评+scan 短睡；其余 terminal 档走常规派发后睡眠。
+          if (s.emptyShopMark) this.#shopLastAt = now;
           this.#stage = dg.stage;
           if (s.obj === 'shop') this.#stageWhy = why; // BOSS 拍不碰 why（现状⑤从头到尾不赋）
           this.#lastBranch = branch;
           this.#dispatch(kind, null);
           this.#heartbeat(now);
-          return s.obj === 'shop' ? tuning.driveScanMs : this.#sleepAfterDispatch();
+          return s.emptyShopMark ? tuning.driveScanMs : this.#sleepAfterDispatch();
         }
-        if (s.id === 'bossPlaneLead') {
-          // 串行模型下 901 已由 #autoLeader await 拉完（以 BOSS 为中心），不存在「在途未回」可等：
-          //   #pickPlane 仍选不到平台就是真没有 → 记一笔后落回日常链（这就是它不标 terminal 的原因）。
-          //   （旧「短睡 400 等一刀」在 fire-and-forget 时代防白睡 5s，串行 await 后既无在途可等、
-          //     其 `viewAt` 判据又会恒真导致无限空转，故删除。）
-          this.#note(
-            'no-plane',
-            'pilot: no usable platform found within BOSS open-countdown window (viewport lacks 176/174 or all occupied), give up boarding this tick. reason=no_plane',
-          );
+        if (s.emptyNote) {
+          // 空候选边沿 info（三-5 下沉：文案/键名归方案声明）。串行模型下 901 已由
+          //   #autoLeader await 拉完（以 BOSS 为中心），不存在「在途未回」可等：选不到就是真没有
+          //   → 记一笔后落回后续档（这就是开台读秒档不标 terminal 的原因）。
+          this.#note(s.emptyNote.key, s.emptyNote.msg);
         }
         continue;
       }
@@ -2745,7 +2687,8 @@ export class PilotEngine {
         this.#heartbeat(now);
         return Math.min(cdLeft + 50, tuning.driveScanMs);
       }
-      if (s.obj === 'explore') {
+      if (s.explore) {
+        // 探索档发车副作用（三-5：由 stage.explore 声明，不再按 obj 名特判）
         this.#idleSince = now;
         this.#exploreSpin++;
         this.#stage = 'explore';
@@ -2764,7 +2707,7 @@ export class PilotEngine {
         if (dg) this.#stage = dg.stage; // bossPlaneLead 命中：stage='boss-lead'（L2368-2373）
         this.#lastBranch = branch;
         if (!dg || !dg.noIdle) this.#idleSince = 0; // 日常链命中才清；开台拍不清（现状如此）
-        if (s.id === 'shopTail' && why) {
+        if (s.tailShopLog && why) {
           env.log.info(
             'pilot: chain-tail go-shop reason=%s gap=%ss (do not preempt mine/wild)',
             why,
@@ -2846,47 +2789,10 @@ export class PilotEngine {
       return tuning.driveScanMs;
     }
 
-    // 换场复位：fightBeginTime 变化 = 新一场秘境
+    // 换场复位：fightBeginTime 变化 = 新一场秘境（全部场级状态走单一 #resetMatch，见该方法注释）
     const fb = toNum(base.fightBeginTime);
     if (fb > 1e11 && fb !== this.#matchFightBegin) {
-      this.#matchFightBegin = fb;
-      this.#matchStartAt = fb;
-      this.#shops = [];
-      this.#shopsAt = 0;
-      this.#group = 0;
-      this.#consumed = new Map();
-      this.#marched = new Map();
-      this.#cd = {};
-      this.#change = new Map();
-      this.#exhausted = new Set();
-      this.#dayBlack = {};
-      this.#paramBlack = {};
-      this.#shopErrandDone = false;
-      this.#shopLastAt = 0;
-      this.#shopCoolUntil = 0;
-      this.#lastShopWhy = '';
-      this.#shopLedger = new Map();
-      this.#bossDone = {};
-      this.#lastReviveAt = 0;
-      this.#reviveInFlight = false;
-      this.#threatEvaded = false;
-      this.#threatEvadeAt = 0;
-      this.#threatReEvade = 0;
-      this.#evadeCoolUntil = 0;
-      this.#bossStatePullAt = 0;
-      this.#powerGapAt = 0;
-      this.#powerGapVal = null;
-      this.#viewMarch = new Set();
-      this.#viewMarchAt = 0;
-      this.#viewPoints = [];
-      this.#viewPointsAt = 0;
-      this.#viewMarchList = [];
-      this.#realmClosed = false;
-      this.#idleSince = 0;
-      this.#viewAt = 0;
-      this.#viewMiss = 0;
-      this.#viewOff = false;
-      this.#told = {};
+      this.#resetMatch(fb);
       // 场次时间锚：换场当拍落一条 info，把日志时间轴钉到 fightBeginTime（= 整场 +0min）。
       //   字段全部取自已在手的 base，不新增读取；配合文档里 BOSS 排期（小 +23min / 大 +40min）换算。
       env.log.info(
@@ -2928,6 +2834,9 @@ export class PilotEngine {
     //   但跳过 BOSS 档（`quiet` 位向下传导）；当前瓦片正处 PVP 交战（state 11/12）则原地全停。
     //   check_power 闸（面板 driveCheckPower，缺省关）：战力差>0 判「打得过」→ 不扎营、不 quiet，全速含 BOSS 档。
     let quiet = false;
+    // 四-5：本拍威胁块是否判「该扎营」（hold）并落回常规链——供 TO 到点首拍 evade 优先闸复用，
+    //   避免在到点分支重算 checkPower（#powerGap 带发包，威胁块本拍已算过）。
+    let threatHold = false;
     if (this.#threat && env.secret.isTeamLeader()) {
       if (this.#captureBusy()) {
         // 拍宠中不打断：保持让路（等本次拍完），仅记一次「threat during capture」
@@ -2943,6 +2852,7 @@ export class PilotEngine {
           hold = !(gap != null && gap > 0); // 证据不足（null）保守按「打不过」处理
         }
         if (hold) {
+          threatHold = true;
           this.#lastBranch = 'threat';
           const safeHere = curPt === PAB_TENT || curPt === PAB_COMMON_PLANE;
           // 可再逃（D.2）+ 落点回退（D.3）：首逃一次；持续威胁可再挪（上限内）；#pickFleeTarget 返 null 时回退 #explorePoint 当跳板。
@@ -3007,12 +2917,33 @@ export class PilotEngine {
       this.#lastBranch = 'to';
       this.#stage = 'to';
       if (Number(base.marchState) === arrived && curKey && curKey === this.#toXY) {
+        // 四-5：威胁到点首拍 evade 优先——本拍威胁块已判 hold 且可再逃、非安全点、有逃袭落点时，
+        //   不进 WORK（免 kickShop/BOSS 驻留设置抢在 evade 前），清 TO 返 0：下一拍①威胁块
+        //   无在途标记即派 evade。条件与威胁块派发闸同口径（hold 复用本拍判定，落点两函数均纯读）；
+        //   在途 threat-inflight 不改相位、安全点/可再逃额度耗尽时的边避边工收益均不变。
+        const safeHere = curPt === PAB_TENT || curPt === PAB_COMMON_PLANE;
+        if (
+          threatHold &&
+          !safeHere &&
+          this.#mayEvade(now) &&
+          (this.#pickFleeTarget(curKey, cur) || this.#explorePoint(cur))
+        ) {
+          env.log.debug(
+            'pilot: arrived %s (%s) under threat, defer work for evade-first. reason=threat_arrive_evade_first',
+            curKey,
+            this.#toKind,
+          );
+          this.#clearTo();
+          this.#heartbeat(now);
+          return 0;
+        }
         this.#enterWork(curKey);
         this.#heartbeat(now);
         return 0; // 到点当拍即重评：空井可立刻走
       }
       if (now - this.#toAt > tuning.driveMarchTimeoutMs) {
         this.#lastBranch = 'to-timeout';
+        this.#marchTimeouts++;
         env.log.info(
           'pilot: goto %s timed out without arriving, record spend and re-evaluate. reason=march_timeout',
           this.#toKind,
@@ -3057,6 +2988,7 @@ export class PilotEngine {
       this.#workEmptyAt = 0;
       this.#workDeadline = 0;
       this.#workUntil = 0;
+      this.#shopGiveUp = false;
       // BOSS 相关点（176/177/178）驻留满**不记消费**：攻打未完时走人等于把平台弃在战斗中，
       //   且它们不靠消费账防重派（下一拍由 #bossWindow 决定去留，窗口散了自然落下去巡航）。
       let bossPoint = false;
@@ -3225,7 +3157,7 @@ export class PilotEngine {
       curKey: curKey,
       requireFreeSlot: true,
       isBlack: function (k) {
-        return !!self.#dayBlack[k];
+        return self.#dayBlack.has(k);
       },
     });
   }
@@ -3250,7 +3182,7 @@ export class PilotEngine {
       goal: goal,
       hopMaxD: hopMaxD,
       isBlack: function (k) {
-        return !!self.#dayBlack[k];
+        return self.#dayBlack.has(k);
       },
     });
   }
@@ -3351,6 +3283,78 @@ export class PilotEngine {
     return this.#idleSince !== 0 && now - this.#idleSince >= tuning.driveIdleExploreMs;
   }
 
+  /**
+   * 场级状态单一复位点：换场（`#tick` fightBeginTime 变化）/`start()`/`stop()` 三处共用，
+   *   新增场级账本/相位只改这一处（历史三处手工清单各自漂移，已有跨场预算爆账前科，shop.js #syncMatch 同旨）。
+   *   范围 = 一切「按场计」的状态：锚点/账本族/冷却/威胁伴生位/901 视口/TO 与 WORK 相位/一次性提示。
+   *   **不含**生命周期与诊断位（#active/#cycle/#planIdUsed/#contractErrs/#ticks/#gateNow/心跳采样位），
+   *   那些归 start/stop 各自收口；#roundTierCache 是静态配置 memo，跨场无害不清。
+   * @param {number} [fb] 新场 fightBeginTime（毫秒）；换场传入，start/stop 缺省 → 时间锚归零
+   */
+  #resetMatch(fb) {
+    // 时间锚：换场钉到 fightBeginTime；start/stop 归零（首拍兜底见 #tick 的 matchStartAt 补位）
+    this.#matchFightBegin = fb || 0;
+    this.#matchStartAt = fb || 0;
+    // S0 数据层：锚点与视口全部作废，新场重新拉表/拉 901（旧场瓦片状态不得喂新场选点）
+    this.#tiles = new Map();
+    this.#shops = [];
+    this.#shopsAt = 0;
+    this.#group = 0;
+    this.#viewAt = 0;
+    this.#viewKick = false;
+    this.#viewBusy = false;
+    this.#viewMiss = 0;
+    this.#viewOff = false;
+    this.#viewDbg = null;
+    this.#viewMarch = new Set();
+    this.#viewMarchAt = 0;
+    this.#viewPoints = [];
+    this.#viewPointsAt = 0;
+    this.#viewMarchList = [];
+    // S2 账本族与冷却（七账本统一 TtlLedger 原语，TTL 语义见 ledger.js 文件头）
+    this.#marched = new TtlLedger();
+    this.#consumed = new TtlLedger();
+    this.#exhausted = new TtlLedger();
+    this.#cd = {};
+    this.#dayBlack = new TtlLedger();
+    this.#paramBlack = new TtlLedger();
+    this.#bossDone = new TtlLedger();
+    this.#change = new TtlLedger();
+    this.#cooldownUntil = 0;
+    this.#realmClosed = false;
+    // 商店相位与每店账本（按场计，见 #shopLedger 字段注）
+    this.#shopLedger = new Map();
+    this.#shopLastAt = 0;
+    this.#shopCoolUntil = 0;
+    this.#lastShopWhy = '';
+    this.#shopErrandDone = false;
+    this.#idleSince = 0;
+    this.#exploreSpin = 0;
+    this.#inflightStuckSince = 0;
+    // 威胁伴生位显式配对复位：防旧威胁窗的扎营位残留使新场首次威胁不再避让
+    this.#threat = false;
+    this.#threatEvaded = false;
+    this.#threatEvadeAt = 0;
+    this.#threatReEvade = 0;
+    this.#evadeCoolUntil = 0;
+    this.#bossStatePullAt = 0;
+    this.#powerGapAt = 0;
+    this.#powerGapVal = null;
+    this.#escapeFrom = null;
+    this.#returnPending = false;
+    this.#lastReviveAt = 0;
+    this.#reviveInFlight = false;
+    // TO/WORK 相位：旧场在途/驻留对新场无意义，一并清（#workPt 由 #enterWork 重新锁存）
+    this.#clearTo();
+    this.#marchTimeouts = 0;
+    this.#workMode = '';
+    this.#workUntil = 0;
+    this.#workEmptyAt = 0;
+    this.#workDeadline = 0;
+    this.#shopGiveUp = false;
+    this.#told = {};
+  }
+
   /** 清除 TO 相位标记。 */
   #clearTo() {
     this.#toKind = '';
@@ -3374,14 +3378,10 @@ export class PilotEngine {
       key,
       Math.round((Number(tuning.driveConsumedTtlMs) || 0) / 1000),
     );
-    // ⚠ 必须箭头函数：`function` 回调在 ESM 严格模式下 this=undefined（真实报文回放抓到的潜伏崩溃，
-    //   仅当账本里存在已过期条目时触发）→ 离店记账会整拍炸掉。
-    this.#consumed.forEach((until, k) => {
-      if (until !== -1 && until <= now) this.#consumed.delete(k);
-    });
-    this.#marched.forEach((until, k) => {
-      if (until <= now) this.#marched.delete(k);
-    });
+    // ⚠ 惰性清扫收口 TtlLedger.sweep：-1 永久哨兵不碰（旧 forEach 手写同口径）；
+    //   旧 function 回调 this=undefined 的潜伏崩溃随原语内箭头实现一并消除。
+    this.#consumed.sweep(now);
+    this.#marched.sweep(now);
   }
 
   /**
@@ -3440,7 +3440,7 @@ export class PilotEngine {
     // cd 剩余一律走与 debugState 同一纯读表达式（直接读 #cd 存的是绝对解禁时刻）
     const left = (k) => (this.#cd[k] ? Math.max(0, this.#cd[k] - now) : 0);
     env.log.debug(
-      'pilot: tick#%d branch=%s stage=%s why=%s cd[march=%d,beast=%d] phase=%s tl=%d idle=%d plan=%s',
+      'pilot: tick#%d branch=%s stage=%s why=%s cd[march=%d,beast=%d] phase=%s tl=%d idle=%d plan=%s mto=%d',
       this.#ticks,
       this.#lastBranch || '-',
       this.#stage || '-',
@@ -3451,6 +3451,7 @@ export class PilotEngine {
       this.#tiles.size,
       this.#idleSince ? now - this.#idleSince : 0,
       this.#planIdUsed || '-',
+      this.#marchTimeouts,
     );
     // 梯尾空派发拍（= 全链无候选）补一行筛除普查：字段名直接从 #pickDbg 的键取，
     //   窄筛统一形状 {src,seen,best,hopMaxDist?,hop?}，泛型遍历兼容后续加键。
@@ -3484,55 +3485,8 @@ export class PilotEngine {
     const env = this.#env;
     const self = this;
     this.#active = true;
-    this.#tiles = new Map();
-    this.#shops = [];
-    this.#shopsAt = 0;
-    this.#group = 0;
-    this.#viewAt = 0;
-    this.#viewBusy = false;
-    this.#viewMiss = 0;
-    this.#viewOff = false;
-    this.#viewDbg = null;
-    this.#marched = new Map();
-    this.#consumed = new Map();
-    this.#exhausted = new Set();
-    this.#dayBlack = {};
-    this.#paramBlack = {};
-    this.#cooldownUntil = 0;
-    this.#realmClosed = false;
-    this.#matchFightBegin = 0;
-    this.#matchStartAt = 0;
-    this.#shopLastAt = 0;
-    this.#shopCoolUntil = 0;
-    this.#lastShopWhy = '';
-    this.#shopErrandDone = false;
-    this.#idleSince = 0;
-    this.#shopLedger = new Map();
-    this.#bossDone = {};
-    this.#lastReviveAt = 0;
-    this.#reviveInFlight = false;
-    this.#viewMarch = new Set();
-    this.#viewMarchAt = 0;
-    this.#viewPoints = [];
-    this.#viewPointsAt = 0;
-    this.#viewMarchList = [];
-    this.#exploreSpin = 0;
-    this.#inflightStuckSince = 0;
-    this.#threat = false;
-    // 威胁伴生位显式配对复位：防引擎复用/换场首拍读不到 fightBeginTime 时，旧威胁窗的扎营位残留使下一次威胁不再避让
-    this.#threatEvaded = false;
-    this.#threatEvadeAt = 0;
-    this.#threatReEvade = 0;
-    this.#powerGapAt = 0;
-    this.#powerGapVal = null;
-    this.#escapeFrom = null;
-    this.#returnPending = false;
-    this.#clearTo();
-    this.#workMode = '';
-    this.#workUntil = 0;
-    this.#workEmptyAt = 0;
-    this.#workDeadline = 0;
-    this.#change = new Map();
+    // 场级状态单一复位点（换场/start/stop 共用）；诊断位另归本方法收口
+    this.#resetMatch();
     this.#ticks = 0;
     this.#lastTickAt = 0;
     this.#lastBranch = '';
@@ -3554,7 +3508,7 @@ export class PilotEngine {
         if (self.#active && env.realmActive()) self.onBasePush(ev);
       });
       ctx.on.push(PUSH_BOSS_STATE, function () {
-        if (self.#active && env.realmActive() && self.#cycle) self.#cycle.kick();
+        if (self.#active && env.realmActive()) self.#kick();
       });
       ctx.on.push(PUSH_RESOURCE_CHANGE, function (ev) {
         const body = changeBody(ev);
@@ -3578,7 +3532,7 @@ export class PilotEngine {
       },
       fallback: tuning.driveScanMs,
     });
-    this.#cycle.kick();
+    this.#kick();
     env.log.info(
       'pilot started (anchor-table shops + BOSS authoritative coords + 901 active view; boss/shop/cruise/explore; leader-only).',
     );
@@ -3697,6 +3651,8 @@ export class PilotEngine {
           ? Math.max(0, this.#shopLastAt + (Number(tuning.driveShopIntervalMs) || 0) - now)
           : 0,
         inflightStuckSinceAgoMs: this.#inflightStuckSince ? now - this.#inflightStuckSince : 0,
+        // 四-4：本场行军超时兜底计数（观察次通道抖动是否集中引发 no-resp）
+        marchTimeouts: this.#marchTimeouts,
         marchIn: this.#viewMarch.size,
         marchInAgeMs: this.#viewMarchAt ? now - this.#viewMarchAt : null,
         bossFeeding: this.#bossFeeding(),
@@ -3718,6 +3674,14 @@ export class PilotEngine {
         busy: this.#viewBusy,
         lastAgoMs: this.#viewAt ? now - this.#viewAt : null,
         miss: this.#viewMiss,
+        // 四-1 降频观测面：本拍是否空闲态（可降频）与 kick 旁路位是否待消费
+        idle: viewIdleNow({
+          workMode: this.#workMode,
+          bossFeeding: this.#bossFeeding(),
+          teamType: Number(tuning.driveTeamType) || 0,
+          idleSince: this.#idleSince,
+        }),
+        kickPending: this.#viewKick,
         last: this.#viewDbg,
       },
       pick: this.#pickDbg,
@@ -3729,9 +3693,9 @@ export class PilotEngine {
       tiles: { size: tiles.length, byPt: byPt, detail: tiles },
       consumed: consumed,
       marched: marched,
-      dayBlack: Object.keys(this.#dayBlack),
+      dayBlack: this.#dayBlack.keys(),
       // 到场打过的 BOSS 跳过账
-      bossDone: Object.keys(this.#bossDone),
+      bossDone: this.#bossDone.keys(),
       told: Object.keys(this.#told),
       change: change,
     };
@@ -3748,29 +3712,7 @@ export class PilotEngine {
     this.#lastCensusLine = '';
     if (this.#cycle) this.#cycle.dispose();
     this.#cycle = null;
-    this.#tiles = new Map();
-    this.#shops = [];
-    this.#marched = new Map();
-    this.#consumed = new Map();
-    this.#exhausted = new Set();
-    this.#cd = {};
-    this.#dayBlack = {};
-    this.#paramBlack = {};
-    this.#threat = false;
-    this.#threatEvaded = false;
-    this.#threatEvadeAt = 0;
-    this.#threatReEvade = 0;
-    this.#evadeCoolUntil = 0;
-    this.#bossStatePullAt = 0;
-    this.#powerGapAt = 0;
-    this.#powerGapVal = null;
-    this.#escapeFrom = null;
-    this.#returnPending = false;
-    this.#clearTo();
-    this.#workMode = '';
-    this.#workUntil = 0;
-    this.#workEmptyAt = 0;
-    this.#workDeadline = 0;
-    this.#change = new Map();
+    // 场级状态单一复位点（换场/start/stop 共用）
+    this.#resetMatch();
   }
 }
