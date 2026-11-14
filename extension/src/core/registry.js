@@ -436,9 +436,11 @@ function moduleCfg(f, cfg) {
 }
 
 /**
- * 按当前配置驱动一个功能的运行时。
- *   internal：有 apply 回调的（netLog / eventLog）调之驱动对应 core 模块；无 apply 的（自动重连）由 session hook 直读 configs.reconnect。
- *   其余功能：把 {enabled, ...toModuleCfg(秒→毫秒)} 推给 reactor.setConfig，由门控决定起停。
+ * 按当前配置驱动一个功能的运行时（唯一 dispatch 路径：启动/降级补载/面板热更都经它，不再各自分叉）。
+ *   internal：有 apply 回调的（keepAlive/netLog/eventLog/netRecord/logRecord）调之驱动对应 core 模块；
+ *   无 apply 的（自动重连）内联 no-op，由 session hook 直读 configs.reconnect。
+ *   其余功能：无条件把 {enabled, ...toModuleCfg(秒→毫秒)} 推给 reactor.setConfig，由门控决定起停
+ *   （enabled:false 也推——面板关开关靠它 pause；启动期“只推启用”的策略在 startFeatures 过滤）。
  * @param {object} f descriptor
  */
 export function applyFeature(f) {
@@ -451,7 +453,7 @@ export function applyFeature(f) {
 }
 
 /**
- * 场景就绪后：装网络/事件底座，再按配置启动各功能
+ * 场景就绪后：装网络/事件底座，再按配置启动各功能（dispatch 统一走 applyFeature）
  */
 export function startFeatures() {
   const net = netApi;
@@ -459,11 +461,10 @@ export function startFeatures() {
   const event = eventApi;
   if (event && event.install) event.install();
   for (const f of features()) {
-    // internal 有 apply 的执行一次以恢复持久化态（如网络/事件日志开关），须在两个底座 install 之后；
-    // 其余功能仅在启用时推配置起停。
-    if (f.internal) {
-      if (f.apply) applyFeature(f);
-    } else if (configs[f.id].enabled) applyFeature(f);
+    // 启动策略：reactor 功能仅启用时推配置（未启用的保持 reactor 默认停摆，不空推）；
+    // internal 一律交 applyFeature（有 apply 的恢复持久化态，须在两个底座 install 之后；无 apply 的内联 no-op）。
+    if (!f.internal && !configs[f.id].enabled) continue;
+    applyFeature(f);
   }
 }
 
@@ -477,15 +478,8 @@ export function startFeatures() {
 async function reloadForPlayer(reason) {
   log.info('%s, reloading configs for uid', reason);
   await loadAllConfigs(); // 存储层已按 UID 设前缀
-  for (const f of features()) {
-    if (f.internal) {
-      if (f.apply) applyFeature(f);
-    } else
-      reactor.setConfig(
-        f.id,
-        Object.assign({ enabled: configs[f.id].enabled }, moduleCfg(f, configs[f.id])),
-      );
-  }
+  // 全量重推（含未启用的，以纠偏先跑时偏错的启用态）：与面板热更同走 applyFeature 单一路径。
+  for (const f of features()) applyFeature(f);
   // configs 已刷新为新 UID 的值后再通知 UI 重同步控件（否则 UI 在 loadAllConfigs 完成前抢跑会读到旧值）。
   bus.emit(EVT.PLAYER_CONFIGS_RELOADED, { uid: playerGetUid() });
   bus.emit(EVT.UI_REFRESH);

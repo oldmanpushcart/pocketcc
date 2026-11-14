@@ -12,7 +12,7 @@
 - **配置读盘合并**：`loadAllConfigs()` 逐功能读盘、按默认值合并、执行版本迁移，填充 `configs[id]`（identity 稳定，session hook/面板实时读它）。
 - **配置版本化（本轮新增）**：`version` 落盘写 `_v`；`saved._v < version` 且有 `migrate` 钩子时逐版迁移；`strictConfig` 读盘剔除未声明的历史残留键。
 - **落盘视图**：`persistable(f,c)` 决定写什么——detail-hidden 功能只存开关态，其余全量存并补写 `_v`。
-- **启动编排**：`startFeatures()` 对所有功能 `reactor.setConfig` 推配置点火。
+- **启动编排**：`startFeatures()` 装底座后遍历 `applyFeature` 点火（只推启用）；`applyFeature` 是唯一 dispatch 路径（启动/降级补载/面板热更都经它：internal 走 apply 回调，其余推 `reactor.setConfig`）。
 
 **不管什么**（铁律）：
 
@@ -30,7 +30,7 @@
 ## 3. API 契约
 
 ```js
-import { configs, loadAllConfigs, saveFeature, saveGroup, startFeatures, features, findFeature } from '../../core/registry.js';
+import { configs, loadAllConfigs, saveFeature, saveGroup, startFeatures, applyFeature, features, findFeature } from '../../core/registry.js';
 
 features();                 // reactor.list() + INTERNAL_FEATURES + GROUPS 的合集
 findFeature(id);            // 按 id 查 descriptor
@@ -38,7 +38,8 @@ configs;                    // id -> 合并后运行时配置对象（identity �
 await loadAllConfigs({preLogin});  // 读盘→合并→版本迁移，填充 configs；UID 未设走降级默认
 saveFeature(f);             // 落盘单功能（经 persistable 视图，非 hidden 补写 _v）
 saveGroup(id);              // 落盘菜单组闸门配置
-startFeatures();            // 全量 reactor.setConfig 点火（net.install/event.install 之后）
+startFeatures();            // 底座 install 后遍历 applyFeature 点火（reactor 只推启用；internal 走 apply 回调）
+applyFeature(f);            // 唯一 dispatch：internal 走 apply 回调，其余无条件推 reactor.setConfig（enabled:false 也推，面板关开关靠它 pause）
 await migrateLegacyKeys(uid); // 首个 UID 时旧无前缀全局键一次性迁入命名空间
 ```
 
@@ -62,7 +63,8 @@ loadAllConfigs()
              strictConfig ? (defaults 键 + known 键覆盖，剔除未知) : (assign(defaults,saved); delete _v)
              version && savedV<version && migrate ? c = migrate(c, savedV)  ← try/catch，失败仅 warn
   → backfillIntents()（旧存档补 intentEnabled=!!enabled）→ loadedDegraded=false
-startFeatures() → 逐功能 reactor.setConfig（internal 走 apply 回调）
+startFeatures() → 底座 install → 遍历 applyFeature（reactor 只推启用；internal 走 apply 回调）
+reloadForPlayer() → loadAllConfigs → 遍历 applyFeature 全量重推（含未启用，纠偏先跑时偏错的启用态）
 ```
 
 **降级**：读盘单键 `storage.get` 抛错回落 `saved=null`（用默认）；`migrate` 抛错被 try/catch 兜住、保留合并结果并 `log.warn`，绝不因单功能迁移失败中断整体加载。
@@ -81,5 +83,7 @@ startFeatures() → 逐功能 reactor.setConfig（internal 走 apply 回调）
 - 日志：REGISTRY tag；降级读默认走 info（登录页）/warn（游戏内等不到），migrate 失败 warn。
 
 ## 8. 变更记录
+
+- **2026-11-14（P4 dispatch 收一份，架构审查候选 3）**：三份 internal-vs-reactor 分叉（applyFeature / startFeatures / reloadForPlayer 内联复制 setConfig）收进 `applyFeature` 单一路径——start/reload 只遍历调用，internal 是 descriptor 的一种（有 apply 调之、无 apply 内联 no-op）而非各调用方的分叉条件。保留两处语义差异：启动只推启用（策略过滤上移 startFeatures）、补载全量重推含未启用以纠偏。零行为变化；编排契约单测 tests/core/registry.test.js（5 例：启动顺序与策略/热更单 feat/internal apply/降级补载纠偏/toModuleCfg 缺声明降级，假 storage bridge 驱动读盘）。
 
 - **2026-10-31（架构审视轮）**：新增配置字段演化契约 `version/migrate/strictConfig` + `knownConfigKeys` 辅助；`loadAllConfigs` 非 hidden 分支改为版本感知读盘（`_v` 落后触发 migrate、strictConfig 剔除残留键），`persistable` 落盘补写 `_v`。采用保守策略：三字段均缺省不改变既有 39 feat 行为，pruning 显式 opt-in。头部注释补契约说明。

@@ -9,7 +9,7 @@
 **管什么**：
 
 - **生命周期三段**：`install`（只做一次的挂钩，可重复挂载）→ `configure`（每次推配置）→ `run`（只挂触发器）。`pause` 不卸载，统一摘除 `ctx.on.*` 登记的触发器、abort `ctx.signal` 并清掉托管定时器，在飞流程靠 `ctx.alive()` 自行退出，并给 per-feat `pause(ctx)` 钩子一次自我收尾的机会。
-- **注入 `ctx` 这一唯一外部接触面**：`ctx.net/ctx.chat`（ESM 导入，见 §3）、`ctx.game/ctx.bus`、`ctx.alive()`、`ctx.signal` 与托管定时器 `ctx.setTimeout/setInterval/clearTimeout/clearInterval`、`ctx.on.push/resp/req/chat/event`（退订自动登记，pause 统一摘除）。
+- **注入 `ctx` 这一唯一外部接触面**（`core/feat-ctx.js` `createCtx(entry, deps)` 工厂装配，deps 全注入）：`ctx.net/ctx.chat`（ESM 底座，见 §3）、`ctx.alive()`、`ctx.signal` 与托管定时器 `ctx.setTimeout/setInterval/clearTimeout/clearInterval`、`ctx.on.push/resp/req/chat/event`（退订自动登记，pause 统一摘除）。游戏符号不在 ctx 上：feat 经 ESM 直取 `core/game.js`（窄化纪律，见 §2）。
 - **门控重算**：`mode.change` / `world.change` 任一翻转 → `recomputeAll()`；`registerGate` 后立即全量重算。
 
 **不管什么**（铁律）：
@@ -25,6 +25,7 @@
 - **`ctx.on.*` 集中托管退订**：feat 不必自己记 `off`，pause 时 `entry.triggers.forEach(unsub)` 一把摘干净——从根上消灭「订阅泄漏」。`req` 订阅特殊：必须经 `net.onReq`（按需拉起发送 hook），直接 `bus.on('net.req.…')` 会订到永不派发的空事件。
 - **取消语义（signal + 托管定时器）**：每次 activate 新建 `AbortController`，pause 主动 abort 并按 kind 清掉全部托管定时器，再摘触发器、最后跑 per-feat pause 钩子。`sleep(ms, ctx.signal)` abort 时**早 resolve 不 reject**——在飞流程保持「await 回来判 alive()」习语，零新增 catch 路径。已 abort 的 controller 保留到下次 activate 整体替换（在飞流程仍可读 `signal.aborted`）；signal 每次 run 内现读，不跨 pause 缓存。托管是 opt-in 而非强制：cycle/drain/createWaker 薄契约不动（已有 alive 闸门自然停摆），引擎/裸定时器仍归 feat 自收。
 - **懒取 → ESM 直取（本轮改造）**：早先 `ctx.net/event` 通过 `window.pocketcc.*` 懒取以规避安装时序，代价是变成 dependency-cruiser 看不见的「影子依赖」。现已改为 `import { netApi/eventApi/chatApi }`，装配期即就绪，`window.pocketcc` 降为纯调试面。
+- **ctx 工厂 + 窄化（P4）**：`makeCtx` 下沉 `core/feat-ctx.js` 的 `createCtx(entry, deps)`——log/bus/net()/chat()/event() 全注入（三个底座是 export let 活绑定，getter 读时现取保持懒取语义），工厂零 import，单测用假 deps 直驱装配契约（`tests/core/feat-ctx.test.js`）。同时按盘点窄化接触面：`ctx.bus` 零消费者删；`ctx.game` 唯一消费者 global-map 改 ESM 直取后删——ctx 收敛为「生命周期 + 订阅 + 底座」三件套，游戏符号访问一律走 ESM import（与上条影子依赖收口同方向）。薄契约闸门 `schedule-primitives-thin` 扩名 feat-ctx。
 
 ## 3. API 契约
 
@@ -46,7 +47,7 @@ reactor.isRunning(id);                  // 调试：某功能是否激活
 reactor.list();                         // 已注册 spec 数组（registry/面板据此渲染、收集存储与默认值）
 ```
 
-**`ctx` 成员**：`net / chat`（ESM 底座，`null` 表示尚未就绪）、`game / bus`、`alive()`、`signal`（本次激活的 AbortSignal，首次激活前 null；pause 后 aborted，resume 全新）、`setTimeout(fn,ms) / setInterval(fn,ms)`（托管：pause 自动清、timeout fire 自移除、非激活态 no-op 返 -1）、`clearTimeout(id) / clearInterval(id)`（未知 id 静默 no-op，feat 的 stop 函数无需关心框架是否已代清）、`on.push(cmd,h) / on.resp(cmd,h) / on.req(cmd,h) / on.chat(type,h) / on.event(name,h)`（均返回退订函数并自动登记）。`on.chat` 的 `type` 为 `push|pm|update|del|reconnect`，由 chat 底座直连聊天 socket 并对 socket 实例更替自愈重挂（见 core/chat.js `SOCKET_MAP`）。配套：`util.sleep(ms, signal?)` 传 `ctx.signal` 可被 pause 早醒（早 resolve 不 reject）。
+**`ctx` 成员**：`net / chat`（ESM 底座，`null` 表示尚未就绪）、`alive()`、`signal`（本次激活的 AbortSignal，首次激活前 null；pause 后 aborted，resume 全新）、`setTimeout(fn,ms) / setInterval(fn,ms)`（托管：pause 自动清、timeout fire 自移除、非激活态 no-op 返 -1）、`clearTimeout(id) / clearInterval(id)`（未知 id 静默 no-op，feat 的 stop 函数无需关心框架是否已代清）、`on.push(cmd,h) / on.resp(cmd,h) / on.req(cmd,h) / on.chat(type,h) / on.event(name,h)`（均返回退订函数并自动登记）。`on.chat` 的 `type` 为 `push|pm|update|del|reconnect`，由 chat 底座直连聊天 socket 并对 socket 实例更替自愈重挂（见 core/chat.js `SOCKET_MAP`）。配套：`util.sleep(ms, signal?)` 传 `ctx.signal` 可被 pause 早醒（早 resolve 不 reject）。
 
 ## 4. 场景用法
 
@@ -85,6 +86,8 @@ mode.change / world.change / registerGate ──▶ recomputeAll()
 - 日志：`activate/pause` 走 info，`install failed/run threw` 走 warn。
 
 ## 8. 变更记录
+
+- **2026-11-14（P4 ctx 工厂 + registry dispatch 收一份，架构审查候选 3/4 同刀）**：`makeCtx` 下沉 `core/feat-ctx.js` `createCtx(entry, deps)` 工厂（deps 全注入、零 import、单测可直驱）；接触面按盘点窄化——`ctx.bus` 零消费者删、`ctx.game` 唯一消费者 global-map 改 ESM 直取 `core/game.js` 后删。registry 三份 internal-vs-reactor dispatch 分叉（applyFeature/startFeatures/reloadForPlayer 内联复制）收进 applyFeature 单一路径：start 保留「只推启用」启动策略过滤、reload 保留全量重推纠偏，零行为变化。新增契约：tests/core/feat-ctx.test.js（8 例：窄化面/五口订阅登记与降级/底座懒取/alive-signal 现读/托管定时器形状）+ tests/core/registry.test.js（5 例：启动顺序与策略/热更单 feat/internal apply/降级补载纠偏/toModuleCfg 缺声明降级，假 storage bridge 驱动读盘）。`schedule-primitives-thin` 闸门扩名 feat-ctx。
 
 - **2026-11-14（取消语义收尾刀，①遗留项闭环）**：推广刀四类边界逐点处置。① 注入式子模块接 signal：宿主 auto-farm 的 install 注入面增 `signal` 取值器（闭包读 ctxRef.signal，每次 activate 现取新信号），lvl6-scanner（窗间/探针 2 处）与 mech-build（取消间隔 2 处）sleep 接线；cq26 shop 本就收 ctx，持 ctxRef 后抢购间隔 sleep 接线。quick-jump 判定不接：用户触发的批量分享自带 shareAbort，非 feat 生命周期。② secret-realm 发包守卫 abort 收口：api.js sendSecret/sendSecretJson 增可选 signal 参（abort 即回哨兵/null，与超时同口径，收口后移除监听）；index.js buildEnv 的 env.secret 薄包装自动注入当前信号，引擎侧 18 处调用点零改动。③ 引擎类定时器维持自持纪律（stop/clear 已齐），仅补 shop 引擎首扫延迟的句柄缺口（#firstKickTimer，stop 自收）。④ UI 局部定时器核查：jump/map 两步确认 disarm、chat 冷却/toast、channels 队列泵均已有收口；唯一真缺口 chat-overlay resize 监听不摘（mount/unmount 循环累积 + 闭包钉旧实例）已修：存 #onResize/#clearResizeTimer 句柄，unmount 摘监听清防抖。另：过时 window.pocketcc 注释清理 11 处（api.js/heal.js 的 ACL 懒取描述与 render.js 调试面描述属实保留）；chat 未读角标 #e0463b→#d63c33（白字对比度 4.11→4.61:1，OKLCH 降明度保色相）。
 

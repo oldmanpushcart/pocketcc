@@ -4,11 +4,11 @@
 //   统一摘除 ctx.on.* 登记的触发器、abort ctx.signal 并清掉托管定时器，在飞流程靠 ctx.alive() 自行退出。
 import { createLog } from './log.js';
 import { bus, EVT } from './bus.js';
-import { game } from './game.js';
 import { checkCap } from './game-api.js';
 import { netApi } from './net.js';
 import { eventApi } from './event.js';
 import { chatApi } from './chat.js';
+import { createCtx } from './feat-ctx.js';
 
 /** @type {ReturnType<createLog>} 模块日志器（tag=REACTOR） */
 const log = createLog('REACTOR');
@@ -24,7 +24,7 @@ const log = createLog('REACTOR');
  * @property {AbortController|null} controller 本次激活的取消源：每次 activate 新建，pause 主动 abort；
  *   已 abort 的实例保留到下次 activate 整体替换，供在飞流程读 signal.aborted
  * @property {Map<number,{kind:string, handle:number}>} timers 托管定时器（ctx.setTimeout/setInterval 登记），pause 统一清
- * @property {object} ctx 注入给 spec 的唯一外部接触面（makeCtx 产出）
+ * @property {object} ctx 注入给 spec 的唯一外部接触面（core/feat-ctx.js createCtx 产出）
  */
 
 /** @type {Map<string,Entry>} 功能条目：id -> entry */
@@ -45,172 +45,8 @@ function shouldRun(entry) {
   return true;
 }
 
-/**
- * 功能上下文：注入给 spec.install/run 的唯一外部接触面。
- * net/event/chat 懒取（install 时机可能早于底座安装）；alive 反映 entry.running，
- * on.push/on.chat/on.event 订阅自动登记到 entry.triggers，pause 时统一摘除（feat 卸载不靠自己记 off）。
- * signal/托管定时器是取消语义面：pause 主动 abort + 清托管定时器（详见各成员 JSDoc）。
- * @param {Entry} entry 功能条目
- * @returns {object} 上下文对象
- */
-function makeCtx(entry) {
-  return {
-    id: entry.spec.id,
-    /** @returns {object|null} pocketcc.net 底座（ESM 导入，无 window 依赖） */
-    get net() {
-      return netApi;
-    },
-    /** @returns {object|null} pocketcc.chat 底座（ESM 导入，无 window 依赖） */
-    get chat() {
-      return chatApi;
-    },
-    game: game,
-    bus: bus,
-    /**
-     * 功能当前是否激活，在飞流程的 await 回来之后用它判是否继续
-     * @returns {boolean}
-     */
-    alive: function () {
-      return entry.running;
-    },
-    /**
-     * 本次激活的取消信号：每次 activate 新建，pause 时 abort（在飞流程可读 aborted 提前退出，
-     * 典型用法 sleep(ms, ctx.signal) 早醒）。每次 run/await 回来现读，不跨 pause 缓存——resume 后是全新信号。
-     * 首次激活前为 null。
-     * @returns {AbortSignal|null}
-     */
-    get signal() {
-      return entry.controller ? entry.controller.signal : null;
-    },
-    /**
-     * 托管一次性定时器：pause 自动清（暂停后不会再 fire），到点 fire 时自移除托管登记。
-     * 非激活态 no-op 返 -1。生命周期类延迟（唤醒去抖/错峰加入等）优先用它，替代裸 setTimeout。
-     * @param {function():void} fn 回调
-     * @param {number} ms 延迟毫秒
-     * @returns {number} 托管句柄 id（配 ctx.clearTimeout）；非激活态 -1
-     */
-    setTimeout: function (fn, ms) {
-      if (!entry.running) return -1;
-      var id = setTimeout(function () {
-        entry.timers.delete(id);
-        fn();
-      }, ms);
-      entry.timers.set(id, { kind: 'timeout', handle: id });
-      return id;
-    },
-    /**
-     * 托管周期定时器：pause 自动清；常驻直到 ctx.clearInterval 或 pause。
-     * 非激活态 no-op 返 -1。可见性/门控驱动的轮询用它托管兜底，start/stop 语义仍归 feat。
-     * @param {function():void} fn 回调
-     * @param {number} ms 周期毫秒
-     * @returns {number} 托管句柄 id（配 ctx.clearInterval）；非激活态 -1
-     */
-    setInterval: function (fn, ms) {
-      if (!entry.running) return -1;
-      var id = setInterval(fn, ms);
-      entry.timers.set(id, { kind: 'interval', handle: id });
-      return id;
-    },
-    /**
-     * 清托管一次性定时器。未知 id（已 fire 自移除/pause 已清/重复 clear）静默 no-op，
-     * feat 的 stop 函数无需关心框架是否已代清。
-     * @param {number} id ctx.setTimeout 返回的句柄
-     */
-    clearTimeout: function (id) {
-      var t = entry.timers.get(id);
-      if (!t) return;
-      clearTimeout(t.handle);
-      entry.timers.delete(id);
-    },
-    /**
-     * 清托管周期定时器。未知 id 静默 no-op（口径同 ctx.clearTimeout）。
-     * @param {number} id ctx.setInterval 返回的句柄
-     */
-    clearInterval: function (id) {
-      var t = entry.timers.get(id);
-      if (!t) return;
-      clearInterval(t.handle);
-      entry.timers.delete(id);
-    },
-    on: {
-      /**
-       * 订阅一条服务端推送（net.<cmd>），退订自动登记
-       * @param {number} cmd 命令号
-       * @param {function(object):void} handler 处理器
-       * @returns {function():void} 退订函数
-       */
-      push: function (cmd, handler) {
-        const unsub = bus.on('net.' + cmd, handler);
-        entry.triggers.add(unsub);
-        return unsub;
-      },
-      /**
-       * 订阅一条服务端**应答**（net.resp.<cmd>），退订自动登记
-       * 用于消费“本端（含游戏 UI 自己）刚发出去请求的回复”——这类应答不 emit 游戏全局事件。
-       * raw 池化复用，Event 只包引用：要跨拍持有需自行快照字段。
-       * @param {number} cmd 命令号
-       * @param {function(object):void} handler 处理器
-       * @returns {function():void} 退订函数
-       */
-      resp: function (cmd, handler) {
-        const unsub = bus.on('net.resp.' + cmd, handler);
-        entry.triggers.add(unsub);
-        return unsub;
-      },
-      /**
-       * 订阅一条**本端发包**（net.req.<cmd>，载荷 {cmd,key,data,ts}），退订自动登记。
-       * 用途：「请求带而应答不带」的字段只能从发包侧拿（实证：秘境 8532 DROP_INFO 请求带 {x,y}，应答不带）。
-       * 必须经 pocketcc.net.onReq 走——它会按需拉起发送 hook；直接 bus.on 会订到一条永不派发的空事件。
-       * @param {number} cmd 命令号
-       * @param {function(object):void} handler 处理器
-       * @returns {function():void} 退订函数
-       */
-      req: function (cmd, handler) {
-        const api = netApi;
-        if (!api || !api.onReq) {
-          log.warn('net base unavailable, req subscribe for cmd %s is a no-op', cmd);
-          return function () {};
-        }
-        const unsub = api.onReq(cmd, handler);
-        entry.triggers.add(unsub);
-        return unsub;
-      },
-      /**
-       * 订阅一个游戏事件（EventCenter），底座不可用时空订阅并告警
-       * @param {string} name 事件名
-       * @param {function(...*):void} handler 处理器
-       * @returns {function():void} 退订函数
-       */
-      event: function (name, handler) {
-        const event = eventApi;
-        if (!event || !event.install()) {
-          log.warn('event base unavailable, skip subscribe %s', name);
-          return function () {};
-        }
-        const unsub = event.on(name, handler);
-        entry.triggers.add(unsub);
-        return unsub;
-      },
-      /**
-       * 订阅一条聊天推送（chat 底座直连聊天 socket，自带实例更替重挂），退订自动登记。
-       * 语义 type 与 socket 事件的映射见 core/chat.js SOCKET_MAP；载荷即 socket 实参（非池化，跨拍需自行快照）。
-       * @param {string} type 语义类型：push 频道消息 | pm 私聊 | update 消息更新 | del 消息删除 | reconnect 重连成功
-       * @param {function(object):void} handler 处理器（reconnect 无载荷）
-       * @returns {function():void} 退订函数
-       */
-      chat: function (type, handler) {
-        const api = chatApi;
-        if (!api || !api.on) {
-          log.warn('chat base unavailable, skip subscribe %s', type);
-          return function () {};
-        }
-        const unsub = api.on(type, handler);
-        entry.triggers.add(unsub);
-        return unsub;
-      },
-    },
-  };
-}
+// 功能上下文装配已下沉 core/feat-ctx.js（createCtx 工厂，deps 注入可直驱单测）；
+// ctx 窄化后不再暴露 game/bus（盘点结论：bus 零消费、game 唯一消费者 global-map 改 ESM 直取）。
 
 /**
  * 安装前依赖自检：逐项校验 spec.symbols 声明的游戏符号（能力语义名，解析表见 core/game-api.js CAPS）。
@@ -346,7 +182,20 @@ function register(spec) {
     timers: new Map(),
     ctx: null,
   };
-  entry.ctx = makeCtx(entry);
+  // deps 注入：底座是 export let 活绑定（install 时才赋值），getter 读时现取保持懒取语义
+  entry.ctx = createCtx(entry, {
+    log: log,
+    bus: bus,
+    net: function () {
+      return netApi;
+    },
+    chat: function () {
+      return chatApi;
+    },
+    event: function () {
+      return eventApi;
+    },
+  });
   entries.set(spec.id, entry);
 }
 

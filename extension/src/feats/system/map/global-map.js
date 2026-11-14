@@ -17,6 +17,7 @@
 import { createLog } from '../../../core/log.js';
 import { reactor } from '../../../core/reactor.js';
 import { storage } from '../../../core/storage.js';
+import { game } from '../../../core/game.js';
 import { worldMap, gameData } from '../../../core/game-api.js';
 import { SERVER, cellToGame } from '../../../core/map.js';
 import { MapOverlay } from './map-overlay.js';
@@ -515,7 +516,7 @@ function install(ctx) {
   window.addEventListener('keydown', onKeydown, true);
   // 视角切区事件（游戏发 (k, subMap)）；常量取不到时仅靠可见期轮询兜底
   try {
-    const E = ctx.game.get('EventId');
+    const E = game.get('EventId');
     const evName = E && E.EventId && E.EventId.SERVER_VIEW_CHANGE;
     if (evName) ctx.on.event(evName, (k) => onViewChange(k));
     else log.warn('EventId.SERVER_VIEW_CHANGE missing, rely on visible-time poll.');
