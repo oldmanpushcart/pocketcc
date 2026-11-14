@@ -35,11 +35,18 @@
  * 类型级当日熔断：某类花车的 902 回 `mysterioustriangle_10`（今日剩余次数不足）即记该类"今日已满"，
  *   当场收掉同类型全部流程 + 滤掉同类型待派项，后续该类型的发车卡不再建流程（跨类型互不影响，跨日自动失效）。
  * 被拒退避："目标被占/限流"类拒绝按指数退避再试（队满与上限各有专路、不走这里），否则会被拒的坐标每秒重派一遍。
+ *
+ * 当日次数口径（定稿）：到账计 21653 FLOAT_PARADE_REWARD_LUCKY_BAG（花车奖励不走 3416 邮件，报文实证），
+ *   只认 synType=2 增量（synType=1 登录全量同步避开），按 marchId 去重（key 与 8852 marchIdStr 同源，实证 100% 对应）；
+ *   派遣计 902 受理分类型；加速消耗计 920 受理（code=0 即扣道具，resp 空 {}）逐道具分计 520001/520002；
+ *   core/daily-stats 日账跨页持久；面板只读行「到账 N · 派遣 芯片x/弹珠y · 加速 普a/高b」，未读回前显示 '—'。
+ *   实证来源：dashcam store 全量扫描（.reviewtmp/daily-mail-probe.mjs / daily-float-probe.mjs）。
  */
 import {
   CODE_NOT_SENT,
   sleep,
   todayStr,
+  parseData,
   serverTimeSec as utilServerTimeSec,
 } from '../../../core/util.js';
 import { createLog } from '../../../core/log.js';
@@ -49,8 +56,12 @@ import { l10n } from '../../../core/game-api.js';
 import { payloadOf } from '../../../core/net-payload.js';
 import { march } from '../../../core/march.js';
 import { item } from '../../../core/item.js';
+import { createDailyLedger } from '../../../core/daily-stats.js';
 
-import { CMD_FLOAT_PARADE_QUERY_CAN_REWARD_BAG } from './constants.js';
+import {
+  CMD_FLOAT_PARADE_QUERY_CAN_REWARD_BAG,
+  CMD_FLOAT_PARADE_REWARD_LUCKY_BAG,
+} from './constants.js';
 
 /** @type {ReturnType<createLog>} 模块日志器（tag=FLOAT_CAR） */
 const log = createLog('FLOAT_CAR');
@@ -93,8 +104,8 @@ const ERR_RATE_LIMIT = 'march_time_control_info001';
  * @type {object[]}
  */
 const FLOATS = [
-  { id: 'CHIP_BLESSING', label: '芯片祝福', dropType: 256, getType: 257 },
-  { id: 'NEWYEAR2026_PINBALL', label: '2026新年弹珠', dropType: 287, getType: 288 },
+  { id: 'CHIP_BLESSING', label: '芯片祝福', short: '芯片', dropType: 256, getType: 257 },
+  { id: 'NEWYEAR2026_PINBALL', label: '2026新年弹珠', short: '弹珠', dropType: 287, getType: 288 },
 ];
 
 /** @type {Object<number,object>} dropType → 配置项；聊天卡 extra.marchType 与 8852 请求都只认 DROP 值，故以它建索引 */
@@ -104,6 +115,28 @@ for (var i = 0; i < FLOATS.length; i++) FLOAT_BY_DROP[FLOATS[i].dropType] = FLOA
 /** @type {Object<number,boolean>} getType 集合副本：MarchTools 符号缺失时的活动行军归属回退判据 */
 var GET_TYPE_FALLBACK = {};
 for (var g = 0; g < FLOATS.length; g++) GET_TYPE_FALLBACK[FLOATS[g].getType] = true;
+
+/** @type {import('../../../core/daily-stats.js').DailyLedger} 当日日账（arrive=21653 到账按 marchId 去重 / send_<floatId>=902 受理分类型 / accel520001、accel520002=920 受理逐道具） */
+const dailyLedger = createDailyLedger('pocketcc.daily.floatCar');
+
+/** @type {Map<string,string>} 到账归属表：聊天卡 marchIdStr → floatId（21653 rewardedLuckyBags 的 key 与 8852 marchIdStr 同源）；
+ *  跨 pause/resume 保留（到账可能晚于收摊），超容量 FIFO 淘汰 */
+var marchFloat = new Map();
+
+/** @type {number} 归属表容量上限（聊天卡量级有限，防无界增长） */
+const MARCH_FLOAT_CAP = 1024;
+
+/**
+ * 记一条 marchId → 花车类型归属（建流程前就记：熔断/陈旧跳过建流程的车，手动拾取的到账也能归型）
+ * @param {string} marchId 花车行军 id（string 防 Int64）
+ * @param {string} floatId 花车类型 id
+ */
+function rememberMarchFloat(marchId, floatId) {
+  if (!marchFloat.has(marchId) && marchFloat.size >= MARCH_FLOAT_CAP) {
+    marchFloat.delete(marchFloat.keys().next().value);
+  }
+  marchFloat.set(marchId, floatId);
+}
 
 /**
  * 内置调优常量（面板只出启用开关，不暴露这些）
@@ -812,6 +845,9 @@ function onChatPush(msg) {
   var seed = parseParadeShare(msg);
   if (!seed) return;
 
+  // 到账归属先记（21653 的 key 与聊天卡 marchId 同源）：即便下方熔断/陈旧闸不建流程，手动拾取的到账也能归型
+  rememberMarchFloat(seed.marchId, seed.floatId);
+
   // 类型级当日已满：这台车的每次探测都会撞到同一个拒绝，直接不建流程（其他类型照常）
   if (isCapReached(seed.floatId)) {
     log.debug(
@@ -858,6 +894,30 @@ function onChatPush(msg) {
     flows.size,
   );
   startDriver();
+}
+
+/**
+ * 21653 花车拾取奖励到账推送：只认 synType=2 增量（synType=1 是登录全量同步，非当日新增，避开）。
+ * rewardedLuckyBags 的 key 与 8852 marchIdStr 同源（报文实证 100% 对应），按 marchId 去重计到账；
+ * 归属表反查花车类型仅供日志对账（派遣/加速另有各自计数键）。listener 本身永不 throw，不驱动时间轮。
+ * @param {object} ev net.on 事件 {cmd, data}
+ */
+function onLuckyBagPush(ev) {
+  if (!aliveFn()) return;
+  var d = parseData(ev && ev.data);
+  if (!d || typeof d !== 'object' || Number(d.synType) !== 2) return;
+  var bags = d.rewardedLuckyBags;
+  if (!bags || typeof bags !== 'object') return;
+  var ids = Object.keys(bags);
+  for (var i = 0; i < ids.length; i++) {
+    var marchId = ids[i];
+    if (!dailyLedger.countOnce(marchId, 'arrive')) continue;
+    log.info(
+      'cmd 21653 lucky bag arrived. marchId=%s;float=%s',
+      marchId,
+      marchFloat.get(marchId) || 'unknown',
+    );
+  }
 }
 
 /**
@@ -1177,6 +1237,8 @@ async function onPickup(item) {
   if (!aliveFn() || flows.get(item.marchId) !== flow) return;
 
   if (ret.ok) {
+    // 902 受理即计一次派遣（分类型；当日次数口径：派遣计受理，到账另由 21653 计）
+    dailyLedger.bump('send_' + flow.floatId);
     // 902 走旧 JSON 链路（net.send），受理时应答是整包 JSON 文本、被拒才是 "语言键,参数" 裸串；
     // payloadOf 归一化后再取 marchInfo，否则字符串取属性恒 undefined，会误报 shape unexpected 且埋点①拿不到时刻
     var raw = payloadOf(ret);
@@ -1539,6 +1601,8 @@ async function maybeAccelerate(marchIdStr, arriveSec, getType) {
       break;
     }
     applied++;
+    // 920 受理即扣道具（resp 空 {}，code=0）：逐道具计当日加速消耗
+    dailyLedger.bump('accel' + itemId);
     log.info(
       'speed up pickup march. marchId=%s;itemId=%d;remain=%ds;after~=%ds;target=%ds;shot=%d',
       marchIdStr,
@@ -1637,9 +1701,16 @@ function install(ctx) {
  */
 function run(ctx) {
   ctxRef = ctx;
+  dailyLedger.ensureLoaded();
   ctx.on.chat('push', onChatPush);
+  ctx.on.push(CMD_FLOAT_PARADE_REWARD_LUCKY_BAG, onLuckyBagPush);
   startDriver();
-  log.info('started, listening chat=push;flows=%d;pending=%d.', flows.size, pendingPickups.length);
+  log.info(
+    'started, listening chat=push;reward=%d;flows=%d;pending=%d.',
+    CMD_FLOAT_PARADE_REWARD_LUCKY_BAG,
+    flows.size,
+    pendingPickups.length,
+  );
 }
 
 /**
@@ -1665,6 +1736,27 @@ reactor.register({
   offInCombat: true,
   defaults: { enabled: false, accelEnabled: false, accelTargetSec: 0 },
   fields: [
+    {
+      key: '_dailyInfo',
+      type: 'text',
+      label: '今日',
+      get: function () {
+        if (!dailyLedger.loaded()) return '—';
+        var sends = FLOATS.map(function (f) {
+          return f.short + dailyLedger.get('send_' + f.id);
+        }).join('/');
+        return (
+          '到账 ' +
+          dailyLedger.get('arrive') +
+          ' · 派遣 ' +
+          sends +
+          ' · 加速 普' +
+          dailyLedger.get('accel' + march.ITEM_SPEED_UP_NORMAL) +
+          '/高' +
+          dailyLedger.get('accel' + march.ITEM_SPEED_UP_ADVANCED)
+        );
+      },
+    },
     {
       // 花车空投已抽为独立 feature 卡片：卡片主体默认收起（点标题行展开），故「行军加速」段不再自带折叠，避免双层折叠
       key: 'accelEnabled',

@@ -12,3 +12,5 @@ export const CMD_MONSTER_LIST = 8802;
 export const CMD_MARCH_WORLD_POINT = 902;
 /** @type {number} ResponseId.USER_MARCH_INFO，本人行军状态推送；到家（state=4）即补扫一轮 */
 export const CMD_USER_MARCH_INFO = 10019;
+/** @type {number} push PUSH_SINGLE_MAIL：单封邮件推送；使徒奖励邮件（mail_title_3289）经它实时下发，当日到账计数订阅用 */
+export const PUSH_SINGLE_MAIL = 10264;

@@ -10,3 +10,5 @@ export const CMD_PUSH_ONE_ACTIVITY_EXTRA = 10912;
 export const CMD_QUERY_WORLD_BOSS = 3756;
 /** @type {number} RequestId.MARCH_WORLD_POINT，世界地图行军；攻打 boss 用 marchType=178 */
 export const CMD_MARCH_WORLD_POINT = 902;
+/** @type {number} push PUSH_SINGLE_MAIL：单封邮件推送；攻打奖励邮件（mail_title_3243）经它实时下发，当日到账计数订阅用 */
+export const PUSH_SINGLE_MAIL = 10264;

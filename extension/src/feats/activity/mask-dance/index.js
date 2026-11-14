@@ -59,6 +59,7 @@ import { reactor } from '../../../core/reactor.js';
 import { createCycle } from '../../../core/cycle.js';
 import { map } from '../../../core/map.js';
 import { storage } from '../../../core/storage.js';
+import { dailyText } from '../../../core/daily-stats.js';
 
 import { CMD_DANCE_GET_REWARD, PUSH_USER_DATA_COMMON, PUSH_TILEINFO } from './constants.js';
 
@@ -314,8 +315,8 @@ function claimedByItem(itemId) {
 }
 
 /**
- * 今日已领总次数（**只供日志/诊断**）：逐道具取较大者后求和。
- * 限额判定一律走 itemCapped——游戏闸门是逐道具口径，全局和不能当封顶判据。
+ * 今日已领总次数（供日志/诊断与面板展示）：逐道具取较大者后求和。
+ * 限额判定一律走 itemCapped——游戏闸门是逐道具口径，全局和不能当封顶判据，也不能当面板分母。
  * @returns {number}
  */
 function claimedCount() {
@@ -869,8 +870,10 @@ function pause() {
 /**
  * 向 reactor 注册本功能说明书：地图限定 base/world（901/2503 都在世界图语境）、
  * kinds 只放行本服（舞会是本联盟本服玩法）；不派兵但占网络，战斗模式让位。
- * 日常活动形态——面板只出启用开关（无字段无配置）：每日上限读配置表、宝箱道具 id 内置自学习、
- * 射程不本地拦（由服务器裁决 + 当日拉黑）。
+ * 日常活动形态——面板出启用开关 + 一行只读当日进度（inlineStatus）：
+ * 当日次数口径（定稿）：额度类读权威——分子=逐道具 max(danceRec 权威, 镜像) 求和（claimedCount，含手动）。
+ * 无分母：游戏限额是逐道具口径（daily_limit 逐条独立），全局求和会编造总上限（用户否决 80 口径），
+ * 故一律显示「今日 N 次」。
  */
 reactor.register({
   id: 'maskDance',
@@ -881,7 +884,19 @@ reactor.register({
   places: ['base', 'world'],
   offInCombat: true,
   defaults: { enabled: false },
-  fields: [],
+  fields: [
+    {
+      key: '_danceInfo',
+      type: 'text',
+      label: '今日',
+      get: function () {
+        // 权威与镜像都拿不到时不谎报 0（登录期是否全量下发未实证，见 maskDanceState 注释）
+        if (!mirrorLoaded && !gameData.maskDanceState()) return '—';
+        // 无分母：限额逐道具口径，daily_limit 全局求和是编造的总上限（见 register 注释）
+        return dailyText(claimedCount());
+      },
+    },
+  ],
   toModuleCfg: function () {
     return {};
   },

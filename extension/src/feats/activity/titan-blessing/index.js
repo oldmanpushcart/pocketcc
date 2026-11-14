@@ -35,6 +35,10 @@
  * 队列 + 消费间隔：902 过快会被服务器限流（code=3, data="march_time_control_info001"），逐条之间休眠规避。
  * 生命周期由 reactor 托管：install/configure/run 三个钩子，places 门控限定 base/world（Home/NWorldMap）。
  *   run 挂 10904/13226/13227/13228 监听；reactor pause 时摘监听、置 alive=false，队列保留，恢复后续跑。
+ *
+ * 当日次数口径（定稿）：到账计 13227 本人领取推送按 uuid 去重（行军类计奖励到账）；
+ *   加速消耗计 920 受理（code=0 即扣道具，报文实证 resp 空 {}）逐道具分计 520001/520002，
+ *   core/daily-stats 日账跨页持久；面板只读行「到账 N · 加速 普x/高y」，未读回前显示 '—'。
  */
 import { createLog } from '../../../core/log.js';
 import { sleep, serverTimeSec as utilServerTimeSec } from '../../../core/util.js';
@@ -45,6 +49,7 @@ import { game } from '../../../core/game.js';
 import { payloadOf } from '../../../core/net-payload.js';
 import { march } from '../../../core/march.js';
 import { item } from '../../../core/item.js';
+import { createDailyLedger } from '../../../core/daily-stats.js';
 
 import {
   CMD_PUSH_ONE_ACTIVITY,
@@ -134,6 +139,9 @@ var claimLimitReached = false;
 
 /** @type {boolean} install 幂等守卫 */
 var installed = false;
+
+/** @type {import('../../../core/daily-stats.js').DailyLedger} 当日日账（arrive=13227 到账按 uuid 去重 / accel520001、accel520002=920 受理逐道具） */
+const dailyLedger = createDailyLedger('pocketcc.daily.titanBlessing');
 
 /**
  * 功能是否仍在运行（在飞流程的 await 回来后的存活判定）
@@ -328,14 +336,17 @@ function onGiftPush(ev) {
 }
 
 /**
- * 13227 本人领取到账：仅作日志对账，不驱动流程（领取确认已由 13228 负责台账出队）。
+ * 13227 本人领取到账：日志对账 + 当日到账计数（按 uuid 去重，跨页重推不重计），不驱动流程
+ * （领取确认已由 13228 负责台账出队）。
  * @param {object} ev net 事件，ev.data={reward, uuid}
  */
 function onRewardPush(ev) {
   var d = ev && ev.data;
   if (!d || !d.uuid) return;
   var items = (d.reward && d.reward.items) || [];
-  log.info('reward received. uuid=%s;items=%d', d.uuid, items.length);
+  if (dailyLedger.countOnce(String(d.uuid), 'arrive')) {
+    log.info('reward received. uuid=%s;items=%d', d.uuid, items.length);
+  }
 }
 
 /**
@@ -620,6 +631,8 @@ async function maybeAccelerate(marchIdStr, arriveSec) {
       break;
     }
     applied++;
+    // 920 受理即扣道具（resp 空 {}，code=0）：逐道具计当日加速消耗
+    dailyLedger.bump('accel' + itemId);
     log.info(
       'speed up pickup march. marchId=%s;itemId=%d;remain=%ds;after~=%ds;target=%ds;shot=%d',
       marchIdStr,
@@ -680,6 +693,7 @@ function install(ctx) {
  */
 function run(ctx) {
   ctxRef = ctx;
+  dailyLedger.ensureLoaded();
   ctx.on.push(CMD_PUSH_GIFT, onGiftPush);
   ctx.on.push(CMD_PUSH_ONE_ACTIVITY, onActivityPush);
   ctx.on.push(CMD_PUSH_REWARD_GET, onRewardPush);
@@ -715,6 +729,22 @@ reactor.register({
   offInCombat: true,
   defaults: { enabled: false, accelEnabled: false, accelTargetSec: 0 },
   fields: [
+    {
+      key: '_dailyInfo',
+      type: 'text',
+      label: '今日',
+      get: function () {
+        if (!dailyLedger.loaded()) return '—';
+        return (
+          '到账 ' +
+          dailyLedger.get('arrive') +
+          ' · 加速 普' +
+          dailyLedger.get('accel' + march.ITEM_SPEED_UP_NORMAL) +
+          '/高' +
+          dailyLedger.get('accel' + march.ITEM_SPEED_UP_ADVANCED)
+        );
+      },
+    },
     {
       // 泰坦祝福已提为独立 feature 卡片：卡片主体默认收起（点标题行展开），“行军加速”段不再自带折叠，避免双层折叠
       key: 'accelEnabled',

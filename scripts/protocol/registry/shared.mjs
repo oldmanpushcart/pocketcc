@@ -319,4 +319,33 @@ export default [
       },
     ],
   },
+  {
+    cmd: 10264,
+    dir: 'S2C',
+    note: 'push 单封邮件（「遗迹区域刷新」开田信号，载荷是邮件本体）',
+    src: '',
+    fields: '',
+    usages: [
+      {
+        name: 'PUSH_SINGLE_MAIL',
+        feat: 'auto-farm',
+        file: 'feats/player/auto-farm/constants.js',
+      },
+      {
+        name: 'PUSH_SINGLE_MAIL',
+        feat: 'domain-treasure',
+        file: 'feats/activity/domain-treasure/constants.js',
+      },
+      {
+        name: 'PUSH_SINGLE_MAIL',
+        feat: 'mecha-treasure',
+        file: 'feats/activity/mecha-treasure/constants.js',
+      },
+      {
+        name: 'PUSH_SINGLE_MAIL',
+        feat: 'sea-treasure',
+        file: 'feats/activity/sea-treasure/constants.js',
+      },
+    ],
+  },
 ];

@@ -23,12 +23,16 @@
  *   镜像在场时以它为初值、其余一律用本 feat 收到的应答覆盖，跨周期持久，靠 createCycle 自愈纠偏。
  *
  * 生命周期由 reactor 托管：install/run 两钩子，places 限定 base/world（Home/NWorldMap），战斗模式暂停（offInCombat）。
+ *
+ * 当日次数口径（定稿）：动作类计脚本——1643 排产受理成功逐次 +1、1645 应答带 reward（真收割）逐次 +1，
+ *   纯权威读/探测（无 reward）不计；core/daily-stats 日账跨页持久，面板「排产 N · 收割 M」。
  */
 import { parseData, rejectText } from '../../../core/util.js';
 import { createLog } from '../../../core/log.js';
 import { game } from '../../../core/game.js';
 import { reactor } from '../../../core/reactor.js';
 import { createCycle } from '../../../core/cycle.js';
+import { createDailyLedger } from '../../../core/daily-stats.js';
 
 import { CMD_PRODUCE, CMD_PRODUCE_GET } from './constants.js';
 
@@ -87,6 +91,9 @@ var net = null;
 var ctxRef = null;
 /** @type {boolean} install 幂等守卫 */
 var installed = false;
+
+/** @type {import('../../../core/daily-stats.js').DailyLedger} 当日动作日账（produce=1643 排产 / harvest=1645 真收割） */
+const armoryLedger = createDailyLedger('pocketcc.daily.armoryMaterial');
 
 /** @type {object|null} TableManager.TABLE 单例（配置表读） */
 var tableMgr = null;
@@ -374,6 +381,8 @@ async function harvestDue() {
     if (ret && ret.ok && d && typeof d === 'object') {
       if (d.st != null) shadow.st = Number(d.st) || 0;
       if (Array.isArray(d.wait)) shadow.wait = d.wait.slice();
+      // 只有真收割（应答带 reward）计一次；点火权威读/探测无 reward 不计
+      if (d.reward) armoryLedger.bump('harvest');
       log.debug('harvest/sync. code=%d;waitRemain=%d', ret.code, shadow.wait.length);
       // 解除闸门：应答带回短于上限的 wait，或虽无 wait 但确有 reward（收割成功即腾槽），避免形态不符时永久锁死
       if (Array.isArray(d.wait) ? d.wait.length < MAX_QUEUE : !!d.reward) blocked = false;
@@ -428,6 +437,7 @@ async function fillQueue() {
       queue = d.wait.slice();
       shadow.wait = queue;
       if (d.st != null) shadow.st = Number(d.st) || 0;
+      armoryLedger.bump('produce');
       log.debug('produce queued. itemId=%d;queue=%d', base, queue.length);
     } else if (ret && !ret.ok) {
       // 服务器明确拒绝（满员 common_159995 / param error 等）：认定队列已满，置 blocked 停止后续补产，
@@ -535,13 +545,14 @@ function run(ctx) {
   ctxRef = ctx;
   seedShadow();
   synced = false; // 每次点火（含 resume）都重做一次权威读，拾取外部变更后的真实队列态
+  armoryLedger.ensureLoaded();
   log.info('started. queue=%d', shadow.wait.length);
   cycle.kick();
 }
 
 /**
  * 向 reactor 注册本功能说明书：places 限定 base/world（Home/NWorldMap），战斗模式暂停（offInCombat）。
- * 面板仅出启用开关；轮询/队列上限/融合折算均为上方内置常量，不作为可持久化配置项（与 domainTreasure 同口径）。
+ * 面板出启用开关 + 一行只读当日进度；轮询/队列上限/融合折算均为上方内置常量，不作为可持久化配置项（与 domainTreasure 同口径）。
  */
 reactor.register({
   id: 'armoryMaterial',
@@ -552,7 +563,17 @@ reactor.register({
   kinds: ['homeland'],
   offInCombat: true,
   defaults: { enabled: false },
-  fields: [],
+  fields: [
+    {
+      key: '_armoryInfo',
+      type: 'text',
+      label: '今日',
+      get: function () {
+        if (!armoryLedger.loaded()) return '—';
+        return '排产 ' + armoryLedger.get('produce') + ' · 收割 ' + armoryLedger.get('harvest');
+      },
+    },
+  ],
   toModuleCfg: function () {
     return {};
   },

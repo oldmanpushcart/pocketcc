@@ -43,7 +43,9 @@
  *
  * 合规：只读游戏数据（经 game-api ACL，含场景无关的落点查询）+ 直发 4170(sendPB)/4168(send)，不调用游戏 Update/Delete 改写本地态、不 OpenUI、不模拟点击、不播动画。
  * 不行军不参战，不设 offInCombat；生命周期由 reactor 托管，pause 摘 push 订阅、resume 重 kick。
- * 面板：独立 feature 卡片（showFields），只出一个只读态览（待收数 / 上次剩余次数 / 上次落点），无可调参数（落点全自动）。
+ * 面板：playerBasics 组子项，启用开关 + 一行只读当日进度（inlineStatus），无可调参数（落点全自动）。
+ * 当日次数口径（定稿）：动作类计脚本——4170 投放受理成功逐次 +1、4168 收取受理成功逐次 +1，
+ *   core/daily-stats 日账跨页持久，面板「投放 N · 收取 M」；次数（charge）按 cd 恢复非日重置，不作分母。
  */
 import { CODE_NOT_SENT, sleep, rejectText } from '../../../core/util.js';
 import { createLog } from '../../../core/log.js';
@@ -53,6 +55,7 @@ import { airDropDomain } from './api.js';
 import { item } from '../../../core/item.js';
 import { reactor } from '../../../core/reactor.js';
 import { createCycle } from '../../../core/cycle.js';
+import { createDailyLedger } from '../../../core/daily-stats.js';
 
 import { CMD_USE_SKILL, CMD_COLLECT, CMD_SKILL_INFO } from './constants.js';
 
@@ -97,6 +100,9 @@ var rejectStreak = 0;
 var lastCnt = null;
 /** @type {string} 最近一次投放使用的落点串「x,y」（仅面板态览展示） */
 var lastSpot = '';
+
+/** @type {import('../../../core/daily-stats.js').DailyLedger} 当日动作日账（drop=4170 投放 / collect=4168 收取） */
+const dropLedger = createDailyLedger('pocketcc.daily.secretWeaponDrop');
 
 /**
  * 功能是否仍在运行（cycle 与在飞流程的存活判定）
@@ -257,6 +263,7 @@ async function collectPending() {
     if (r.ok) {
       collected[d.id] = true;
       drops.splice(i, 1);
+      dropLedger.bump('collect');
       var desc = r.items.length
         ? r.items
             .map(function (it) {
@@ -356,6 +363,7 @@ async function cycleRun() {
       if (use.ok) {
         rejectStreak = 0;
         lastCnt = use.cnt;
+        dropLedger.bump('drop');
         bus.emit(EVT.UI_REFRESH);
         log.info('air drop used. spot=(%s);remaining=%d.', lastSpot, use.cnt);
         await sleep(DROP_SETTLE_MS, ctxRef && ctxRef.signal);
@@ -435,6 +443,7 @@ function run(ctx) {
   lastCnt = null;
   lastSpot = '';
   drops = [];
+  dropLedger.ensureLoaded();
   // 开机播种（默认逻辑，无需开关）：开启前地面上已存在的空投不会重推 10101，故直接从 UserData.Buildings 扫描入待收队，
   // 随后首个 cycleRun 的 collectPending 逐个发 4168 领取（collected 内存表跨 run 保留，按实例 id 天然去重）。
   try {
@@ -461,7 +470,7 @@ function run(ctx) {
 
 /**
  * 向 reactor 注册本功能说明书：场景 ['Home','NWorldMap']（落点查询已场景无关，两个主场景均可跑）；
- * 不行军不参战不设战斗门控；作为「日常任务」组的子项只出一个启用 checkbox，无详细面板、无可调参数。
+ * 不行军不参战不设战斗门控；playerBasics 组子项，启用开关 + 一行只读当日进度，无可调参数。
  */
 reactor.register({
   id: 'secretWeaponDrop',
@@ -472,6 +481,17 @@ reactor.register({
   kinds: ['homeland'],
   offInCombat: false,
   defaults: { enabled: false },
+  fields: [
+    {
+      key: '_dropInfo',
+      type: 'text',
+      label: '今日',
+      get: function () {
+        if (!dropLedger.loaded()) return '—';
+        return '投放 ' + dropLedger.get('drop') + ' · 收取 ' + dropLedger.get('collect');
+      },
+    },
+  ],
   toModuleCfg: function () {
     return {};
   },

@@ -39,6 +39,7 @@ import { sleep, rejectText } from '../../../core/util.js';
 import { createLog } from '../../../core/log.js';
 import { game } from '../../../core/game.js';
 import { reactor } from '../../../core/reactor.js';
+import { createDailyLedger } from '../../../core/daily-stats.js';
 
 import {
   CMD_RECEIVE_GIFT_ALL,
@@ -117,6 +118,13 @@ var lastClaimAt = Object.create(null);
 
 /** @type {boolean} install 幂等守卫 */
 var installed = false;
+
+/**
+ * 今日领取个数日账（动作类计脚本：1177 批量按发前权威可领数计、1178 逐箱 +1）。
+ * 键 normal/rare/big 与三类礼物一一对应；无每日上限分母（协议无权威日额度字段）。
+ * @type {import('../../../core/daily-stats.js').DailyLedger}
+ */
+const dailyLedger = createDailyLedger('pocketcc.daily.allianceGift');
 
 /**
  * 功能是否仍在运行（定时器与在飞流程的存活判定）
@@ -293,6 +301,8 @@ async function claimType(type, label) {
   }
   if (ret.ok) {
     lastClaimAt[type] = Date.now();
+    // 1177 一键领完该类全部可领：发前 RedPointObj 是服务器权威可领数，即本批到账个数
+    dailyLedger.bump(label, pending);
     log.info('receive %s gift ok. wasPending=%d', label, pending);
     return true;
   }
@@ -333,6 +343,7 @@ async function claimBig() {
   }
   if (ret.ok) {
     lastClaimAt[GIFT_KEY_BIG] = Date.now();
+    dailyLedger.bump(GIFT_KEY_BIG, 1);
     log.info('receive big gift ok. wasPending=%d', pending);
     return true;
   }
@@ -389,6 +400,7 @@ function run(ctx) {
   lastCheckAt = 0;
   timerMode = null;
   lastClaimAt = Object.create(null);
+  dailyLedger.ensureLoaded();
   ctx.on.push(CMD_PUSH_ALLIANCE_GIFT_INFO, onGiftInfoPush);
   log.info('started, listening push=%d.', CMD_PUSH_ALLIANCE_GIFT_INFO);
   // 启动即查一次；本轮结束后 tick 末尾按 busy/idle 武装下一轮
@@ -397,6 +409,8 @@ function run(ctx) {
 
 /**
  * 向 reactor 注册本功能说明书：纯协议领取，不声明 scenes / offInCombat（全场景 + 战斗态都继续跑）。
+ * 当日次数口径（定稿）：动作类计脚本——今日领取个数（三类合计）经 inlineStatus 内联到开关行；
+ * 普通/稀有领取开关与 busy/idle 间隔均为上方 cfg 的内置常量，不作为可持久化配置项。
  */
 reactor.register({
   id: 'allianceGift',
@@ -404,11 +418,22 @@ reactor.register({
   label: '联盟礼物',
   storageKey: 'pocketcc.feat.allianceGift',
   symbols: ['dataCenter'],
-  // 面板仅出启用开关；普通/稀有领取开关与 busy/idle 间隔均为上方 cfg 的内置常量，不作为可持久化配置项。
+  // 面板出启用开关 + 一行只读今日领取个数（inlineStatus）；领取开关与间隔不暴露为配置项。
   defaults: {
     enabled: false,
   },
-  fields: [],
+  fields: [
+    {
+      key: '_giftInfo',
+      type: 'text',
+      label: '今日',
+      get: function () {
+        if (!dailyLedger.loaded()) return '—';
+        var n = dailyLedger.get('normal') + dailyLedger.get('rare') + dailyLedger.get(GIFT_KEY_BIG);
+        return '今日 ' + n + ' 个';
+      },
+    },
+  ],
   toModuleCfg: function () {
     return {};
   },

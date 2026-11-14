@@ -30,7 +30,8 @@
  *   避免升级后仍按旧 level 发包被服务端拒而空转。
  *
  * 合规：全程只读游戏数据（经 game-api ACL）+ 直发 7102，不调用游戏的 Update 系改写本地态；不 OpenUI。
- *   日常任务形态：面板只出启用开关，无字段无配置（fields=[]，toModuleCfg 返回空）。
+ *   日常任务形态：面板出启用开关 + 一行只读今日捐献次数（inlineStatus），无可调配置（toModuleCfg 返回空）。
+ *   当日次数口径（定稿）：动作类计脚本——7102 受理成功逐枚计；能量池回点制无固定日限，无分母。
  *   仅消耗道具与能量、不行军不参战，故 offInCombat:false。
  *
  * 生命周期由 reactor 托管：install/run 两钩子（日常任务无配置可推），places 限 base/world（Home/NWorldMap）；
@@ -41,6 +42,7 @@ import { createLog } from '../../../core/log.js';
 import { l10n, gameData } from '../../../core/game-api.js';
 import { reactor } from '../../../core/reactor.js';
 import { createCycle } from '../../../core/cycle.js';
+import { createDailyLedger, dailyText } from '../../../core/daily-stats.js';
 
 import { CMD_DONATE, CMD_PUSH_ENERGY } from './constants.js';
 
@@ -84,6 +86,12 @@ var rejectStreak = 0;
 
 /** @type {number} 上次观测到的守卫捐赠池点数（type=13），用于只认「点数回升」的恢复推送、忽略捐赠消耗回执推送 */
 var lastEnergyPoint = 0;
+
+/**
+ * 今日捐献次数日账（动作类计脚本：7102 受理成功逐枚计）；能量池回点制无固定日限，无分母。
+ * @type {import('../../../core/daily-stats.js').DailyLedger}
+ */
+const dailyLedger = createDailyLedger('pocketcc.daily.allianceBehemoth');
 
 /**
  * 功能是否仍在运行（定时器与在飞流程的存活判定）
@@ -264,6 +272,7 @@ async function tickBody() {
     }
     if (i < loopMax - 1) await sleep(DONATE_GAP_MS, ctxRef && ctxRef.signal);
   }
+  if (donated > 0) dailyLedger.bump('donate', donated);
   return {
     donated: donated > 0,
     energy: donated > 0 ? gameData.energy(ENERGY_BEHEMOTH) || energy : energy,
@@ -295,6 +304,7 @@ function install(ctx) {
 function run(ctx) {
   ctxRef = ctx;
   rejectStreak = 0;
+  dailyLedger.ensureLoaded();
   log.info('started.');
 
   // 以当前点数作为基准：自家捐赠带来的 point 递减推送会因「非回升」被过滤，不再触捐
@@ -320,8 +330,8 @@ function run(ctx) {
 
 /**
  * 向 reactor 注册本功能说明书：地图限定 base/world（Home/NWorldMap），不行军不参战故不设战斗门控；
- * 日常任务形态——面板只出启用开关，无字段无配置（守卫未开/满级/道具不足/能量空均为内置口径）；
- * 能量池 id / 恢复周期 / 单捐间距等均为本文件内置常量。
+ * 日常任务形态——面板出启用开关 + 一行只读今日捐献次数（inlineStatus；守卫未开/满级/道具不足/能量空
+ * 均为内置口径）；能量池 id / 恢复周期 / 单捐间距等均为本文件内置常量。
  */
 reactor.register({
   id: 'allianceBehemoth',
@@ -332,7 +342,17 @@ reactor.register({
   kinds: ['homeland'],
   offInCombat: false,
   defaults: { enabled: false },
-  fields: [],
+  fields: [
+    {
+      key: '_behemothInfo',
+      type: 'text',
+      label: '今日',
+      get: function () {
+        if (!dailyLedger.loaded()) return '—';
+        return dailyText(dailyLedger.get('donate'));
+      },
+    },
+  ],
   toModuleCfg: function () {
     return {};
   },

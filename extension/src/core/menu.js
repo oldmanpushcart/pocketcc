@@ -19,6 +19,8 @@
  * @property {string} [label] 展示标签（category/group 自带；feature 为面板标签覆写）
  * @property {MenuNode[]} [children] 子节点（category -> 卡片，group -> 子项）
  * @property {boolean} [showFields] feature 为真时面板渲染 descriptor 的详细字段
+ * @property {boolean} [inlineStatus] 组内子项为真时，把 descriptor 第一个 type:'text' 字段的 get()
+ *   内联到开关行（左标签 · 中状态值 · 右 checkbox），不展开详细字段块（当日次数统计只读行用）
  * @property {string} [storageKey] group 的配置存储键
  * @property {boolean} [defaultEnabled] group 的默认开关态
  * @property {string} [gate] category 的活动闸门名：由 ui/panel.js 的 TAB_GATES 注册表求值，
@@ -57,14 +59,15 @@ export const MENU = [
         defaultEnabled: true,
         storageKey: 'pocketcc.group.playerBasics',
         children: [
-          { id: 'dailySupply', kind: 'feature', label: '每日补给' },
-          { id: 'adDiamond', kind: 'feature', label: '广告领钻石' },
-          { id: 'autoCoinCollect', kind: 'feature', label: '自动收取金币' },
-          { id: 'armoryMaterial', kind: 'feature', label: '军火库生产材料' },
-          { id: 'secretWeaponDrop', kind: 'feature', label: '秘密武器空投' },
-          { id: 'oneClickClaim', kind: 'feature', label: '一键领取' },
-          { id: 'dailyDeal', kind: 'feature', label: '每日特惠' },
-          { id: 'birthdayBless', kind: 'feature', label: '生日祝福' },
+          // 当日次数统计（定稿口径）：各子项 descriptor 首行 type:'text' 只读进度经 inlineStatus 内联到开关行
+          { id: 'dailySupply', kind: 'feature', label: '每日补给', inlineStatus: true },
+          { id: 'adDiamond', kind: 'feature', label: '广告领钻石', inlineStatus: true },
+          { id: 'autoCoinCollect', kind: 'feature', label: '自动收取金币', inlineStatus: true },
+          { id: 'armoryMaterial', kind: 'feature', label: '军火库生产材料', inlineStatus: true },
+          { id: 'secretWeaponDrop', kind: 'feature', label: '秘密武器空投', inlineStatus: true },
+          { id: 'oneClickClaim', kind: 'feature', label: '一键领取', inlineStatus: true },
+          { id: 'dailyDeal', kind: 'feature', label: '每日特惠', inlineStatus: true },
+          { id: 'birthdayBless', kind: 'feature', label: '生日祝福', inlineStatus: true },
         ],
       },
       { id: 'potionCraft', kind: 'feature', label: '机械制药', showFields: true },
@@ -94,10 +97,11 @@ export const MENU = [
         defaultEnabled: true,
         storageKey: 'pocketcc.group.allianceBasics',
         children: [
-          { id: 'allianceHelp', kind: 'feature', label: '联盟帮助' },
-          { id: 'allianceGift', kind: 'feature', label: '联盟礼物' },
-          { id: 'allianceScience', kind: 'feature', label: '联盟科技' },
-          { id: 'allianceBehemoth', kind: 'feature', label: '联盟守卫' },
+          // 当日次数统计（定稿口径）：帮助读权威额度，礼物/科技/守卫计脚本动作，经 inlineStatus 内联到开关行
+          { id: 'allianceHelp', kind: 'feature', label: '联盟帮助', inlineStatus: true },
+          { id: 'allianceGift', kind: 'feature', label: '联盟礼物', inlineStatus: true },
+          { id: 'allianceScience', kind: 'feature', label: '联盟科技', inlineStatus: true },
+          { id: 'allianceBehemoth', kind: 'feature', label: '联盟守卫', inlineStatus: true },
         ],
       },
       { id: 'allianceRally', kind: 'feature', label: '联盟集结', showFields: true },
@@ -118,10 +122,11 @@ export const MENU = [
         defaultEnabled: true,
         storageKey: 'pocketcc.group.activityBasics',
         children: [
-          { id: 'seaTreasure', kind: 'feature', label: '海上夺宝' },
-          { id: 'mechaTreasure', kind: 'feature', label: '重装母舰' },
-          { id: 'domainTreasure', kind: 'feature', label: '领域寻宝' },
-          { id: 'maskDance', kind: 'feature', label: '假面舞会' },
+          // 当日次数统计（定稿口径）：到账/额度只读进度经 inlineStatus 内联到开关行
+          { id: 'seaTreasure', kind: 'feature', label: '海上夺宝', inlineStatus: true },
+          { id: 'mechaTreasure', kind: 'feature', label: '重装母舰', inlineStatus: true },
+          { id: 'domainTreasure', kind: 'feature', label: '领域寻宝', inlineStatus: true },
+          { id: 'maskDance', kind: 'feature', label: '假面舞会', inlineStatus: true },
         ],
       },
       { id: 'titanBlessing', kind: 'feature', label: '泰坦祝福', showFields: true },

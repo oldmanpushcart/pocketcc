@@ -1222,20 +1222,6 @@ export default [
     ],
   },
   {
-    cmd: 10264,
-    dir: 'S2C',
-    note: 'push 单封邮件（「遗迹区域刷新」开田信号，载荷是邮件本体）',
-    src: '',
-    fields: '',
-    usages: [
-      {
-        name: 'PUSH_SINGLE_MAIL',
-        feat: 'auto-farm',
-        file: 'feats/player/auto-farm/constants.js',
-      },
-    ],
-  },
-  {
     cmd: 10452,
     dir: 'S2C',
     note: 'push 联盟记录增量（建塔/毁塔事件；1031 重拉 kick 源 + 新机械田即时并入活表）',

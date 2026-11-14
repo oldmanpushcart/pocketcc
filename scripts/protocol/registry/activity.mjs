@@ -944,4 +944,18 @@ export default [
       },
     ],
   },
+  {
+    cmd: 21653,
+    dir: null,
+    note: '',
+    src: '',
+    fields: '',
+    usages: [
+      {
+        name: 'CMD_FLOAT_PARADE_REWARD_LUCKY_BAG',
+        feat: 'floatcar',
+        file: 'feats/activity/floatcar/constants.js',
+      },
+    ],
+  },
 ];

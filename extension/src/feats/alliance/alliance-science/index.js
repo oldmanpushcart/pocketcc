@@ -44,7 +44,9 @@
  *
  * 合规：全程只读游戏数据（经 game-api ACL）+ 直发 1144/1067，不调用游戏的 Update* 改写本地态；
  *   不做研究发起（1145 需 UpScience 权限）与秒完成（1146/1068 花钻石）。
- *   日常任务形态：面板只出启用开关，无字段无配置（fields=[]，toModuleCfg 返回空）。
+ *   日常任务形态：面板出启用开关 + 一行只读今日捐赠次数（inlineStatus），无可调配置（toModuleCfg 返回空）。
+ *   当日次数口径（定稿）：动作类计脚本——1144/1067 受理成功逐枚计（直发不回写游戏本地态，
+ *   权威 donateDailyHonor 不被脚本捐包刷新，故不走额度读权威）；能量池回点制无固定日限，无分母。
  *
  * 生命周期由 reactor 托管：install/run 两钩子（日常任务无配置可推），places 限 base/world（Home/NWorldMap），战斗模式暂停；
  *   调度交给 core/cycle.js：单飞闸门、推触合并、异常 fallback 重排均内置；pause 后 alive()=false 让 cycle 自然停摆。
@@ -54,6 +56,7 @@ import { createLog } from '../../../core/log.js';
 import { l10n, gameData } from '../../../core/game-api.js';
 import { reactor } from '../../../core/reactor.js';
 import { createCycle } from '../../../core/cycle.js';
+import { createDailyLedger } from '../../../core/daily-stats.js';
 
 import { CMD_DONATE, CMD_DONATE_RELIC, CMD_PUSH_ENERGY } from './constants.js';
 
@@ -124,6 +127,13 @@ var lastEnergyPoint = {};
  * 的建筑补捐链误封两链的隐患）。
  */
 var honorCappedDay = '';
+
+/**
+ * 今日捐赠次数日账（动作类计脚本：1144/1067 受理成功逐枚计）。
+ * 键 science/relic 分指科技主链与遗迹链；能量池回点制无固定日限，无分母。
+ * @type {import('../../../core/daily-stats.js').DailyLedger}
+ */
+const dailyLedger = createDailyLedger('pocketcc.daily.allianceScience');
 
 /**
  * 本地日键（年-月-日），用于 honorCappedDay 的“当日停捐、次日自然解禁”判定。
@@ -395,6 +405,7 @@ async function donateLoop(o) {
     if (i < loopMax - 1) await sleep(SCIENCE_DONATE_GAP_MS, ctxRef && ctxRef.signal);
   }
   if (done > 0) {
+    dailyLedger.bump('science', done);
     log.info(
       '%s donate ok. sid=%d(%s);x%d;addExp+%d;honor+%d;crit=%d',
       o.tag,
@@ -538,6 +549,7 @@ async function donateRelic() {
     if (i < energy.point - 1) await sleep(RELIC_GAP_MS, ctxRef && ctxRef.signal);
   }
   if (done > 0) {
+    dailyLedger.bump('relic', done);
     log.info(
       'relic donate ok. site=%d(%s);x%d;honor=%d;crit=%d',
       target.id,
@@ -576,6 +588,7 @@ function run(ctx) {
   ctxRef = ctx;
   rejectStreak = 0;
   relicBanUntil = 0;
+  dailyLedger.ensureLoaded();
   log.info('started.');
 
   // 以当前点数作为基准：自家捐赠带来的 point 递减推送会因“非回升”被过滤，不再触捐
@@ -607,8 +620,8 @@ function run(ctx) {
 
 /**
  * 向 reactor 注册本功能说明书：地图限定 base/world（Home/NWorldMap），战斗模式暂停；
- * 日常任务形态——面板只出启用开关，无字段无配置（荣誉到顶必停、只做金币捐、目标两级
- * 均为内置口径）；能量池 id / 恢复周期 / 单捐间距等均为本文件内置常量。
+ * 日常任务形态——面板出启用开关 + 一行只读今日捐赠次数（inlineStatus；荣誉到顶必停、只做金币捐、
+ * 目标两级均为内置口径）；能量池 id / 恢复周期 / 单捐间距等均为本文件内置常量。
  */
 reactor.register({
   id: 'allianceScience',
@@ -619,7 +632,19 @@ reactor.register({
   kinds: ['homeland'],
   offInCombat: true,
   defaults: { enabled: false },
-  fields: [],
+  fields: [
+    {
+      key: '_donateInfo',
+      type: 'text',
+      label: '今日',
+      get: function () {
+        if (!dailyLedger.loaded()) return '—';
+        var s = dailyLedger.get('science');
+        var r = dailyLedger.get('relic');
+        return '今日 ' + (s + r) + ' 次 · 科' + s + '/遗' + r;
+      },
+    },
+  ],
   toModuleCfg: function () {
     return {};
   },

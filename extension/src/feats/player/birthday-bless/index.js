@@ -36,7 +36,10 @@
  *   在途闸门会拒第二发），CODE_NOT_SENT 延迟 3s 重试至多 3 次；业务拒绝不重试。
  *
  * 合规：只读游戏数据（经 game-api ACL）+ 直发 3567/3565，不 OpenUI、不回写本地态。
- *   日常任务形态：面板只出启用开关（playerBasics 组），无字段无配置。
+ *   日常任务形态：面板出启用开关 + 一行只读当日进度（playerBasics 组 inlineStatus）。
+ *   当日次数口径（定稿）：面板只显今日祝福次数（动作类计脚本：3565 受理成功逐次 +1，
+ *   core/daily-stats 日账跨页持久）；分母共用领取上限 grabCountMaxDaily（实证 10，用户拍板：
+ *   协议无独立祝福上限字段，3567 应答权威更新）。领取额度只作内部闸门，不上面板。
  *   不行军不参战，offInCombat:false。生命周期由 reactor 托管，pause 摘订阅后 alive()=false 自然停摆。
  */
 import { CODE_NOT_SENT, rejectText, safeParse } from '../../../core/util.js';
@@ -44,6 +47,7 @@ import { createLog } from '../../../core/log.js';
 import { bits, gameData } from '../../../core/game-api.js';
 import { getUid } from '../../../core/player.js';
 import { reactor } from '../../../core/reactor.js';
+import { createDailyLedger, dailyText } from '../../../core/daily-stats.js';
 
 import { CMD_INFO_OPEN, CMD_BLESS } from './constants.js';
 
@@ -53,7 +57,7 @@ const log = createLog('BIRTHDAY-BLESS');
 /** @type {string} CHAT_CT_TYPE.BIRTHDAY_RED_PACKET（chatCommon.js），生日红包消息内容类型 */
 const CT_BIRTHDAY = '3';
 
-/** @type {number} 每日领取上限缺省值（权威值以 3567 应答 grabCountMaxDaily 为准） */
+/** @type {number} 每日领取上限缺省值（权威值以 3567 应答 grabCountMaxDaily 为准；兼作祝福展示分母，用户定稿） */
 const DEFAULT_MAX_DAILY = 10;
 
 /** @type {number} CODE_NOT_SENT 重试间隔（毫秒） */
@@ -86,6 +90,9 @@ var seen = new Map();
 /** @type {{day:string, grabbed:number, max:number}} 当日领取镜像（grabbed/max 以 3567 应答为权威，日切清零） */
 var daily = { day: '', grabbed: 0, max: DEFAULT_MAX_DAILY };
 
+/** @type {import('../../../core/daily-stats.js').DailyLedger} 祝福次数日账（动作类计脚本：3565 受理成功 +1） */
+const blessLedger = createDailyLedger('pocketcc.daily.birthdayBless');
+
 /**
  * 功能是否仍在运行（drain 与在飞流程的存活判定）
  * @returns {boolean}
@@ -97,7 +104,9 @@ function aliveFn() {
 /** 本地日切检查：跨天清零当日领取计数（额度上限保留上次权威值）。 */
 function rollDaily() {
   var day = new Date().toDateString();
-  if (daily.day !== day) daily = { day: day, grabbed: 0, max: daily.max || DEFAULT_MAX_DAILY };
+  if (daily.day !== day) {
+    daily = { day: day, grabbed: 0, max: daily.max || DEFAULT_MAX_DAILY };
+  }
 }
 
 /**
@@ -267,6 +276,7 @@ async function processPacket(item, seq) {
   if (!aliveFn() || seq !== runSeq) return;
   if (blessRet.ok) {
     var cnt = blessRet.data ? blessRet.data.blessingCount : null;
+    blessLedger.bump('bless');
     log.info('birthday blessing sent. owner=%s;year=%s;blessingCount=%s', ownerUid, rp.year, cnt);
   } else if (blessRet.code === CODE_NOT_SENT) {
     log.warn('cmd 3565 not sent. owner=%s;year=%s', ownerUid, rp.year);
@@ -308,13 +318,14 @@ function run(ctx) {
   runSeq++;
   queue = [];
   busy = false;
+  blessLedger.ensureLoaded();
   ctx.on.chat('push', onChatPush);
   log.info('started. watching chat ct=3 birthday packets.');
 }
 
 /**
  * 向 reactor 注册本功能说明书：地图限定 base/world（Home/NWorldMap）；不行军不参战故不设战斗门控；
- * 日常任务形态——面板只出启用开关，无字段无配置（额度/过期/抢光均为内置判据）。
+ * 日常任务形态——面板出启用开关 + 一行只读当日进度（额度/过期/抢光均为内置判据）。
  */
 reactor.register({
   id: 'birthdayBless',
@@ -325,7 +336,19 @@ reactor.register({
   kinds: ['homeland'],
   offInCombat: false,
   defaults: { enabled: false },
-  fields: [],
+  fields: [
+    {
+      key: '_bdayInfo',
+      type: 'text',
+      label: '今日',
+      get: function () {
+        rollDaily();
+        if (!blessLedger.loaded()) return '—';
+        // 分母共用领取上限 grabCountMaxDaily（用户定稿）：缺省 10，3567 应答后以权威值为准
+        return dailyText(blessLedger.get('bless'), daily.max);
+      },
+    },
+  ],
   toModuleCfg: function () {
     return {};
   },

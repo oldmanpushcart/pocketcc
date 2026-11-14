@@ -30,7 +30,9 @@
  *   - 连续被拒 3 次：退 IDLE×2。
  *
  * 合规：全程只读游戏数据（经 game-api ACL）+ 直发 102，不调用任何游戏 Update/Delete 改写本地态、不 OpenUI、
- *   不花钻石。日常任务形态：面板只出启用开关，无字段无配置（fields=[]，toModuleCfg 返回空）。
+ *   不花钻石。日常任务形态：面板出启用开关 + 一行只读当日进度（inlineStatus）。
+ *   当日次数口径（定稿）：动作类计脚本——102 受理成功逐次 +1（core/daily-stats 日账跨页持久），
+ *   无分母文案「今日 N 次」；手动收取不计（无权威当日次数字段可读）。
  *   不行军不参战，offInCombat:false。生命周期由 reactor 托管，pause 后 alive()=false 自然停。
  */
 import { CODE_NOT_SENT } from '../../../core/util.js';
@@ -39,6 +41,7 @@ import { gameData } from '../../../core/game-api.js';
 import { coinDomain } from './api.js';
 import { reactor } from '../../../core/reactor.js';
 import { createCycle } from '../../../core/cycle.js';
+import { createDailyLedger, dailyText } from '../../../core/daily-stats.js';
 
 import { CMD_GET_ORDER } from './constants.js';
 
@@ -77,6 +80,9 @@ var net;
 
 /** @type {object|null} reactor 上下文；alive() 反映运行态 */
 var ctxRef = null;
+
+/** @type {import('../../../core/daily-stats.js').DailyLedger} 当日收取次数日账（动作类计脚本：102 受理成功 +1） */
+const coinLedger = createDailyLedger('pocketcc.daily.autoCoinCollect');
 
 /**
  * 功能是否仍在运行（cycle 与在飞流程的存活判定）
@@ -180,6 +186,7 @@ async function collectOnce(harvester) {
   mirrors[harvester.id] = now + (interval > 0 ? interval : Math.round(IDLE_TICK_MS / 1000));
   lastHarvestAt = now;
   rejectStreak = 0;
+  coinLedger.bump('coin');
   log.info('coin harvest claimed, id=%s coin=%s.', harvester.id, rewardCoin(d));
   return { claimed: true, code: code };
 }
@@ -238,13 +245,14 @@ function run(ctx) {
   rejectStreak = 0;
   lastHarvestAt = 0;
   mirrors = {};
+  coinLedger.ensureLoaded();
   log.info('started.');
   cycle.kick();
 }
 
 /**
  * 向 reactor 注册本功能说明书：地图限定 base/world（Home/NWorldMap）；不行军不参战故不设战斗门控；
- * 日常任务形态——面板只出启用开关，无字段无配置（门槛比例/4h 提现窗均为内置口径，不花钻石故不暴露付费档）。
+ * 日常任务形态——面板出启用开关 + 一行只读当日进度（门槛比例/4h 提现窗均为内置口径，不花钻石故不暴露付费档）。
  */
 reactor.register({
   id: 'autoCoinCollect',
@@ -255,7 +263,16 @@ reactor.register({
   kinds: ['homeland'],
   offInCombat: false,
   defaults: { enabled: false },
-  fields: [],
+  fields: [
+    {
+      key: '_coinInfo',
+      type: 'text',
+      label: '今日',
+      get: function () {
+        return coinLedger.loaded() ? dailyText(coinLedger.get('coin')) : '—';
+      },
+    },
+  ],
   toModuleCfg: function () {
     return {};
   },

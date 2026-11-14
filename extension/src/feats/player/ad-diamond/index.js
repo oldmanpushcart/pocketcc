@@ -42,7 +42,9 @@
  *   - 表未加载/9706 未就绪：IDLE 巡检；9706/9707 瞬态未发出：短重试，不拖进退避。
  *
  * 合规：全程只读游戏数据（经 game-api ACL）+ 直发 9706/9707，不回写游戏本地态、不 OpenUI、不看真实广告 SDK。
- *   日常任务形态：面板只出启用开关，无字段无配置（fields=[]，toModuleCfg 返回空）。
+ *   日常任务形态：面板出启用开关 + 一行只读当日进度（inlineStatus）。
+ *   当日次数口径（定稿）：额度类读服务器权威——分子=钻石槽 ΣviewCount（9706 权威，含手动），
+ *   分母=钻石槽 Σtimes；文案「已完成 x/y」由 core/daily-stats.dailyText 收口。
  *   不行军不参战，offInCombat:false。生命周期由 reactor 托管，pause 后 alive()=false 自然停摆。
  */
 import { CODE_NOT_SENT, sleep, rejectText } from '../../../core/util.js';
@@ -50,6 +52,7 @@ import { createLog } from '../../../core/log.js';
 import { bits, gameData, l10n } from '../../../core/game-api.js';
 import { reactor } from '../../../core/reactor.js';
 import { createCycle } from '../../../core/cycle.js';
+import { dailyText } from '../../../core/daily-stats.js';
 
 import { CMD_WATCH_INFO, CMD_WATCH_REWARD } from './constants.js';
 
@@ -102,6 +105,9 @@ var ctxRef = null;
 
 /** @type {Map<number, {viewCount:number, lastSec:number}>} 槽位态：9706 权威读入，9707 应答乐观补写 */
 var stateById = new Map();
+
+/** @type {boolean} 9706 是否已成功读回过（未读回前面板进度显示 '—' 而非 0，不谎报今日未领） */
+var infoReady = false;
 
 /**
  * 功能是否仍在运行（cycle 与在飞流程的存活判定）
@@ -260,6 +266,7 @@ async function fetchInfo() {
       lastSec: Math.floor(toMs(it.lastViewTime) / 1000),
     });
   }
+  infoReady = true;
   return { ok: true, code: 0 };
 }
 
@@ -408,13 +415,14 @@ function run(ctx) {
   ctxRef = ctx;
   claimStreak = 0;
   stateById = new Map();
+  infoReady = false;
   log.info('started.');
   cycle.kick();
 }
 
 /**
  * 向 reactor 注册本功能说明书：地图限定基地/大世界（base/world），常态本服（homeland）；
- * 不行军不参战故不设战斗门控；日常任务形态——面板只出启用开关，无字段无配置
+ * 不行军不参战故不设战斗门控；日常任务形态——面板出启用开关 + 一行只读当日进度
  * （配额/冷却均由 AD_NEW 表驱动，非用户可调项）。
  */
 reactor.register({
@@ -426,7 +434,26 @@ reactor.register({
   kinds: ['homeland'],
   offInCombat: false,
   defaults: { enabled: false },
-  fields: [],
+  fields: [
+    {
+      key: '_adInfo',
+      type: 'text',
+      label: '今日',
+      get: function () {
+        if (!infoReady) return '—';
+        var list = slots().list;
+        if (!list.length) return '—';
+        var done = 0;
+        var total = 0;
+        for (var i = 0; i < list.length; i++) {
+          var st = stateById.get(list[i].id);
+          done += st ? st.viewCount : 0;
+          total += list[i].times;
+        }
+        return dailyText(done, total);
+      },
+    },
+  ],
   toModuleCfg: function () {
     return {};
   },

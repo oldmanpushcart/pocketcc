@@ -32,6 +32,7 @@ import { reactor } from '../../../core/reactor.js';
 import { item } from '../../../core/item.js';
 import { screen } from '../../../core/net-guard.js';
 import { getUid } from '../../../core/player.js';
+import { dailyText } from '../../../core/daily-stats.js';
 
 import {
   CMD_ALLIANCE_HELP_APPLY,
@@ -743,6 +744,9 @@ function run(ctx) {
 /**
  * 向 reactor 注册本功能说明书：纯发包（不派行军、不抢队列），不声明 places / offInCombat；
  * kinds:['homeland']（A 档）——进峡谷/天梯/秘境/征服者即 pause、回本服图 resume，口径同联盟礼物。
+ * 当日次数口径（定稿）：额度类读权威——申请次数 AllianceHelpCount/AllianceHelpMax 是
+ * UserData.Alliance 当日计数器（含手动），经 inlineStatus 内联到开关行；荣誉分只作内部闸门不上面板（用户定稿）；
+ * 计数通道未同步（AllianceHelpMax=0 占位）时显 '—' 不谎报 0。
  */
 reactor.register({
   id: 'allianceHelp',
@@ -751,9 +755,21 @@ reactor.register({
   storageKey: 'pocketcc.feat.allianceHelp',
   symbols: ['tableManager', 'dataCenter', 'tableUtils'],
   // 无 scenes、无 offInCombat：纯发包（不派行军、不抢队列），全场景 + 战斗态下都继续跑。
-  // 面板仅出启用开关；busy/idle/consume 间隔与 items 候选均为上方 cfg 的内置常量，不作为可持久化配置项。
+  // 面板出启用开关 + 一行只读当日额度（inlineStatus）；busy/idle/consume 间隔与 items 候选均为上方 cfg 的内置常量，不作为可持久化配置项。
   defaults: { enabled: false },
-  fields: [],
+  fields: [
+    {
+      key: '_helpInfo',
+      type: 'text',
+      label: '今日',
+      get: function () {
+        var alliance = data && data.UserData && data.UserData.Alliance;
+        if (!alliance || !isHelpCountSynced(alliance)) return '—';
+        // 分子=已完成（含手动），dailyText 钳进 [0, 上限]；荣誉分只作内部闸门不展示（用户定稿）
+        return dailyText(alliance.AllianceHelpCount, getHelpMax(alliance));
+      },
+    },
+  ],
   toModuleCfg: function () {
     return {};
   },

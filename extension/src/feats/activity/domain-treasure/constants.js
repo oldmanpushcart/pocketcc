@@ -10,3 +10,5 @@ export const CMD_PUSH_ONE_ACTIVITY_EXTRA = 10912;
 export const CMD_GET_KUANG_LIST = 8623;
 /** @type {number} RequestId.MARCH_WORLD_POINT，世界地图行军请求（挖矿派 902） */
 export const CMD_MARCH_WORLD_POINT = 902;
+/** @type {number} push PUSH_SINGLE_MAIL：单封邮件推送；开采奖励邮件（mail_title_3245）经它实时下发，当日到账计数订阅用 */
+export const PUSH_SINGLE_MAIL = 10264;

@@ -46,7 +46,9 @@
  *     仅服务器真拒绝（s≠0）才计入 streak，连续 3 次降巡检档 ×2。
  *
  * 合规：全程只读游戏数据（经 game-api ACL）+ 直发 5684/5685，不调任何游戏 Update/回写、不 OpenUI。
- *   日常任务形态：面板只出启用开关，无字段无配置（fields=[]，toModuleCfg 返回空）。
+ *   日常任务形态：面板出启用开关 + 一行只读当日进度（inlineStatus）。
+ *   当日次数口径（定稿）：动作类计脚本——5685 应答逐行 code=0（真领到）累加，core/daily-stats 日账跨页持久，
+ *   无分母文案「今日 N 次」（N=领到的收益行数，非发包次数）。
  *   不行军不参战，offInCombat:false。生命周期由 reactor 托管，pause 后 alive()=false 自然停摆。
  */
 import { CODE_NOT_SENT, rejectText } from '../../../core/util.js';
@@ -54,6 +56,7 @@ import { createLog } from '../../../core/log.js';
 import { gameData } from '../../../core/game-api.js';
 import { reactor } from '../../../core/reactor.js';
 import { createCycle } from '../../../core/cycle.js';
+import { createDailyLedger, dailyText } from '../../../core/daily-stats.js';
 
 import { CMD_INFO, CMD_REWARD } from './constants.js';
 
@@ -93,6 +96,9 @@ var infoStreak = 0;
 
 /** @type {boolean} 「功能未对该玩家开启」是否已打过一条 info（防逐拍刷屏，可用后复位） */
 var loggedUnavailable = false;
+
+/** @type {import('../../../core/daily-stats.js').DailyLedger} 当日领取日账（动作类计脚本：5685 逐行 code=0 累加） */
+const claimLedger = createDailyLedger('pocketcc.daily.oneClickClaim');
 
 /**
  * 功能是否仍在运行（cycle 与在飞流程的存活判定）
@@ -261,6 +267,7 @@ async function cycleRun() {
     return rejectStreak >= 3 ? IDLE_TICK_MS * 2 : IDLE_TICK_MS;
   }
   rejectStreak = 0;
+  if (res.success > 0) claimLedger.bump('row', res.success);
   // 规则 2+3 修正：收益 0 点后仍按小时累积 → 领后睡到「下一个 0 点」与 CLAIM_GAP_MS 的较早者，不再纯日锚空转
   var wakeMs = nextClaimDelay();
   if (res.success > 0) {
@@ -308,13 +315,14 @@ function run(ctx) {
   rejectStreak = 0;
   infoStreak = 0;
   loggedUnavailable = false;
+  claimLedger.ensureLoaded();
   log.info('started.');
   cycle.kick();
 }
 
 /**
  * 向 reactor 注册本功能说明书：地图限定基地/大世界（base/world），常态本服（homeland）；
- * 不行军不参战故不设战斗门控；日常任务形态——面板只出启用开关，无字段无配置。
+ * 不行军不参战故不设战斗门控；日常任务形态——面板出启用开关 + 一行只读当日进度。
  * mechaTower 为软依赖（重装母舰子玩法闸，subpack2 未接管时该子玩法按未开降级，不阻断安装）。
  */
 reactor.register({
@@ -326,7 +334,16 @@ reactor.register({
   kinds: ['homeland'],
   offInCombat: false,
   defaults: { enabled: false },
-  fields: [],
+  fields: [
+    {
+      key: '_claimInfo',
+      type: 'text',
+      label: '今日',
+      get: function () {
+        return claimLedger.loaded() ? dailyText(claimLedger.get('row')) : '—';
+      },
+    },
+  ],
   toModuleCfg: function () {
     return {};
   },

@@ -40,20 +40,27 @@
  *   消费逐条派遣的限流逻辑不套 createDrain，作为 cycleRun 一轮的后半段原样保留在本文件。
  *   兜底定时器（active/idle 两档）由 cycle 承载，pause 后 alive()=false 自然停摆，resume 时 run 复位状态并重新点火
  *   （dispatched/rejected 不随 run 清空，防 resume 后重复攻打同一使徒）。
+ *
+ * 当日次数口径（定稿）：行军类计**奖励到账**（非派遣受理）——使徒奖励邮件经 push 10264 PUSH_SINGLE_MAIL
+ *   实时下发（报文实证 dashcam store 全量扫描 .reviewtmp/daily-mail-probe.mjs），标题字面匹配
+ *   mail_title_3289「【重装母舰宝藏】攻击重装母舰使徒奖励」，按邮件 id 去重 countOnce（跨页重推不重计），
+ *   core/daily-stats 日账跨页持久；无分母文案「今日 N 次」，未读回前显示 '—'。
  */
-import { CODE_NOT_SENT, sleep } from '../../../core/util.js';
+import { CODE_NOT_SENT, sleep, parseData } from '../../../core/util.js';
 import { createLog } from '../../../core/log.js';
 import { game } from '../../../core/game.js';
 import { gameData } from '../../../core/game-api.js';
 import { reactor } from '../../../core/reactor.js';
 import { march } from '../../../core/march.js';
 import { createCycle } from '../../../core/cycle.js';
+import { createDailyLedger, dailyText } from '../../../core/daily-stats.js';
 
 import {
   CMD_PUSH_ONE_ACTIVITY_EXTRA,
   CMD_MONSTER_LIST,
   CMD_MARCH_WORLD_POINT,
   CMD_USER_MARCH_INFO,
+  PUSH_SINGLE_MAIL,
 } from './constants.js';
 
 /** @type {ReturnType<createLog>} 模块日志器（tag=MECHA-TREASURE） */
@@ -75,6 +82,15 @@ const MONSTER_LIST_TYPE_WORLD = 2;
  * @type {number}
  */
 const MARCH_TYPE = 189;
+
+/**
+ * 使徒奖励邮件标题字面（字典表 mail_title_3289；10264 推送的邮件本体 title 字段逐字匹配）
+ * @type {string}
+ */
+const REWARD_MAIL_TITLE = '【重装母舰宝藏】攻击重装母舰使徒奖励';
+
+/** @type {import('../../../core/daily-stats.js').DailyLedger} 当日到账日账（行军类计奖励到账：10264 邮件按 id 去重） */
+const rewardLedger = createDailyLedger('pocketcc.daily.mechaTreasure');
 
 /**
  * 内置调优常量（面板仅出启用开关，不暴露这些间隔）
@@ -447,6 +463,26 @@ function onMarchUpdate(ev) {
 }
 
 /**
+ * 10264 单封邮件推送：标题命中使徒奖励即按邮件 id 去重计一次到账（行军类计奖励到账口径）。
+ * 载荷容错同 auto-farm 遗迹邮件范式：parseData 拆可能串化的业务体，再探 d.mail / d.data.mail / d。
+ * listener 本身永不 throw；不踢扫描 cycle（到账只是计数，不影响攻打调度）。
+ * @param {object} ev net.on 事件 {cmd, data}
+ */
+function onRewardMailPush(ev) {
+  if (!aliveFn()) return;
+  var d = parseData(ev && ev.data);
+  if (!d || typeof d !== 'object') return;
+  var m = d.mail || (d.data && d.data.mail) || d;
+  if (!m || m.title !== REWARD_MAIL_TITLE) return;
+  // Int64 邮件 id 按字符串读；无 id 时退 sendTime 合成键，同封重推仍可去重
+  var id = String(m.id || m.mailId || '');
+  if (!id) id = 't' + (Number(m.sendTime) || 0);
+  if (rewardLedger.countOnce(id, 'arrive')) {
+    log.info('cmd 10264 reward mail arrived. mailId=%s', id);
+  }
+}
+
+/**
  * aid 是否指向一个重装母舰宝藏活动
  * @param {number} aid 推送载荷里的活动 id
  * @returns {boolean}
@@ -521,9 +557,16 @@ function run(ctx) {
   emptyStreak = 0;
   queue = [];
   lastPushScanAt = 0;
+  rewardLedger.ensureLoaded();
   ctx.on.push(CMD_PUSH_ONE_ACTIVITY_EXTRA, onActivityExtraPush);
   ctx.on.push(CMD_USER_MARCH_INFO, onMarchUpdate);
-  log.info('started, listening push cmd=%d;marchType=%d.', CMD_PUSH_ONE_ACTIVITY_EXTRA, MARCH_TYPE);
+  ctx.on.push(PUSH_SINGLE_MAIL, onRewardMailPush);
+  log.info(
+    'started, listening push cmd=%d;mail=%d;marchType=%d.',
+    CMD_PUSH_ONE_ACTIVITY_EXTRA,
+    PUSH_SINGLE_MAIL,
+    MARCH_TYPE,
+  );
   // 启动即主动查一次；本轮结束后 cycle 会武装兜底定时
   cycle.kick();
 }
@@ -540,9 +583,19 @@ reactor.register({
   places: ['base', 'world'],
   kinds: ['homeland'],
   offInCombat: true,
-  // 面板仅出启用开关；扫描/攻打间隔均为 cfg 内置常量，不作为可持久化配置项。
+  // 面板仅出启用开关 + 一行只读当日到账进度（inlineStatus）；扫描/攻打间隔均为 cfg 内置常量。
   defaults: { enabled: false },
-  fields: [],
+  fields: [
+    {
+      key: '_arriveInfo',
+      type: 'text',
+      label: '今日',
+      get: function () {
+        if (!rewardLedger.loaded()) return '—';
+        return dailyText(rewardLedger.get('arrive'));
+      },
+    },
+  ],
   toModuleCfg: function () {
     return {};
   },
