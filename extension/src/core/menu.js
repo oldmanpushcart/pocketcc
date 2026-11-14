@@ -64,6 +64,7 @@ export const MENU = [
           { id: 'secretWeaponDrop', kind: 'feature', label: '秘密武器空投' },
           { id: 'oneClickClaim', kind: 'feature', label: '一键领取' },
           { id: 'dailyDeal', kind: 'feature', label: '每日特惠' },
+          { id: 'birthdayBless', kind: 'feature', label: '生日祝福' },
         ],
       },
       { id: 'potionCraft', kind: 'feature', label: '机械制药', showFields: true },

@@ -53,6 +53,7 @@ import './feats/player/beast-breed.js';
 import './feats/player/secret-weapon-drop.js';
 import './feats/player/one-click-claim.js';
 import './feats/player/daily-deal.js';
+import './feats/player/birthday-bless.js';
 import './feats/battle/quick-attack.js';
 import './feats/battle/imperial-decree.js';
 import './feats/battle/auto-defense.js';
