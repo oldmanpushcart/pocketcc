@@ -12,8 +12,10 @@
  *
  * 可领判据（游戏源码 DailyGift/SupplyGiftCell/金融中心红点同构，纯本地钟算、无到点推送）：
  *   UserData.timeReward={times,rewardTime}；online_reward[times+1].time - (ServerTime - rewardTime) < 0 即可领；
- *   查不到 times+1 行 = 当日封顶。真机实证（探针 2026-10-07）：表共 36 行，前段间隔逐档拉长
- *   （…55/70/85/100/120min），第 19 行起回到 10/15/30/45/60/120min 循环——最长睡 2h 属正常，
+ *   查不到 times+1 行 = 当日封顶。注意第 1 行 time=0（日切后首档立即可领，游戏 setTimeRewardState 同口径）：
+ *   「行存在但 time=0」是 ready 不是 capped——旧实现把两者混判，导致 0 点后首见 times=0 即误判封顶睡整天
+ *   （实证 dashcam-log 20261112~14 连续三天「capped at #0」）。真机实证（探针 2026-10-07）：表共 36 行，
+ *   前段间隔逐档拉长（…55/70/85/100/120min），第 19 行起回到 10/15/30/45/60/120min 循环——最长睡 2h 属正常，
  *   领取后的静默期靠 ETA 日志自证，不靠频繁心跳。
  *
  * 直发不回写 → 本地回执镜像：脚本发 825 不经游戏回调，UserData.timeReward 不会更新（游戏只在自己 UI
@@ -29,18 +31,23 @@
  *     一次性 24h 长睡会整天跳过；注：36 档累计间隔≈>24h，正常跑不到封顶，此分支平时无感。
  *   - 数据未就绪（timeReward null / 表未加载）：IDLE 档巡检；
  *   - 连续被拒 3 次：退 IDLE×2。
+ *   - 唤醒补充：订阅 push LOGIN（cmd=1，UserData 全量重同步）——日切重置态 {times:0} 经它回写，
+ *     到即 kick 重判（实证 dashcam 20261112T235237：0 点重置可迟到 50min，纯本地钟会干等）。
  *
  * 合规：全程只读游戏数据（经 game-api ACL）+ 直发 825，不调 updateTimeReward 回写本地态、不 OpenUI。
- *   日常任务形态：面板只出启用开关，无字段无配置（fields=[]，toModuleCfg 返回空）。
+ *   日常任务形态：面板出启用开关 + 一行只读当日进度（inlineStatus）。
+ *   当日次数口径（定稿）：额度类读服务器权威——分子=effectiveState().times（含手动领取）。
+ *   无分母：表 36 行累计间隔>24h，行数不是真实每日上限（用户否决 36 口径），一律显示「今日 N 次」。
  *   不行军不参战，offInCombat:false。生命周期由 reactor 托管，pause 后 alive()=false 自然停摆。
  */
-import { CODE_NOT_SENT, rejectText } from '../../../core/util.js';
+import { CODE_NOT_SENT, rejectText, safeParse } from '../../../core/util.js';
 import { createLog } from '../../../core/log.js';
 import { l10n, gameData } from '../../../core/game-api.js';
 import { reactor } from '../../../core/reactor.js';
 import { createCycle } from '../../../core/cycle.js';
+import { dailyText } from '../../../core/daily-stats.js';
 
-import { CMD_GET_TIME_REWARD } from './constants.js';
+import { CMD_GET_TIME_REWARD, PUSH_LOGIN } from './constants.js';
 
 /** @type {ReturnType<createLog>} 模块日志器（tag=DAILY-SUPPLY） */
 const log = createLog('DAILY-SUPPLY');
@@ -98,14 +105,17 @@ function effectiveState() {
 
 /**
  * 三态判定：ready 可领 / wait 未到点（waitMs 相对毫秒）/ capped 当日封顶 / idle 数据未就绪。
+ * capped 只认「行缺失」；行存在而 time=0 是首档立即可领（游戏 setTimeRewardState 同口径），
+ * 不得混判封顶（0 点停摆根因，见文件头）；表未加载归 idle 巡检，同样不得混判封顶。
  * @returns {{state:string, waitMs?:number, times?:number}}
  */
 function readyInfo() {
   var t = effectiveState();
   if (!t) return { state: 'idle' };
+  if (!l10n.tableReady()) return { state: 'idle' };
   var row = l10n.tableRow(TABLE_ONLINE_REWARD, t.times + 1);
-  var intervalSec = row ? Number(row.time) || 0 : 0;
-  if (!(intervalSec > 0)) return { state: 'capped', times: t.times };
+  if (!row) return { state: 'capped', times: t.times };
+  var intervalSec = Number(row.time) || 0;
   var leftSec = intervalSec - (gameData.serverTime() - t.rewardTime);
   if (leftSec <= 0) return { state: 'ready', times: t.times };
   return { state: 'wait', waitMs: leftSec * 1000, times: t.times };
@@ -202,6 +212,19 @@ async function cycleRun() {
 const cycle = createCycle({ log: log, alive: aliveFn, run: cycleRun, fallback: IDLE_TICK_MS });
 
 /**
+ * push LOGIN（UserData 全量重同步）：只认带 timeReward 的载荷——日切重置态 {times:0,rewardTime=日界}
+ * 经它回写（可能迟到几十分钟），游戏侧已自行更新 UserData，这里只 kick 重判不读值。
+ * @param {object} ev bus 事件（data 为 JSON 串或已解析对象）
+ */
+function onLoginPush(ev) {
+  if (!aliveFn()) return;
+  var d = safeParse(ev && ev.data) || {};
+  if (d.timeReward == null) return;
+  log.debug('push LOGIN carries timeReward, kick re-eval.');
+  cycle.kick();
+}
+
+/**
  * 安装：取网络底座。缺失即失败（reactor 不会激活）。
  * @param {object} ctx reactor 上下文
  * @returns {boolean}
@@ -219,20 +242,22 @@ function install(ctx) {
 }
 
 /**
- * 运行：复位在飞态 → 立即判一拍。无 push 订阅（到点判据是本地钟算，游戏红点同款）。
+ * 运行：复位在飞态 → 订阅日切回写推送 → 立即判一拍。到点判据仍是本地钟算（游戏红点同款），
+ * LOGIN 推送只做日切重置的唤醒补充，不承担到点通知。
  * @param {object} ctx reactor 上下文
  */
 function run(ctx) {
   ctxRef = ctx;
   rejectStreak = 0;
   mirror = null;
+  ctx.on.push(PUSH_LOGIN, onLoginPush);
   log.info('started.');
   cycle.kick();
 }
 
 /**
  * 向 reactor 注册本功能说明书：地图限定 base/world（Home/NWorldMap）；不行军不参战故不设战斗门控；
- * 日常任务形态——面板只出启用开关，无字段无配置（封顶/未到点均为内置钟算口径）。
+ * 日常任务形态——面板出启用开关 + 一行只读当日进度（组卡片 inlineStatus 取第一个 type:'text' 的 get()）。
  */
 reactor.register({
   id: 'dailySupply',
@@ -243,10 +268,30 @@ reactor.register({
   kinds: ['homeland'],
   offInCombat: false,
   defaults: { enabled: false },
-  fields: [],
+  fields: [
+    {
+      key: '_supplyInfo',
+      type: 'text',
+      label: '今日',
+      get: function () {
+        var t = effectiveState();
+        if (!t) return '—';
+        // 无分母：表行数不是日限（36 行累计间隔>24h，见文件头），只报权威次数
+        return dailyText(t.times);
+      },
+    },
+  ],
   toModuleCfg: function () {
     return {};
   },
   install: install,
   run: run,
 });
+
+// 单测导出（仅供 tests/feats/daily-midnight.test.js 断言判据，运行期无消费方）
+export { readyInfo, claimOnce, install as installForTest };
+/** 单测专用：复位在飞态（等价 run() 的复位段，不 kick 循环） */
+export function resetForTest() {
+  rejectStreak = 0;
+  mirror = null;
+}

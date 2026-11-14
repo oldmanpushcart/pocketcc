@@ -6,3 +6,8 @@
 
 /** @type {number} RequestId.GetTimeReward，领取每日补给免费计时奖励（V1 send） */
 export const CMD_GET_TIME_REWARD = 825;
+/**
+ * @type {number} push LOGIN：UserData 全量重同步，含 timeReward 日切重置态 {times:0,rewardTime=日界}。
+ * 0 点重置不保证即时推送（实证 dashcam 20261112T235237：11-13 00:50 才到，迟到 50min），到即 kick 重判。
+ */
+export const PUSH_LOGIN = 1;

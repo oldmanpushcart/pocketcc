@@ -496,20 +496,6 @@ export default [
     ],
   },
   {
-    cmd: 10053,
-    dir: 'S2C',
-    note: 'push 增量下发 danceRec/myReceiveDance（今日领取权威态）',
-    src: '',
-    fields: '',
-    usages: [
-      {
-        name: 'PUSH_USER_DATA_COMMON',
-        feat: 'mask-dance',
-        file: 'feats/activity/mask-dance/constants.js',
-      },
-    ],
-  },
-  {
     cmd: 10904,
     dir: 'S2C',
     note: 'push 整条活动（PUSH_ONE_ACTIVITY，载荷含 type/extra/id）',

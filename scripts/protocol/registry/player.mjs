@@ -3,6 +3,25 @@
 // 条目键 = 协议号；名字是 feat 局部别名（同名异号是局部命名，非漂移）。只链不搬：src 指 references/ 出处。
 export default [
   {
+    cmd: 1,
+    dir: 'S2C',
+    note: 'push LOGIN：UserData 全量重同步（含 timeReward/choose_hero_daily_reward 日切重置态，0 点后可迟到几十分钟）',
+    src: '',
+    fields: '',
+    usages: [
+      {
+        name: 'PUSH_LOGIN',
+        feat: 'daily-deal',
+        file: 'feats/player/daily-deal/constants.js',
+      },
+      {
+        name: 'PUSH_LOGIN',
+        feat: 'daily-supply',
+        file: 'feats/player/daily-supply/constants.js',
+      },
+    ],
+  },
+  {
     cmd: 102,
     dir: 'C2S',
     note: '收取主城建筑产出（V1 send，{id:建筑实例id}）',

@@ -6,3 +6,13 @@
 
 /** @type {number} NRequestIdV2.HERO_DAILY_EXCHANGE_GET_FREE_REWARD，领取每日特惠免费奖励（sendPBV2，空载荷） */
 export const CMD_GET_FREE_REWARD = 9884;
+/**
+ * @type {number} PUSH_USER_DATA_COMMON：领取后回写 choose_hero_daily_reward="1"（今日已领的新鲜度凭证）。
+ * 服务器 0 点不推重置 0（全量录制实证），故日界后字段=1 可能是昨日 stale，不得当闸门。
+ */
+export const PUSH_USER_DATA_COMMON = 10053;
+/**
+ * @type {number} push LOGIN：UserData 全量重同步，含 choose_hero_daily_reward 日切重置态（实证可迟到 50min，
+ * dashcam 20261112T235237：11-13 00:50 才推 0），到即 kick 重判。
+ */
+export const PUSH_LOGIN = 1;

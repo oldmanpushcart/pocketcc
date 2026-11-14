@@ -320,6 +320,25 @@ export default [
     ],
   },
   {
+    cmd: 10053,
+    dir: 'S2C',
+    note: 'push 增量下发 danceRec/myReceiveDance、choose_hero_daily_reward 等（今日领取权威态）',
+    src: '',
+    fields: '',
+    usages: [
+      {
+        name: 'PUSH_USER_DATA_COMMON',
+        feat: 'daily-deal',
+        file: 'feats/player/daily-deal/constants.js',
+      },
+      {
+        name: 'PUSH_USER_DATA_COMMON',
+        feat: 'mask-dance',
+        file: 'feats/activity/mask-dance/constants.js',
+      },
+    ],
+  },
+  {
     cmd: 10264,
     dir: 'S2C',
     note: 'push 单封邮件（「遗迹区域刷新」开田信号，载荷是邮件本体）',
