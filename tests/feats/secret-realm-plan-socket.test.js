@@ -97,6 +97,41 @@ test('validatePlan(default) 无违例——契约清单与阶段表一致', () =
   assert.deepEqual(errs, [], 'default 方案契约违例：\n  ' + errs.join('\n  '));
 });
 
+// ── 三-5：解释器效果属性形状违例必被卡住（防「属性写错档 → 引擎静默不生效」）──
+test('validatePlan 卡效果属性违例：emptyShopMark/tailShopLog/explore/emptyNote/chain', () => {
+  const diag = engineStageDiagKeys();
+  const mk = (over) => ({
+    stages: [Object.assign({ id: 'x', obj: 'shop', when: () => true }, over)],
+  });
+  assert.ok(
+    validatePlan(mk({ emptyShopMark: true }), diag).length > 0,
+    '非 terminal 店档不得 emptyShopMark',
+  );
+  assert.ok(
+    validatePlan(mk({ terminal: true, obj: 'resource', emptyShopMark: true }), diag).length > 0,
+    '非店档不得 emptyShopMark',
+  );
+  assert.ok(
+    validatePlan(mk({ terminal: true, tailShopLog: true }), diag).length > 0,
+    'terminal 店档不得 tailShopLog',
+  );
+  assert.ok(
+    validatePlan(mk({ obj: 'resource', explore: true }), diag).length > 0,
+    '非 explore 档不得 explore 属性',
+  );
+  assert.ok(
+    validatePlan(mk({ emptyNote: { key: '', msg: 'x' } }), diag).length > 0,
+    'emptyNote 空 key 必卡',
+  );
+  assert.ok(
+    validatePlan(mk({ emptyNote: { key: 'k' } }), diag).length > 0,
+    'emptyNote 缺 msg 必卡',
+  );
+  assert.ok(validatePlan(mk({ chain: 'yes' }), diag).length > 0, 'chain 非布尔必卡');
+  // 合法形状不报：非 terminal 店档带 tailShopLog + chain
+  assert.deepEqual(validatePlan(mk({ chain: true, tailShopLog: true }), diag), []);
+});
+
 // ── 防漂移：plans.js 声明的清单 = pilot.js 引擎实际 ────────────────────────
 test('OBJECTIVES 清单 = 引擎 #objective switch 实际 case 名（双向）', () => {
   const have = engineObjectives();

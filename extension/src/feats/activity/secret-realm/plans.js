@@ -15,6 +15,11 @@
  *   2. `OBJECTIVES`——引擎 #objective switch 已实现的目标原语名清单。方案 stage.obj 写错/未实现 → 启动期抛。
  *   3. `params`——**方案私有阈值留在 stage.params**（例：某方案的“前 30s 回店”阈值写 `params:{leadMs:30000}`），
  *      不往 constants.tuning 里塞方案专用字段；constants.tuning 只存跨方案共享参数。
+ *   4. **解释器效果属性**（三-5 下沉）——链标记/空候选处置/探索副作用等原 pilot.#runStages 的
+ *      id/obj 硬编码特判，一律声明为 stage 属性、由解释器通用消费（引擎不得再按阶段 id 特判）：
+ *      `chain`（日常链标记）/`emptyShopMark`（terminal 店档空候选记到店+scan 短睡）/
+ *      `emptyNote`（空候选边沿日志 {key,msg}）/`explore`（探索发车副作用）/`tailShopLog`（链尾去店 info）。
+ *      validatePlan 同步卡属性形状与适用档位。
  *
  * 语义：`stages` 顺序即优先级。`matchStages` 从头试到第一个 `when(ctx)` 为真的阶段；
  *   - `terminal:true` 的阶段命中即**独占本拍**（哪怕选不到目标也不回落后续档）——对应现状
@@ -90,6 +95,11 @@ export const OBJECTIVES = Object.freeze([
  * `params` 是**方案语义**的参数（用名字引用 tuning，别把魔法数写死进本文件，保持 config 解耦）。
  * @typedef {{
  *   id: string, obj: string, terminal?: boolean, stopNext?: boolean,
+ *   chain?: boolean,          // 日常链成员：首个命中档落 stage='cruise'/'beast-stage'（relax 时）+ why
+ *   emptyShopMark?: boolean,  // terminal 店档专属：空候选也记 #shopLastAt=now 防重评，睡眠取 driveScanMs
+ *   emptyNote?: {key:string,msg:string}, // 空候选时落一条 #note 边沿 info（如开台读秒无平台）
+ *   explore?: boolean,        // 探索档发车副作用：起/重置闲逛计时 + 方向轮转 + stage/branch + idle_explore 边沿日志
+ *   tailShopLog?: boolean,    // 链尾店档命中且有去店理由时落 chain-tail go-shop info
  *   params?: object,
  *   when: (c:Ctx)=>boolean
  * }} Stage */
@@ -125,7 +135,12 @@ export const PLANS = {
         id: 'bossPlaneLead',
         obj: 'plane',
         params: { source: 'bossWindow' },
-        // 非 terminal：找不到平台且视口不忙时落回 #stageChain（L2367-2383）
+        // 非 terminal：找不到平台且视口不忙时落回 #stageChain（L2367-2383）；
+        //   空候选记一笔边沿 info（串行模型下 901 已 await 完，选不到就是真没有，不等在途）
+        emptyNote: {
+          key: 'no-plane',
+          msg: 'pilot: no usable platform found within BOSS open-countdown window (viewport lacks 176/174 or all occupied), give up boarding this tick. reason=no_plane',
+        },
         when: (c) =>
           c.bossMode === 'lead' && c.teamType > 0 && c.driveBoss && c.snap.curPt !== PAB_BOSS_PLANE, // L2367
       },
@@ -135,6 +150,7 @@ export const PLANS = {
         id: 'shopExit',
         obj: 'shop',
         terminal: true,
+        emptyShopMark: true, // 选不到店也不回落采井打野，只记防重评（L2043-2051）
         params: { exit: true }, // 窄筛 pickShop（preferNoSausage=false，收场只拿货）
         when: (c) => c.shopWhy === 'exit', // L2043
       },
@@ -142,6 +158,7 @@ export const PLANS = {
         id: 'shopStage',
         obj: 'shop',
         terminal: true,
+        emptyShopMark: true, // 同 shopExit：空候选记防重评 + scan 短睡
         params: { preferNoSausage: true }, // 窄筛 pickShop（preferNoSausage=true）
         when: (c) => c.shopWhy === 'stage', // L2043
       },
@@ -155,49 +172,62 @@ export const PLANS = {
       },
 
       // ── 日常链（L2070-2119，非 terminal：逐档试，选不到即顺延下一档）──
-      { id: 'follow', obj: 'follow', when: (c) => c.marchPolicy === 2 }, // L2071 acts.unshift('follow')
+      { id: 'follow', obj: 'follow', chain: true, when: (c) => c.marchPolicy === 2 }, // L2071 acts.unshift('follow')
 
       // 百兽期（relax）分支（L2072-2074）
       {
         id: 'beastRelax',
         obj: 'beast',
+        chain: true,
         when: (c) => c.relax && c.beastPolicy < 2 && !c.beastOff && !c.beastLock, // L2073 + 禁走窗 L2092 + 总闸短路
       },
-      { id: 'cruiseRelax', obj: 'resource', params: { yield: 'cruise' }, when: (c) => c.relax }, // L2074
+      {
+        id: 'cruiseRelax',
+        obj: 'resource',
+        chain: true,
+        params: { yield: 'cruise' },
+        when: (c) => c.relax,
+      }, // L2074
 
       // 日常（非 relax）分支（L2075-2080）
       {
         id: 'beastEarly',
         obj: 'beast',
+        chain: true,
         when: (c) => !c.relax && c.beastPolicy === 1 && !c.beastOff && !c.beastLock, // L2076 + 总闸短路
       },
       {
         id: 'cruiseStrict',
         obj: 'resource',
+        chain: true,
         params: { yield: 'strict' }, // #strictResMinNum() + driveStrictResMaxDist(100) L2093-2094
         when: (c) => !c.relax, // L2077
       },
       {
         id: 'beastLate',
         obj: 'beast',
+        chain: true,
         when: (c) => !c.relax && c.beastPolicy === 0 && !c.beastOff && !c.beastLock, // L2078 + 总闸短路
       },
       {
         id: 'cruiseLoose',
         obj: 'resource',
+        chain: true,
         params: { yield: 'loose' }, // driveCruiseMinYield(≥0，不允许快照明确 0 件) L2097-2104
         when: (c) => !c.relax, // L2079
       },
       {
         id: 'shopTail',
         obj: 'shop',
+        chain: true,
+        tailShopLog: true, // 命中且有去店理由时落 chain-tail go-shop info（不抢采井/打野）
         params: { preferByWhy: true }, // 链尾兜底：有 errand/sausage/gap 理由时按「香肠没买过」优先 L2105-2108
         when: (c) => !c.relax, // L2080
       },
 
       // ── 探索档（#tick L2391，日常链全空后）── ctx.shouldExplore 是纯读；「未起表先起表」
       //   的副作用在引擎梯尾补（pilot.js #runStages 尾部），时序对齐现状⑧。
-      { id: 'explore', obj: 'explore', when: (c) => c.shouldExplore }, // L2391
+      { id: 'explore', obj: 'explore', chain: true, explore: true, when: (c) => c.shouldExplore }, // L2391
     ],
   },
 };
@@ -248,6 +278,8 @@ export function planIds() {
  *      probe 对拍丢分支。例外：`obj==='wait'` 走 cand.wait 专用分支，不经 STAGE_DIAG。
  *   3. `id`/`obj` 存在且类型正确；`id` 全局唯一。
  *   4. `when` 为函数（方案层当前保留箭头函数判据；未来如降级为 DSL 会新加一项）。
+ *   5. 解释器效果属性形状与适用档（三-5）：`emptyShopMark` 只许 terminal 店档；`tailShopLog`
+ *      只许非 terminal 店档；`explore` 只许 obj=explore；`emptyNote` 必带字符串 key/msg；`chain` 必为布尔。
  *
  * @param {{stages?:Stage[]}} plan 待验方案（PLANS[id]）
  * @param {string[]} stageDiagKeys 引擎 STAGE_DIAG 当前登记的阶段 id 清单（pilot.js 传 Object.keys(STAGE_DIAG)）
@@ -279,6 +311,21 @@ export function validatePlan(plan, stageDiagKeys) {
     }
     if (s.terminal && s.obj !== 'wait' && s.id && !diag.includes(s.id)) {
       errs.push(tag + ' terminal 档未登记到 STAGE_DIAG（引擎无法为它提供诊断档位名）');
+    }
+    // 解释器效果属性（三-5）：形状与适用档校验，防「属性写错档 → 引擎静默不生效」
+    if (s.chain !== undefined && typeof s.chain !== 'boolean') errs.push(tag + ' chain 非布尔');
+    if (s.emptyShopMark && !(s.terminal && s.obj === 'shop')) {
+      errs.push(tag + ' emptyShopMark 只适用于 terminal 店档');
+    }
+    if (s.tailShopLog && !(s.obj === 'shop' && !s.terminal)) {
+      errs.push(tag + ' tailShopLog 只适用于非 terminal 店档');
+    }
+    if (s.explore && s.obj !== 'explore') errs.push(tag + ' explore 属性只适用于 obj=explore');
+    if (s.emptyNote) {
+      const en = s.emptyNote;
+      if (!en || typeof en.key !== 'string' || !en.key || typeof en.msg !== 'string' || !en.msg) {
+        errs.push(tag + ' emptyNote 需 {key,msg} 非空字符串');
+      }
     }
   }
   return errs;

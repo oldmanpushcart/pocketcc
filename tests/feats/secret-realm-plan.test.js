@@ -149,3 +149,58 @@ test('shouldExplore 日常链尾追加 explore（非 terminal，排最后）', (
   const got = ids(c);
   assert.equal(got[got.length - 1], 'explore');
 });
+
+// ── 三-5：解释器效果属性下沉（chain/emptyShopMark/emptyNote/explore/tailShopLog）──
+test('chain 声明与旧 isChain 口径逐档等价：日常链+explore 在列，BOSS/独占/让路不在', () => {
+  const chainIds = plan.stages.filter((s) => s.chain).map((s) => s.id);
+  assert.deepStrictEqual(chainIds, [
+    'follow',
+    'beastRelax',
+    'cruiseRelax',
+    'beastEarly',
+    'cruiseStrict',
+    'beastLate',
+    'cruiseLoose',
+    'shopTail',
+    'explore',
+  ]);
+  // 旧口径里 !dg 前置：登记了 STAGE_DIAG 的档（bossFight/bossPlaneOpen/bossPlaneLead/shopExit/shopStage）绝不标 chain
+  for (const id of [
+    'bossFight',
+    'bossPlaneOpen',
+    'bossPlaneLead',
+    'shopExit',
+    'shopStage',
+    'bossWait',
+  ]) {
+    const s = plan.stages.find((x) => x.id === id);
+    assert.ok(s, id + ' 档丢失');
+    assert.ok(!s.chain, id + ' 不得标 chain（旧 isChain 口径 !dg 前置）');
+  }
+});
+
+test('空候选处置属性：terminal 店档 emptyShopMark；开台读秒档 emptyNote 文案逐字保留', () => {
+  for (const id of ['shopExit', 'shopStage']) {
+    const s = plan.stages.find((x) => x.id === id);
+    assert.equal(s.emptyShopMark, true);
+  }
+  const lead = plan.stages.find((x) => x.id === 'bossPlaneLead');
+  assert.equal(lead.emptyNote.key, 'no-plane');
+  assert.equal(
+    lead.emptyNote.msg,
+    'pilot: no usable platform found within BOSS open-countdown window (viewport lacks 176/174 or all occupied), give up boarding this tick. reason=no_plane',
+  );
+  // 其余档不得携带空候选处置属性（防静默扩散）
+  for (const s of plan.stages) {
+    if (s.id === 'shopExit' || s.id === 'shopStage') continue;
+    assert.ok(!s.emptyShopMark, s.id + ' 不应有 emptyShopMark');
+    if (s.id !== 'bossPlaneLead') assert.ok(!s.emptyNote, s.id + ' 不应有 emptyNote');
+  }
+});
+
+test('探索/链尾店档属性：explore 档带 explore；shopTail 带 tailShopLog', () => {
+  const ex = plan.stages.find((x) => x.id === 'explore');
+  assert.equal(ex.explore, true);
+  const tail = plan.stages.find((x) => x.id === 'shopTail');
+  assert.equal(tail.tailShopLog, true);
+});
