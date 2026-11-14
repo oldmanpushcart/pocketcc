@@ -438,6 +438,12 @@ function buildEnv() {
       const e = engines.drive;
       if (e && typeof e.markShopLedger === 'function') e.markShopLedger(key, patch);
     },
+    // 商店引擎→方向盘的「刷店止损，提前离店」口（四-2）：连续刷不中香肠货位达阈 → 本店停刷，
+    //   若正驻留该店则截短驻留当拍离店（防重派靠 pilot 离站 #consume）。读不到（pilot 未起）静默降级。
+    shopRefreshGiveUp: function (key) {
+      const e = engines.drive;
+      if (e && typeof e.shopRefreshGiveUp === 'function') e.shopRefreshGiveUp(key);
+    },
     // 拾取引擎→方向盘的「此点对我已采完/无需采」口：pickup 不引 pilot（§14.1 零引用红线），经 env 惰性回灌。
     //   单人开车下一个资源井常剩下自己不要的货，服务器看非空→双路拿空判据失效→只能由 pickup 主动报；
     //   pilot 收到即让当前停靠点即时离站（防重派靠离站时的 #consume）。读不到（pilot 未起）静默降级。

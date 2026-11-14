@@ -69,6 +69,20 @@ function isOk(r) {
 }
 
 /**
+ * 刷店命中率止损一步（四-2，纯函数离线可测）：命中（目标品在架）清零重计；
+ *   未命中累加，达 max 触发止损（max<=0 = 关止损，只计数不触发）。
+ * @param {number} prev 当前连续未命中次数
+ * @param {boolean} onShelf 本次刷新后目标品是否在架
+ * @param {number} max 止损阈值（tuning.driveSausageRefreshMissMax）
+ * @returns {{miss:number,giveUp:boolean}} 新计数与是否首次达阈
+ */
+export function refreshMissStep(prev, onShelf, max) {
+  if (onShelf) return { miss: 0, giveUp: false };
+  const miss = (Number(prev) || 0) + 1;
+  return { miss: miss, giveUp: max > 0 && miss >= max };
+}
+
+/**
  * 商店补货引擎：单条 createCycle 电平循环（到店 INFO 一次 → 逐货位买/刷 → 目标齐即长睡）。
  */
 export class ShopEngine {
@@ -93,6 +107,14 @@ export class ShopEngine {
    *   会话级累计会让同一激活连打多场时第 2 场起预算必爆（症状同「只买到 7/10」）。
    */
   #refreshTries = {};
+  /**
+   * @type {Object<string,number>} 各店**连续**刷出目标品未命中次数（四-2 止损）：
+   *   8543 应答后货单仍无香肠货位 +1，刷出即清零；达 driveSausageRefreshMissMax 触发 #refreshGaveUp。
+   *   只统计香肠预算刷（#refreshFor 路径），通用清单刷不碰本账；换场 #syncMatch 归零。
+   */
+  #refreshMiss = {};
+  /** @type {Object<string,1>} 已触发刷店止损的店（本场不再为香肠刷 8543，已通知 pilot 离店）；换场归零 */
+  #refreshGaveUp = {};
   /** @type {number} 上一笔 8543 发起时刻（毫秒）：#tick 用它夹出 shopRefreshGapMs 最小间隔 */
   #lastRefreshAt = 0;
   /** @type {string} #items 装载时所在的商店点坐标键（''=未装；换点或重新到店都要重 INFO 一次） */
@@ -193,6 +215,8 @@ export class ShopEngine {
     const first = !this.#matchKey;
     this.#matchKey = key;
     this.#refreshTries = {};
+    this.#refreshMiss = {};
+    this.#refreshGaveUp = {};
     this.#bought = {};
     this.#done = {};
     this.#retriedBuy = {};
@@ -731,6 +755,8 @@ export class ShopEngine {
    */
   #refreshFor(cur, what) {
     const env = this.#env;
+    // 四-2 止损：本店已连续刷不中目标品 → 本场不再烧币（离店信号已经 env.shopRefreshGiveUp 发给 pilot）
+    if (this.#refreshGaveUp[cur.key]) return false;
     const max = Number(tuning.driveSausageRefreshMax) || 0;
     if (!(max > 0)) return false;
     const tries = Number(this.#refreshTries[cur.key]) || 0;
@@ -751,7 +777,7 @@ export class ShopEngine {
     }
     this.#refreshTries[cur.key] = tries + 1;
     env.log.info('shop: %s short at %s, refreshing (%d/%d).', what, cur.key, tries + 1, max);
-    return this.#sendRefresh(cur);
+    return this.#sendRefresh(cur, true);
   }
 
   /**
@@ -809,9 +835,11 @@ export class ShopEngine {
   /**
    * 发一次 8543 刷新（扣 1 刷新币）。成功用应答 items 刷新 getTime（非 type3 归零）→ 下一拍能继续买。
    * @param {{x:number,y:number,key:string}} cur 当前商店点
+   * @param {boolean} [forSausage] 是否香肠预算刷（#refreshFor 路径）：是则更新连续未命中账，
+   *   达 driveSausageRefreshMissMax 触发止损（本店停刷 + 通知 pilot 提前离店，四-2）
    * @returns {boolean}
    */
-  #sendRefresh(cur) {
+  #sendRefresh(cur, forSausage) {
     const env = this.#env;
     if (env.secret.isSecretSending(CMD_SHOP_REFRESH)) return false;
     // 节流时间戳在**发起时**就推进（不能只在成功路径推进，否则旧值不挪会把调度压到下限）
@@ -824,6 +852,34 @@ export class ShopEngine {
         this.#items = this.#parseItems(r);
         this.#markLedger(cur);
         env.log.info('shop: refreshed %s.', cur.key);
+        // 四-2 命中率止损：只对香肠预算刷记账；刷出香肠货位=命中清零，连续未命中达阈 → 本店停刷 + 离店信号
+        if (forSausage) {
+          const sSpecs = this.#specsOf(ITEM_SAUSAGE) || [];
+          let onShelf = false;
+          for (let i = 0; i < sSpecs.length; i++) {
+            if (sSpecs[i] in this.#items) {
+              onShelf = true;
+              break;
+            }
+          }
+          const step = refreshMissStep(
+            this.#refreshMiss[cur.key],
+            onShelf,
+            Number(tuning.driveSausageRefreshMissMax) || 0,
+          );
+          this.#refreshMiss[cur.key] = step.miss;
+          if (step.giveUp && !this.#refreshGaveUp[cur.key]) {
+            this.#refreshGaveUp[cur.key] = 1;
+            env.log.info(
+              'shop: sausage still off-shelf at %s after %d consecutive refreshes, stop refreshing and leave. reason=refresh_miss_stop',
+              cur.key,
+              step.miss,
+            );
+            // 账本的 sausageShelf=0 已由 #markLedger 按应答 items 回写（喂 pilot #shopAllTried 白跑惩罚）；
+            //   这里只发「提前离店」信号，防重派靠 pilot 离站时的 #consume（10min）。
+            if (typeof env.shopRefreshGiveUp === 'function') env.shopRefreshGiveUp(cur.key);
+          }
+        }
         this.#kickSoon();
       } else {
         env.log.debug('shop: refresh not ok (%s).', (r && r.reason) || 'code ' + (r && r.code));
