@@ -149,7 +149,7 @@ export const MENU = [
           { id: 'cq26Excav', kind: 'feature', label: '战区宝藏', inlineStatus: true },
           { id: 'cq26WlChest', kind: 'feature', label: '遗失之箱', inlineStatus: true },
           { id: 'cq26EnergyConvoy', kind: 'feature', label: '能量补充车队', inlineStatus: true },
-          { id: 'cq26IceShake', kind: 'feature', label: '开荒融冰', inlineStatus: true },
+          { id: 'cq26IceShake', kind: 'feature', label: '急速解冻', inlineStatus: true },
         ],
       },
       { id: 'cq26Train', kind: 'feature', label: '雪原列车', showFields: true },

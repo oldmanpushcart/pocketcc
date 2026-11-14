@@ -84,11 +84,6 @@ export default [
         file: 'feats/cq26/feast.js',
       },
       {
-        name: 'CMD_WORLD_INFO',
-        feat: 'ice-shake',
-        file: 'feats/cq26/ice-shake.js',
-      },
-      {
         name: 'CMD_GET_WORLD_INFO',
         feat: 'map',
         file: 'core/map.js',
@@ -253,11 +248,6 @@ export default [
         name: 'PUSH_TILE',
         feat: 'feast',
         file: 'feats/cq26/feast.js',
-      },
-      {
-        name: 'PUSH_TILE',
-        feat: 'ice-shake',
-        file: 'feats/cq26/ice-shake.js',
       },
       {
         name: 'PUSH_TILEINFO',

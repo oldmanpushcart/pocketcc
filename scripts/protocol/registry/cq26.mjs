@@ -3,20 +3,6 @@
 // 条目键 = 协议号；名字是 feat 局部别名（同名异号是局部命名，非漂移）。只链不搬：src 指 references/ 出处。
 export default [
   {
-    cmd: 2101,
-    dir: 'C2S',
-    note: '补读巨兽锚点 pos（BWL_INFO，只读探针窗心；融冰 2103 前置）',
-    src: '',
-    fields: 'req {} → resp {pos:{x,y,k}}（x/y>0 才采信）',
-    usages: [
-      {
-        name: 'CMD_BWL_INFO',
-        feat: 'ice-shake',
-        file: 'feats/cq26/ice-shake.js',
-      },
-    ],
-  },
-  {
     cmd: 2103,
     dir: 'C2S',
     note: '巨熊盛宴（BWL）融冰（specIndex===0 分叉至此，resp 同形）',
@@ -568,11 +554,6 @@ export default [
         name: 'PUSH_PHASE',
         feat: 'feast',
         file: 'feats/cq26/feast.js',
-      },
-      {
-        name: 'PUSH_PHASE',
-        feat: 'ice-shake',
-        file: 'feats/cq26/ice-shake.js',
       },
     ],
   },

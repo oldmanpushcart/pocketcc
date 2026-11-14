@@ -1,7 +1,6 @@
-// cq26-ice-shake（CQ26 开荒融冰：融冰腿 2103 + 摇一摇腿 2129）纯函数单测：
+// cq26-ice-shake（CQ26 急速解冻自动选最高档）纯函数单测：
 //   miniGameId 句柄读取（两种 Int64 形态 + 直接给奖那一支 + 被拒应答）、提交计划（过期闸与选档）、
-//   重投判定（在途闸挡下的不重投）、奖励面板实参归一、档位展示名；
-//   融冰腿（从 cq26-feast 迁来）：冰缓存重建、逐等级消耗表求值、候选分线/预算/冷却过滤。
+//   重投判定（在途闸挡下的不重投）、奖励面板实参归一、档位展示名。
 // 全部断言不发包、不摸游戏符号——feat 模块 import 链会触到浏览器全局，
 // 故先最小桩化 window/document/chrome，再动态 import 取导出纯函数（同 cq26-excav 口径）。
 import { test } from 'node:test';
@@ -44,13 +43,6 @@ const {
   TIER_HIGH,
   SUBMIT_EXPIRE_MS,
   MAX_TRIES,
-  // 融冰腿（2103）纯函数与常量：从 cq26-feast 迁来，与摇一摇腿共用同一份 feat 导出面
-  ingestIceList,
-  iceCost,
-  pickIce,
-  PHASE_GATHER,
-  ICE_TTL_MS,
-  MAX_REJECT,
 } = mod;
 
 // 实录 fixtures：本场 rec 11981629951662 / dashcam-rec-20261112T011559…-1794417359392 里
@@ -62,22 +54,6 @@ const RECORDED = [
   { lo: 488499207, hi: 1146845513, dec: '4925663972387842055' },
   { lo: -635574271, hi: 1146845531, dec: '4925664052868147201' },
 ];
-
-// ── 融冰腿 fixtures（从 cq26-feast 迁来：冰缓存重建/消耗表/候选过滤）──────────
-const SID = 3828; // 实录老家服号（iceList 行 initSid）
-const NOW_MS = 1794234712000; // 任取基准毫秒（与服务器秒同源即可）
-
-/** 造一条 901/10018 的 iceList 行（逐键照抄实录：行内不带 k，k 在 body 顶层） */
-function iceRow(x, y, over) {
-  return Object.assign({ level: 3, v: 3397, x, y, specIndex: 0, initSid: SID }, over || {});
-}
-
-/** 把 iceList 行灌成冰缓存（k 从 body 顶层传入） */
-function iceMap(rows, k = 14002212, atMs = NOW_MS) {
-  const into = Object.create(null);
-  ingestIceList(rows, k, into, atMs);
-  return into;
-}
 
 test('裸 {_low,_high} 形态：四枚实录句柄逐枚解出十进制串（负 _low 补回 2^32）', () => {
   for (const r of RECORDED) {
@@ -200,117 +176,4 @@ test('奖励面板实参：只把非空对象包成 {serverReward}', () => {
   assert.equal(rewardPanelArgs(null), null);
   assert.equal(rewardPanelArgs(undefined), null);
   assert.equal(rewardPanelArgs('47007004'), null);
-});
-
-// ── 融冰腿（2103）：冰缓存重建 / 消耗表求值 / 候选过滤（从 cq26-feast 迁来）──────
-test('阶段常量：GATHER=1（融冰腿只在集结期发 2103，比真人保守）', () => {
-  assert.equal(PHASE_GATHER, 1);
-});
-
-test('ingestIceList：upsert + level=0 删格 + k 取 body 顶层 + 缓存存标量副本', () => {
-  const row = iceRow(46, 144);
-  const into = Object.create(null);
-  assert.equal(ingestIceList([row], 14002212, into, NOW_MS), 1);
-  assert.deepEqual(into['46_144'], {
-    x: 46,
-    y: 144,
-    k: 14002212,
-    level: 3,
-    specIndex: 0,
-    initSid: SID,
-    atMs: NOW_MS,
-  });
-  // 报文对象池化复用：原行被下一条报文刷掉后，缓存仍须是本条的值
-  row.level = 9;
-  row.specIndex = 7;
-  assert.equal(into['46_144'].level, 3);
-  assert.equal(into['46_144'].specIndex, 0);
-  // 10018 增量：level=0 = 已融 → 删格（双保险，2103 成功也会本地删）
-  assert.equal(ingestIceList([iceRow(46, 144, { level: 0 })], 14002212, into, NOW_MS + 1), 1);
-  assert.equal(into['46_144'], undefined);
-  // 删不存在的格不计变更
-  assert.equal(ingestIceList([iceRow(99, 99, { level: 0 })], 0, into, NOW_MS), 0);
-});
-
-test('iceCost：逐等级消耗表求值（level 从 1 起），缺表/越界/非数值回 null 不得按 0 白送', () => {
-  const table = [1, 2, 3];
-  assert.equal(iceCost(table, 1), 1);
-  assert.equal(iceCost(table, 3), 3);
-  assert.equal(iceCost(table, 0), null);
-  assert.equal(iceCost(table, 4), null);
-  assert.equal(iceCost(null, 1), null);
-  assert.equal(iceCost(['x'], 1), null);
-  assert.equal(iceCost([0], 1), 0, '0 消耗是合法配置（免费冰）');
-});
-
-test('pickIce：闸序 not-bwl > other-server > stale > cooling > blacklisted > no-cost-cfg > no-fire', () => {
-  const tiles = iceMap([
-    iceRow(1, 1, { level: 1 }),
-    iceRow(2, 2, { specIndex: 1 }), // NWL 冰归别处
-    iceRow(3, 3, { initSid: 4178 }), // 外服
-    iceRow(4, 4, { level: 9 }), // 消耗表越界
-  ]);
-  // 单独造陈旧格（ingest 时刻早于 TTL）
-  ingestIceList([iceRow(5, 5, { level: 1 })], 0, tiles, NOW_MS - ICE_TTL_MS - 1);
-  const picked = pickIce(tiles, {
-    costTable: [1, 2, 3],
-    fireAmount: 10,
-    originSid: SID,
-    now: NOW_MS,
-    coolUntil: { 'i:6_6': NOW_MS + 60000 },
-    rejectCount: { 'i:7_7': MAX_REJECT },
-  });
-  // 6_6/7_7 没灌地块，补上才能走到冷却/拉黑闸
-  ingestIceList([iceRow(6, 6, { level: 1 }), iceRow(7, 7, { level: 1 })], 0, tiles, NOW_MS);
-  const p2 = pickIce(tiles, {
-    costTable: [1, 2, 3],
-    fireAmount: 10,
-    originSid: SID,
-    now: NOW_MS,
-    coolUntil: { 'i:6_6': NOW_MS + 60000 },
-    rejectCount: { 'i:7_7': MAX_REJECT },
-  });
-  assert.deepEqual(
-    p2.ready.map((c) => c.key),
-    ['1_1'],
-  );
-  const reasons = Object.fromEntries(p2.blocked.map((b) => [b.key, b.reason]));
-  assert.equal(reasons['2_2'], 'not-bwl');
-  assert.equal(reasons['3_3'], 'other-server');
-  assert.equal(reasons['4_4'], 'no-cost-cfg');
-  assert.equal(reasons['5_5'], 'stale');
-  assert.equal(reasons['6_6'], 'cooling');
-  assert.equal(reasons['7_7'], 'blacklisted');
-  assert.equal(picked.ready.length, 1, '冷却/拉黑键对应的格不在场时不影响其它候选');
-});
-
-test('pickIce：level 升序（先便宜）+ 火种预算边界（>= cost 才发）', () => {
-  const tiles = iceMap([
-    iceRow(46, 144, { level: 3 }),
-    iceRow(47, 145, { level: 1 }),
-    iceRow(48, 146, { level: 2 }),
-  ]);
-  const g = { costTable: [1, 2, 3], originSid: SID, now: NOW_MS };
-  const rich = pickIce(tiles, { ...g, fireAmount: 6 });
-  assert.deepEqual(
-    rich.ready.map((c) => c.level),
-    [1, 2, 3],
-  );
-  assert.deepEqual(
-    rich.ready.map((c) => c.cost),
-    [1, 2, 3],
-  );
-  const poor = pickIce(tiles, { ...g, fireAmount: 2 });
-  assert.deepEqual(
-    poor.ready.map((c) => c.level),
-    [1, 2],
-    'lv3 要 3 个火种，只有 2 个 → no-fire',
-  );
-  assert.deepEqual(poor.blocked, [{ key: '46_144', reason: 'no-fire' }]);
-  const exact = pickIce(tiles, { ...g, fireAmount: 1 });
-  assert.deepEqual(
-    exact.ready.map((c) => c.level),
-    [1],
-    '预算恰等于消耗仍发（闭区间）',
-  );
 });
