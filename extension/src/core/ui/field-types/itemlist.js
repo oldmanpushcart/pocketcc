@@ -174,7 +174,7 @@ function itemListInnerHTML(items, state, fd, order, cfgForSummary, fid) {
       );
     })
     .join('');
-  // fd.head：表头行（{name,cost,bought,max,stock} 各列文案，缺省有默认词；二渠道列直接用 ch2.label；勾选列只占位不出标题）。
+  // fd.head：表头行（{name,cost,bought,max,stock} 各列文案，缺省有默认词；二渠道列直接用 ch2.label；勾选列/↑↓列只占位不出标题）。
   //   与数据行共用 .pc-irow 骨架 + 逐列同类名 → 像素级对齐（ranges 表头同款教训：另写一套列宽必错位）；
   //   放在 .pc-irows 外：renderRows 整块重画只换数据行不抹表头；不挂 data-ikey/data-ibought 钩子，拖拽/刷新逻辑不认它
   const head = fd && fd.head;
@@ -197,6 +197,11 @@ function itemListInnerHTML(items, state, fd, order, cfgForSummary, fid) {
       `<span class="pc-ichklbl pc-ichkpush"><input type="checkbox" class="pc-ichk" disabled style="visibility:hidden"><span>${escAttr(ch2 ? ch2.aLabel || '拾' : '')}</span></span>` +
       (ch2
         ? `<span class="pc-ichklbl pc-ichklbl2"><input type="checkbox" class="pc-ichk2" disabled style="visibility:hidden"><span>${escAttr(ch2.label)}</span></span>`
+        : '') +
+      // ↑↓ 列占位须与数据行 .pc-rmvgrp 同宽（两枚同款隐藏按钮）：否则名称 flex 列在表头
+      //   宽出整组按钮宽，后面所有固定列跟着右移错位（勾选列占位同款教训）；表头在 .pc-irows 外，不会被拖拽/移动绑定认作行内按钮
+      (sortable
+        ? `<span class="pc-rmvgrp"><button type="button" class="pc-rmv" disabled style="visibility:hidden">↑</button><button type="button" class="pc-rmv" disabled style="visibility:hidden">↓</button></span>`
         : '') +
       `</div>`
     : '';
