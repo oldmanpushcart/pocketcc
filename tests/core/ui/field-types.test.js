@@ -642,7 +642,7 @@ test('farmrules 数组初始化：c[key] 非数组时增行就地置 []（镜像
   assert.deepEqual(ctx.c.frules, [{ preset: 1, families: [7], kinds: ['tower', 'normal'] }]);
 });
 
-test('farmrules mount：Popover 可用 → panel 加 pc-kindpop + 注册 click 与 scroll(捕获)', () => {
+test('farmrules mount：Popover 可用 → panel 加 pc-kindpop + 注册 beforetoggle/toggle/scroll(捕获)，不手写 click', () => {
   const added = [];
   const listeners = [];
   const panel = {
@@ -658,10 +658,14 @@ test('farmrules mount：Popover 可用 → panel 加 pc-kindpop + 注册 click �
     globalThis.document.createElement = origCreate;
   }
   assert.ok(added.includes('pc-kindpop'));
-  assert.ok(listeners.some((l) => l.on === 'click'));
-  const scroll = listeners.find((l) => l.on === 'scroll');
-  assert.ok(scroll);
-  assert.equal(scroll.opts.capture, true);
+  // 开/关/点外/Esc 由 popovertarget + auto light dismiss 平台代劳，不再手写点击委托
+  assert.ok(!listeners.some((l) => l.on === 'click'));
+  for (const on of ['beforetoggle', 'toggle', 'scroll']) {
+    const l = listeners.find((x) => x.on === on);
+    assert.ok(l, `missing listener: ${on}`);
+    // 捕获阶段：toggle/beforetoggle 不冒泡必须捕获，scroll 抓两层；兼容 true 简写与 {capture:true}
+    assert.ok(l.opts === true || (l.opts && l.opts.capture === true));
+  }
 });
 
 test('farmrules mount 降级：无 Popover API → 打 debug 且不加 pc-kindpop（流内撑开）', () => {
@@ -697,8 +701,9 @@ test('mountTypeModules：装配期对声明 mount 的类型调一次（farmrules
   } finally {
     globalThis.document.createElement = origCreate;
   }
-  // farmrules.mount 注册了 click + scroll；ranges/huntlist 无 mount 不贡献监听
-  assert.ok(listeners.includes('click'));
+  // farmrules.mount 注册了 beforetoggle/toggle/scroll；ranges/huntlist 无 mount 不贡献监听
+  assert.ok(listeners.includes('beforetoggle'));
+  assert.ok(listeners.includes('toggle'));
   assert.ok(listeners.includes('scroll'));
 });
 

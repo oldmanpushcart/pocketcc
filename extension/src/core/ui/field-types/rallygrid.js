@@ -19,6 +19,8 @@ import { escAttr, PLACEHOLDER_UNLIMITED, findFieldDescriptor } from '../dom.js';
  * 行集不要求固定长度：fd.rows 可以是 getter（目标目录运行时反查 + 推送自学习，行随赛季增删），
  *   每格控件身份钉在自己的 key（delay.key / limit.key / count.key / enableKey）上，不依赖行下标。
  * 列头与数据行共用同一 5 列 CSS Grid（.pc-rghead/.pc-rgrow 用 display:contents 让子格直挂父栅格），列宽严格对齐。
+ * 末列每行固定「checkbox + gap + 删除槽」结构：学习行槽里是×按钮，非学习行渲染同宽隐形占位 .pc-rgdelna——
+ *   条件性内容（×）不得改变行内 flex 总宽，否则 checkbox 的 x 随×有无逐行偏移（同异能秘境角标占位教训）。
  * 签名照 module render (val, fd, c, fid)，本类型直接读 cfg（val 仅占位对齐）。
  * @param {*} val 配置里的字段值（占位，不读）
  * @param {object} fd 字段描述符 { key, cols: string[], rows: [{ name, enableKey, delay, limit, count, learned?, itemIds? }] }
@@ -55,8 +57,8 @@ function rallyGridInnerHTML(val, fd, cfg, fid) {
         `<span class="pc-rgcell pc-rgc-3"><span class="pc-fval pc-rgcount" data-fid="${fid}" data-fkey="${escAttr(count.key)}">${countText}</span></span>` +
         `<span class="pc-rgcell pc-rgc-4"><input type="checkbox" class="pc-fchk pc-rgchk" data-id="${fid}" data-key="${escAttr(r.enableKey)}"${cfg[r.enableKey] ? ' checked' : ''} title="勾选=自动加入${escAttr(r.name || '')}集结">` +
         (r.learned && r.itemIds && r.itemIds.length
-          ? `<button class="pc-rgdel" type="button" data-rowkey="${escAttr(r.itemIds.join(','))}" title="删除这个自学习目标（除非它再次被服务器推送，否则不会回来）" aria-label="删除这个自学习目标">×</button>`
-          : '') +
+          ? `<button class="pc-rgdel" type="button" data-rowkey="${escAttr(r.itemIds.join(','))}" title="删除这个自学习目标（除非它再次被服务器推送，否则不会回来）" aria-label="删除自学习目标「${escAttr(r.name || '')}」">×</button>`
+          : `<span class="pc-rgdelna" aria-hidden="true"></span>`) +
         `</span>` +
         `</div>`
       );

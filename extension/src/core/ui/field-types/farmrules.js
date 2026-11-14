@@ -3,8 +3,8 @@
  *
  * T2（架构审查候选 1）：render 迁自 fields.js farmRulesInnerHTML（连同 FARM_KIND_DEFS / farmKindSummary /
  * farmFamilySummary 三个只服务本类型的 helper），数据事件迁自 wire.js farmrules 委托。
- * 「资源类型/种类」浮层是**面板级生命周期**（一次性探测 + panel 类名、全面板扫描收起、点浮层外 dismiss、
- * scroll 捕获监听），超出 dispatcher（单容器 closest('[data-fkey]') + 仅 input/change/click），故经定稿外
+ * 「资源类型/种类」浮层是**面板级生命周期**（一次性探测 + panel 类名、scroll 捕获收起、toggle 事件同步箭头态；
+ * auto popover 的点外收起/Esc 由浏览器代劳，仅老 Chrome 降级档才手写点外 dismiss），超出 dispatcher（单容器 closest('[data-fkey]') + 仅 input/change/click），故经定稿外
  * 新增的可选 mount(panel, log) 钩子自持（用户拍板 A，与 Q7「有状态清单保留 mount* 装配」先例一致，T5 可复用）。
  * 数据事件（family/kind/preset change + 增删 click）仍走 dispatcher：mount 只管浮层 UI，不碰数据提交。
  *
@@ -37,6 +37,10 @@ const FARM_KIND_DEFS = [
     title: '普通田：1~5 级，走 906 服务端搜索，等级从高到低试',
   },
 ];
+
+/** 多选浮层子系统的类名选择器（syncRowGroupsUi 与 mount 共用，收口一处防漂移） */
+const KIND_BOX_SEL = '.pc-frkinds'; // 多选组行容器
+const KIND_BTN_SEL = '.pc-frkbtn'; // 摘要触发按钮
 
 /**
  * 种类多选 → 下拉按钮上的摘要文案（按优先级序拼短名，一项未选回「未选」= 该行不下田）。
@@ -99,9 +103,10 @@ function farmRulesInnerHTML(list, fd) {
    * @param {Array<{value:string|number,long:string,title?:string,dis?:boolean}>} defs 选项定义
    * @param {Array<string|number>} picked 该行已选值（数字/字符串混用，比较统一走 String）
    * @param {string} sum 按钮上的已选摘要
+   * @param {number} idx 行下标（与 grp 拼浮层唯一 id，供按钮 aria-controls 回指）
    * @returns {string}
    */
-  const optCell = (grp, btnTitle, defs, picked, sum) => {
+  const optCell = (grp, btnTitle, defs, picked, sum, idx) => {
     const has = (v) => picked.map(String).indexOf(String(v)) >= 0;
     const optRows = defs
       .map((d) => {
@@ -116,10 +121,10 @@ function farmRulesInnerHTML(list, fd) {
       .join('');
     return (
       `<span class="pc-frkinds" data-grp="${grp}">` +
-      `<button class="pc-frkbtn" type="button" title="${escAttr(btnTitle)}">` +
+      `<button class="pc-frkbtn" type="button" title="${escAttr(btnTitle)}" popovertarget="pc-frkpop-${idx}-${grp}" aria-expanded="false" aria-controls="pc-frkpop-${idx}-${grp}">` +
       `<span class="pc-frksum">${escAttr(sum)}</span>` +
       `<span class="pc-frkcaret" aria-hidden="true">▾</span></button>` +
-      `<span class="pc-frkpop" popover="manual">${optRows}</span></span>`
+      `<span class="pc-frkpop" id="pc-frkpop-${idx}-${grp}" popover="auto" role="group" aria-label="${escAttr(btnTitle)}">${optRows}</span></span>`
     );
   };
   const rowsArr = Array.isArray(list) ? list : [];
@@ -160,6 +165,7 @@ function farmRulesInnerHTML(list, fd) {
           famDefs,
           families,
           farmFamilySummary(families, fd.familyOptions),
+          i,
         ) +
         `<span class="pc-frdiv" aria-hidden="true"></span>` +
         optCell(
@@ -168,6 +174,7 @@ function farmRulesInnerHTML(list, fd) {
           kindDefs,
           kinds,
           farmKindSummary(kinds),
+          i,
         ) +
         `</div>` +
         `<button class="pc-frdel" type="button" title="删除这支队伍" aria-label="删除这支队伍">×</button>` +
@@ -222,7 +229,7 @@ function syncRowGroupsUi(rowEl, row, fd) {
   const kinds = Array.isArray(row.kinds) ? row.kinds : [];
   // 雷神(family 16) 没有 6 级田：本行勾选的家族全都开不出遗迹 → 遗迹置灰（与 feat 侧 normalizeRules 同口径）
   const thunder = fams.length > 0 && fams.every((f) => f === '16');
-  rowEl.querySelectorAll('.pc-frkinds').forEach((holder) => {
+  rowEl.querySelectorAll(KIND_BOX_SEL).forEach((holder) => {
     const isFam = holder.dataset.grp === 'family';
     const want = isFam ? fams : kinds;
     holder.querySelectorAll('.pc-frkin').forEach((cb) => {
@@ -322,11 +329,13 @@ export const farmrulesType = {
   ],
   /**
    * 面板级生命周期装配（一次性）：资源种类/类型多选的展开/收起浮层子系统。
-   * 主路径用 Popover API（top layer）：面板/卡片/内容区的 overflow 裁切与面板的 backdrop-filter
+   * 主路径用 Popover API（top layer + popover="auto"）：面板/卡片/内容区的 overflow 裁切与面板的 backdrop-filter
    * （会给 fixed 子元素建 containing block）都困不住它，选项列表能像原生下拉那样浮在行下方、不撑高卡片；
-   * light dismiss（点浮层外/Esc）由浏览器代劳，这里只补两件浏览器不管的：定位 + 箭头态类名同步。
-   * 老 Chrome（<114）无 popover 属性 → 降级为流内撑开独占一行（样式在 panel-css 的 .pc-frkinds.pc-open 分支）。
-   * 这些都要 panel 根 + scroll 捕获 + 全面板扫描，非单容器 dispatcher 所能表达，故收进 mount（不碰数据提交）。
+   * 点浮层外收起与 Esc 由 auto 的 light dismiss 代劳（manual 没有这两样，故不用），开/关由按钮 popovertarget 原生切换，
+   * 这里只补浏览器不管的：定位（beforetoggle）+ 滚动收起 + toggle 事件同步箭头态类名/aria-expanded。
+   * 老 Chrome（<114）无 popover 属性 → 降级为流内撑开独占一行（样式在 panel-css 的 .pc-frkinds.pc-open 分支），
+   * 点外收起/Esc 无浏览器代劳，降级档才手写。
+   * 这些都要 panel 根 + scroll 捕获，非单容器 dispatcher 所能表达，故收进 mount（不碰数据提交）。
    * @param {Element} panel 面板根
    * @param {object} log 日志器（createLog 实例，降级时打 debug）
    */
@@ -351,20 +360,13 @@ export const farmrulesType = {
           }
         }
         x.classList.remove('pc-open');
-      });
-    };
-    // 只把“浏览器已经自己关掉”的浮层类名补齐（箭头不能一直翻着）；
-    // 本拍刚 hide 又立刻 reopen 的（getPopover 仍为 shown）不动，否则会误关刚展开的列表。
-    const syncKindPopClass = () => {
-      if (!kindPopSupported) return;
-      panel.querySelectorAll(KIND_OPEN_SEL).forEach((x) => {
-        const p = x.querySelector(KIND_POP_SEL);
-        if (p && p.getPopover && p.getPopover() === 'hidden') x.classList.remove('pc-open');
+        const b = x.querySelector(KIND_BTN_SEL);
+        if (b) b.setAttribute('aria-expanded', 'false');
       });
     };
     /** 浮层左上角对齐按钮左下角（top layer 里的 fixed 坐标就是视口坐标） */
     const placeKindPop = (box, pop) => {
-      const btn = box.querySelector('.pc-frkbtn');
+      const btn = box.querySelector(KIND_BTN_SEL);
       if (!btn || !btn.getBoundingClientRect) return;
       const r = btn.getBoundingClientRect();
       const vw = window.innerWidth || document.documentElement.clientWidth || 0;
@@ -380,37 +382,59 @@ export const farmrulesType = {
         w +
         'px;';
     };
-    panel.addEventListener('click', (e) => {
-      const el = e.target;
-      if (!el || !el.classList) return;
-      const btn = el.closest ? el.closest('.pc-frkbtn') : null;
-      if (btn) {
-        const box = btn.closest('.pc-frkinds');
-        const pop = box.querySelector(KIND_POP_SEL);
-        const wasOpen = box.classList.contains('pc-open');
-        hideKindPops();
-        if (wasOpen) return; // 再点一次按钮 = 收起
-        box.classList.add('pc-open');
-        if (kindPopSupported && pop && pop.showPopover) {
-          try {
-            placeKindPop(box, pop);
-            pop.showPopover();
-          } catch (err) {
-            // showPopover 报错（元素已脱离文档等）：本会话常驻退回流内撑开那一档，
-            // 不能让列表既不弹也不撑（两头落空 = 点了没反应）
-            panel.classList.add('pc-kindpopfail');
-            log.debug(
-              'kind popover open failed, fallback to in-flow expand: %s',
-              err && err.message,
-            );
-          }
+    if (kindPopSupported) {
+      // 平台代劳：popovertarget 原生「再点收起/点外收起/Esc 收起/开新关旧」，不手写点击委托。
+      // 只补定位（beforetoggle，展开前按按钮 rect 定坐标）与展开态同步（toggle：类名 + aria-expanded）。
+      // 两事件都不冒泡，在 panel 上按捕获监听：行重绘（preset 改动/增删）换新浮层也不丢监听。
+      panel.addEventListener(
+        'beforetoggle',
+        (e) => {
+          if (e.newState !== 'open') return;
+          const pop = e.target;
+          const box = pop.closest ? pop.closest(KIND_BOX_SEL) : null;
+          if (box) placeKindPop(box, pop);
+        },
+        true,
+      );
+      panel.addEventListener(
+        'toggle',
+        (e) => {
+          const pop = e.target;
+          const box = pop.closest ? pop.closest(KIND_BOX_SEL) : null;
+          if (!box) return;
+          const open = e.newState === 'open';
+          box.classList.toggle('pc-open', open);
+          const btn = box.querySelector(KIND_BTN_SEL);
+          if (btn) btn.setAttribute('aria-expanded', String(open));
+        },
+        true,
+      );
+    } else {
+      // 降级档（无 Popover API）：流内撑开，点外收起/再点收起只能手写
+      panel.addEventListener('click', (e) => {
+        const el = e.target;
+        if (!el || !el.classList) return;
+        const btn = el.closest ? el.closest(KIND_BTN_SEL) : null;
+        if (btn) {
+          const box = btn.closest(KIND_BOX_SEL);
+          const wasOpen = box.classList.contains('pc-open');
+          hideKindPops();
+          if (wasOpen) return; // 再点一次按钮 = 收起
+          box.classList.add('pc-open');
+          btn.setAttribute('aria-expanded', 'true');
+          return;
         }
-        return;
-      }
-      if (el.closest && el.closest(KIND_POP_SEL)) return; // 展开列表内操作（勾选/改文案）：保持展开
-      hideKindPops();
-      syncKindPopClass();
-    });
+        if (el.closest && el.closest(KIND_POP_SEL)) return; // 展开列表内操作（勾选/改文案）：保持展开
+        hideKindPops();
+      });
+      panel.addEventListener('keydown', (e) => {
+        // 有展开的浮层才收并拦停冒泡（面板根的 Esc 收面板监听不能连带把面板也收了）；无浮层时放行给面板
+        if (e.key === 'Escape' && panel.querySelector(KIND_OPEN_SEL)) {
+          hideKindPops();
+          e.stopPropagation();
+        }
+      });
+    }
     // 浮层位置按打开那一刻的按钮 rect 定死（top layer 里的 fixed 不跟着重排），所以任何一层滚动都把列表收起：
     // 跟原生下拉一致，也免得选项飘到别的行下面被误勾。scroll 不冒泡，用捕获抓外层面板与内层 pane 两级。
     panel.addEventListener('scroll', hideKindPops, { capture: true, passive: true });

@@ -77,17 +77,17 @@ function sortListInnerHTML(list, fd, offArr) {
   return (
     `<div class="pc-slisttop">` +
     `<span class="pc-rngtitle">${escAttr(fd.label || '领取优先级')}</span>` +
-    `<span class="pc-rnghint">拖动调整顺序</span>` +
+    `<span class="pc-rnghint">拖动或按 ↑↓ 调整顺序</span>` +
     `</div>` +
     `<div class="pc-srows">` +
     (rows || '<div class="pc-rnghint">礼品池为空</div>') +
     `</div>` +
-    `<div class="pc-rnghint">${escAttr(fd.hint || '拖动调整顺序，顺序靠前优先领取')}</div>`
+    `<div class="pc-rnghint">${escAttr(fd.hint || '拖动或按 ↑↓ 调整顺序，顺序靠前优先领取')}</div>`
   );
 }
 
 /**
- * 装配领取优先级清单容器（.pc-slist）：整行 pointer 拖拽交换 order 位（已去掉 ↑/↓ 按钮）。
+ * 装配领取优先级清单容器（.pc-slist）：整行 pointer 拖拽交换 order 位（另有 ↑/↓ 按钮作单指针/键盘等价替代）。
  * 拖拽与松手收尾的机制见 attachRowDrag；松手按 DOM 顺序回写 arr（数字 id 回写原类型，不统一转字符串）。
  * @param {HTMLElement} box .pc-slist 容器
  * @param {object} ctx 字段上下文（commit 收口 save+apply+log）

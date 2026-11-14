@@ -49,8 +49,8 @@ export async function lookupPlayerName(uid) {
   // netApi 是 net.js 的具名导出（模块级 let，装配时赋值）：比摸 window.pocketcc.net 的影子总线少一层
   // 隐式契约（core/devtools.js 已把「调试面句柄」收口到 core 代挂，生产链路不该再依赖 window 上的键）。
   const net = netApi;
-  if (!net || !net.send) return { ok: false, msg: '网络未就绪' };
-  if (!/^\d{4,20}$/.test(uid)) return { ok: false, msg: 'UID 格式不正确' };
+  if (!net || !net.send) return { ok: false, msg: '网络未就绪，请待连接建立后重试' };
+  if (!/^\d{4,20}$/.test(uid)) return { ok: false, msg: 'UID 需为 4–20 位数字' };
   let ret;
   try {
     ret = await net.send(CMD_PLAYER_INFO, { uid });

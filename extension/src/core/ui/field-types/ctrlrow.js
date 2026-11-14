@@ -4,7 +4,7 @@
  * T5（架构审查候选 1 · Option A 全量收编）：render 迁自 fields.js renderCtrlRow，
  * 子下拉 change 迁自 wire.js wireControls 的 select.pc-fsel 委托（该通用 handler T5 整段退役）。
  * 一个标签接 N 个控件，每 cell 自己一个 data-key（= 存档键，与 field.key 不同，同 tripick.parts 口径）：
- *   非表格变体（label.pc-row）无 data-fkey 容器 → dispatcher 内联路径经 findFieldOwner(f, cell.key) 路由到本 module；
+ *   非表格变体（div.pc-row）无 data-fkey 容器 → dispatcher 内联路径经 findFieldOwner(f, cell.key) 路由到本 module；
  *   表格变体（fd.table=true，.pc-hl.pc-ct 带 data-fkey）→ dispatcher 容器路径直接命中本 module。
  *   两路 handler 都经 findFieldDescriptor 下探 cells 取子描述符，选项取该 cell 自己的口径。
  * cell.type='text' 的只读格（.pc-fval）随 refreshTexts 重算：其子描述符 type='text' → 走 text module 的 refreshText 钩子，
@@ -16,6 +16,7 @@ import { escAttr, findFieldDescriptor } from '../dom.js';
 
 /**
  * 一行多控件 HTML：一个标签接 N 个控件；fd.table=true 走表格式排版（与自动打野怪物清单同外观）。
+ * 非表格变体不用 label 包裹（label 只关联首个可标签控件，会污染首个 select 的可访问名），每个 select 自带 aria-label。
  * cell.type 只区分 'text'（只读值 .pc-fval，随 refreshTexts 重算）与否（下拉 .pc-fsel）；
  *   下拉选项支持数组与函数（同 select 口径），只读值取 cell.get(cfg)。
  * 表格变体控件类改用 .pc-hlmode/.pc-hlstat 与怪物清单对齐，但 data-key/data-fkey 不变 → wire/refreshTexts 同一条 cells 通路。
@@ -46,7 +47,9 @@ function renderCtrlRow(val, fd, c, fid) {
         )
         .join('');
       const cls = table ? 'pc-fsel pc-hlmode' : 'pc-fsel pc-ftri';
-      return `<select class="${cls}" data-id="${fid}" data-key="${escAttr(p.key)}"${title}>${inner}</select>`;
+      // 可访问名：表格变体取列头（与可见列名一致），非表格取 cell.title，缺省回落行标签
+      const aria = ` aria-label="${escAttr((table ? p.label : '') || p.title || fd.label || '')}"`;
+      return `<select class="${cls}" data-id="${fid}" data-key="${escAttr(p.key)}"${title}${aria}>${inner}</select>`;
     })
     .join('');
   if (table) {
@@ -70,9 +73,9 @@ function renderCtrlRow(val, fd, c, fid) {
   }
   // fd.label 缺位时不出标签格（整行宽度给控件），行名交 section 小标题承担
   return (
-    `<label class="pc-row">` +
+    `<div class="pc-row">` +
     (fd.label ? `<span class="pc-triolab">${fd.label}</span>` : '') +
-    `<span class="pc-trio">${cells}</span></label>`
+    `<span class="pc-trio">${cells}</span></div>`
   );
 }
 

@@ -11,7 +11,7 @@ export const PANEL_CSS = `
       z-index:2147483647;}
     .pc-icon svg{position:relative;z-index:1;
       filter:drop-shadow(0 0 10px rgba(47,155,255,.7)) drop-shadow(0 2px 5px rgba(0,0,0,.55));transition:filter .15s;}
-    .pc-icon:hover svg{filter:drop-shadow(0 0 13px rgba(47,155,255,.9)) drop-shadow(0 2px 5px rgba(0,0,0,.55)) brightness(1.2);}
+    @media (hover:hover){.pc-icon:hover svg{filter:drop-shadow(0 0 13px rgba(47,155,255,.9)) drop-shadow(0 2px 5px rgba(0,0,0,.55)) brightness(1.2);}}
     .pc-icon.combat svg{filter:drop-shadow(0 0 12px rgba(255,59,48,.95)) drop-shadow(0 2px 5px rgba(0,0,0,.55));}
     /* 光晕层必须明显大于图标：亮带半径要落在不透明圆盘（约 21px）之外，否则整圈被圆盘盖住。 */
     .pc-halo{position:absolute;left:50%;top:50%;width:190%;height:190%;
@@ -37,6 +37,11 @@ export const PANEL_CSS = `
     @media (prefers-reduced-motion: no-preference){
       .pc-halo{animation:pc-breathe-daily 3.4s ease-out infinite;}
       .pc-icon.combat .pc-halo{animation:pc-breathe-combat 1.1s ease-out infinite;}
+      /* 折叠箭头/星级/浮层箭头的 transform 过渡同样只在用户不排斥动效时启用；reduced-motion 下状态瞬时切换（旋转仍在，无动画） */
+      .pc-chev{transition:transform .15s;}
+      .pc-fsecchev{transition:transform .15s;}
+      .pc-mrstar{transition:transform .1s,color .1s;}
+      .pc-frkcaret{transition:transform .12s;}
     }
     .pc-mode{display:flex;align-items:center;justify-content:space-between;gap:8px;
       margin:2px 0 10px;padding:8px 10px;border-radius:8px;cursor:pointer;
@@ -61,7 +66,7 @@ export const PANEL_CSS = `
       max-height:calc(100vh - 16px);overflow-y:auto;overscroll-behavior:contain;scrollbar-gutter:stable;}
     .pc-panel[hidden]{display:none;}
     .pc-panel h3{margin:0 0 8px;font-size:14px;font-weight:600;letter-spacing:.5px;color:#cfe8ff;}
-    .pc-sub{margin-left:8px;font-size:10px;font-weight:400;opacity:.6;letter-spacing:1.5px;}
+    .pc-sub{margin-left:8px;font-size:11px;font-weight:400;opacity:.6;letter-spacing:1.5px;}
     /* 左右两栏：左 TAB，右内容。 */
     .pc-tabs{display:flex;gap:12px;align-items:stretch;}
     .pc-tabbar{flex:0 0 88px;display:flex;flex-direction:column;gap:4px;
@@ -69,11 +74,11 @@ export const PANEL_CSS = `
     .pc-tab{appearance:none;text-align:left;border:none;background:transparent;color:#e8eef7;
       font:inherit;font-size:13px;padding:8px 10px;border-radius:8px;cursor:pointer;
       transition:background .15s,color .15s;}
-    .pc-tab:hover{background:rgba(255,255,255,.08);}
+    @media (hover:hover){.pc-tab:hover{background:rgba(255,255,255,.08);}}
     .pc-tab.active{background:rgba(70,140,255,.24);color:#dbeaff;font-weight:600;}
     /* 活动未开启的 TAB（如 CQ26印石）：置灰不可点，且不响应 hover（放在 .active 之后，同特异度靠后覆盖）*/
     .pc-tab:disabled{opacity:.4;cursor:not-allowed;}
-    .pc-tab:disabled:hover{background:transparent;}
+    @media (hover:hover){.pc-tab:disabled:hover{background:transparent;}}
     .pc-tabpanes{flex:1;min-width:0;}
     .pc-pane{max-height:56vh;overflow-y:auto;overscroll-behavior:contain;scrollbar-gutter:stable;padding-right:2px;}
     /* 固定滞动条槽宽度 + 细滑动条：避免内容超高时滞动条出现/消失导致面板横向跳动 */
@@ -86,16 +91,17 @@ export const PANEL_CSS = `
     .pc-sec:last-child{margin-bottom:0;}
     .pc-sec-head{display:flex;align-items:center;gap:8px;padding:8px 10px;
       background:rgba(255,255,255,.04);transition:background .15s;}
-    .pc-sec-head:hover{background:rgba(255,255,255,.09);}
+    @media (hover:hover){.pc-sec-head:hover{background:rgba(255,255,255,.09);}}
     /* 可展开卡片的折叠标题做成 button：清掉 UA 按钮外观、铺满标题区（chev+标题走它），checkbox 作兄弟不被包住 */
     .pc-sec-toggle{appearance:none;-webkit-appearance:none;display:flex;align-items:center;gap:8px;flex:1;min-width:0;
       margin:0;padding:0;border:none;background:transparent;font:inherit;color:inherit;text-align:left;cursor:pointer;}
-    .pc-chev{font-size:10px;opacity:.65;transition:transform .15s;}
+    .pc-chev{font-size:10px;opacity:.65;}
     .pc-chev.invisible{visibility:hidden;}
     .pc-sec.open > .pc-sec-head .pc-chev{transform:rotate(90deg);}
     .pc-sec-title{flex:1;font-weight:600;font-size:13px;}
     .pc-en,.pc-gen{width:16px;height:16px;cursor:pointer;flex:0 0 auto;}
-    .pc-sec-body{padding:4px 12px 10px;}
+    /* 窄视口（320px）下面板收窄，固定列数据表 min-content 会超出卡片：body 横向可滚使被裁控件仍可达（1.4.10 二维表豁免，但须可滚达） */
+    .pc-sec-body{padding:4px 12px 10px;overflow-x:auto;overscroll-behavior-x:contain;}
     .pc-sec-body[hidden]{display:none;}
     /* 组内子项声明了 showFields 时展开的详细字段：左缩进一级、与子项开关行视觉从属，去掉重复上边框 */
     .pc-subfields{margin:0 0 6px 18px;padding:0 0 2px;border:0;}
@@ -104,14 +110,14 @@ export const PANEL_CSS = `
     .pc-row{display:flex;align-items:center;justify-content:space-between;gap:12px;margin:7px 0;}
     .pc-row > span{flex:1;min-width:0;}
     .pc-row input[type=number]{width:96px;flex:0 0 auto;padding:3px 6px;border-radius:6px;box-sizing:border-box;
-      border:1px solid rgba(255,255,255,.14);background:rgba(255,255,255,.06);color:#e8eef7;font:inherit;
+      border:1px solid rgba(255,255,255,.4);background:rgba(255,255,255,.06);color:#e8eef7;font:inherit;
       font-variant-numeric:tabular-nums;}
     .pc-row input[type=number]:focus{outline:none;border-color:rgba(150,205,255,.95);box-shadow:0 0 0 2px rgba(90,160,255,.5);background:rgba(120,180,255,.10);}
     /* placeholder（如 0=不限 的「不限」提示）：与打野 .pc-hln 同款亮色，避免浏览器默认浅灰看不清；聚焦时隐去 */
     .pc-row input[type=number]::placeholder{color:#cfe3ff;opacity:1;}
     .pc-row input[type=number]:focus::placeholder{color:transparent;}
     .pc-row input[type=text].pc-fstr{width:140px;flex:0 0 auto;padding:3px 6px;border-radius:6px;box-sizing:border-box;
-      border:1px solid rgba(255,255,255,.14);background:rgba(255,255,255,.06);color:#e8eef7;font:inherit;
+      border:1px solid rgba(255,255,255,.4);background:rgba(255,255,255,.06);color:#e8eef7;font:inherit;
       font-variant-numeric:tabular-nums;}
     .pc-row input[type=text].pc-fstr:focus{outline:none;border-color:rgba(150,205,255,.95);box-shadow:0 0 0 2px rgba(90,160,255,.5);background:rgba(120,180,255,.10);}
     /* UID 控件（城市技能）：显示态「✎ 玩家名」可点→输入态；失焦反查名字，失败留框+红字 */
@@ -119,17 +125,17 @@ export const PANEL_CSS = `
     .pc-uidwrap .pc-row>span:first-of-type{flex:0 0 auto;}
     /* 显示态做成与输入态同宽同框的「字段」外观（150px 定宽 + 边框 + 内边距），切换不跳版 */
     .pc-udisp{flex:0 0 150px;width:150px;box-sizing:border-box;display:flex;align-items:center;justify-content:flex-start;gap:4px;
-      padding:3px 6px;border-radius:6px;border:1px solid rgba(255,255,255,.14);background:rgba(255,255,255,.06);cursor:pointer;
+      padding:3px 6px;border-radius:6px;border:1px solid rgba(255,255,255,.4);background:rgba(255,255,255,.06);cursor:pointer;
       color:#9ecbff;white-space:nowrap;overflow:hidden;transition:border-color .15s,background .15s;
       appearance:none;-webkit-appearance:none;font-family:inherit;font-size:inherit;text-align:left;}
     /* display:flex 会盖过 UA 的 [hidden]{display:none}，enterEdit 里 disp.hidden=true 失效导致 ✎ Label 与输入框并存、行宽溢出：显式补一条 */
     .pc-udisp[hidden]{display:none;}
-    .pc-udisp:hover{border-color:rgba(120,180,255,.55);background:rgba(120,180,255,.10);}
-    .pc-udisp .pc-uedit{opacity:.55;font-size:11px;flex:0 0 auto;}
+    @media (hover:hover){.pc-udisp:hover{border-color:rgba(120,180,255,.55);background:rgba(120,180,255,.10);}}
+    .pc-udisp .pc-uedit{opacity:.85;font-size:11px;flex:0 0 auto;}
     .pc-udisp .pc-uname{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;text-align:left;}
-    .pc-udisp .pc-uname.pc-uempty{opacity:.5;}
+    .pc-udisp .pc-uname.pc-uempty{opacity:.85;}
     .pc-row input[type=text].pc-uinput{width:150px;flex:0 0 auto;padding:3px 6px;border-radius:6px;box-sizing:border-box;
-      border:1px solid rgba(255,255,255,.14);background:rgba(255,255,255,.06);color:#e8eef7;font:inherit;
+      border:1px solid rgba(255,255,255,.4);background:rgba(255,255,255,.06);color:#e8eef7;font:inherit;
       font-variant-numeric:tabular-nums;}
     .pc-row input[type=text].pc-uinput:focus{outline:none;border-color:rgba(150,205,255,.95);box-shadow:0 0 0 2px rgba(90,160,255,.5);background:rgba(120,180,255,.10);}
     .pc-row input[type=text].pc-uinput.pc-uerr{border-color:rgba(255,95,95,.85);}
@@ -139,14 +145,14 @@ export const PANEL_CSS = `
     .pc-ulist{display:flex;flex-direction:column;gap:4px;width:100%;margin:2px 0 6px;}
     .pc-ulisttop{display:flex;align-items:center;justify-content:space-between;gap:8px;}
     .pc-ulistadd{flex:0 0 auto;width:22px;height:20px;padding:0;border-radius:6px;cursor:pointer;
-      border:1px dashed rgba(255,255,255,.28);background:transparent;color:#cfe8ff;font:inherit;font-size:14px;line-height:18px;}
-    .pc-ulistadd:hover{background:rgba(255,255,255,.1);}
+      border:1px dashed rgba(255,255,255,.4);background:transparent;color:#cfe8ff;font:inherit;font-size:14px;line-height:18px;}
+    @media (hover:hover){.pc-ulistadd:hover{background:rgba(255,255,255,.1);}}
     /* uidlist 行首勾选框（fd.itemCheck，夺宝玩家池）：勾中才入池，未勾行由 feat 侧自行排除 */
     .pc-ulichk{flex:0 0 auto;width:15px;height:15px;margin:0 2px 0 0;cursor:pointer;accent-color:#4aa3ff;}
     .pc-ulistadd:disabled{opacity:.4;cursor:default;}
     .pc-uli .pc-udel{flex:0 0 18px;width:18px;height:22px;padding:0;border:none;background:transparent;
       color:#ff9c9c;font:inherit;font-size:14px;line-height:22px;cursor:pointer;}
-    .pc-uli .pc-udel:hover{color:#ff6b6b;}
+    @media (hover:hover){.pc-uli .pc-udel:hover{color:#ff6b6b;}}
     .pc-uli .pc-udisp{flex:1 1 auto;width:auto;min-width:0;}
     /* 领取优先级清单字段（type:'sortlist'，遗迹奖励）：整池奖励摆出、行不可增删只能整行拖拽调序。
        无删除按钮（全员参与），松手才按 DOM 顺序回写（见 mountSortList）。 */
@@ -154,18 +160,18 @@ export const PANEL_CSS = `
     .pc-slisttop{display:flex;align-items:center;justify-content:space-between;gap:8px;}
     .pc-srows{display:flex;flex-direction:column;gap:4px;width:100%;}
     .pc-srow{display:flex;align-items:center;gap:6px;width:100%;cursor:grab;touch-action:none;-webkit-user-select:none;user-select:none;}
-    .pc-shandle{flex:0 0 auto;width:12px;text-align:center;opacity:.4;font-size:14px;line-height:1;letter-spacing:-2px;cursor:grab;}
+    .pc-shandle{flex:0 0 auto;width:12px;text-align:center;opacity:.8;font-size:14px;line-height:1;letter-spacing:-2px;cursor:grab;}
     .pc-srow.pc-sdragging{opacity:.35;}
     .pc-srows.pc-sgrabbing,.pc-srows.pc-sgrabbing .pc-sname{cursor:grabbing;}
     .pc-srank{flex:0 0 auto;width:18px;text-align:right;opacity:.6;font-variant-numeric:tabular-nums;}
     .pc-sname{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:left;
-      padding:3px 6px;border-radius:6px;border:1px solid rgba(255,255,255,.12);background:rgba(255,255,255,.05);color:#e8eef7;}
+      padding:3px 6px;border-radius:6px;border:1px solid rgba(255,255,255,.4);background:rgba(255,255,255,.05);color:#e8eef7;}
     /* 行序 ↑↓ 按钮（拖拽之外的键盘/单指针替代，见 attachRowMove）：行尾两个小方块。
        gap=4px 使 20px 按钮 + 4px 间距 = 24px 节距，与 ::before 的 24px 命中区恰好边贴边不重叠（2.5.8） */
     .pc-rmvgrp{flex:0 0 auto;display:inline-flex;gap:4px;}
     .pc-rmv{appearance:none;-webkit-appearance:none;position:relative;flex:0 0 auto;width:20px;height:20px;padding:0;border-radius:5px;cursor:pointer;
-      border:1px solid rgba(255,255,255,.22);background:transparent;color:#cfe8ff;font:inherit;font-size:13px;line-height:18px;}
-    .pc-rmv:hover{background:rgba(255,255,255,.1);}
+      border:1px solid rgba(255,255,255,.4);background:transparent;color:#cfe8ff;font:inherit;font-size:13px;line-height:18px;}
+    @media (hover:hover){.pc-rmv:hover{background:rgba(255,255,255,.1);}}
     .pc-rmv:disabled{opacity:.3;cursor:default;}
     /* checkable sortlist（卡车争夺）：每行行首一枚 checkbox 控制该物品是否参与匹配，取消勾选整行置灰但仍可拖拽排序 */
     .pc-scheck{flex:0 0 auto;width:15px;height:15px;margin:0;cursor:pointer;accent-color:#4aa3ff;}
@@ -205,7 +211,7 @@ export const PANEL_CSS = `
       background:rgba(74,163,255,.12);border:1px solid rgba(74,163,255,.22);}
     .pc-icap.pc-icapna{visibility:hidden;}
     .pc-imax{flex:0 0 auto;width:64px;padding:2px 4px;border-radius:4px;
-      border:1px solid rgba(255,255,255,.15);background:rgba(0,0,0,.25);color:#e8eef7;font:inherit;font-size:12px;
+      border:1px solid rgba(255,255,255,.4);background:rgba(0,0,0,.25);color:#e8eef7;font:inherit;font-size:12px;
       appearance:textfield;-moz-appearance:textfield;}
     /* 隐藏 number 聚焦/悬停时的上下微调箭头：窄列（30px）会被箭头吃掉一半宽；键盘 ↑↓ 仍按 step 调，change 委托不受影响 */
     .pc-imax::-webkit-inner-spin-button,.pc-imax::-webkit-outer-spin-button{-webkit-appearance:none;margin:0;}
@@ -226,7 +232,7 @@ export const PANEL_CSS = `
     /* fd.noMax 的钻石价列（代替「购买上限」输入列）：纯红数字无图标，红色对齐游戏内钻石花费读数，表未加载时置灰破折号；
        min-width 34 容四位数字（~29px），更宽的价格自动撑开（flex:auto + nowrap） */
     .pc-icost{flex:0 0 auto;min-width:34px;text-align:left;font-variant-numeric:tabular-nums;
-      font-size:12px;color:#ff6b6b;white-space:nowrap;}
+      font-size:12px;color:#ff8787;white-space:nowrap;}
     .pc-icost.pc-icostunk{color:#8b97a8;}
     /* itemlist 的只读总数量列（fd.stockText，如密所「全部商店该商品剩余之和」）：居中成列（2026-11-12 排版决策：价左对齐、三数量居中）。
        双类选择器 (0-2-0) 压过上方 .pc-fval 的 flex:0 0 auto——那一条源码顺序在后，单类写会被它抢走宽度行为 */
@@ -259,7 +265,7 @@ export const PANEL_CSS = `
     .pc-rgrow > .pc-rgcell{display:flex;align-items:center;justify-content:center;gap:2px;min-width:0;}
     .pc-rgrow > .pc-rgc-0{justify-content:flex-start;color:#e8eef7;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
     .pc-rgrow > .pc-rgcell input[type=number].pc-rgin{width:100%;min-width:0;padding:2px 4px;border-radius:5px;
-      box-sizing:border-box;border:1px solid rgba(255,255,255,.14);background:rgba(255,255,255,.06);
+      box-sizing:border-box;border:1px solid rgba(255,255,255,.4);background:rgba(255,255,255,.06);
       color:#e8eef7;font:inherit;font-variant-numeric:tabular-nums;}
     .pc-rgrow > .pc-rgcell input[type=number].pc-rgin:focus{outline:none;border-color:rgba(150,205,255,.95);box-shadow:0 0 0 2px rgba(90,160,255,.5);
       background:rgba(120,180,255,.10);}
@@ -270,9 +276,12 @@ export const PANEL_CSS = `
     /* 自学习行的×删除按钮（仅学习行出现，在勾选格的 checkbox 右侧）：与勾选同格共存，靠上边 grid 末列 40px 撑开 */
     .pc-rgdel{flex:0 0 auto;width:16px;height:18px;padding:0;border:none;background:transparent;
       color:#ff9c9c;font:inherit;font-size:15px;line-height:18px;cursor:pointer;text-align:center;}
-    .pc-rgdel:hover{color:#ff6b6b;}
+    @media (hover:hover){.pc-rgdel:hover{color:#ff6b6b;}}
+    /* 非学习行的隐形删除槽：与 .pc-rgdel 同宽同高占位，使每行末格内容宽恒为 checkbox+gap+槽，
+       checkbox 的 x 不随×有无逐行偏移（条件性内容错列教训，同异能秘境角标占位方案） */
+    .pc-rgdelna{flex:0 0 auto;width:16px;height:18px;visibility:hidden;}
     .pc-row select.pc-fsel{max-width:150px;flex:0 0 auto;padding:3px 6px;border-radius:6px;
-      border:1px solid rgba(255,255,255,.25);background:rgba(20,26,38,.9);color:#e8eef7;font:inherit;}
+      border:1px solid rgba(255,255,255,.4);background:rgba(20,26,38,.9);color:#e8eef7;font:inherit;}
     /* 行内多下拉（type:'tripick'，如异能兽培育属相/品种/品质同一行）与一行多控件（type:'ctrlrow'，
        如惧星集结「等级/方式/预设队伍/今日已打」）共用：标签只占文字宽，控件在剩余空间里等分收缩。
        用 .pc-row > 提升特异度，压过通用的 .pc-row > span{flex:1}（否则两个 span 各占一半、控件会撑破右边界） */
@@ -301,19 +310,19 @@ export const PANEL_CSS = `
     .pc-rngrow{display:flex;align-items:center;gap:4px;}
     /* 列宽用 flex 均分而非固定 px：卡片内容区只有两百多 px，固定宽会把行撑到面板外 */
     .pc-rngrow input[type=number]{flex:1 1 0;min-width:0;width:auto;padding:3px 5px;border-radius:6px;box-sizing:border-box;
-      border:1px solid rgba(255,255,255,.14);background:rgba(255,255,255,.06);color:#e8eef7;font:inherit;
+      border:1px solid rgba(255,255,255,.4);background:rgba(255,255,255,.06);color:#e8eef7;font:inherit;
       font-variant-numeric:tabular-nums;text-align:right;appearance:textfield;-moz-appearance:textfield;}
     .pc-rngrow input[type=number]:focus{outline:none;border-color:rgba(150,205,255,.95);box-shadow:0 0 0 2px rgba(90,160,255,.5);background:rgba(120,180,255,.10);}
     .pc-rngrow input[type=number]::-webkit-inner-spin-button,
     .pc-rngrow input[type=number]::-webkit-outer-spin-button{-webkit-appearance:none;margin:0;}
     /* 括号 / 波浪号 / 箭头：不参与伸缩，也不给数字框抢宽 */
-    .pc-rngop{flex:0 0 auto;min-width:7px;text-align:center;font-size:12px;opacity:.5;}
+    .pc-rngop{flex:0 0 auto;min-width:7px;text-align:center;font-size:12px;opacity:.7;}
     .pc-rnghead .pc-rngop{visibility:hidden;}
     .pc-rnglbl{flex:1 1 0;min-width:0;font-size:11px;opacity:.72;text-align:center;letter-spacing:.2px;}
     .pc-rngdelcol{flex:0 0 18px;}
     .pc-rngdel{flex:0 0 18px;width:18px;height:22px;padding:0;border:none;background:transparent;
       color:#ff9c9c;font:inherit;font-size:14px;line-height:22px;cursor:pointer;}
-    .pc-rngdel:hover{color:#ff6b6b;}
+    @media (hover:hover){.pc-rngdel:hover{color:#ff6b6b;}}
     /* 多选开关组字段（type:'multiopts'，次元矿洞矿种）：标题行（左标题 + 右全选/清空）+ 下方紧凑网格。
        网格用 auto-fill 小盒，窄卡片下一行排几个自适应；选项由配置表运行时枚举，数量不定。 */
     .pc-mopts{display:flex;flex-direction:column;gap:4px;width:100%;margin:2px 0 6px;}
@@ -323,8 +332,8 @@ export const PANEL_CSS = `
     /* 已选/上限计数（fd.maxSelect）：与全选/清空同组靠右 */
     .pc-moptcount{font-size:11px;opacity:.7;font-variant-numeric:tabular-nums;}
     .pc-moptall,.pc-moptnone{padding:1px 8px;border-radius:6px;cursor:pointer;font:inherit;font-size:11px;
-      border:1px solid rgba(255,255,255,.24);background:transparent;color:#cfe8ff;}
-    .pc-moptall:hover,.pc-moptnone:hover{background:rgba(255,255,255,.1);}
+      border:1px solid rgba(255,255,255,.4);background:transparent;color:#cfe8ff;}
+    @media (hover:hover){.pc-moptall:hover,.pc-moptnone:hover{background:rgba(255,255,255,.1);}}
     .pc-moptgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(72px,1fr));gap:4px 8px;width:100%;}
     .pc-mopt{display:flex;align-items:center;gap:4px;font-size:12px;min-width:0;cursor:pointer;}
     .pc-mopt input[type=checkbox]{width:14px;height:14px;cursor:pointer;flex:0 0 auto;}
@@ -333,8 +342,8 @@ export const PANEL_CSS = `
     .pc-mopt input[type=checkbox]:disabled{cursor:default;}
     .pc-mopt span,.pc-mopt{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
     .pc-rngadd{flex:0 0 auto;width:22px;height:20px;padding:0;border-radius:6px;cursor:pointer;
-      border:1px dashed rgba(255,255,255,.28);background:transparent;color:#cfe8ff;font:inherit;font-size:14px;line-height:18px;}
-    .pc-rngadd:hover{background:rgba(255,255,255,.1);}
+      border:1px dashed rgba(255,255,255,.4);background:transparent;color:#cfe8ff;font:inherit;font-size:14px;line-height:18px;}
+    @media (hover:hover){.pc-rngadd:hover{background:rgba(255,255,255,.1);}}
     /* 字段分组小标题（如联盟集结按目标分段） */
     .pc-fsec{margin:10px 0 2px;padding-top:8px;border-top:1px dashed rgba(255,255,255,.14);
       font-size:12px;font-weight:600;color:#cfe8ff;letter-spacing:.5px;}
@@ -343,8 +352,8 @@ export const PANEL_CSS = `
     .pc-fsectoggle{display:flex;align-items:center;gap:6px;cursor:pointer;user-select:none;
       appearance:none;-webkit-appearance:none;width:100%;text-align:left;background:transparent;font-family:inherit;color:inherit;box-sizing:border-box;
       border-right:0;border-bottom:0;border-left:0;}
-    .pc-fsectoggle:hover{color:#eaf4ff;}
-    .pc-fsecchev{font-size:9px;opacity:.6;transition:transform .15s;}
+    @media (hover:hover){.pc-fsectoggle:hover{color:#eaf4ff;}}
+    .pc-fsecchev{font-size:9px;opacity:.6;}
     .pc-fsectoggle.open .pc-fsecchev{transform:rotate(90deg);}
     .pc-fsec-body{margin:0;}
     /* 纯说明横幅字段（type:'note'）：整行 muted 小字，配合其 section 标题切分相邻字段块 */
@@ -354,81 +363,83 @@ export const PANEL_CSS = `
        分组小标题同理：其下字段全隐时一起收起，不留「光杆标题」 */
     [data-dep][hidden]{display:none;}
     .pc-fsec[data-sec][hidden]{display:none;}
-    .pc-empty{opacity:.5;font-size:12px;padding:4px 0;}
+    .pc-empty{opacity:.7;font-size:12px;padding:4px 0;}
     /* 快捷键一览卡（方案 C：分组 + 键帽精修）：不复用 .pc-row（其 >span{flex:1} 会抢宽导致换行/错位）。
        行内负外边距 + padding 让 hover 高亮能铺到卡片内边沿；键帽立体（渐变+底边阴影）、键名列右对齐贴齐功能名、场景做小胶囊 */
     .pc-hkrow{display:flex;align-items:center;gap:10px;margin:0 -6px;padding:5px 6px;border-radius:6px;transition:background .12s;}
-    .pc-hkrow:hover{background:rgba(255,255,255,.06);}
+    @media (hover:hover){.pc-hkrow:hover{background:rgba(255,255,255,.06);}}
     .pc-hkrow .pc-hkk{flex:0 0 62px;text-align:right;}
     .pc-hkrow .pc-hkk kbd{display:inline-block;padding:2px 7px;border-radius:6px;font:inherit;font-size:12px;white-space:nowrap;color:#dcefff;
       background:linear-gradient(180deg,rgba(255,255,255,.18),rgba(255,255,255,.05));
       border:1px solid rgba(255,255,255,.24);border-bottom-width:2px;box-shadow:0 1px 0 rgba(0,0,0,.35);}
     .pc-hkrow .pc-hkl{flex:1 1 auto;min-width:0;}
-    .pc-hkrow .pc-hkw{flex:0 0 auto;font-size:11px;opacity:.5;text-align:right;background:rgba(255,255,255,.06);border-radius:10px;padding:1px 8px;}
-    .pc-hkgrp{font-size:11px;opacity:.55;letter-spacing:.5px;margin:8px 0 2px;padding:0 6px;}
+    .pc-hkrow .pc-hkw{flex:0 0 auto;font-size:11px;opacity:.7;text-align:right;background:rgba(255,255,255,.06);border-radius:10px;padding:1px 8px;}
+    .pc-hkgrp{font-size:11px;opacity:.7;letter-spacing:.5px;margin:8px 0 2px;padding:0 6px;}
     .pc-hkgrp:first-child{margin-top:2px;}
     .pc-btn{margin-top:10px;width:100%;padding:7px 0;border-radius:8px;cursor:pointer;
-      border:1px solid rgba(255,255,255,.2);background:rgba(255,255,255,.08);color:#e8eef7;
+      border:1px solid rgba(255,255,255,.4);background:rgba(255,255,255,.08);color:#e8eef7;
       font:inherit;transition:background .15s;}
-    .pc-btn:hover{background:rgba(255,255,255,.16);}
+    @media (hover:hover){.pc-btn:hover{background:rgba(255,255,255,.16);}}
     /* 账号级破坏性动作（登出/换号）：危险色区分（红边 + 红字），与常规 .pc-btn 拉开 */
-    .pc-btn-danger{border-color:rgba(255,95,65,.55);background:rgba(255,60,48,.16);color:#ffcabf;}
-    .pc-btn-danger:hover{background:rgba(255,60,48,.28);}
+    .pc-btn-danger{border-color:rgba(255,95,65,.85);background:rgba(255,60,48,.16);color:#ffcabf;}
+    @media (hover:hover){.pc-btn-danger:hover{background:rgba(255,60,48,.28);}}
     /* 采集规则字段（type:'minerules'，次元矿洞：每条=矿种下拉 + 等级下拉 + 星级★点选，可动态增删）。
        每条规则单行：盒子 flex:1 撑满整行（矿种/等级左侧簇集、星级靠右），× 删除按钮留在最右与标题行的＋对齐，盒与×靠 row gap 拉开固定间隔。行可增删，交互走面板级事件委托（见 wirePanel）。 */
     .pc-mrule{display:flex;flex-direction:column;gap:6px;width:100%;margin:2px 0 6px;}
     .pc-mruletop{display:flex;align-items:center;justify-content:space-between;gap:8px;}
     .pc-mradd{flex:0 0 auto;width:22px;height:20px;padding:0;border-radius:6px;cursor:pointer;
-      border:1px dashed rgba(255,255,255,.28);background:transparent;color:#cfe8ff;font:inherit;font-size:14px;line-height:18px;}
-    .pc-mradd:hover{background:rgba(255,255,255,.1);}
+      border:1px dashed rgba(255,255,255,.4);background:transparent;color:#cfe8ff;font:inherit;font-size:14px;line-height:18px;}
+    @media (hover:hover){.pc-mradd:hover{background:rgba(255,255,255,.1);}}
     .pc-mrrow{display:flex;align-items:center;justify-content:space-between;gap:10px;}
     .pc-mrbox{display:flex;flex:1 1 auto;align-items:center;gap:9px;min-width:0;padding:6px 9px;
       border:1px solid rgba(255,255,255,.12);border-radius:8px;background:rgba(255,255,255,.03);}
-    .pc-mrsel{padding:3px 5px;border-radius:6px;border:1px solid rgba(255,255,255,.25);
+    .pc-mrsel{padding:3px 5px;border-radius:6px;border:1px solid rgba(255,255,255,.4);
       background:rgba(20,26,38,.9);color:#e8eef7;font:inherit;min-width:0;}
     .pc-mrtype{flex:0 1 auto;}
     .pc-mrlv{flex:0 0 auto;}
     .pc-mrdel{flex:0 0 auto;width:22px;height:24px;padding:0;border:none;background:transparent;
       color:#ff9c9c;font:inherit;font-size:16px;line-height:24px;cursor:pointer;text-align:center;}
-    .pc-mrdel:hover{color:#ff6b6b;}
+    @media (hover:hover){.pc-mrdel:hover{color:#ff6b6b;}}
     .pc-mrcap{flex:0 0 auto;margin-left:auto;font-size:11px;line-height:1;color:#8fa6c4;letter-spacing:.5px;}
-    .pc-mrstars{display:inline-flex;gap:3px;flex:0 0 auto;}
-    .pc-mrstar{font-size:15px;line-height:1;cursor:pointer;color:rgba(255,255,255,.3);transition:transform .1s,color .1s;}
+    /* gap 12px 使星心距 ≥24px（2.5.8）；button 化后清 UA 外观，星级键盘可达（原生 button） */
+    .pc-mrstars{display:inline-flex;gap:12px;flex:0 0 auto;}
+    .pc-mrstar{appearance:none;-webkit-appearance:none;border:none;background:transparent;padding:0;font-family:inherit;font-size:15px;line-height:1;cursor:pointer;color:rgba(255,255,255,.55);}
     .pc-mrstar.on{color:#ffcf4d;text-shadow:0 0 6px rgba(255,207,77,.5);}
-    .pc-mrstar:hover{transform:scale(1.18);}
+    @media (hover:hover){.pc-mrstar:hover{transform:scale(1.18);}}
     /* 下田规则字段（type:'farmrules'，自动下田：每行=一个田位；资源类型/种类多选/预设部队 三个下拉 + 删除，行存在即生效）。
        行盒可换行（窄卡尽量单行），× 与标题行＋右对齐；骨架同 minerules，交互走面板级事件委托（见 wirePanel）。 */
     .pc-frule{display:flex;flex-direction:column;gap:6px;width:100%;margin:2px 0 6px;}
     .pc-fruletop{display:flex;align-items:center;justify-content:space-between;gap:8px;}
     .pc-fradd{flex:0 0 auto;width:22px;height:20px;padding:0;border-radius:6px;cursor:pointer;
-      border:1px dashed rgba(255,255,255,.28);background:transparent;color:#cfe8ff;font:inherit;font-size:14px;line-height:18px;}
-    .pc-fradd:hover{background:rgba(255,255,255,.1);}
+      border:1px dashed rgba(255,255,255,.4);background:transparent;color:#cfe8ff;font:inherit;font-size:14px;line-height:18px;}
+    @media (hover:hover){.pc-fradd:hover{background:rgba(255,255,255,.1);}}
     .pc-frmain{display:flex;align-items:center;justify-content:space-between;gap:10px;}
     .pc-frbox{display:flex;flex:1 1 auto;flex-wrap:wrap;align-items:center;gap:4px;min-width:0;padding:6px 7px;
       border:1px solid rgba(255,255,255,.12);border-radius:8px;background:rgba(255,255,255,.03);}
     /* 目标/部队 分组小标签 + 中间竖分隔线：把“采集什么田”与“派哪支部队”在视觉上分成两段 */
     .pc-frcap{flex:0 0 auto;font-size:11px;line-height:1;color:#8fa6c4;letter-spacing:.5px;}
     .pc-frdiv{flex:0 0 auto;width:1px;align-self:stretch;margin:1px 2px;background:rgba(255,255,255,.22);}
-    .pc-frsel{padding:3px 5px;border-radius:6px;border:1px solid rgba(255,255,255,.25);
+    .pc-frsel{padding:3px 5px;border-radius:6px;border:1px solid rgba(255,255,255,.4);
       background:rgba(20,26,38,.9);color:#e8eef7;font:inherit;min-width:0;}
     /* 资源种类多选下拉（type:'farmrules'：遗迹/机械/普通）——按钮就是下拉触发器（观感对齐 .pc-frsel，只显示已选摘要），
        选项列表每项一个 checkbox。主路径（面板带 .pc-kindpop = 浏览器有 Popover API）：列表进 top layer 浮在按钮下方，
        不撑高卡片，也不被 .pc-panel/.pc-pane 的 overflow:auto、.pc-sec 的 overflow:hidden 和面板的 backdrop-filter 裁切
-       （fixed 子元素会被这些困住）；位置由 wire.js 按按钮 rect 写行内 style，light dismiss 交给浏览器。
+       （fixed 子元素会被这些困住）；位置由 farmrules.js mount 的 beforetoggle 按按钮 rect 写行内 style，
+       开/关（popovertarget）与点外/Esc 收起（auto light dismiss）都交给浏览器。
        降级（老 Chrome 无 popover 属性）：同一条列表改走流内撑开，独占一行。全不勾 = 该行不下田。 */
     .pc-frkinds{display:inline-flex;flex-direction:column;align-items:flex-start;gap:3px;flex:0 1 auto;min-width:0;}
     .pc-frkinds.pc-open{flex:1 0 100%;align-items:flex-start;}
     .pc-frkbtn{display:inline-flex;align-items:center;gap:5px;max-width:150px;padding:3px 6px;border-radius:6px;cursor:pointer;
-      border:1px solid rgba(255,255,255,.25);background:rgba(20,26,38,.9);color:#e8eef7;font:inherit;font-size:12px;}
-    .pc-frkbtn:hover{border-color:rgba(74,158,255,.6);}
+      border:1px solid rgba(255,255,255,.4);background:rgba(20,26,38,.9);color:#e8eef7;font:inherit;font-size:12px;}
+    @media (hover:hover){.pc-frkbtn:hover{border-color:rgba(74,158,255,.6);}}
     .pc-frksum{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
-    .pc-frkcaret{flex:0 0 auto;font-size:10px;line-height:1;opacity:.7;transition:transform .12s;}
+    .pc-frkcaret{flex:0 0 auto;font-size:10px;line-height:1;opacity:.7;}
     .pc-frkinds.pc-open .pc-frkcaret{transform:rotate(180deg);}
     .pc-frkpop{display:none;flex-wrap:wrap;align-items:center;gap:3px 14px;width:100%;padding:4px 7px;
-      border:1px solid rgba(255,255,255,.14);border-radius:7px;background:rgba(255,255,255,.05);}
+      border:1px solid rgba(255,255,255,.4);border-radius:7px;background:rgba(255,255,255,.05);}
     .pc-frkinds.pc-open .pc-frkpop{display:flex;}
     /* popover 模式：收起时由 UA 的 :not(:popover-open) 隐藏，声明顺序要压过上面那条「展开才 flex」；
-       .pc-kindpopfail = showPopover 报错后常驻退回流内撑开（wire.js），两类名不同时存在所以不冲突 */
+       .pc-kindpopfail = 流内撑开的防御性兜底档（主路径走 popovertarget 后不再主动置位），两类名不同时存在所以不冲突 */
     .pc-panel.pc-kindpop .pc-frkpop{display:none;}
     .pc-panel.pc-kindpop .pc-frkinds.pc-open{flex:0 1 auto;}
     .pc-panel.pc-kindpopfail .pc-frkinds.pc-open{flex:1 0 100%;}
@@ -442,22 +453,22 @@ export const PANEL_CSS = `
     .pc-frkopt input[type=checkbox]:disabled{cursor:not-allowed;}
     .pc-frdel{flex:0 0 auto;width:22px;height:24px;padding:0;border:none;background:transparent;
       color:#ff9c9c;font:inherit;font-size:16px;line-height:24px;cursor:pointer;text-align:center;}
-    .pc-frdel:hover{color:#ff6b6b;}
+    @media (hover:hover){.pc-frdel:hover{color:#ff6b6b;}}
     /* 下田时段字段（type:'timeranges'，自动下田：每行=一个时段，原生 time 选时:分，× 删除，行存在即生效）。
        骨架同 minerules/ranges，行盒单行：[起始 ~ 结束 ×]；交互走面板级事件委托（见 wirePanel）。 */
     .pc-trule{display:flex;flex-direction:column;gap:6px;width:100%;margin:2px 0 6px;}
     .pc-trtop{display:flex;align-items:center;justify-content:space-between;gap:8px;}
     .pc-tradd{flex:0 0 auto;width:22px;height:20px;padding:0;border-radius:6px;cursor:pointer;
-      border:1px dashed rgba(255,255,255,.28);background:transparent;color:#cfe8ff;font:inherit;font-size:14px;line-height:18px;}
-    .pc-tradd:hover{background:rgba(255,255,255,.1);}
+      border:1px dashed rgba(255,255,255,.4);background:transparent;color:#cfe8ff;font:inherit;font-size:14px;line-height:18px;}
+    @media (hover:hover){.pc-tradd:hover{background:rgba(255,255,255,.1);}}
     .pc-trow{display:flex;align-items:center;gap:8px;}
-    .pc-tinp{flex:0 1 auto;min-width:0;padding:3px 6px;border-radius:6px;border:1px solid rgba(255,255,255,.25);
+    .pc-tinp{flex:0 1 auto;min-width:0;padding:3px 6px;border-radius:6px;border:1px solid rgba(255,255,255,.4);
       background:rgba(20,26,38,.9);color:#e8eef7;font:inherit;font-variant-numeric:tabular-nums;}
     .pc-tinp:focus{outline:none;border-color:rgba(150,205,255,.95);box-shadow:0 0 0 2px rgba(90,160,255,.5);}
-    .pc-tdash{flex:0 0 auto;opacity:.55;font-size:12px;}
+    .pc-tdash{flex:0 0 auto;opacity:.7;font-size:12px;}
     .pc-tdel{flex:0 0 auto;width:22px;height:24px;padding:0;border:none;background:transparent;
       color:#ff9c9c;font:inherit;font-size:16px;line-height:24px;cursor:pointer;text-align:center;}
-    .pc-tdel:hover{color:#ff6b6b;}
+    @media (hover:hover){.pc-tdel:hover{color:#ff6b6b;}}
     /* 怪物清单字段（type:'huntlist'，自动打野）：固定行（每种怪一行）的表格，列头与数据行共用同一 grid 模板逐列对齐。
        列：类型 | 方式 | 数量 | 已打 | 参与☑（等级不入清单，固定搜最高档）。行不可增删，交互走面板级事件委托（见 wirePanel）。 */
     .pc-hl{display:flex;flex-direction:column;width:100%;margin:2px 0 6px;}
@@ -474,7 +485,7 @@ export const PANEL_CSS = `
     .pc-hlname{display:flex;align-items:center;gap:5px;min-width:0;font-size:12px;text-align:left;}
     .pc-hllabel{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
     .pc-hln{width:100%;min-width:0;box-sizing:border-box;padding:3px 2px;border-radius:5px;
-      border:1px solid rgba(255,255,255,.14);background:rgba(255,255,255,.06);color:#e8eef7;font:inherit;
+      border:1px solid rgba(255,255,255,.4);background:rgba(255,255,255,.06);color:#e8eef7;font:inherit;
       font-size:12px;font-variant-numeric:tabular-nums;text-align:center;appearance:textfield;-moz-appearance:textfield;}
     .pc-hln:focus{outline:none;border-color:rgba(150,205,255,.95);box-shadow:0 0 0 2px rgba(90,160,255,.5);background:rgba(120,180,255,.10);}
     .pc-hln::-webkit-inner-spin-button,.pc-hln::-webkit-outer-spin-button{-webkit-appearance:none;margin:0;}
@@ -491,16 +502,16 @@ export const PANEL_CSS = `
     .pc-pp{display:flex;flex-direction:column;gap:4px;width:100%;margin:2px 0 6px;}
     .pc-pptop{display:flex;align-items:center;justify-content:space-between;gap:8px;}
     .pc-ppadd{flex:0 0 auto;width:22px;height:20px;padding:0;border-radius:6px;cursor:pointer;
-      border:1px dashed rgba(255,255,255,.28);background:transparent;color:#cfe8ff;font:inherit;font-size:14px;line-height:18px;}
-    .pc-ppadd:hover{background:rgba(255,255,255,.1);}
+      border:1px dashed rgba(255,255,255,.4);background:transparent;color:#cfe8ff;font:inherit;font-size:14px;line-height:18px;}
+    @media (hover:hover){.pc-ppadd:hover{background:rgba(255,255,255,.1);}}
     .pc-ppadd:disabled{opacity:.4;cursor:default;}
     .pc-pprow{display:flex;align-items:center;gap:6px;}
     .pc-ppslot{flex:0 0 auto;font-size:11px;opacity:.6;font-variant-numeric:tabular-nums;}
     .pc-ppdel{flex:0 0 auto;width:22px;height:22px;padding:0;border:none;background:transparent;
       color:#ff9c9c;font:inherit;font-size:16px;line-height:22px;cursor:pointer;text-align:center;}
-    .pc-ppdel:hover{color:#ff6b6b;}
+    @media (hover:hover){.pc-ppdel:hover{color:#ff6b6b;}}
     /* 下田清单/预设池下拉共用外观（限定 select.：表头同名 span 不能继承下拉的边框/背景，否则表头「方式」格会与其他表头不一致） */
-    select.pc-hlmode,.pc-ppsel{padding:2px 4px;border-radius:6px;border:1px solid rgba(255,255,255,.25);
+    select.pc-hlmode,.pc-ppsel{padding:2px 4px;border-radius:6px;border:1px solid rgba(255,255,255,.4);
       background:rgba(20,26,38,.9);color:#e8eef7;font:inherit;font-size:12px;min-width:0;width:100%;box-sizing:border-box;}
     .pc-ppsel{flex:1 1 auto;}
     /* 2.5.8 最小命中区：把 <24px 的图标按钮（增/删档、删除行、＋添加）用居中伪元素扩到 24×24，

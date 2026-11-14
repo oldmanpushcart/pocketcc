@@ -38,9 +38,9 @@ function uidListInnerHTML(list, fd) {
       return (
         `<div class="pc-uidwrap pc-uli" data-idx="${i}">` +
         `<div class="pc-row">${chk}<span>${item} ${i + 1}</span>` +
-        `<button type="button" class="pc-udisp" title="点击编辑 UID" aria-label="编辑目标 UID"><span class="pc-uedit">✎</span><span class="pc-uname">${escAttr(nmV || uidV)}</span></button>` +
+        `<button type="button" class="pc-udisp" title="点击编辑 UID" aria-label="编辑${item} ${i + 1} 的 UID"><span class="pc-uedit">✎</span><span class="pc-uname">${escAttr(nmV || uidV)}</span></button>` +
         `<input type="text" class="pc-uinput" inputmode="numeric" hidden placeholder="${ph}">` +
-        `<button class="pc-udel" type="button" title="删除此${item}" aria-label="删除此${item}">×</button>` +
+        `<button class="pc-udel" type="button" title="删除此${item}" aria-label="删除${item} ${i + 1}">×</button>` +
         `</div><div class="pc-uhint" hidden></div></div>`
       );
     })

@@ -40,11 +40,14 @@ export async function mountUI() {
   root.appendChild(style);
 
   // 浮动图标做成真实 button：键盘可聚焦、Enter/Space 可开合面板（2.1.1 指针路径皆需键盘等价）。
+  // aria-expanded/controls 把「图标↔面板」的展开关系告诉读屏（disclosure 模式）。
   const icon = document.createElement('button');
   icon.type = 'button';
   icon.className = 'pc-icon';
   icon.title = '口袋控制中心';
   icon.setAttribute('aria-label', '口袋控制中心');
+  icon.setAttribute('aria-expanded', 'false');
+  icon.setAttribute('aria-controls', 'pc-panel');
 
   /** 图标随战斗态切换：换 SVG（冷/热）+ 切 .combat 类（光晕节奏/配色、外发光跟随）。 */
   function renderIcon() {
@@ -55,6 +58,7 @@ export async function mountUI() {
   bus.on(EVT.MODE_CHANGE, renderIcon);
 
   const panel = document.createElement('div');
+  panel.id = 'pc-panel';
   panel.className = 'pc-panel';
   panel.hidden = true;
   panel.innerHTML = buildPanelHTML();
@@ -208,15 +212,40 @@ export async function mountUI() {
   function openPanel() {
     placePanel();
     panel.hidden = false;
+    icon.setAttribute('aria-expanded', 'true');
     flushRebuild(); // 收起期间播报过的行集变化，此时才真能重渲染（展开本身不动 DOM 结构）
     refreshTexts(panel);
     refreshTabGates(panel); // 活动开/退常在面板收起期间发生，展开时按实时判据回算左 TAB 可点态
     renderWorldStatus(); // 展开时再核一次世界态（订阅已常驻，此处兜住极早期 world.change 先于挂订阅的窗口）
+    // 焦点移入面板首个可见可聚焦控件（键盘用户不必从图标一路 Tab 进来）；
+    // 漫游 tabindex 的 inactive TAB（-1）与隐藏 pane 里的控件都跳过，preventScroll 免得带动游戏页滚动。
+    for (const el of panel.querySelectorAll('button, input, select, textarea, [tabindex]')) {
+      if (el.disabled || el.tabIndex < 0 || el.hidden || el.closest('[hidden]')) continue;
+      el.focus({ preventScroll: true });
+      break;
+    }
   }
   /** 收起面板 */
   function closePanel() {
     panel.hidden = true;
+    icon.setAttribute('aria-expanded', 'false');
   }
+
+  // Esc 收起面板：监听在 shadow root（图标/面板内的事件都冒到这里）。
+  // 下田规则浮层展开时让浏览器先收它（auto popover 的 Esc 是 UA 默认动作，事件仍会冒上来），
+  // 再按一次 Esc 才收面板，避免一键连收两层。
+  root.addEventListener('keydown', (e) => {
+    if (e.key !== 'Escape' || panel.hidden) return;
+    let popOpen = false;
+    try {
+      popOpen = !!panel.querySelector('.pc-frkpop:popover-open');
+    } catch {
+      /* 老 Chrome 不识 :popover-open：降级档 farmrules 自收浮层并 stopPropagation，不会走到这 */
+    }
+    if (popOpen) return;
+    closePanel();
+    icon.focus({ preventScroll: true }); // 焦点回到触发器，不留给已隐藏的面板
+  });
 
   let dragging = false;
   let moved = false;

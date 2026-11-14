@@ -39,7 +39,7 @@ function presetPoolInnerHTML(list, fd) {
         `<div class="pc-pprow" data-idx="${i}">` +
         `<span class="pc-ppslot" title="出兵顺序">#${i + 1}</span>` +
         `<select class="pc-ppsel" title="该位的战斗预设">${opts}</select>` +
-        `<button class="pc-ppdel" type="button" title="移出预设池" aria-label="移出预设池">×</button>` +
+        `<button class="pc-ppdel" type="button" title="移出预设池" aria-label="移出预设池（第 ${i + 1} 位）">×</button>` +
         `</div>`
       );
     })

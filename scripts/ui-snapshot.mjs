@@ -365,11 +365,21 @@ const CASES = [
               limit: { key: 'rgLimit', zeroUnlimited: true },
               count: { key: 'rgCount', get: () => '2' },
             },
+            {
+              // 学习行：触发×删除按钮路径，与上行隐形占位槽对拍末列对齐
+              name: '雷达集结怪#94',
+              enableKey: 'rgOn2',
+              delay: { key: 'rgDelay2', min: 0, step: 1 },
+              limit: { key: 'rgLimit2', zeroUnlimited: true },
+              count: { key: 'rgCount2', get: () => '0' },
+              learned: true,
+              itemIds: [94],
+            },
           ],
         },
       ],
     },
-    cfg: { rgDelay: 5, rgLimit: 0, rgOn: true },
+    cfg: { rgDelay: 5, rgLimit: 0, rgOn: true, rgDelay2: 0, rgLimit2: 10, rgOn2: true },
   },
   // ── 数字兜底（type 未命中任一注册表 → renderNumber） ──
   {

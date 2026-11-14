@@ -28,12 +28,12 @@ const CSS = `
 .pcw-title { font-size: 17px; font-weight: 700; margin-bottom: 14px; color: #f0d9a0; }
 .pcw-gift { font-size: 14px; line-height: 1.9; margin-bottom: 14px; }
 .pcw-gift .pcw-name { color: #7ecbff; font-weight: 700; }
-.pcw-gift .pcw-uid { color: #9aa7ba; font-size: 12px; }
+.pcw-gift .pcw-uid { color: #b4c0d1; font-size: 12px; }
 .pcw-verdict { font-size: 15px; font-weight: 700; margin: 10px 0 14px; }
 .pcw-verdict.ok { color: #59d17c; }
 .pcw-verdict.fail { color: #ff6b6b; }
 .pcw-decls {
-  font-size: 12px; line-height: 1.8; color: #8b96a6;
+  font-size: 12px; line-height: 1.8; color: #b4c0d1;
   border-top: 1px dashed #3a4a63; margin-top: 6px; padding-top: 10px; text-align: left;
 }
 .pcw-btn {
@@ -41,8 +41,8 @@ const CSS = `
   font-size: 14px; font-weight: 700; color: #10151f;
   background: linear-gradient(180deg, #8fd7ff, #5eb3e8);
 }
-.pcw-btn:hover { filter: brightness(1.08); }
-.pcw-foot { margin-top: 12px; font-size: 11px; color: #677182; }
+@media (hover:hover){.pcw-btn:hover { filter: brightness(1.08); }}
+.pcw-foot { margin-top: 12px; font-size: 11px; color: #b4c0d1; }
 `;
 
 /**
@@ -76,8 +76,8 @@ function cardHTML(pass, uid) {
     : '<div class="pcw-verdict fail">核验失败</div>';
   const btn = pass ? '<button class="pcw-btn" type="button">进入使用</button>' : '';
   return (
-    '<div class="pcw-card">' +
-    '<div class="pcw-title">口袋控制中心</div>' +
+    '<div class="pcw-card" role="dialog" aria-modal="true" aria-labelledby="pcw-title">' +
+    '<div class="pcw-title" id="pcw-title">口袋控制中心</div>' +
     `<div class="pcw-gift">${gift}</div>` +
     verdict +
     '<div class="pcw-decls">' +
@@ -131,12 +131,35 @@ export function showWelcome(mode, uid) {
     mask.addEventListener('pointerdown', swallow);
     mask.addEventListener('click', swallow);
 
+    // 模态语义：背景兄弟节点 inert（键盘/读屏不能穿透遮罩），焦点移入对话框；
+    // ok 态 Esc 等价「进入使用」，fail 态故意不可关闭（仅聚焦卡片供读屏播报）。
+    const inerted = [];
+    for (const el of document.body.children) {
+      if (el !== host && !el.inert) {
+        el.inert = true;
+        inerted.push(el);
+      }
+    }
+    const restore = () => {
+      for (const el of inerted) el.inert = false;
+    };
+
     if (pass) {
       const btn = root.querySelector('.pcw-btn');
-      btn.addEventListener('click', () => {
+      const close = () => {
         host.remove();
+        restore();
         resolve();
+      };
+      btn.addEventListener('click', close);
+      mask.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape') close();
       });
+      btn.focus();
+    } else {
+      const card = root.querySelector('.pcw-card');
+      card.tabIndex = -1;
+      card.focus();
     }
   });
 }

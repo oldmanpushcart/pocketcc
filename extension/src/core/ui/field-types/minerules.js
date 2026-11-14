@@ -38,7 +38,7 @@ function mineRulesInnerHTML(list, fd, cfg) {
       let stars = '';
       for (let s = 1; s <= maxStar; s++) {
         const on = s <= star;
-        stars += `<span class="pc-mrstar${on ? ' on' : ''}" data-part="star" data-star="${s}" title="${s} 星；再点当前星=不限">${on ? '★' : '☆'}</span>`;
+        stars += `<button type="button" class="pc-mrstar${on ? ' on' : ''}" data-part="star" data-star="${s}" title="${s} 星；再点当前星=不限" aria-label="${s} 星" aria-pressed="${on}">${on ? '★' : '☆'}</button>`;
       }
       return (
         `<div class="pc-mrrow" data-idx="${i}">` +

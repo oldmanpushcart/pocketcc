@@ -49,16 +49,17 @@ function huntListInnerHTML(list, fd, fid) {
       const count = countCap > 0 && count0 > countCap ? countCap : count0;
       const mode = r.mode != null ? r.mode : mo.defaultMode;
       const on = r.on === undefined ? !!mo.defaultOn : !!r.on;
+      // 行名可能被截断：title 带上完整怪名，悬停/长按可取全值（1.4.10 截断须有全值路径）
       const title = mo.openItem
-        ? `用求救信(${mo.openItem})开营 · 无每日上限`
-        : `groupType ${mo.groupType} / pointType ${mo.pointType} / 搜索等级 ${mo.levelMode === 'dynamic' ? `动态反查(回退${mo.level})` : mo.level}`;
+        ? `${mo.label} · 用求救信(${mo.openItem})开营 · 无每日上限`
+        : `${mo.label} · groupType ${mo.groupType} / pointType ${mo.pointType} / 搜索等级 ${mo.levelMode === 'dynamic' ? `动态反查(回退${mo.level})` : mo.level}`;
       return (
         `<div class="pc-hlrow" data-idx="${i}" data-hkey="${escAttr(String(mo.key))}">` +
         `<span class="pc-hlname" title="${escAttr(title)}"><span class="pc-hllabel">${escAttr(String(mo.label))}</span></span>` +
         `<select class="pc-hlmode pc-hlsel" data-part="mode" title="攻打方式">${optsHTML(mo.modes, mode)}</select>` +
         `<input type="number" class="pc-hlcnt pc-hln" data-part="count" min="0"${countCap > 0 ? ` max="${countCap}"` : ''} step="1" value="${count > 0 ? count : ''}" placeholder="${PLACEHOLDER_UNLIMITED}" title="攻打数量；留空 = 不限${countCap > 0 ? `（上限 ${countCap}）` : ''}">` +
         `<span class="pc-fval pc-hlstat" data-fid="${fid}" data-fkey="${fd.key}" data-hlstat="${escAttr(String(mo.key))}" title="今日已打数量">${escAttr(String(today(mo.key) || ''))}</span>` +
-        `<input type="checkbox" class="pc-hlon pc-hlchk" data-part="on"${on ? ' checked' : ''} title="勾选=纳入猎杀范围">` +
+        `<input type="checkbox" class="pc-hlon pc-hlchk" data-part="on"${on ? ' checked' : ''} title="勾选=纳入猎杀范围" aria-label="纳入猎杀「${escAttr(String(mo.label))}」">` +
         `</div>`
       );
     })

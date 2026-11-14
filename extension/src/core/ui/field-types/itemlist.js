@@ -115,7 +115,7 @@ function itemListInnerHTML(items, state, fd, order, cfgForSummary, fid) {
       const rowOff = pickOff && !ch2 ? !on : pickOff ? !ch2On : ch2 ? !on && !ch2On : !on;
       const mainChk =
         `<label class="pc-ichklbl pc-ichkpush" title="${pickOff ? '该物品无掉落来源，不可拾取' : escAttr((fd && fd.chkTitle) || '是否自动拾取')}">` +
-        `<input type="checkbox" class="pc-ichk" data-ik="${escAttr(key)}"${on && !pickOff ? ' checked' : ''}${pickOff ? ' disabled' : ''}>` +
+        `<input type="checkbox" class="pc-ichk" data-ik="${escAttr(key)}" aria-label="${escAttr(label)}：${escAttr((fd && fd.chkTitle) || '是否自动拾取')}"${on && !pickOff ? ' checked' : ''}${pickOff ? ' disabled' : ''}>` +
         `<span>${escAttr(ch2 ? ch2.aLabel || '拾' : '')}</span></label>`;
       const ch2Chk = ch2
         ? `<label class="pc-ichklbl pc-ichklbl2" title="${escAttr(ch2.title || '')}${ch2Off ? '（该项不走此渠道）' : ''}">` +
