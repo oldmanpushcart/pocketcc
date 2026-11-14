@@ -5,7 +5,7 @@
  * 三条协议铁律（target=null、ensureServerResponse=false、无 clickInfo）由 net 封装内部固定，这里不再关心。
  *
  * 架构：
- *   生产者 runTick 定时轮询（两档间隔：当天还有事可做 busyInterval，荣誉分与申请次数都满 idleInterval），
+ *   生产者 createCycle 电平调和轮询（两档间隔：当天还有事可做 busyInterval，荣誉分与申请次数都满 idleInterval），
  *     无状态条件扫描 → 按 kind 去重入队任务（HELP_ALL / RECEIVE / APPLY），申请闸门：
  *     计数通道已同步（AllianceHelpMax>0）、未被服务器显式标记当日已满、本地计数未达上限（同步前不发申请）；
  *   消费者（createDrain）串行取任务，执行前重判前置条件（条件没了就地丢弃），每条之间休眠 consumeInterval。
@@ -13,20 +13,21 @@
  *   数据来源：自己的自助帮助进度靠游戏 push（10446 自助帮助列表 / 10453 帮助重取）写进 _selfHelpList，
  *     面板正是监听 AllianceHelpUpdate 事件即时刷新——所以面板能秒显、只靠轮询的脚本却迟迟读不到。
  *     脚本不解析 push 载荷（10446 语义未验证），只订阅这两条 push 的“到达”当唤醒信号（net.recvMine
- *     先跑游戏处理器再派发，唤醒时本地数据已新鲜），到达即 scheduling(0) 抢跑一轮生产消除空档；轮询仍作兜底。
+ *     先跑游戏处理器再派发，唤醒时本地数据已新鲜），到达即 cycle.kick() 抢跑一轮生产消除空档（在飞自动合并）；轮询仍作兜底。
  *
  * 只读 + 发包：本脚本不调用游戏任何 Update、Delete 等改写本地数据的内部方法——
  *   发包后的数据变更全部交给游戏自身的 push 通知维护，下一轮轮询读到的即是新状态。
  * 协议出处与设计台账见本文件行内各源码锚点（早期整理的《联盟帮助资料整理》笔记未入库）。
  *
- * 生命周期由 reactor 托管：install/configure/run 三个钩子。无推送，run 直接点火自重排定时器；
- *   定时器是功能内部的生产逻辑（ctx 托管），pause 后被 reactor 自动清，resume 时 run 重新点火。
+ * 生命周期由 reactor 托管：install/configure/run 三个钩子。无推送，run 直接 cycle.kick() 点火；
+ *   生产排程归 createCycle（单飞/触发合并/异常兜底重排/看门狗自愈），pause 后自然停摆，resume 时 run 重新 kick。
  *   未声明 scenes → scene 门控默认放行，任何场景都跑（与重构前一致）。
  */
 import { CODE_NOT_SENT, todayStr, rejectText } from '../../core/util.js';
 import { createLog } from '../../core/log.js';
 import { game } from '../../core/game.js';
 import { createDrain } from '../../core/drain.js';
+import { createCycle } from '../../core/cycle.js';
 import { reactor } from '../../core/reactor.js';
 import { item } from '../../core/item.js';
 import { screen } from '../../core/net-guard.js';
@@ -132,9 +133,6 @@ var doneReceived = new Set();
 /** @type {string|null} doneReceived 归属日期（YYYY-MM-DD），跨日自动失效 */
 var doneReceivedDay = null;
 
-/** @type {number|null} 生产轮询单定时器句柄 */
-var timer = null;
-
 /** @type {object[]} 待消费任务队列（pause 保留、恢复续跑；execTask 执行前重判前置条件，陈旧任务自动丢弃） */
 var queue = [];
 
@@ -164,47 +162,27 @@ var drain = createDrain({
   },
 });
 
-/**
- * 单定时器武装器：每个 tick 跑一次 runTick
- * runTick 为 async，用 Promise 兜住意外 reject——断链就重排一次，链不死
- * @param {number} delay 延迟(毫秒)
- * @param {function} fn 到点执行的下一步
- */
-function scheduling(delay, fn) {
-  if (!aliveFn()) return false;
-  if (timer) ctxRef.clearTimeout(timer);
-  timer = ctxRef.setTimeout(
-    function () {
-      timer = null;
-      if (!aliveFn()) return;
-      Promise.resolve()
-        .then(fn)
-        .catch(function (err) {
-          log.warn('scheduled step threw, reschedule.', err);
-          scheduling(nextInterval(), runTick);
-        });
-    },
-    Math.max(0, delay),
-  );
-  return true;
-}
-
 // ─────────────────────────── 生产者 ───────────────────────────
 
 /**
- * 生产轮询：无状态条件扫描 → 按 kind 去重入队 → 触发消费 → 重排下一轮
+ * cycle 单轮：无状态条件扫描 → 按 kind 去重入队 → 触发消费 → 返回下拍间隔（排程/异常兜底归 createCycle）。
+ * 在飞期间到达的 push 只置 cycle.pending：本轮结束后立即补扫一轮（等价旧 scheduling(0) 抢跑，
+ * 多条连到自然合并）；发包节奏不受影响——逐条间距由 drain 的 consumeInterval 独立守着。
+ * @returns {Promise<number>} 下一次兜底扫描间隔（毫秒）
  */
-function runTick() {
+async function cycleRun() {
   // 准入存活校验（O(1) 读缓存判定，不设限包恒真）：不过则本轮不生产不消费，
-  // 不重排定时器、不报错不刷屏；不设限包永不命中此分支。
-  if (!screen(getUid())) return;
+  // 静默睡闲档不刷屏；不设限包永不命中此分支。
+  if (!screen(getUid())) return cfg.idleInterval;
   produce();
-  if (!aliveFn()) return;
+  if (!aliveFn()) return cfg.idleInterval;
   drain.consume().catch(function (err) {
     log.warn('consume loop threw!', err);
   });
-  scheduling(nextInterval(), runTick);
+  return cycle.pending ? 0 : nextInterval();
 }
+
+const cycle = createCycle({ log: log, alive: aliveFn, run: cycleRun, fallback: cfg.busyInterval });
 
 /**
  * 条件扫描入队。帮助全员与自己申请是两条独立业务流，各自判定、各自入队，互不抢占——
@@ -351,7 +329,7 @@ function hasQueued(kind) {
  * 三者都不成立 → idleInterval（等次日重置）。
  * “有在途待领”必须计入 busy：最后一次申请用满当天次数、荣誉分也满时，若只看两个配额会掉进
  * idleInterval（默认10分钟），而进度是在这一次轮询之间的空档里才被盟友填满的，
- * 下一次 runTick 要等满 10 分钟才探测到满进度并领取（真机：“最后一个 help 进度满了迟迟不领”）。
+ * 下一轮 cycle 要等满 10 分钟才探测到满进度并领取（真机：“最后一个 help 进度满了迟迟不领”）。
  * 服务器标记“当日已满”后不再申请，但他人求助仍会 push 唤醒（10446/10453），
  * 在途领取流不依赖本轮询兼顾，故此处按“非 busy”处理掉进 idleInterval 可接受。
  * @returns {number} 毫秒
@@ -749,24 +727,23 @@ function install(ctx) {
  * push 唤醒：联盟帮助数据（含自己自助帮助进度）由游戏 push 写进 _selfHelpList 后，
  * net.recvMine 先跑游戏自己的处理器、再派发到本回调（net.js:212-225），故此刻本地数据已新鲜。
  * 不解析 push 载荷（10446 语义未验证），只把“到达”当作“立即重跑一轮生产”的信号：
- * 用 scheduling(0, runTick) 把下一轮提前到当前宏任务——既避开在游戏入站回调里同步发包的重入，
- * 又靠单定时器语义自然合并频繁 push（多条连到也只抢跑一次）。轮询仍是兜底。
+ * cycle.kick() 非在飞即起一轮、在飞置 pending 本轮后补扫——既避开在游戏入站回调里同步发包的重入，
+ * 又靠单飞闸门自然合并频繁 push（多条连到也只抢跑一次）。轮询仍是兜底。
  */
 function onHelpUpdate() {
-  if (!aliveFn()) return;
-  scheduling(0, runTick);
+  cycle.kick();
 }
 
 /**
- * 运行：订阅自助帮助 push、立刻跑一轮生产，之后按 nextInterval 档位自续。
- * reactor pause 置 alive=false 后定时器自然停摆；resume 重新点火（scheduling 先 clearTimeout 单定时器，不会重复）。
+ * 运行：订阅自助帮助 push、立刻跑一轮生产，之后按 nextInterval 档位自续（createCycle 托管排程）。
+ * reactor pause 置 alive=false 后 cycle 自然停摆；resume 重新 kick（单飞闸门不会重复起轮）。
  * @param {object} ctx reactor 上下文
  */
 function run(ctx) {
   ctxRef = ctx;
   ctx.on.push(PUSH_ALLIANCE_SELF_HELP, onHelpUpdate);
   ctx.on.push(PUSH_ALLIANCE_HELP_REGET, onHelpUpdate);
-  scheduling(0, runTick);
+  cycle.kick();
   log.info('started.');
 }
 
