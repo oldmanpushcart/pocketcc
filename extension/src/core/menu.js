@@ -102,6 +102,7 @@ export const MENU = [
           { id: 'allianceGift', kind: 'feature', label: '联盟礼物', inlineStatus: true },
           { id: 'allianceScience', kind: 'feature', label: '联盟科技', inlineStatus: true },
           { id: 'allianceBehemoth', kind: 'feature', label: '联盟守卫', inlineStatus: true },
+          { id: 'allianceDefender', kind: 'feature', label: '联盟保卫战', inlineStatus: true },
         ],
       },
       { id: 'allianceRally', kind: 'feature', label: '联盟集结', showFields: true },
