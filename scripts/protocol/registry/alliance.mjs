@@ -143,6 +143,34 @@ export default [
     ],
   },
   {
+    cmd: 1353,
+    dir: 'C2S',
+    note: '联盟保卫战展示时刻（GET_ALLIANCE_DISPLAY_TIME，req {}；resp {st,et,det,siegeStatus,actSpec,redDot}，et 为展示结束非战斗结束，redDot[42] 个人可领档数）',
+    src: 'references/游戏逆向/extracted/Script/RequestId__RequestId.js',
+    fields: 'st,et,det,siegeStatus,actSpec,redDot',
+    usages: [
+      {
+        name: 'CMD_GET_ALLIANCE_DISPLAY_TIME',
+        feat: 'alliance-defender',
+        file: 'feats/alliance/alliance-defender/constants.js',
+      },
+    ],
+  },
+  {
+    cmd: 1792,
+    dir: 'C2S',
+    note: '活动奖励批量领取（ACTIVITY_GET_REWARD，req {aid,type}；type42 个人积分 / type47 联盟累计，一次领完该组全部可领行）',
+    src: 'references/游戏逆向/extracted/Script/RequestId__RequestId.js',
+    fields: 'aid,type',
+    usages: [
+      {
+        name: 'CMD_ACTIVITY_GET_REWARD',
+        feat: 'alliance-defender',
+        file: 'feats/alliance/alliance-defender/constants.js',
+      },
+    ],
+  },
+  {
     cmd: 1825,
     dir: 'C2S',
     note: '查询遗迹本轮候选/已领（GET_FORTRESS_CHOOSE_ITEM_REWARD_DATA，{wonderId}）',
@@ -237,6 +265,20 @@ export default [
         name: 'PUSH_ALLIANCE_HELP_REGET',
         feat: 'alliance-help',
         file: 'feats/alliance/alliance-help/constants.js',
+      },
+    ],
+  },
+  {
+    cmd: 11104,
+    dir: 'S2C',
+    note: 'push 联盟保卫战战斗态（ALLIANCE_MONSTER_SIEGE_INFO，{alMonsterSiege:{startTime,endTime,isEnd,nextTime,targetId,round,…}}，收尾 isEnd=1/endTime>0）',
+    src: 'references/游戏逆向/extracted/Script/ResponseId__ResponseId.js',
+    fields: 'alMonsterSiege',
+    usages: [
+      {
+        name: 'CMD_PUSH_ALLIANCE_MONSTER_SIEGE',
+        feat: 'alliance-defender',
+        file: 'feats/alliance/alliance-defender/constants.js',
       },
     ],
   },

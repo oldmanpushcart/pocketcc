@@ -57,6 +57,25 @@ export default [
     ],
   },
   {
+    cmd: 841,
+    dir: 'C2S',
+    note: '活动数据总查询（GET_ACTIVITY_DATA，req {}；resp {alist:[{type,id,alMonsterSiege,atarget,…}]}，type26=联盟保卫战，.id=活动 aid）',
+    src: 'references/游戏逆向/extracted/Script/RequestId__RequestId.js',
+    fields: 'alist',
+    usages: [
+      {
+        name: 'CMD_GET_ACTIVITY_DATA',
+        feat: 'alliance-defender',
+        file: 'feats/alliance/alliance-defender/constants.js',
+      },
+      {
+        name: 'CMD_GET_ACTIVITY_DATA',
+        feat: 'titan-blessing',
+        file: 'feats/activity/titan-blessing/constants.js',
+      },
+    ],
+  },
+  {
     cmd: 856,
     dir: 'C2S',
     note: '全量本人行军（视口无关 Home 亦有）——行军列表权威源',
@@ -224,6 +243,11 @@ export default [
     src: 'references/游戏逆向/分析报告.md',
     fields: '',
     usages: [
+      {
+        name: 'CMD_PUSH_MARCH_INFO',
+        feat: 'alliance-defender',
+        file: 'feats/alliance/alliance-defender/constants.js',
+      },
       {
         name: 'PUSH_MARCH_INFO',
         feat: 'secret-realm',
