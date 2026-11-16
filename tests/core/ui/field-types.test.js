@@ -1189,6 +1189,26 @@ test('infogrid render：行集来自 fd.rows(c)，固定列栅格 + 右对齐（
   assert.match(html, />5</);
 });
 
+test('infogrid emptyText：字符串直用 / 函数形态随 c 求值 / 缺省「暂无记录」；有行不显空态', () => {
+  const base = {
+    label: '今日',
+    columns: [{ label: '项目' }, { label: '次数', align: 'right' }],
+    rows: () => [],
+  };
+  assert.match(infogridType.render(null, base, {}), /暂无记录/);
+  assert.match(infogridType.render(null, { ...base, emptyText: '—' }, {}), />—</);
+  const fdFn = { ...base, emptyText: (c) => (c.loaded ? '今日无记录' : '—') };
+  assert.match(infogridType.render(null, fdFn, { loaded: false }), />—</);
+  assert.match(infogridType.render(null, fdFn, { loaded: true }), /今日无记录/);
+  const html = infogridType.render(
+    null,
+    { ...base, emptyText: '—', rows: () => [['到账', 3]] },
+    {},
+  );
+  assert.doesNotMatch(html, /pc-ignone/);
+  assert.match(html, />到账</);
+});
+
 // ───────────── T4 内联无状态型（checkbox/number/select/string/button/text/note） ─────────────
 // 内联型 kind:'inline'：buildFieldsHTML 走 module 路径直出 inner（无 fieldBox 外壳）；
 //   events 由 wire.js dispatcher 内联路径（e.target[data-id]+data-key/bkey，仅顶层字段）分发，此处直调 run(e,stubCtx) 验纯逻辑。

@@ -37,9 +37,10 @@
  * 被拒退避："目标被占/限流"类拒绝按指数退避再试（队满与上限各有专路、不走这里），否则会被拒的坐标每秒重派一遍。
  *
  * 当日次数口径（定稿）：到账计 21653 FLOAT_PARADE_REWARD_LUCKY_BAG（花车奖励不走 3416 邮件，报文实证），
- *   只认 synType=2 增量（synType=1 登录全量同步避开），按 marchId 去重（key 与 8852 marchIdStr 同源，实证 100% 对应）；
- *   派遣计 902 受理分类型；加速消耗计 920 受理（code=0 即扣道具，resp 空 {}）逐道具分计 520001/520002；
- *   core/daily-stats 日账跨页持久；面板只读行「到账 N · 派遣 芯片x/弹珠y · 加速 普a/高b」，未读回前显示 '—'。
+ *   只认 synType=2 增量（synType=1 登录全量同步避开），按 marchId 去重（key 与 8852 marchIdStr 同源，实证 100% 对应），
+ *   同一去重事件计「到账总 + 分类型到账」（归属表反查；面板分类型以成功到账为准，非派遣）；
+ *   派遣计 902 受理分类型（仅内部对账不上面板）；加速消耗计 920 受理（code=0 即扣道具，resp 空 {}）逐道具分计 520001/520002；
+ *   core/daily-stats 日账跨页持久；面板「今日」只读列表一种一行（到账总/分类型到账/加速逐道具），0 的行隐藏，未读回前显示 '—'。
  *   实证来源：dashcam store 全量扫描（.reviewtmp/daily-mail-probe.mjs / daily-float-probe.mjs）。
  */
 import {
@@ -104,8 +105,8 @@ const ERR_RATE_LIMIT = 'march_time_control_info001';
  * @type {object[]}
  */
 const FLOATS = [
-  { id: 'CHIP_BLESSING', label: '芯片祝福', short: '芯片', dropType: 256, getType: 257 },
-  { id: 'NEWYEAR2026_PINBALL', label: '2026新年弹珠', short: '弹珠', dropType: 287, getType: 288 },
+  { id: 'CHIP_BLESSING', label: '芯片祝福', dropType: 256, getType: 257 },
+  { id: 'NEWYEAR2026_PINBALL', label: '2026新年弹珠', dropType: 287, getType: 288 },
 ];
 
 /** @type {Object<number,object>} dropType → 配置项；聊天卡 extra.marchType 与 8852 请求都只认 DROP 值，故以它建索引 */
@@ -116,11 +117,11 @@ for (var i = 0; i < FLOATS.length; i++) FLOAT_BY_DROP[FLOATS[i].dropType] = FLOA
 var GET_TYPE_FALLBACK = {};
 for (var g = 0; g < FLOATS.length; g++) GET_TYPE_FALLBACK[FLOATS[g].getType] = true;
 
-/** @type {import('../../../core/daily-stats.js').DailyLedger} 当日日账（arrive=21653 到账按 marchId 去重 / send_<floatId>=902 受理分类型 / accel520001、accel520002=920 受理逐道具） */
+/** @type {import('../../../core/daily-stats.js').DailyLedger} 当日日账（arrive=21653 到账按 marchId 去重 / arrive_<floatId>=同事件分类型到账 / send_<floatId>=902 受理分类型（仅内部对账） / accel520001、accel520002=920 受理逐道具） */
 const dailyLedger = createDailyLedger('pocketcc.daily.floatCar');
 
 /** @type {Map<string,string>} 到账归属表：聊天卡 marchIdStr → floatId（21653 rewardedLuckyBags 的 key 与 8852 marchIdStr 同源）；
- *  跨 pause/resume 保留（到账可能晚于收摊），超容量 FIFO 淘汰 */
+ *  供日志对账与分类型到账计数；跨 pause/resume 保留（到账可能晚于收摊），超容量 FIFO 淘汰 */
 var marchFloat = new Map();
 
 /** @type {number} 归属表容量上限（聊天卡量级有限，防无界增长） */
@@ -898,9 +899,10 @@ function onChatPush(msg) {
 
 /**
  * 21653 花车拾取奖励到账推送：只认 synType=2 增量（synType=1 是登录全量同步，非当日新增，避开）。
- * rewardedLuckyBags 的 key 与 8852 marchIdStr 同源（报文实证 100% 对应），按 marchId 去重计到账；
- * 归属表反查花车类型仅供日志对账（派遣/加速另有各自计数键）。listener 本身永不 throw，不驱动时间轮。
- * @param {object} ev net.on 事件 {cmd, data}
+ * 业务体已由 net 剥到 ev.data（pbAckV2 内层）。rewardedLuckyBags 的 key 是花车 marchId（与 8852 marchIdStr
+ *   同源，整趟共享），num 是该趟内到账箱序号（实证 [1]→[2]→[3]→[4] 逐箱递增）；故按 marchId+箱序号去重，
+ *   每箱计一次「到账总 + 分类型到账」（面板分类型行以成功到账为准）；归属未知只计总。listener 本身永不 throw，不驱动时间轮。
+ * @param {object} ev net.on 事件 {cmd, data}（data 为内层业务体 {synType, rewardedLuckyBags}）
  */
 function onLuckyBagPush(ev) {
   if (!aliveFn()) return;
@@ -911,12 +913,12 @@ function onLuckyBagPush(ev) {
   var ids = Object.keys(bags);
   for (var i = 0; i < ids.length; i++) {
     var marchId = ids[i];
-    if (!dailyLedger.countOnce(marchId, 'arrive')) continue;
-    log.info(
-      'cmd 21653 lucky bag arrived. marchId=%s;float=%s',
-      marchId,
-      marchFloat.get(marchId) || 'unknown',
-    );
+    var num = bags[marchId] && bags[marchId].num;
+    var ord = Array.isArray(num) ? num.join(',') : String(num == null ? '' : num);
+    var floatId = marchFloat.get(marchId);
+    var keys = floatId ? ['arrive', 'arrive_' + floatId] : ['arrive'];
+    if (!dailyLedger.countOnce(marchId + '#' + ord, keys)) continue;
+    log.info('cmd 21653 lucky bag arrived. marchId=%s;num=%s;float=%s', marchId, ord, floatId || 'unknown');
   }
 }
 
@@ -1237,7 +1239,7 @@ async function onPickup(item) {
   if (!aliveFn() || flows.get(item.marchId) !== flow) return;
 
   if (ret.ok) {
-    // 902 受理即计一次派遣（分类型；当日次数口径：派遣计受理，到账另由 21653 计）
+    // 902 受理即计一次派遣（分类型；仅内部对账不上面板——面板分类型行以 21653 成功到账为准）
     dailyLedger.bump('send_' + flow.floatId);
     // 902 走旧 JSON 链路（net.send），受理时应答是整包 JSON 文本、被拒才是 "语言键,参数" 裸串；
     // payloadOf 归一化后再取 marchInfo，否则字符串取属性恒 undefined，会误报 shape unexpected 且埋点①拿不到时刻
@@ -1723,6 +1725,28 @@ function pause() {
 }
 
 /**
+ * 面板「今日」只读列表行集（infogrid fd.rows）：一种一行、0 的行隐藏。
+ * 分类型行以成功到账为准（21653 去重归型），非 902 派遣；加速行=920 受理逐道具消耗；
+ * 到账总含归属未知的到账（聊天卡缺失时只计总），与分类型行天然对账。
+ * @returns {Array<Array<string|number>>}
+ */
+function dailyRows() {
+  if (!dailyLedger.loaded()) return [];
+  var rows = [];
+  var arrive = dailyLedger.get('arrive');
+  if (arrive > 0) rows.push(['到账', arrive]);
+  for (var i = 0; i < FLOATS.length; i++) {
+    var n = dailyLedger.get('arrive_' + FLOATS[i].id);
+    if (n > 0) rows.push([FLOATS[i].label, n]);
+  }
+  var normal = dailyLedger.get('accel' + march.ITEM_SPEED_UP_NORMAL);
+  if (normal > 0) rows.push(['加速·普通', normal]);
+  var advanced = dailyLedger.get('accel' + march.ITEM_SPEED_UP_ADVANCED);
+  if (advanced > 0) rows.push(['加速·高级', advanced]);
+  return rows;
+}
+
+/**
  * 向 reactor 注册本功能说明书：地图限定 base/world（Home/NWorldMap），战斗模式暂停（offInCombat）。
  * 面板只出启用开关，探测节奏全部为 cfg 内置常量。
  */
@@ -1737,25 +1761,26 @@ reactor.register({
   defaults: { enabled: false, accelEnabled: false, accelTargetSec: 0 },
   fields: [
     {
+      // 今日统计列表化：一种一行、0 的行隐藏；分类型以成功到账为准（用户定稿），非派遣
       key: '_dailyInfo',
-      type: 'text',
+      type: 'infogrid',
       label: '今日',
-      get: function () {
-        if (!dailyLedger.loaded()) return '—';
-        var sends = FLOATS.map(function (f) {
-          return f.short + dailyLedger.get('send_' + f.id);
-        }).join('/');
-        return (
-          '到账 ' +
-          dailyLedger.get('arrive') +
-          ' · 派遣 ' +
-          sends +
-          ' · 加速 普' +
-          dailyLedger.get('accel' + march.ITEM_SPEED_UP_NORMAL) +
-          '/高' +
-          dailyLedger.get('accel' + march.ITEM_SPEED_UP_ADVANCED)
-        );
+      columns: [
+        {
+          label: '项目',
+          title: '到账=今日成功到账总；类型行=该类型成功到账；加速=道具消耗枚数',
+        },
+        {
+          label: '次数',
+          align: 'right',
+          title: '到账按 marchId 去重（21653 synType=2）；0 的行不显示',
+        },
+      ],
+      rows: dailyRows,
+      emptyText: function () {
+        return dailyLedger.loaded() ? '今日无到账与加速' : '—';
       },
+      hint: '分类型以成功到账为准（非派遣）；0 的行不显示。',
     },
     {
       // 花车空投已抽为独立 feature 卡片：卡片主体默认收起（点标题行展开），故「行军加速」段不再自带折叠，避免双层折叠

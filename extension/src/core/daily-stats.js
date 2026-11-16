@@ -10,7 +10,8 @@
  *   - 日界：服务器秒按本地时区格式化（todayStr(serverTime)）；国服 UTC+8 与游戏日界
  *     （SystemZeroTime 0 点，GAME_DAY_RESET_OFFSET=57600）对齐；服务器时刻缺失回退本地时钟。
  *   - 邮件/到账去重：countOnce(id, key) 按 id 串去重，seen 随日账落盘（跨页重载不重计），
- *     跳日连 seen 一并清（新的一天旧 id 不再参与去重，同 cs-hunt lastId 口径）。
+ *     key 可传数组（同一去重事件计多个计数器，如到账总+分类型），跳日连 seen 一并清
+ *     （新的一天旧 id 不再参与去重，同 cs-hunt lastId 口径）。
  *   - 面板文案：有分母「已完成 x/y」（分子=已完成，不得用剩余量拼），无分母「今日 N 次」，
  *     纯函数 dailyText 收口；未读回前展示 '—'（不谎报 0）。
  *
@@ -63,7 +64,7 @@ export function dailyText(done, limit) {
  * @property {function(string, number=):number} bump 计一次（可带增量）；返回该 key 当前值
  * @property {function(string):number} get 读某 key 当日计数（未读回返回 0）
  * @property {function():Object<string,number>} counts 当日计数浅拷贝（面板/日志用）
- * @property {function(string, string, number=):boolean} countOnce 按 id 去重计一次（邮件/到账通道用）；id 已见过返回 false 不计
+ * @property {function(string, string|string[], number=):boolean} countOnce 按 id 去重计一次（邮件/到账通道用）；id 已见过返回 false 不计；key 可数组（同事件计多键）
  */
 
 /**
@@ -206,7 +207,7 @@ export function createDailyLedger(name, opts) {
    * 按 id 去重计一次（行军类：奖励到账通道收口处调，id=邮件 id / marchId / 箱 id）。
    * 未读回前也先计（读回时与盘上 seen 对账回抵），不丢事件。
    * @param {string} id 去重键（Int64 一律字符串）
-   * @param {string} key 计数键
+   * @param {string|string[]} key 计数键；数组=同一去重事件计多个计数器（如到账总+分类型），读回对账逐键回抵
    * @param {number} [n] 增量（缺省 1）
    * @returns {boolean} true=首次计入；false=已见过（未计）
    */
@@ -217,12 +218,16 @@ export function createDailyLedger(name, opts) {
     seenPush(sid);
     var inc = n == null ? 1 : Number(n) || 0;
     if (inc > 0) {
-      state.counts[key] = (state.counts[key] || 0) + inc;
-      if (loaded) persist();
-      else {
-        preBumps.push({ key: key, n: inc });
-        preOnce.push({ id: sid, key: key, n: inc });
+      var keys = Array.isArray(key) ? key : [key];
+      for (var i = 0; i < keys.length; i++) {
+        var k = keys[i];
+        state.counts[k] = (state.counts[k] || 0) + inc;
+        if (!loaded) {
+          preBumps.push({ key: k, n: inc });
+          preOnce.push({ id: sid, key: k, n: inc });
+        }
       }
+      if (loaded) persist();
       pokePanel();
     }
     return true;
