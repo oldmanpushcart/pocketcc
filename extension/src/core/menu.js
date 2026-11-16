@@ -81,7 +81,6 @@ export const MENU = [
       { id: 'mineCave', kind: 'feature', label: '次元矿洞', showFields: true },
       { id: 'beastBreed', kind: 'feature', label: '异能兽培育', showFields: true },
       { id: 'citySkill', kind: 'feature', label: '城市技能', showFields: true },
-      { id: 'quickRepair', kind: 'feature', label: '快速修理', showFields: true },
     ],
   },
   {
@@ -176,6 +175,7 @@ export const MENU = [
       { id: 'quickAttack', kind: 'feature', label: '快捷战斗' },
       { id: 'imperialDecree', kind: 'feature', label: '奉旨出征', showFields: true },
       { id: 'autoDefense', kind: 'feature', label: '自动防御', showFields: true },
+      { id: 'quickRepair', kind: 'feature', label: '快速修理', showFields: true },
     ],
   },
   {

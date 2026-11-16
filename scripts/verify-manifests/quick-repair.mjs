@@ -38,18 +38,22 @@
  *   真人未必逐笔照做，故降为 SOFT（只报不 fail），避免以「真人没修满」冒充 HARD 违例；
  *   反向「发了不该发的队列」跨版本恒成立，保留 HARD。
  *
- * 协议字典来源：本 feat 是单文件浏览器模块（core/util→net→storage→bridge 链触浏览器全局），
- *   为守住「判据不与 feat 分叉」红线，此处直接从 feat 源码文本抽 `const CMD_* = …`，
- *   抽不到即抛错——宁可跑不起来也不手抄一份字典。
+ * 协议字典来源：CMD_/PUSH_ 协议号 B6 起就近收编 feat 的 constants.js（纯常量模块），
+ *   此处直接 import 共用同一份（cs-hunt 同款，判据不另起炉灶）；调参（ORDER_TYPE_HEAL/
+ *   INTER_SEND_MS/IDLE_TICK_MS）仍留在 index.js（浏览器模块不可 import），从源码文本抽、抽不到即抛。
  */
 import fs from 'node:fs';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { scanNDJSON } from '../replay/reader.mjs';
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const FEAT = path.join(ROOT, 'extension/src/feats/player/quick-repair/index.js');
 const SRC = fs.readFileSync(FEAT, 'utf8');
+// 协议字典：与 feat 共用同一份 constants.js（B6 就近收编，纯常量模块可直 import；cs-hunt 同款）
+const C = await import(
+  pathToFileURL(path.join(ROOT, 'extension/src/feats/player/quick-repair/constants.js')).href
+);
 
 /**
  * 抽 feat 源码里的 `const NAME = <数字字面量>;`（单一真相源，缺符号即抛）。
@@ -73,15 +77,15 @@ function featNumExpr(name) {
   return Number(m[1]) * (m[2] ? Number(m[2]) : 1);
 }
 
-const CMD_GET_QUICK_REPARE = featNum('CMD_GET_QUICK_REPARE'); // 1785
-const CMD_ARMY_HEAL_LIST = featNum('CMD_ARMY_HEAL_LIST'); // 220
-const CMD_GET_CROSS_HOSPITAL_QUEUES = featNum('CMD_GET_CROSS_HOSPITAL_QUEUES'); // 1426
-const CMD_ARMY_CROSS_HEAL = featNum('CMD_ARMY_CROSS_HEAL'); // 1427
-const CMD_ORDER_QUEUE_ING_DONE = featNum('CMD_ORDER_QUEUE_ING_DONE'); // 151
-const CMD_SPEEDUP_CROSS_GOLD = featNum('CMD_SPEEDUP_CROSS_GOLD'); // 1428
-const CMD_ITEM_USE = featNum('CMD_ITEM_USE'); // 815
-const PUSH_ORDER_QUEUES = featNum('PUSH_ORDER_QUEUES'); // 10120
-const PUSH_CROSS_QUEUE_ADD = featNum('PUSH_CROSS_QUEUE_ADD'); // 13006
+const CMD_GET_QUICK_REPARE = C.CMD_GET_QUICK_REPARE; // 1785
+const CMD_ARMY_HEAL_LIST = C.CMD_ARMY_HEAL_LIST; // 220
+const CMD_GET_CROSS_HOSPITAL_QUEUES = C.CMD_GET_CROSS_HOSPITAL_QUEUES; // 1426
+const CMD_ARMY_CROSS_HEAL = C.CMD_ARMY_CROSS_HEAL; // 1427
+const CMD_ORDER_QUEUE_ING_DONE = C.CMD_ORDER_QUEUE_ING_DONE; // 151
+const CMD_SPEEDUP_CROSS_GOLD = C.CMD_SPEEDUP_CROSS_GOLD; // 1428
+const CMD_ITEM_USE = C.CMD_ITEM_USE; // 815
+const PUSH_ORDER_QUEUES = C.PUSH_ORDER_QUEUES; // 10120
+const PUSH_CROSS_QUEUE_ADD = C.PUSH_CROSS_QUEUE_ADD; // 13006
 const ORDER_TYPE_HEAL = featNum('ORDER_TYPE_HEAL'); // 1
 /** 拍内逐条发包节流与慢心跳兜底窗（D12 节奏分类阈）：取自 feat 源码，不手抄毫秒字面（修正十八已删 ACTIVE_TICK_MS 勤扫档） */
 const INTER_SEND_MS = featNumExpr('INTER_SEND_MS');
@@ -93,22 +97,22 @@ const IDLE_TICK_MS = featNumExpr('IDLE_TICK_MS');
 const REJECTED_PARAM_FORM = (SRC.match(/"(\d\|\d)"\s*被服务器拒/) || [])[1] || null;
 const REJECT_KEY_TEXT = (SRC.match(/s=\d+\/(item_\d+)/) || [])[1] || '（feat 源码未记载拒因）';
 // 无双（NewCAB/AVA）协议族：ask/cure/speed 三件套 × 4 模式，均走 V1 req:send
-const CMD_AVA_ASK = featNum('CMD_AVA_ASK'); // 6310
-const CMD_AVA_CURE = featNum('CMD_AVA_CURE'); // 6311
-const CMD_AVA_SPEED = featNum('CMD_AVA_SPEED'); // 6312
-const CMD_TM_ASK = featNum('CMD_TM_ASK'); // 6356
-const CMD_TM_CURE = featNum('CMD_TM_CURE'); // 6357
-const CMD_TM_SPEED = featNum('CMD_TM_SPEED'); // 6358
-const CMD_MASTER_ASK = featNum('CMD_MASTER_ASK'); // 8403
-const CMD_MASTER_CURE = featNum('CMD_MASTER_CURE'); // 8404
-const CMD_MASTER_SPEED = featNum('CMD_MASTER_SPEED'); // 8405
-const CMD_LEGEND_ASK = featNum('CMD_LEGEND_ASK'); // 9055
-const CMD_LEGEND_CURE = featNum('CMD_LEGEND_CURE'); // 9056
-const CMD_LEGEND_SPEED = featNum('CMD_LEGEND_SPEED'); // 9057
-const PUSH_AVA_HOSPITAL_CHANGE = featNum('PUSH_AVA_HOSPITAL_CHANGE'); // 21203
-const PUSH_TM_HOSPITAL_CHANGE = featNum('PUSH_TM_HOSPITAL_CHANGE'); // 21211
-const PUSH_MASTER_HOSPITAL_CHANGE = featNum('PUSH_MASTER_HOSPITAL_CHANGE'); // 21465
-const PUSH_LEGEND_HOSPITAL_CHANGE = featNum('PUSH_LEGEND_HOSPITAL_CHANGE'); // 21562
+const CMD_AVA_ASK = C.CMD_AVA_ASK; // 6310
+const CMD_AVA_CURE = C.CMD_AVA_CURE; // 6311
+const CMD_AVA_SPEED = C.CMD_AVA_SPEED; // 6312
+const CMD_TM_ASK = C.CMD_TM_ASK; // 6356
+const CMD_TM_CURE = C.CMD_TM_CURE; // 6357
+const CMD_TM_SPEED = C.CMD_TM_SPEED; // 6358
+const CMD_MASTER_ASK = C.CMD_MASTER_ASK; // 8403
+const CMD_MASTER_CURE = C.CMD_MASTER_CURE; // 8404
+const CMD_MASTER_SPEED = C.CMD_MASTER_SPEED; // 8405
+const CMD_LEGEND_ASK = C.CMD_LEGEND_ASK; // 9055
+const CMD_LEGEND_CURE = C.CMD_LEGEND_CURE; // 9056
+const CMD_LEGEND_SPEED = C.CMD_LEGEND_SPEED; // 9057
+const PUSH_AVA_HOSPITAL_CHANGE = C.PUSH_AVA_HOSPITAL_CHANGE; // 21203
+const PUSH_TM_HOSPITAL_CHANGE = C.PUSH_TM_HOSPITAL_CHANGE; // 21211
+const PUSH_MASTER_HOSPITAL_CHANGE = C.PUSH_MASTER_HOSPITAL_CHANGE; // 21465
+const PUSH_LEGEND_HOSPITAL_CHANGE = C.PUSH_LEGEND_HOSPITAL_CHANGE; // 21562
 const AVA_PUSH_CMDS = new Set([
   PUSH_AVA_HOSPITAL_CHANGE,
   PUSH_TM_HOSPITAL_CHANGE,

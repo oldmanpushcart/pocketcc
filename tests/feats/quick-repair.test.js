@@ -55,6 +55,7 @@ const {
   estimateGold,
   parseRepairCost,
   filterAffordable,
+  budgetHealIds,
   pickSpeedItem,
   itemSpeedParam,
   goldPlannedFor,
@@ -254,7 +255,7 @@ test('LOCAL_SYNC_KINDS：仅本地 220/151 流回灌 UpdateOrderQueues（除幻�
   // 本地流：治疗 220 / 钻石全量加速 151
   assert.equal(LOCAL_SYNC_KINDS['heal-local'], true);
   assert.equal(LOCAL_SYNC_KINDS['heal-local-thor'], true);
-  assert.equal(LOCAL_SYNC_KINDS['heal-local-resource'], true);
+  assert.equal(LOCAL_SYNC_KINDS['heal-local-resource'], undefined); // 修正十九：并入 heal-local 单笔，该 kind 已删
   assert.equal(LOCAL_SYNC_KINDS['speed-gold-local'], true);
   // 本地道具 815（speed-item-local）应答仅 {itemId,amount}、不含队列，无东西可回灌——幻影靠下拍 push 10120 确认读
   assert.equal(LOCAL_SYNC_KINDS['speed-item-local'], undefined);
@@ -267,7 +268,7 @@ test('LOCAL_SYNC_KINDS：仅本地 220/151 流回灌 UpdateOrderQueues（除幻�
 test('FP_FAMILY：三场景 × 治疗/加速 全族登记（治疗族 lw/cw/aw，加速族 lr/cr/ar）', () => {
   assert.equal(FP_FAMILY['heal-local'], 'lw');
   assert.equal(FP_FAMILY['heal-local-thor'], 'lw');
-  assert.equal(FP_FAMILY['heal-local-resource'], 'lw');
+  assert.equal(FP_FAMILY['heal-local-resource'], undefined); // 修正十九：并入 heal-local 单笔，该 kind 已删
   assert.equal(FP_FAMILY['heal-cross'], 'cw');
   assert.equal(FP_FAMILY['heal-ava'], 'aw');
   assert.equal(FP_FAMILY['speed-gold-local'], 'lr');
@@ -359,6 +360,33 @@ test('filterAffordable：累计不超持有则纳入；超了跳过且不累加�
   ];
   assert.deepEqual(filterAffordable(costs, holdingOf), [true, false, true, false, true, false]);
   assert.deepEqual(filterAffordable([], holdingOf), []);
+});
+
+// ─────────────────────────── budgetHealIds（单笔 220 可发集预算，修正十九）───────────────────────────
+test('budgetHealIds：免费前缀恒可发 + 付费段按可负担筛；resourceRepair 关→仅免费段；零免费→纯付费段', () => {
+  const split = {
+    commonIds: ['1', '2', '3', '4'],
+    commonKeys: ['1#a#100', '2#b#200', '3#c#300', '4#d#400'],
+    commonOrders: ['a', 'b', 'c', 'd'],
+  };
+  const hold = { 1: 100 };
+  const holdingOf = (r) => hold[r] || 0;
+  const costOf = (oid) => (oid === 'd' ? null : [{ resId: 1, amount: 60 }]); // d 成本不可判定
+  // freeLeft=2 → 前缀 1/2 恒可发；3 累计 60<=100 ok；4 null 跳过
+  const r1 = budgetHealIds(split, 2, true, costOf, holdingOf);
+  assert.deepEqual(r1.ids, ['1', '2', '3']);
+  assert.deepEqual(r1.keys, ['1#a#100', '2#b#200', '3#c#300']);
+  // resourceRepair 关 → 只发免费段（零消耗），付费段买得起也不发
+  assert.deepEqual(budgetHealIds(split, 2, false, costOf, holdingOf).ids, ['1', '2']);
+  // freeLeft=0 → 纯付费段：a ok(60<=100)、b/c 累计超、d null 跳过
+  const r3 = budgetHealIds(split, 0, true, costOf, holdingOf);
+  assert.deepEqual(r3.ids, ['1']);
+  assert.deepEqual(r3.keys, ['1#a#100']);
+  // freeLeft 超总数 → 全发（免费全覆盖，无需材料预算）
+  assert.deepEqual(budgetHealIds(split, 99, true, costOf, holdingOf).ids, ['1', '2', '3', '4']);
+  // freeLeft=0 + resourceRepair 关 → 空集；负 freeLeft 钳 0
+  assert.deepEqual(budgetHealIds(split, 0, false, costOf, holdingOf).ids, []);
+  assert.deepEqual(budgetHealIds(split, -5, false, costOf, holdingOf).ids, []);
 });
 
 // ─────────────────────────── crossWaitIds ───────────────────────────
@@ -488,16 +516,19 @@ function baseSnap(over) {
   );
 }
 
-test('planActions：freeRepair 开且额度充足 → 发 220 全量 ids；额度不足截断到 commonFreeLeft', () => {
+test('planActions：单笔 220 全发（修正十九）→ 发 snapshot 预算的 healIds，dedup 用 healKeys', () => {
   const snap = baseSnap({
     quotas: quickFields({ common_max: 77, common_use: 70 }), // 剩 7
     commonIds: ['1', '2', '3', '4', '5', '6', '7', '8', '9'],
+    healIds: ['1', '2', '3', '4', '5', '6', '7'],
+    healKeys: ['1#a#1', '2#b#2', '3#c#3', '4#d#4', '5#e#5', '6#f#6', '7#g#7'],
   });
   const { actions } = planActions(snap);
   const heal = actions.find((a) => a.cmd === CMD_ARMY_HEAL_LIST);
   assert.ok(heal);
+  assert.equal(heal.kind, 'heal-local');
   assert.deepEqual(heal.body.ids, ['1', '2', '3', '4', '5', '6', '7']);
-  assert.equal(heal.body.ids.length, 7);
+  assert.deepEqual(heal.dedup, ['1#a#1', '2#b#2', '3#c#3', '4#d#4', '5#e#5', '6#f#6', '7#g#7']);
 });
 
 test('planActions：freeRepair 关 → reason 记录、无 220；额度耗尽 → reason 不误发', () => {
@@ -512,6 +543,8 @@ test('planActions：freeRepair 关 → reason 记录、无 220；额度耗尽 �
     baseSnap({
       quotas: quickFields({ common_max: 77, common_use: 77 }),
       commonIds: ['1'],
+      healIds: [],
+      healKeys: [],
       mcfg: normalize({ resourceRepair: false }),
     }),
   );
@@ -522,29 +555,29 @@ test('planActions：freeRepair 关 → reason 记录、无 220；额度耗尽 �
   assert.ok(exhausted.reasons.some((r) => /exhausted/.test(r)));
 });
 
-test('planActions：额度耗尽且 resourceRepair 开 → 发可负担集 220；无买得起者 → reason 不误发', () => {
+test('planActions：额度耗尽且 resourceRepair 开 → 单笔 220 发可负担集（kind heal-local）；无买得起者 → reason 不误发', () => {
   const m = normalize({ resourceRepair: true });
   const pay = baseSnap({
     quotas: quickFields({ common_max: 77, common_use: 77 }),
     commonIds: ['1', '2', '3'],
-    payIds: ['1', '3'],
-    payKeys: ['1#a#100', '3#c#300'],
+    healIds: ['1', '3'],
+    healKeys: ['1#a#100', '3#c#300'],
     mcfg: m,
   });
   const got = planActions(pay);
-  const act = got.actions.find((a) => a.kind === 'heal-local-resource');
+  const act = got.actions.find((a) => a.kind === 'heal-local');
   assert.ok(act);
   assert.equal(act.cmd, CMD_ARMY_HEAL_LIST);
   assert.deepEqual(act.ids, ['1', '3']);
   assert.deepEqual(act.dedup, ['1#a#100', '3#c#300']);
 
-  // 无买得起（payIds 为空数组）→ 不发、记 no affordable
+  // 无买得起（healIds 为空数组）→ 不发、记 no affordable
   const broke = planActions(
     baseSnap({
       quotas: quickFields({ common_max: 77, common_use: 77 }),
       commonIds: ['1'],
-      payIds: [],
-      payKeys: [],
+      healIds: [],
+      healKeys: [],
       mcfg: m,
     }),
   );
@@ -554,17 +587,19 @@ test('planActions：额度耗尽且 resourceRepair 开 → 发可负担集 220�
   );
   assert.ok(broke.reasons.some((r) => /no affordable/.test(r)));
 
-  // 额度仍有余 → 走免费路径（不受 resourceRepair 影响）
+  // 额度仍有余 → 单笔含免费前缀（不再拆独立免费批，修正十九）
   const freeFirst = planActions(
     baseSnap({
       quotas: quickFields({ common_max: 77, common_use: 70 }),
       commonIds: ['1', '2'],
-      payIds: ['1', '2'],
+      healIds: ['1', '2'],
+      healKeys: ['1#a#100', '2#b#200'],
       mcfg: m,
     }),
   );
   const fa = freeFirst.actions.find((a) => a.cmd === CMD_ARMY_HEAL_LIST);
   assert.equal(fa.kind, 'heal-local');
+  assert.deepEqual(fa.body.ids, ['1', '2']);
 });
 
 test('planActions：thorRepair 开 → 本地雷神走 220、跨服走 1427（不混批）', () => {
@@ -851,7 +886,8 @@ test('planHealActions/planSpeedActions：拆层不串货——治疗层只出 22
     quotas: quickFields({ common_max: 77, common_use: 0 }),
     commonIds: ['1', '2'],
     commonKeys: ['1#a', '2#b'],
-    payIds: ['1', '2'],
+    healIds: ['1', '2'],
+    healKeys: ['1#a', '2#b'],
     repairing: 255000,
     localRepairing: 255000,
     speedItem: SI8H,
@@ -877,9 +913,9 @@ test('planHealActions/planSpeedActions：拆层不串货——治疗层只出 22
   assert.equal(speed[0].body.amount, 9);
 });
 
-test('HEAL_LANES：四类治疗动作触发同拍二次加速；加速类与无双 cure 不触发', () => {
+test('HEAL_LANES：三类治疗动作触发同拍二次加速；加速类与无双 cure 不触发', () => {
   assert.equal(HEAL_LANES['heal-local'], true);
-  assert.equal(HEAL_LANES['heal-local-resource'], true);
+  assert.equal(HEAL_LANES['heal-local-resource'], undefined); // 修正十九：并入 heal-local 单笔，该 kind 已删
   assert.equal(HEAL_LANES['heal-local-thor'], true);
   assert.equal(HEAL_LANES['heal-cross'], true);
   assert.equal(HEAL_LANES['heal-ava'], undefined);

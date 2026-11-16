@@ -68,7 +68,7 @@
  *   任一写动作成功后同样 kick()，尽早拿到「确认读」缩小在途窗。连续被拒达阈时心跳×2 退避。
  *
  * 幻影回灌（quickRepair 专属例外，是本地流的「确认」源而非时钟）：本地治疗/钻石加速（heal-local / heal-local-thor /
- *   heal-local-resource / speed-gold-local）成功后，借用游戏官方应答回调同款 `UserData.UpdateOrderQueues(resp.queues/orderQueues)`
+ *   speed-gold-local）成功后，借用游戏官方应答回调同款 `UserData.UpdateOrderQueues(resp.queues/orderQueues)`
  *   （见源码 HospitalComponentNew/HospitalArmySelectPopup 与竞品 B hospitalStart/hospitalEnd；220/151 本地应答带 orderQueues，
  *   实录 “… (queues synced)” 佐证；本地道具 815 应答仅 {itemId,amount}、不含队列，本例外不适用于它）把服务器权威队列
  *   按 id 回灌本地态，从根消除「已治好/已加速槽滞留成陈旧幻影 → 重发 common_159995」；回灌后该队列退出 state0/state1，
@@ -77,9 +77,11 @@
  * 合规：全程只读游戏数据（经 game-api ACL）+ 直发上述协议。除上述「幻影回灌」借用游戏自带 UpdateOrderQueues
  *   （把服务器已下发的权威队列就地覆盖，非自造增删、不弹 UI）外，不调 StartAllQueue/OpenUI/Delete 等改写本地态
  *   或弹 UI 的原生方法（「feat 只读+发包」红线；UpdateOrderQueues 为 quickRepair 经用户批准的唯一例外）。
- * 免费 vs 资源续修：普通伤兵先修「英雄免费额度」（common_max-common_use）内（`freeRepair` 恒开）；额度耗尽后默认继续
- *   花资源续修（`resourceRepair` 恒开，两者均不放面板），按部队 `repair_cost` 累计持有量筛「买得起」的伤兵发 220（服务器先扣免费、超出扣
- *   材料，与游戏一键修理/竞品 B hospitalStart 一致）；买不起的静默跳过、不告警不进退避。
+ * 普通兵单笔 220 全发（学竞品 B hospitalStart，修正十九）：不再拆免费/资源两批——可负担集内的普通伤兵一笔 220 全发，
+ *   服务器内部优先扣「英雄免费额度」（common_max-common_use）、超出扣材料。旧两批拆分存在「第一批修好 → 回灌确认遗忘 →
+ *   陈旧 push 推回 → 第二批重开修理」的幻影重烧窗口（实录实证浪费钻石/材料/免费额度），单笔从结构上消除。
+ *   `freeRepair`/`resourceRepair` 均恒开、不放面板：后者显式 false（旧存档）时只发免费额度内、保持零消耗；
+ *   可负担集按部队 `repair_cost` 累计持有量筛付费段（免费额度覆盖的前缀恒可发），买不起的静默跳过、不告警不进退避。
  * 日常任务形态：面板只暴露 3 个付费/带材料开关（雷神/钻石/道具）；免费修/资源续修恒开、自愈轮询间隔为系统内置，
  *   均不出现在面板。钻石日预算与道具保留下限两个闸门已废弃（钻石只受余额约束、道具持有即动用）。
  *   生命周期由 reactor 托管：places base/world、kinds homeland、不行军不参战故 offInCombat:false；
@@ -733,6 +735,41 @@ function filterAffordable(costs, holdingOf) {
 }
 
 /**
+ * 普通兵单笔 220 可发集预算（学竞品 B hospitalStart 单笔全发，修正十九）：免费额度覆盖前 freeN 个（零消耗恒可发）；
+ * resourceRepair 开 → 其余按 repair_cost 累计持有量筛可负担（costOf 返回 null=成本不可判定→跳过）；
+ * resourceRepair 关（旧存档显式 false）→ 只发免费额度内，保持零消耗。纯判据、无副作用。
+ * @param {{commonIds:string[], commonKeys:string[], commonOrders:string[]}} split splitWaitIds 产物（三数组同序对齐）
+ * @param {number} freeLeft 免费额度剩余（common_max-common_use）
+ * @param {boolean} resourceRepair 是否花资源续修
+ * @param {function(string):Array<{resId:number,amount:number}>|null} costOf orderId → repair_cost 解析
+ * @param {function(number):number} holdingOf 资源 id → 持有量
+ * @returns {{ids:string[], keys:string[]}} 可发集（ids 与去重令牌 keys 同序）
+ */
+function budgetHealIds(split, freeLeft, resourceRepair, costOf, holdingOf) {
+  var ids = split.commonIds || [];
+  var keys = split.commonKeys || ids;
+  var orders = split.commonOrders || [];
+  var freeN = Math.min(Math.max(0, Math.floor(Number(freeLeft) || 0)), ids.length);
+  if (!resourceRepair) {
+    return { ids: ids.slice(0, freeN), keys: keys.slice(0, freeN) };
+  }
+  var costs = [];
+  for (var i = 0; i < orders.length; i++) {
+    costs.push(i < freeN ? null : costOf(orders[i])); // 免费前缀零消耗，不参与材料预算
+  }
+  var aff = filterAffordable(costs, holdingOf);
+  var outIds = [];
+  var outKeys = [];
+  for (var j = 0; j < ids.length; j++) {
+    if (j < freeN || aff[j]) {
+      outIds.push(ids[j]);
+      outKeys.push(keys[j]);
+    }
+  }
+  return { ids: outIds, keys: outKeys };
+}
+
+/**
  * 挑一枚医院加速道具：只在持有量 > keepItemNum 的候选间比较，取持有最多者，并列取 id 小者（确定性）。
  * ⚠ 面板「道具保留下限」闸门已废弃（见头部“日常任务形态”条目），生产调用恒传 0；形参与分支保留仅供测试与向后兼容。
  * @param {Array<{id:number, amount:number}>} held 候选道具（ITEM 表 type=12 的持有行）
@@ -791,7 +828,7 @@ function planActions(snap) {
 }
 
 /**
- * 治疗层（1 免费/资源续修 + 2 雷神/跨服）：纯判据产出 220/1427，累加进调用方容器。
+ * 治疗层（1 普通兵单笔 220 + 2 雷神/跨服）：纯判据产出 220/1427，累加进调用方容器。
  * 无返回值：结果只写进传入的 actions/reasons（调用方不得取返回值）。
  * @param {object} snap 快照
  * @param {object} m 归一后的模块配置
@@ -801,43 +838,32 @@ function planActions(snap) {
 function planHealActions(snap, m, actions, reasons) {
   var q = snap.quotas || quickFields(null);
 
-  // 1) 英雄免费快速修理（普通兵，零消耗）——服务器自动优先扣免费额度
+  // 1) 普通兵单笔 220 全发（学竞品 B，修正十九）：可发集由 snapshot 的 budgetHealIds 预算（免费前缀恒可发 +
+  //    付费段按材料可负担筛），服务器内部先扣免费额度、超出扣材料。不再拆免费/资源两批——消除「第一批修好 →
+  //    回灌遗忘 → 陈旧 push 推回 → 第二批重开修理」的幻影重烧窗口。
   if (!m.freeRepair) {
     reasons.push('freeRepair off');
   } else if (!q) {
     reasons.push('quota unknown (1785 not parsed)');
   } else if (snap.commonIds.length === 0) {
     reasons.push('no common wait');
-  } else if (q.commonFreeLeft > 0) {
-    var ids = snap.commonIds.slice(0, q.commonFreeLeft);
-    var idKeys = (snap.commonKeys || snap.commonIds).slice(0, q.commonFreeLeft);
+  } else if (snap.healIds && snap.healIds.length) {
     actions.push({
       kind: 'heal-local',
       cmd: CMD_ARMY_HEAL_LIST,
-      body: { ids: ids },
+      body: { ids: snap.healIds },
       fp: 'heal-local',
-      ids: ids,
-      dedup: idKeys,
-      label: 'free heal ' + ids.length + '/' + snap.commonIds.length,
+      ids: snap.healIds,
+      dedup: snap.healKeys || snap.healIds,
+      label: 'heal ' + snap.healIds.length + '/' + snap.commonIds.length,
     });
-  } else if (!m.resourceRepair) {
-    // 免费额度耗尽且未开「用资源续修」：保持零消耗，不花材料修普通兵。
+  } else if (!m.resourceRepair && q.commonFreeLeft <= 0) {
+    // 免费额度耗尽且未开「用资源续修」（旧存档显式 false）：保持零消耗，不花材料修普通兵。
     reasons.push('common free quota exhausted (' + q.commonUse + '/' + q.commonMax + ')');
-  } else if (snap.payIds && snap.payIds.length) {
-    // 用资源续修：发快照预算出的「买得起」伤兵（服务器先扣免费额度、超出扣材料）。
-    actions.push({
-      kind: 'heal-local-resource',
-      cmd: CMD_ARMY_HEAL_LIST,
-      body: { ids: snap.payIds },
-      fp: 'heal-local-resource',
-      ids: snap.payIds,
-      dedup: snap.payKeys || snap.payIds,
-      label: 'resource heal ' + snap.payIds.length + '/' + snap.commonIds.length,
-    });
-  } else if (snap.payIds) {
+  } else if (snap.healIds) {
     reasons.push('no affordable common repair (materials short)');
   } else {
-    reasons.push('resource repair: cost pending (snapshot not ready)');
+    reasons.push('heal budget pending (snapshot not ready)');
   }
 
   // 2) 雷神/跨服修理（带材料，默认关）：本地雷神队列并入 220（超免费额度自然扣材料），跨服队列走 1427
@@ -1440,7 +1466,6 @@ function battleFieldHospitalOpen() {
 var FP_FAMILY = {
   'heal-local': 'lw',
   'heal-local-thor': 'lw',
-  'heal-local-resource': 'lw',
   'heal-cross': 'cw',
   'heal-ava': 'aw',
   'speed-gold-local': 'lr',
@@ -1510,7 +1535,7 @@ function isHealBatchCmd(cmd) {
 
 /**
  * 本地队列类动作 ⇒ 成功后需把服务器应答的权威队列回灌 `UserData`（消除幻影）。
- * 仅覆盖本地流：220（heal-local / heal-local-thor / heal-local-resource）、151 钻石全量（speed-gold-local）。
+ * 仅覆盖本地流：220（heal-local / heal-local-thor）、151 钻石全量（speed-gold-local）。
  * 本地道具 815（speed-item-local）不在表内：其实应答仅 {itemId,amount}、不含队列，无东西可回灌，幻影靠下拍 push 10120 确认读。
  * 跨服流（heal-cross / speed-gold-cross / speed-item-cross）不回灌——战场队列由 1426/push 权威刷新。
  * @type {Object<string, true>}
@@ -1518,7 +1543,6 @@ function isHealBatchCmd(cmd) {
 var LOCAL_SYNC_KINDS = {
   'heal-local': true,
   'heal-local-thor': true,
-  'heal-local-resource': true,
   'speed-gold-local': true,
 };
 
@@ -1530,7 +1554,6 @@ var LOCAL_SYNC_KINDS = {
  */
 var HEAL_LANES = {
   'heal-local': true,
-  'heal-local-resource': true,
   'heal-local-thor': true,
   'heal-cross': true,
 };
@@ -1810,23 +1833,20 @@ async function snapshot() {
     prunePendingByExit('aw', avaWaitIdSet(avaList));
     prunePendingByExit('ar', avaRepairingIdSet(avaList));
   }
-  // 「用资源续修」仅在开关开、免费额度耗尽且有普通待修时预算：逐伤兵取 repair_cost，按累计持有量筛可负担集（同竞品 B）。
-  var payIds = null;
-  var payKeys = null;
-  if (MCFG.resourceRepair && quotas && quotas.commonFreeLeft <= 0 && split.commonIds.length) {
-    var costs = [];
-    for (var ci = 0; ci < split.commonOrders.length; ci++) {
-      costs.push(repairCostOfOrderId(split.commonOrders[ci]));
-    }
-    var aff = filterAffordable(costs, resourceHolding);
-    payIds = [];
-    payKeys = [];
-    for (var pi = 0; pi < split.commonIds.length; pi++) {
-      if (aff[pi]) {
-        payIds.push(split.commonIds[pi]);
-        payKeys.push(split.commonKeys[pi]);
-      }
-    }
+  // 普通兵单笔 220 可发集预算（学竞品 B，修正十九）：免费前缀恒可发 + 付费段按材料可负担筛；
+  // resourceRepair 关（旧存档）只发免费段。不再拆免费/资源两批，从结构上消除幻影重烧窗口。
+  var healIds = null;
+  var healKeys = null;
+  if (MCFG.freeRepair && quotas && split.commonIds.length) {
+    var hb = budgetHealIds(
+      split,
+      quotas.commonFreeLeft,
+      MCFG.resourceRepair,
+      repairCostOfOrderId,
+      resourceHolding,
+    );
+    healIds = hb.ids;
+    healKeys = hb.keys;
   }
   return {
     ok: true,
@@ -1835,9 +1855,8 @@ async function snapshot() {
     commonKeys: split.commonKeys,
     thorIds: split.thorIds,
     thorKeys: split.thorKeys,
-    resourceRepair: MCFG.resourceRepair,
-    payIds: payIds,
-    payKeys: payKeys,
+    healIds: healIds,
+    healKeys: healKeys,
     crossIds: crossIds,
     crossKeys: crossWaitKeys(crossData),
     crossSkipped: crossSkipped,
@@ -2034,7 +2053,9 @@ function configure(partial) {
 }
 
 /**
- * 向 reactor 注册本功能说明书：places 限定 base/world（Home/NWorldMap），不行军不参战故不设战斗门控。
+ * 向 reactor 注册本功能说明书：战斗设置类，跟随战斗设置生效（不声明 offInCombat，战斗模式下照常修）。
+ * kinds 覆盖本服 + 无双峡谷（AVA/TM/大师赛/传奇小队）+ 天梯三国 + 征服者 + 盟决，跨服战场图内持续自动修理；
+ * 秘境（pab）由 world 门控隔离，不放行。places 限 base/world（医院 UI 所在场景）。
  * 字段只暴露需用户决策的 3 个付费/带材料开关（雷神/钻石/道具）；钻石只受余额约束、道具持有即动用（日预算/保留下限闸门已废弃）。
  * 免费修理（freeRepair）与超额花资源续修（resourceRepair）恒开、自愈轮询间隔（pollIntervalSec）为系统内置，均不进面板。
  */
@@ -2044,7 +2065,7 @@ reactor.register({
   storageKey: 'pocketcc.feat.quickRepair',
   symbols: ['dataCenter', 'gameTools', 'tableManager'],
   places: ['base', 'world'],
-  kinds: ['homeland'],
+  kinds: ['homeland', 'wushuang', 'kvk', 'sphere', 'adp_war'],
   offInCombat: false,
   defaults: {
     enabled: false,
@@ -2111,6 +2132,7 @@ export {
   estimateGold,
   parseRepairCost,
   filterAffordable,
+  budgetHealIds,
   pickSpeedItem,
   itemSpeedParam,
   goldPlannedFor,
