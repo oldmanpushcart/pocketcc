@@ -264,6 +264,12 @@ eslint 看不出，运行期却是「每一拍 cycle 抛 TypeError、只在 warn
 
 ## 6. 变更记录
 
+- 2026-11-15（**「1 领记 2」竞态修复**：dashcam 实录坐实 10053 权威推送先于 2503 应答到达
+  （push `claims=1` 在前、`box claimed today=2` 在后 2ms）——应答续体无条件 `+1` 把已含本实例的镜像翻倍，
+  而 push/面板均 `max(权威, 镜像)` 只升不降，脏值当日锁定并落盘。修复：应答记账改**按实例幂等**
+  （实例已在册 = 推送先记过账，不补计数）；新增 `sanitizeMirror` 自洽闸（sum(byItem) > insts 数即脏账，
+  丢计数保名单，交权威重建），loadMirror 与 onUserDataPush 合并后各跑一次，存量脏账重启/推送即自愈。
+
 - 2026-11-01（真机报错修复）：`claimOne` 误调 `gameData.serverId()`——该函数挂在 `worldMap` 上，不是 `gameData`，
   导致「cycle run threw. TypeError: gameData.serverId is not a function」每一拍抛错（本 feat 从领取链启动起就
   一条包都没发）。改 `worldMap.serverId()`，并补两项：本服服号 ≤0（UserData 未就绪）时按「可翻转失败」回填重试

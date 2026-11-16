@@ -287,7 +287,27 @@ async function loadMirror() {
     }
     log.info('mirror merged. claims=%d;insts=%d', claimedCount(), mirrorInstIds.length);
   }
+  sanitizeMirror();
   mirrorLoaded = true;
+}
+
+/**
+ * 镜像自洽闸：每次领取恰消耗一个实例 id，sum(byItem) 不可能超过 insts 数。
+ * 越界即「推送先于应答」竞态翻倍的脏账（2026-11-15 实证 1 领记 2）：整表丢弃计数、
+ * 保留实例名单（幂等判据宁滥勿缺），计数交权威 danceRec 与后续推送重建（claimedByItem 本就权威优先）。
+ * 仅在 insts 非空时校验：danceRec 单独先到、名单未到的瞬态不满足不变量，不算脏账。
+ */
+function sanitizeMirror() {
+  if (!mirrorInstIds.length) return;
+  var sum = 0;
+  for (var k in todayByItem) sum += Number(todayByItem[k]) || 0;
+  if (sum <= mirrorInstIds.length) return;
+  log.warn(
+    'mirror counts exceed insts (%d>%d), drop counts, rebuild from authority.',
+    sum,
+    mirrorInstIds.length,
+  );
+  todayByItem = {};
 }
 
 // ── 今日领取态 ────────────────────────────────────────────────────────
@@ -482,6 +502,7 @@ function onUserDataPush(ev) {
         if (mirrorInstIds.indexOf(s) < 0) mirrorInstIds.push(s);
       }
     }
+    sanitizeMirror();
     persistMirror();
     log.debug('authoritative state. claims=%d;insts=%d', claimedCount(), mirrorInstIds.length);
   }
@@ -718,10 +739,17 @@ async function claimOne(cand) {
     if (ret && ret.code !== CODE_NOT_SENT) markBlacklist(instId);
     return;
   }
-  // 记账：镜像先行（10053 权威推送随后覆盖），同实例当日不再重发；计数按宝箱道具归位
+  // 记账：按实例幂等。10053 权威推送可能先于 2503 应答到达（2026-11-15 实录：push claims=1
+  // 在前、应答在后），推送已把本实例计进镜像时再 +1 会翻倍，且 max 合并只升不降、当日无法自愈。
+  // 实例不在册才 +1（镜像先行，推送随后 max 覆盖）；已在册说明推送先记过账，不补计数。
   var boxKey = String(cr.itemId);
-  todayByItem[boxKey] = (todayByItem[boxKey] || 0) + 1;
-  if (mirrorInstIds.indexOf(instId) < 0) mirrorInstIds.push(instId);
+  if (mirrorInstIds.indexOf(instId) < 0) {
+    mirrorInstIds.push(instId);
+    todayByItem[boxKey] = (todayByItem[boxKey] || 0) + 1;
+  } else if (!(todayByItem[boxKey] > 0)) {
+    // 退化形态：推送只带实例名单没带 danceRec，至少把本道具记 1
+    todayByItem[boxKey] = 1;
+  }
   markBlacklist(instId);
   persistMirror();
   var d = safeParse(ret.data) || {};
