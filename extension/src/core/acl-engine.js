@@ -45,6 +45,7 @@ export const SYM = {
     procedureManager: 'ProcedureManager', // 场景程序管理器（PROCE 单例）：Run(PROCE.Home/PROCE.NewWorld) 切场景，与主界面「世界/回城」按钮同源
     uiManager: 'UIManager', // UI 管理器门面（default.Instance().OpenUI(UIDataInfo.xxx) 打开原生面板）
     uiDataInfo: 'UIDataInfo', // 面板描述符注册表（UIDataInfo.<PanelName> → UIDataInfoClass 实例）
+    homeMap: 'HomeMap', // 大本营地图组件类（default=cc 组件类；core/home-snap.js 钩 default.prototype.onSceneEnded 克隆离场景快照，world 空投选点回退用）
     homeMapUtils: 'HomeMapUtils', // 大本营地图工具（default.getMapPosByPosId：posId→主城小格坐标 {x,y}），空投落点换算用
     homeMapCommon: 'HomeMapCommon', // 大本营地图常量（WidthCount/HeightCount 主城网格尺寸），空投落点扫描边界用
     commonTools: 'CommonTools', // 通用工具（subpack2）：checkShieldEnable(false) 权威「能否开盾」闸（狂热/危险区/跨服一次覆盖，抑制 UI）
@@ -403,6 +404,9 @@ export const CAPS = {
   commonTools: () => !!game.get(SYM.modules.commonTools),
   homeMapUtils: () => !!game.get(SYM.modules.homeMapUtils),
   homeMapCommon: () => !!game.get(SYM.modules.homeMapCommon),
+  // 秘密武器空投原生选点依赖：UIManager.default.Instance().HomeMap.findValidAirDropBoxArea（Home 内组件，离开即 null；
+  //   此处只验门面模块在场，HomeMap 实时可用性由 feat ACL fail-closed 兜底）
+  uiManager: () => !!game.get(SYM.modules.uiManager),
   worldSite: () => {
     var m = game.get(SYM.modules.worldSiteCtrl);
     return !!(

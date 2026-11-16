@@ -8,109 +8,73 @@
  */
 import { game } from '../../../core/game.js';
 import { createAcl, sharedValue } from '../../../core/acl-engine.js';
+import { homeSnap } from '../../../core/home-snap.js';
 
 const { ns, SYM, userData, log } = createAcl('AIRDROPDOM');
 
 /** 秘密武器空投支援领域只读面（feat 经 import { airDropDomain } from '../secret-weapon-drop/api.js' 消费） */
 export const airDropDomain = {
   /**
-   * 空投支援合法落点（只读、**场景无关**）：复刻游戏 HomeMap.findValidAirDropBoxArea 的落点判定，但不依赖 HomeMap 场景组件
-   *   （该组件离开 Home 即被 cpnDestroy 置 null）。原版三块数据的权威来源均可在任意场景只读获取：
-   *     · 地形/可投放合法性：HomeMapUtils.checkHomeBoxLegal（静态表 HomeMapTileBlockTypeTable，任何场景可调）；
-   *     · 建筑占用：DataCenter.UserData.Buildings（正是 HomeMap.InitBuildings 的数据源、服务器推送的常驻单例），
-   *       footprint 复用游戏自身的等距展开函数 HomeMapUtils.getMapPosList（与 checkHomeBoxLegal 内部同一生成器，零口径漂移）；
-   *     · 空投 footprint：BUILDING 表 buildingId 行的 width/height（缺省 3×3）。
-   *   原版把搜索种子锚在「当前视口中心」（必然已解锁疆域）再螺旋外扩；本实现把扫描锚定在主城网格中心、按距中心由近及远，
-   *   等价地优先落在玩家早期即解锁的核心地块，规避「静态表合法但疆域未解锁」的外围格被服务器拒。
-   *   占用采保守口径：把 UserData.Buildings 里每个建筑的 footprint 全计为占位（含游戏侧本不计占位的地面装饰/地板）——
-   *   保守只会少选几格、绝不会选到与真建筑重叠的非法格（服务器端也忽略地面装饰，避开地面格是其合法子集），故无需精确复刻 IsGround 判据。
+   * 空投支援合法落点（只读）：直接调游戏原生 HomeMap.findValidAirDropBoxArea(buildingId)（UIManager.Instance().HomeMap，
+   *   与 PlayerSkillController.useSkill 手动施放、竞品A/B 同一选点函数），返回 posId 经 HomeMapUtils.getMapPosByPosId 换算小格坐标。
+   *   竞品A/B 同款 world 支持：core/home-snap.js 钩 HomeMap.onSceneEnded 离场景前克隆组件成快照，本 ACL 取 live||homeSnap()
+   *   （Home 用活组件、world 用快照）；选点链自包含在实例上不读 UIManager 门面，故无需改门面（比竞品少一步侵入）。
+   *   原生锚视口中心，三级判定：getBuildingPosNearBy（建筑对齐环扫）→ getPosNearBy（通用环扫）→ checkNearByPos
+   *   （边界 / checkInLagCache / checkHomeBoxLegal / checkBoxLegal 分支 / checkBoxTypeLegal），尺寸取 BUILDING 表
+   *   width/height/point_type——与服务器同口径，选出的点即游戏自己会投的点。
+   *   **自研环扫复刻已废弃（2026-11-16 Home 判别实验实锤）**：复刻三道闸全过的 (40,55) 在 Home 投放依旧 s=0 扣次数
+   *   不建箱（rec 092411：4170 param=[40,55] → cnt 1→0，774s 内 10101/10109 零 9001001）；投放同拍服务器恰推
+   *   现存建筑 71000@(41,55) 的 10109——落点 3×3 footprint 与其冲突，复刻占用闸漏算（历史 46 发无一建箱）。
+   *   游戏原生选点是唯一验真路径（10-07 手动 (4,66) 全链路成功）。
+   *   活组件离开 Home 即 cpnDestroy 置 null → world 回退快照；快照未就位（从未进过 Home）/组件与快照皆缺/函数缺失/
+   *   返回 -1（无合法空地）一律 null → 本轮不发（fail-closed，绝不盲投烧次数）。
+   *   皆只读查询（不改写游戏数据、不 OpenUI、不播动画）。
    * @param {number} buildingId 待投放建筑 id（空投建筑=9001001）
-   * @returns {{x:number, y:number, posId:number}|null} 合法空位锚点（主城小格坐标，即 4170 param 口径）；符号缺失/无空地/无建筑数据返回 null（→ 本轮不发）
+   * @returns {{x:number, y:number, posId:number}|null} 合法空位锚点（主城小格坐标，即 4170 param 口径）；组件不在/无空地返回 null（→ 本轮不发）
    */
   homeAirDropSpot(buildingId) {
     try {
+      var UM = ns(game.get(SYM.modules.uiManager));
+      var live = UM && typeof UM.Instance === 'function' ? UM.Instance().HomeMap : null;
+      // Home 用活组件；world 活组件已 cpnDestroy → 回退 onSceneEnded 克隆快照（core/home-snap.js，侵入性钩子用户已接受）
+      var hm = live || homeSnap();
+      if (!hm || typeof hm.findValidAirDropBoxArea !== 'function') {
+        log.warn(
+          'homeAirDropSpot: no HomeMap (not in Home / no snapshot yet / symbol drift) → skip drop this round. buildingId=%d',
+          buildingId,
+        );
+        return null;
+      }
       var HU = ns(game.get(SYM.modules.homeMapUtils));
-      if (
-        !HU ||
-        typeof HU.getMapPosList !== 'function' ||
-        typeof HU.checkHomeBoxLegal !== 'function' ||
-        typeof HU.getMapPosByPosId !== 'function' ||
-        typeof HU.getPosIdByMapPos !== 'function'
-      ) {
-        log.warn(
-          'homeAirDropSpot: HomeMapUtils symbol missing (getMapPosList/checkHomeBoxLegal/…) → cannot locate drop spot',
+      if (!HU || typeof HU.getMapPosByPosId !== 'function') {
+        log.warn('homeAirDropSpot: HomeMapUtils.getMapPosByPosId missing → skip drop this round.');
+        return null;
+      }
+      var posId = hm.findValidAirDropBoxArea(buildingId);
+      if (!(posId > 0)) {
+        // -1=无合法空地（游戏同款提示 secret_weapon_53）；未发包、次数未消耗，空地腾出后再试
+        log.debug(
+          'homeAirDropSpot: game findValidAirDropBoxArea returned %d (no legal free area). buildingId=%d',
+          posId,
+          buildingId,
         );
         return null;
       }
-      var GD = game.get(SYM.modules.gameDefine);
-      var BI_BUILD = GD && GD.BaseItemType && GD.BaseItemType.Building; // 必为真值：传错 checkHomeBoxLegal 会跳过地形判定
-      if (BI_BUILD == null) {
+      var mp = HU.getMapPosByPosId(posId);
+      if (!mp || mp.x == null || mp.y == null) {
         log.warn(
-          'homeAirDropSpot: GameDefine.BaseItemType.Building missing → cannot locate drop spot',
+          'homeAirDropSpot: posId=%d unreadable via getMapPosByPosId → skip drop this round.',
+          posId,
         );
         return null;
-      }
-      var l = sharedValue('l10n');
-      var air = l && l.tableRow('building', buildingId);
-      var airW = air && air.width > 0 ? air.width | 0 : 3;
-      var airH = air && air.height > 0 ? air.height | 0 : 3;
-      var HCM = ns(game.get(SYM.modules.homeMapCommon));
-      var WC = (HCM && HCM.WidthCount) || 84,
-        HC = (HCM && HCM.HeightCount) || 104;
-      // 占用格集合：所有建筑 footprint（getMapPosList 与游戏内部同一等距生成器，口径一致）
-      var occ = Object.create(null);
-      var list = userData() && userData().Buildings;
-      if (Array.isArray(list)) {
-        for (var k = 0; k < list.length; k++) {
-          var b = list[k];
-          if (!b || b.Pos == null) continue;
-          var cfg = l && l.tableRow('building', b.BuildingId);
-          if (!cfg) continue;
-          var mp = HU.getMapPosByPosId(b.Pos);
-          if (!mp || mp.x == null || mp.y == null) continue;
-          var cells = HU.getMapPosList(mp.x, mp.y, cfg.width | 0 || 1, cfg.height | 0 || 1);
-          for (var j = 0; j < cells.length; j++) {
-            if (cells[j] !== -1) occ[cells[j]] = 1;
-          }
-        }
-      }
-      // 由主城网格中心向外（切比雪夫环）扫第一个「地形合法 + 空投 footprint 全空」的锚点；限环数待在核心已解锁区，宁可本轮不发也不赌外围
-      var cx = WC >> 1,
-        cy = HC >> 1,
-        R = Math.min(WC, HC) >> 1;
-      for (var r = 0; r <= R; r++) {
-        for (var dx = -r; dx <= r; dx++) {
-          for (var dy = -r; dy <= r; dy++) {
-            if (Math.max(Math.abs(dx), Math.abs(dy)) !== r) continue; // 只走本环边框，避免重扫内圈
-            var x = cx + dx,
-              y = cy + dy;
-            if (x < 0 || y < 0 || x >= WC || y >= HC) continue;
-            var pid = HU.getPosIdByMapPos(x, y);
-            if (occ[pid]) continue; // 快速淘汰：锚点格已被占
-            if (!HU.checkHomeBoxLegal(x, y, airW, airH, BI_BUILD, buildingId, -1)) continue; // 地形/可投放合法性
-            var ac = HU.getMapPosList(x, y, airW, airH),
-              free = true;
-            for (var q = 0; q < ac.length; q++) {
-              if (ac[q] === -1 || occ[ac[q]]) {
-                free = false;
-                break;
-              }
-            }
-            if (free) return { x: x, y: y, posId: pid };
-          }
-        }
       }
       log.debug(
-        'homeAirDropSpot: no legal free spot within %d rings of core area (BUILDING table %s→ footprint=%dx%d, grid=%dx%d, occupied cells=%d)',
-        R,
-        air ? 'OK' : 'MISSING',
-        airW,
-        airH,
-        WC,
-        HC,
-        Object.keys(occ).length,
+        'homeAirDropSpot: chose (%d,%d) via game findValidAirDropBoxArea. posId=%d',
+        mp.x,
+        mp.y,
+        posId,
       );
-      return null; // 核心区内无合法空位（空地不足）
+      return { x: mp.x, y: mp.y, posId: posId };
     } catch (e) {
       log.warn(
         'homeAirDropSpot threw: %s —— landing computation threw mid-way and was swallowed, skip sending this round',
