@@ -41,6 +41,7 @@ const {
   remainingLifeSec,
   isFreeField,
   shouldDropLedgerEntry,
+  isMarchGoneRet,
 } = mod;
 
 test('bidFor/familyOfBid：bid = 家族前缀×1000 + 等级，反查同表（实证 53006 粮6 / 52006 油6 / 51006 金6 / 71001 雷神1）', () => {
@@ -150,4 +151,24 @@ test('remainingLifeSec（MA-1 非负化）：查不到寿命/btime 回 null；�
   ); // 寿命查不到
   assert.equal(remainingLifeSec({ bid: 53006, btime: 1000 }, 2000, life8), 7000); // 1000+8000-2000
   assert.equal(remainingLifeSec({ bid: 53006, btime: 1000 }, 10000, life8), 0); // -1000 压 0（到期后择时按下限尽快复查）
+});
+
+// ── 本轮修复回归：904 撤回「行军已不存在」终结判据（出秘境后 5s 刷屏病灶）──────────────
+// 实证 dashcam-rec-20261115T200249-异能秘境-我是队长：建造单兵在秘境期间已 state=4 到家（游戏侧自动遣返、无 904），
+// 跨会话账本仍留条目，出秘境后对已不存在的 march 重发 904 被服务器 code=3 + world_130517「march is null」拒。
+test('isMarchGoneRet：code=3 + world_130517「march is null」才判终结；其余拒因/未发出/成功一律非终结', () => {
+  // 旧 JSON 通道：拒因裸串落 data（实证 904 resp {s:3, d:"world_130517,<marchId>"}）
+  assert.equal(
+    isMarchGoneRet({ code: 3, data: 'world_130517,4931130432799498249', reason: null }),
+    true,
+  );
+  // PBV2 通道：拒因多语言 key 落 reason，同样识别
+  assert.equal(isMarchGoneRet({ code: 3, data: null, reason: 'world_130517,m1' }), true);
+  // code=3 但其它拒因 → 非终结（双重锚定保守判定，保留账本退避重试）
+  assert.equal(isMarchGoneRet({ code: 3, data: 'world_999999,m1', reason: null }), false);
+  // 其它 code（成功/未发出/业务拒）→ 非终结，即便携 march-is-null 键也不跨 code 误判
+  assert.equal(isMarchGoneRet({ code: 0, data: '{}' }), false);
+  assert.equal(isMarchGoneRet({ code: -1, data: null }), false); // CODE_NOT_SENT 未发出
+  assert.equal(isMarchGoneRet({ code: 5, data: 'world_130517,m1' }), false);
+  assert.equal(isMarchGoneRet(null), false);
 });

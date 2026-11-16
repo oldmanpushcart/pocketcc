@@ -29,6 +29,10 @@
  *     （实证 st=3 与单兵入塔同拍，army_size 0→1）；
  *  ④ 建成立即撤回（固定行为，非可选项）：st===3 → net.send(904 {marchId}) → state 3 RETURNING → 4 ARRIVED_HOME，
  *     队列释放；塔留在原地（实证撤回后盟友照常来采，army_size 412/218），不撤不影响塔存活；
+ *     904 被拒按归因分流：服务器 code=3 + world_130517「march is null」= 行军早已到家/被遣返、查无此 march，
+ *     撤回目的（腾队列）已天然达成 → 终结摘账本（塔留活表由 1031 维持覆盖），绝不盲重试；其余拒因保留账本按 marchId 指数退避。
+ *     实证 dashcam-rec-20261115T200249-异能秘境-我是队长：建造单兵在秘境期间已 state=4 到家（游戏侧自动遣返、无 904），
+ *     跨会话账本仍留条目，出秘境后对已不存在的 march 每 5s 重发 904 被 code=3 拒、且 jobs.shift() 头阻塞饿死其余撤回——与 1032「查无此塔」同病灶；
  *  ⑤ 补建：塔到期/被毁 → 1031 活表里该族条目消失 → 下一拍重新选地派建（家族唯一性靠「塔实例是否存在」
  *     判定，重启/换号天然自愈）。**不做提前补建**：服务器强制一族一座——旧塔还在（哪怕只剩几秒寿命）就派第二单
  *     必被拒 build_122094「该建筑只能建造1个」（2026-11-12 录制实证：四族均在旧塔剩余 <600s 时抢跑被拒），
@@ -99,6 +103,13 @@ const MARCH_TYPE_BUILD = 25;
 const TOWER_STATE_BUILDING = 2;
 /** @type {number} TowerState.COMPLETE：已建成（可采，也是「建成立即撤回」的触发态） */
 const TOWER_STATE_COMPLETE = 3;
+/**
+ * @type {number} 904 撤回被拒的「行军已不存在」终结码（服务器 world_130517「march is null,marchId:{0}」，字典表实证）。
+ * 与 1032「查无此塔」的 code=3 同口径：权威判「目标不存在」即终结摘账本，绝不跨会话盲重试。
+ */
+const MARCH_GONE_CODE = 3;
+/** @type {RegExp} 「march is null」语言键锚（精确终结判据，免 code=3 的其它拒因被误判终结） */
+const MARCH_GONE_KEY = /world_130517/;
 // MARCH_STATE_BUILDING(11)：建塔单兵行军「到达并开工」态（实证 10019 state 1→11→5；march.js 的 State 枚举无此项，
 //   完工判定仍以塔 st===3 为准，本常量历史上仅供探针/真机对拍引用，当前无消费者——备查）。
 /** @type {number} 实体类型：资源田（901/906 pointType=4，建塔落点必须是田点） */
@@ -166,6 +177,10 @@ const cfg = {
   cancelRetryMs: 1000 * 30,
   /** 取消被拒的族冷却上限（毫秒）：同一座塔反复被拒时按指数退避封顶，防把 1032 钉成长频循环 */
   cancelRetryMaxMs: 1000 * 60 * 15,
+  /** 904 撤回非终结被拒的按 marchId 重试冷却基数（毫秒）：保留账本下拍重发，免把 904 钉成 5s 高频 */
+  recallRetryMs: 1000 * 30,
+  /** 904 撤回被拒的冷却上限（毫秒）：同一 march 反复被拒按指数退避封顶（与 1032 取消同设计语言） */
+  recallRetryMaxMs: 1000 * 60 * 5,
   /** 10452 联盟记录推送唤醒的最小间隔（毫秒）：合并突发推送，防把 1031 全量重拉钉成高频（与宿主 autoFarm 同口径） */
   pushWakeMinGapMs: 1000 * 4,
 };
@@ -227,6 +242,10 @@ var ledgerLoading = null;
 var familyCooldown = {};
 /** @type {Object<number, number>} 家族 → 取消在建的连续被拒次数（成功取消/收到受理即清零，驱动冷却指数退避） */
 var cancelRejectStreak = {};
+/** @type {Object<string, number>} marchId → 904 非终结被拒的冷却到期墙上时刻（毫秒）：退避窗内不重发、让位其它就绪条目 */
+var recallCooldown = {};
+/** @type {Object<string, number>} marchId → 904 连续非终结被拒次数（撤回成功/行军已不存在即清，驱动冷却指数退避） */
+var recallRejectStreak = {};
 /** @type {Object<string, number>} 落点键 "x,y" → 拉黑到期墙上时刻（毫秒） */
 var pointBlacklist = {};
 /** @type {number} 连续被拒次数（成功派建/正常一拍即清零） */
@@ -572,6 +591,19 @@ export function shouldDropLedgerEntry(e, nowMs, timeoutMs) {
 }
 
 /**
+ * 904 撤回应答是否「行军已不存在」的终结态（纯函数，供单测）。
+ * 服务器 code=3 携 world_130517「march is null,marchId:{0}」（字典表实证）= 该 march 早已到家/被遣返、
+ * 服务器查无此行军 → 撤回目的（腾队列）已天然达成，应摘账本终结，绝不盲重试（与 1032「查无此塔只摘账本」同口径）。
+ * 双重锚定（code + 语言键）保守判定：其余 code/拒因（含 CODE_NOT_SENT=-1 未发出）一律非终结，保留账本退避重试。
+ * @param {object|null} ret net.Ret 或同形状结果对象
+ * @returns {boolean} true=行军已不存在（终结摘账本）
+ */
+export function isMarchGoneRet(ret) {
+  if (!ret || ret.code !== MARCH_GONE_CODE) return false;
+  return MARCH_GONE_KEY.test(rejectText(ret) || '');
+}
+
+/**
  * 活表回填后校正账本：塔已不在活表（到期/被毁）、已撤回、或未认领超时（BL-4）的条目就地清理，防账本挡住补建。
  */
 function reconcileLedger() {
@@ -870,8 +902,23 @@ function claimTowerId(e) {
 }
 
 /**
- * 建成即撤一轮：认领塔 id → 塔 st===3（或 btime 到期兜底）→ 904 撤回 → 落 recalledAt。
- * 单拍最多发 1 发 1034（只在推送/权威读都没给出 st 时用于校准）。
+ * 撤回成功 / 行军已不存在（终结态）→ 摘账本并即时落盘，清该 march 的退避态。
+ * 塔仍留在活表（实证撤回后盟友照常来采），家族覆盖由 1031 自然维持，不摸内存塔表。
+ * @param {object} e 账本条目
+ */
+function dropRecalled(e) {
+  delete ledger[String(e.family)];
+  delete recallCooldown[e.marchId];
+  delete recallRejectStreak[e.marchId];
+  persistLedger();
+}
+
+/**
+ * 建成即撤一轮：认领塔 id → 塔 st===3（或 btime 到期兜底）→ 904 撤回 → 摘账本。
+ * 单拍最多发 1 发 1034（只在推送/权威读都没给出 st 时用于校准）+ 1 发 904。
+ * 被拒归因分流：code=3 + world_130517「march is null」= 行军已不存在 → 终结摘账本（绝不盲重试）；
+ * 未发出（CODE_NOT_SENT）让路下拍重试不计退避；其余拒因保留账本按 marchId 指数退避，
+ * 退避窗内跳过该条（防 5s 高频，且让位其它就绪条目防头阻塞饿死）。
  * @param {number} serverSec 服务器当前时刻（秒）
  * @returns {Promise<number>} 下一次需要复查撤回的墙上间隔（毫秒），0=无在飞建造
  */
@@ -881,6 +928,7 @@ function recallPass(serverSec) {
   var soonest = 0;
   var jobs = [];
   var calibrate = null;
+  var now = Date.now();
   for (var i = 0; i < keys.length; i++) {
     var e = ledger[keys[i]];
     if (!e || e.recalledAt) continue;
@@ -902,6 +950,8 @@ function recallPass(serverSec) {
       log.warn('tower complete but marchId missing, family=%d (wait next 1031)', e.family);
       continue;
     }
+    // 非终结被拒的退避窗内不重发（防把 904 钉成 5s 高频），也让位给其它就绪条目（防头阻塞饿死）
+    if (recallCooldown[e.marchId] && recallCooldown[e.marchId] > now) continue;
     jobs.push(e);
   }
   var pre = calibrate ? calibrateTower(calibrate) : Promise.resolve(false);
@@ -912,6 +962,7 @@ function recallPass(serverSec) {
         var e2 = ledger[keys[j]];
         if (!e2 || e2.recalledAt || !e2.towerId || !e2.marchId) continue;
         if (jobs.indexOf(e2) >= 0) continue;
+        if (recallCooldown[e2.marchId] && recallCooldown[e2.marchId] > Date.now()) continue;
         if (isBuildComplete(towers[e2.towerId], serverSec)) jobs.push(e2);
       }
     }
@@ -919,9 +970,7 @@ function recallPass(serverSec) {
     var one = jobs.shift(); // 单拍最多 1 发 904，余下下拍继续
     return march.recall(one.marchId).then(function (ret) {
       if (ret && ret.ok) {
-        // 塔仍留在活表（实证撤回后盟友照常来采），家族覆盖由 1031 自然维持
-        delete ledger[String(one.family)];
-        persistLedger();
+        dropRecalled(one);
         log.info(
           'built and recalled. family=%s tower=%s at (%d,%d) marchId=%s',
           FAMILY_LABEL[one.family],
@@ -930,11 +979,38 @@ function recallPass(serverSec) {
           one.y,
           one.marchId,
         );
-      } else {
+      } else if (isMarchGoneRet(ret)) {
+        // 服务器权威「march is null」：行军早已到家/被遣返，撤回目的（腾队列）已天然达成 → 终结摘账本。
+        // 与 1032「查无此塔只摘账本」同口径：绝不跨会话对已不存在的 march 盲重试（实证出秘境后 5s 刷屏）。
+        dropRecalled(one);
         log.info(
-          'recall rejected (retry next pass). marchId=%s code=%s',
+          'recall unnecessary (march gone, drop ledger). family=%s tower=%s marchId=%s code=%s msg=%s',
+          FAMILY_LABEL[one.family],
+          one.towerId || '?',
           one.marchId,
           ret && ret.code,
+          rejectHint(ret),
+        );
+      } else if (ret && ret.code === CODE_NOT_SENT) {
+        // 未发出（同号在途/投递失败）≠业务拒：不计退避，本拍让路下拍重试（与 dispatchBuild MA-4 同口径）
+        log.debug(
+          '904 not sent (in flight/failed to emit), marchId=%s retry next pass',
+          one.marchId,
+        );
+      } else {
+        // 非终结被拒（行军仍在但 904 暂拒）：保留账本 + 按 marchId 指数退避，下拍让位其它条目
+        var tries = (recallRejectStreak[one.marchId] | 0) + 1;
+        recallRejectStreak[one.marchId] = tries;
+        recallCooldown[one.marchId] =
+          Date.now() +
+          Math.min(cfg.recallRetryMs * (1 << Math.min(tries - 1, 9)), cfg.recallRetryMaxMs);
+        log.info(
+          'recall rejected (retry after backoff). family=%s marchId=%s code=%s msg=%s streak=%d',
+          FAMILY_LABEL[one.family],
+          one.marchId,
+          ret && ret.code,
+          rejectHint(ret),
+          tries,
         );
       }
       soonest = Object.keys(ledger).length ? cfg.buildPollMs : 0;
