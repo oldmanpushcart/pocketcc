@@ -7,6 +7,7 @@
  *   - 偷/封/加速都依「已勾选规则」过滤目标；无规则则不换矿（不白耗每日预算），仍可免费读池观测。
  * 有自己的队列/drain/定时器/刷新预算，与 ① 挖矿完全独立。
  * 注：盟友矿「帮忙封存」已按需求取消，封存只发生在裂隙矿场，故 packLeft 名额专属于本引擎。
+ * 面板状态：panelStatus() 只读快照（偷/封日额），经 env.pokePanel 推 UI_REFRESH 就地重算。
  */
 import { CODE_NOT_SENT, todayStr } from '../../../core/util.js';
 import { createLog } from '../../../core/log.js';
@@ -132,6 +133,23 @@ export class StealEngine {
 
   kick() {
     if (this.#env.alive()) this.#triggerScan();
+  }
+
+  /**
+   * 面板只读状态快照（零发包：纯读最近一次 7415 应答权威额度）。
+   * hasSnap=false 即尚未读回世界池。
+   * @returns {{running:boolean,hasSnap:boolean,stealDone:number,stealMax:number,packDone:number,
+   *   packMax:number}}
+   */
+  panelStatus() {
+    return {
+      running: this.#scanning || this.#consuming,
+      hasSnap: this.#lastWorldTs > 0,
+      stealDone: this.#stealDoneNum,
+      stealMax: this.#stealMaxNum,
+      packDone: this.#packDoneNum,
+      packMax: this.#packMaxNum,
+    };
   }
 
   // ─────────── 规则匹配包装 ───────────
@@ -342,6 +360,7 @@ export class StealEngine {
   // ─────────── 主扫描 ───────────
   async #doScan() {
     this.#scanning = true;
+    if (this.#env.pokePanel) this.#env.pokePanel();
     this.#queue = [];
     try {
       if (this.#env.getData() && this.#env.inAlliance()) {
@@ -427,6 +446,7 @@ export class StealEngine {
     this.#packLeft = this.#packMaxNum > 0 ? Math.max(0, this.#packMaxNum - this.#packDoneNum) : 0;
     var endMs = int64ToNum(world.endTime);
     this.#worldEndTs = endMs > 1e11 ? endMs : endMs * 1000;
+    if (this.#env.pokePanel) this.#env.pokePanel();
   }
 
   // ─────────── 任务生成 ───────────

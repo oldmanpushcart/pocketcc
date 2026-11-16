@@ -3,12 +3,13 @@
  *
  * 职责：只管「挖矿」——自家矿脉 + 盟友列表。
  *   - 拉自矿聚合 7428（独立缓存/节奏）
- *   - 回收：自矿采完 / toOthers / toOtherCollects / 他人来采 / 联盟产出
+ *   - 回收：自矿采完 / collects 礼包 / toOthers / toOtherCollects / 他人来采 / 联盟产出
  *   - 占领 7417（自矿 occ_self + 盟友 occ_ally），带自动布阵
  *   - 探测换矿 7416（0 点优先耗免费）
  *   - 盟友线 7425/7414 只取「占领」目标（不做帮忙封存——那是②之外、且已按需求取消）
  * 有自己的队列/drain/定时器/刷新节奏，与 ② 盗窃封存完全独立。
  * 无「已勾选」规则 = 不采（不占领、不探测）。
+ * 面板状态：panelStatus() 只读快照（探测/占领额度与待领份数），经 env.pokePanel 推 UI_REFRESH 就地重算。
  */
 import { createLog } from '../../../core/log.js';
 import { createDrain } from '../../../core/drain.js';
@@ -63,6 +64,7 @@ const WAKE_DEBOUNCE_MS = 3000;
  * @property {function():boolean} inAlliance 是否结在同盟
  * @property {function():number} myUid 自己 UID（数字）
  * @property {{hotSlots:Array<Array<number>>}} tuning 跨引擎领域调参：hotSlots=每日热点时段 [start,end) 小时
+ * @property {function():void} [pokePanel] 快照变更后推面板只读行重算（EVT.UI_REFRESH；面板关着早退零开销）
  */
 
 /**
@@ -151,6 +153,55 @@ export class MiningEngine {
   // 配置变更后即时唤醒（rules 变→重扫一遍以生效新筛选）
   kick() {
     if (this.#env.alive()) this.#triggerScan();
+  }
+
+  /**
+   * 面板只读状态快照（零发包：纯读 7428 缓存与配置额度）。
+   * 待领份数口径与 #collectTasks 同源（state∈{3,4}；自矿槽只认 3），不含当日拉黑过滤——纯展示。
+   * @returns {{running:boolean,hasSnap:boolean,occUsed:number,occMax:number,refreshUsed:number,
+   *   refreshMax:number,pending:number}}
+   */
+  panelStatus() {
+    var self = this.#cachedSelf;
+    var st = {
+      running: this.#scanning || this.#consuming,
+      hasSnap: !!self,
+      occUsed: 0,
+      occMax: this.#env.cfgSeg(1051, 0),
+      refreshUsed: 0,
+      refreshMax: this.#env.cfgSeg(1051, 1),
+      pending: 0,
+    };
+    if (!self) return st;
+    st.occUsed = Number(self.todayOccupyNum) || 0;
+    st.refreshUsed = Number(self.todayRefreshNum) || 0;
+    var infos = self.infos || [];
+    var pending = 0;
+    for (var i = 0; i < infos.length; i++) {
+      var si = infos[i].simpleInfo || {};
+      if (si.state !== STATE_FINISH || si.id == null) continue;
+      var slot = null;
+      try {
+        slot = gameData.mineSlotPos(Number(si.pos));
+      } catch (e) {
+        /* 表未就绪（面板早于游戏开）：按非盟友槽计，展示口径宁多勿漏 */
+      }
+      if (slot && Number(slot.is_ally) === 1) continue;
+      pending++;
+    }
+    var lists = [self.collects || [], self.toOthers || [], self.toOtherCollects || []];
+    for (var l = 0; l < lists.length; l++) {
+      for (var j = 0; j < lists[l].length; j++) {
+        var ci = lists[l][j].simpleInfo || {};
+        if ((ci.state === STATE_FINISH || ci.state === STATE_STEAL_FINISH) && ci.id != null)
+          pending++;
+      }
+    }
+    var og = self.otherGatherRewardNum || {};
+    for (var p in og) if (Number(og[p]) > 0) pending++;
+    if (Number(self.haveAllianceReward) === 1) pending++;
+    st.pending = pending;
+    return st;
   }
 
   // ─────────── 规则匹配包装 ───────────
@@ -259,6 +310,7 @@ export class MiningEngine {
   // ─────────── 主扫描 ───────────
   async #doScan() {
     this.#scanning = true;
+    if (this.#env.pokePanel) this.#env.pokePanel();
     this.#abandonOccupy = false;
     this.#queue = [];
     try {
@@ -317,6 +369,7 @@ export class MiningEngine {
       this.#cachedSelf = ret.data;
       this.#lastSelfTs = Date.now();
       this.#selfDirty = false;
+      if (this.#env.pokePanel) this.#env.pokePanel();
       return ret.data;
     }
     return this.#cachedSelf; // 失败退回上次快照，selfDirty 保持→下轮重试
@@ -326,6 +379,8 @@ export class MiningEngine {
   // 回收：7422 领取「采集/行军产出」+ 7424 他人来采 + 7429 联盟。
   // 修正（对齐游戏 getIsHasReward + MineCaveToOtherItem）：
   //   - infos[]（自矿非盟友槽）：state===3 才领（自矿只认 GATHER_FINISH）
+  //   - collects[]（自家采集行军礼包）：state∈{3,4} 才领（游戏 getIsHasReward 末条判据即 collects 非空；
+  //     此前整块漏遍历、只拿它算行军名额。报文实证 dashcam-rec-20261116T000925：3 条 state=4 礼包逐条 7422 {id} 领讫）
   //   - toOthers[]（我分享出去被采的行军项）：state∈{3,4} 才领（此前整块漏遍历）
   //   - toOtherCollects[]（我在他人矿上的行军项）：state∈{3,4} 才领（此前只认 3、漏 4）
   #collectTasks(self, tasks) {
@@ -335,6 +390,12 @@ export class MiningEngine {
       var slot = gameData.mineSlotPos(Number(si.pos));
       if (slot && Number(slot.is_ally) === 1) continue;
       if (si.state === STATE_FINISH && si.id != null) tasks.push({ k: 'reward_self', id: si.id });
+    }
+    var cs = self.collects || [];
+    for (var c = 0; c < cs.length; c++) {
+      var ci = cs[c].simpleInfo || {};
+      if ((ci.state === STATE_FINISH || ci.state === STATE_STEAL_FINISH) && ci.id != null)
+        tasks.push({ k: 'reward_self', id: ci.id });
     }
     var tos = self.toOthers || [];
     for (var a = 0; a < tos.length; a++) {
