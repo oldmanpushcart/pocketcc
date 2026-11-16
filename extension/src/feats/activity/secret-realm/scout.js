@@ -19,6 +19,8 @@
  *   • **先 8536 后 8537**：能白嫖已侦察结果就绝不动道具；
  *   • 花道具前查 `getItemNumById(41001) > tuning.scoutItemReserve`（余量闸）+ 距上次花道具 ≥ `scoutGapMs`（速率闸）；
  *   • 只探**就近**（距当前停泊点欧氏序）且未在本缓存的野生点，一场缓存去重、不重复烧道具；
+ *   • 候选快照受 `scoutTileFreshMs` 新鲜度闸（10018 只覆盖视口、车走后不刷新，陈旧点可能已被拍掉）；
+ *     8537 撞 enigma_realm159（点不存在）→ 删快照 + 本场拉黑不再进候选（问题18，防同点反复拒）；
  *   • 8536 全局间隔 `scoutInfoGapMs` 防撞次通道频控，查到未侦察的点 `scoutReQueryMs` 后才重查（兼顾新生野怪）。
  *
  * 红线与频控：只走 ACL sendSecret 发 8536/8537，不碰游戏 Update/Delete、不调游戏侧 spyon 方法；侦察用的是**本人私有背包**
@@ -36,6 +38,7 @@ import {
   TABLE_BEAST,
   ITEM_SCOUT_TOOL,
   CODE_NOT_SENT,
+  REJ_POINT_NOT_EXIST,
   tuning,
 } from './constants.js';
 import { GateStateLog } from './gate-log.js';
@@ -84,6 +87,11 @@ export class ScoutEngine {
    */
   #tiles = new Map();
   /**
+   * @type {Set<string>} 本场 8537 撞 159（点不存在）的点位键：服务器确认已移除，后续 10018 push 也不再进候选
+   *   （问题18：旧实现只记冷却不删快照，陈旧 push 会把同点重新喂进择优序反复拒）；换场/停机清空。
+   */
+  #gone = new Set();
+  /**
    * @type {Map<string,{beastId:number,quality:number|null,scouted:boolean,at:number}>}
    * 侦察情报缓存：点位键 → 结果。scouted=true 表示已拿到 beastId（不再重探）；false 表示查过但场上无兽/未侦察（冷却后重查）。
    */
@@ -128,6 +136,7 @@ export class ScoutEngine {
       if ((Number(m.state) || 0) !== 0) continue; // 非空闲（在拍/交战/已清场）→ 不是可侦察的野生候选
       const k = tileKey(p.x, p.y);
       if (!k) continue;
+      if (this.#gone.has(k)) continue; // 本场 159 确认已移除的点不再进候选（防陈旧 push 复活）
       if (this.#scout.has(k)) continue; // 已囤过情报的点不再进候选（缓存去重，防重复烧道具）
       if (this.#tiles.size >= tuning.tileExtMax && !this.#tiles.has(k)) {
         const first = this.#tiles.keys().next();
@@ -167,6 +176,7 @@ export class ScoutEngine {
     if (fb > 1e11 && fb !== this.#matchBegin) {
       this.#matchBegin = fb;
       this.#scout = new Map();
+      this.#gone = new Set(); // 换场：坐标可同位不同场，159 拉黑不作数
       g.reset(); // 换场清了缓存，边沿状态一并复位
     }
 
@@ -180,6 +190,8 @@ export class ScoutEngine {
     // 就近候选序：距当前停泊点欧氏升序；剔除已被别队号召（callTId 非 0 且非本队）、有驻军、本场已缓存（含冷却未到）的点
     const cands = [];
     for (const t of this.#tiles.values()) {
+      // 新鲜度闸（问题18）：快照只由视口 push 写，车走后不刷新；陈旧点可能已被拍掉，发 8537 必撞 159
+      if (now - t.at > tuning.scoutTileFreshMs) continue;
       if (t.teams > 0) continue;
       if (t.callTId && t.callTId !== teamId) continue;
       const rec = this.#scout.get(tileKey(t.x, t.y));
@@ -298,11 +310,24 @@ export class ScoutEngine {
           return;
         }
         if (Number(code) !== 0) {
-          // 服务器明确拒（非「未上线」）：该点当前不可侦察 → 记「查过」进 scoutReQueryMs 长冷却，不逐拍重烧道具撞同一堵
+          const reason = String((r && r.reason) || '');
+          if (reason === REJ_POINT_NOT_EXIST) {
+            // 159 点不存在（问题18）：服务器确认该点已移除 → 删快照 + 本场拉黑，后续 push 也不复活；
+            //   旧实现只记冷却不删点，同点 41s 内两拒（报文实证 20261114 队长场）
+            self.#tiles.delete(target.k);
+            self.#gone.add(target.k);
+            env.log.info(
+              'scout: 8537 %s point not exist (159), dropped from candidates for this match.',
+              target.k,
+            );
+            return;
+          }
+          // 其余明确拒（非「未上线」）：该点当前不可侦察 → 记「查过」进 scoutReQueryMs 长冷却，不逐拍重烧道具撞同一堵
           self.#record(target.k, 0, false);
           env.log.info(
-            'scout: 8537 scout rejected (%s), re-evaluate this point after cooldown.',
-            (r && r.reason) || 'code ' + code,
+            'scout: 8537 %s scout rejected (%s), re-evaluate this point after cooldown.',
+            target.k,
+            reason || 'code ' + code,
           );
           return;
         }
@@ -386,6 +411,7 @@ export class ScoutEngine {
     this.#active = true;
     this.#tiles = new Map();
     this.#scout = new Map();
+    this.#gone = new Set();
     this.#matchBegin = 0;
     this.#lastScoutAt = 0;
     this.#lastInfoAt = 0;
@@ -426,6 +452,7 @@ export class ScoutEngine {
     this.#gates.reset();
     this.#active = false;
     this.#tiles = new Map();
+    this.#gone = new Set();
     this.#infoInFlight = false;
     this.#scoutInFlight = false;
   }

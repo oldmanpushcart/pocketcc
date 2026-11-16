@@ -204,6 +204,8 @@ export const REJECT_RULES = {
     },
     boss: {
       area: 'demote',
+      // 降级只烧这一对区域配对，同区域 BOSS 紧接着就该打：用通用 5s 会把「倒计时已结束」的同区域攻打拖成发呆（1115 实录问题3）
+      backoff: 'bossAreaDemoteMs',
       log: {
         lvl: 'info',
         tpl: 'boss attack: %s rejected %s (platform area esr=%s != boss area) → pair demoted, boss NOT blacklisted.',

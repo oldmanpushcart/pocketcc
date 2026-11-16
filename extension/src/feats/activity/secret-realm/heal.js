@@ -263,8 +263,7 @@ export class HealEngine {
     const env = this.#env;
     if (!env.alive()) return;
     if (!ev || (ev.status != null && Number(ev.status) !== 0)) return;
-    const outer = ev.data || {};
-    const inner = outer.data || outer;
+    const inner = ev.data || {};
     const pi = inner.playerInfo || {};
     const uid = this.#uid();
     if (!uid) return;

@@ -30,7 +30,7 @@
  *   21521/21535/21539 是 `ev.data = {header, data}`（只当唤醒源，业务态一律重读 ACL 落地快照）；**10018 是平的**
  *   `ev.data = {pointInfos:[{v,x,y,k,id,pointType,m}]}`。
  *
- * 拒绝码（攻打）——退避第一：任一 `s≠0` 先进 `tuning.rejectBackoffMs`(5s) 静默，141 更给 `tuning.planeRefreshMs`(15s)，
+ * 拒绝码（攻打）——退避第一：任一 `s≠0` 先进 `tuning.rejectBackoffMs`(5s) 静默，141 更给 `tuning.planeRefreshMs`(15s)、142 降级只给 `tuning.bossAreaDemoteMs`(1s)，
  *   否则被拒路径会以 ≈5 条/秒重发同一条 8521。逐码语义见 constants.js 拒绝键段；本档的本地账差异：158 不烧额度不拉黑、
  *   142 只降级配对、163 拉黑坐标 6h、162 给一次重试、CODE_NOT_SENT 不动配对账、common_159995 短拉黑坐标 60s、其它只首见
  *   提示一条 info。
@@ -180,7 +180,7 @@ export class BossEngine {
   #didSend = false;
   /** @type {Object<string,number>} bossId → 首次见到 state===21 的时刻（排序 tie-break：先进入战斗的在先） */
   #seen21 = {};
-  /** @type {number} 两枪之间的最小间隔 / 被拒退避到期时刻（Date.now）：成功写 ATTACK_COOLDOWN_MS，任一 `s≠0` 写 tuning.rejectBackoffMs（141 写 planeRefreshMs） */
+  /** @type {number} 两枪之间的最小间隔 / 被拒退避到期时刻（Date.now）：成功写 ATTACK_COOLDOWN_MS，任一 `s≠0` 写 tuning.rejectBackoffMs（141 写 planeRefreshMs、142 写 bossAreaDemoteMs） */
   #cooldownUntil = 0;
   /** @type {number} 攻打一枪发出后的最小冷却（毫秒，内置不调面板） */
   static ATTACK_COOLDOWN_MS = 1000;
@@ -232,6 +232,16 @@ export class BossEngine {
     const env = this.#env;
     const g = this.#gates;
     const now = Date.now();
+    // 手动接管暂停闸（1115 问题5/10）：用户手发 8521 时 drive 暂停，攻打同步停手，
+    //   直到 drive.enabled 重新开启（pilot #manualPaused 经 env.drivePaused 惰性读，读不到静默降级）。
+    if (
+      g.edge(
+        'drive-paused',
+        typeof env.drivePaused === 'function' && env.drivePaused(),
+        'manual takeover, drive paused',
+      )
+    )
+      return;
     // 这一条既拦两枪最小间隔、也拦被拒退避（#handleMarchReject 写长档），且必须定 #sleep 而不能回 0
     if (now < this.#cooldownUntil) {
       this.#sleep = this.#cooldownUntil - now;
@@ -263,6 +273,18 @@ export class BossEngine {
         'drive-driving',
         !!(drv && drv.enabled && !isBossTile(Number(base.pointType))),
         'drive on & not on a BOSS tile',
+      )
+    )
+      return;
+    // 让位 pilot 在途非 BOSS 转向（1115 问题4②）：drive 开启且 pilot 有在途 TO 相位驶向非 BOSS 目标
+    //   （evade/cruise/shop/return 等，tag 非 boss/boss-plane）→ 攻打行军让位，防攻打 loop 覆盖
+    //   evade 的 8521 打成乒乓。steer 经 env.pilotSteer 惰性读（pilot 未起/无 TO 回 null → 不拦）。
+    const steer = typeof env.pilotSteer === 'function' ? env.pilotSteer() : null;
+    if (
+      g.edge(
+        'drive-steer',
+        !!(drv && drv.enabled && steer && steer.tag !== 'boss' && steer.tag !== 'boss-plane'),
+        'pilot steering to non-BOSS target: ' + (steer ? steer.tag + '|' + steer.xy : '-'),
       )
     )
       return;
@@ -799,7 +821,7 @@ export class BossEngine {
    * 攻打拒绝码处置（三-3 表化）：读 rejects.js 共享真相表的 boss 列，与 pilot.#applyReject 同源。
    *   核心差异（表内定稿）：**142 只降级区域闸、不拉黑 bossId；163 才拉黑坐标（6h）**；
    *   159995 与 pilot 同口径短黑 paramBlacklistMs(60s)。
-   * 进入即写 `#cooldownUntil`（`tuning.rejectBackoffMs`，141 表内专用 `tuning.planeRefreshMs`）：
+   * 进入即写 `#cooldownUntil`（`tuning.rejectBackoffMs`，141 表内专用 `tuning.planeRefreshMs`、142 专用 `tuning.bossAreaDemoteMs`）：
    *   被拒那一刻本地闸已不可信，不进退避就会以 ≈5 条/秒重发同一条 8521（162 的一次递归重试不走 #attackTick，
    *   因此不受该冷却影响）。表未登记的码 → 兜底：烧区域试探 + 首见 info/再次 debug。
    * @param {{bossId:number,x:number,y:number,platEsr:number|null}} t 目标
@@ -948,8 +970,7 @@ export class BossEngine {
    */
   #logStoneGain(r, bossId, k) {
     const env = this.#env;
-    const outer = (r && r.data) || {};
-    const inner = outer.data || outer;
+    const inner = (r && r.data) || {};
     const res = inner.rewardResult || {};
     const items = Array.isArray(res.items) ? res.items : [];
     const parts = [];
@@ -1046,8 +1067,7 @@ export class BossEngine {
    */
   onBossStatePush(ev) {
     if (!this.#env.alive()) return;
-    const d = ev && ev.data;
-    const inner = d && d.data ? d.data : d;
+    const inner = ev && ev.data;
     const list = inner && Array.isArray(inner.stateInfo) ? inner.stateInfo : null;
     if (list) {
       const now = Date.now();

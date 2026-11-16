@@ -489,14 +489,16 @@ test('pickHopTile 逃袭档（无 goal）：就近任意可行军点作落点，
   assert.deepEqual({ x: got.x, y: got.y, pt: got.pt }, { x: 110, y: 100, pt: 173 });
 });
 
-test('pickHopTile 逃袭档：PVP/交战/驻军>1/拉黑点全排除，仅留安全落点', () => {
+test('pickHopTile 逃袭档：PVP/交战/任何驻军(teams>0)/拉黑点全排除，仅留全空落点', () => {
+  // 1115 问题8：teams=1 的井仍会触发遭遇战（实录逃到 (92,170) 三场全败）→ requireFreeSlot 收紧到 teams>0 即排。
   const cur = { x: 100, y: 100 };
   const tiles = [
     { k: '105,100', x: 105, y: 100, pt: 174, state: 12 }, // PVP 交战中 → 排除
     { k: '106,100', x: 106, y: 100, pt: 173, state: 0, isFight: true }, // 已交战 → 排除
-    { k: '107,100', x: 107, y: 100, pt: 173, state: 0, teams: 2 }, // 驻军>1（逃袭档 requireFreeSlot）→ 排除
+    { k: '107,100', x: 107, y: 100, pt: 173, state: 0, teams: 2 }, // 驻军 2 → 排除
+    { k: '109,100', x: 109, y: 100, pt: 173, state: 0, teams: 1 }, // 驻军 1（更近）→ 也排除（旧闸 teams>1 的漏网反例）
     { k: '108,100', x: 108, y: 100, pt: 175, state: 0, teams: 0 }, // 拉黑 → 排除
-    { k: '120,100', x: 120, y: 100, pt: 173, state: 0, teams: 1 }, // 唯一安全落点
+    { k: '120,100', x: 120, y: 100, pt: 173, state: 0, teams: 0 }, // 唯一全空安全落点
     { k: '300,300', x: 300, y: 300, pt: 161, state: 0 }, // 商店（非候选点类型）→ 排除
   ];
   const got = pickHopTile(tiles, {
@@ -506,6 +508,9 @@ test('pickHopTile 逃袭档：PVP/交战/驻军>1/拉黑点全排除，仅留安
     isBlack: (k) => k === '108,100',
   });
   assert.deepEqual({ x: got.x, y: got.y }, { x: 120, y: 100 });
+  // 全部候选都有队 → null（宁不逃也不进遭遇战；交回探索档）
+  const none = pickHopTile([tiles[3]], { cur, curKey: '100,100', requireFreeSlot: true });
+  assert.equal(none, null, 'teams=1 唯一候选时不得选中');
 });
 
 test('pickHopTile 跳板档（有 goal）：单跳窗内挑最能逼近 goal 者，窗内无落脚回 null', () => {

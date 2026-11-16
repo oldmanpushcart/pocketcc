@@ -84,12 +84,15 @@ export function resourceCost(p, ctx) {
 /**
  * 选资源井（竞品 `marchResource` L24708-24770）。筛子**收敛到 4 道**：类型 / 回合 / iNum+距离 / 空位无在途。
  * ⚠ 我方 v3 的 `rTime>now` 判空 与 `consumed` 10min 黑名单**在此一律不看**（竞品无此闸，误删是"不回头补拿"的根因，§5.1）。
+ *   唯一本地附加 `isExhausted`（问题19）：pickup 已判「对我无可采」的井，服务器看非空但去了白跑。
  * @param {Array} points 901 原样 pointList（每点 {x,y,pointType,m:{iNum,state,teams,esrId}}）
  * @param {{
  *   startPoint:{x:number,y:number}, serverTimeSec:number, minNum?:number, maxDist?:number,
  *   isRoundOpen:(esrId:number)=>boolean, marches?:Array, marchedList?:Array, marchPolicy?:number,
  *   firstUnrewardedBoss?:{x:number,y:number}|null, nearestNoSausageShop?:{x:number,y:number}|null,
- *   hopMaxDist?:number, preferStrong?:boolean, roundTier?:(esrId:number)=>number
+ *   hopMaxDist?:number, preferStrong?:boolean, roundTier?:(esrId:number)=>number,
+ *   isExhausted?:(x:number,y:number)=>boolean,
+ *   nowMs?:number, tileAt?:(x:number,y:number)=>number, staleScorePerSec?:number
  * }} ctx
  * @returns {{x:number,y:number,pointType:number,m:object,score:number}|null} 最佳井，无则 null
  */
@@ -106,6 +109,8 @@ export function pickResource(points, ctx) {
   for (let i = 0; i < points.length; i++) {
     const p = points[i];
     if (!p || Number(p.pointType) !== PAB_RESOURCE) continue; // 闸 1：类型（Number 兜字符串 pointType，防静默全 drop）
+    // 闸 1b：对我已采完（pickup 回灌，问题19）——与 consumed 防重派不同，此闸防「明知白跑还选」
+    if (ctx.isExhausted && ctx.isExhausted(p.x, p.y)) continue;
     const m = p.m || {};
     if (!isRoundOpen(m.esrId)) continue; // 闸 2：回合已开放（用 m.esrId，viewLevel:1）
     if (inMarchedList(ctx.marchedList, p.x, p.y, ctx.serverTimeSec)) continue; // 闸 3a：60s 内派过
@@ -117,12 +122,22 @@ export function pickResource(points, ctx) {
     if (Array.isArray(m.teams) && m.teams.length > 0) continue;
     if (hasMarchTargeting(ctx.marches, p.x, p.y, policy)) continue;
     const gain = Number(m.iNum || 0);
+    // 新鲜度惩罚（1115 问题2）：快照越旧扣分越多，优先近期被 push/视口更新的井（陈旧 teams=0 可能已被他人抢先）；
+    //   tileAt/nowMs 未喂入 → 不扣（纯函数向后兼容）。到点占用即 evade 的兑底仍在，本项只缓解选点端。
+    let score = gain - resourceCost(p, ctx);
+    if (ctx.tileAt && ctx.nowMs > 0) {
+      const at = Number(ctx.tileAt(p.x, p.y)) || 0;
+      if (at > 0) {
+        const ageSec = Math.max(0, (ctx.nowMs - at) / 1000);
+        score -= ageSec * (Number(ctx.staleScorePerSec) || 0);
+      }
+    }
     cands.push({
       x: p.x,
       y: p.y,
       pointType: p.pointType,
       m,
-      score: gain - resourceCost(p, ctx),
+      score,
       d0: dd,
       gain,
       tier: roundTier(m.esrId),
@@ -312,9 +327,10 @@ export function pickShop(shops, ctx) {
  *     · 无 goal（逃袭档，#pickFleeTarget 语义）= 在安全点里取距当前最近的一个，用于“被拉线立即转移”。
  *     · 有 goal（跳板档，#hopTowardGoal 语义）= 在单跳可达窗（hopMaxD）内挑最能缩短到 goal 距离的落脚点，
  *       且**必须严格比当前点更逼近 goal**（防稀疏区 A↔B 无进展往复）；窗内无任何前进落脚点回 null（交回探索档换视野，不发不可取消的长途）。
- *   安全过滤沿用：排除当前点 / 当日拉黑 / 正被 PVP(state 11/12) / 已交战；requireFreeSlot 时再排除驻军>1。
+ *   安全过滤沿用：排除当前点 / 当日拉黑 / 正被 PVP(state 11/12) / 已交战；requireFreeSlot 时再排除**任何驻军**；
+ *   noMonster（面板「不打野」总闸关）时再排除 172——踏上即自动 PVE，不能当「只走过去」的落脚位（问题4/5/8/10/12）。
  * @param {Array<{k:string,x:number,y:number,pt:number,state:number,isFight?:boolean,teams?:number}>} tiles 候选点数组
- * @param {{cur:{x:number,y:number},curKey:string,goal?:{x:number,y:number}|null,hopMaxD?:number,isBlack?:(k:string)=>boolean,requireFreeSlot?:boolean}} ctx
+ * @param {{cur:{x:number,y:number},curKey:string,goal?:{x:number,y:number}|null,hopMaxD?:number,isBlack?:(k:string)=>boolean,requireFreeSlot?:boolean,noMonster?:boolean}} ctx
  * @returns {{x:number,y:number,pt:number}|null}
  */
 export function pickHopTile(tiles, ctx) {
@@ -334,11 +350,12 @@ export function pickHopTile(tiles, ctx) {
     const tpt = Number(t.pt);
     if (tpt !== PAB_TENT && tpt !== PAB_COMMON_PLANE && tpt !== PAB_RESOURCE && tpt !== PAB_MONSTER)
       continue;
+    if (ctx.noMonster && tpt === PAB_MONSTER) continue; // 不打野：172 踏上即自动 PVE，不当落脚/跳板
     if (t.k === curKey) continue;
     if (isBlack && isBlack(t.k)) continue;
     if (t.state === ST_PVP_READY || t.state === ST_PVP_FIGHTING) continue;
     if (t.isFight) continue;
-    if (requireFreeSlot && t.teams > 1) continue; // 至少留一个位
+    if (requireFreeSlot && t.teams > 0) continue; // 逃逸/败退落点必须完全无队：teams=1 仍会触发遭遇战（1115 实录三场全败）
     const d0 = dist(t.x, t.y, cur.x, cur.y);
     if (!(d0 > 0 && d0 <= hmax)) continue;
     const ap = goal ? dist(t.x, t.y, goal.x, goal.y) : d0;

@@ -65,6 +65,7 @@ import { PLANS, planIds } from './plans.js';
 import { LeaveEngine } from './leave.js';
 import { ScoutEngine } from './scout.js';
 import {
+  CMD_MARCH_MOVE,
   TABLE_ITEM,
   TABLE_RSS_STATION,
   TABLE_BEAST,
@@ -400,6 +401,20 @@ function buildPickPool() {
  * @returns {object} env
  */
 function buildEnv() {
+  // 扩展自身 8521 意图队列（1115 问题5/10 手动接管检测）：发送前记 {x,y,ts}，pilot 经 ctx.on.req(8521)
+  //   订阅本端发包与本队列匹配——命中=扩展自身行为（消费掉），不命中=用户手动行军 → 暂停驾驶。
+  //   sendSecret(8521) 与 sendMarch 双口都记（boss/warn 走 sendMarch→原 sendSecret，只包一口会漏）。
+  const marchIntents = [];
+  const noteMarchIntent = function (data) {
+    const x = Math.floor(Number(data && data.x));
+    const y = Math.floor(Number(data && data.y));
+    if (!(x > 0) || !(y > 0)) return;
+    const now = Date.now();
+    marchIntents.push({ x: x, y: y, ts: now });
+    // TTL + 容量双清扫：未匹配的意图（发包被在途闸拦下等）只留近 10s/16 条，防无界增长
+    while (marchIntents.length && (marchIntents.length > 16 || now - marchIntents[0].ts > 10000))
+      marchIntents.shift();
+  };
   return {
     alive: function () {
       return !!(ctxRef && ctxRef.alive());
@@ -410,12 +425,18 @@ function buildEnv() {
     },
     // 发包两口薄包装：自动注入宿主当前取消信号（每次 activate 新建），pause 后在飞守卫 abort 早收口，
     //   不再白等满 4s 超时窗；其余只读方法原样透传。引擎侧 18 处调用点零改动。
+    //   8521 双口（sendSecret/sendMarch）额外记 intent（手动接管检测，见 buildEnv 头部队列注）。
     secret: Object.assign({}, secretRealm, {
       sendSecret: function (cmd, data) {
+        if (cmd === CMD_MARCH_MOVE) noteMarchIntent(data);
         return secretRealm.sendSecret(cmd, data, ctxRef && ctxRef.signal);
       },
       sendSecretJson: function (cmd, data) {
         return secretRealm.sendSecretJson(cmd, data, ctxRef && ctxRef.signal);
+      },
+      sendMarch: function (x, y) {
+        noteMarchIntent({ x: x, y: y });
+        return secretRealm.sendMarch(x, y);
       },
     }),
     gameData: gameData,
@@ -471,6 +492,29 @@ function buildEnv() {
     driveExitStage: function () {
       const e = engines.drive;
       return e && typeof e.exitStageWant === 'function' ? !!e.exitStageWant() : false;
+    },
+    // 手动接管匹配口（1115 问题5/10）：坐标相等 + ts 在 2s 窗内 → 消费该 intent 回 true（扩展自身发送）；
+    //   否则回 false（用户手动）。pilot 订阅本端 8521 后逐笔匹配，不命中即置暂停位。
+    marchIntentMatch: function (x, y, ts) {
+      const now = Number(ts) || Date.now();
+      for (let i = 0; i < marchIntents.length; i++) {
+        const it = marchIntents[i];
+        if (it.x === x && it.y === y && Math.abs(now - it.ts) <= 2000) {
+          marchIntents.splice(i, 1);
+          return true;
+        }
+      }
+      return false;
+    },
+    // pilot→boss 的手动接管暂停口（1115 问题5/10）：惰性读 pilot #manualPaused，读不到（pilot 未起）静默降级 false。
+    drivePaused: function () {
+      const e = engines.drive;
+      return !!(e && typeof e.isManualPaused === 'function' && e.isManualPaused());
+    },
+    // boss→pilot 的在途转向快照口（1115 问题4②让位闸）：惰性读 pilot steerState，无 TO/未起回 null。
+    pilotSteer: function () {
+      const e = engines.drive;
+      return e && typeof e.steerState === 'function' ? e.steerState() : null;
     },
   };
 }
@@ -715,6 +759,8 @@ function pickDriveRaw(c) {
     beastQuality: c && c.driveBeastQuality != null ? c.driveBeastQuality : 4,
     planeLeadSec: c && c.drivePlaneLeadSec != null ? c.drivePlaneLeadSec : 60,
     drivePlan: c && c.drivePlan != null ? String(c.drivePlan) : 'default',
+    beastBoxFirst: !(c && c.driveBeastBoxFirst === false),
+    pvpFleeRounds: c && c.drivePvpFleeRounds,
   };
 }
 
@@ -746,6 +792,18 @@ function sanitizeDrive(raw) {
   if (!Number.isFinite(pl) || pl < 0) pl = 60;
   else if (pl > 600) pl = 600;
   const plan = PLANS[e.drivePlan] ? String(e.drivePlan) : 'default';
+  // 遭遇战「输即逃」勾选场次：只认 1/2/3，去重升序；缺失/非法 → 缺省 [1]（早止损）；空数组 = 用户全不勾 = 关闭该功能。
+  const pfrRaw = Array.isArray(e.pvpFleeRounds) ? e.pvpFleeRounds : [1];
+  const pfrSeen = {};
+  const pvpFleeRounds = [];
+  for (let i = 0; i < pfrRaw.length; i++) {
+    const n = Number(pfrRaw[i]);
+    if (n !== 1 && n !== 2 && n !== 3) continue;
+    if (pfrSeen[n]) continue;
+    pfrSeen[n] = 1;
+    pvpFleeRounds.push(n);
+  }
+  pvpFleeRounds.sort((a, b) => a - b);
   return {
     enabled: e.enabled === true,
     boss: e.boss !== false,
@@ -759,6 +817,8 @@ function sanitizeDrive(raw) {
     beastQuality: bq,
     planeLeadSec: pl,
     drivePlan: plan,
+    beastBoxFirst: e.beastBoxFirst !== false,
+    pvpFleeRounds: pvpFleeRounds,
   };
 }
 
@@ -945,6 +1005,8 @@ reactor.register({
     driveBeastQuality: 4,
     drivePlaneLeadSec: 60,
     drivePlan: 'default',
+    driveBeastBoxFirst: true,
+    drivePvpFleeRounds: [1],
     autoLeaveEnabled: false,
     scoutEnabled: true,
   },
@@ -1033,7 +1095,7 @@ reactor.register({
         { value: 'transfer', label: '立即转移（默认）' },
         { value: 'stand', label: '抗争到底' },
       ],
-      hint: '立即转移=自动撤到就近安全点（不打野）；抗争到底=原地应战。仅队长、停稳时生效。',
+      hint: '立即转移=自动撤到就近安全点（不打野）；抗争到底=原地应战。仅队长、停稳时生效。BOSS 平台与玩家是 1 局定胜负：本档位同样决定自动驾驶在验真后的攻击警告下是否撤离平台（无敌方 UID 的误告始终忽略）。',
     },
     {
       key: 'driveEnabled',
@@ -1081,6 +1143,47 @@ reactor.register({
         return !!(cfg && cfg.driveEnabled);
       },
       hint: '默认开：开场 10/15/20 分钟任一时刻若还没去过商店，强制去就近商店补一趟投喂料（本场一次）；关则仅补货有缺口时才去店。',
+    },
+    {
+      key: 'driveBeastBoxFirst',
+      type: 'checkbox',
+      label: '到店先买低保（传奇百兽箱碎片自选箱）',
+      section: '自动驾驶',
+      showIf: function (cfg) {
+        return !!(cfg && cfg.driveEnabled);
+      },
+      hint: '默认开：到店先买满全场限量的低保（传奇百兽箱碎片自选箱，2000 晶块）再买香肠等；关=香肠优先（竞品回落）。',
+    },
+    {
+      key: 'drivePvpFleeRounds',
+      type: 'multiopts',
+      label: '遭遇战输即逃场次',
+      section: '自动驾驶',
+      stack: true,
+      options: [
+        { value: 1, label: '第 1 场输即逃' },
+        { value: 2, label: '第 2 场输即逃' },
+        { value: 3, label: '第 3 场输即逃' },
+      ],
+      showIf: function (cfg) {
+        return !!(cfg && cfg.driveEnabled);
+      },
+      hint: '勾选场次输掉（对手胜场 +1）立即逃往完全无队的资源井；缺省勾第 1 场（早止损），全不勾=关闭。PVP 中途撤退仍可能被对手追击。',
+    },
+    {
+      key: 'driveManualStatus',
+      type: 'text',
+      label: '手动接管状态',
+      section: '自动驾驶',
+      showIf: function (cfg) {
+        return !!(cfg && cfg.driveEnabled);
+      },
+      get: function () {
+        const e = engines.drive;
+        if (e && typeof e.isManualPaused === 'function' && e.isManualPaused())
+          return '已手动接管·暂停（重新开启自动驾驶恢复）';
+        return '正常';
+      },
     },
     {
       key: 'driveShopDwell',

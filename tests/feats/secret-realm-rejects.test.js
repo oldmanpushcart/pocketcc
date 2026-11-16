@@ -56,6 +56,11 @@ test('刻意差异：163 pilot 不拉黑（marched 预付）vs boss 长黑；142
   assert.equal(r142.pilot.onlyTag, 'boss-plane');
   assert.equal(r142.boss.area, 'demote');
   assert.equal(r142.boss.black, undefined);
+  // 1115 问题3：降级只烧区域配对，退避用专用短窗 bossAreaDemoteMs(1s)，不用通用 5s
+  //   （实录 20:22:55 boss12 拒 142 → 20:23:00 才打同区域 boss11，倒计时已结束却原地发呆）。
+  assert.equal(r142.boss.backoff, 'bossAreaDemoteMs');
+  assert.equal(C.tuning.bossAreaDemoteMs, 1000);
+  assert.ok(C.tuning.bossAreaDemoteMs < C.tuning.rejectBackoffMs, '降级退避必须短于通用拒码退避');
 });
 
 test('瞬态与到达：158 两引擎不拉黑；157 pilot 进 WORK / boss 认区域正常', () => {
@@ -95,7 +100,8 @@ test('表完整性：每条规则有 name/match；pilot 处置的退避键与日
     assert.ok(ru.match === 'exact' || ru.match === 'contains');
     for (const col of [ru.pilot, ru.boss]) {
       if (!col) continue;
-      if (col.backoff) assert.ok(['rejectBackoffMs', 'planeRefreshMs'].includes(col.backoff));
+      if (col.backoff)
+        assert.ok(['rejectBackoffMs', 'planeRefreshMs', 'bossAreaDemoteMs'].includes(col.backoff));
       if (col.log) assert.ok(['info', 'debug', 'note'].includes(col.log.lvl));
     }
   }

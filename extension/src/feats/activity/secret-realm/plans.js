@@ -160,7 +160,11 @@ export const PLANS = {
         terminal: true,
         emptyShopMark: true, // 同 shopExit：空候选记防重评 + scan 短睡
         params: { preferNoSausage: true }, // 窄筛 pickShop（preferNoSausage=true）
-        when: (c) => c.shopWhy === 'stage', // L2043
+        // BOSS 优先闸（1115 问题6）：BOSS 窗活跃（open/lead）或投喂窗（state23，此时 bossMode=null）
+        //   → shopStage 不命中，让位 boss 链/bossWait；治「从 BOSS 平台径直去商店」（terminal 独占本拍）。
+        when: (c) =>
+          c.shopWhy === 'stage' &&
+          !(c.teamType > 0 && c.driveBoss && (!!c.bossMode || c.bossFeeding)), // L2043
       },
 
       // ── BOSS 开台读秒让路（L2056-2060，team_type>0 && state23 → 本拍不派日常车，独占）──

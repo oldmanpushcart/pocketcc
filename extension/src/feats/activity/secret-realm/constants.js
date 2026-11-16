@@ -305,14 +305,14 @@ export const PUSH_POINT_FIGHTING_INFO = 21523;
  * ENIGMA_SECRET_ROOM_RESOURCE_CHANGE：资源点 bag 变动下推（载荷带 `uid`/`playerInfo`）。
  * ⚠ 与 8526 RESOURCE_INFO 的口径差异：**应答条目不带 uid，而本推送带**
  *   → 「谁已领过」只能从推送侧拿，INFO 侧必须自己记账（见 REJ_SAME_ITEM_ONCE 注）。
- * 投递：`ctx.on.push(21522)`，业务体在 `ev.data.data`（PBV2 包装层 `{header,data}` 的内层，
+ * 投递：`ctx.on.push(21522)`，业务体在 `ev.data`（net 已剥 pbAckV2 信封 `{header,data}` 到内层，
  *   与游戏侧事件 PabRoomResLibraryDataUpdate 的载荷是**同一对象引用**）。
  * @type {number}
  */
 export const PUSH_RESOURCE_CHANGE = 21522;
 /**
  * ENIGMA_SECRET_ROOM_DROP_CHANGE：掉落箱变动下推（载荷 `{x,y,dropInfo:[{dropId,info{itemId,itemCount},uid,hide}],beastGetNum,bagGetNum}`）。
- * 投递：`ctx.on.push(21532)`，业务体同样在 `ev.data.data`（游戏侧事件 PabRoomRewardBoxDataUpdate）。
+ * 投递：`ctx.on.push(21532)`，业务体同样在 `ev.data`（游戏侧事件 PabRoomRewardBoxDataUpdate）。
  * @type {number}
  */
 export const PUSH_DROP_CHANGE = 21532;
@@ -966,6 +966,13 @@ export const tuning = {
    */
   rejectBackoffMs: 5000,
   /**
+   * BOSS 攻打：撞 142（平台区域 ≠ BOSS 区域）后的**降级短退避**（毫秒）。
+   * 取 1000：142 只烧「当前平台×该 BOSS」这一对区域配对（不拉黑 bossId），同区域的下一个 BOSS
+   *   紧接着就该打；用通用 5s 会把「可攻打倒计时已结束」的同区域攻打拖成原地发呆（1115 实录 20:22:55→20:23:00）。
+   *   仍留 1s 而非 0：防降级账未落时同一对被重评打成风暴。
+   */
+  bossAreaDemoteMs: 1000,
+  /**
    * BOSS 攻打：撞 141（服务端认为我不在 176 平台上）后的专用静默（毫秒）——等 push 21521 把 roomBaseInfo 刷正。
    * 取 15000：21521 一场 239 条 ≈17s 一条（行军状态变化时补发，但被拒这一路没有行军可触发），
    *   给一个「≈一条推送周期」的窗；用通用 5s 会在刷正前多撞两枪。
@@ -1070,6 +1077,13 @@ export const tuning = {
    *   故触发主要靠 push 21534 事件 kick；本值只用于「警告挂起但快照里暂无就近营帐」时的重扫间隔。
    */
   warnScanMs: 3000,
+  /**
+   * 驾驶：21534 警告验真的本点占用快照新鲜窗（毫秒）。
+   *   1115 复核（warn-reaudit）：21534 恒只有 {num} 无 UID——BOSS 交战期大 num=争夺计数
+   *   （46/46 本点无 enemy UID）、井位到点 num=1=到点噪声（9/10）。仅「快照够新鲜且带 uid 列表」
+   *   才敢判误告忽略；超窗按证据不足保守置威胁。实录 62 条警告快照龄均 ≤1.2s，取 15s 留足余量。
+   */
+  warnVerifyAgeMs: 15000,
   // ── 自动驾驶（pilot.js）──
   /**
    * 驾驶：状态机空闲轮询兜底（毫秒）。kick 源是 21534/21529/21535/21521（10018 只写快照不 kick），
@@ -1226,6 +1240,13 @@ export const tuning = {
    *   取 1：只排除「快照里明确为 0 件」的点（`iNum` 读不到仍放行，保持宽松档的探索用途）。
    */
   driveCruiseMinYield: 1,
+  /**
+   * pilot：**巡航选点的快照新鲜度惩罚**（分/秒，1115 问题2）：pickResource 打分按瓦片上次更新距今的秒数
+   *   线性扣分（`score -= ageSec × 本值`），优先近期被 10018 push/视口更新的井——陈旧快照 teams=0
+   *   可能已被他人抢先占领（到点即 PVP）。取 0.1：3min 陈旧扣 18 分，足以让位近期视口井，
+   *   又不致把视口外高产井一棍打死（视口外陈旧不可完全消除，到点占用即 evade 兑底仍在）。0=关闭惩罚。
+   */
+  driveStaleScorePerSec: 0.1,
   /**
    * pilot：**商店勤务的定期节拍**（毫秒）：距上次到店超过本值且当前点不是商店 → 再去一家
    *   （#shopWant 的 `stage` 档，抢在日常链前）。「勤务/缺香肠/持有缺口」三档**不拦路**，只作链尾兜底那一下的选店排序。
@@ -1475,6 +1496,12 @@ export const tuning = {
   scoutInfoGapMs: 2000,
   /** @type {number} 侦察：同一点位 8536 查到未侦察后的重查冷却（毫秒） */
   scoutReQueryMs: 600000,
+  /**
+   * 侦察：172 候选快照的新鲜度上限（毫秒）。#tiles 只由 10018 视口增量 push 写、车离开后不再刷新，
+   *   陈旧快照里的点可能已被拍掉/移走，拿去发 8537 会撞 enigma_realm159（报文实证 20261114 队长场
+   *   同一点 41s 内两拒）；超过本窗的候选不进择优序，等下次进视口 push 刷新后再探。取 60s 与 pilot bossTileFreshMs 同量级。
+   */
+  scoutTileFreshMs: 60000,
   /**
    * 侦察：为背包勘察车保留的最低余量（个数）——`getItemNumById(41001) <= 本值` 即不再花道具侦察。
    * 默认 0=有多少探多少（勘察车非商店货、只能从野怪点产出拾取，无「留货打关键兽」的既有语义）；

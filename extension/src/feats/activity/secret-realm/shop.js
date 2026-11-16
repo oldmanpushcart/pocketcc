@@ -339,14 +339,13 @@ export class ShopEngine {
   }
 
   /**
-   * 从应答里取 items → `{specId: getTime}`。应答形：sendSecret 的 Ret.data（可能再嵌一层 data）。
+   * 从应答里取 items → `{specId: getTime}`。应答形：sendSecret 的 Ret.data（已剥 pbAckV2 信封，即业务体）。
    * @param {object} r Ret
    * @returns {Object<number,number>}
    */
   #parseItems(r) {
     const out = {};
-    const outer = (r && r.data) || {};
-    const inner = outer.data || outer;
+    const inner = (r && r.data) || {};
     const arr = Array.isArray(inner.items) ? inner.items : [];
     for (let i = 0; i < arr.length; i++) {
       const it = arr[i];
@@ -438,15 +437,17 @@ export class ShopEngine {
     //   通用清单不得重复处理该品目——否则 #grabSausage soldOut 不再置 done 后，本路径 L462 的裸
     //   #sendRefresh 会绕过预算把刷币刷干（手动档 #grabSausage 空转，故仅在 drive 开启时让位）。
     const driveOn = !!(env.cfg().drive && env.cfg().drive.enabled);
-    // 百兽箱（type3）/香肠的**购买优先级**随 BOSS 是否已清台而翻（竞品 §9.2 shopConver L25204）：
-    //   未清台 → 香肠优先（它是投喂 BOSS 的硬通货，先攒够）；已清台 → 百兽箱优先（没 BOSS 可喂，香肠价值降）。
+    // 低保（type3 传奇百兽箱碎片自选箱）全场跨店共享限量、不可刷：先买不占香肠的刷新预算。
+    //   drive.beastBoxFirst（缺省 true）→ 不论是否清台都 type3 优先（1115 实录问题1：首店香肠×10+刷新耗尽驻留，type3 轮不到）；
+    //   关档回落竞品 shopConver L25204 排序：未清台 → 香肠优先（投喂 BOSS 硬通货），已清台 → 百兽箱优先（没 BOSS 可喂，香肠价值降）。
     //   两档各自「没需求/不在架就 return false」→ 自然形成竞品 `X || Y` 的兜底语义（香肠需但不在架→刷店，不外溢到百兽箱）。
     //   ⚠ 两笔都是「一拍只发一个包」，另一档在同拍 return true 后不执行，下一拍再轮到（无买漏，仅优先级差）。
-    if (this.#bossCleared()) {
+    const drvCfg = env.cfg().drive || {};
+    if (drvCfg.beastBoxFirst !== false || this.#bossCleared()) {
       if (this.#grabType3(cur, buyBalance)) return true;
       if (this.#grabSausage(cur, buyBalance)) return true;
     } else {
-      // 常态：香肠优先（受 #grabSausage 的 `drive.enabled` 子闸约束，手动档不主动补）→ 再百兽箱。
+      // 关档回落：香肠优先（受 #grabSausage 的 `drive.enabled` 子闸约束，手动档不主动补）→ 再百兽箱。
       if (this.#grabSausage(cur, buyBalance)) return true;
       if (this.#grabType3(cur, buyBalance)) return true;
     }
@@ -739,10 +740,35 @@ export class ShopEngine {
       // desired 传 0（不按累计件数降级）：目标差额由入口的 have>=target 每拍复判，拿捏最准
       return this.#sendBuy(cur, spec, qty, 0, this.#bought[spec] || 0);
     }
+    // 香肠货位本场全部降级（买不起/被拒/携带满）或无货位：刷新不改变购买币余额，再驻留是白等（问题6/20）
+    //   → 止损回灌，pilot 截短驻留当拍离店。本闸先于 refreshFor：防「全 done 但 onShelf=false」误入刷店烧币。
+    if (specs.every((s) => this.#done[s])) {
+      this.#giveUpShop(cur, 'sausage_all_degraded');
+      return false;
+    }
     // 货单上**根本没香肠**，或**香肠本店额度已买完**（需求 2：同店刷到买满）：都走「刷店」（预算 driveSausageRefreshMax）
     //   ——刷新把非 type3 行 getTime 归零，下一拍即可继续买，直到 have>=target 或刷新预算/刷新币耗尽。
     if (specs.length && (!onShelf || soldOut)) return this.#refreshFor(cur, 'sausage');
     return false;
+  }
+
+  /**
+   * 商店止损回灌收口（问题6/20）：本店已无法服务香肠目标（无刷新币/预算尽/货位全降级）时，
+   *   通知 pilot 截短驻留当拍离店——否则「have<target → extra 续留」会白等一整个 extra 窗。
+   *   #refreshGaveUp 按店去重（本场只发一次，与四-2 连续未命中止损共用同一旗标）；
+   *   账本 sausageShelf 由 #markLedger 按应答回写（喂 pilot #shopAllTried 白跑惩罚），防重派靠离站 #consume。
+   * @param {{x:number,y:number,key:string}} cur 当前商店点
+   * @param {string} why 止损原因（日志 reason=，dashcam 单轨定责）
+   */
+  #giveUpShop(cur, why) {
+    if (this.#refreshGaveUp[cur.key]) return;
+    this.#refreshGaveUp[cur.key] = 1;
+    this.#env.log.info(
+      'shop: %s cannot serve sausage target, stop and leave. reason=%s',
+      cur.key,
+      why,
+    );
+    if (typeof this.#env.shopRefreshGiveUp === 'function') this.#env.shopRefreshGiveUp(cur.key);
   }
 
   /**
@@ -758,7 +784,11 @@ export class ShopEngine {
     // 四-2 止损：本店已连续刷不中目标品 → 本场不再烧币（离店信号已经 env.shopRefreshGiveUp 发给 pilot）
     if (this.#refreshGaveUp[cur.key]) return false;
     const max = Number(tuning.driveSausageRefreshMax) || 0;
-    if (!(max > 0)) return false;
+    if (!(max > 0)) {
+      // 预算闸关（用户配 0）：不在架/额度买完也无刷可用 → 止损离店（问题6/20）
+      this.#giveUpShop(cur, 'refresh_budget_off');
+      return false;
+    }
     const tries = Number(this.#refreshTries[cur.key]) || 0;
     if (tries >= max) {
       // 预算烧尽的成因有「不在架」与「本店额度买完」两种（需求 2 后不只前者），统一措辞为 short
@@ -766,6 +796,7 @@ export class ShopEngine {
         'rmax' + cur.key,
         'shop: ' + what + ' still short at ' + cur.key + ' after ' + max + ' refreshes, give up.',
       );
+      this.#giveUpShop(cur, 'refresh_budget_spent');
       return false;
     }
     const cur0 = this.#currency();
@@ -773,6 +804,8 @@ export class ShopEngine {
     const rcost = this.#refreshCost();
     if (rcost > 0 && env.secret.getItemNumById(cur0.refreshId) < rcost) {
       this.#note('rcur' + cur.key, 'shop: ' + what + ' still short, no refresh currency.');
+      // 缺刷新币是硬约束（刷不了也买不了）：旧实现只 note 不回灌，车白等 extra 续留窗（问题6/20）
+      this.#giveUpShop(cur, 'no_refresh_currency');
       return false;
     }
     this.#refreshTries[cur.key] = tries + 1;

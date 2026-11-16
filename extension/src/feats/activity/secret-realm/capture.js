@@ -291,8 +291,7 @@ export class CaptureEngine {
   onFeedBeast(ev) {
     const env = this.#env;
     if (!env.alive()) return;
-    const outer = (ev && ev.data) || {};
-    const inner = outer.data || outer;
+    const inner = (ev && ev.data) || {};
     const x = Number(inner.x);
     const y = Number(inner.y);
     const key = x > 0 && y > 0 ? x + ',' + y + (Number(inner.boss) === 1 ? ' boss' : '') : '';
@@ -313,13 +312,12 @@ export class CaptureEngine {
    * 捕获事件推送入口（push 21527，载荷 `{type, specId[], endTime, points[]}`）：拖拽窗口只有 2.0s
    * （源码 `ClientTime+2e3`，报文 349/349 条一致，见 EVT_TYPE_DRAG 注），等不起下一拍的 capturingInfo 回写，
    * 所以到达即发。退订由 reactor 托管（ctx.on.push）。
-   * @param {object} ev bus `net.21527` 事件（Event 实例：data 里再包一层业务载荷）
+   * @param {object} ev bus `net.21527` 事件（Event 实例：ev.data 即业务体）
    */
   onBeastEvent(ev) {
     const env = this.#env;
     if (!env.alive() || !env.realmActive()) return;
-    const outer = (ev && ev.data) || {};
-    const inner = outer.data || outer;
+    const inner = (ev && ev.data) || {};
     this.#lastPushAt = Date.now(); // 任何一条 21527 都证明通道活着 → 轮询兜底退场（防双发）
     const et = Number(inner.type) || 0;
     if (et !== EVT_TYPE_DRAG && et !== EVT_TYPE_FEED_POP) return; // 3=能量爆发演出，交 ③ 的 selfenergy 闸

@@ -113,7 +113,8 @@ export function enter(pt, f) {
  * @param {object} f 事实包：
  *   now 毫秒；key 点位键；d 面板 drive 配置；t tuning；
  *   isEmpty 三路判空结果（empty 档）；
- *   captureBusy/bossLeaveWhy/bossWin/bossLiveHere（BOSS 档提前离点判据，pilot 预先算好）；
+ *   captureBusy/bossLeaveWhy/bossWin/bossLiveHere（BOSS 档提前离点判据，pilot 预先算好；
+ *   empty 档只喂 bossWin：BOSS 窗中断，问题21②）；
  *   sausageHave/sausageTarget（shop 缺口续留）；shopGiveUp（刷店止损信号，四-2：true 时缺口也不续留）
  * @returns {{leave:boolean,sleep:number,patch?:object,log?:{tpl:string,args:Array}}}
  */
@@ -121,6 +122,18 @@ export function tick(pt, s, f) {
   const now = f.now;
   const t = f.t;
   if (s.workMode === 'empty') {
+    // BOSS 窗中断（问题21②）：井/掉落箱采集中 BOSS 窗开了（open/lead，pilot 预算 f.bossWin，
+    //   仅 teamType>0 && driveBoss && !captureBusy 时喂入）→ 立即离点让路，不等判空/天花板。
+    if (f.bossWin) {
+      return {
+        leave: true,
+        sleep: 0,
+        log: {
+          tpl: 'pilot: %s BOSS window opened (mode=%s), interrupt gathering and leave. reason=boss_window',
+          args: [f.key, f.bossWin.mode],
+        },
+      };
+    }
     if (f.isEmpty) {
       const emptyAt = s.workEmptyAt || now;
       const d = f.d || {};

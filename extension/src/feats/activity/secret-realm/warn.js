@@ -18,8 +18,9 @@
  *     且 10018 瓦片快照里 **174 出现 0 次、175 出现 420 次** → 实际能就近落到的基本都是 175 营帐；174 只作名义候选保留。
  *
  * 料源与安全过滤（只读，不改游戏数据）：
- *   • 停靠现场 = ACL getRoomBaseInfo()（队级快照：startPoint/marchState/pointType）；只在 marchState=ARRIVED 且停在**非BOSS点**时转移
- *     （停在 176/177/178 上的警告属战斗语义，交 BOSS 档或玩家手动，本引擎绝不抢 BOSS 方向盘）；
+ *   • 停靠现场 = ACL getRoomBaseInfo()（队级快照：startPoint/marchState/pointType）；只在 marchState=ARRIVED 且验真通过时转移；
+ *     警告验真（1115 复核，与 pilot 同口径）：本点新鲜快照确证无敌方 UID → 误告（BOSS 争夺计数/到点噪声）不转移；
+ *     BOSS 平台与玩家是 1 局定胜负：transfer 档验真后照常撤离（不再无条件豁免），抗争到底档本引擎完全不动作；
  *   • 就近营帐取自本引擎自己维护的 10018 快照（视口增量，覆盖范围天然受限 → 快照里没有就**不转移**，绝不凭空造坐标）；
  *   • 落点优先「未被 PVP」（瓦片 `m.state ∉ {11,12}`，verbatim WIPabResource 的本地判据）与「无驻军」；同距取更空者。
  *
@@ -76,7 +77,7 @@ export class WarnEngine {
   #cycle = null;
   /** @type {boolean} 存活位（stop 置 false 后旧 cycle 定时器到点即终止） */
   #active = false;
-  /** @type {Map<string,{pt:number,x:number,y:number,state:number,teams:number,at:number}>} 174/175 瓦片快照 */
+  /** @type {Map<string,{pt:number,x:number,y:number,state:number,teams:number,teamUids:?string[],at:number}>} 174/175/173/172 落点 + BOSS 点验真瓦片快照 */
   #tiles = new Map();
   /** @type {boolean} 是否有待处置的 num>0 警告（事件置位、转移成功后清除） */
   #pendingWarn = false;
@@ -97,10 +98,10 @@ export class WarnEngine {
 
   /**
    * push 21534 落地：num>0 立即置位待发警告并 kick（用户档=不做存活窗去抖）。num===0 只清「待处置」里“已冷却且非新警”的陈旧态，不动在途。
-   * @param {object} ev bus `net.21534` 事件（载荷平铺在 ev.data.data）
+   * @param {object} ev bus `net.21534` 事件（载荷平铺在 ev.data，net 已剥 pbAckV2 信封）
    */
   onWarnPush(ev) {
-    const d = (ev && ev.data && ev.data.data) || {};
+    const d = (ev && ev.data) || {};
     const num = Number(d.num) || 0;
     if (num > 0) {
       this.#pendingWarn = true;
@@ -124,7 +125,16 @@ export class WarnEngine {
       const pt = Number(p.pointType) || 0;
       // 需求 1/5：立即转移落点不再只认 174/175（录制实证车多停在 173 资源点且快照几乎不含 174/175），
       //   扩到任意可行军点 {175 营帐, 174 平台, 173 资源, 172 野怪}，走过去即脱离拉线（本引擎发的是转移行军、不打野）。
-      if (pt !== PAB_TENT && pt !== PAB_COMMON_PLANE && pt !== PAB_RESOURCE && pt !== PAB_MONSTER)
+      //   BOSS 点（176/177/178）只作警告验真料（本点占用 UID），不作转移落点（见 #nearestSafeTent）。
+      if (
+        pt !== PAB_TENT &&
+        pt !== PAB_COMMON_PLANE &&
+        pt !== PAB_RESOURCE &&
+        pt !== PAB_MONSTER &&
+        pt !== PAB_BOSS_PLANE &&
+        pt !== PAB_BOSS &&
+        pt !== PAB_BOSS_GUARD
+      )
         continue;
       const k = tileKey(p.x, p.y);
       if (!k) continue;
@@ -139,13 +149,17 @@ export class WarnEngine {
         y: Math.floor(Number(p.y)),
         state: Number(m.state) || 0,
         teams: Array.isArray(m.teams) ? m.teams.length : 0,
+        // 占用队 UID 列表（警告验真料，1115）：无 teams 字段=null（证据不足 fail-safe）。
+        teamUids: Array.isArray(m.teams)
+          ? m.teams.map((t) => String((t && t.uid) || '')).filter(Boolean)
+          : null,
         at: now,
       });
     }
   }
 
   /**
-   * 一拍：警告挂起 + 冷却已过 + 停在非BOSS点(ARRIVED) + 队长 → 就近发一笔 8521 去营帐。永不 reject。
+   * 一拍：警告挂起 + 冷却已过 + 停稳(ARRIVED) + 验真通过 + 队长 → 就近发一笔 8521 去营帐。永不 reject。
    * @returns {number} 下拍睡眠（毫秒）
    */
   #tick() {
@@ -192,12 +206,14 @@ export class WarnEngine {
       return tuning.warnScanMs;
     if (g.edge('not-mooring', !env.secret.teamIsMooring(), 'team not mooring'))
       return tuning.warnScanMs;
-    const curPt = Number(base.pointType) || 0;
-    // 停在 BOSS 平台/本体/小BOSS 上的警告属战斗语义：交 BOSS 档或玩家手动，本引擎不抢方向盘
-    if (curPt === PAB_BOSS_PLANE || curPt === PAB_BOSS || curPt === PAB_BOSS_GUARD) {
-      this.#note(
-        'bosspt',
-        'warn: parked on a BOSS-related point, no auto-relocate (combat semantics, leave to manual / stand-and-fight).',
+    // 警告验真（1115 复核，与 pilot 同口径）：本点确证无敌方 UID → 误告（BOSS 争夺计数/到点噪声），不转移。
+    //   BOSS 平台与玩家是 1 局定胜负：transfer 档验真后照常撤离（不再无条件豁免）；证据不足 fail-safe 照转。
+    const noFoeKey = this.#warnNoFoeHere(base);
+    if (noFoeKey) {
+      this.#pendingWarn = false;
+      env.log.debug(
+        'warn: num>0 at %s ignored: no foe uid on tile (contest/arrival noise). reason=warn_no_foe',
+        noFoeKey,
       );
       return tuning.warnScanMs;
     }
@@ -216,7 +232,36 @@ export class WarnEngine {
   }
 
   /**
-   * 就近安全营帐：排除当前点，优先「未被 PVP(state∉{11,12})」→ 距当前点最近 → 驻军更少。全被 PVP 则回 null（不转移）。
+   * 警告验真（1115 复核，与 pilot#warnNoFoeHere 同口径）：21534 恒只有 {num} 不带 UID；
+   *   本点新鲜快照（≤tuning.warnVerifyAgeMs）且带 teamUids 列表、确证无本队外 uid → 误告
+   *   （BOSS 争夺计数/到点噪声）→ 回点位键；证据不足（无快照/超龄/无 uid 列表）回 null，fail-safe 按真攻击处置。
+   * @param {object} base 队级快照（startPoint/members）
+   * @returns {string|null} 误告时回本点键，否则 null
+   */
+  #warnNoFoeHere(base) {
+    const env = this.#env;
+    const p = base && base.startPoint;
+    if (!p) return null;
+    const k = tileKey(Math.floor(Number(p.x)), Math.floor(Number(p.y)));
+    if (!k) return null;
+    const t = this.#tiles.get(k);
+    if (!t || Date.now() - (t.at || 0) > tuning.warnVerifyAgeMs) return null;
+    if (!Array.isArray(t.teamUids)) return null;
+    const mine = new Set();
+    const me = env.gameData && env.gameData.myUidStr ? env.gameData.myUidStr() : '';
+    if (me) mine.add(String(me));
+    const mem = base && Array.isArray(base.members) ? base.members : [];
+    for (let i = 0; i < mem.length; i++) {
+      if (mem[i] && mem[i].uid != null) mine.add(String(mem[i].uid));
+    }
+    for (let i = 0; i < t.teamUids.length; i++) {
+      if (!mine.has(t.teamUids[i])) return null;
+    }
+    return k;
+  }
+
+  /**
+   * 就近安全营帐：排除当前点与 BOSS 点（只作验真料），优先「未被 PVP(state∉{11,12})」→ 距当前点最近 → 驻军更少。全被 PVP 则回 null（不转移）。
    * @param {number} cx 当前横
    * @param {number} cy 当前纵
    * @returns {{x:number,y:number,pt:number}|null}
@@ -226,6 +271,7 @@ export class WarnEngine {
     let bestD = Infinity;
     this.#tiles.forEach((t) => {
       if (t.x === cx && t.y === cy) return; // 别原地打转
+      if (t.pt === PAB_BOSS_PLANE || t.pt === PAB_BOSS || t.pt === PAB_BOSS_GUARD) return; // BOSS 点不作转移落点
       if (t.state === ST_PVP_READY || t.state === ST_PVP_FIGHTING) return; // 正被 PVP 的点不作落点
       const d = dist(t.x, t.y, cx, cy);
       if (!best || d < bestD || (d === bestD && t.teams < best.teams)) {

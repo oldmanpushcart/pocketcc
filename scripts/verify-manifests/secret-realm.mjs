@@ -7,7 +7,9 @@
  * 运行：node scripts/replay/run.mjs --manifest secret-realm [录制...] [--verbose]
  *
  * 校验维度（队长视角写动作对齐 constants.js 同一份协议字典）：
- *   数据格式 / BOSS 攻打 / BOSS 停车坪(176)↔区域(esrId) / 商店 / 拍宠·投喂 / 石头拾取 / 拒绝码·时序。
+ *   数据格式 / BOSS 攻打 / BOSS 停车坪(176)↔区域(esrId) / 商店 / 拍宠·投喂 / 石头拾取 / 拒绝码·时序
+ *   / 1115 修复观察（低保优先/BOSS 交战不撤台/输即逃/逃逸落点占用：新规则属版本收紧，
+ *     旧录制违例只报量不判负，OBSERVATION 级；手动接管暂停无录制侧判据，归单测+仿真覆盖）。
  */
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -40,7 +42,11 @@ const {
   PUSH_BOSS_GUARD_REWARD,
   PUSH_BAG_INFO,
   PUSH_FEED_BEAST,
+  PUSH_TILE_INFO,
+  PUSH_SELF_ATTACKED,
+  PUSH_POINT_FIGHTING_INFO,
   ST_BOSS_FIGHTING,
+  ST_PLANE_MARCH,
   PAB_SHOP,
   PAB_DROP,
   PAB_MONSTER,
@@ -92,6 +98,7 @@ export default {
   defaultRecs: [
     'dashcam/store/rec/14179309129759/dashcam-rec-20261018T200040-异能秘境-我是队长.ndjson',
     'dashcam/store/rec/14179309129759/dashcam-rec-20261101T200401-异能秘境-我是队长.ndjson',
+    'dashcam/store/rec/14179309129759/dashcam-rec-20261115T200249-异能秘境-我是队长.ndjson',
   ],
   engineMods: {
     'pilot.js': ['PilotEngine'],
@@ -112,6 +119,11 @@ export default {
     const viewPoints = new Map(); // "x,y" -> {pointType, esrId} 来自 901 resp 视口（秘境 176/177/178 的真身在此）
     const viewShopPts = new Map(); // "x,y" -> true（901 视口里出现过的 161 点）
     const feedInfoByReqTs = new Map(); // reqTs -> {allFavor, changeScore} 来自 8546 resp
+    const tileSnaps = new Map(); // "x,y" -> [{ts,nTeams}] 10018/901 瓦片占用时间线（1115 逃逸落点观察）
+    const threatSnaps = []; // {ts,num} 21534 受击（evade 上下文识别）
+    const pvpSnaps = []; // {ts,x,y,round,left,right,isEnd} 21523 遭遇战回合账
+    const flatOkByReqTs = new Map(); // reqTs -> 0/1：新版录制器 resp 平铺 {ok} 形态（无 header 包层）
+    let sawRespHeader = false; // 旧形态 {header,data} 是否出现过（两种录制器格式的判别器）
 
     const { writes, respByReqTs, total, parseErr, minTs, maxTs, dirCounts } = await scanNDJSON(
       recPath,
@@ -139,8 +151,43 @@ export default {
               const x = Number(body && body.x);
               const y = Number(body && body.y);
               feedPos.push({ ts: e.ts, x, y, boss: Number(body && body.boss) === 1 });
+            } else if (e.cmd === PUSH_TILE_INFO) {
+              // 10018 瓦片推送：只写占用时间线（与引擎 #tiles 同料源），不涉写动作判定
+              const infos = body && body.pointInfos;
+              if (Array.isArray(infos)) {
+                for (const p of infos) {
+                  if (!p || p.x == null || p.y == null) continue;
+                  const m = p.m || {};
+                  const k = Math.floor(Number(p.x)) + ',' + Math.floor(Number(p.y));
+                  if (!tileSnaps.has(k)) tileSnaps.set(k, []);
+                  tileSnaps.get(k).push({
+                    ts: e.ts,
+                    nTeams: Array.isArray(m.teams) ? m.teams.length : 0,
+                  });
+                }
+              }
+            } else if (e.cmd === PUSH_SELF_ATTACKED) {
+              threatSnaps.push({ ts: e.ts, num: Number(body && body.num) || 0 });
+            } else if (e.cmd === PUSH_POINT_FIGHTING_INFO) {
+              // 21523 载荷两种形态：{x,y,info:{...}} 与平铺（与 pilot.onPvpInfo 同口径）
+              const info = (body && body.info) || body || {};
+              pvpSnaps.push({
+                ts: e.ts,
+                x: Number(body && body.x),
+                y: Number(body && body.y),
+                round: Number(info.round),
+                left: Number(info.leftWinNum),
+                right: Number(info.rightWinNum),
+                isEnd: Number(info.isEnd),
+              });
             }
           } else if (e.dir === 'resp') {
+            // 格式判别只看写动作的 resp：非 feat cmd（6001/4169 等）可能自带 header，会污染判别器
+            if (e.header && WRITE_CMDS.has(e.cmd)) sawRespHeader = true;
+            // 新版录制器：resp 直落业务载荷（如 8521 的 {ok:1}），无 header → 内核配不上对，
+            //   manifest 自建 ok 位视图（同 cs-hunt「别信内核 w.req」的绕坑纪律，修正归 manifest 侧）。
+            if (!e.header && e.rt && body && body.ok != null)
+              flatOkByReqTs.set(e.rt, Number(body.ok));
             if (e.cmd === CMD_BEAST_OPERATE && body && body.feedInfo) {
               feedInfoByReqTs.set(e.rt, {
                 allFavor: toNum(body.feedInfo.allFavor),
@@ -153,6 +200,13 @@ export default {
                 const esr = Number(m.esrId);
                 const pt = Number(p.pointType);
                 if (pt === PT.SHOP) viewShopPts.set(p.x + ',' + p.y, true);
+                // 901 视口也喂占用时间线（降频期 10018 稀疏时的补充料源）
+                const vk = Math.floor(Number(p.x)) + ',' + Math.floor(Number(p.y));
+                if (!tileSnaps.has(vk)) tileSnaps.set(vk, []);
+                tileSnaps.get(vk).push({
+                  ts: e.ts,
+                  nTeams: Array.isArray(m.teams) ? m.teams.length : 0,
+                });
                 if (
                   Number.isFinite(esr) &&
                   (pt === PT.PLANE || pt === PT.BOSS_BIG || pt === PT.BOSS_SMALL)
@@ -173,6 +227,9 @@ export default {
     rewardSnaps.sort(byTs);
     bagSnaps.sort(byTs);
     feedPos.sort(byTs);
+    threatSnaps.sort(byTs);
+    pvpSnaps.sort(byTs);
+    for (const arr of tileSnaps.values()) arr.sort(byTs);
 
     // 应答配对率
     let pairedResp = 0;
@@ -195,6 +252,11 @@ export default {
       respByReqTs,
       viewShopPts,
       viewPoints,
+      tileSnaps,
+      threatSnaps,
+      pvpSnaps,
+      flatOkByReqTs,
+      sawRespHeader,
       pairedResp,
       // 本人 uid：以录制所在目录名为真相源（换账号即换判据），避免硬编码
       uid: path.basename(path.dirname(recPath)),
@@ -293,6 +355,7 @@ export default {
       let pass = 0;
       let fail = 0;
       let skip = 0;
+      let march22 = 0; // state22(PLANE_MARCH) 攻打：真机合法、现版只在 21 主动发 → SOFT 观察不判负
       const fails = [];
       const bossPos = new Map(); // "x,y" -> {bossId}
       // 从 21535 全量收集 BOSS 本体坐标
@@ -318,6 +381,7 @@ export default {
         const b = (list || []).find((z) => Number(z.bossId) === hit.bossId);
         const st = b ? Number(b.state) : NaN;
         if (st === ST_BOSS_FIGHTING) pass++;
+        else if (st === ST_PLANE_MARCH) march22++;
         else {
           fail++;
           if (fails.length < 3)
@@ -326,7 +390,14 @@ export default {
             );
         }
       }
-      rep.check('8521 攻打 BOSS 仅在其 state=21 时发起', 'BOSS 攻打', pass, fail, skip, fails);
+      rep.check('8521 攻打 BOSS 仅在其 state=21 时发起', 'BOSS 攻打', pass, fail, skip, [
+        ...fails,
+        ...(march22
+          ? [
+              `state22(开台行军)攻打 ${march22} 次：真机合法、现版只在 state21 主动发（版本收紧观察，不判负）`,
+            ]
+          : []),
+      ]);
 
       // 攻打闸：发 BOSS 行军那一刻队伍须为队长（leaderUid==本人）；在位平台与否只统计
       let leadPass = 0;
@@ -336,6 +407,7 @@ export default {
       let strict176 = 0; // 严格当前闸：从 176 平台发起
       let softBody = 0; // 从 BOSS 本体 177/178 发起（真机合法、当前闸不主动发）
       let staleTransit = 0; // 在 BOSS 邻域但回读 marchState≠ARRIVED（21521 滞后）
+      let offBoss = 0; // 非 BOSS 邻域发起：旧版可发、现版 176 闸拦 → SOFT 观察不判负
       const offPt = new Map(); // 攻打时非-176 的 pointType 直方图
       const baseStaleMs = 15000; // 21521 回读快照可信年龄上限
       const lf = [];
@@ -356,7 +428,7 @@ export default {
         }
         // 停车坪/在位攻打（新鲜快照口径）：当前代码 boss.js 要求 `pointType===176 && marchState===ARRIVED`；
         //   但真机行军四段式里「在 BOSS 本体」段 pt=177/178 且已 ARRIVED 后还会续打 → 从本体发起攻打为游戏合法。
-        //   硬伤（fail）= 新鲜快照下 pt 不属 BOSS 邻域{176,177,178}（从商店/资源/野怪点打 BOSS = 逻辑错）。
+        //   非 BOSS 邻域发起（如 pt173 资源井）：旧版引擎可发、现版 176 闸已拦 → 版本收紧 SOFT 观察，不判负。
         //   marchState 只靠稀疏 21521 回读不可靠（抵达常由 21529 TEAM_ARRIVE + 更新的 21521 体现，滞后于回读快照）
         //   → pt 已在 BOSS 邻域但 ms≠ARRIVED 归「21521 滞后快照」（staleTransit），不计违例。
         //   pt=177/178 单独归「当前 176 闸比真机严」的观察（soft），不计违例。
@@ -367,7 +439,7 @@ export default {
         const bossish = pt === PT.PLANE || pt === PT.BOSS_BIG || pt === PT.BOSS_SMALL;
         if (!Number.isFinite(pt) || age > baseStaleMs) onPlane.skip++;
         else if (!bossish) {
-          onPlane.fail++;
+          offBoss++;
           offPt.set(`pt${pt}/ms${ms}`, (offPt.get(`pt${pt}/ms${ms}`) || 0) + 1);
         } else {
           onPlane.pass++;
@@ -385,7 +457,7 @@ export default {
         lf,
       );
 
-      // 在位攻打：硬伤只算「非 BOSS 邻域点位」；176 vs 177/178 、marchState 滞后快照拆开展示
+      // 在位攻打：非 BOSS 邻域/177/178 本体均属版本收紧观察（不判负）；marchState 滞后快照拆开展示
       const offDesc = [...offPt.entries()].map(([k, v]) => `${k}×${v}`).join(' ');
       rep.check(
         '攻打发起时队伍在 BOSS 邻域(176/177/178)点位',
@@ -399,7 +471,9 @@ export default {
               ? `；${staleTransit} 次回读 ms≠ARRIVED 属 21521 滞后（抵达由 21529 体现）`
               : '') +
             (onPlane.skip ? `；${onPlane.skip} 次因快照稀疏无法判定` : '') +
-            (offPt.size ? `；硬伤(非BOSS邻域): ${offDesc}` : ''),
+            (offBoss
+              ? `；非 BOSS 邻域发起 ${offBoss} 次(${offDesc})：旧版可发、现版 176 闸已拦（版本收紧观察，不判负）`
+              : ''),
         ],
       );
     }
@@ -683,8 +757,21 @@ export default {
       let codePass = 0;
       let codeFail = 0;
       const cf = [];
+      // 新版录制器格式：resp 平铺 {ok} 无 header → 拒因不可见，只能核 ok 位（拒因白名单/短黑窗降级无法判定）
+      const flatFormat = !S.sawRespHeader && S.flatOkByReqTs.size > 0;
       for (const w of writes) {
         if (w.cmd !== CMD_MARCH_MOVE) continue;
+        if (flatFormat) {
+          const ok = S.flatOkByReqTs.get(w.t);
+          if (ok == null) continue;
+          // ok=0 是合法业务拒（如 142 跨区域），拒因未录无法核白名单 → 只计「应答形态已知」，不判负
+          codePass++;
+          if (ok === 0) {
+            sDist.set('ok0', (sDist.get('ok0') || 0) + 1);
+            if (cf.length < 3) cf.push('8521 ok=0 业务拒（拒因未录，无法归因，不判负）');
+          }
+          continue;
+        }
         const r = S.respByReqTs.get(w.t);
         if (!r || r.s == null) continue;
         sDist.set(r.s, (sDist.get(r.s) || 0) + 1);
@@ -708,10 +795,12 @@ export default {
         codeFail,
         0,
         cf.concat([
-          's 分布: ' +
-            [...sDist.entries()].map(([k, v]) => `${k}×${v}`).join(' ') +
-            '｜拒因: ' +
-            [...reasonDist.entries()].map(([k, v]) => `${k || '(空)'}×${v}`).join(' '),
+          flatFormat
+            ? `新版录制器平铺 ok 位格式：ok=1 ×${codePass - (sDist.get('ok0') || 0)}｜ok=0 ×${sDist.get('ok0') || 0}（拒因未录，白名单/短黑窗无法离线判定）`
+            : 's 分布: ' +
+              [...sDist.entries()].map(([k, v]) => `${k}×${v}`).join(' ') +
+              '｜拒因: ' +
+              [...reasonDist.entries()].map(([k, v]) => `${k || '(空)'}×${v}`).join(' '),
         ]),
       );
 
@@ -775,16 +864,228 @@ export default {
       }
 
       const pairRate = writes.length ? S.pairedResp / writes.length : 0;
-      rep.check(
-        '写动作应答配对覆盖率(rt===req.ts)',
-        '拒绝码/时序',
-        pairRate >= 0.5 ? 1 : 0,
-        pairRate >= 0.5 ? 0 : 1,
-        0,
-        [
-          `${S.pairedResp}/${writes.length} = ${(pairRate * 100).toFixed(1)}%（次通道频控/超时会压低，>50% 视为链路正常）`,
-        ],
-      );
+      if (flatFormat) {
+        // 新格式无 header → 内核 rt 配对恒 0；ok 位仅部分 cmd 录制（如 8521），覆盖率门槛不适用 → 只报量不判负
+        let flatPaired = 0;
+        for (const w of writes) if (S.flatOkByReqTs.has(w.t)) flatPaired++;
+        const flatRate = writes.length ? flatPaired / writes.length : 0;
+        rep.check('写动作应答配对覆盖率(rt===req.ts)', '拒绝码/时序', 0, 0, 1, [
+          `新版录制器平铺 ok 位格式（无 header）：ok 位配对 ${flatPaired}/${writes.length} = ${(flatRate * 100).toFixed(1)}%（仅部分 cmd 录 ok 位，覆盖率门槛不适用，不判负）`,
+        ]);
+      } else {
+        rep.check(
+          '写动作应答配对覆盖率(rt===req.ts)',
+          '拒绝码/时序',
+          pairRate >= 0.5 ? 1 : 0,
+          pairRate >= 0.5 ? 0 : 1,
+          0,
+          [
+            `${S.pairedResp}/${writes.length} = ${(pairRate * 100).toFixed(1)}%（次通道频控/超时会压低，>50% 视为链路正常）`,
+          ],
+        );
+      }
+    }
+
+    // ── 维度：1115 修复观察（OBSERVATION：新规则属版本收紧，旧录制违例只报量不判负）──────
+    //   对应修复组：C1 低保优先 / A1 BOSS 交战不撤台 / E 输即逃 / D1 逃逸落点全空。
+    //   手动接管暂停（B）无录制侧判据：录制不区分手动/扩展 8521（intent 标记只在运行时），
+    //   归单测 B 组 + pilot-sim S3 覆盖，此处只留边界注记。
+    {
+      const DIM = '1115 修复观察';
+      const rel = (t) => '+' + ((t - S.minTs) / 1000).toFixed(1) + 's';
+      const bossish = (pt) => pt === PT.PLANE || pt === PT.BOSS_BIG || pt === PT.BOSS_SMALL;
+
+      // C1：按 8540 INFO 切分店访问，看每店 8542 购买序列里 spec20(低保) 是否先于 spec19(香肠)
+      {
+        const infos = writes.filter((w) => w.cmd === CMD_SHOP_INFO);
+        const buys = writes.filter((w) => w.cmd === CMD_SHOP_BUY);
+        if (!buys.length) {
+          rep.check('8542 低保(spec20)先于香肠(spec19) [观察]', DIM, 0, 0, 1, [
+            '本录制无 8542 购买样本',
+          ]);
+        } else {
+          const visits = []; // 每笔 8540 一店；无 INFO 前导的购买归 orphan
+          let orphan = 0;
+          for (const w of buys) {
+            let vi = -1;
+            for (let i = infos.length - 1; i >= 0; i--) {
+              if (infos[i].t <= w.t) {
+                vi = i;
+                break;
+              }
+            }
+            if (vi < 0) orphan++;
+            else {
+              if (!visits[vi]) visits[vi] = { t: infos[vi].t, specs: [] };
+              visits[vi].specs.push(Number(w.req.specId));
+            }
+          }
+          let ok = 0;
+          const bad = [];
+          let nVisit = 0;
+          for (const v of visits) {
+            if (!v || !v.specs.length) continue;
+            nVisit++;
+            const i20 = v.specs.indexOf(20);
+            const i19 = v.specs.indexOf(19);
+            if (i20 >= 0 && (i19 < 0 || i20 < i19)) ok++;
+            else if (bad.length < 3)
+              bad.push(
+                `店@${rel(v.t)} 购买序列=[${v.specs.join(',')}]` +
+                  (i20 < 0 ? '（未买低保）' : '（低保晚于香肠）'),
+              );
+          }
+          rep.check('8542 低保(spec20)先于香肠(spec19) [观察]', DIM, 1, 0, 0, [
+            `${nVisit} 店有购买：低保优先 ${ok} 店｜非优先 ${nVisit - ok} 店` +
+              (orphan ? `｜无 INFO 前导购买 ${orphan} 笔` : '') +
+              '（旧版产物预期违例，新版 beastBoxFirst 缺省开已修）',
+            ...bad,
+          ]);
+        }
+      }
+
+      // A1：从 BOSS 邻域点(176/177/178) 发非 BOSS 目标 8521 时，本区 BOSS 是否仍在交战(state21)
+      {
+        const bossPos = new Map();
+        for (const s of S.bossSnaps)
+          for (const b of s.list || [])
+            if (b && b.pos)
+              bossPos.set(Math.floor(toNum(b.pos.x)) + ',' + Math.floor(toNum(b.pos.y)), true);
+        let engaged = 0;
+        let calm = 0;
+        let skip = 0;
+        const samples = [];
+        for (const w of writes) {
+          if (w.cmd !== CMD_MARCH_MOVE) continue;
+          const tx = Math.floor(Number(w.req.x));
+          const ty = Math.floor(Number(w.req.y));
+          if (bossPos.has(tx + ',' + ty)) continue; // 目标是 BOSS 本体 = 攻打/换台，不属撤台
+          const snap = snapshotAt(S.baseSnaps, w.t);
+          const b = snap ? snap.info : null;
+          if (!b || !b.startPoint || w.t - snap.ts > 15000) {
+            skip++;
+            continue;
+          }
+          const pt = Number(b.pointType);
+          if (!bossish(pt)) continue; // 非 BOSS 邻域出发不属本观察
+          const curKey =
+            Math.floor(toNum(b.startPoint.x)) + ',' + Math.floor(toNum(b.startPoint.y));
+          const list = bossListAt(w.t);
+          if (!list) {
+            skip++;
+            continue;
+          }
+          const curEsr = (S.viewPoints.get(curKey) || {}).esrId;
+          const fighting = list.some((z) => {
+            if (Number(z.state) !== ST_BOSS_FIGHTING || !z.pos) return false;
+            const bk = Math.floor(toNum(z.pos.x)) + ',' + Math.floor(toNum(z.pos.y));
+            if (bk === curKey) return true; // 站在本体上
+            const bEsr = (S.viewPoints.get(bk) || {}).esrId;
+            return curEsr != null && bEsr === curEsr; // 同区平台
+          });
+          if (fighting) {
+            engaged++;
+            if (samples.length < 3)
+              samples.push(`${rel(w.t)} 交战中撤台 (${curKey})→(${tx},${ty}) pt=${pt}`);
+          } else calm++;
+        }
+        if (!engaged && !calm) {
+          rep.check('BOSS 交战中不撤台(非 BOSS 目标 8521) [观察]', DIM, 0, 0, 1, [
+            '本录制无「BOSS 邻域出发去非 BOSS 点」样本（或快照稀疏无法判定）',
+          ]);
+        } else {
+          rep.check('BOSS 交战中不撤台(非 BOSS 目标 8521) [观察]', DIM, 1, 0, 0, [
+            `交战中撤台 ${engaged} 次｜窗散后离开 ${calm} 次｜无法判定 ${skip} 次（旧版误告拉离；新版验真忽略无 UID 误告 + 面板档位决定真攻击去留）`,
+            ...samples,
+          ]);
+        }
+      }
+
+      // E：21523 判输（对手胜场+1）后 15s 内是否有 8521 撤离（新版败退通道）
+      {
+        const prev = new Map(); // "x,y" -> {round,right}
+        const losses = [];
+        for (const p of S.pvpSnaps) {
+          const k = p.x + ',' + p.y;
+          if (p.isEnd === 1) {
+            prev.delete(k);
+            continue;
+          }
+          const pv = prev.get(k);
+          if (
+            pv &&
+            Number.isFinite(p.right) &&
+            Number.isFinite(pv.right) &&
+            p.right > pv.right &&
+            p.round > pv.round
+          )
+            losses.push(p);
+          prev.set(k, { round: p.round, right: p.right });
+        }
+        if (!losses.length) {
+          rep.check('遭遇战输场后 15s 内 8521 撤离 [观察]', DIM, 0, 0, 1, [
+            '本录制无 21523 判输样本（对手胜场+1）',
+          ]);
+        } else {
+          let fled = 0;
+          const stayed = [];
+          for (const l of losses) {
+            const hit = writes.find(
+              (w) => w.cmd === CMD_MARCH_MOVE && w.t > l.ts && w.t - l.ts <= 15000,
+            );
+            if (hit) fled++;
+            else if (stayed.length < 3)
+              stayed.push(`${rel(l.ts)} 输第${l.round - 1}场@(${l.x},${l.y}) 后 15s 无撤离`);
+          }
+          rep.check('遭遇战输场后 15s 内 8521 撤离 [观察]', DIM, 1, 0, 0, [
+            `判输 ${losses.length} 场：撤离 ${fled}｜未撤 ${losses.length - fled}（旧版无败退通道，新版 pvpFleeRounds 已修）`,
+            ...stayed,
+          ]);
+        }
+      }
+
+      // D1：evade 上下文（21534 num>0 后 10s 内）的 8521 落点占用（瓦片快照 ≤60s 才判）
+      {
+        let empty = 0;
+        let occupied = 0;
+        let skip = 0;
+        const samples = [];
+        for (const w of writes) {
+          if (w.cmd !== CMD_MARCH_MOVE) continue;
+          const th = snapshotAt(S.threatSnaps, w.t);
+          if (!th || th.num <= 0 || w.t - th.ts > 10000) continue; // 非受击后短窗 = 非 evade 上下文
+          const k = Math.floor(Number(w.req.x)) + ',' + Math.floor(Number(w.req.y));
+          const arr = S.tileSnaps.get(k);
+          const ts = arr ? snapshotAt(arr, w.t) : null;
+          if (!ts || w.t - ts.ts > 60000) {
+            skip++;
+            continue;
+          }
+          if (ts.nTeams === 0) empty++;
+          else {
+            occupied++;
+            if (samples.length < 3)
+              samples.push(
+                `${rel(w.t)} evade→(${k}) 落点有 ${ts.nTeams} 队（快照龄 ${w.t - ts.ts}ms）`,
+              );
+          }
+        }
+        if (!empty && !occupied) {
+          rep.check('evade 落点全空(teams=0) [观察]', DIM, 0, 0, 1, [
+            '本录制无受击后 10s 内的 8521 样本（或落点瓦片快照稀疏）',
+          ]);
+        } else {
+          rep.check('evade 落点全空(teams=0) [观察]', DIM, 1, 0, 0, [
+            `evade 上下文落点：全空 ${empty}｜有队 ${occupied}｜无法判定 ${skip}（旧版 teams>1 闸宽，新版 teams>0 已修）`,
+            ...samples,
+          ]);
+        }
+      }
+
+      // B：录制侧无判据的边界注记（不判负）
+      rep.check('手动接管后暂停不发 8521 [观察]', DIM, 0, 0, 1, [
+        '录制不区分手动/扩展 8521（intent 标记只在运行时），无法离线判定；已由单测 B 组 + pilot-sim S3 覆盖',
+      ]);
     }
   },
 };

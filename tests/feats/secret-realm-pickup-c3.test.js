@@ -99,7 +99,7 @@ test('§9.2 约束1：晶块(41009)已超保底 → 掉落箱候选里剔除，�
     bagGetNum: 0,
     beastGetNum: 0,
   };
-  subs.get(PUSH_DROP_CHANGE)({ data: { header: { s: 0 }, data: body } });
+  subs.get(PUSH_DROP_CHANGE)({ data: body, status: 0 });
   await sleep(tuning.pickupDebounceMs + 900);
   const gets = sent.filter((s) => s.cmd === CMD_DROP_GET).map((s) => s.data.rId);
   assert.deepEqual(gets, ['dSausage'], 'reserve=12000：13000>12000 应剔晶块，只剩香肠一笔 8533');
@@ -122,7 +122,7 @@ test('§9.2 约束2：刷新币(41010)+香肠 >= 目标10 → 资源点候选里
     bagGetNum: 0,
     buffGetNum: 0,
   };
-  h.subs.get(PUSH_RESOURCE_CHANGE)({ data: { header: { s: 0 }, data: body } });
+  h.subs.get(PUSH_RESOURCE_CHANGE)({ data: body, status: 0 });
   await sleep(tuning.pickupDebounceMs + 900);
   const gets = h.sent.filter((s) => s.cmd === CMD_RESOURCE_GET).map((s) => s.data.rId);
   assert.deepEqual(gets, ['dScout'], '10+0>=10 应剔刷新币，只发 41001 一笔 8527');

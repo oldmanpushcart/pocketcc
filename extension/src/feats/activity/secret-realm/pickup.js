@@ -139,25 +139,22 @@ function pickRank(cfg, key) {
 
 /**
  * 从 21522/21532 推送事件里取出**业务体**（等价于旧 EventCenter 事件载荷）。
- * 两道状态守卫缺一不可：`ev.status` 是报文顶层 s（net.js 已归一化，可能为 null），
- *   而 `header.s` 是游戏 Handler 自己判的那一层——verbatim `if (o && o.header.s === 0) EVENT.emit(...)`，
- *   非 0 时游戏根本不发事件，我们也不能补发拍。
- * PBV2 通道的 `ev.data` 是 `{header,data}` 包装（业务体在内层）；JSON 通道是平铺的，故内层缺失时回落到外层。
+ * net 已对 pbAckV2 剥信封：ev.data 恒为内层业务体，header.s 已提升到 ev.status，故只需一道 ev.status 守卫
+ *   （非 0 时游戏 Handler 根本不发事件，我们也不能补发拍）。
  * @param {object} ev `net.<cmd>` 事件（Event 实例：{cmd,status,data,raw}）
  * @returns {object|null} 业务体；非成功包/形态异常回 null
  */
 function changeBody(ev) {
   if (!ev) return null;
-  const outer = ev.data;
-  if (!outer) return null;
+  const body = ev.data;
+  if (!body) return null;
   if (ev.status != null && Number(ev.status) !== 0) return null;
-  if (outer.header && Number(outer.header.s) !== 0) return null;
-  return outer.data || outer;
+  return body;
 }
 
 /**
  * 点位明细快照：只复制本引擎实际读到的字段（dropId/specId/uid 与几个标量），脱离池化报文的复用生命周期。
- * 必要性：`Event.data` 直接包的是 `pbAckV2` 引用，而载荷要被 #pending 持到一个去抖窗口之后才消费。
+ * 必要性：`Event.data` 直接包的是池化报文的业务体引用，而载荷要被 #pending 持到一个去抖窗口之后才消费。
  * @param {object} inner 8526 应答 / 21522 推送的点位载荷 {x?,y?,bagInfo?,buffInfo?,bagGetNum?,buffGetNum?}
  * @param {number} [x] 从 8526 **请求侧**配对来的横号（推送自带 x,y 时不传）
  * @param {number} [y] 同上横纵号
@@ -322,8 +319,7 @@ export class PickupEngine {
    */
   onResourceInfoResp(ev) {
     if (!ev || (ev.status != null && Number(ev.status) !== 0)) return;
-    const outer = ev.data || {};
-    const inner = outer.data || outer;
+    const inner = ev.data || {};
     if (!Array.isArray(inner.bagInfo) && !Array.isArray(inner.buffInfo)) return;
     const c = this.#posMatch('res', ev);
     if (!c) this.#env.log.debug('8526 resp has no paired {x,y}; tile accounting skipped.');
@@ -387,8 +383,7 @@ export class PickupEngine {
   #onDropInfoResp(ev) {
     const env = this.#env;
     if (!ev || (ev.status != null && Number(ev.status) !== 0)) return;
-    const outer = ev.data || {};
-    const inner = outer.data || outer;
+    const inner = ev.data || {};
     if (!Array.isArray(inner.info) && !Array.isArray(inner.dropBeastInfo)) return;
     const c = this.#posMatch('reward', ev);
     if (!c) {
@@ -532,7 +527,7 @@ export class PickupEngine {
    * 事件总入口：门控通过后先吸收载荷里「uid==我」的条目进点位账，再缓存最新载荷并按去抖窗口安排一次消费。
    * 门控不过去时打一行 debug（区分 feat 未激活 / 不在秘境地图），免得下次只能靠「一个包都没发」倒推。
    * @param {'reward'|'res'} kind 点位类别
-   * @param {object} e 点位业务体（21522/21532 推送的 `ev.data.data`，或 INFO 应答快照）
+   * @param {object} e 点位业务体（21522/21532 推送的 `ev.data`，或 INFO 应答快照）
    */
   #onEvent(kind, e) {
     const env = this.#env;
