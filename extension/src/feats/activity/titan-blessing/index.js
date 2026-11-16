@@ -10,7 +10,10 @@
  *   13227 PUSH_WORLD_TITAN_BLESSING_REWARD_GET = 本人领取到账，载荷 {reward, uuid}（有 uuid 无坐标）。
  *   13228 PUSH_WORLD_TITAN_BLESSING_GIFT_CLEAR = 箱子消失，载荷 {uuid}（有 uuid 无坐标，被本盟任何人领走/到期都推）。
  *   10904 PUSH_ONE_ACTIVITY = 整条活动推送，extra 是对象（非字符串），含 hasRed/left/totalNum/rec_other_record{uuid:领取ms}。
+ *     rec_other_record 是「本人」领取台账（含手动领取，uuid 与 13227 逐条对应、条数恒等于 totalNum），非他人记录。
  *   9595 HERO_EQUIP_WISH_FIND_BOX = 查一只可领箱，应答仅 {serverId,x,y}，不带归属信息 → 单靠它无法滤掉自己的箱。
+ *   841 GET_ACTIVITY_DATA = 全量活动查询（旧 JSON 主通道、空体 {}），应答 {alist:[活动对象…]}；泰坦祝福条目 type=271，
+ *     extra.left 与 10904 推送同口径。启动时补查一次作面板「本期剩余」状态行种子（只刷展示值，不动兜底链 activityId）。
  *   三条推送的字段互斥（uuid 与坐标从不同时出现），因此「哪只箱领过了」只能由本模块按 "x,y" 自建台账。
  *   时间线实证：每簇「13226×3 → 902×3」中 902 的坐标与 13226 逐条相等（主链无需 9595）；
  *   且同一簇会伴随 3 条 10904 hasRed=true（活动推送按箱计数），故兜底链必须自带去重与冷却，否则每簇白打 3 次 9595。
@@ -32,16 +35,19 @@
  * 额度上限：extra.totalNum=本期已领、extra.left=本期剩余可领；left<=0 即本期触顶，置 claimLimitReached 闸门，
  *   主链/兜底链/消费三处一并停派并清空残留队列（否则领满后盟友每发一只箱都会被派出去又被服务器拒 → 死循环刷屏）；
  *   触顶日志只在 false→true 转变时打一行（一簇 3 条 10904 不再刷 3 行），下一轮 left 回升自动复位续领。
+ *   面板状态行「本期剩余」只读展示 extra.left（启动 841 补查种子 + 10904 推送刷新；未读到显示 '—'，0=已领满），与触顶闸门同源独立。
+ *   面板「今日」到账数按同 extra 的 rec_other_record 日界过滤聚合（含手动），与 left 同批锁存 + 原子刷面板，两行天然对账。
  * 队列 + 消费间隔：902 过快会被服务器限流（code=3, data="march_time_control_info001"），逐条之间休眠规避。
  * 生命周期由 reactor 托管：install/configure/run 三个钩子，places 门控限定 base/world（Home/NWorldMap）。
  *   run 挂 10904/13226/13227/13228 监听；reactor pause 时摘监听、置 alive=false，队列保留，恢复后续跑。
  *
- * 当日次数口径（定稿）：到账计 13227 本人领取推送按 uuid 去重（行军类计奖励到账）；
+ * 当日次数口径（定稿，1116 对账修正）：到账读服务器权威 rec_other_record 按日界过滤（含手动/脚本窗外到账），
+ *   与 left 同源可对账（首日 到账+left=200）；13227 日账计数仅作台账读回前兜底；
  *   加速消耗计 920 受理（code=0 即扣道具，报文实证 resp 空 {}）逐道具分计 520001/520002，
  *   core/daily-stats 日账跨页持久；面板只读行「到账 N · 加速 普x/高y」，未读回前显示 '—'。
  */
 import { createLog } from '../../../core/log.js';
-import { sleep, serverTimeSec as utilServerTimeSec } from '../../../core/util.js';
+import { sleep, serverTimeSec as utilServerTimeSec, todayStr } from '../../../core/util.js';
 import { createDrain } from '../../../core/drain.js';
 import { reactor } from '../../../core/reactor.js';
 import { getUid } from '../../../core/player.js';
@@ -50,6 +56,7 @@ import { payloadOf } from '../../../core/net-payload.js';
 import { march } from '../../../core/march.js';
 import { item } from '../../../core/item.js';
 import { createDailyLedger } from '../../../core/daily-stats.js';
+import { bus, EVT } from '../../../core/bus.js';
 
 import {
   CMD_PUSH_ONE_ACTIVITY,
@@ -57,6 +64,7 @@ import {
   CMD_PUSH_REWARD_GET,
   CMD_PUSH_GIFT_CLEAR,
   CMD_HERO_EQUIP_WISH_FIND_BOX,
+  CMD_GET_ACTIVITY_DATA,
 } from './constants.js';
 
 /** @type {ReturnType<createLog>} 模块日志器（tag=TITAN_BLESSING） */
@@ -137,10 +145,26 @@ var fallbackScanAt = 0;
  */
 var claimLimitReached = false;
 
+/**
+ * 本期剩余可领箱数（面板状态行「本期剩余」的展示值）：null=还没读到（显示 '—'），0=本期已领满。
+ * 两个来源：启动时 841 GET_ACTIVITY_DATA 查询补查种子；活动期内 10904 推送 extra.left 持续刷新。
+ * 与 claimLimitReached 闸门同源（extra.left）但独立存储：闸门只管停派，本值只管展示。
+ * @type {number|null}
+ */
+var periodLeft = null;
+
+/**
+ * 服务器权威本人领取台账（面板「今日」到账的聚合源）：{uuid:领取ms}，含手动领取，
+ * 841/10904 extra.rec_other_record 锁存；null=还没读到（兜底日账 13227 观察计数）。
+ * 与 periodLeft 同源（同一份 extra）同批锁存 + 原子刷面板，两行天然对账。
+ * @type {Object<string, number>|null}
+ */
+var periodRec = null;
+
 /** @type {boolean} install 幂等守卫 */
 var installed = false;
 
-/** @type {import('../../../core/daily-stats.js').DailyLedger} 当日日账（arrive=13227 到账按 uuid 去重 / accel520001、accel520002=920 受理逐道具） */
+/** @type {import('../../../core/daily-stats.js').DailyLedger} 当日日账（arrive=13227 到账按 uuid 去重，仅作 rec 读回前兜底 / accel520001、accel520002=920 受理逐道具） */
 const dailyLedger = createDailyLedger('pocketcc.daily.titanBlessing');
 
 /**
@@ -265,6 +289,14 @@ function onActivityPush(ev) {
 
   var extra = data.extra || {};
 
+  // 本期剩余展示值：left 为有限数即锁存（含 0=已领满）；推送是活动期内的新鲜度来源
+  var leftChanged =
+    typeof extra.left === 'number' && isFinite(extra.left) && extra.left !== periodLeft;
+  if (leftChanged) periodLeft = extra.left;
+  // 领取台账与 left 同源同批锁存、原子刷面板：杜绝「left 已减、到账未计」的瞬态口径差
+  var recChanged = latchRec(extra);
+  if (leftChanged || recChanged) bus.emit(EVT.UI_REFRESH);
+
   // 本期领取额度闸门：left<=0 即触顶。仅在状态翻转时打日志（否则一簇 3 条推=刷 3 行）。
   // 触顶即清空残留队列（已入队但未派的箱不再派），并置闸让主链/消费一并停手；
   // 不停监听——下一轮活动 left 回升，闸门自动复位
@@ -336,8 +368,8 @@ function onGiftPush(ev) {
 }
 
 /**
- * 13227 本人领取到账：日志对账 + 当日到账计数（按 uuid 去重，跨页重推不重计），不驱动流程
- * （领取确认已由 13228 负责台账出队）。
+ * 13227 本人领取到账：日志对账 + 当日到账兜底计数（按 uuid 去重，跨页重推不重计），不驱动流程
+ * （领取确认已由 13228 负责台账出队；面板到账数优先服务器权威 rec_other_record，本计数仅作读回前兜底）。
  * @param {object} ev net 事件，ev.data={reward, uuid}
  */
 function onRewardPush(ev) {
@@ -529,6 +561,78 @@ async function queryBoxPosition() {
 }
 
 /**
+ * 锁存服务器权威本人领取台账 rec_other_record（{uuid:领取ms}，含手动领取，条数恒等于 totalNum）：
+ * 与 left/totalNum 同源，totalNum+left=本期上限。是对象才整体替换，字段缺失不动旧值。
+ * @param {object} extra 活动 extra（841 alist 条目 / 10904 推送同口径）
+ * @returns {boolean} 台账条数是否变化（供面板刷新节流：hasRed 簇推不刷）
+ */
+function latchRec(extra) {
+  var rec = extra && extra.rec_other_record;
+  if (!rec || typeof rec !== 'object') return false;
+  var n = Object.keys(rec).length;
+  var old = periodRec ? Object.keys(periodRec).length : -1;
+  periodRec = rec;
+  return n !== old;
+}
+
+/**
+ * 今日到账（服务器权威口径）：rec_other_record 按日界过滤计数，含手动领取与脚本窗外（pause/重载）到账，
+ * 与「本期剩余」left 相加即本期上限（首日 26+174=200）。
+ * 日界与 core/daily-stats 同口径：服务器秒按本地时区格式化，缺失回退本地时钟。
+ * 台账未读回前（启动瞬间 841/10904 都还没到）兜底日账 13227 观察计数。
+ * @returns {number}
+ */
+function todayArrive() {
+  if (!periodRec) return dailyLedger.get('arrive');
+  var today = todayStr(utilServerTimeSec(dataCenter && dataCenter.ServerTime));
+  var n = 0;
+  for (var uuid in periodRec) {
+    var ms = +periodRec[uuid];
+    if (ms > 0 && isFinite(ms) && todayStr(ms / 1000) === today) n++;
+  }
+  return n;
+}
+
+/**
+ * 启动补查本期剩余（面板状态行种子）：841 GET_ACTIVITY_DATA 空体查全量活动，从 alist 认 type=271
+ * 泰坦祝福条目锁存 extra.left。只刷展示值，不动 activityId/兜底链（兜底链 activityId 仍只从 10904 锁存，
+ * 保持 run() 既有「不做启动补查 9595」语义）。旧 JSON 链路 Ret.data 是整包文本，须 payloadOf 归一化再取 alist。
+ * 报文实证 dashcam dashcam-rec-20261105T103923-我的日常.ndjson：req api=send data={}，resp {alist:[…type:271…extra.left]}。
+ * 永不 reject：sendGuarded 壳 + 异常就地 warn；活动未开（alist 无泰坦祝福）留 null 显示 '—'。
+ * @returns {Promise<void>}
+ */
+async function queryPeriodLeft() {
+  var ret = await net.sendGuarded(
+    CMD_GET_ACTIVITY_DATA,
+    {},
+    {
+      gate: false,
+      protocol: 'send',
+      onError: function (err) {
+        log.warn('query activity data error!', err);
+      },
+    },
+  );
+  if (!aliveFn() || !ret.ok) return;
+  var alist = (payloadOf(ret) || {}).alist || [];
+  for (var i = 0; i < alist.length; i++) {
+    var a = alist[i];
+    if (a && a.type === ACTIVITY_TYPE_TITAN_BLESSING) {
+      var x = a.extra || {};
+      var changed = false;
+      if (typeof x.left === 'number' && isFinite(x.left)) {
+        changed = x.left !== periodLeft;
+        periodLeft = x.left;
+        log.debug('period left seeded from query. left=%s;id=%s', x.left, a.id);
+      }
+      if (latchRec(x) || changed) bus.emit(EVT.UI_REFRESH);
+      return;
+    }
+  }
+  log.debug('period left query: titan blessing absent. alist=%d', alist.length);
+}
+
+/**
  * 派拾取行军（零部队九键 body，含 ext:{}）→ 走 core/march.pickUp；永不 reject（异常回 Ret(NOT_SENT)）
  * @param {number} x 箱子坐标
  * @param {number} y 箱子坐标
@@ -706,6 +810,13 @@ function run(ctx) {
   fallbackPending = false;
   fallbackScanAt = 0;
   claimLimitReached = false;
+  periodLeft = null;
+  periodRec = null;
+
+  // 启动补查本期剩余种子（fire-and-forget，不阻领取主流程）；活动期内再由 10904 推送刷新
+  queryPeriodLeft().catch(function (err) {
+    log.warn('query period left threw!', err);
+  });
 
   log.info(
     'started, listening push cmd=%d(main);%d(fallback);%d;%d(ledger).',
@@ -730,6 +841,14 @@ reactor.register({
   defaults: { enabled: false, accelEnabled: false, accelTargetSec: 0 },
   fields: [
     {
+      key: '_periodLeft',
+      type: 'text',
+      label: '本期剩余',
+      get: function () {
+        return periodLeft == null ? '—' : String(periodLeft);
+      },
+    },
+    {
       key: '_dailyInfo',
       type: 'text',
       label: '今日',
@@ -737,7 +856,7 @@ reactor.register({
         if (!dailyLedger.loaded()) return '—';
         return (
           '到账 ' +
-          dailyLedger.get('arrive') +
+          todayArrive() +
           ' · 加速 普' +
           dailyLedger.get('accel' + march.ITEM_SPEED_UP_NORMAL) +
           '/高' +

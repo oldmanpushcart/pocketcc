@@ -14,3 +14,9 @@ export const CMD_PUSH_REWARD_GET = 13227;
 export const CMD_PUSH_GIFT_CLEAR = 13228;
 /** @type {number} NRequestIdV2.HERO_EQUIP_WISH_FIND_BOX（NRequestIdV2.js:1374），载荷 {activityId}，应答 data={serverId,x,y}（值已真机验证） */
 export const CMD_HERO_EQUIP_WISH_FIND_BOX = 9595;
+/**
+ * @type {number} RequestId.GET_ACTIVITY_DATA=841，全量活动查询（旧 JSON 主通道 api=send，空体 {}），
+ * 应答 data={alist:[活动对象…]}；泰坦祝福条目 type=271/showUiType="ActivityTitanBlessing"，extra.left=本期剩余可领。
+ * 报文实证 dashcam dashcam-rec-20261105T103923-我的日常.ndjson（req data={}，resp alist 含 type:271 extra.left/totalNum）。
+ */
+export const CMD_GET_ACTIVITY_DATA = 841;
