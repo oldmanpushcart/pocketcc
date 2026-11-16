@@ -1,14 +1,16 @@
 /**
- * 联盟保卫战（allianceDefender）：开战前 5 分钟单兵驻防 + 结束后双 type 批量领奖。
+ * 联盟保卫战（allianceDefender）：开战前 5 分钟单兵驻防 + 结束后三奖批量领取（个人/联盟/排行）。
  *
  * 玩法（源码 `AllianceDefense` / `prefabActivitydefenderMonster` 组件族 + i18n `defend_alliance_*`）：
  *   联盟管理选定开战时刻（邮件只通知、不含具体时刻），到点服务器逐波攻打联盟驻防点。
  *   参与 = 把自己的部队派到驻防点（902 marchType30 驻防行军，**不是**加入集结 1204）。
- *   奖励两组：targetType42 个人积分（defend_alliance_01，8 档）/ targetType47 联盟累计（defend_alliance_02，16 档）。
+ *   奖励三组：targetType42 个人积分（defend_alliance_01，8 档）/ targetType47 联盟累计（defend_alliance_02，16 档）/
+ *   排行奖（联盟积分排名，独立协议 1355，活动结束后才放出）。
  *
  * 用户口径（硬约束）：
  *   - 派兵 = 开战前 5 分钟派一个单兵（无英雄、无军阵、最低等级部队 ×1），迟到可补派；
- *   - 领奖 = 保卫战结束后**个人 + 联盟两个奖励都领**（排行奖 redDot[43]/1355 不碰）；
+ *   - 领奖 = 保卫战结束后**个人 + 联盟 + 排行三个奖励都领**（2026-11-16 用户补口径：排行奖原被排除，
+ *     实证手动 1355 可领且 redDot[43] 服务器权威，改为自动领；排行奖只在活动结束后放出，battleOver 闸天然对齐）；
  *   - 面板纯 checkbox，不需玩家指定任何参数。
  *
  * 协议清单（载荷形态逐键抄自实录，标注见 constants.js）：
@@ -18,6 +20,7 @@
  *   841  GET_ACTIVITY_DATA req `{}` resp `{alist:[…]}`，取 type26 条目：`.id`=活动 aid、`.alMonsterSiege`=战斗快照。
  *        startTime 开战前数小时即暴露（实证提前 1838s），派兵窗口据此提前锚定。
  *   1792 ACTIVITY_GET_REWARD req `{aid,type}` —— type42 个人 / type47 联盟，均**批量**一次领完该组全部可领行。
+ *   1355 AWARD_AL_MONSTER_SIEGE_RANK req `{}` —— 排行奖（联盟积分排名），活动结束后放出，redDot[43]>0 为闸。
  *   11104 push ALLIANCE_MONSTER_SIEGE_INFO `{alMonsterSiege}` —— 战斗态实时合并源 + 唤醒源（isEnd/endTime 收尾）。
  *   10007 push MARCH_INFO —— 驻防 type30 生命周期**只走这条**（856/10019 对 type30 全盲），联盟广播须按 uid 过滤。
  *   902  MARCH_WORLD_POINT marchType30 —— 走 core/march.attack() 组 canonical body（minimal 单兵）。
@@ -32,7 +35,8 @@
  * 闸门判据（按序短路）：
  *   派兵腿：siege.startTime>0 && 未结束 && targetId>0 && now≥startTime−300 && 本轮未封顶 && 无冷却 &&
  *           无本人 type30 在场（10007 本地跟踪）&& march.canMarch(1) && 坐标可解码 && minimal 能出兵。
- *   领奖腿：battleOver && now<det && aid>0；type42 以 redDot42>0 为闸；type47 无红点、每场 latch+冷却重试。
+ *   领奖腿：battleOver && now<det && aid>0；type42 以 redDot42>0 为闸；type47 无红点、每场 latch+冷却重试；
+ *           排行奖以 redDot43>0 为闸（1355 无参数，同 latch+冷却重试）。
  *
  * 触发源：createCycle 档位择时 + ctx.on.push(11104) 战斗态唤醒 + ctx.on.push(10007) 驻防返航/到家边沿补派。
  *
@@ -52,6 +56,7 @@ import {
   CMD_GET_ALLIANCE_DISPLAY_TIME,
   CMD_GET_ACTIVITY_DATA,
   CMD_ACTIVITY_GET_REWARD,
+  CMD_AWARD_SIEGE_RANK,
   CMD_PUSH_ALLIANCE_MONSTER_SIEGE,
   CMD_PUSH_MARCH_INFO,
 } from './constants.js';
@@ -70,6 +75,8 @@ const MARCH_TYPE_DEFEND = 30;
 const REWARD_PERSONAL = 42;
 /** @type {number} 1792 联盟累计奖励 type（targetType47，defend_alliance_02） */
 const REWARD_ALLIANCE = 47;
+/** @type {number} 排行奖（联盟积分排名，独立协议 1355；复用领奖记账骨架的 type 标识，非 1792 参数） */
+const REWARD_RANK = 43;
 
 /** @type {number} 派兵提前量（秒）：开战前 5 分钟（用户口径） */
 const LEAD_SEC = 300;
@@ -98,6 +105,7 @@ var installed = false;
  * @property {number} siegeStatus 1353 展示状态（2→3）
  * @property {number} redDot42 个人积分可领档数（领后归 0）
  * @property {number} redDot47 联盟红点（实证恒 0，仅防御性解析）
+ * @property {number} redDot43 排行奖可领标记（活动结束后出现，领后不再下发）
  * @property {number} aid 活动 aid（841 type26.id，1792 领奖用）
  * @property {object|null} siege 战斗快照（841 播种 + 11104 实时合并）
  */
@@ -118,6 +126,8 @@ var coolUntilMs = 0;
 var claim42 = { done: false, tries: 0, cool: 0 };
 /** @type {{done:boolean,tries:number,cool:number}} 本场联盟奖（type47）记账 */
 var claim47 = { done: false, tries: 0, cool: 0 };
+/** @type {{done:boolean,tries:number,cool:number}} 本场排行奖（1355）记账 */
+var claim43 = { done: false, tries: 0, cool: 0 };
 /** @type {Map<string,number>} 本人 type30 行军 marchId→state（10007 本地跟踪，占位闸） */
 var ownMarches = new Map();
 
@@ -133,7 +143,7 @@ var wakeAtSec = 0;
 var posWarned = false;
 
 /**
- * 今日动作日账（派兵 / 个人领奖 / 联盟领奖各一键，经 inlineStatus 内联到开关行）。
+ * 今日动作日账（派兵 / 个人领奖 / 联盟领奖 / 排行领奖各一键，经 inlineStatus 内联到开关行）。
  * @type {import('../../../core/daily-stats.js').DailyLedger}
  */
 const dailyLedger = createDailyLedger('pocketcc.daily.allianceDefender');
@@ -193,6 +203,7 @@ function pause() {
   coolUntilMs = 0;
   claim42 = { done: false, tries: 0, cool: 0 };
   claim47 = { done: false, tries: 0, cool: 0 };
+  claim43 = { done: false, tries: 0, cool: 0 };
   ownMarches.clear();
   justDispatched = false;
   justClaimed = false;
@@ -307,6 +318,7 @@ function ensureBattle(key) {
   coolUntilMs = 0;
   claim42 = { done: false, tries: 0, cool: 0 };
   claim47 = { done: false, tries: 0, cool: 0 };
+  claim43 = { done: false, tries: 0, cool: 0 };
   ownMarches.clear();
 }
 
@@ -372,6 +384,7 @@ function applyDisplay(d) {
     siegeStatus: Number(d.siegeStatus) || 0,
     redDot42: Number(red['42']) || 0,
     redDot47: Number(red['47']) || 0,
+    redDot43: Number(red['43']) || 0,
     aid: prev.aid || 0,
     siege: prev.siege || null,
   };
@@ -420,7 +433,17 @@ async function readActivityData() {
     return false;
   }
   if (!SNAP) {
-    SNAP = { st: 0, et: 0, det: 0, siegeStatus: 0, redDot42: 0, redDot47: 0, aid: 0, siege: null };
+    SNAP = {
+      st: 0,
+      et: 0,
+      det: 0,
+      siegeStatus: 0,
+      redDot42: 0,
+      redDot47: 0,
+      redDot43: 0,
+      aid: 0,
+      siege: null,
+    };
   }
   SNAP.aid = Number(hit.id) || 0;
   if (hit.alMonsterSiege) SNAP.siege = normalizeSiege(hit.alMonsterSiege);
@@ -530,8 +553,9 @@ async function dispatchLeg(nowSec) {
 
 // ── 领奖腿 ────────────────────────────────────────────────────────────
 /**
- * 结束后双 type 批量领奖。type42 以 redDot42>0 为闸；type47 无红点、每场 latch+冷却重试。
- *   一拍最多发一条（两 type 由 justClaimed 短巡自然隔开 ≥20s，规避同刻连发限流）。
+ * 结束后三奖领取。type42 以 redDot42>0 为闸；type47 无红点、每场 latch+冷却重试；
+ *   排行奖（1355）活动结束后才放出，以 redDot43>0 为闸（服务器权威，与游戏原版 1354 status==0 同效）。
+ *   一拍最多发一条（各奖由 justClaimed 短巡自然隔开 ≥20s，规避同刻连发限流）。
  * @param {number} nowSec 服务器秒
  * @returns {Promise<void>}
  */
@@ -543,17 +567,22 @@ async function claimLeg(nowSec) {
   // 个人积分（redDot 权威闸）
   if (!claim42.done && s.redDot42 > 0) {
     var r = await tryClaim(REWARD_PERSONAL, claim42);
-    if (r === 'ok') return; // 本拍已发一条，另一 type 下拍再领
+    if (r === 'ok') return; // 本拍已发一条，另一奖下拍再领
     if (r === 'reject') return;
   }
   // 联盟累计（无红点，battleOver 后试领）
-  if (!claim47.done) await tryClaim(REWARD_ALLIANCE, claim47);
+  if (!claim47.done) {
+    var r47 = await tryClaim(REWARD_ALLIANCE, claim47);
+    if (r47 === 'ok' || r47 === 'reject') return;
+  }
+  // 排行奖（活动结束后放出，redDot43 权威闸；独立协议 1355 无参数）
+  if (!claim43.done && s.redDot43 > 0) await tryClaim(REWARD_RANK, claim43);
 }
 
 /**
- * 发一条 1792 {aid,type} 并按结果记账。永不 reject。
- * @param {number} type 42/47
- * @param {{done:boolean,tries:number,cool:number}} st 该 type 本场记账
+ * 发一条领奖请求并按结果记账：type42/47 走 1792 {aid,type}，排行奖走 1355 {}。永不 reject。
+ * @param {number} type 42/47/43（43 仅作记账标识，非 1792 参数）
+ * @param {{done:boolean,tries:number,cool:number}} st 该奖本场记账
  * @returns {Promise<'ok'|'reject'|'skip'>} ok=领到 / reject=发出但被拒或未发出 / skip=本拍不发
  */
 async function tryClaim(type, st) {
@@ -561,25 +590,25 @@ async function tryClaim(type, st) {
   if (Date.now() < st.cool) return 'skip';
   if (st.tries >= MAX_CLAIM_TRIES) {
     st.done = true;
-    log.debug('1792 type=%d tries capped, nothing to claim this battle.', type);
+    log.debug('claim type=%d tries capped, nothing to claim this battle.', type);
     return 'skip';
   }
-  if (!net || net.isSending(CMD_ACTIVITY_GET_REWARD)) return 'skip';
+  var isRank = type === REWARD_RANK;
+  var cmd = isRank ? CMD_AWARD_SIEGE_RANK : CMD_ACTIVITY_GET_REWARD;
+  var body = isRank ? {} : { aid: SNAP.aid, type: type };
+  if (!net || net.isSending(cmd)) return 'skip';
   var sendErr = '';
-  var ret = await net.sendGuarded(
-    CMD_ACTIVITY_GET_REWARD,
-    { aid: SNAP.aid, type: type },
-    {
-      onError: function (err) {
-        sendErr = (err && err.message) || String(err);
-      },
+  var ret = await net.sendGuarded(cmd, body, {
+    onError: function (err) {
+      sendErr = (err && err.message) || String(err);
     },
-  );
+  });
   if (!aliveFn()) return 'skip';
   if (ret && ret.code === CODE_NOT_SENT) {
     st.cool = Date.now() + REJECT_COOL_MS;
     log.warn(
-      '1792 type=%d not sent%s.',
+      '%d type=%d not sent%s.',
+      cmd,
       type,
       sendErr ? ' (threw: ' + sendErr + ')' : ' (gate/timeout)',
     );
@@ -589,7 +618,8 @@ async function tryClaim(type, st) {
     st.tries++;
     st.cool = Date.now() + REJECT_COOL_MS;
     log.info(
-      '1792 type=%d rejected. code=%s reason=%s try=%d',
+      '%d type=%d rejected. code=%s reason=%s try=%d',
+      cmd,
       type,
       ret ? ret.code : '?',
       rejectText(ret),
@@ -600,8 +630,8 @@ async function tryClaim(type, st) {
   }
   st.done = true;
   justClaimed = true;
-  dailyLedger.bump(type === REWARD_PERSONAL ? 'claim42' : 'claim47', 1);
-  log.info('reward claimed. type=%d aid=%d', type, SNAP.aid);
+  dailyLedger.bump(type === REWARD_PERSONAL ? 'claim42' : isRank ? 'claim43' : 'claim47', 1);
+  log.info('reward claimed. cmd=%d type=%d aid=%d', cmd, type, SNAP.aid);
   return 'ok';
 }
 
@@ -619,14 +649,14 @@ const cfg = {
 };
 
 /**
- * 领奖是否仍待办（battleOver && 窗内 && 有 type 未领完）→ 择时切短巡。
+ * 领奖是否仍待办（battleOver && 窗内 && 有奖未领完）→ 择时切短巡。
  * @param {number} nowSec 服务器秒
  * @returns {boolean}
  */
 function claimPending(nowSec) {
   var s = SNAP;
   if (!s || !(s.aid > 0) || !battleOver(s, nowSec) || nowSec >= s.det) return false;
-  return (!claim42.done && s.redDot42 > 0) || !claim47.done;
+  return (!claim42.done && s.redDot42 > 0) || !claim47.done || (!claim43.done && s.redDot43 > 0);
 }
 
 /**
@@ -703,7 +733,7 @@ const cycle = createCycle({
 
 // ── descriptor ────────────────────────────────────────────────────────
 /**
- * 面板 fields：单行只读今日进度（派兵 + 双 type 领奖次数），纯 checkbox 无可调参数。
+ * 面板 fields：单行只读今日进度（派兵 + 三奖领奖次数），纯 checkbox 无可调参数。
  * @returns {object[]}
  */
 function buildFields() {
@@ -715,7 +745,8 @@ function buildFields() {
       get: function () {
         if (!dailyLedger.loaded()) return '—';
         var d = dailyLedger.get('dispatch');
-        var c = dailyLedger.get('claim42') + dailyLedger.get('claim47');
+        var c =
+          dailyLedger.get('claim42') + dailyLedger.get('claim47') + dailyLedger.get('claim43');
         return '派兵 ' + d + ' 次 · 领奖 ' + c + ' 次';
       },
     },

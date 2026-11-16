@@ -2,7 +2,8 @@
  * alliance/alliance-defender · 协议号常量（B6 就近收编）。
  * 口径纪律：只收「服务器 ↔ 客户端契约」cmd 号；调参与面板项留在实现文件。
  * 注册表：scripts/protocol/（开发期单一真相）；改动后须重跑 npm run protocol:extract。
- * 报文实证 dashcam-rec-20261115T183001-14179309129759-1794738601093.part.ndjson（一场完整保卫战 + 双 type 领奖）。
+ * 报文实证 dashcam-rec-20261115T183001-14179309129759-1794738601093.part.ndjson（一场完整保卫战 + 双 type 领奖）；
+ * 排行奖实证 dashcam-rec-20261116T023232-15596140531952-1794767552259.part.ndjson（手动 1355 领取 + 1311 快照）。
  */
 
 /**
@@ -10,7 +11,8 @@
  * req `{}`（JSON send，实证 req:send data={}）；resp `{st,et,det,siegeStatus,actSpec,redDot}`：
  *   st=活动开始 / et=活动展示结束（**非战斗结束**）/ det=领奖截止 / siegeStatus 2→3（战斗收尾后跃迁）；
  *   actSpec 是 POJO 枚举 `{empty,keys}`（wire 上读不到 .id，活动 aid 只能从 841 取）；
- *   redDot 形如 `{"42":8}`（个人积分可领档数，领后归 0；**47 键实证全程不出现**，联盟奖不能以红点为闸）。
+ *   redDot 形如 `{"42":8}`（个人积分可领档数，领后归 0；**47 键实证全程不出现**，联盟奖不能以红点为闸）；
+ *   **43 键=排行奖可领标记**（实证活动结束后出现 {"43":1}，领后不再下发；排行奖以红点为闸）。
  */
 export const CMD_GET_ALLIANCE_DISPLAY_TIME = 1353;
 
@@ -30,6 +32,15 @@ export const CMD_GET_ACTIVITY_DATA = 841;
  * 一次领完该 type 全部可领行（type42 领后 redDot[42] 8→0、type47 领后 atarget 16 行 state→2，均批量语义）。
  */
 export const CMD_ACTIVITY_GET_REWARD = 1792;
+
+/**
+ * @type {number} RequestId.AWARD_AL_MONSTER_SIEGE_RANK（RequestId.js），联盟保卫战排行奖领取（联盟积分排名奖）。
+ * req `{}`（JSON send，实证 req:send data={}）；resp `{reward:{items:[…]}}`。
+ * 闸门：活动结束后才放出（用户口径 + 实证：战斗结束前 redDot[43] 不出现）；
+ * 游戏原版以 1354 排行查询 status==0 为按钮闸（1=已领），本 feat 用 1353 redDot[43]>0 同效为闸（服务器权威）。
+ * 与 1792 双 type 无关：排行奖是独立协议，无 aid/type 参数。
+ */
+export const CMD_AWARD_SIEGE_RANK = 1355;
 
 /**
  * @type {number} ResponseId.ALLIANCE_MONSTER_SIEGE_INFO（ResponseId.js:2），保卫战战斗态推送。

@@ -145,12 +145,26 @@ export default [
   {
     cmd: 1353,
     dir: 'C2S',
-    note: '联盟保卫战展示时刻（GET_ALLIANCE_DISPLAY_TIME，req {}；resp {st,et,det,siegeStatus,actSpec,redDot}，et 为展示结束非战斗结束，redDot[42] 个人可领档数）',
+    note: '联盟保卫战展示时刻（GET_ALLIANCE_DISPLAY_TIME，req {}；resp {st,et,det,siegeStatus,actSpec,redDot}，et 为展示结束非战斗结束，redDot[42] 个人可领档数、redDot[43] 排行奖可领标记）',
     src: 'references/游戏逆向/extracted/Script/RequestId__RequestId.js',
     fields: 'st,et,det,siegeStatus,actSpec,redDot',
     usages: [
       {
         name: 'CMD_GET_ALLIANCE_DISPLAY_TIME',
+        feat: 'alliance-defender',
+        file: 'feats/alliance/alliance-defender/constants.js',
+      },
+    ],
+  },
+  {
+    cmd: 1355,
+    dir: 'C2S',
+    note: '联盟保卫战排行奖领取（AWARD_AL_MONSTER_SIEGE_RANK，req {}；resp {reward}；活动结束后才放出，redDot[43]>0 为闸，与 1792 双 type 无关）',
+    src: 'references/游戏逆向/extracted/Script/RequestId__RequestId.js',
+    fields: '',
+    usages: [
+      {
+        name: 'CMD_AWARD_SIEGE_RANK',
         feat: 'alliance-defender',
         file: 'feats/alliance/alliance-defender/constants.js',
       },
