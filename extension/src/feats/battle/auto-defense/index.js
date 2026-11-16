@@ -8,7 +8,8 @@
  *     · 策略 2 绕后攻击：迁城到敌主城 8 单位内最近合法可落点（911），迁城落地确认后以预设部队 902 打敌主城。
  *       不做行军加速——贴近即压缩行军；8 单位内无落点则放弃顺延。
  *     · 策略 3 迁城逃避：以我方主城为锚、背向敌取离敌更远的合法落点（911）迁走；本地 ±20 带内无落点则按 3×3 大扇区轮换到远处重试（离敌最远扇区优先，≤5 轮，借鉴竞品B）；迁成后镜头跟随到新落地点。
- *     · 策略 4 原地反击：不迁城，直接以预设部队 902 从当前主城攻打敌主城（闸门同绕后攻击：需全部部队回城 + 有空闲队列）。
+ *     · 策略 4 原地反击：不迁城，直接以预设部队 902 从当前主城攻打敌主城（需有空闲队列；不要求全部部队回城，
+ *       但预设必须满编——英雄/机甲/军阵还在途（含返程）时 adjust 会剔成纯兵残阵，宁可不反击也不送死）。
  *
  * 坐标/战力来源（报文实证）：敌主城坐标与战力一次 630 PLAYER_INFO 按 uid 直查（应答顶层 x/y=主城、power/level），
  *   与视口/场景无关——Home 城内也能查。（曾试过 10007 MARCH_INFO push：它是视口绑定推送，视野在 Home 时不下发；
@@ -309,6 +310,41 @@ function attackFailText(ret) {
   return rejectText(ret);
 }
 
+/**
+ * 满编闸：拿「满编快照」（不 adjust，走 projectRaw，纯本地零发包）与 adjust 后的「实际可派」live 逐项比对，
+ *   任一不足返回偏差描述，满编返回 null。adjust() 会排除在途单位（**含返程行军**）：主力刚打完在回家路上时
+ *   （哪怕距到家 1s），英雄/机甲/军阵仍被剔除，live 静默退化成纯兵残阵——反击宁可不发也不送死
+ *   （天梯录制实证：残阵 144 兵全灭、敌 371 兵零损）。绕后攻击同闸。
+ *   逐 pos 只比「在不在 + 数量」不比 armyId：机甲条目的 armyId 会被游戏按当前 armyType 换算，两条路径可能不同值。
+ * @param {number} presetIdx 预设部队号 1..8
+ * @param {object} live adjust().build() 后的 MarchData
+ * @returns {string|null} 偏差描述；null=满编可发
+ */
+function presetDeviates(presetIdx, live) {
+  var full = new Battle().plan().preset(presetIdx).build();
+  if (!full.armyListNew.length) return null; // 预设本就空：上游非空闸已拦，不重复判
+  if (live.heroList.length < full.heroList.length)
+    return 'heroes ' + live.heroList.length + '/' + full.heroList.length;
+  if (full.formationV2 && live.formationV2 !== full.formationV2)
+    return 'formation ' + full.formationV2 + ' dropped';
+  if (live.armyListNew.length < full.armyListNew.length)
+    return 'cells ' + live.armyListNew.length + '/' + full.armyListNew.length;
+  var byPos = {};
+  for (var i = 0; i < live.armyListNew.length; i++)
+    byPos[live.armyListNew[i].pos] = live.armyListNew[i];
+  for (var j = 0; j < full.armyListNew.length; j++) {
+    var f = full.armyListNew[j];
+    var l = byPos[f.pos];
+    if (!l) return 'cell pos=' + f.pos + ' missing'; // 机甲格被整格剔除即落这里
+    if ((l.armyNum | 0) < (f.armyNum | 0))
+      return 'cell pos=' + f.pos + ' troops ' + (l.armyNum | 0) + '/' + (f.armyNum | 0);
+  }
+  var fe = (full.extraArmy && full.extraArmy.armyNum) | 0;
+  var le = (live.extraArmy && live.extraArmy.armyNum) | 0;
+  if (fe > 0 && le < fe) return 'extraArmy ' + le + '/' + fe;
+  return null;
+}
+
 // ─────────────────────── 四条策略（各返回 {result, reason, stop}；stop=true 即命中收手） ───────────────────────
 
 /**
@@ -419,6 +455,13 @@ async function strategyAttack(snap) {
     return {
       result: 'fail',
       reason: 'preset #' + cfg.preset + ' has no troops to send',
+      stop: false,
+    };
+  var devA = presetDeviates(cfg.preset, marchData);
+  if (devA)
+    return {
+      result: 'fail',
+      reason: 'preset #' + cfg.preset + ' not full (' + devA + '), refuse ragged attack',
       stop: false,
     };
   var spot = await defense.findRelocatableSpot(
@@ -541,6 +584,8 @@ async function strategyRelocate(snap) {
  * 原地反击只发 902 不动城，无此约束。且它是被动挨打(10167)时的应急反打，若死等在外部队全部回城，
  * 那波攻击早已落到头上——反击及时性被摧毁。预设里正在外出的兵由 Battle().adjust() 自动剔除，
  * 凑不凑得出兵由下面 freeSlots 与 armyListNew.length 两道闸兜住，无需 marchesOut===0 这道过严硬闸。
+ * 但「能派出兵」≠「预设满编」：英雄/机甲/军阵还在返程行军上时 adjust 同样剔除，只剩纯兵残阵，
+ * 故再过一道 presetDeviates 满编闸——残缺即弃发（fail），绝不拿残阵去送死。
  * @param {object} snap 共享快照
  * @returns {Promise<{result:string, reason:string, stop:boolean}>}
  */
@@ -563,6 +608,13 @@ async function strategyCounter(snap) {
     return {
       result: 'fail',
       reason: 'preset #' + cfg.preset + ' has no troops to send',
+      stop: false,
+    };
+  var devC = presetDeviates(cfg.preset, marchData);
+  if (devC)
+    return {
+      result: 'fail',
+      reason: 'preset #' + cfg.preset + ' not full (' + devC + '), refuse ragged counter',
       stop: false,
     };
   var marchType = marchApi.resolve(MARCH_TYPE_ATTACK_PLAYER, MARCH_FALLBACK);
