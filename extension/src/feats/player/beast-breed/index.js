@@ -40,13 +40,14 @@
  *
  * 配额闸门（gameConf.dataConfig）：310007 每日免费申请次数 / 310008 同时等待同意上限 /
  *   310009 产出可领缓冲(分) / 310011 单只被帮助人次上限 / 310012 每日帮助次数上限。
- *   每日次数唯一来源是 10132 缓存的 breedData：缺失时**不硬拦**（fail-open），靠服务器拒绝回落；
- *   拒绝文案命中 enigma_peiyu_times_8（次数耗尽）即置当日停止申请，只继续跑领奖/加速。
+ *   每日次数唯一来源是 10132 缓存的 breedData（ev.data 即业务体本身，跨拍持有须快照）：缺失时**不硬拦**（fail-open），靠服务器拒绝回落；
+ *   拒绝 key 命中 enigma_beast130（每日培育耗尽）当日停申请、命中 enigma_beast132（每日加油耗尽）当日停加油；
+ *   两标记在 10132 显示额度回升（如买次数）时提前解除，否则跳日清；领奖照常跑。
  *
  * 合规红线：全程只读游戏数据（经 game-api ACL）+ 直发 15xx，不调用游戏的 Update 系列接口改写本地态、不 OpenUI。
  *   唯一的非 15xx 出站是 670 聊天分享（求加油，走 core/chat.js 底座，与聊天浮层同一发送链）。
- *   唯一本地写是 storage.data 的当日账本（在途首发时刻 + 「次数耗尽」标记 + 上次分享时刻）。
- *   刷屏防护：发包条间 sleep 限流 + 在途集合本轮不撞同一目标 + 「次数耗尽」当日不再申请；
+ *   唯一本地写是 storage.data 的当日账本（在途首发时刻 + 培育/加油「次数耗尽」标记 + 上次分享时刻）。
+ *   刷屏防护：发包条间 sleep 限流 + 在途集合本轮不撞同一目标 + 「次数耗尽」当日不再申请/不再加油；
  *   不做按 uid 的当日拉黑（错 ID/瞬时拒不该把指定玩家整天封掉；下一拍重读 1585/1582 自愈）。
  *
  * Int64 陷阱：兽 id 在应答里是游戏 Int64 实例（{_low,_high}），读必须 .toString() 取十进制串，
@@ -129,8 +130,14 @@ const CFG = {
   favMax: 310033,
 };
 
-/** @type {string} 拒绝文案键：每日申请次数耗尽（命中即当日不再申请） */
-const REJECT_TIMES_EXHAUSTED = 'enigma_peiyu_times_8';
+/**
+ * @type {string} 拒绝 key：每日培育次数耗尽（1580，字典 enigma_beast130=「今日培育次数已达上限」）。
+ *   旧值 enigma_peiyu_times_8 是游戏客户端本地预检文案，服务器应答从不回它（1116 录制实证：
+ *   耗尽拒绝一律 header.d=enigma_beast130）——按旧键匹配使 exhausted 标记沦为死代码，每 5 分钟重撞一次拒绝。
+ */
+const REJECT_APPLY_EXHAUSTED = 'enigma_beast130';
+/** @type {string} 拒绝 key：每日加油次数耗尽（1587，字典 enigma_beast132=「今日加油次数已达上限」），命中即当日不再加油 */
+const REJECT_HELP_EXHAUSTED = 'enigma_beast132';
 
 // ─────────────────────────── 择时常量 ───────────────────────────
 /** @type {number} 活跃档：有在途申请/有兽在培育时的复查间隔 */
@@ -197,8 +204,8 @@ var ctl = null;
 /** @type {object|null} 10132 缓存的 breedData：{info,breedingTodayCnt,breedingBuyMaxCnt,breedingTodayHelpCnt,helpBornRewardCnt} */
 var breedData = null;
 
-/** @type {{day:string, exhausted:string, shareAt:number}} 「次数耗尽」标记与上次分享时刻（不做按 uid 拉黑） */
-var ledger = { day: '', exhausted: '', shareAt: 0 };
+/** @type {{day:string, exhausted:string, helpExhausted:string, shareAt:number}} 培育/加油「次数耗尽」标记与上次分享时刻（不做按 uid 拉黑） */
+var ledger = { day: '', exhausted: '', helpExhausted: '', shareAt: 0 };
 
 /** @type {boolean} 账本是否已成功读回（未读回前绝不写盘，避免拿内存初值覆掉盘上真值） */
 var ledgerLoaded = false;
@@ -262,6 +269,47 @@ function idStr(v) {
     s = String(v);
   }
   return /^\d+$/.test(s) ? s : '';
+}
+
+/**
+ * 兽简要快照（10132 info.main/other 只消费 id/cfgId/star 三字段）：id 顺手箱成十进制串，
+ * 下游 idStr 对字符串原样透传；取不到合法 id 回 null（调用方按「无兽」判）。
+ * @param {*} b 报文里的兽对象（id 可能是池化 Int64 实例）
+ * @returns {{id:string,cfgId:number,star:number}|null}
+ */
+function beastBrief(b) {
+  if (!b || typeof b !== 'object') return null;
+  var id = idStr(b.id);
+  if (!id) return null;
+  return { id: id, cfgId: b.cfgId | 0, star: b.star | 0 };
+}
+
+/**
+ * 10132 breedData 业务体快照：net 派发侧 raw 池化复用（Event 只包引用，见 core/net.js dispatch 注释），
+ * 跨拍持有必须拷字段——只取本 feat 消费的四个标量配额 + info 最小字段集。
+ * 旧版直存 ev.data 引用（且多剥了一层信封）：池化对象下一拍就被改写，配额缓存从未新鲜过。
+ * @param {*} d ev.data（pbAckV2 信封已被观测面剥掉，即 breedData 本身）
+ * @returns {object|null} 快照；形态不对回 null（调用方保留旧值）
+ */
+function snapshotBreedData(d) {
+  if (!d || typeof d !== 'object' || (!d.info && d.breedingTodayCnt == null)) return null;
+  var inf = d.info && typeof d.info === 'object' ? d.info : null;
+  return {
+    breedingTodayCnt: Number(d.breedingTodayCnt) || 0,
+    breedingBuyMaxCnt: Number(d.breedingBuyMaxCnt) || 0,
+    breedingTodayHelpCnt: Number(d.breedingTodayHelpCnt) || 0,
+    helpBornRewardCnt: Number(d.helpBornRewardCnt) || 0,
+    info: inf
+      ? {
+          ownerUid: String(inf.ownerUid || ''),
+          breedingStatus: inf.breedingStatus | 0,
+          breedingEndTimeSec: inf.breedingEndTimeSec | 0,
+          main: beastBrief(inf.main),
+          other: beastBrief(inf.other),
+          helpUid: Array.isArray(inf.helpUid) ? inf.helpUid.map(String) : [],
+        }
+      : null,
+  };
 }
 
 /**
@@ -337,6 +385,7 @@ function rollDay() {
   if (ledger.day === today) return;
   ledger.day = today;
   ledger.exhausted = '';
+  ledger.helpExhausted = '';
 }
 
 /**
@@ -354,6 +403,7 @@ function loadLedger() {
       if (saved && typeof saved === 'object') {
         if (typeof saved.day === 'string') ledger.day = saved.day;
         if (typeof saved.exhausted === 'string') ledger.exhausted = saved.exhausted;
+        if (typeof saved.helpExhausted === 'string') ledger.helpExhausted = saved.helpExhausted;
         if (saved.seen && typeof saved.seen === 'object')
           inflightSeen = Object.assign({}, saved.seen);
         // 上次分享时刻不按日清（它只是防刷屏的节流锚，跳日照常继续隔够久再发）
@@ -374,6 +424,7 @@ function persistLedger() {
     storage.data.set(LEDGER_NAME, {
       day: ledger.day,
       exhausted: ledger.exhausted,
+      helpExhausted: ledger.helpExhausted,
       seen: inflightSeen,
       shareAt: ledger.shareAt,
     }),
@@ -734,12 +785,15 @@ async function agreeApplies(applyList, mainSet) {
 /**
  * 帮盟友加速（1587）。四重闸门逐条判（同游戏 VisitPopCell）：培育中 && 那家的寄养兽不是我 && 我没帮过
  * && 该兽被帮助人次未饱和 && 我今日帮助次数未耗尽。每轮最多 helpPerTick 条，条间限流。
+ * 服务器判今日加油耗尽（enigma_beast132）即置当日 helpExhausted 标记：后续整段不再发，
+ * 免得每拍重撞同一拒绝、游戏侧不停弹「今日加油次数已达上限」（1116 实录）。
  * @param {object[]} visit 1585 的 visit
  * @param {string} myUid 我的 StrUid
  * @returns {Promise<number>} 发出的帮助条数
  */
 async function helpBreeding(visit, myUid) {
   if (!cfg.autoHelp) return 0;
+  if (ledger.helpExhausted === todayStr()) return 0;
   var perMax = cfgNum(CFG.helpPerBeast);
   var dailyMax = cfgNum(CFG.dailyHelp);
   var todayHelp = breedData ? breedData.breedingTodayHelpCnt | 0 : 0;
@@ -766,7 +820,13 @@ async function helpBreeding(visit, myUid) {
       log.debug('helped breeding. uid=%s', uid);
       done++;
     } else if (ret.code !== CODE_NOT_SENT) {
-      log.info('help rejected. uid=%s;code=%d;data=%s', uid, ret.code, rejectText(ret));
+      var text = rejectText(ret);
+      log.info('help rejected. uid=%s;code=%d;data=%s', uid, ret.code, text);
+      if (text.indexOf(REJECT_HELP_EXHAUSTED) >= 0) {
+        ledger.helpExhausted = todayStr();
+        persistLedger();
+        log.info('daily help exhausted today, help paused until tomorrow.');
+      }
       break;
     }
     await sleep(cfg.applyIntervalMs, ctxRef && ctxRef.signal);
@@ -911,7 +971,7 @@ async function cancelStaleApplies(inflight, nowMs) {
 
 /**
  * 今日剩余可申请次数（镜像游戏 EnigmaBeastBreedMainPop 同判据：`max(310007 - breedingTodayCnt, 0) + breedingBuyMaxCnt`）。
- * breedData 缺失回 null（调用方 fail-open，靠服务器拒绝兜底）；返回 <=0 即与游戏一样会弹 enigma_peiyu_times_8 挡住申请。
+ * breedData 缺失回 null（调用方 fail-open，靠服务器拒绝兜底）；返回 <=0 即与游戏一样会弹 enigma_beast130 挡住申请。
  * @returns {number|null} 剩余次数；不可知回 null
  */
 function dailyApplyLeft() {
@@ -995,7 +1055,7 @@ async function applyNewBeasts(beasts, visit, inflight, nowSec, nowMs) {
     } else if (ret.code !== CODE_NOT_SENT) {
       var text = rejectText(ret);
       log.info('apply rejected. uid=%s;code=%d;reason=%s', target, ret.code, text || '(none)');
-      if (text.indexOf(REJECT_TIMES_EXHAUSTED) >= 0) {
+      if (text.indexOf(REJECT_APPLY_EXHAUSTED) >= 0) {
         ledger.exhausted = todayStr();
         persistLedger();
         log.info('daily apply exhausted today, only claim/help will run.');
@@ -1144,12 +1204,25 @@ function planNextDelay(mainList, inflight, claim) {
 // ─────────────────────────── 推送唤醒 ───────────────────────────
 /**
  * 10132：整包 breedData 覆盖缓存（每日申请/帮助次数、帮助奖励数的唯一来源）。listener 永不 throw。
- * @param {object} ev net 事件 {cmd,status,data}；data 是 pbAckV2 {header,data}
+ * 信封口径：net 观测面已剥 pbAckV2（Event.#dataOf），ev.data 即 breedData 业务体本身（同 Ret.data 形状，
+ * 与 titan-blessing 读 ev.data.extra 同习语）——旧版再读一层 ev.data.data 恒为 undefined，缓存从未被推送刷新，
+ * 依赖它的配额闸门全部 fail-open，是 1116 「培育已达上限」刷屏的根因。raw 池化复用，跨拍持有须快照。
+ * @param {object} ev net 事件 {cmd,status,data,ord,ts,raw}；data 是 breedData 业务体
  */
 function onBreedingPush(ev) {
-  var p = ev && ev.data;
-  if (p && typeof p === 'object' && p.data && typeof p.data === 'object') {
-    breedData = p.data;
+  var snap = snapshotBreedData(ev && ev.data);
+  if (snap) {
+    breedData = snap;
+    // 服务器权威计数显示额度回升（如买次数）→ 提前解除当日耗尽标记，下轮恢复动作；否则等跳日清
+    if (ledger.exhausted && dailyApplyLeft() > 0) {
+      ledger.exhausted = '';
+      persistLedger();
+    }
+    var helpMax = cfgNum(CFG.dailyHelp);
+    if (ledger.helpExhausted && helpMax > 0 && snap.breedingTodayHelpCnt < helpMax) {
+      ledger.helpExhausted = '';
+      persistLedger();
+    }
   }
   if (aliveFn()) cycle.kick();
 }
@@ -1214,9 +1287,9 @@ function run(ctx) {
   ctx.on.push(PUSH_BEAST_CHANGE, onWakePush);
   ctx.on.push(PUSH_BREEDING_CHANGE, onBreedingPush);
   ctx.on.push(PUSH_OTHER_BREEDING, onWakePush);
-  // 重新激活时补一次 breedData（游戏控制器是 10132 的常驻镜像，比等下一条推送快）
+  // 重新激活时补一次 breedData（游戏控制器是 10132 的常驻镜像，比等下一条推送快）；同快照口径持有
   if (!breedData && ctl && ctl.breedData && typeof ctl.breedData === 'object')
-    breedData = ctl.breedData;
+    breedData = snapshotBreedData(ctl.breedData);
   Promise.resolve(loadLedger());
   log.info(
     'started (mode=%s;agree=%s;help=%s;claim=%s;share=%s).',
