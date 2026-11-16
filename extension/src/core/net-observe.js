@@ -43,7 +43,9 @@ export class Event {
   }
 
   /**
-   * 按报文形态取业务数据：d（JSON 串）> pbAck > pbAckV2 > p；都取不到返回 null
+   * 按报文形态取业务数据：d（JSON 串）> pbAck（V1 命名子字段整体）> pbAckV2.data（剥信封）> p；都取不到返回 null。
+   * pbAckV2 与发包应答 Ret 同口径剥到内层业务体（{header,data} 的 data）：消费方直读 ev.data.<字段>，
+   *   无需各自解信封；header.s 已提升到 ev.status。V1 pbAck 无统一 .data 包装（命名子字段），整体返回由调用方按 cmd 取。
    * @param {object} e 原始报文
    * @returns {*} 业务数据
    */
@@ -51,7 +53,7 @@ export class Event {
     try {
       if (e.d != null) return Event.#parseMaybe(e.d);
       if (e.pbAck != null) return e.pbAck;
-      if (e.pbAckV2 != null) return e.pbAckV2;
+      if (e.pbAckV2 != null) return e.pbAckV2.data != null ? e.pbAckV2.data : null;
       if (e.p != null) return Event.#parseMaybe(e.p);
     } catch (err) {}
     return null;
@@ -367,7 +369,7 @@ export function createObserve(deps) {
     var matched = matchAny(collectors, dir, e.c);
     var smatched = matchAny(streams, dir, e.c);
     if (!matched.length && !smatched.length) return;
-    // 归一化口径与 dispatch/logInbound 一致：data 取 d/pbAck/pbAckV2/p；raw 存报文快照（池化对象不可直存）
+    // 归一化口径与 dispatch/logInbound 一致：data 取 d/pbAck/pbAckV2.data/p；raw 存报文快照（池化对象不可直存）
     var event = ev || new Event(e, t);
     var entry = makeEntry(dir, event.cmd, event.data, snapshotPacket(e), t);
     for (var i = 0; i < matched.length; i++) pushTo(matched[i], entry);

@@ -285,18 +285,14 @@ async function scanPass() {
 }
 
 /**
- * 10452 增量推送处理：新建成机械田即时并入活表（容错外层结构：数组 / d.ret / 单条 / d.data）。
+ * 10452 增量推送处理：新建成机械田即时并入活表（容错外层结构：数组 / d.ret / 单条）。
  * @param {object} ev net 推送事件（载荷在 ev.data）
  * @returns {boolean} 是否并入过至少一条（供调用方决定是否唤醒派兵）
  */
 function onRecordPush(ev) {
   var d = ev && ev.data;
   if (!d) return false;
-  var arr = Array.isArray(d)
-    ? d
-    : Array.isArray(d.ret)
-      ? d.ret
-      : [d.specId != null ? d : d.data || d];
+  var arr = Array.isArray(d) ? d : Array.isArray(d.ret) ? d.ret : [d];
   var hit = false;
   for (var i = 0; i < arr.length; i++) {
     try {

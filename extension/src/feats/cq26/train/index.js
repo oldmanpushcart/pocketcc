@@ -336,7 +336,7 @@ function run(ctx) {
  */
 function onTrainInfoPush(ev) {
   if (!aliveFn()) return;
-  var d = (ev && ev.data && ev.data.data) || null;
+  var d = (ev && ev.data) || null;
   var st = d && d.trainList && d.trainList[0] ? Number(d.trainList[0].state) || 0 : 0;
   log.debug('22095 push state=%s, invalidate snapshot and kick lanes.', st);
   snap = null;
@@ -353,7 +353,7 @@ function onTrainInfoPush(ev) {
  */
 function onTrainDataPush(ev) {
   if (!aliveFn()) return;
-  var t = (ev && ev.data && ev.data.data && ev.data.data.train) || null;
+  var t = (ev && ev.data && ev.data.train) || null;
   if (!t) {
     log.debug('22096 push has no train payload, ignore.');
     return;
@@ -384,7 +384,7 @@ function onTrainDataPush(ev) {
  */
 function onRedPointsPush(ev) {
   if (!aliveFn() || !MCFG.lootEnabled) return; // 22010 高频推送，未开启/已暂停时不日志以免刷屏；lane 自身仍有节奏
-  var ps = (ev && ev.data && ev.data.data && ev.data.data.redPoints) || [];
+  var ps = (ev && ev.data && ev.data.redPoints) || [];
   for (var i = 0; i < ps.length; i++) {
     if (Number(ps[i].id) === RED_POINT_LOOT) {
       log.debug('22010 redPoint id=%d num=%s, kick loot lane.', RED_POINT_LOOT, ps[i].num);

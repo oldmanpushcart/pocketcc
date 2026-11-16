@@ -202,14 +202,14 @@ function aliveFn() {
 
 // ── 推送入口 ──────────────────────────────────────────────────────────
 /**
- * PBV2 报文取业务体：整包是 `{header,data}`，下钻一层；平铺载荷（旧 JSON 形态）原样回落。
+ * 取业务体：net 已剥 pbAckV2 信封，ev.data 即内层业务体（与 Ret 同口径）；此处仅做对象形态守卫。
  * @param {object} ev 推送事件
  * @returns {object|null}
  */
 function pushBody(ev) {
   var o = ev && ev.data;
   if (!o || typeof o !== 'object') return null;
-  return o.data || o;
+  return o;
 }
 
 /**

@@ -394,14 +394,15 @@ function scanMails(list) {
 
 /**
  * 10264 PUSH_SINGLE_MAIL：单封邮件推送 → 命中即记待扫。
- * 保留容错：先 parseData 拆可能串化的业务体，再探 d.mail / d.data.mail / d。
+ * 容错：parseData 拆可能串化的业务体；net 已剥 pbAckV2 信封，ev.data 即邮件对象本身
+ *   （实录无 mail/data 包装，不再多层探针）。
  * @param {object} ev net 推送事件（载荷在 ev.data）
  * @returns {boolean} 是否新入队（供调用方决定是否 kick 扫图 cycle）
  */
 function onMailPush(ev) {
   var d = parseData(ev && ev.data);
   if (!d || typeof d !== 'object') return false;
-  var m = d.mail || (d.data && d.data.mail) || d;
+  var m = d;
   var r = parseRelicMail(m);
   if (!r) return false;
   if (!markPending(r)) return false;

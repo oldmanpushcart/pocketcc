@@ -210,7 +210,7 @@ function onUpdate(payload) {
  * CHAT_INFO_LIST(10919) 实时推送：被攻击/主动攻击等系统战报消息（与 systemMessages 拉取同构的 infos）。
  * 复用 chat.toSysItem 归一（fu="-1" 命中系统模板分支）→ S.fns.ingest('push') 按 uuid 去重入相应频道缓冲
  * （非当前频道计未读、当前频道 appendMessage 实时追底）。纯接收，不改游戏状态。
- * @param {object} ev net Event（ev.data 形如 {header, data:{infos}}，兼容 {infos} / JSON 串）
+ * @param {object} ev net Event（net 已剥 pbAckV2 信封，ev.data 即 {infos}，兼容 JSON 串）
  * @returns {void}
  */
 function onChatInfoList(ev) {
@@ -218,7 +218,7 @@ function onChatInfoList(ev) {
   if (!chat || !chat.toSysItem) return;
   var d = ev && ev.data;
   if (typeof d === 'string') d = safeParse(d);
-  var infos = (d && d.data && d.data.infos) || (d && d.infos) || null;
+  var infos = (d && d.infos) || null;
   if (!Array.isArray(infos) || !infos.length) return;
   var sys = [];
   for (var it of infos) {

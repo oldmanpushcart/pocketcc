@@ -1146,14 +1146,14 @@ function bestActionable(pool, g, leg) {
 
 // ── 订阅 ──────────────────────────────────────────────────────────────
 /**
- * 报文载荷归一（推送外层可能再包一层 data）。
+ * 取业务体：net 已剥 pbAckV2 信封，ev.data 即内层业务体（与 Ret 同口径）；此处仅做对象形态守卫。
  * @param {object} ev bus 事件
  * @returns {object|null}
  */
 function bodyOf(ev) {
   var o = ev && ev.data;
   if (!o || typeof o !== 'object') return null;
-  return o.data || o;
+  return o;
 }
 
 /**

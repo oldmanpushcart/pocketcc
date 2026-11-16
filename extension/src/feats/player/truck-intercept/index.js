@@ -1302,11 +1302,9 @@ const cycle = createCycle({ log: log, alive: aliveFn, run: cycleRun, fallback: c
  */
 function onRefreshPush(ev) {
   if (!aliveFn()) return;
-  var p = ev && ev.data; // PBV2 推送经 Event.#dataOf 得 {header,data}，业务对象在 .data（与 send 的 ret.data 口径不同）
-  if (!p || typeof p !== 'object') return;
-  if (p.header && (p.header.s | 0) !== 0) return; // 非 0 状态推送不参与配额覆盖
-  var d = p.data || p;
+  var d = ev && ev.data; // net 已剥 pbAckV2 信封，ev.data 即业务体（与 ret.data 同口径）
   if (!d || typeof d !== 'object') return;
+  if (ev.status != null && (ev.status | 0) !== 0) return; // 非 0 状态推送不参与配额覆盖
   var before = dailyLeft();
   applyRefresh(d);
   if (before <= 0 && dailyLeft() > 0) {

@@ -464,7 +464,8 @@ function onMarchUpdate(ev) {
 
 /**
  * 10264 单封邮件推送：标题命中使徒奖励即按邮件 id 去重计一次到账（行军类计奖励到账口径）。
- * 载荷容错同 auto-farm 遗迹邮件范式：parseData 拆可能串化的业务体，再探 d.mail / d.data.mail / d。
+ * 载荷容错：parseData 拆可能串化的业务体；net 已剥 pbAckV2 信封，ev.data 即邮件对象本身
+ *   （1115/1116 实录 240 包 title/sendTime 均在顶层，无 mail/data 包装，不再多层探针）。
  * listener 本身永不 throw；不踢扫描 cycle（到账只是计数，不影响攻打调度）。
  * @param {object} ev net.on 事件 {cmd, data}
  */
@@ -472,7 +473,7 @@ function onRewardMailPush(ev) {
   if (!aliveFn()) return;
   var d = parseData(ev && ev.data);
   if (!d || typeof d !== 'object') return;
-  var m = d.mail || (d.data && d.data.mail) || d;
+  var m = d;
   if (!m || m.title !== REWARD_MAIL_TITLE) return;
   // Int64 邮件 id 按字符串读；无 id 时退 sendTime 合成键，同封重推仍可去重
   var id = String(m.id || m.mailId || '');

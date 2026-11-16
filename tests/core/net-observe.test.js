@@ -71,14 +71,19 @@ test('Event：d 字符串 JSON.parse，status/ord/reqTime/raw 口径', () => {
   assert.ok(typeof ev.ts === 'number');
 });
 
-test('Event：载荷优先级 d > pbAck > pbAckV2 > p，status 兜底链', () => {
+test('Event：载荷优先级 d > pbAck > pbAckV2.data > p，status 兜底链', () => {
   assert.deepEqual(new Event({ c: 1, pbAck: { header: { s: 3 }, a: 1 } }).data, {
     header: { s: 3 },
     a: 1,
   });
   const v2 = new Event({ c: 1, pbAckV2: { header: { s: 4 }, data: { b: 2 } } });
   assert.equal(v2.status, 4);
-  assert.deepEqual(v2.data, { header: { s: 4 }, data: { b: 2 } });
+  assert.deepEqual(v2.data, { b: 2 }, 'pbAckV2 剥信封到内层业务体（与 Ret 同口径）');
+  assert.equal(
+    new Event({ c: 1, pbAckV2: { header: { s: 0 } } }).data,
+    null,
+    'pbAckV2 无 data → null',
+  );
   assert.deepEqual(new Event({ c: 1, p: '{"y":2}' }).data, { y: 2 });
   assert.equal(new Event({ c: 1 }).data, null);
   assert.equal(new Event({ c: 1 }).status, null);
