@@ -25,7 +25,6 @@
     "release/**",
     "warroom/**",
     "references/**",
-    "tools/**",
     ".reviewtmp/**",
     ".replaytmp/**",
     "dashcam/store/**",
