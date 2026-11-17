@@ -287,7 +287,10 @@ export const PANEL_CSS = `
     /* 非学习行的隐形删除槽：与 .pc-rgdel 同宽同高占位，使每行末格内容宽恒为 checkbox+gap+槽，
        checkbox 的 x 不随×有无逐行偏移（条件性内容错列教训，同异能秘境角标占位方案） */
     .pc-rgdelna{flex:0 0 auto;width:16px;height:18px;visibility:hidden;}
-    .pc-row select.pc-fsel{max-width:150px;flex:0 0 auto;padding:3px 6px;border-radius:6px;
+    /* 单下拉与数字输入同宽对齐（二轮收口 UI 反馈）：number 固定 96px border-box，select intrinsic 宽随选项文本
+       伸缩会出现「select 比 input 窄、左缘参差」→ min-width 抬到同档 96px + border-box 同口径；
+       长选项面板仍允许长到 150px（不截断），tripick/ctrlrow 的等分收缩规则在下方覆盖本 min-width */
+    .pc-row select.pc-fsel{box-sizing:border-box;min-width:96px;max-width:150px;flex:0 0 auto;padding:3px 6px;border-radius:6px;
       border:1px solid rgba(255,255,255,.4);background:rgba(20,26,38,.9);color:#e8eef7;font:inherit;}
     /* 行内多下拉（type:'tripick'，如异能兽培育属相/品种/品质同一行）与一行多控件（type:'ctrlrow'，
        如惧星集结「等级/方式/预设队伍/今日已打」）共用：标签只占文字宽，控件在剩余空间里等分收缩。
