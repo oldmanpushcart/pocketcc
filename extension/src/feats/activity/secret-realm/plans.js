@@ -39,14 +39,13 @@ import { PAB_BOSS_PLANE } from './constants.js';
  *   snap: object,                       // {points, marches, cur, curKey, curPt}：901 原样信封 + 当前点
  *   shopWhy: string|null,               // #shopWant 结果：'exit'|'stage'|'errand'|'sausage'|'gap'|null（后三者仅喂链尾排序，不拦路）
  *   teamType: number,                   // tuning.driveTeamType（0=只拿百兽箱，不碰 BOSS）
- *   driveBoss: boolean,                 // cfg.drive.boss（BOSS 窗开着时是否自动上平台，缺省 true）
  *   bossMode: 'open'|'lead'|null,       // #bossWindow：21 开打 / 22 开台读秒 / 无
  *   onBossPlane: boolean,               // 当前正停在 BOSS 平台（curPt===PAB_BOSS_PLANE）
  *   bossSameArea: boolean,              // 当前平台与目标 BOSS 同区域（esrId 真值比较，缺证放行）
  *   bossFeeding: boolean,               // 任一 BOSS state==23（开台读秒中）→ 日常车让路
  *   marchPolicy: number,                // tuning.driveMarchPolicy（2=跟人优先）
  *   beastPolicy: number,                // tuning.driveBeastPolicy（0/1/2=打野档插入位置）
- *   beastOff: boolean,                  // 面板 driveBeast 总闸关（true=完全不打野，短路打野三档，等价 beastPolicy=2）
+ *   beastOff: boolean,                  // 面板 drivePetLevel=0（不抓宠）派生（true=完全不打野，短路打野三档，等价 beastPolicy=2）
  *   relax: boolean,                     // #beastStageWant（百兽期＝安心抓宠，链形不同）
  *   beastLock: boolean,                 // #beastLockNow（开台读秒后 0~180s 禁走窗，窗内跳打野档）
  *   shouldExplore: boolean              // 纯读：已起表且闲逛超时（起表副作用在引擎梯尾，对齐现状 L2391/2465-2468）
@@ -61,7 +60,6 @@ export const CTX_KEYS = Object.freeze([
   'snap',
   'shopWhy',
   'teamType',
-  'driveBoss',
   'bossMode',
   'onBossPlane',
   'bossSameArea',
@@ -107,19 +105,21 @@ export const OBJECTIVES = Object.freeze([
 /**
  * 内置方案：竞品B对齐（= 现状 #tick 目标梯逐字复刻），也是唯一在跑的方案。
  * 每条 `when` 后注 pilot.js 现状行号，便于对拍与评审。
- * @type {{ default: { label:string, stages:Stage[] } }}
+ * 顶层旗标：`shopErrand`（大BOSS 前定点商店勤务，缺省 true；pilot #shopWant errand 档读当前方案旗标，
+ *   未来方案不含即不做勤务）；BOSS 窗上平台不再设子闸——方案含 BOSS 档即代表「上平台」，不含即不上。
+ * @type {{ default: { label:string, shopErrand?:boolean, stages:Stage[] } }}
  */
 export const PLANS = {
   default: {
     label: '默认方案',
+    shopErrand: true,
     stages: [
-      // ── BOSS 档（#tick L2349-2383，早于 #stageChain）：team_type>0 && driveBoss 才走 ──
+      // ── BOSS 档（#tick L2349-2383，早于 #stageChain）：team_type>0 才走；方案含本组档即代表上平台 ──
       {
         id: 'bossFight',
         obj: 'bossFight', // 已停平台且同区域→发 8521 开上 BOSS 本体（打仗本身仍归 boss.js 到点层）
         terminal: true,
-        when: (c) =>
-          c.bossMode === 'open' && c.teamType > 0 && c.driveBoss && c.onBossPlane && c.bossSameArea, // L2352-2360
+        when: (c) => c.bossMode === 'open' && c.teamType > 0 && c.onBossPlane && c.bossSameArea, // L2352-2360
       },
       {
         id: 'bossPlaneOpen',
@@ -129,7 +129,7 @@ export const PLANS = {
         //   return（L2357-2364），找不到也不落日常链；只有 bossPlaneLead（开台读秒）才是
         //   非独占：没平台记一笔、落回日常链采井/打野（L2367-2383）。
         terminal: true,
-        when: (c) => c.bossMode === 'open' && c.teamType > 0 && c.driveBoss, // L2351-2364
+        when: (c) => c.bossMode === 'open' && c.teamType > 0, // L2351-2364
       },
       {
         id: 'bossPlaneLead',
@@ -141,8 +141,7 @@ export const PLANS = {
           key: 'no-plane',
           msg: 'pilot: no usable platform found within BOSS open-countdown window (viewport lacks 176/174 or all occupied), give up boarding this tick. reason=no_plane',
         },
-        when: (c) =>
-          c.bossMode === 'lead' && c.teamType > 0 && c.driveBoss && c.snap.curPt !== PAB_BOSS_PLANE, // L2367
+        when: (c) => c.bossMode === 'lead' && c.teamType > 0 && c.snap.curPt !== PAB_BOSS_PLANE, // L2367
       },
 
       // ── 收场/高光去店档（#stageChain L2043-2051，命中即独占、不回落采井打野）──
@@ -162,9 +161,7 @@ export const PLANS = {
         params: { preferNoSausage: true }, // 窄筛 pickShop（preferNoSausage=true）
         // BOSS 优先闸（1115 问题6）：BOSS 窗活跃（open/lead）或投喂窗（state23，此时 bossMode=null）
         //   → shopStage 不命中，让位 boss 链/bossWait；治「从 BOSS 平台径直去商店」（terminal 独占本拍）。
-        when: (c) =>
-          c.shopWhy === 'stage' &&
-          !(c.teamType > 0 && c.driveBoss && (!!c.bossMode || c.bossFeeding)), // L2043
+        when: (c) => c.shopWhy === 'stage' && !(c.teamType > 0 && (!!c.bossMode || c.bossFeeding)), // L2043
       },
 
       // ── BOSS 开台读秒让路（L2056-2060，team_type>0 && state23 → 本拍不派日常车，独占）──
@@ -284,6 +281,7 @@ export function planIds() {
  *   4. `when` 为函数（方案层当前保留箭头函数判据；未来如降级为 DSL 会新加一项）。
  *   5. 解释器效果属性形状与适用档（三-5）：`emptyShopMark` 只许 terminal 店档；`tailShopLog`
  *      只许非 terminal 店档；`explore` 只许 obj=explore；`emptyNote` 必带字符串 key/msg；`chain` 必为布尔。
+ *   6. 顶层旗标 `shopErrand`（若声明）必为布尔（大BOSS 前定点勤务开关，pilot #shopWant 读）。
  *
  * @param {{stages?:Stage[]}} plan 待验方案（PLANS[id]）
  * @param {string[]} stageDiagKeys 引擎 STAGE_DIAG 当前登记的阶段 id 清单（pilot.js 传 Object.keys(STAGE_DIAG)）
@@ -293,6 +291,9 @@ export function validatePlan(plan, stageDiagKeys) {
   const errs = [];
   const stages = (plan && plan.stages) || [];
   const diag = Array.isArray(stageDiagKeys) ? stageDiagKeys : [];
+  if (plan && plan.shopErrand !== undefined && typeof plan.shopErrand !== 'boolean') {
+    errs.push('plan.shopErrand 非布尔');
+  }
   const seen = new Set();
   for (let i = 0; i < stages.length; i++) {
     const s = stages[i];

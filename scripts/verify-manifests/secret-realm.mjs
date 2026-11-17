@@ -322,7 +322,8 @@ export default {
       }
       rep.check('写动作载荷字段形态（数据格式）', '数据格式', pass, fail, 0, fails);
 
-      // 8581 uuIds 必须是 Int64 对象；8589 带 uid
+      // 8581 uuIds 必须是 Int64 对象；8589 带 uid。
+      //   注记（二轮收口）：新版已废弃拿满自动离场（leave.js 删除），本组仅校验旧录制里的 8581/8589，判据不动。
       let bagPass = 0;
       let bagFail = 0;
       const bagF = [];
@@ -938,7 +939,7 @@ export default {
           rep.check('8542 低保(spec20)先于香肠(spec19) [观察]', DIM, 1, 0, 0, [
             `${nVisit} 店有购买：低保优先 ${ok} 店｜非优先 ${nVisit - ok} 店` +
               (orphan ? `｜无 INFO 前导购买 ${orphan} 笔` : '') +
-              '（旧版产物预期违例，新版 beastBoxFirst 缺省开已修）',
+              '（旧版产物预期违例；新版低保为系统默认前置闸：欠低保且晶块不足时整店停购）',
             ...bad,
           ]);
         }
@@ -1038,7 +1039,7 @@ export default {
               stayed.push(`${rel(l.ts)} 输第${l.round - 1}场@(${l.x},${l.y}) 后 15s 无撤离`);
           }
           rep.check('遭遇战输场后 15s 内 8521 撤离 [观察]', DIM, 1, 0, 0, [
-            `判输 ${losses.length} 场：撤离 ${fled}｜未撤 ${losses.length - fled}（旧版无败退通道，新版 pvpFleeRounds 已修）`,
+            `判输 ${losses.length} 场：撤离 ${fled}｜未撤 ${losses.length - fled}（旧版无败退通道，新版系统默认连输 2 场即逃）`,
             ...stayed,
           ]);
         }

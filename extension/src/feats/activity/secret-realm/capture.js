@@ -3,6 +3,8 @@
  *
  * 语义：**仅自动拍**——队伍已经在拍异能兽时，接管整个拍宠物节奏直到捕获成功/失败；
  *   不负责找怪、不派兵过去、不主动开拍，全部走游戏原生动作，零 INFO 扫描。
+ *   **不抓宠（drive.petLevel=0）时普通野宠窗拒拍**（不手拍/不能量/不事件/不投喂，由 pilot beast-off-leave 档即离切断）；
+ *   BOSS 窗（boss:1）照拍——大BOSS 投喂/手拍是 BOSS 链默认能力，与抓宠意图无关。
  *   **BOSS 也算「在拍宠物」**（21530 载荷带 boss:1）：BOSS 与普通异能兽同协议同 specId 集，
  *   只差 allFavor（大BOSS 1000000 vs 普通宠 7000~5000）→ 同一套节奏照拍，不为 BOSS 分叉。
  *
@@ -121,6 +123,8 @@ export class CaptureEngine {
   #lastFeedAt = 0;
   /** @type {boolean} 本轮「不在拍」已打过 info（重新在拍后复位，保证只在进入不拍的边沿打一条） */
   #notFeedLogged = false;
+  /** @type {boolean} 本只普通野宠窗已就「不抓宠拒拍」打过 info（换宠/重新在拍复位，防刷屏） */
+  #petOffLogged = false;
   /** @type {boolean} 本次静默窗已打过 debug（同窗内不重复，出窗复位） */
   #quietLogged = false;
   /** @type {number} 上一次打「手拍配额耗尽」debug 的秒（同一秒只打一条，防刷屏） */
@@ -159,6 +163,18 @@ export class CaptureEngine {
     }
     this.#notFeedLogged = false;
     this.#lastFeedAt = Date.now();
+    // 不抓宠拒拍（二轮收口）：普通野宠窗在 petLevel=0 时一律不拍（pilot 会即离切断本窗）；
+    //   边沿 info 一条（同窗不重复），BOSS 窗不受影响。
+    if (this.#wildBlocked(st)) {
+      if (!this.#petOffLogged) {
+        this.#petOffLogged = true;
+        env.log.info(
+          'capture: wild-beast window refused (petLevel=0), pilot leaves. reason=pet_off_refuse',
+        );
+      }
+      return tuning.feedIdleMs;
+    }
+    this.#petOffLogged = false;
     const cap = st.cap;
 
     // ① 限时事件的轮询兜底：排在静默窗之前，且只在推送通道失联时启用（能量演出 7s 窗 > 拖拽 2.0s 窗）
@@ -214,6 +230,18 @@ export class CaptureEngine {
       cap: cap && typeof cap === 'object' ? cap : EMPTY_CAP,
       boss: Number(pos.boss) === 1,
     };
+  }
+
+  /**
+   * 不抓宠拒拍闸（二轮收口）：普通野宠窗（非 BOSS）且面板抓宠等级=0 → 拒拍。
+   *   **只看 petLevel、不看 drive.enabled**：不抓宠是意图级真相（drive 关时用户手动踏点也不替它拍）。
+   *   轮询（#tick）与推送（onBeastEvent）两路共用，保证「能不能拍」一字不差。
+   * @param {{cap:object,boss:boolean}} st #feedState 取样
+   * @returns {boolean} true=本窗拒拍
+   */
+  #wildBlocked(st) {
+    if (st.boss) return false;
+    return !(Number((this.#env.cfg().drive || {}).petLevel) > 0);
   }
 
   /**
@@ -305,6 +333,7 @@ export class CaptureEngine {
     this.#pollSig = '';
     this.#nextFeedAt = 0; // 换一只就重新允许投一次（上一只的节流点不该压住新一只的首件）
     this.#toldNoFeed = false;
+    this.#petOffLogged = false;
     env.log.info('capture: feeding %s.', key);
   }
 
@@ -325,12 +354,18 @@ export class CaptureEngine {
     if (!es.length) return;
     const pab = env.secret.getPabController();
     if (!pab) return;
-    if (!this.#feedState(pab)) {
+    const st = this.#feedState(pab);
+    if (!st) {
       env.log.debug(
         'capture push type=%d dropped: capturingPetPos=%s (not feeding).',
         et,
         JSON.stringify(pab.capturingPetPos),
       );
+      return;
+    }
+    // 与 #tick 同闸：不抓宠时普通野宠窗的事件动作也不发（两路一字不差）
+    if (this.#wildBlocked(st)) {
+      env.log.debug('capture push type=%d dropped: petLevel=0 (wild window refused).', et);
       return;
     }
     this.#tryEvent(et, es, toNum(inner.endTime), 'beast push', pab);
@@ -518,6 +553,7 @@ export class CaptureEngine {
     this.#nextFeedAt = 0;
     this.#toldNoFeed = false;
     this.#notFeedLogged = false;
+    this.#petOffLogged = false;
     this.#quietLogged = false;
     this.#quotaToldSec = 0;
     this.#lastFeedAt = Date.now();

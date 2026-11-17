@@ -133,8 +133,8 @@ export const CMD_CALL_HELP = 8551;
 /**
  * ENIGMA_SECRET_ROOM_REVIVE：战败复活（req `{uid}`，`ok===1` 后游戏 `jumpToTarget(roomBaseInfo.startPoint)`）。
  * 消费口在战败面板 PabWorldDefeatPanel（tips enigma_realm198 带 reviveNum+1）。本 feat 在自动驾驶下
- *   代答一条 8552（判据 `deadType==1 && dataConfig(3056) > reviveNum`，见 pilot.js #maybeRevive），
- *   受面板 `driveRevive` 子闸 + `driveReviveGapMs` 限速 + 上限读不到/为 0 一律不发 三重约束。
+ *   代答一条 8552（判据 `deadType==1 && dataConfig(3056) > reviveNum`，见 pilot.js #maybeRevive）——
+ *   系统默认行为（无面板子闸），受 `driveReviveGapMs` 限速 + 上限读不到/为 0 一律不发 两重约束。
  * @type {number}
  */
 export const CMD_REVIVE = 8552;
@@ -142,6 +142,7 @@ export const CMD_REVIVE = 8552;
  * ENIGMA_SECRET_ROOM_LEAVE：退出 BOSS 战区（req `{uid:UID+""}`，`ok===1` 后游戏 `pabFightQuit()`）。
  *：`baseActivityInfo.type===1 && isPABServer()` 时额外 `leaveObserve()+purge()+emit(UPDATE_PAB_SELF_ATTACK,0)`；
  *   未选完 options 时 tips enigma_realm203。**整场退出、不是「换个点」** → 不作为「立即转移」手段。
+ * @deprecated 二轮收口废弃拿满自动离场（leave.js 已删）：停止读取，键保留供旧录制对拍/注册表兼容。
  * @type {number}
  */
 export const CMD_LEAVE_AREA = 8589;
@@ -151,7 +152,8 @@ export const CMD_LEAVE_AREA = 8589;
  *   `id`（protobuf Int64）填进 `uuIds`、`itemIds` 留空，`ok===1` 后才发 8589 LEAVE → 它是「只带最好的走」的预选项，
  *   不是背包写入（配合 21521 段 `roomBagInfo.backItemIds/backBeasts` = 撤离带出选择结果）。
  * ⚠ **8581 的线路形态只有源码级依据**（游戏侧那条自动离场路径不由本 feat 走），逐键形态未经报文核对，
- *   且宠物清单键 `beastInfo` 未实机确认存在 → 消费口见 leave.js，读不到清单即**不发**（宁不离场）。
+ *   且宠物清单键 `beastInfo` 未实机确认存在。
+ * @deprecated 二轮收口废弃拿满自动离场（leave.js 已删）：停止读取，键保留供旧录制对拍/注册表兼容。
  * @type {number}
  */
 export const CMD_BAG_GET_SET = 8581;
@@ -939,6 +941,13 @@ export const tuning = {
    */
   tileAccMax: 32,
   /**
+   * 治疗：**掉血阈值**（百分比，系统常量不露面板）：某支军队 `armyPower/maxArmyPower <= 1 - 本值/100`
+   *   即算伤员（达阈即伤；不写 `1 - ratio >= need`，浮点上恰好掉血 10% 会被误判无伤）。
+   *   预筛（21521 powerInfos）与 8584 权威路逐位同式共用（夹 [0,100] 口径在 heal.js）。
+   * @type {number}
+   */
+  healLossPct: 10,
+  /**
    * 治疗：无伤（或无可用道具）时的扫描间隔（毫秒）。
    * 8584 是一个「拉全编队血量」的查询包，没伤也不需要频；游戏弹层只在玩家开窗时才发。
    */
@@ -1049,21 +1058,35 @@ export const tuning = {
    */
   shopSweepMs: 600000,
   /**
-   * 攻击警告：判定「我确实被盯上」的**连续存活窗**（毫秒）。21534 一场 591 条里 525 条是 0（频繁跳变），
-   *   单条 num>0 就转走会把玩家自己“手操撤离”变成抽风；本窗内无新的 num>0 即认为警报解除。
+   * 商店：**自动驾驶开着或低保（type3）还欠**时的短轮询间隔（毫秒）。
+   *   到店驻留窗只有 driveShopDwellMs（25s），队员被队长带到店也是同一个窗：睡满 shopSweepMs（10min）
+   *   就错过整个驻留窗；低保停购期也要短轮询赶上「离店→换店再到店」。取 3000：赶得上驻留窗，
+   *   又不至 shopGapMs(250) 节拍空转（取代本引擎对已废 driveScanMs 的读）。
+   * @type {number}
+   */
+  shopWatchMs: 3000,
+  /**
+   * 攻击警告：判定「我确实被盯上」的**连续存活窗**（毫秒）。
+   * @deprecated 面板档定为「num>0 立即转移」后本键已无消费者；warn.js 并入自动驾驶后停止读取，仅留 storage 兼容。
    */
   warnAliveMs: 8000,
   /**
-   * 攻击警告：转点后的**再评估静默**（毫秒）。转移本身要 31~44s（一整套 8521→采集→8526 闭环），
-   *   且 8521 在行军途中必吃 158「小队尚未抵达」 → 不到达就不重评。
-   *   取 45000：比闭环上限（44.2s）多一档。
+   * 攻击警告：转点后的**再评估静默**（毫秒）。
+   * @deprecated warn.js 并入自动驾驶后停止读取；pilot evade 冷却改读 driveEvadeCooldownMs，仅留 storage 兼容。
    */
   warnMoveCooldownMs: 45000,
   /**
+   * 驾驶：**evade 专属冷却**（毫秒）：上一次逃后本值内不再重发 evade（不抬全局路由锁，不拦常规选点）。
+   *   承接旧 warnMoveCooldownMs(45s) 语义：转移闭环 31~44s，不到达不重评；
+   *   pilot #dispatch 取 `max(本值, driveThreatReEvadeMs)`，两键任何相对大小都不互相遮蔽。
+   * @type {number}
+   */
+  driveEvadeCooldownMs: 45000,
+  /**
    * 驾驶：**威胁窗内可再逃**的触发阈值（毫秒）。首次逃后，若 21534 num>0 仍持续超过本值
    *   → 复位 `#threatEvaded` 允许再挪一次（原「一次威胁窗只逃一次」在持续抓车时会困死）。
-   *   ⚠ 耦合：evade 冷却（pilot #dispatch）取 `max(本值, warnMoveCooldownMs)`，本值小于 45s 时
-   *   实际再逃时刻由 warnMoveCooldownMs 决定（取 max 是为两键任何相对大小都不互相遮蔽）。
+   *   ⚠ 耦合：evade 冷却（pilot #dispatch）取 `max(本值, driveEvadeCooldownMs)`，本值小于 45s 时
+   *   实际再逃时刻由 driveEvadeCooldownMs 决定（取 max 是为两键任何相对大小都不互相遮蔽）。
    * @type {number}
    */
   driveThreatReEvadeMs: 30000,
@@ -1073,8 +1096,8 @@ export const tuning = {
    */
   driveThreatReEvadeMax: 2,
   /**
-   * 攻击警告：转移引擎的空闲轮询兑底（毫秒）。面板档定为「num>0 立即转移」（不做存活窗去抖），
-   *   故触发主要靠 push 21534 事件 kick；本值只用于「警告挂起但快照里暂无就近营帐」时的重扫间隔。
+   * 攻击警告：转移引擎的空闲轮询兑底（毫秒）。
+   * @deprecated warn.js 并入自动驾驶（pilot 威胁块）后停止读取，仅留 storage 兼容。
    */
   warnScanMs: 3000,
   /**
@@ -1101,20 +1124,24 @@ export const tuning = {
   /**
    * 驾驶：到点 WORK 相位的**固定驻留时长**（毫秒），驻留满即记消费走人。
    * 现仅用于「无采集进度信号」的点（BOSS 平台 176 让 boss.js 打仗、其余非资源/掉落点）；
-   *   资源点 173 / 掉落箱 163 走「拿空即走」（driveEmptyDwellMs + driveWorkMaxMs），不吃本值。
+   *   资源点 173 / 掉落箱 163 走「拿空当拍即走」（拿不空受 driveWorkMaxMs 天花板兜底），不吃本值。
    *   取 45s：覆盖到点后 BOSS 攻打/一整套采集闭环上限 44.2s。
    * @deprecated v4 重写作废：到点驻留改由 driveResStaySec +「拿空即走」判定，本键停止读取。
    */
   driveWorkDwellMs: 45000,
   /**
-   * 驾驶：**资源点/掉落箱「拿空」后**再多驻留的 settle（毫秒，面板可配，可 0=拿空立即走）。
-   * 拿空判据有**两路料源任一命中即走**（见 pilot.js #isTileEmpty）：
-   *   ① 过渡路（独立订阅 21522/21532 按点记账，零耦合 pickup）：173 bag 空闲==0 且 buff 空闲==0；163 drop 空闲==0 且 beast 空闲==0；
-   *   ② 当前态路（读 10018 快照，到点即判，解决「到点前已被别人采空、之后无人再碰→无 CHANGE」的死等）：
-   *      173 `m.rTime` 落在未来=井已被抽空（rTime 只覆盖 bag，若 CHANGE 显示 buffFree>0 则不据此判空）；163 `m.iNum`==0=无可拾条目。
-   *   大量 173 首帧视口即带 rTime 且本队从未采集（多会话一致）。
+   * 驾驶：**资源点/掉落箱「拿空」后**再多驻留的 settle（毫秒）。
+   * @deprecated 判空两路料源（21522/21532 账归零、10018 rTime/iNum）皆为服务器结算后权威态，
+   *   拿空当拍即走不再留 settle 地板，本键停止读取，仅留 storage 兼容。
    */
   driveEmptyDwellMs: 0,
+  /**
+   * 驾驶：**终局奖励弹窗保持窗**（毫秒）。大BOSS 确证死局（state30/墓碑）后先冻住路由/驻留本值时长，
+   *   让游戏奖励弹窗完整展示/领取；窗满派最后一趟商店，驻留结算后本场自动驾驶永久收场
+   *   （再勾启用也不复活，换场 fightBeginTime 变化才复位）。用户拍板 2026-11-17 固定 5s，不上面板。
+   * @type {number}
+   */
+  driveEndgameHoldMs: 5000,
   /**
    * 驾驶：**商店到店驻留**（毫秒，面板可配）。到店后 shop.js 逐行补货（8540/8542/8543），
    *   驻留满即离店；与「大BOSS 前定点勤务」和 reactive 补货共用本值。默认 25s。
@@ -1265,17 +1292,6 @@ export const tuning = {
    */
   driveSausageTarget: 10,
   /**
-   * §9.2 购物/采集**晶块保底**基准（竞品 L24221 写死字面量，非用户调参 → 入 constants 带注释，禁内联魔法数）。
-   *   竞品 `ids` 过滤式：`getItemNumById(41009) > base − getItemNumById(41011)*perSausage − (买过百兽箱?box:0)`
-   *   → 从购物/采集清单剔掉 41009（晶块够买香肠/百兽箱就不必再刷/采晶块）。
-   * @type {number}
-   */
-  shopReserveBaseCrystal: 12000,
-  /** @type {number} §9.2 保底式里每根香肠(41011)扣减的晶块系数（竞品 L24221 `*500`） */
-  shopReserveCrystalPerSausage: 500,
-  /** @type {number} §9.2 保底式里「本场已买过百兽箱(piece==1)」时的晶块额外预留（竞品 L24221 `3000`） */
-  shopReserveCrystalBeastBox: 3000,
-  /**
    * pickup §9.3/§9.4 **自愈补拉的点位静默窗**（毫秒，键 `r@x,y`/`d@x,y`）。
    *   竞品语义：`drop_list` 按箱 `endTime` 去重（未过期不再主动 8532），到点 8526 由 `onPabTeamMarchArrive` 触发一次；
    *   我方 8532 应答若带回 `endTime` 会**覆盖**本 TTL 改为按箱到期日静默，取不到才退回本窗。
@@ -1303,7 +1319,7 @@ export const tuning = {
   driveMarchPolicy: 0,
   /**
    * pilot 打野策略：0 打野优先于采井 / 1 采井优先于打野 / 2 完全不打野。
-   *   ⚠ v4.2 起面板 `driveBeast`（允许打野抓宠总闸，缺省 true）为上层开关：关时 pilot 直接把打野三档
+   *   ⚠ v4.2 起面板抓宠等级 `drivePetLevel`（0=不抓宠，1~4=至少 N 星）为上层开关：0 时 pilot 直接把打野三档
    *   短路（beastOff，等价本值=2），本 tuning 仅决定「开启抓宠时打野与采井的先后」。
    */
   driveBeastPolicy: 0,
@@ -1312,7 +1328,7 @@ export const tuning = {
    *   2 跳过「石头奖励已领过且我到场打过」的 / 3 跳过任何有石头记录的。
    */
   driveGuardPolicy: 0,
-  /** @type {number} pilot 打野档的最小品质（enigma_beast 行 quality ≥ 本值才去）。v4.2 起作面板 driveBeastQuality 的回落缺省 */
+  /** @type {number} pilot 打野档的最小品质（enigma_beast 行 quality ≥ 本值才去）。作面板 drivePetLevel 的回落缺省 */
   driveBeastMinQuality: 4,
   /**
    * pilot：读秒**开始前**的禁店窗（毫秒）与窗宽（毫秒）。判据
@@ -1424,9 +1440,7 @@ export const tuning = {
   drivePlaneLeadSec: 60,
   /**
    * pilot：**资源/掉落点到点驻留上限**（秒，对齐竞品 `res_stay_time`）。
-   *   语义等价旧三键 `driveResStayPerBagMs/base/max` 的公式 `min(res_stay, n*0.8+1.1)`（pilot.js L1950），
-   *   本键为该公式的 `res_stay` 上界；旧三键仅作 storage 迁移入口保留。取 8 ≡ `driveResStayMaxMs:8000`。
-   * @type {number}
+   * @deprecated 拿空当拍即走、不再加动态驻留地板（work-mode.js resDwellMs 已删），本键停止读取，仅留 storage 兼容。
    */
   driveResStaySec: 8,
   /**
@@ -1436,18 +1450,22 @@ export const tuning = {
    */
   driveShopIntervalSec: 480,
   /**
-   * pilot：**战力差预检开关**（对齐竞品 `option.check_power`，v4.1 已在 pilot.js 威胁档实装）。
-   *   本队战力取 21521 本地 `roomBaseInfo.members[].powerInfos[].power` 求和（heal.js 同源已证），
-   *   来犯战力按需查 8549 ATTACK_SELF_TEAM（源码已证；本局录制 0 次发的 `TEAM_INFO` 根本不依赖）；
-   *   差>0 这一拍不逃、落回常规阶梯；读不到/查败一律保守照逃（闭开）。
-   * @type {boolean}
+   * pilot：**战力差预检开关**（对齐竞品 `option.check_power`）。
+   * @deprecated 检查方式未定案，先废弃：威胁档恒按保守照逃（hold 恒 true），8549 探针已删，本键停止读取，仅留 storage 兼容。
    */
   driveCheckPower: false,
   /**
-   * pilot：**战力差探针结果缓存**（毫秒）：威胁窗持续时防逐拍重发 8549 烧协议；超时重探。
-   * @type {number}
+   * pilot：**战力差探针结果缓存**（毫秒）。
+   * @deprecated 随 driveCheckPower 一并废弃（8549 探针已删），本键停止读取，仅留 storage 兼容。
    */
   drivePowerGapTtlMs: 4000,
+  /**
+   * pilot：**遭遇战连输即逃**的连输场数阈值（系统默认不露面板）。三局两胜口径：
+   *   连输达到本值（21523 对手胜场 +1 且回合递增记一输，己方胜场 +1 清零）且本场未逃过 → 逃往无队资源井。
+   *   LL 与 WLL 触发、LWL 不触发；isEnd/异点/回合回退/stop 复位连输账。
+   * @type {number}
+   */
+  drivePvpFleeLossStreak: 2,
   /**
    * pilot：本场已到场打过的 BOSS 是否计入跳过账（与 `guard_policy==2` 联动）。
    *   true=跳过重复目标；false=只按石头奖励记录判（更激进，会重打同一个）。
@@ -1473,8 +1491,8 @@ export const tuning = {
    */
   driveReviveGapMs: 15000,
   /**
-   * 拿满自动离场（leave.js）：扫描间隔（毫秒）。离场是「读背包数 → 发一次 8581 → 发一次 8589」的低频动作，
-   *   不需要紧拍；本值只兜「品质增益/背包刷新漏拍」的重评节奏（离场动作另有内存态防重发）。
+   * 拿满自动离场（leave.js）：扫描间隔（毫秒）。
+   * @deprecated 二轮收口废弃拿满自动离场（leave.js 已删）：停止读取，键保留供旧配置/注册表兼容。
    */
   leaveScanMs: 3000,
   // ── 侦察囤情报（scout.js）──

@@ -540,7 +540,8 @@ export const secretRealm = {
   /**
    * 宠物携带背包**总容量** = 基础格数 dataConfig(3017) + 增益 `GameDefine.BuffType.PabExtraPackItemNum` 的扩容。
    *   即 `Number(getDataConfigData(3017)) + pab.getPabBuffValueByType(GameDefine.BuffType.PabExtraPackItemNum)`。
-   * 任一环取不到即** fail-safe 回 0**（调用方 leave.js 把 0 当「容量未知、不触发离场」，防把未坐实的阈值当成「拿满」误发整场退出）：
+   * 任一环取不到即** fail-safe 回 0**（调用方把 0 当「容量未知、不触发 exit 档」：leave.js 二轮收口已退役，
+   *   现 petPackIsFull→exit 档同口径，防把未坐实的阈值当成「拿满」）：
    *   3017 读不到/为 0、控制器无 getPabBuffValueByType、BuffType 枚举缺成员，都收 0。
    * @returns {number} 总容量（0 = 容量不可信，不触发离场）
    */

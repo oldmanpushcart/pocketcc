@@ -3,15 +3,16 @@
  *
  * 定位：**只侦察囤情报、不派兵**——本 feat 不会主动开车去野怪点（拍宠仍由玩家带到，见 index.js 第 3 条
  *   与 pilot.js 文件头「172 不在巡航档」），故本引擎不改变任何行车/攻打行为，只把「哪个野怪点是哪只兽、什么品质」这份
- *   情报攒进内存缓存（供面板展示与后续择点派兵复用）。面板开关 `scoutEnabled` **v4.1 起缺省开**——本缓存是
- *   打野档品质闸（pilot.js 打野档窄筛 pickBeast 的 qualityFor）的唯一料源，关掉后未知品质恒按 2 处理、被
- *   driveBeastMinQuality=4 筛光，打野整档哑火（竞品 scoutBeast 挂主调度 %9 默认在跑，同口径）；侦察会真消耗背包勘察车道具，护栏见下。
+ *   情报攒进内存缓存（供面板展示与后续择点派兵复用）。**无面板开关（二轮收口）**：派生闸＝自动驾驶开启且
+ *   抓宠等级>0（drive.enabled && drive.petLevel>0）——本缓存是打野档品质闸（pilot.js 打野档窄筛 pickBeast 的
+ *   qualityFor）的唯一料源，选抓宠即默认先侦察确认星级（不抓宠/drive 关时情报无消费者且省勘察车）；
+ *   关掉后未知品质恒按 2 处理、被 minQ 筛光的问题由派生闸天然避免；侦察会真消耗背包勘察车道具，护栏见下。
  *
  * 侦察链路（只取侦察、不接派兵择点）：
  *   • 链路 = 先 8536 BEAST_INFO **免费预检**（req `{x,y}`），应答带 `beastId` 即「已侦察」→ 直接囤结果、**不花道具**
  *     （8536 在侦察前回 `{beastType,pveId}` 无 beastId、侦察后回 `{…,beastId:39}`）；
  *     应答无 `beastId` 才 8537 BEAST_SCOUT（req `{x,y}`，扣 1 个 41001，回 `{beastType,pveId,beastId}`）；
- *   • 品质 = `enigma_beast[beastId].quality`（与 leave.js/pickup.js 同一张表同一读法，读不到行则 quality 存 null、仍囤 beastId）；
+ *   • 品质 = `enigma_beast[beastId].quality`（与 pickup.js 同一张表同一读法，读不到行则 quality 存 null、仍囤 beastId）；
  *   • 不用 esrId 轮次时间闸（enigma_secret_realm_timer.start）：172 瓦片 esrId 恒 15、无逐点差异
  *     （见 constants PAB 段），拿它做闸只会误拦；改用「state=0 空闲 + 无驻军 + 未被别队号召」的点位态判据。
  *
@@ -24,7 +25,7 @@
  *   • 8536 全局间隔 `scoutInfoGapMs` 防撞次通道频控，查到未侦察的点 `scoutReQueryMs` 后才重查（兼顾新生野怪）。
  *
  * 红线与频控：只走 ACL sendSecret 发 8536/8537，不碰游戏 Update/Delete、不调游戏侧 spyon 方法；侦察用的是**本人私有背包**
- *   的勘察车（getItemNumById 读 roomBagInfo），**非队级动作**→ 不要求队长（与 8521/8548/8589 那族「驱动全队」的写请求不同）；
+ *   的勘察车（getItemNumById 读 roomBagInfo），**非队级动作**→ 不要求队长（与 8521/8548 那族「驱动全队」的写请求不同）；
  *   非秘境 / 未激活 / 关闭档一律长睡。Int64（fightEndTime/fightBeginTime/teamId）以 toNum 读。
  */
 import { createCycle } from '../../../core/cycle.js';
@@ -66,7 +67,7 @@ function dist(ax, ay, bx, by) {
 }
 
 /**
- * protobuf Long / {_low,_high} / number / 字符串 → 数值（取不到回 0）。与 boss.js/leave.js 同口径。
+ * protobuf Long / {_low,_high} / number / 字符串 → 数值（取不到回 0）。与 boss.js/pickup.js 同口径。
  * @param {*} v 数值字段原值
  * @returns {number}
  */
@@ -162,8 +163,11 @@ export class ScoutEngine {
     const g = this.#gates;
     if (!env.alive()) return 0;
     if (g.edge('realm-off', !env.realmActive(), 'not in pab realm')) return tuning.scoutScanMs;
-    const sc = env.cfg().scout;
-    if (g.edge('cfg-off', !sc || !sc.enabled, 'scoutEnabled OFF')) return tuning.scoutScanMs;
+    // 派生闸（二轮收口，无面板开关）：选抓宠（petLevel>0）且自动驾驶开启才侦察——
+    //   遇野宠先免费预检确认星级喂品质闸；不抓宠/drive 关时情报无消费者且省勘察车。
+    const dv = env.cfg().drive || {};
+    if (g.edge('cfg-off', !(dv.enabled && Number(dv.petLevel) > 0), 'drive off or petLevel=0'))
+      return tuning.scoutScanMs;
     if (
       g.edge('in-flight', this.#infoInFlight || this.#scoutInFlight, '8536/8537 async chain busy')
     )
@@ -354,7 +358,7 @@ export class ScoutEngine {
   }
 
   /**
-   * beastId → enigma_beast 行 quality（与 leave.js/pickup.js 同表同读法）；行/字段读不到回 null（仍囤 beastId，不把未知当低品质）。
+   * beastId → enigma_beast 行 quality（与 pickup.js 同表同读法）；行/字段读不到回 null（仍囤 beastId，不把未知当低品质）。
    * @param {number} beastId enigma_beast 主键
    * @returns {number|null} 品质（null=读不到）
    */

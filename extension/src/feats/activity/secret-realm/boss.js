@@ -232,16 +232,6 @@ export class BossEngine {
     const env = this.#env;
     const g = this.#gates;
     const now = Date.now();
-    // 手动接管暂停闸（1115 问题5/10）：用户手发 8521 时 drive 暂停，攻打同步停手，
-    //   直到 drive.enabled 重新开启（pilot #manualPaused 经 env.drivePaused 惰性读，读不到静默降级）。
-    if (
-      g.edge(
-        'drive-paused',
-        typeof env.drivePaused === 'function' && env.drivePaused(),
-        'manual takeover, drive paused',
-      )
-    )
-      return;
     // 这一条既拦两枪最小间隔、也拦被拒退避（#handleMarchReject 写长档），且必须定 #sleep 而不能回 0
     if (now < this.#cooldownUntil) {
       this.#sleep = this.#cooldownUntil - now;
@@ -285,6 +275,17 @@ export class BossEngine {
         'drive-steer',
         !!(drv && drv.enabled && steer && steer.tag !== 'boss' && steer.tag !== 'boss-plane'),
         'pilot steering to non-BOSS target: ' + (steer ? steer.tag + '|' + steer.xy : '-'),
+      )
+    )
+      return;
+    // 终局让闸（大BOSS 死局）：本场自动驾驶已收场，攻打行军同停——哪怕小BOSS 还活着也不打
+    //   （用户拍板 2026-11-17：大BOSS 死后不再继续）。闩在 index.js 模块级，活过引擎重建；
+    //   与 drive 开关无关：drive 关着但终局已落闩时同样停（收场是场级语义不是开关语义）。
+    if (
+      g.edge(
+        'endgame',
+        typeof env.endgameActive === 'function' && env.endgameActive(),
+        'final BOSS dead, autopilot ended for this match',
       )
     )
       return;

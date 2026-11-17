@@ -1,7 +1,9 @@
 /**
  * 编队治疗引擎（异能秘境：对**受伤军队**使用秘境背包里的治疗道具）。
  *
- * 语义：只在「已拉到本编队血量快照、且某支军队掉血达到阈值、且秘境背包里还有白名单道具」时动作；
+ * 系统默认行为（无面板开关、无物品勾选）：进秘境即生效，仅 realm-off 闸；
+ *   掉血阈值 = 系统常量 tuning.healLossPct(10%)；道具恒走游戏白名单 dataConfig(3035) 全量。
+ *   语义：只在「已拉到本编队血量快照、且某支军队掉血达到阈值、且秘境背包里还有白名单道具」时动作；
  *   不做找怪/派兵/攻打，与 pickup.js（拾取）、capture.js（拍宠物）解耦。
  *
  * 链路（源码 NWorldPabTeamSelfPopup / NWorldPabTeamSelfItem）：
@@ -11,11 +13,11 @@
  *      源码 NWorldPabTeamSelfPopup.updateView：`sendPBV2(8584,{uid:this._uid})`，
  *      且道具按钮**只在本人（`_uid===String(UserData.UID)`）时绘制** → 非本人的军队游戏根本不给治疗口。
  *   ② 受伤判据 = 源码 progress 口径 `armyPower / maxArmyPower`（NWorldPabTeamSelfItem.updateUI），
- *      本引擎在其上加面板阈值：`1 - armyPower/maxArmyPower >= healThreshold/100`。
+ *      本引擎在其上加系统常量阈值：`armyPower/maxArmyPower <= 1 - tuning.healLossPct/100`（达阈即伤员）。
  *   ③ 道具白名单**不硬编码**：源码 `getDataConfigData(3035).split('|')`，逐个
  *      `getItemNumById(id) > 0` 才画按钮（本 feat 用到的是 41002 急救绷带 / 41003 全科医疗包）。
- *      v4.1 起按**伤情分档选药**（竞品 recuperate L25042 同旨）：`ratio<0.9` 重伤优先 41003（急救箱），
- *      否则优先 41002（绷带）；首选不在白名单/缺货/被拉黑则落回勾选（3035）常规序，档位只在白名单内生效。
+ *      按**伤情分档选药**（竞品 recuperate L25042 同旨）：`ratio<0.9` 重伤优先 41003（急救箱），
+ *      否则优先 41002（绷带）；首选不在白名单/缺货/被拉黑则落回白名单（3035）常规序，档位只在白名单内生效。
  *   ④ `8534 ENIGMA_SECRET_ROOM_BAG_USE {info:{itemId,itemCount:1}, marchId}` —— 源码
  *      NWorldPabTeamSelfItem.useItem；**`itemCount` 恒为 1**（游戏是逐件点击语义），
  *      **`marchId` 直接复用 8584 应答里那个 Int64 对象本体**（不 Number 化、不转字符串、不 Int64.fromString）。
@@ -23,15 +25,16 @@
  *   ⑤ 回环：8584 与 8534 严格交替，8534 成功后 0.5~0.6s 必有一条 8584 → 节拍 tuning.healGapMs=600
  *   与之一致；本引擎不镜像血量，治疗后的新血一律以重新拉到的快照为准（红线）。
  *
- * 一拍只做一个动作（与游戏逐件点击同口径），且**一拍最多发一次 8584**：
- *   快照新鲜 → 决策并用掉一件道具（返回 healGapMs）；
+ * 一拍只做一个动作（与游戏逐件点击同口径，8534 itemCount 恒 1 是协议形状不是配额旋钮），且**一拍最多发一次 8584**：
+ *   快照新鲜 → 决策并用掉一件道具（返回 healGapMs）；循环按 healGapMs(600ms) 自然续拍，
+ *   直到「快照无伤员（恢复到阈值以上）」或「无可用道具（用光/被拉黑）」才长睡；
  *   快照过期/缺场 → **先过一遍零成本预筛**（见下）才发 8584 拉新快照（返回 healGapMs，应答到达即 kick 复跑）；
  *   无伤 / 无道具 / 未激活 → 返回 healScanMs 长睡（没伤就不该频着拉全编队血量）。
  *   成功用掉一件后把快照标记为「早于本次动作」→ 下一拍自动去重拉新血，既不猜血量也不与游戏自补的那条 8584 撞车。
  *
  * 零成本预筛（#mayNeedHeal）：8584 是个「拉全编队血量」的查询包，而 push 21521
  *   已把每支军队的 `{power, initPower}` 送到本地（`roomBaseInfo.members[].powerInfos[]`，一对「初始/当前」）
- *   → 先用面板阈值扫一眼，确认无伤就**一个查询包也不发**。
+ *   → 先用系统常量阈值扫一眼，确认无伤就**一个查询包也不发**。
  *   预筛只做「拦明显无伤」这一件事，不拿它决定给哪支军队用道具（那仍以 8584 的权威快照为准，红线），
  *   且任何证据缺失（找不到我 / 无 powerInfos / 算不出比值）一律放行。
  *
@@ -100,11 +103,10 @@ function cloneId(v) {
  * dataConfig(3035) → 治疗道具白名单（源码 `getDataConfigData(3035).split('|')`）。
  * dataConfig 回的是原始串（形如 "41002|41003"）；只留正整数、去重保序，
  *   读不到（配置未就绪/键缺失）回空数组 → 引擎按「游戏白名单不可用」降级不用道具。
- * **导出给装配层的面板选项构建复用**（同一拆法两处共存必然漂移，与 buildModuleCfg 共用归一化同理）。
  * @param {*} raw gameConf.dataConfig(3035) 原值
  * @returns {number[]}
  */
-export function parseHealWhitelist(raw) {
+function parseHealWhitelist(raw) {
   const s = String(raw == null ? '' : raw);
   const out = [];
   for (const part of s.split('|')) {
@@ -136,14 +138,12 @@ export class HealEngine {
   #retried = {};
   /** @type {Object<string,1>} 已就「背包里没有该道具」打过 info 的 id（换一次余量才重新提示一次，防刷屏） */
   #toldEmpty = {};
-  /** @type {number} 本拍已发出的 8534 条数（一拍一件，与游戏逐件点击同口径） */
-  #sentThisTick = 0;
   /** @type {GateStateLog} 静默睡过出口的门控边沿日志（不参与判定） */
   #gates;
   /** @type {string} 本拍「快照新鲜却没治疗」的原因（仅诊断，下一条 debug 带出） */
   #idleWhy = '';
 
-  /** @param {object} env 注入底座 {alive, realmActive, cfg, secret, gameConf, l10n, log} */
+  /** @param {object} env 注入底座 {alive, realmActive, secret, gameConf, gameData, log}（治疗无面板配置，不读 cfg） */
   constructor(env) {
     this.#env = env;
     this.#gates = new GateStateLog(env.log, 'heal');
@@ -158,10 +158,7 @@ export class HealEngine {
     const g = this.#gates;
     if (!env.alive()) return 0;
     if (g.edge('realm-off', !env.realmActive(), 'not in pab realm')) return tuning.healScanMs;
-    const h = env.cfg().heal;
-    if (g.edge('cfg-off', !h || !h.enabled, 'heal.enabled=false')) return tuning.healScanMs;
 
-    this.#sentThisTick = 0;
     this.#idleWhy = '';
     if (
       g.edge(
@@ -170,7 +167,7 @@ export class HealEngine {
         this.#snap ? 'armies=' + this.#snap.armies.length : 'no snapshot',
       )
     ) {
-      if (this.#healOne(h)) return tuning.healGapMs;
+      if (this.#healOne()) return tuning.healGapMs;
       // 快照在手却没治疗：把原因落日志（事后区分「真没伤」与「药被拉黑/用完」）
       env.log.debug('heal: fresh snapshot but no action, reason=%s.', this.#idleWhy || '-');
       return tuning.healScanMs;
@@ -181,7 +178,7 @@ export class HealEngine {
     ) {
       return tuning.healGapMs;
     }
-    if (g.edge('nobody-wounded', !this.#mayNeedHeal(h), 'prescan via 21521 powerInfos')) {
+    if (g.edge('nobody-wounded', !this.#mayNeedHeal(), 'prescan via 21521 powerInfos')) {
       env.log.debug('heal: prescan says nobody wounded (21521 powerInfos), skip 8584.');
       return tuning.healScanMs;
     }
@@ -193,18 +190,15 @@ export class HealEngine {
    * 零成本预筛：只回答「值不值得为拉血量发一个 8584」，**不参与「给哪支军队用道具」的决策**。
    * 料源：push 21521 落地的 `roomBaseInfo.members[].powerInfos[]`（每条一个 `{power, initPower}`，
    *   与 8584 的 `armyPower/maxArmyPower` 同为一个「当前/初始」比值口径）。
-   * 阈值直接用面板 `threshold`（掉血百分比）：`1 - power/initPower >= threshold/100` 即算「有伤员」，
+   * 阈值直接用系统常量 `tuning.healLossPct`（掉血百分比）：`power/initPower <= 1 - healLossPct/100` 即算「有伤员」，
    *   与 #healOne 对 8584 快照的判据逐位同式（预筛与权威路不一致会在阈值边界上互相矛盾）。
-   *   本引擎只一档（直接吃面板 `threshold`）：拆两档只会让面板多一个旋钮，而预筛本来就不影响
-   *   最终用哪一件（那由 #healOne 按白名单顺序定）。
    * 三条 fail-open（宁可多发一次查询，也不把治疗闸死）：members 缺失/找不到我 / 该 member 无 powerInfos
    *   / 数组里一条都算不出比值。
    * 代价（写清不藏着）：21521 一场 239 条 ≈17s 一条 → 刚掉下去的血最长要等一条推送才进得了门；
    *   而本引擎节拍本就是 healScanMs 4s 一轮、一件一件用，治疗不是秒级需求，故可接受。
-   * @param {object} h 面板 heal 配置 {threshold}
    * @returns {boolean} true=有伤员或无证据（放行，发 8584）；false=确认无伤（不发）
    */
-  #mayNeedHeal(h) {
+  #mayNeedHeal() {
     const env = this.#env;
     const base = env.secret.getRoomBaseInfo();
     const members = base && base.members;
@@ -220,15 +214,16 @@ export class HealEngine {
     }
     const infos = mine && mine.powerInfos;
     if (!Array.isArray(infos) || !infos.length) return true;
-    const need = Math.min(100, Math.max(0, Number(h.threshold) || 0)) / 100;
+    const need = Math.min(100, Math.max(0, Number(tuning.healLossPct) || 0)) / 100;
     let judged = 0;
     for (let j = 0; j < infos.length; j++) {
       const p = infos[j];
       const init = toNum(p && p.initPower);
       if (!(init > 0)) continue;
       judged++;
-      // 与 #healOne 逐位同式（`1 - ratio >= need` 即伤员）：写成 `ratio <= 1 - need` 在阈值边界上两者可能判反
-      if (1 - toNum(p.power) / init >= need) return true;
+      // 与 #pickWounded 逐位同式（`ratio <= 1 - need` 即伤员）：不写 `1 - ratio >= need`——
+      // 浮点上 `1 - 0.9 = 0.09999999999999998 < 0.1`，恰好掉血 10% 会被误判无伤；两路必须用同一式
+      if (toNum(p.power) / init <= 1 - need) return true;
     }
     return judged === 0; // 一条比值都算不出来 = 无证据 → 放行
   }
@@ -291,12 +286,11 @@ export class HealEngine {
   }
 
   /**
-   * 治疗候选（按面板阈值筛最受伤的一支）。
-   * @param {object} h 面板 heal 配置 {threshold,maxPerTick}
+   * 治疗候选（按系统常量阈值筛最受伤的一支）。
    * @returns {object|null} 军队快照条目
    */
-  #pickWounded(h) {
-    const need = Math.min(100, Math.max(0, Number(h.threshold) || 0)) / 100;
+  #pickWounded() {
+    const need = Math.min(100, Math.max(0, Number(tuning.healLossPct) || 0)) / 100;
     let worst = null;
     let worstRatio = 1;
     const armies = this.#snap ? this.#snap.armies : [];
@@ -305,7 +299,7 @@ export class HealEngine {
       const max = a.maxArmyPower;
       if (!(max > 0)) continue; // 满血口径不明（无上限）→ 不猜
       const ratio = a.armyPower / max;
-      if (1 - ratio < need) continue;
+      if (ratio > 1 - need) continue; // 达阈即伤员（与 #mayNeedHeal 逐位同式，见彼处浮点边界注）
       if (ratio < worstRatio) {
         worstRatio = ratio;
         worst = a;
@@ -315,18 +309,16 @@ export class HealEngine {
   }
 
   /**
-   * 按「伤情分档优先（竞品 recuperate L25042）+勾选序（空=游戏 3035 白名单序）」挑第一件**背包有货且未被本会话拉黑**的道具。
+   * 按「伤情分档优先（竞品 recuperate L25042）+ 游戏 3035 白名单序」挑第一件**背包有货且未被本会话拉黑**的道具。
    *   重伤（`armyPower/maxArmyPower < 0.9`）先试 41003 急救箱，其余先试 41002 绷带；
-   *   首选不在白名单/缺货/被拉黑 → 落回勾选（3035）常规序（保守：不因为分档把可用药拦在门外；
+   *   首选不在白名单/缺货/被拉黑 → 落回白名单（3035）常规序（保守：不因为分档把可用药拦在门外；
    *   副作用是白名单序把 41003 排前时，轻伤也可能花掉急救箱，与竞品双档 fallback 略有出入，属取舍）。
-   * @param {object} h 面板 heal 配置 {items}
    * @param {object|null} army 受伤军队快照（{armyPower,maxArmyPower}；缺=不分档，走常规序）
    * @returns {number} itemId（0=没有可用道具）
    */
-  #pickItem(h, army) {
+  #pickItem(army) {
     const env = this.#env;
-    let ids = Array.isArray(h.items) ? h.items.filter(Number.isInteger) : [];
-    if (!ids.length) ids = parseHealWhitelist(env.gameConf.dataConfig(CFG_PAB_HEAL_ITEMS));
+    const ids = parseHealWhitelist(env.gameConf.dataConfig(CFG_PAB_HEAL_ITEMS));
     const has = function (id) {
       for (let i = 0; i < ids.length; i++) if (ids[i] === id) return true;
       return false;
@@ -368,27 +360,22 @@ export class HealEngine {
   }
 
   /**
-   * 治疗一拍里的一次动作：找受伤军队 → 选道具 → 发 8534（一发一件）。
-   * @param {object} h 面板 heal 配置
+   * 治疗一拍里的一次动作：找受伤军队 → 选道具 → 发 8534（一发一件，协议形状）。
+   *   无配额上限：循环按 healGapMs 自然续拍，直到快照无伤员（恢复到阈值以上）或无可用道具（用光）。
    * @returns {boolean} true=这次真发出了一个治疗包
    */
-  #healOne(h) {
-    const maxPer = Math.max(1, Number(h.maxPerTick) || 1);
-    if (this.#sentThisTick >= maxPer) {
-      this.#idleWhy = 'per-tick cap ' + maxPer + ' reached';
-      return false;
-    }
-    const army = this.#pickWounded(h);
+  #healOne() {
+    const army = this.#pickWounded();
     if (!army) {
       this.#idleWhy =
         'nobody below threshold in snapshot (armies=' +
         (this.#snap ? this.#snap.armies.length : 0) +
         ', need=' +
-        Math.min(100, Math.max(0, Number(h.threshold) || 0)) / 100 +
+        Math.min(100, Math.max(0, Number(tuning.healLossPct) || 0)) / 100 +
         ')';
       return false;
     }
-    const itemId = this.#pickItem(h, army);
+    const itemId = this.#pickItem(army);
     if (!itemId) {
       this.#idleWhy =
         'no usable item (whitelist rejected/empty; rejected=' +
@@ -397,7 +384,6 @@ export class HealEngine {
       return false;
     }
     this.#sendUse(army, itemId);
-    this.#sentThisTick++;
     // 血量账不在本地镜像：把快照标脏（下一拍重拉），同时接住游戏成功后自补的那条 8584（0.5~0.6s）
     this.#usedAt = Date.now();
     return true;
@@ -452,7 +438,6 @@ export class HealEngine {
     this.#active = true;
     this.#snap = null;
     this.#usedAt = 0;
-    this.#sentThisTick = 0;
     this.#rejected = {};
     this.#retried = {};
     this.#toldEmpty = {};

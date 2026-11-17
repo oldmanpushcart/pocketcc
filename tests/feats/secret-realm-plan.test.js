@@ -32,7 +32,6 @@ function mkCtx(over) {
     {
       shopWhy: null,
       teamType: 0,
-      driveBoss: true,
       bossMode: null,
       onBossPlane: false,
       bossSameArea: false,
@@ -52,6 +51,22 @@ const ids = (c) => matchStages(plan, c).map((s) => s.id);
 
 test('planIds 暴露内置方案且 default 在列', () => {
   assert.ok(planIds().includes('default'));
+});
+
+test('shopErrand 顶层旗标：default 方案含勤务；validatePlan 布尔形状检查', () => {
+  assert.equal(plan.shopErrand, true, 'default 方案含大BOSS 前定点勤务（无面板子闸）');
+  const { validatePlan } = mod;
+  assert.deepEqual(validatePlan({ stages: [] }, []), [], '省略旗标合法（pilot 读 !== false 兜底）');
+  assert.deepEqual(
+    validatePlan({ stages: [], shopErrand: false }, []),
+    [],
+    '布尔 false 合法（方案不做勤务）',
+  );
+  const errs = validatePlan({ stages: [], shopErrand: 'yes' }, []);
+  assert.ok(
+    errs.some((s) => s.includes('shopErrand')),
+    '非布尔必须报违例（启动期拒发车）',
+  );
 });
 
 test('BOSS 开打且已停同区平台 → bossFight 独占（terminal，不回落后续）', () => {

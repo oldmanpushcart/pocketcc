@@ -21,7 +21,7 @@ globalThis.chrome = globalThis.chrome || {
   runtime: { id: 'test', sendMessage() {}, getURL: (s) => s, onMessage: { addListener() {} } },
 };
 
-const { enter, tick, resDwellMs } =
+const { enter, tick } =
   await import('../../extension/src/feats/activity/secret-realm/work-mode.js');
 const C = await import('../../extension/src/feats/activity/secret-realm/constants.js');
 
@@ -40,14 +40,8 @@ function facts(over = {}) {
       driveShopExtraMs: 20000,
       driveShopStayMs: 5000,
       driveSausageTarget: 10,
-      driveEmptyDwellMs: 3000,
       driveScanMs: 1000,
-      driveResStayPerBagMs: 2000,
-      driveResStayBaseMs: 1000,
-      driveResStayMaxMs: 5000,
     },
-    change: null,
-    tile: null,
     sausageHave: 0,
     shopLedgerEntry: null,
     ...over,
@@ -59,15 +53,14 @@ test('enter 172 野怪：固定驻留 driveStayMonsterMs，不重路由', () => 
   const p = enter(C.PAB_MONSTER, f);
   assert.equal(p.workMode, 'dwell');
   assert.equal(p.workUntil, f.now + 20000);
-  assert.equal(p.workEmptyAt, 0);
   assert.equal(p.workDeadline, 0);
 });
 
-test('enter 173 井：empty 档，地板走 resDwellMs，天花板 driveWorkMaxMs', () => {
-  const f = facts({ change: { bagFree: 2, buffFree: 1 } });
+test('enter 173 井：empty 档无驻留地板（workUntil=0），拿不空受天花板 driveWorkMaxMs 兜底', () => {
+  const f = facts();
   const p = enter(C.PAB_RESOURCE, f);
   assert.equal(p.workMode, 'empty');
-  assert.equal(p.workUntil, 3 * 2000 + 1000); // 件数×perBag + base
+  assert.equal(p.workUntil, 0); // 拿空当拍即走，旧 resDwellMs 动态地板已废
   assert.equal(p.workDeadline, f.now + 45000);
 });
 
@@ -119,49 +112,34 @@ test('enter 其余点型（176 平台）：driveWorkDwellMs 固定驻留', () =>
   assert.equal(p.workUntil, 100000 + 8000);
 });
 
-test('resDwellMs：21522 空位优先、iNum 兜底、保底取大、driveWorkMaxMs 封顶', () => {
-  const t = facts().t;
-  assert.equal(resDwellMs({ bagFree: 2, buffFree: 1 }, { iNum: 99 }, t), 7000); // 记账优先
-  assert.equal(resDwellMs(null, { iNum: 4 }, t), Math.max(5000, 4 * 2000 + 1000)); // iNum 兜底 + 保底
-  assert.equal(resDwellMs({ bagFree: 0, buffFree: 0 }, { iNum: 3 }, t), Math.max(5000, 7000)); // 记账全 0 回退 iNum
-  assert.equal(resDwellMs(null, null, t), 5000); // 无料源只剩保底
-  const capT = { ...t, driveWorkMaxMs: 6000 };
-  assert.equal(resDwellMs(null, { iNum: 4 }, capT), 6000); // 天花板
-});
-
-test('tick empty：判空首拍记 workEmptyAt，地板=max(结算窗,动态驻留)，到期即走', () => {
+test('tick empty：isEmpty 当拍即走（无 settle 结算窗/无驻留地板，判空两路皆服务器结算后权威态）', () => {
   const f = facts({ isEmpty: true });
-  const s = { workMode: 'empty', workUntil: 107000, workEmptyAt: 0, workDeadline: 145000 };
-  // now=100000：readyAt=max(100000+3000, 107000)=107000 → 睡 7000，首拍带补丁
-  const r1 = tick(C.PAB_RESOURCE, s, f);
-  assert.equal(r1.leave, false);
-  assert.equal(r1.sleep, 7000);
-  assert.deepEqual(r1.patch, { workEmptyAt: 100000 });
-  // 已有 emptyAt 后不再重复补丁；到地板即走
-  const s2 = { ...s, workEmptyAt: 100000 };
-  const r2 = tick(C.PAB_RESOURCE, s2, { ...f, now: 106999 });
-  assert.equal(r2.leave, false);
-  assert.equal(r2.patch, undefined);
-  const r3 = tick(C.PAB_RESOURCE, s2, { ...f, now: 107000 });
-  assert.equal(r3.leave, true);
-  assert.equal(r3.sleep, 0);
+  const s = { workMode: 'empty', workUntil: 0, workDeadline: 145000 };
+  const r = tick(C.PAB_RESOURCE, s, f);
+  assert.equal(r.leave, true, '拿空当拍即走');
+  assert.equal(r.sleep, 0);
+  assert.equal(r.patch, undefined, '不再带 workEmptyAt 补丁');
+  // 旧地板料源（workUntil 动态驻留）不再拦路：即使 workUntil 未到也当拍走
+  const r2 = tick(C.PAB_RESOURCE, { ...s, workUntil: 107000 }, f);
+  assert.equal(r2.leave, true);
+  assert.equal(r2.sleep, 0);
 });
 
 test('tick empty：未判空 → 分段轮询；到天花板强制离点（empty_ceiling 日志）', () => {
   const f = facts({ isEmpty: false });
-  const s = { workMode: 'empty', workUntil: 0, workEmptyAt: 99000, workDeadline: 145000 };
+  const s = { workMode: 'empty', workUntil: 0, workDeadline: 145000 };
   const r1 = tick(C.PAB_RESOURCE, s, f);
   assert.equal(r1.leave, false);
   assert.equal(r1.sleep, 1000); // min(driveScanMs, 45000)
-  assert.deepEqual(r1.patch, { workEmptyAt: 0 }); // 判空计时复位
-  const r2 = tick(C.PAB_RESOURCE, { ...s, workEmptyAt: 0 }, { ...f, now: 145000 });
+  assert.equal(r1.patch, undefined);
+  const r2 = tick(C.PAB_RESOURCE, s, { ...f, now: 145000 });
   assert.equal(r2.leave, true);
   assert.match(r2.log.tpl, /reason=empty_ceiling/);
   assert.deepEqual(r2.log.args, ['10,20']);
 });
 
 test('tick BOSS：拍宠让路不赶车；bossLeaveWhy/no-window 两条提前离点', () => {
-  const s = { workMode: 'dwell', workUntil: 108000, workEmptyAt: 0, workDeadline: 0 };
+  const s = { workMode: 'dwell', workUntil: 108000, workDeadline: 0 };
   const f = facts();
   // 拍宠中：即使全图无窗也让路，分段轮询
   const r0 = tick(C.PAB_BOSS, s, { ...f, captureBusy: true, bossWin: null, bossLiveHere: false });
@@ -185,7 +163,7 @@ test('tick BOSS：拍宠让路不赶车；bossLeaveWhy/no-window 两条提前离
 });
 
 test('tick 非 BOSS dwell：睡满剩余驻留（不分段），到期离点', () => {
-  const s = { workMode: 'dwell', workUntil: 120000, workEmptyAt: 0, workDeadline: 0 };
+  const s = { workMode: 'dwell', workUntil: 120000, workDeadline: 0 };
   const r1 = tick(C.PAB_MONSTER, s, facts());
   assert.equal(r1.leave, false);
   assert.equal(r1.sleep, 20000); // 一次睡满，区别于 BOSS 分段
@@ -194,7 +172,7 @@ test('tick 非 BOSS dwell：睡满剩余驻留（不分段），到期离点', (
 });
 
 test('tick 商店：缺口续留分段轮询至 ceiling；超顶强制离店；补满当拍即走', () => {
-  const s = { workMode: 'dwell', workUntil: 125000, workEmptyAt: 0, workDeadline: 0 };
+  const s = { workMode: 'dwell', workUntil: 125000, workDeadline: 0 };
   // 驻留满但香肠 7/10 → ceiling=125000+20000=145000，分段轮询
   const r1 = tick(C.PAB_SHOP, s, facts({ now: 125000, sausageHave: 7 }));
   assert.equal(r1.leave, false);
@@ -211,7 +189,7 @@ test('tick 商店：缺口续留分段轮询至 ceiling；超顶强制离店；�
 });
 
 test('tick 商店：shopGiveUp 止损信号 → 缺口也不续留，当拍即走（四-2）', () => {
-  const s = { workMode: 'dwell', workUntil: 125000, workEmptyAt: 0, workDeadline: 0 };
+  const s = { workMode: 'dwell', workUntil: 125000, workDeadline: 0 };
   // 驻留已截短到 now（pilot shopRefreshGiveUp 同步截短），缺口仍在但带止损信号 → 不续留
   const r = tick(C.PAB_SHOP, s, facts({ now: 125000, sausageHave: 3, shopGiveUp: true }));
   assert.equal(r.leave, true);

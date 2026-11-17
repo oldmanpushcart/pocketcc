@@ -24,7 +24,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 /**
  * 构造最小假底座：点位固定在 (10,20)（marchState=ARRIVED、startPoint 在位），teamId 用 >2^53 的 16 位串以覆盖抹零分支。
- * @param {object} over { items, bossList, shopBoxBought, base 覆写 }
+ * @param {object} over { items, bossList, base, pickItems, stationRows 覆写 }
  */
 function makeHarness(over = {}) {
   const sent = [];
@@ -46,7 +46,7 @@ function makeHarness(over = {}) {
   const env = {
     alive: () => true,
     realmActive: () => true,
-    cfg: () => ({ pickItems: {}, buffEffects: [], drive: { enabled: true } }),
+    cfg: () => ({ pickItems: over.pickItems || {}, buffEffects: [], drive: { enabled: true } }),
     gameData: { myUidStr: () => '999' },
     gameConf: { dataConfig: (k) => ({ 3021: 50, 3061: 3, 3013: '10|3' })[k] },
     l10n: {
@@ -71,7 +71,6 @@ function makeHarness(over = {}) {
         return Promise.resolve({ ok: false, code: 161, reason: '' });
       },
     },
-    shopBoxBought: 'shopBoxBought' in over ? over.shopBoxBought : () => null,
   };
   const subs = new Map();
   const ctx = {
@@ -86,7 +85,7 @@ function makeHarness(over = {}) {
   return { engine, sent, subs, state };
 }
 
-test('§9.2 约束1：晶块(41009)已超保底 → 掉落箱候选里剔除，香肠(41011)照拾（竞品 ids 消费在 getDropBox/getResItem 侧）', async () => {
+test('§9.2（订正）竞品约束1已移除：晶块背包 13000 超旧保底 12000 仍默认采，香肠照拾（未登记行=默认采）', async () => {
   const { subs, sent } = makeHarness({ items: { 41009: 13000, 41010: 0, 41011: 0 } });
   const body = {
     x: 10,
@@ -102,12 +101,17 @@ test('§9.2 约束1：晶块(41009)已超保底 → 掉落箱候选里剔除，�
   subs.get(PUSH_DROP_CHANGE)({ data: body, status: 0 });
   await sleep(tuning.pickupDebounceMs + 900);
   const gets = sent.filter((s) => s.cmd === CMD_DROP_GET).map((s) => s.data.rId);
-  assert.deepEqual(gets, ['dSausage'], 'reserve=12000：13000>12000 应剔晶块，只剩香肠一笔 8533');
+  assert.deepEqual(
+    gets,
+    ['dCrystal', 'dSausage'],
+    '隐藏节流不再替玩家做主：两笔 8533 都发（背包上限闸兜底）',
+  );
 });
 
-test('§9.2 约束2：刷新币(41010)+香肠 >= 目标10 → 资源点候选里剔除 41010，普通道具照采；清台([0].state=30) 同剔', async () => {
+test('§9.2（订正）竞品约束2/3已移除：刷新币+香肠>=10、bossList[0].state=30 都不再停采，普通道具照采', async () => {
   const h = makeHarness({
     items: { 41009: 0, 41010: 10, 41011: 0 },
+    bossList: [{ state: 30 }],
     base: { pointType: PAB_RESOURCE },
     stationRows: { 1001: { item: 41010 }, 1002: { item: 41001 } },
   });
@@ -125,7 +129,51 @@ test('§9.2 约束2：刷新币(41010)+香肠 >= 目标10 → 资源点候选里
   h.subs.get(PUSH_RESOURCE_CHANGE)({ data: body, status: 0 });
   await sleep(tuning.pickupDebounceMs + 900);
   const gets = h.sent.filter((s) => s.cmd === CMD_RESOURCE_GET).map((s) => s.data.rId);
-  assert.deepEqual(gets, ['dScout'], '10+0>=10 应剔刷新币，只发 41001 一笔 8527');
+  assert.deepEqual(gets, ['dRefresh', 'dScout'], '配额/清台动态约束已移除：两笔 8527 都发');
+});
+
+test('§0 登记行意图级真相：item:41010 max=15、背包 10 → 续拾到 max（资源点 8527）', async () => {
+  const h = makeHarness({
+    items: { 41009: 0, 41010: 10, 41011: 0 },
+    pickItems: { 'item:41010': { on: 1, max: 15 } },
+    base: { pointType: PAB_RESOURCE },
+    stationRows: { 1001: { item: 41010 } },
+  });
+  h.subs.get(PUSH_RESOURCE_CHANGE)({
+    data: {
+      x: 10,
+      y: 20,
+      bagInfo: [{ dropId: 'dRefresh', specId: 1001, uid: null }],
+      buffInfo: [],
+      bagGetNum: 0,
+      buffGetNum: 0,
+    },
+    status: 0,
+  });
+  await sleep(tuning.pickupDebounceMs + 900);
+  const gets = h.sent.filter((s) => s.cmd === CMD_RESOURCE_GET).map((s) => s.data.rId);
+  assert.deepEqual(gets, ['dRefresh'], '登记行＝意图级真相：背包 10 < max 15 续拾');
+});
+
+test('§0 登记行意图级真相：item:41009 max=20000、背包 13000 → 续拾到 max（掉落箱 8533）', async () => {
+  const { subs, sent } = makeHarness({
+    items: { 41009: 13000, 41010: 0, 41011: 0 },
+    pickItems: { 'item:41009': { on: 1, max: 20000 } },
+  });
+  subs.get(PUSH_DROP_CHANGE)({
+    data: {
+      x: 10,
+      y: 20,
+      dropInfo: [{ dropId: 'dCrystal', uid: null, info: { itemId: 41009 } }],
+      dropBeastInfo: [],
+      bagGetNum: 0,
+      beastGetNum: 0,
+    },
+    status: 0,
+  });
+  await sleep(tuning.pickupDebounceMs + 900);
+  const gets = sent.filter((s) => s.cmd === CMD_DROP_GET).map((s) => s.data.rId);
+  assert.deepEqual(gets, ['dCrystal'], '登记行＝意图级真相：背包 13000 < max 20000 续拾');
 });
 
 test('§9.4 归属闸+去重：非本队/没货不拉；本队在位点只拉一发 8532；重复 10018 不再拉（drop_list 等价窗）', async () => {

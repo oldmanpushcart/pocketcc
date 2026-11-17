@@ -33,6 +33,15 @@
  *   每拍只做一个动作（买 1 笔 or 刷 1 次），
  *   串行（isSecretSending + #busy 双闸）→ 全部目标满足或无可继续（缺币/缺刷新币/售罄且 type3 不可刷）即返回长睡。
  *
+ * 低保前置闸（**系统默认行为，无面板开关；队长/队员同权，与自动驾驶/清单勾选无关**）：
+ *   type3（跨店共享限量；实证 spec20=38006601 传奇百兽箱碎片自选箱、单价 2000 晶块、全场额度 1）即本场低保。
+ *   到店 INFO 装载货单后先判「低保是否还欠」（#floorOwedWhy）：欠且买得起 → 本拍只买低保（#grabType3）；
+ *   欠但晶块不够/携带满/货单缺槽 → **本轮商店什么都不买**（floor-block 闸，香肠与清单补货一律让路），
+ *   短轮询等离店换店/余额变化；买到（getTime>0 或本会话已购，与 pilot.isBoxBought 的 piece>0 同口径）
+ *   或全场额度尽 → 闸放行，才轮到 #grabSausage/清单补货（二者仍受各自原总闸约束）。
+ *   「买到」位按场记（#floorGot，换场 #syncMatch 复位）。实证 dashcam 20261115T200249：每店 8540 货单恒带
+ *   spec20，买后跨店回带 20:1（共享额度）→ 缺槽只是防御形态，不代表本店不卖。
+ *
  * 只读+发包红线：只走 ACL sendSecret 发 8540/8542/8543，读余额用 getItemNumById，不调游戏侧 Update/Delete、不镜像态；
  *   非秘境/未停靠商店点/未激活一律长睡。Int64 无（这些协议载荷都是标量）。
  */
@@ -47,7 +56,6 @@ import {
   TABLE_ITEM,
   ITEM_TYPE_PAB,
   ITEM_SAUSAGE,
-  ST_BOSS_DEAD_END,
   PAB_SHOP,
   REJ_RETRY,
   CODE_NOT_SENT,
@@ -139,6 +147,11 @@ export class ShopEngine {
   #atShopWhy = '';
   /** @type {string} 场次锚（fightBeginTime 的字符串形；''=未钉）——变化即换场，#syncMatch 用它复位按场预算 */
   #matchKey = '';
+  /**
+   * @type {boolean} 本场低保（type3）是否已买到/额度尽（系统默认前置闸的放行位）。
+   *   买成应答即置；或任一 type3 货行 getTime>0（服务器权威、跨店共享）/本会话 #bought>0 补证；换场复位。
+   */
+  #floorGot = false;
 
   /** @param {object} env 注入底座 {alive, realmActive, cfg, secret, gameConf, l10n, log} */
   constructor(env) {
@@ -221,6 +234,9 @@ export class ShopEngine {
     this.#done = {};
     this.#retriedBuy = {};
     this.#told = {};
+    this.#floorGot = false;
+    // 换场货单基准作废：同点停靠跨场时不清 loadedXY 会拿上一场的 getTime 当本场基准（低保「买到」位误置）
+    this.#loadedXY = '';
     // 首钉静默；换场留一条 info 给单轨日志定轴（不逐拍刷屏）
     if (!first)
       this.#env.log.info('shop: new match (fightBeginTime=%s), refresh budget reset.', key);
@@ -238,17 +254,20 @@ export class ShopEngine {
     // 换场复位先于一切业务闸：引擎长期存活跨场，不复位则刷新预算/进度账/去重表跨场累计
     this.#syncMatch(env.secret.getRoomBaseInfo());
     const sc = env.cfg().shop;
-    // 总闸：
+    // 补货总闸（只管低保之外的补货）：
     //   ① 持有清单里任一行勾了「店」渠道（sc.enabled）→ 用户显式要求的补货；
     //   ② **自动驾驶开着（drive.enabled）** → 车会自己开到店，不买白跑一趟；自动驾驶即「替我开去商店」的
     //      意图表达，故没勾「店」渠道时也允许到店自动购买。
+    //   低保（type3）前置闸**不受本总闸约束**——系统默认行为，队长/队员同权（见 #floorOwedWhy）。
     const dv = env.cfg().drive;
     const autoBuy = !!(dv && dv.enabled);
+    const restock = !!(sc && sc.enabled) || autoBuy;
+    const floorOwed = this.#floorOwedQuick();
     if (
       g.edge(
         'master-off',
-        !(sc && sc.enabled) && !autoBuy,
-        'pickItems no shop channel and drive off',
+        !restock && !floorOwed,
+        'pickItems no shop channel, drive off, floor secured',
       )
     ) {
       return tuning.shopSweepMs;
@@ -258,16 +277,18 @@ export class ShopEngine {
       this.#loadedXY = '';
       g.edge('docked', false, '');
       // 没停在商店点：
-      //   · 自动驾驶开着 → **短轮询**：车随时可能到店，而到店只停 driveShopDwellMs（默认 25s），
-      //     本引擎若睡满 shopSweepMs（10 分钟）就错过了整个驻留窗 = 用户口径「到店也不买货」；
-      //   · 手动档 → 保守长睡，等玩家把队开到店里再醒（本引擎绠不主动开车）。
+      //   · 自动驾驶开着 **或低保还欠** → **短轮询**：车随时可能到店（队员由队长带到店也是同一个驻留窗），
+      //     而到店只停 driveShopDwellMs（默认 25s），本引擎若睡满 shopSweepMs（10 分钟）就错过了整个驻留窗
+      //     = 用户口径「到店也不买货」；
+      //   · 手动档且低保已买到 → 保守长睡，等玩家把队开到店里再醒（本引擎绝不主动开车）。
       //   闸名用 not-docked：实战最高危路径「到店也不买」就靠这条 + detail 定性。
+      const shortPoll = autoBuy || floorOwed;
       g.edge(
         'not-docked',
         true,
-        this.#atShopWhy + (autoBuy ? ' (short poll)' : ' (manual, long sleep)'),
+        this.#atShopWhy + (shortPoll ? ' (short poll)' : ' (manual, long sleep)'),
       );
-      return autoBuy ? tuning.driveScanMs : tuning.shopSweepMs;
+      return shortPoll ? tuning.shopWatchMs : tuning.shopSweepMs;
     }
     g.edge('not-docked', false, '');
     g.edge('docked', true, 'at (' + cur.x + ',' + cur.y + ')');
@@ -293,7 +314,35 @@ export class ShopEngine {
       env.log.debug('shop: not INFOed yet at %s, send 8540 first.', cur.key);
       return this.#sendInfo(cur) ? tuning.shopGapMs : tuning.shopSweepMs;
     }
-    // 选中的货位里找第一个可买/可刷的（补货项=持有清单 shop 渠道勾选，总闸 enabled 已在 #tick 夹过）
+    // 低保前置闸（系统默认行为，先于一切补货）：欠低保时本拍只允许买低保；
+    //   晶块不够等暂时不可得 → 本轮商店停购一切其他物品（floor-block），短轮询等换店/余额变化。
+    const cur0 = this.#currency();
+    const balance = cur0 ? env.secret.getItemNumById(cur0.buyId) : 0;
+    const why = cur0 ? this.#floorOwedWhy(balance) : '';
+    if (why === 'buy') {
+      this.#grabType3(cur, balance);
+      return tuning.shopGapMs;
+    }
+    if (
+      g.edge(
+        'floor-block',
+        !!why,
+        why ? 'reason=' + why + ' balance=' + balance + ' at ' + cur.key : '',
+      )
+    ) {
+      this.#note(
+        'floor|' + cur.key + '|' + why,
+        'shop: floor box owed at ' +
+          cur.key +
+          ', hold ALL other purchases this round. reason=' +
+          why +
+          ' balance=' +
+          balance,
+      );
+      // 停购期不能长睡：驻留窗内余额不会自愈，但离店→再到店（换店重 INFO）必须赶上，长睡会漏掉下一家店
+      return tuning.shopWatchMs;
+    }
+    // 选中的货位里找第一个可买/可刷的（补货项=持有清单 shop 渠道勾选，总闸已在上面夹过）
     const acted = this.#actOnce(cur);
     g.edge('acted', !acted, acted ? '' : 'nothing actionable in selected rows');
     if (acted) return tuning.shopGapMs;
@@ -394,28 +443,8 @@ export class ShopEngine {
   }
 
   /**
-   * 本场是否已有 BOSS 被打死收场（任一 `bossBaseInfo[].state === ST_BOSS_DEAD_END(30)`）。
-   *   对齐竞品 shopConver L25204 的 `bossBaseInfo.find(state==30)`（**任一个**而非 [0]）：
-   *   清台后香肠价值下降（没 BOSS 可喂）→ 买货优先级从「香肠优先」翻成「百兽箱优先」。
-   *   读不到 BOSS 列表（未下发/抛错）一律当**未清**（保守走常态香肠优先，不越权改变行为）。
-   * @returns {boolean}
-   */
-  #bossCleared() {
-    const env = this.#env;
-    try {
-      const list = env.secret.getBossBaseInfo();
-      if (!Array.isArray(list)) return false;
-      for (let i = 0; i < list.length; i++) {
-        if (list[i] && Number(list[i].state) === ST_BOSS_DEAD_END) return true;
-      }
-    } catch (e) {
-      return false;
-    }
-    return false;
-  }
-
-  /**
    * 找第一个「可买」或「可刷」的选中道具并发起一笔动作（一拍一个）。
+   * 前置：低保（type3）已由 #tick 的前置闸买妥/额度尽才放行到本函数（系统默认行为，见文件头）。
    * 数据源是合并后的持有清单（pickItems）：行 key=`item:{itemId}`，条目 `shop=1` 即商店补货渠道勾选；
    *   目标持有量 T = `max>0 ? max : 携带上限 para1_v1`（无渠道上限，只有持有上限），
    *   还需补 = `max(0, T - 背包现有)`。这里展开成该道具的全部货行，
@@ -434,23 +463,13 @@ export class ShopEngine {
     }
     const buyBalance = env.secret.getItemNumById(cur0.buyId);
     // drive 模式下香肠(41011) 由 #grabSausage 独占补满（含 driveSausageRefreshMax 预算刷店）；
-    //   通用清单不得重复处理该品目——否则 #grabSausage soldOut 不再置 done 后，本路径 L462 的裸
+    //   通用清单不得重复处理该品目——否则 #grabSausage soldOut 不再置 done 后，本路径的裸
     //   #sendRefresh 会绕过预算把刷币刷干（手动档 #grabSausage 空转，故仅在 drive 开启时让位）。
     const driveOn = !!(env.cfg().drive && env.cfg().drive.enabled);
-    // 低保（type3 传奇百兽箱碎片自选箱）全场跨店共享限量、不可刷：先买不占香肠的刷新预算。
-    //   drive.beastBoxFirst（缺省 true）→ 不论是否清台都 type3 优先（1115 实录问题1：首店香肠×10+刷新耗尽驻留，type3 轮不到）；
-    //   关档回落竞品 shopConver L25204 排序：未清台 → 香肠优先（投喂 BOSS 硬通货），已清台 → 百兽箱优先（没 BOSS 可喂，香肠价值降）。
-    //   两档各自「没需求/不在架就 return false」→ 自然形成竞品 `X || Y` 的兜底语义（香肠需但不在架→刷店，不外溢到百兽箱）。
-    //   ⚠ 两笔都是「一拍只发一个包」，另一档在同拍 return true 后不执行，下一拍再轮到（无买漏，仅优先级差）。
-    const drvCfg = env.cfg().drive || {};
-    if (drvCfg.beastBoxFirst !== false || this.#bossCleared()) {
-      if (this.#grabType3(cur, buyBalance)) return true;
-      if (this.#grabSausage(cur, buyBalance)) return true;
-    } else {
-      // 关档回落：香肠优先（受 #grabSausage 的 `drive.enabled` 子闸约束，手动档不主动补）→ 再百兽箱。
-      if (this.#grabSausage(cur, buyBalance)) return true;
-      if (this.#grabType3(cur, buyBalance)) return true;
-    }
+    // 补货总闸（低保之外的部分）：清单任一行勾「店」或自动驾驶开启；两者皆无 → 本轮补货不动作。
+    const sc = env.cfg().shop;
+    if (!(sc && sc.enabled) && !driveOn) return false;
+    if (this.#grabSausage(cur, buyBalance)) return true;
     for (let i = 0; i < keys.length; i++) {
       const k = keys[i];
       if (k.indexOf(KEY_ITEM) !== 0) continue;
@@ -598,8 +617,102 @@ export class ShopEngine {
   }
 
   /**
-   * type3（跨店共享限量、整场活动限购）道具的最高优先级自动购买：本店货单里有、本会话未降级、全场额度未用尽即优先买一笔。
-   *   这类道具已从持有清单面板移除（见 index.js buildPickPool），不受任何「店」勾选控制——只要商店引擎在跑就先把它拿下；
+   * 低保是否还欠（不看货单/余额的快判，供未到店时的轮询择时与补货总闸旁路）：
+   *   本场未买到且仍有未降级的 type3 货行。表未就绪回 false（买不了任何东西，不拦补货闸的日志语义）。
+   * @returns {boolean}
+   */
+  #floorOwedQuick() {
+    if (this.#floorGot) return false;
+    if (!this.#ensureIndex()) return false;
+    const list = this.#type3Specs || [];
+    for (let i = 0; i < list.length; i++) {
+      if (!this.#done[list[i].spec]) return true;
+    }
+    return false;
+  }
+
+  /**
+   * 低保前置闸判据（到店且货单已装载后每拍跑）：返回 ''=不欠（已买到/全场额度尽/无 type3 货行/表未就绪），
+   *   'buy'=欠且本拍可买（调用方随即发 #grabType3），'broke'/'carry'/'noshelf'=欠但暂时不可得
+   *   → **本轮商店停购一切其他物品**（用户口径：晶块不够买低保就什么都不买）。
+   *   「买到」位按场记：任一 type3 货行 getTime>0（服务器权威、跨店共享）或本会话 #bought>0 → #floorGot=true；
+   *   全场额度尽（buyTimes-getTime<=0）→ 永久 done（type3 不可刷）。与 pilot.isBoxBought（piece>0）同口径。
+   * @param {number} balance 购买币（41009 异能晶块）余额
+   * @returns {string} ''|'buy'|'broke'|'carry'|'noshelf'
+   */
+  #floorOwedWhy(balance) {
+    if (this.#floorGot) return '';
+    if (!this.#ensureIndex()) return '';
+    const list = this.#type3Specs || [];
+    let why = '';
+    for (let i = 0; i < list.length; i++) {
+      const info = list[i];
+      const spec = info.spec;
+      // 「买到」证据先于 done 跳过：#sendBuy 买满即标 done（防重发），若先跳 done 会漏置 #floorGot，
+      //   面板误报「额度已尽」而非「已买到」（getTime>0 与 #bought>0 都是本场买到的权威证据）。
+      if ((this.#bought[spec] || 0) > 0) {
+        this.#floorGot = true; // 本会话已购（应答缺槽时的自有进度账兜底）
+        return '';
+      }
+      if (spec in this.#items && (this.#items[spec] || 0) > 0) {
+        this.#floorGot = true; // 服务器权威：本场已买到过（跨店共享额度回带；先于额度尽判定，买到≠额度尽）
+        return '';
+      }
+      if (this.#done[spec]) continue;
+      if (!(spec in this.#items)) {
+        // 货单缺槽（防御形态，实证每店 8540 恒带 type3）：不代表本店不卖，欠位保留、本轮停购其他
+        why = why || 'noshelf';
+        continue;
+      }
+      const getTime = this.#items[spec] || 0;
+      const quotaLeft = Math.max(info.buyTimes - getTime, 0);
+      if (quotaLeft <= 0) {
+        this.#done[spec] = 1; // type3 不可刷：全场额度确已用尽 → 永久降级
+        this.#note(
+          't3-quota|' + spec,
+          'shop: type3 spec=' +
+            spec +
+            ' global quota used up (buyTimes=' +
+            info.buyTimes +
+            ' getTime=' +
+            getTime +
+            '), permanent done. note=quota-used',
+        );
+        continue;
+      }
+      if (info.cost <= 0) {
+        this.#done[spec] = 1; // 货表异常（无价）：永久降级
+        continue;
+      }
+      if (balance < info.cost) {
+        why = why || 'broke'; // 晶块不够买低保：本轮商店什么都不买
+        continue;
+      }
+      if (this.#carryRoom(info.itemId) < 1) {
+        why = why || 'carry'; // 携带位满：暂时不可得，同样不让其他物品先花晶块
+        continue;
+      }
+      return 'buy';
+    }
+    return why;
+  }
+
+  /**
+   * 面板只读状态口（低保是系统默认行为、无开关，队长/队员同权）：本场低保买到没有。
+   * @returns {string}
+   */
+  floorStatus() {
+    if (!this.#active) return '引擎未运行';
+    if (this.#floorGot) return '本场已买到';
+    if (!this.#ensureIndex()) return '货表未就绪';
+    if (!this.#floorOwedQuick()) return '本场低保额度已尽';
+    return '未买到 · 到店系统默认优先买（晶块不足时本轮商店停购）';
+  }
+
+  /**
+   * 低保（type3 跨店共享限量、整场活动限购）购买执行口：**只由 #tick 的低保前置闸在 why='buy' 时调用**
+   *   （系统默认优先、无开关；本店货单里有、本会话未降级、全场额度未用尽即买一笔）。
+   *   这类道具已从持有清单面板移除（见 index.js buildPickPool），不受任何「店」勾选控制；
    *   type3 不可刷新，**仅**全场额度确已用尽（`buyTimes-getTime<=0`）才永久 done（B2）：
    *   「不在本店当前 8540 快照」「余额暂不够」「携带满」都是**暂时不可得**，本轮跳过、下拍/换店重试，不写永久 done。
    *   ——旧实现把「买完香肠后瞬时余额不足」也降级成本场永久 done，导致后续几家店再也不重试传奇百兽箱碎片。
@@ -833,6 +946,9 @@ export class ShopEngine {
         this.#items = this.#parseItems(r);
         this.#lastBuyEndAt = Date.now();
         this.#bought[spec] = bought + qty;
+        // 低保买成即置放行位（不依赖下拍 #floorOwedWhy：无补货渠道时买完即总闸长睡，面板状态不能停在「额度已尽」）
+        if (this.#type3Specs && this.#type3Specs.some((t) => t.spec === spec))
+          this.#floorGot = true;
         this.#markLedger(cur);
         env.log.info(
           'shop: bought spec %d x%d (total %d%s).',
@@ -1025,6 +1141,7 @@ export class ShopEngine {
     this.#done = {};
     this.#told = {};
     this.#retriedBuy = {};
+    this.#floorGot = false;
     this.#gates.reset();
     this.#cycle = createCycle({
       log: env.log,
@@ -1069,6 +1186,7 @@ export class ShopEngine {
     this.#lastRefreshAt = 0;
     this.#refreshTries = {};
     this.#matchKey = '';
+    this.#floorGot = false;
     this.#specsByItem = null;
     this.#type3Specs = null;
   }

@@ -78,10 +78,6 @@ import {
   CODE_NOT_SENT,
   REJ_SAME_ITEM_ONCE,
   REJ_NOT_ARRIVED,
-  ITEM_BUY_CURRENCY,
-  ITEM_REFRESH_CURRENCY,
-  ITEM_SAUSAGE,
-  ST_BOSS_DEAD_END,
   tuning,
 } from './constants.js';
 
@@ -92,7 +88,6 @@ const CAT_RES_BAG = 'res-bag';
 const CAT_RES_BUFF = 'res-buff';
 /** #skip 日志维度——跳过原因 */
 const SKIP_PANEL_OFF = 'panel-off';
-const SKIP_QUOTA_ENOUGH = 'farm-quota-enough';
 const SKIP_BLACKLISTED = 'blacklisted';
 const SKIP_ALREADY_MINE = 'already-mine';
 const SKIP_TAKEN_OTHER = 'taken-by-other';
@@ -622,11 +617,8 @@ export class PickupEngine {
         this.#skip(CAT_ITEM, x, y, key, SKIP_PANEL_OFF);
         continue;
       }
-      if (!this.#farmWorthy(itemId)) {
-        // §9.2：货币配额已够，不再浪费拾取位（竞品 ids 过滤的 farm 侧消费）
-        this.#skip(CAT_ITEM, x, y, key, SKIP_QUOTA_ENOUGH);
-        continue;
-      }
+      // 二轮收口（用户拍板 2026-11-17）：竞品「货币配额够就停采」三动态约束已整体移除——
+      //   未登记行＝默认采（只受背包上限闸），登记行＝row.max 意图级真相；隐藏节流不再替玩家做主。
       if (this.#blacked(it.dropId)) {
         this.#skip(CAT_ITEM, x, y, key, SKIP_BLACKLISTED);
         continue;
@@ -825,11 +817,7 @@ export class PickupEngine {
         this.#skip(CAT_RES_BAG, rx, ry, key, SKIP_PANEL_OFF);
         continue;
       }
-      if (itemId && !this.#farmWorthy(itemId)) {
-        // §9.2：货币配额已够不再采（竞品 getResItem 的 `for(h=this.ids)` 同义）
-        this.#skip(CAT_RES_BAG, rx, ry, key, SKIP_QUOTA_ENOUGH);
-        continue;
-      }
+      // 二轮收口：与 #pickupReward 同口径——竞品三动态约束已移除，未登记行默认采（背包上限闸兜底）。
       if (this.#gotLocal(tileKey, it.dropId, it.specId, itemId)) {
         // 本 feat 已按点位发过/已得
         this.#skip(CAT_RES_BAG, rx, ry, key, SKIP_FEAT_ALGOT);
@@ -976,59 +964,6 @@ export class PickupEngine {
     if (specId == null) return 0;
     const st = this.#env.l10n.tableRow(TABLE_RSS_STATION, specId);
     return st ? Number(st.item) || 0 : 0;
-  }
-
-  /**
-   * §9.2 farm 侧三约束（竞品 `get ids()` L24220-24228，消费在 getResItem/getDropBox 的选品循环，**不是** shopConver）：
-   *   把「够买就别再刷/采」的货币从拾取候选里动态剔除（基础式的「目标数>已有 && !checkItemNumMax」我方已由
-   *   pickRow/row.max + #itemNumMax/#roomBagNum 覆盖，本函数只补三条动态约束）：
-   *   约束1（41009 晶块）：`crystal > base − sausage*perSausage − (买过百兽箱?boxReserve:0)` → 停采晶块；
-   *   约束2（41010 刷新币）：`refresh + sausage >= driveSausageTarget` → 停采（商店不再需要刷新）；
-   *   约束3（41010 刷新币）：`bossBaseInfo[0].state==30`（清台）→ 停采（竞品原文取 [0]，不扩 find）。
-   * 公式底数一律走 tuning.shopReserve* 键（竞品内联字面量 12000/500/3000，本仓禁内联）；键缺失/非法 → 该约束失效。
-   * 其余 itemId 不受三约束管辖直接回 true；取数失败/读不到一律 fail-open（多采无害于少采，
-   *   误把晶块/刷新币锁死出拾取池的代价远大于多拾一枚货币）。
-   * @param {number} itemId 拾取候选道具
-   * @returns {boolean} true=仍值得采
-   */
-  #farmWorthy(itemId) {
-    const env = this.#env;
-    if (itemId !== ITEM_BUY_CURRENCY && itemId !== ITEM_REFRESH_CURRENCY) return true;
-    const pab = env.secret.getPabController();
-    if (!pab) return true;
-    // 取数失败/非数值 → NaN，下面统一按「读不到」fail-open
-    const num = function (id) {
-      try {
-        return Number(pab.getItemNumById(id));
-      } catch (e) {
-        return NaN;
-      }
-    };
-    const crystal = num(ITEM_BUY_CURRENCY);
-    const refresh = num(ITEM_REFRESH_CURRENCY);
-    const sausage = num(ITEM_SAUSAGE);
-    if (!Number.isFinite(crystal) || !Number.isFinite(refresh) || !Number.isFinite(sausage))
-      return true;
-    if (itemId === ITEM_BUY_CURRENCY) {
-      const base = Number(tuning.shopReserveBaseCrystal);
-      if (!Number.isFinite(base) || base <= 0) return true;
-      const per = Number(tuning.shopReserveCrystalPerSausage) || 0;
-      const boxReserve = Number(tuning.shopReserveCrystalBeastBox) || 0;
-      // 百兽箱位经 env.shopBoxBought 惰性读 pilot 账（读不到按未买：不扣预留 → 更不易停采，保守同竞品 shops 空集）
-      const boxBought = typeof env.shopBoxBought === 'function' ? !!env.shopBoxBought() : false;
-      const reserve = base - sausage * per - (boxBought ? boxReserve : 0);
-      return !(crystal > reserve);
-    }
-    const sausageTarget = Number(tuning.driveSausageTarget) || 0;
-    if (sausageTarget > 0 && refresh + sausage >= sausageTarget) return false;
-    try {
-      const list = env.secret.getBossBaseInfo();
-      if (Array.isArray(list) && list[0] && Number(list[0].state) === ST_BOSS_DEAD_END)
-        return false;
-    } catch (e) {
-      /* 读不到 BOSS 清单 = 不构成清台，不剔 */
-    }
-    return true;
   }
 
   /**

@@ -3,8 +3,8 @@
  *
  * 四种点型策略（与旧 if 分支逐位等价）：
  *   • 172 野怪 → monster：固定驻留 driveStayMonsterMs，等拍宠/交战结算；
- *   • 173 井 / 163 掉落箱 → resource：拿空即走（三路判空由 pilot 喂 isEmpty），
- *     地板 = max(拿空结算窗, 动态驻留 #resDwellMs)，天花板 driveWorkMaxMs；
+ *   • 173 井 / 163 掉落箱 → resource：拿空当拍即走（判空由 pilot 喂 isEmpty，两路料源皆服务器结算后权威态），
+ *     无驻留地板；拿不空受天花板 driveWorkMaxMs 兜底；
  *   • 161 商店 → shop：动态驻留 max(基墙, 缺口×driveShopUnitMs) 封顶 基墙+driveShopExtraMs，
  *     驻留满后缺口未补再续留至多 driveShopExtraMs（分段轮询，补满当拍即走）；
  *   • 其余（176/177/178/174…）→ dwell：driveWorkDwellMs；BOSS 相关点加三条提前离点判据
@@ -34,49 +34,27 @@ function bossish(pt) {
 }
 
 /**
- * 173 井的最短驻留地板（原 pilot.#resDwellMs 纯读搬迁）：
- *   「未拿件数」优先取 21522 按点记账的空位数（bagFree+buffFree），没记账就用快照 iNum 兜底；
- *   动态值 = 件数×driveResStayPerBagMs + driveResStayBaseMs，driveResStayMaxMs 作保底（取大），
- *   最终以 driveWorkMaxMs 为天花板。
- * @param {object|null} change 该点 21522 记账（{bagFree,buffFree}；无则 null）
- * @param {object|null} tile 该点快照（{iNum}；无则 null）
- * @param {object} t tuning 事实 {driveResStayPerBagMs,driveResStayBaseMs,driveResStayMaxMs,driveWorkMaxMs}
- * @returns {number} 毫秒（0=不加下限）
- */
-export function resDwellMs(change, tile, t) {
-  let n = 0;
-  if (change) n = Math.max(0, (Number(change.bagFree) || 0) + (Number(change.buffFree) || 0));
-  if (!n) {
-    n = tile && tile.iNum != null ? Math.max(0, Number(tile.iNum) || 0) : 0;
-  }
-  const dyn = n * (Number(t.driveResStayPerBagMs) || 0) + (Number(t.driveResStayBaseMs) || 0);
-  const cap = Number(t.driveResStayMaxMs) || 0;
-  const ms = cap > 0 ? Math.max(cap, dyn) : dyn;
-  return Math.max(0, Math.min(t.driveWorkMaxMs, ms));
-}
-
-/**
  * 到点进驻留：按点型算状态补丁（pilot Object.assign 到引擎字段；shop 档另带账本/冷却副作用位）。
  * @param {number} pt 到达点型（pilot 已锁存 #workPt）
  * @param {object} f 事实包：
  *   now 毫秒；key 点位键；d 面板 drive 配置；t tuning；
- *   change/tile 该点记账与快照（resource 地板用）；
  *   sausageHave/sausageTarget 香肠持有与目标（shop 动态驻留用）；
  *   shopLedgerEntry 该店现有账本行（无则 null）
- * @returns {object} 补丁：必含 workMode/workUntil/workEmptyAt/workDeadline；
+ * @returns {object} 补丁：必含 workMode/workUntil/workDeadline；
  *   shop 档附 shopErrandDone/shopLastAt/shopCoolUntil/shopLedgerEntry/kickShop
  */
 export function enter(pt, f) {
   const now = f.now;
   const t = f.t;
   const d = f.d || {};
-  const patch = { workMode: 'dwell', workUntil: 0, workEmptyAt: 0, workDeadline: 0 };
+  const patch = { workMode: 'dwell', workUntil: 0, workDeadline: 0 };
   if (pt === PAB_MONSTER) {
     // 到 172 后本拍不重路由，等拍宠/交战把点数结算完
     patch.workUntil = now + (Number(t.driveStayMonsterMs) || 0);
   } else if (pt === PAB_RESOURCE || pt === PAB_DROP) {
     patch.workMode = 'empty';
-    patch.workUntil = pt === PAB_RESOURCE ? resDwellMs(f.change, f.tile, t) : 0;
+    // 拿空当拍即走，无驻留地板（旧 resDwellMs 动态地板已废：判空两路料源皆服务器结算后态，地板属冗余驻留）
+    patch.workUntil = 0;
     patch.workDeadline = now + t.driveWorkMaxMs;
   } else if (pt === PAB_SHOP) {
     // 驻留时长按缺口动态放宽：`max(基墙, 待补件数 × driveShopUnitMs)`。
@@ -109,21 +87,21 @@ export function enter(pt, f) {
 /**
  * WORK 相位一拍推进（纯决策）：返回离点决策与待落日志，副作用归 pilot。
  * @param {number} pt 锁存点型（#workPt）
- * @param {object} s 相位状态 {workMode,workUntil,workEmptyAt,workDeadline}
+ * @param {object} s 相位状态 {workMode,workUntil,workDeadline}
  * @param {object} f 事实包：
  *   now 毫秒；key 点位键；d 面板 drive 配置；t tuning；
  *   isEmpty 三路判空结果（empty 档）；
  *   captureBusy/bossLeaveWhy/bossWin/bossLiveHere（BOSS 档提前离点判据，pilot 预先算好；
  *   empty 档只喂 bossWin：BOSS 窗中断，问题21②）；
  *   sausageHave/sausageTarget（shop 缺口续留）；shopGiveUp（刷店止损信号，四-2：true 时缺口也不续留）
- * @returns {{leave:boolean,sleep:number,patch?:object,log?:{tpl:string,args:Array}}}
+ * @returns {{leave:boolean,sleep:number,log?:{tpl:string,args:Array}}}
  */
 export function tick(pt, s, f) {
   const now = f.now;
   const t = f.t;
   if (s.workMode === 'empty') {
     // BOSS 窗中断（问题21②）：井/掉落箱采集中 BOSS 窗开了（open/lead，pilot 预算 f.bossWin，
-    //   仅 teamType>0 && driveBoss && !captureBusy 时喂入）→ 立即离点让路，不等判空/天花板。
+    //   仅 teamType>0 且方案含 BOSS 档 && !captureBusy 时喂入）→ 立即离点让路，不等判空/天花板。
     if (f.bossWin) {
       return {
         leave: true,
@@ -135,28 +113,21 @@ export function tick(pt, s, f) {
       };
     }
     if (f.isEmpty) {
-      const emptyAt = s.workEmptyAt || now;
-      const d = f.d || {};
-      const settle = Number.isFinite(d.emptyDwellMs) ? d.emptyDwellMs : t.driveEmptyDwellMs;
-      // 动态驻留作**地板**：拿空了也至少给 8527/8538 把这一批结算完
-      const readyAt = Math.max(emptyAt + settle, s.workUntil || 0);
-      const patch = s.workEmptyAt ? undefined : { workEmptyAt: emptyAt };
-      if (now >= readyAt) return { leave: true, sleep: 0, patch: patch };
-      return { leave: false, sleep: readyAt - now, patch: patch };
+      // 拿空当拍即走：判空两路（21522/21532 账归零 / 快照 rTime/iNum）皆服务器结算后权威态，
+      //   不存在「离队丢结算」窗，旧 settle 结算窗与动态驻留地板均属冗余驻留（已废）。
+      return { leave: true, sleep: 0 };
     }
-    const patch = s.workEmptyAt ? { workEmptyAt: 0 } : undefined;
     if (now >= s.workDeadline) {
       return {
         leave: true,
         sleep: 0,
-        patch: patch,
         log: {
           tpl: 'pilot: %s scouted empty, hit fallback ceiling, leave point. reason=empty_ceiling',
           args: [f.key],
         },
       };
     }
-    return { leave: false, sleep: Math.min(t.driveScanMs, s.workDeadline - now), patch: patch };
+    return { leave: false, sleep: Math.min(t.driveScanMs, s.workDeadline - now) };
   }
   // dwell 相位：BOSS 点提前离点（不等满驻留）——现场瓦片判死或投喂窗且无石头可领
   if (bossish(pt)) {

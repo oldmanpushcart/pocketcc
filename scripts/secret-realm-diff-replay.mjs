@@ -193,7 +193,7 @@ function rewriteImports(src) {
       JSON.stringify(path.join(TMP, 'game-api.js')),
     )
     .replace(
-      /'\.\/(util|constants|pilot-select|plans|boss|shop|pickup|scout|capture|heal|leave|warn)\.js'/g,
+      /'\.\/(util|constants|pilot-select|plans|boss|shop|pickup|scout|capture|heal|leave)\.js'/g,
       (_m, n) => JSON.stringify(path.join(SR, n + '.js')),
     );
 }
@@ -244,9 +244,6 @@ async function runEngine(mod, _label) {
     cfg: () => ({
       drive: {
         enabled: true,
-        boss: true,
-        revive: false, // 关 8552 自救：避免 fake uid 分支引发明细差异（与决策链无关）
-        shop: true,
         beast: true,
       },
     }),
