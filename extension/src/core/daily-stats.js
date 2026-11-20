@@ -234,11 +234,13 @@ export function createDailyLedger(name, opts) {
   }
 
   /**
-   * 读某 key 当日计数。
+   * 读某 key 当日计数（读前先踢跳日收敛：跨 0 点长驻时面板纯读也能归零，
+   * 已加载时 ensureLoaded 只做一次日界比较，零额外 I/O）。
    * @param {string} key
    * @returns {number} 未读回/无此键返回 0
    */
   function get(key) {
+    ensureLoaded();
     return state.counts[key] || 0;
   }
 
@@ -250,6 +252,7 @@ export function createDailyLedger(name, opts) {
     bump: bump,
     get: get,
     counts: function () {
+      ensureLoaded();
       return Object.assign({}, state.counts);
     },
     countOnce: countOnce,
