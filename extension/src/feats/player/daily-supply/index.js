@@ -22,10 +22,15 @@
  *   领取回调里 updateTimeReward），下一拍会误判仍 ready → 逐拍重发（对齐战争之源 claimedIds 教训）。
  *   对策：领成功把应答 timeReward 记入内存镜像；判定时取 rewardTime 较新者，游戏侧日切/登录全量下发
  *   （rewardTime 追平或更新）后镜像自动让位并被清掉。reload 后即便镜像丢失也多付一次被拒请求，
- *   由 rejectStreak 退避兜住。
+ *   由 rejectStreak 退避兜住。镜像按游戏日键控（mirror.day）：昨日 23:45 的 rewardTime 比今日 0 点
+ *   重置的更新，光靠「较新者」会压制新日权威态，跨日即失效（实证 dashcam-log 20261119 罢工窗）。
  *
  * 调度（A 族 createCycle，单一收敛态 + 全本地可重放读）：
  *   - wait 档：睡到点 + 缓冲（封顶 IDLE×8，到点前零发包，重读无损）；
+ *   - 睡越本地日界的 wait/capped 一律截断到「日界 + DAY_ROLL_BUFFER_MS」再醒（实证 dashcam-log 20261119：
+ *     昨夜 23:45 领 #35 后排 01:45 醒，用户 0 点后手动领 3 次全落睡眠窗——0 点重置是确定性状态变化，
+ *     排程必须优先于表间隔于日界处重判；日界拍若 LOGIN 全量迟到而权威仍昨日旧态，发一拍由服务器裁决，
+ *     领到即今日首档，被拒走 rejectStreak 退避）；
  *   - capped 档：睡到本地日界 + 缓冲（封顶 26h），不逐轮空查；例外：日界后 1h 宽限窗内仍判 capped
  *     降为 IDLE 巡检——防御保险：若日切重置回写滞后（直发不回写）或 times 实为滚动队列，
  *     一次性 24h 长睡会整天跳过；注：36 档累计间隔≈>24h，正常跑不到封顶，此分支平时无感。
@@ -40,7 +45,7 @@
  *   无分母：表 36 行累计间隔>24h，行数不是真实每日上限（用户否决 36 口径），一律显示「今日 N 次」。
  *   不行军不参战，offInCombat:false。生命周期由 reactor 托管，pause 后 alive()=false 自然停摆。
  */
-import { CODE_NOT_SENT, rejectText, safeParse } from '../../../core/util.js';
+import { CODE_NOT_SENT, rejectText, safeParse, todayStr } from '../../../core/util.js';
 import { createLog } from '../../../core/log.js';
 import { l10n, gameData } from '../../../core/game-api.js';
 import { reactor } from '../../../core/reactor.js';
@@ -79,7 +84,7 @@ var ctxRef = null;
 /** @type {number} 连续被服务器拒绝次数，达 3 次后退巡检档；领取成功即清零 */
 var rejectStreak = 0;
 
-/** @type {{times:number, rewardTime:number}|null} 领取回执镜像（内存态，直发不回写的补偿） */
+/** @type {{times:number, rewardTime:number, day:string}|null} 领取回执镜像（内存态，直发不回写的补偿；day=写入时的游戏日，跨日作废） */
 var mirror = null;
 
 /**
@@ -93,10 +98,12 @@ function aliveFn() {
 // ── 状态判定 ──────────────────────────────────────────────────────────
 /**
  * 合并权威值与回执镜像：取 rewardTime 较新者；权威值追平/反超后镜像让位并清掉（日切/重登全量下发即此情形）。
+ * 跨日镜像一律作废：昨日尾档的 rewardTime 晚于今日 0 点重置值，「较新者」规则会压制新日权威态。
  * @returns {{times:number, rewardTime:number}|null} 两边都拿不到返回 null
  */
 function effectiveState() {
   var u = gameData.timeReward();
+  if (mirror && mirror.day !== todayStr(Math.floor(gameData.serverTime()))) mirror = null;
   if (!u) return mirror;
   if (mirror && mirror.rewardTime > u.rewardTime) return mirror;
   mirror = null;
@@ -137,13 +144,30 @@ function dayRollDelay() {
 }
 
 /**
+ * 长睡截断到「下一个本地日界 + 缓冲」：日切重置是确定性状态变化（首档 time=0 立即可领），
+ * 跨日的排程若不一一截断，睡眠窗内的手动领取与重置档位都要等到原 ETA 才重判（20261119 罢工窗根因）。
+ * 仅对 > TRANSIENT 的长睡生效（ready 后下一拍、瞬态重试不打扰）；本拍已在日界窗内则不干预，防紧循环。
+ * @param {number} ms delayFor 原择时（毫秒）
+ * @returns {number} 毫秒
+ */
+function capAtDayRoll(ms) {
+  if (ms <= IDLE_TICK_MS * 2) return ms;
+  var now = new Date();
+  var next = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1, 0, 0, 0, 0);
+  var rollMs = next.getTime() - now.getTime() + DAY_ROLL_BUFFER_MS;
+  if (rollMs <= 0) return ms;
+  return Math.min(ms, rollMs);
+}
+
+/**
  * 按三态出择时（ready 交调用方走发包分支）。
  * @param {object} info readyInfo() 结果
  * @returns {number} 毫秒
  */
 function delayFor(info) {
-  if (info.state === 'wait') return Math.min(info.waitMs + READY_BUFFER_MS, WAIT_CAP_MS);
-  if (info.state === 'capped') return dayRollDelay();
+  if (info.state === 'wait')
+    return capAtDayRoll(Math.min(info.waitMs + READY_BUFFER_MS, WAIT_CAP_MS));
+  if (info.state === 'capped') return capAtDayRoll(dayRollDelay());
   return rejectStreak >= 3 ? IDLE_TICK_MS * 2 : IDLE_TICK_MS;
 }
 
@@ -174,10 +198,11 @@ async function claimOnce(times) {
   }
   // 镜像优先取应答回写的 timeReward；缺则按「now + times+1」兜底，保证下一拍不误判仍可领
   var tr = d && d.timeReward;
+  var day = todayStr(Math.floor(gameData.serverTime()));
   if (tr && Number(tr.rewardTime) > 0) {
-    mirror = { times: Number(tr.times) || times + 1, rewardTime: Number(tr.rewardTime) };
+    mirror = { times: Number(tr.times) || times + 1, rewardTime: Number(tr.rewardTime), day: day };
   } else {
-    mirror = { times: times + 1, rewardTime: gameData.serverTime() };
+    mirror = { times: times + 1, rewardTime: gameData.serverTime(), day: day };
   }
   rejectStreak = 0;
   var gold = d && d.reward && d.reward.resource ? Number(d.reward.resource.gold) || 0 : 0;
@@ -289,7 +314,7 @@ reactor.register({
 });
 
 // 单测导出（仅供 tests/feats/daily-midnight.test.js 断言判据，运行期无消费方）
-export { readyInfo, claimOnce, install as installForTest };
+export { readyInfo, claimOnce, delayFor, install as installForTest };
 /** 单测专用：复位在飞态（等价 run() 的复位段，不 kick 循环） */
 export function resetForTest() {
   rejectStreak = 0;

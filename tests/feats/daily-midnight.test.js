@@ -1,7 +1,9 @@
 // 每日补给 / 每日特惠 0 点判据回归单测（事故复刻：dashcam-log 20261112~14）。
 // 断言的是「日切判据决策」，不含择时曲线与发包形态（后者由 replay 对拍覆盖）：
 //   补给：行存在而 time=0 是 ready 不是 capped（旧实现混判 → 0 点首见 times=0 睡整天）；
-//         表未加载归 idle；行缺失才 capped；镜像与权威取 rewardTime 较新者。
+//         表未加载归 idle；行缺失才 capped；镜像与权威取 rewardTime 较新者；
+//         镜像跨日作废（事故复刻 dashcam-log 20261119：昨日尾档 rewardTime 压制今日 0 点重置）；
+//         睡越日界的长 wait 截断到日界+缓冲再醒（罢工窗内手动领 3 次全错过）。
 //   特惠：日界后字段=1 无今日新鲜回写凭证 → 照发由服务器裁决（旧实现当闸门 → 0 点漏领）；
 //         今日观察到 push 翻 1 才省包；日戳抑制当日重发；被拒/成功都睡到次日日界。
 // feat 模块 import 链会触到浏览器全局（reactor/storage/bus），故先最小桩化 window/document/chrome，再动态 import。
@@ -170,6 +172,40 @@ test('补给：直发不回写 → 镜像兜底；权威 rewardTime 追平后镜
   const info2 = supply.readyInfo();
   assert.equal(info2.times, 5);
   assert.equal(info2.state, 'wait');
+});
+
+test('补给：镜像跨日作废——昨日尾档不得压制今日 0 点重置（事故复刻 dashcam-log 20261119）', async () => {
+  // 全部经服务器秒驱动（todayStr 不依本地日，依传入 epochSec 的本地字段）；
+  // 写入 mirror 时 serverTime=D1+82800（“昨日” 23:00），读取时 serverTime=D1+86430（“今日” 00:00:30）：
+  // mirror.day 与新的 todayStr 不同→ 跨日作废。
+  const D1 = DAY_START;
+  stub.serverTime = D1 + 82800 + 9; // “昨日” 23:00:09
+  stub.timeReward = { times: 34, rewardTime: D1 + 82200 };
+  stub.rows = { 35: { time: 3600 }, 36: { time: 7200 }, 1: { time: 0 }, 2: { time: 60 } };
+  respond = () => ({
+    ok: true,
+    code: 0,
+    data: JSON.stringify({ reward: {}, timeReward: { times: 35, rewardTime: D1 + 82809 } }),
+  });
+  await supply.claimOnce(34); // 领 #35，mirror={times:35, rewardTime: 昨日23:00:09, day: yesterday-str}
+  // 同日内：mirror 生效，查第 36 行 (7200s) 需等，仍在 wait
+  assert.equal(supply.readyInfo().state, 'wait');
+  assert.equal(supply.readyInfo().times, 35);
+  // 跨到今日 0 点：权威经 LOGIN 重置为 {times:0, rewardTime=日界}（时刻上早于 mirror 的昨日 23:00）
+  stub.serverTime = D1 + 86430; // “今日” 00:00:30（与写入时的 todayStr 不同日）
+  stub.timeReward = { times: 0, rewardTime: D1 + 86400 };
+  const info = supply.readyInfo();
+  // 旧实现：mirror.rewardTime(昨日 23:00) > 权威(今日 0:00) → 压制 → wait/capped 睡整天
+  // 新实现：mirror.day ≠ todayStr(serverTime) → 作废 → 取权威 times=0，第 1 行 time=0 → ready
+  assert.equal(info.state, 'ready');
+  assert.equal(info.times, 0);
+});
+
+test('补给：不跨日的中等 wait 不截断（保护原有择时曲线）', () => {
+  // delayFor 内 capAtDayRoll 仅对 >30e3ms 的睡生效；waitMs=5e3 的应原样返回 waitMs+10e3 不超过 WAIT_CAP_MS
+  assert.equal(supply.delayFor({ state: 'wait', waitMs: 5000 }), 5000 + 10000);
+  // idle 分支（≤30e3 不走截断）： IDLE 档 15min
+  assert.equal(supply.delayFor({ state: 'idle' }), 15 * 60 * 1000);
 });
 
 // ── 每日特惠 ─────────────────────────────────────────────────────────
