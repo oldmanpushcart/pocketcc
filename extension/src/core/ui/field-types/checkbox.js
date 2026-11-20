@@ -8,6 +8,10 @@
  * 双轨守卫：wireControls 仅对「顶层且 type 已注册」的 .pc-fchk 跳过旧绑定；uid 复合行 / rallygrid 行内的
  *   enableKey 勾选框（data-key 反查不到顶层 descriptor）仍走旧绑定（T5 迁），故本 module 只接 type:'checkbox' 字段。
  *
+ * 可选 fd.onChange(cfg, checked)：勾选态落 cfg 后、commit 前的描述符级回调（同 rallygrid fd.onDeleteRow
+ *   的描述符回调先例），供「开关翻动时联动改写其它键」类需求（如夺宝奇兵按场次开关开启瞬间播种矩阵）；
+ *   回调就地 mutate cfg，随后统一 commit 落盘+热更，不另开提交流管道。缺省无回调时行为与旧版逐字一致。
+ *
  * 依赖面 = ctx（dispatcher 传入）；不反查 fields.js/wire.js。
  */
 
@@ -41,13 +45,14 @@ export const checkboxType = {
         e.stopPropagation();
       },
     },
-    // 改动即存档 + 热更：勾选态落 configs[fid][fd.key]，commit 统一管道（save+apply+debug 日志）
+    // 改动即存档 + 热更：勾选态落 configs[fid][fd.key]，可选 fd.onChange 联动改写后再走 commit 统一管道（save+apply+debug 日志）
     {
       on: 'change',
       sel: '.pc-fchk',
       run(e, ctx) {
         const cb = e.target;
         ctx.c[ctx.fd.key] = cb.checked;
+        if (typeof ctx.fd.onChange === 'function') ctx.fd.onChange(ctx.c, cb.checked);
         ctx.commit();
       },
     },

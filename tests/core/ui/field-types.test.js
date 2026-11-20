@@ -1290,6 +1290,25 @@ test('checkbox change：写勾选态 + commit 一次，不 refresh', () => {
   assert.equal(calls.refresh, 0);
 });
 
+test('checkbox change：fd.onChange 在 commit 前联动改写 cfg（缺省无回调形态不变）', () => {
+  const { ctx, calls } = cbCtx(false);
+  const seen = [];
+  ctx.fd.onChange = (c, on) => {
+    seen.push([c.on, on]);
+    c.seed = on ? 'main' : 'helper'; // 模拟开关翻动时播种其它键
+  };
+  cbEv('change').run({ target: { checked: true } }, ctx);
+  assert.deepEqual(seen, [[true, true]]); // 回调看到的是已落勾选态的 cfg
+  assert.equal(ctx.c.seed, 'main');
+  assert.equal(calls.commit, 1); // 联动改写随同一次 commit 落盘，不另开管道
+  // 无 onChange：行为与旧版逐字一致
+  const plain = cbCtx(false);
+  cbEv('change').run({ target: { checked: true } }, plain.ctx);
+  assert.equal(plain.ctx.c.on, true);
+  assert.equal(plain.ctx.c.seed, undefined);
+  assert.equal(plain.calls.commit, 1);
+});
+
 test('checkbox click：stopPropagation（不触发卡片折叠）', () => {
   let stopped = 0;
   cbEv('click').run({ stopPropagation: () => stopped++ }, cbCtx(false).ctx);
@@ -1721,6 +1740,36 @@ test('ctrlrow render：非表格变体 label.pc-row + 子下拉 data-key（无�
   assert.match(html, /class="pc-row"/);
   assert.match(html, /data-key="lv"/);
   assert.doesNotMatch(html, /data-fkey/);
+});
+
+test('ctrlrow render：fd.head 列头行与数据行同构（标签隐藏复刻等宽），无 head 形态不变', () => {
+  const cells = [
+    { key: 'a', options: [{ value: 'follow', label: '跟随' }] },
+    { key: 'b', options: [{ value: 'main', label: '主跑' }] },
+  ];
+  const fd = { key: 'row', label: '周五', head: ['第一场', '第二场'], cells };
+  const html = ctrlrowType.render(null, fd, { a: 'follow', b: 'main' }, 'fid');
+  // 带列头单根包裹：showIf data-dep 只标首根，头行+数据行必须同在一个根内才能整块显隐
+  assert.match(html, /^<div><div class="pc-row pc-crihead">/);
+  assert.match(html, /<\/div><\/div>$/);
+  assert.match(html, /class="pc-row pc-crihead"/);
+  // 标签格隐藏复刻 fd.label 文本，保证与数据行等宽对齐
+  assert.match(
+    html,
+    /<span class="pc-triolab" aria-hidden="true" style="visibility:hidden">周五<\/span>/,
+  );
+  assert.match(html, /<span>第一场<\/span><span>第二场<\/span>/);
+  // 头行在数据行之前，且头行无控件（不携带 data-key）
+  assert.ok(html.indexOf('pc-crihead') < html.indexOf('data-key="a"'));
+  assert.doesNotMatch(html.split('pc-crihead')[1].split('</div>')[0], /data-key/);
+  // 无 head 时形态与旧版一致
+  const noHead = ctrlrowType.render(
+    null,
+    { key: 'row', label: '周五', cells },
+    { a: 'follow', b: 'main' },
+    'fid',
+  );
+  assert.doesNotMatch(noHead, /pc-crihead/);
 });
 
 test('ctrlrow render：表格变体 .pc-hl.pc-ct 带 data-fkey + text 只读格', () => {

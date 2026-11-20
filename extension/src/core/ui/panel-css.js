@@ -298,6 +298,10 @@ export const PANEL_CSS = `
     .pc-row > .pc-triolab{flex:0 0 auto;}
     .pc-row > .pc-trio{display:flex;gap:4px;flex:1 1 auto;min-width:0;}
     .pc-trio select.pc-fsel{flex:1 1 0;min-width:0;width:auto;max-width:none;padding:3px 4px;font-size:12px;}
+    /* ctrlrow 可选列头（fd.head，如夺宝奇兵各场模式矩阵）：头行与数据行同构（标签格隐藏复刻等宽），
+       列 span 等分居中，字号/色同 infogrid 列头口径；margin 收紧贴住数据行 */
+    .pc-crihead{margin:2px 0 0;}
+    .pc-crihead .pc-trio > span{flex:1 1 0;min-width:0;font-size:11px;color:#9ecbff;text-align:center;}
     /* ctrlrow 里的只读格（.pc-fval）：同样等分收缩，靠右对齐与其他只读值一致。
        必须写在下方 .pc-fval 之后：两条同为 (0-2-1) 特异度，靠源码顺序决胜，否则 .pc-fval 的 flex:0 0 auto 会赢 */
     .pc-fval{font-variant-numeric:tabular-nums;color:#9ecbff;opacity:.9;flex:0 0 auto;

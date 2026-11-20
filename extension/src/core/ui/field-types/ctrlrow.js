@@ -9,6 +9,10 @@
  *   两路 handler 都经 findFieldDescriptor 下探 cells 取子描述符，选项取该 cell 自己的口径。
  * cell.type='text' 的只读格（.pc-fval）随 refreshTexts 重算：其子描述符 type='text' → 走 text module 的 refreshText 钩子，
  *   故本 module 无需自持 refreshText（与 rallygrid count 走 fd.get 兜底同理，只读格各有归属）。
+ * 非表格变体可选 fd.head: string[] 列头（如夺宝奇兵各场模式矩阵）：控件行前渲染同构头行，
+ *   标签格 visibility:hidden 复刻 fd.label 保证与数据行等宽对齐；头行无控件，事件/回写链路不动。
+ *   带列头时头行+数据行包进单根 div（无类名无 data-fkey，不影响 dispatcher 内联路由）：
+ *   fields.js 的 showIf data-dep 只标首根节点，双根直出会导致藏头不藏身；单根包裹后整块显隐。
  *
  * 依赖面 = dom（escAttr/findFieldDescriptor）+ ctx；不反查 fields.js/wire.js。
  */
@@ -22,7 +26,7 @@ import { escAttr, findFieldDescriptor } from '../dom.js';
  * 表格变体控件类改用 .pc-hlmode/.pc-hlstat 与怪物清单对齐，但 data-key/data-fkey 不变 → wire/refreshTexts 同一条 cells 通路。
  * 签名照 module render (val, fd, c, fid)，本类型直接读 c[p.key]（val 仅占位对齐）。
  * @param {*} val 配置里的字段值（占位，不读）
- * @param {object} fd 字段描述符（label / table / cells:[{key,type?,options,get?,title?,label?}]）
+ * @param {object} fd 字段描述符（label / table / head?:string[] / cells:[{key,type?,options,get?,title?,label?}]）
  * @param {object} c 该功能当前配置
  * @param {string} fid 功能 id
  * @returns {string}
@@ -71,12 +75,21 @@ function renderCtrlRow(val, fd, c, fid) {
       `</div>`
     );
   }
+  // 可选列头（fd.head）：与数据行同构的头行，标签格隐藏复刻 fd.label 文本保证等宽（列对齐）；
+  //   头行纯展示无控件，change 委托不会命中
+  const head =
+    Array.isArray(fd.head) && fd.head.length
+      ? `<div class="pc-row pc-crihead">` +
+        `<span class="pc-triolab" aria-hidden="true" style="visibility:hidden">${fd.label || ''}</span>` +
+        `<span class="pc-trio">${fd.head.map((h) => `<span>${escAttr(String(h))}</span>`).join('')}</span></div>`
+      : '';
   // fd.label 缺位时不出标签格（整行宽度给控件），行名交 section 小标题承担
-  return (
+  const row =
     `<div class="pc-row">` +
     (fd.label ? `<span class="pc-triolab">${fd.label}</span>` : '') +
-    `<span class="pc-trio">${cells}</span></div>`
-  );
+    `<span class="pc-trio">${cells}</span></div>`;
+  // 带列头：单根包裹头行+数据行（showIf data-dep 只标首根，双根直出会藏头不藏身）；无列头形态不变
+  return head ? `<div>${head}${row}</div>` : row;
 }
 
 /** 一行多控件类型（inline，子下拉 change 按 option 原类型回写 + 存档热更；interface 形状见 index.js 头注释） */
