@@ -1,0 +1,1959 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>科技夺宝 · 排班器</title>
+    <style>
+        :root {
+            --bg: #f6f7f9;
+            --card: #fff;
+            --line: #e2e5ea;
+            --ink: #1c2026;
+            --muted: #6b7280;
+            --accent: #2563eb;
+            --warn: #b45309;
+            --bad: #b91c1c;
+            --ok: #15803d;
+            --mono: ui-monospace, Consolas, "Courier New", monospace;
+        }
+
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            margin: 0;
+            background: var(--bg);
+            color: var(--ink);
+            font: 14px/1.5 "Segoe UI", "Microsoft YaHei", system-ui, sans-serif;
+        }
+
+        header {
+            position: sticky;
+            top: 0;
+            z-index: 5;
+            background: var(--card);
+            border-bottom: 1px solid var(--line);
+            padding: 8px 14px;
+            display: flex;
+            flex-wrap: wrap;
+            gap: 7px;
+            align-items: center;
+        }
+
+        header h1 {
+            font-size: 16px;
+            margin: 0 10px 0 0;
+        }
+
+        main {
+            padding: 10px 14px;
+            max-width: 900px;
+            margin: 0 auto;
+        }
+
+        .tabs {
+            display: flex;
+            gap: 5px;
+            flex-wrap: wrap;
+        }
+
+        .tabs button {
+            border: 1px solid var(--line);
+            background: #fff;
+            color: var(--muted);
+            padding: 4px 11px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 14px;
+        }
+
+        .tabs button[aria-selected="true"] {
+            background: var(--accent);
+            border-color: var(--accent);
+            color: #fff;
+            font-weight: 600;
+        }
+
+        button,
+        input,
+        select,
+        textarea {
+            font: inherit;
+            color: inherit;
+        }
+
+        button.act {
+            border: 1px solid var(--line);
+            background: #fff;
+            padding: 4px 9px;
+            border-radius: 6px;
+            cursor: pointer;
+        }
+
+        button.act:hover {
+            border-color: var(--accent);
+            color: var(--accent);
+        }
+
+        button.primary {
+            background: var(--accent);
+            border-color: var(--accent);
+            color: #fff;
+            font-weight: 600;
+        }
+
+        button.primary:hover {
+            color: #fff;
+            filter: brightness(1.08);
+        }
+
+        input,
+        select {
+            border: 1px solid var(--line);
+            border-radius: 5px;
+            padding: 3px 6px;
+            background: #fff;
+        }
+
+        input:focus-visible,
+        select:focus-visible,
+        button:focus-visible,
+        textarea:focus-visible {
+            outline: 2px solid var(--accent);
+            outline-offset: 1px;
+        }
+
+        input[type="number"] {
+            width: 54px;
+        }
+
+        input.w-name {
+            width: 96px;
+        }
+
+        input.w-uid {
+            width: 120px;
+            font-family: var(--mono);
+        }
+
+        input.w-sm {
+            width: 52px;
+        }
+
+        select.w-main {
+            width: 112px;
+        }
+
+        select.w-branch {
+            width: 74px;
+        }
+
+        /* 排班表：场次列（带「凌晨」标签）不折行；备注列吃掉行内剩余宽度 */
+        .c-sess {
+            white-space: nowrap;
+        }
+
+        .c-note {
+            width: 100%;
+        }
+
+        .c-note input {
+            width: 100%;
+        }
+
+        section {
+            display: none;
+        }
+
+        section.on {
+            display: block;
+        }
+
+        .card {
+            background: var(--card);
+            border: 1px solid var(--line);
+            border-radius: 10px;
+            padding: 9px 11px;
+            margin-bottom: 9px;
+        }
+
+        .card>h2 {
+            font-size: 15px;
+            margin: 0 0 6px;
+        }
+
+        .row {
+            display: flex;
+            gap: 6px;
+            flex-wrap: wrap;
+            align-items: center;
+        }
+
+        .hint {
+            color: var(--muted);
+            font-size: 12px;
+        }
+
+        table {
+            border-collapse: collapse;
+            width: auto;
+            max-width: 100%;
+            font-size: 13px;
+        }
+
+        /* 长文本表（约束说明、告警清单）仍撑满卡片，其余表按内容收紧以免列间大缝隙 */
+        table.wide {
+            width: 100%;
+        }
+
+        th,
+        td {
+            border-bottom: 1px solid var(--line);
+            padding: 3px 6px;
+            text-align: left;
+        }
+
+        th {
+            background: #f0f2f5;
+            font-weight: 600;
+            white-space: nowrap;
+        }
+
+        tbody tr:hover {
+            background: #f8fafc;
+        }
+
+        td.num,
+        th.num {
+            text-align: right;
+            font-family: var(--mono);
+        }
+
+        td.ctr,
+        th.ctr {
+            text-align: center;
+        }
+
+        tr.zebra {
+            background: #fbfcfe;
+        }
+
+        tr.zebra:hover {
+            background: #f4f6fa;
+        }
+
+        .tag {
+            font-size: 12px;
+            padding: 1px 6px;
+            border-radius: 999px;
+            border: 1px solid var(--line);
+        }
+
+        .tag.ok {
+            color: var(--ok);
+            border-color: #bbf7d0;
+            background: #f0fdf4;
+        }
+
+        .tag.warn {
+            color: var(--warn);
+            border-color: #fde68a;
+            background: #fffbeb;
+        }
+
+        .tag.bad {
+            color: var(--bad);
+            border-color: #fecaca;
+            background: #fef2f2;
+        }
+
+        .tag.dim {
+            color: var(--muted);
+        }
+
+        textarea {
+            width: 100%;
+            min-height: 110px;
+            border: 1px solid var(--line);
+            border-radius: 6px;
+            padding: 8px;
+            font-family: var(--mono);
+            font-size: 12px;
+            resize: vertical;
+        }
+
+        .grid-set {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+            gap: 4px 16px;
+        }
+
+        /* 控件紧跟标题（不再 space-between 推到格子最右），空白集中到列尾而不是文字中间 */
+        .grid-set label {
+            display: flex;
+            justify-content: flex-start;
+            gap: 6px;
+            align-items: center;
+            white-space: nowrap;
+            min-width: 0;
+        }
+
+        /* 每场次主跑上限：固定 3 列 × 3 行（列=03/11/19，行=周五/六/日），SESSIONS 按天主序自然对齐 */
+        #sessMaxMains {
+            grid-template-columns: repeat(3, minmax(0, 1fr));
+        }
+
+        .bar {
+            display: flex;
+            gap: 8px;
+            flex-wrap: wrap;
+            margin-bottom: 6px;
+            font-size: 13px;
+        }
+
+        .flag {
+            font-size: 12px;
+        }
+
+        .flag.bad {
+            color: var(--bad);
+        }
+
+        .flag.warn {
+            color: var(--warn);
+        }
+
+        .flag.dim {
+            color: var(--muted);
+        }
+
+        /* 台账「提示」列：一条一行，超出宽度用省略号，完整文字看悬浮提示 */
+        .c-flag .flag {
+            display: block;
+            max-width: 260px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        pre.out {
+            background: #0f172a;
+            color: #e2e8f0;
+            padding: 10px;
+            border-radius: 8px;
+            font-family: var(--mono);
+            font-size: 12px;
+            overflow: auto;
+            max-height: 340px;
+            white-space: pre-wrap;
+        }
+
+        .toast {
+            position: fixed;
+            right: 16px;
+            bottom: 16px;
+            background: #111827;
+            color: #fff;
+            padding: 8px 12px;
+            border-radius: 8px;
+            opacity: 0;
+            transition: opacity 0.2s;
+            pointer-events: none;
+        }
+
+        .toast.on {
+            opacity: 0.94;
+        }
+
+        /* 队伍操作条 / 允许主跑场次弹层 */
+        .team-bar {
+            margin-bottom: 6px;
+        }
+
+        .dlg-sess {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+            gap: 4px 14px;
+            margin: 8px 0;
+        }
+
+        .dlg-sess label {
+            display: flex;
+            gap: 6px;
+            align-items: center;
+            white-space: nowrap;
+        }
+
+        /* 个人计划：每人一行，负责场次逐条罗列 */
+        .pv-item {
+            margin: 1px 0;
+        }
+
+        td.c-name {
+            white-space: nowrap;
+            font-weight: 600;
+        }
+    </style>
+</head>
+
+<body>
+    <header>
+        <h1>科技夺宝 · 排班器</h1>
+        <nav class="tabs" role="tablist" aria-label="功能页">
+            <button role="tab" data-tab="input" aria-selected="true">成员录入</button>
+            <button role="tab" data-tab="plan" aria-selected="false">排班计划</button>
+            <button role="tab" data-tab="personal" aria-selected="false">个人计划</button>
+            <button role="tab" data-tab="ledger" aria-selected="false">自然票台账</button>
+            <button role="tab" data-tab="rules" aria-selected="false">规则与说明</button>
+        </nav>
+        <span style="flex: 1"></span>
+        <button class="act" id="btnGen">生成排班</button>
+    </header>
+
+    <main>
+        <section id="tab-input" class="on">
+            <div class="card">
+                <h2>规则参数（只有这两项是可调意图）</h2>
+                <div class="grid-set" id="settings"></div>
+                <h2 style="margin-top: 10px">每场次主跑人数上限</h2>
+                <div class="grid-set" id="sessMaxMains"></div>
+                <p class="hint">每场可安排的主跑人数上限，生成与校验都按此值执行；改动即时生效。</p>
+                <p class="hint">
+                    改动即时写入本地存储并重算。其余按游戏既定值算：自然票封顶 5 张、从周五 03:00 起每 10 小时回 1
+                    张。到账时刻只要还在场次范围内（开场起 2
+                    小时）就当场可用，所以不存在「边界票」这种模棱两可的告警。回票只在活动周期内发生（活动场外不回票），期末剩下的票不会作废，全额结转给下次活动当底仓；只有下次开场把它打到超出封顶
+                    5 张时才会溢出丢弃。单场默认 12 次：行军路上与集结都要耗时，给一场留点 buff 余量。
+                </p>
+            </div>
+
+            <div class="card">
+                <h2>成员表（队伍可动态增删，删队连带删其成员）</h2>
+                <div class="row team-bar">
+                    <input type="text" id="newTeamName" class="w-name" placeholder="新队名，如 3队" aria-label="新队名" />
+                    <button class="act" id="btnAddTeam">+ 添加队伍</button>
+                    <select id="delTeamSel" aria-label="选择要删除的队伍"></select>
+                    <button class="act" id="btnDelTeam">删除选中队伍（连带删成员）</button>
+                </div>
+                <div class="bar" id="teamSummary"></div>
+                <div style="overflow-x: auto">
+                    <table id="memberTable">
+                        <thead>
+                            <tr>
+                                <th>队伍</th>
+                                <th>UID</th>
+                                <th>昵称</th>
+                                <th>队标</th>
+                                <th>军种</th>
+                                <th>战力</th>
+                                <th class="num">初始票</th>
+                                <th class="num">初始信标</th>
+                                <th class="ctr">允许主跑</th>
+                                <th></th>
+                            </tr>
+                        </thead>
+                        <tbody></tbody>
+                    </table>
+                </div>
+                <div class="row" style="margin-top: 8px">
+                    <button class="act" id="btnAddRow">+ 加一行</button>
+                    <button class="act" id="btnSortRows">按队伍排序</button>
+                    <button class="act" id="btnSeed">载入示例（4402 两队）</button>
+                    <button class="act" id="btnWipeMembers">清空成员</button>
+                </div>
+            </div>
+        </section>
+
+        <section id="tab-plan">
+            <div class="card">
+                <h2>排班计划</h2>
+                <p class="hint">
+                    计划表可直接手改：换主跑人选、改自然票 / 信标次数、增减主跑人数。任何改动都会存本地，并立刻喂给「自然票台账」重算 ——
+                    生成器只负责给一个符合规则的初稿，最终以表内数值为准。
+                </p>
+                <div class="row">
+                    <button class="act primary" id="btnRegen">按规则重新生成（覆盖手改）</button>
+                    <button class="act" id="btnClearPlan">清空计划</button>
+                    <span class="hint" id="planMsg"></span>
+                </div>
+            </div>
+            <div id="planHost"></div>
+        </section>
+
+        <section id="tab-personal">
+            <div class="card">
+                <h2>个人排班计划</h2>
+                <p class="hint">
+                    按人汇总的只读视图（随排班计划自动更新）：每名列出其负责场次、票数/信标与先后搭配备注，方便逐人核对。
+                    要改动请去「排班计划」按场次编辑。
+                </p>
+            </div>
+            <div id="personalHost"></div>
+        </section>
+
+        <section id="tab-ledger">
+            <div class="card">
+                <h2>自然票台账</h2>
+                <div class="bar" id="ledgerSummary"></div>
+                <p class="hint">
+                    口径：<b>可用 = 上场结存 + 归本场到账的回票节点（落在本场开场起 2 小时内的也算），封顶后溢出丢弃</b>；回票从周五 03:00 起每 10
+                    小时一张，只在活动周期内到账。周期结束的剩余票<b>不作废、全额结转下次活动</b>作为底仓（场外不回票，不会被顶掉），只会因下次开局打到超过封顶而溢出。逐场给出「期初 / 回票 / 溢出 / 可用
+                    / 消耗 /
+                    期末」，方便与游戏内票数逐格核对。
+                </p>
+            </div>
+            <div id="ledgerHost"></div>
+        </section>
+
+        <section id="tab-rules">
+            <div class="card">
+                <h2>硬约束（违反即为红色告警）</h2>
+                <table class="wide">
+                    <thead>
+                        <tr>
+                            <th style="width: 92px">类别</th>
+                            <th>约束</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td>场次</td>
+                            <td>周五 03/11/19、周六 03/11/19、周日 03/11/19 共 9 场，每场 2 小时。</td>
+                        </tr>
+                        <tr>
+                            <td>主跑人数</td>
+                            <td>周五三场各 1 人；周六 03 一场 1 人、11/19 各 2 人；周日 03 一场 1 人、11 两场 2 人、19 一场 1 人。</td>
+                        </tr>
+                        <tr>
+                            <td>单场次数</td>
+                            <td>每场总跑数 ≤ 12（两人先后主跑时按合计计）—— 行军路上与集结都要耗时，预留一点 buff 时间；该值可在「规则参数」里调。</td>
+                        </tr>
+                        <tr>
+                            <td>自然票</td>
+                            <td>从周五 03:00 起每 10 小时回 1 张，封顶 5 张，满 5 不再累积。到账时刻若落在某场开场后 2 小时内，那张票当场就能用。</td>
+                        </tr>
+                        <tr>
+                            <td>结转</td>
+                            <td>自然票只在活动周期内回票，活动场外不回票。周日 21:00 周期结束时未用完的票不作废，全额带到下次活动当底仓，不会被顶掉；只有下次开场带着它们打、余额超过封顶 5
+                                张时，超出部分才溢出丢弃。</td>
+                        </tr>
+                        <tr>
+                            <td>信标</td>
+                            <td>仅凌晨 03:00 场消耗；消耗时当前持有必须 ≥ 5；凌晨场先耗自然票、不足部分用信标补；未耗完的信标存档到下个凌晨场。</td>
+                        </tr>
+                        <tr>
+                            <td>陪跑</td>
+                            <td>非主跑全程陪跑，不耗票、不耗信标。</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+            <div class="card">
+                <h2>生成器优先级（软规则）</h2>
+                <ol>
+                    <li><b>凌晨场清标</b>：持有信标 ≥ 门槛者优先主跑，一次尽量清光；被单场上限截断的部分留到下个凌晨场继续清。</li>
+                    <li><b>主跑即打空</b>：被选为主跑就把手上可用自然票全部跑掉 —— 越早清空越不会撞封顶浪费。</li>
+                    <li><b>票荒场（周五 11:00）</b>：首个回票点在 13:00，只能用表内存量 → 取初始票数最高者。</li>
+                    <li><b>两人场</b>：取可用票最多的两人；同队标成员在票差 ≤ 1 时优先同场 —— 票量有差是正常事，差得多就不强凑。</li>
+                    <li><b>错峰</b>：票数相近时优先安排距上次主跑更久的人，避免票攒到封顶。</li>
+                    <li><b>门槛内信标不碰</b>：信标 &lt; 门槛者全程只用自然票，其信标本周期用不上（可存档到下个周期，台账汇总显示）。</li>
+                    <li><b>末场清票</b>：最后一场（周日 19:00）仍建议打空 ——
+                        未用完的票会结转给下次当底仓（场外不回票，带得过去），但下次开场余额越高，前期回票越容易撞封顶溢出；只有确认下次场次消化不完时，留票才划算。</li>
+                </ol>
+                <p class="hint">
+                    告警分级：<span class="tag bad">红</span> 超发或违反硬约束；<span class="tag warn">黄</span>
+                    封顶溢出、清标后残余低于门槛；<span class="tag dim">灰</span> 结转、存档信标等信息提示。
+                </p>
+            </div>
+            <div class="card">
+                <h2>数据存放</h2>
+                <p class="hint">
+                    成员、规则参数、计划（含手改）全部存在本机
+                    <code>localStorage[<span id="lsKey"></span>]</code>，按浏览器 + 文件来源隔离。
+                </p>
+                <div class="row">
+                    <button class="act" id="btnWipeAll">清除本机数据</button>
+                </div>
+            </div>
+        </section>
+    </main>
+
+    <div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+    <dialog id="allowDlg">
+        <h3 id="allowDlgTitle">允许主跑的场次</h3>
+        <p class="hint">勾选该成员可担任主跑的场次；排班只在勾选项内安排其主跑。</p>
+        <div class="dlg-sess" id="allowDlgSess"></div>
+        <div class="row">
+            <button class="act" id="allowDlgAll">全选</button>
+            <button class="act" id="allowDlgNone">全不选</button>
+            <span style="flex: 1"></span>
+            <button class="act primary" id="allowDlgSave">保存</button>
+            <button class="act" id="allowDlgCancel">取消</button>
+        </div>
+    </dialog>
+
+    <script>
+        "use strict";
+        /* ====================== 常量 ====================== */
+        var LS_KEY = "duobao-schedule.v1";
+        var SESSION_DUR = 2; // 每场 2 小时；场次窗口 = [开场, 开场+2h)
+        var SESSIONS = [
+            { label: "周五-03:00", hour: 0, night: true, maxMains: 1 },
+            { label: "周五-11:00", hour: 8, night: false, maxMains: 1 },
+            { label: "周五-19:00", hour: 16, night: false, maxMains: 1 },
+            { label: "周六-03:00", hour: 24, night: true, maxMains: 1 },
+            { label: "周六-11:00", hour: 32, night: false, maxMains: 2 },
+            { label: "周六-19:00", hour: 40, night: false, maxMains: 2 },
+            { label: "周日-03:00", hour: 48, night: true, maxMains: 1 },
+            { label: "周日-11:00", hour: 56, night: false, maxMains: 2 },
+            { label: "周日-19:00", hour: 64, night: false, maxMains: 1 }
+        ];
+        var CYCLE_END = SESSIONS[SESSIONS.length - 1].hour + SESSION_DUR; // 周日 21:00 = 周五 03:00 后 66 小时
+        /* 只有这两项是用户意图，其余都是游戏既定机制，不做配置 */
+        var SET_DEFS = [
+            { key: "beaconThreshold", label: "信标使用门槛", min: 1, max: 30, unit: "个" },
+            { key: "sessionCap", label: "单场最多跑", min: 1, max: 40, unit: "次" }
+        ];
+        /* 每场次主跑人数上限：默认沿用 SESSIONS[i].maxMains，可在设置区逐场调整 */
+        var DEFAULT_SESS_MAX = SESSIONS.map(function (s) { return s.maxMains; });
+        /* 机制常量：自然票封顶 5 张、从周五 03:00 起每 10 小时回 1 张；
+           回票只在活动周期内发生（场外不回票），所以期末结转的票全额带得过去 */
+        var MECH = { capNatural: 5, regenHours: 10 };
+        /* 同队标尽量同场的票差容忍（固定 1 张，票量差距大时不强凑） */
+        var PAIR_SLACK = 1;
+        /* 单场最多跑默认 12：行军路上与集结都要耗时，给一场留点 buff 余量 */
+        var DEFAULTS = { capNatural: MECH.capNatural, regenHours: MECH.regenHours, beaconThreshold: 5, sessionCap: 12 };
+        var SEED = [
+            { team: "1队", uid: "14179309129759", name: "晚风", mark: "", branch: "陆军", power: "91M", tickets: 4, beacons: 0 },
+            { team: "1队", uid: "15589884924144", name: "御", mark: "", branch: "海军", power: "80M", tickets: 2, beacons: 2 },
+            { team: "1队", uid: "15970694074674", name: "拾光", mark: "", branch: "陆军", power: "21M", tickets: 2, beacons: 2 },
+            { team: "1队", uid: "15973649748274", name: "番薯粥", mark: "", branch: "海军", power: "82M", tickets: 2, beacons: 6 },
+            { team: "1队", uid: "15588957458672", name: "JOY", mark: "", branch: "海军", power: "57.6M", tickets: 5, beacons: 5 },
+            { team: "2队", uid: "15483155583202", name: "合金钢板", mark: "A", branch: "空军", power: "90M", tickets: 2, beacons: 3 },
+            { team: "2队", uid: "12477611839249", name: "松松Tsong", mark: "A", branch: "海军", power: "45M", tickets: 2, beacons: 0 },
+            { team: "2队", uid: "15591945081072", name: "暗夜", mark: "", branch: "陆军", power: "51.7M", tickets: 5, beacons: 16 },
+            { team: "2队", uid: "15597749637360", name: "Ricc", mark: "", branch: "陆军", power: "56M", tickets: 2, beacons: 3 },
+            { team: "2队", uid: "14738958094434", name: "听白", mark: "", branch: "海军", power: "94M", tickets: 3, beacons: 1 }
+        ];
+
+        var state = { settings: {}, sessMax: DEFAULT_SESS_MAX.slice(), teams: [], players: [], plans: {}, seq: 1 };
+
+        /* ====================== 小工具 ====================== */
+        /* 全部场次索引：allowMain 缺省即此值（不限），显式选空 = 任何场次都不可主跑 */
+        function allSessions() {
+            return SESSIONS.map(function (_, i) {
+                return i;
+            });
+        }
+        /* 该成员是否可在第 si 场主跑：allowMain 含 si 才行（缺省全含 = 不限） */
+        function canMain(p, si) {
+            return Array.isArray(p.allowMain) ? p.allowMain.indexOf(si) >= 0 : true;
+        }
+        /* 第 si 场允许的主跑人数上限：设置区可逐场调，缺省沿用既定值 */
+        function maxMainsOf(si) {
+            var v = num(state.sessMax[si]);
+            return v > 0 ? v : DEFAULT_SESS_MAX[si];
+        }
+        function nextId() {
+            /* 发号跳过已占用的：宁可从 seq 往后找，也不能和存量撞号 */
+            var id = "p" + state.seq++;
+            while (byId(id)) id = "p" + state.seq++;
+            return id;
+        }
+        function num(v) {
+            var n = Math.floor(Number(v));
+            return isNaN(n) || n < 0 ? 0 : n;
+        }
+        function normPlayer(p) {
+            p = p || {};
+            var allow;
+            if (Array.isArray(p.allowMain)) {
+                /* 存量/导入的场次索引数组：去重、钳进 [0, SESSIONS.length)，非法值丢弃 */
+                allow = [];
+                p.allowMain.forEach(function (si) {
+                    si = num(si);
+                    if (si >= 0 && si < SESSIONS.length && allow.indexOf(si) < 0) allow.push(si);
+                });
+                allow.sort(function (a, b) {
+                    return a - b;
+                });
+            } else {
+                allow = allSessions(); // 未指定 = 全部场次可主跑（不限）
+            }
+            return {
+                id: p.id || nextId(),
+                team: String(p.team || "").trim() || "1队",
+                uid: String(p.uid || "").trim(),
+                name: String(p.name || "").trim(),
+                mark: String(p.mark || "").trim(),
+                branch: String(p.branch || "").trim(),
+                power: String(p.power || "").trim(),
+                tickets: num(p.tickets),
+                beacons: num(p.beacons),
+                allowMain: allow
+            };
+        }
+        function esc(s) {
+            return String(s == null ? "" : s).replace(/[&<>"]/g, function (c) {
+                return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c];
+            });
+        }
+        var toastTimer = null;
+        function toast(msg) {
+            var el = document.getElementById("toast");
+            el.textContent = msg;
+            el.classList.add("on");
+            clearTimeout(toastTimer);
+            toastTimer = setTimeout(function () {
+                el.classList.remove("on");
+            }, 2800);
+        }
+
+        function setPlanMsg(text) {
+            document.getElementById("planMsg").textContent = text;
+        }
+
+        /* ====================== 读写本地存储 ====================== */
+        /* 发号纪律：id 去重 + seq 严格高于存量最大编号。
+           否则「加一行」会沿用老成员的号，删这一行时按号过滤会连带把同号的老成员删掉 */
+        function syncSeq(s) {
+            var maxId = 0;
+            s.players.forEach(function (p) {
+                var n = num(String(p.id || "").replace(/^p/i, ""));
+                if (n > maxId) maxId = n;
+            });
+            var seen = {};
+            s.players.forEach(function (p) {
+                if (!p.id || seen[p.id]) p.id = "p" + ++maxId;
+                seen[p.id] = 1;
+            });
+            s.seq = Math.max(num(s.seq), maxId + 1);
+        }
+
+        function load() {
+            var raw = null;
+            try {
+                raw = localStorage.getItem(LS_KEY);
+            } catch (e) {
+                raw = null; // 隐私模式等：当作无数据，用默认值跑
+            }
+            var s = { settings: {}, sessMax: DEFAULT_SESS_MAX.slice(), teams: [], players: [], plans: {}, seq: 1 };
+            Object.keys(DEFAULTS).forEach(function (k) {
+                s.settings[k] = DEFAULTS[k];
+            });
+            if (raw) {
+                try {
+                    var o = JSON.parse(raw);
+                    if (o && typeof o === "object") {
+                        if (o.settings) {
+                            Object.keys(DEFAULTS).forEach(function (k) {
+                                if (o.settings[k] !== undefined) s.settings[k] = o.settings[k];
+                            });
+                            /* 旧默认 13 → 新默认 12：单场按 12 次计（行军与集结耗时，预留 buff 时间） */
+                            if (s.settings.sessionCap === 13) s.settings.sessionCap = DEFAULTS.sessionCap;
+                        }
+                        /* 每场主跑上限：长度不符逐位回默认 */
+                        if (Array.isArray(o.sessMax) && o.sessMax.length === SESSIONS.length) {
+                            s.sessMax = o.sessMax.map(function (v, i) {
+                                var n = num(v);
+                                return n > 0 ? n : DEFAULT_SESS_MAX[i];
+                            });
+                        }
+                        if (Array.isArray(o.players)) s.players = o.players.map(normPlayer);
+                        /* 队伍登记表：存量可能无，按成员所属队伍兼平后补全 */
+                        if (Array.isArray(o.teams)) s.teams = o.teams.map(function (t) { return String(t || "").trim(); }).filter(Boolean);
+                        if (o.plans && typeof o.plans === "object") s.plans = o.plans;
+                        s.seq = num(o.seq);
+                    }
+                } catch (e) {
+                    toast("本地数据损坏，已按空数据启动（未覆盖磁盘）");
+                }
+            }
+            if (!s.players.length) s.players = SEED.map(normPlayer);
+            syncSeq(s);
+            /* 机制常量不进设置区：不管存量里写过什么，一律按游戏既定值算 */
+            s.settings.capNatural = MECH.capNatural;
+            s.settings.regenHours = MECH.regenHours;
+            state = s;
+            syncTeams();
+        }
+        /* 队伍登记表兼平：成员所属但未登记的队补进表（不删多余空队，支持空队存在） */
+        function syncTeams() {
+            state.players.forEach(function (p) {
+                if (p.team && state.teams.indexOf(p.team) < 0) state.teams.push(p.team);
+            });
+        }
+        function save() {
+            try {
+                localStorage.setItem(LS_KEY, JSON.stringify(state));
+            } catch (e) {
+                toast("写入本地存储失败：" + e.message);
+            }
+        }
+        function S() {
+            return state.settings;
+        }
+        function teams() {
+            var out = state.teams.slice();
+            state.players.forEach(function (p) {
+                if (p.team && out.indexOf(p.team) < 0) out.push(p.team);
+            });
+            return out.sort(function (a, b) {
+                var na = num(a.replace(/\D/g, "")) || 999;
+                var nb = num(b.replace(/\D/g, "")) || 999;
+                return na - nb || a.localeCompare(b, "zh");
+            });
+        }
+        function teamPlayers(t) {
+            return state.players.filter(function (p) {
+                return p.team === t;
+            });
+        }
+        function byId(id) {
+            for (var i = 0; i < state.players.length; i++) if (state.players[i].id === id) return state.players[i];
+            return null;
+        }
+        function planOf(t) {
+            var p = state.plans[t];
+            if (!Array.isArray(p) || p.length !== SESSIONS.length) return null;
+            return p;
+        }
+
+        /* ====================== 页签 ====================== */
+        function initTabs() {
+            var btns = Array.prototype.slice.call(document.querySelectorAll('.tabs button[role="tab"]'));
+            btns.forEach(function (b) {
+                b.addEventListener("click", function () {
+                    btns.forEach(function (x) {
+                        x.setAttribute("aria-selected", String(x === b));
+                    });
+                    Array.prototype.slice.call(document.querySelectorAll("main section")).forEach(function (s) {
+                        s.classList.remove("on");
+                    });
+                    document.getElementById("tab-" + b.dataset.tab).classList.add("on");
+                });
+            });
+        }
+        function goTab(name) {
+            var b = document.querySelector('.tabs button[data-tab="' + name + '"]');
+            if (b) b.click();
+        }
+
+        /* ====================== 规则参数 UI ====================== */
+        function renderSettings() {
+            var host = document.getElementById("settings");
+            host.innerHTML = SET_DEFS.map(function (d) {
+                var v = state.settings[d.key];
+                var ctrl = d.bool
+                    ? '<input type="checkbox" data-set="' + d.key + '"' + (v ? " checked" : "") + " />"
+                    : '<input type="number" data-set="' + d.key + '" min="' + d.min + '" max="' + d.max + '" value="' + esc(v) + '" /><span class="hint">' + esc(d.unit) + "</span>";
+                return "<label><span>" + esc(d.label) + "</span><span>" + ctrl + "</span></label>";
+            }).join("");
+            Array.prototype.slice.call(host.querySelectorAll("[data-set]")).forEach(function (el) {
+                el.addEventListener(el.type === "checkbox" ? "change" : "input", function () {
+                    var key = el.dataset.set;
+                    var def = SET_DEFS.filter(function (d) {
+                        return d.key === key;
+                    })[0];
+                    state.settings[key] = def.bool ? el.checked : Math.max(def.min, Math.min(def.max, num(el.value) || def.min));
+                    save();
+                    regenAll(true);
+                });
+            });
+            renderSessMax();
+        }
+        /* 每场次主跑上限：9 个数字框，改动即写 state.sessMax 并重排 */
+        function renderSessMax() {
+            var host = document.getElementById("sessMaxMains");
+            host.innerHTML = SESSIONS.map(function (s, si) {
+                return (
+                    '<label><span>' + esc(s.label) + (s.night ? ' <span class="tag dim">凌晨</span>' : "") + '</span>' +
+                    '<input type="number" min="1" max="9" value="' + maxMainsOf(si) + '" data-smax="' + si + '" aria-label="' + esc(s.label) + ' 主跑上限" /></label>'
+                );
+            }).join("");
+            Array.prototype.slice.call(host.querySelectorAll("[data-smax]")).forEach(function (el) {
+                el.addEventListener("input", function () {
+                    var si = Number(el.dataset.smax);
+                    state.sessMax[si] = Math.max(1, Math.min(9, num(el.value) || 1));
+                    save();
+                    regenAll(true);
+                });
+            });
+        }
+
+        /* ====================== 成员录入 ====================== */
+        /* 军种是有限枚举，直接下拉；导入数据里若有别的写法会临时并进选项，不静默改用户数据 */
+        var BRANCHES = ["陆军", "海军", "空军"];
+        var MCols = [
+            { k: "team", type: "team", cls: "w-name", th: "队伍" },
+            { k: "uid", type: "text", cls: "w-uid", th: "UID" },
+            { k: "name", type: "text", cls: "w-name", th: "昵称" },
+            { k: "mark", type: "text", cls: "w-sm", th: "队标" },
+            { k: "branch", type: "select", cls: "w-branch", th: "军种", opts: BRANCHES },
+            { k: "power", type: "text", cls: "w-sm", th: "战力" },
+            { k: "tickets", type: "number", cls: "", th: "初始票" },
+            { k: "beacons", type: "number", cls: "", th: "初始信标" }
+        ];
+        function renderMembers() {
+            var tb = document.querySelector("#memberTable tbody");
+            tb.innerHTML = state.players
+                .map(function (p) {
+                    var tds = MCols.map(function (c) {
+                        var v = p[c.k];
+                        var common =
+                            ' class="' +
+                            c.cls +
+                            '" data-pid="' +
+                            p.id +
+                            '" data-pk="' +
+                            c.k +
+                            '" aria-label="' +
+                            esc(p.name || "新成员") +
+                            " " +
+                            c.th +
+                            '"';
+                        var ctl;
+                        if (c.type === "select" || c.type === "team") {
+                            /* 队伍列：从队伍登记表取选项（新队靠上方“+ 添加队伍”先登记）；军种列：固定枚举。
+                               非 team 列保留「未填」空项，避免空值被下拉默认选中第一项顶掉 */
+                            var opts;
+                            if (c.type === "team") {
+                                opts = teams();
+                                if (v && opts.indexOf(v) < 0) opts = opts.concat([v]);
+                            } else {
+                                opts = [""].concat(c.opts);
+                                if (v && opts.indexOf(v) < 0) opts.push(v);
+                            }
+                            ctl =
+                                "<select" +
+                                common +
+                                ">" +
+                                opts
+                                    .map(function (o) {
+                                        return (
+                                            '<option value="' +
+                                            esc(o) +
+                                            '"' +
+                                            (String(v || "") === o ? " selected" : "") +
+                                            ">" +
+                                            esc(o || "未填") +
+                                            "</option>"
+                                        );
+                                    })
+                                    .join("") +
+                                "</select>";
+                        } else {
+                            ctl = '<input type="' + c.type + '"' + common + ' value="' + esc(v) + '" />';
+                        }
+                        return '<td class="' + (c.type === "number" ? "num" : "") + '">' + ctl + "</td>";
+                    }).join("");
+                    /* 允许主跑场次：未限→“全部”；部分→“N/9”；一个未选→“不可主跑” */
+                    var allowN = Array.isArray(p.allowMain) ? p.allowMain.length : SESSIONS.length;
+                    var allowTxt = allowN === SESSIONS.length ? "全部" : allowN === 0 ? "不可主跑" : allowN + "/" + SESSIONS.length;
+                    return (
+                        "<tr>" +
+                        tds +
+                        '<td class="ctr"><button class="act" data-allow="' +
+                        p.id +
+                        '">' +
+                        esc(allowTxt) +
+                        "</button></td>" +
+                        '<td><button class="act" data-del="' +
+                        p.id +
+                        '">删</button></td></tr>'
+                    );
+                })
+                .join("");
+            Array.prototype.slice.call(tb.querySelectorAll("input[data-pid], select[data-pid]")).forEach(function (el) {
+                el.addEventListener("change", function () {
+                    var p = byId(el.dataset.pid);
+                    if (!p) return;
+                    var k = el.dataset.pk;
+                    p[k] = k === "tickets" || k === "beacons" ? num(el.value) : el.value.trim();
+                    save();
+                    /* 换队：旧队可能变空队、新队计划需重建，整表重排 */
+                    if (k === "team") {
+                        syncTeams();
+                        renderMembers();
+                        regenAll(false);
+                        return;
+                    }
+                    renderTeamSummary();
+                });
+                // 票数/信标改动后失焦即重算，避免台账与录入不同步
+                el.addEventListener("blur", function () {
+                    if (el.type === "number") regenAll(false);
+                });
+            });
+            Array.prototype.slice.call(tb.querySelectorAll("[data-allow]")).forEach(function (el) {
+                el.addEventListener("click", function () {
+                    openAllowDlg(el.dataset.allow);
+                });
+            });
+            Array.prototype.slice.call(tb.querySelectorAll("[data-del]")).forEach(function (el) {
+                el.addEventListener("click", function () {
+                    var id = el.dataset.del;
+                    /* 只删点到的这一行：存量里万一还有同号的，不能顺手把老数据一起带走 */
+                    for (var i = 0; i < state.players.length; i++) {
+                        if (state.players[i].id === id) {
+                            state.players.splice(i, 1);
+                            break;
+                        }
+                    }
+                    save();
+                    renderMembers();
+                    regenAll(false);
+                });
+            });
+            renderTeamSummary();
+        }
+        function renderTeamSummary() {
+            var th = S().beaconThreshold;
+            document.getElementById("teamSummary").innerHTML = teams()
+                .map(function (t) {
+                    var ps = teamPlayers(t);
+                    var tk = 0;
+                    var bc = 0;
+                    var ok = 0;
+                    ps.forEach(function (p) {
+                        tk += p.tickets;
+                        bc += p.beacons;
+                        if (p.beacons >= th) ok += p.beacons;
+                    });
+                    var marks = {};
+                    ps.forEach(function (p) {
+                        if (p.mark) marks[p.mark] = (marks[p.mark] || 0) + 1;
+                    });
+                    var pairTxt = Object.keys(marks)
+                        .filter(function (m) {
+                            return marks[m] >= 2;
+                        })
+                        .map(function (m) {
+                            return "队标" + m + " " + marks[m] + "人";
+                        });
+                    return (
+                        '<span class="tag dim">' +
+                        esc(t) +
+                        " " +
+                        ps.length +
+                        " 人 · 存量票 " +
+                        tk +
+                        " · 信标 " +
+                        bc +
+                        "（≥门槛可用 " +
+                        ok +
+                        "）" +
+                        (pairTxt.length ? " · " + pairTxt.join("/") : "") +
+                        "</span>"
+                    );
+                })
+                .join("");
+            /* 删队下拉：选项跟随当前队伍列表（保留已选项，若队已不存在则回退为空） */
+            var delSel = document.getElementById("delTeamSel");
+            if (delSel) {
+                var curDel = delSel.value;
+                var ts = teams();
+                delSel.innerHTML =
+                    '<option value="">— 选择队伍 —</option>' +
+                    ts
+                        .map(function (t) {
+                            return '<option value="' + esc(t) + '">' + esc(t) + "</option>";
+                        })
+                        .join("");
+                delSel.value = ts.indexOf(curDel) >= 0 ? curDel : "";
+            }
+        }
+        function addRow() {
+            var last = state.players[state.players.length - 1];
+            state.players.push(normPlayer({ team: last ? last.team : "1队" }));
+            save();
+            renderMembers();
+        }
+        function sortRows() {
+            state.players.sort(function (a, b) {
+                var na = num(a.team.replace(/\D/g, "")) || 999;
+                var nb = num(b.team.replace(/\D/g, "")) || 999;
+                return na - nb || b.tickets - a.tickets || b.beacons - a.beacons || a.name.localeCompare(b.name, "zh");
+            });
+            save();
+            renderMembers();
+        }
+        /* 新队名归一：去空白、无“队”后缀自动补（输入“3”→“3队”，输入“3队”保留） */
+        function normTeamName(raw) {
+            var t = String(raw || "").trim();
+            if (!t) return "";
+            if (!/[队组]$/u.test(t) && /^\d+$/.test(t)) t += "队";
+            return t;
+        }
+        function addTeam() {
+            var inp = document.getElementById("newTeamName");
+            var t = normTeamName(inp.value);
+            if (!t) {
+                toast("先填新队名");
+                return;
+            }
+            if (teams().indexOf(t) >= 0) {
+                toast("队伍已存在：" + t);
+                return;
+            }
+            state.teams.push(t);
+            inp.value = "";
+            save();
+            renderMembers();
+            regenAll(false);
+            toast("已添加队伍 " + t);
+        }
+        /* 删队连带删成员：从登记表移除该队、清掉其下所有成员与计划（空队也直接删） */
+        function deleteTeam() {
+            var sel = document.getElementById("delTeamSel");
+            var t = sel && sel.value;
+            if (!t) {
+                toast("先在右侧下拉选中要删的队伍");
+                return;
+            }
+            var n = teamPlayers(t).length;
+            if (!confirm("删除“" + t + "”" + (n ? "及其 " + n + " 名成员" : "（空队）") + "？此操作不可恢复。")) return;
+            state.teams = state.teams.filter(function (x) {
+                return x !== t;
+            });
+            state.players = state.players.filter(function (p) {
+                return p.team !== t;
+            });
+            delete state.plans[t];
+            save();
+            renderMembers();
+            regenAll(false);
+            toast("已删除队伍 " + t);
+        }
+        /* 允许主跑场次弹层：勾选写入 player.allowMain */
+        var allowDlgPid = null;
+        function openAllowDlg(pid) {
+            var p = byId(pid);
+            if (!p) return;
+            allowDlgPid = pid;
+            var cur = Array.isArray(p.allowMain) ? p.allowMain : allSessions();
+            document.getElementById("allowDlgTitle").textContent = (p.name || "新成员") + " · 允许主跑的场次";
+            document.getElementById("allowDlgSess").innerHTML = SESSIONS.map(function (s, si) {
+                return (
+                    '<label><input type="checkbox" value="' +
+                    si +
+                    '"' +
+                    (cur.indexOf(si) >= 0 ? " checked" : "") +
+                    " />" +
+                    esc(s.label) +
+                    (s.night ? ' <span class="tag dim">凌晨</span>' : "") +
+                    "</label>"
+                );
+            }).join("");
+            document.getElementById("allowDlg").showModal();
+        }
+        function saveAllowDlg() {
+            var p = byId(allowDlgPid);
+            if (p) {
+                var picked = [];
+                Array.prototype.slice.call(document.querySelectorAll("#allowDlgSess input:checked")).forEach(function (el) {
+                    picked.push(Number(el.value));
+                });
+                picked.sort(function (a, b) {
+                    return a - b;
+                });
+                p.allowMain = picked;
+                save();
+                renderMembers();
+                regenAll(false);
+            }
+            document.getElementById("allowDlg").close();
+        }
+
+        /* ====================== 回票节点 ====================== */
+        function tickList() {
+            var out = [];
+            var step = Math.max(1, S().regenHours);
+            for (var h = step; h <= CYCLE_END; h += step) out.push(h);
+            return out;
+        }
+        /* 回票节点归属：到账时刻落在某场窗口 [开场, 开场+时长) 内 → 本场当场可用；
+           落在场次间隙 → 归下一场（开场前已到手）；晚于末场窗口 → 本周期用不上，计入期末结转 */
+        function tickOwnerSi(node) {
+            for (var i = 0; i < SESSIONS.length; i++) {
+                var s = SESSIONS[i];
+                if (node >= s.hour && node < s.hour + SESSION_DUR) return i;
+                if (node < s.hour) return i;
+            }
+            return -2;
+        }
+        function gainOfSession(si) {
+            var n = 0;
+            tickList().forEach(function (t) {
+                if (tickOwnerSi(t) === si) n++;
+            });
+            return n;
+        }
+        function gainAfterSessions() {
+            var n = 0;
+            tickList().forEach(function (t) {
+                if (tickOwnerSi(t) === -2) n++;
+            });
+            return n;
+        }
+        /* 自然票只在活动周期内回票，活动场外不回票 —— 期末结转的票不会被下次开场前的回票顶掉，
+           全额带到下次活动当底仓（结转量本身已被封顶 5 张卡住） */
+
+        /* ====================== 生成器 ====================== */
+        function idleOf(x, si) {
+            return x.last < 0 ? si + 2 : si - x.last;
+        }
+        /* 白天场人选：可用票多 > 久未主跑 > 信标少（把信标大户留给凌晨场） > 昵称 */
+        function cmpMain(a, b, si) {
+            return (
+                b.bal - a.bal ||
+                idleOf(b, si) - idleOf(a, si) ||
+                a.bea - b.bea ||
+                String(a.name).localeCompare(String(b.name), "zh")
+            );
+        }
+        function generateTeamPlan(players) {
+            var cfg = S();
+            var st = players.map(function (p) {
+                return { id: p.id, name: p.name, mark: p.mark, bal: Math.min(cfg.capNatural, p.tickets), bea: p.beacons, last: -1, allowMain: p.allowMain };
+            });
+            var byId2 = {};
+            st.forEach(function (x) {
+                byId2[x.id] = x;
+            });
+            var plan = SESSIONS.map(function () {
+                return [];
+            });
+            SESSIONS.forEach(function (s, si) {
+                var gain = gainOfSession(si);
+                st.forEach(function (x) {
+                    x.bal = Math.min(cfg.capNatural, x.bal + gain);
+                });
+                var cap = cfg.sessionCap;
+                /* 候选池只取「本场有可用票 且 允许本场主跑」的人（需求5：只在指定场次安排主跑） */
+                var pool = st.filter(function (x) {
+                    return x.bal > 0 && canMain(x, si);
+                });
+                var picks = [];
+                if (s.night) {
+                    /* 凌晨场：信标达门槛者优先清标，按「本场能跑几次」排序（不是单纯看标多）；同样限允许主跑者 */
+                    var holders = st
+                        .filter(function (x) {
+                            return x.bea >= cfg.beaconThreshold && canMain(x, si);
+                        })
+                        .map(function (x) {
+                            var n = Math.min(x.bal, cap);
+                            return { x: x, runs: n + Math.min(x.bea, cap - n) };
+                        })
+                        .sort(function (a, b) {
+                            return b.runs - a.runs || cmpMain(a.x, b.x, si);
+                        });
+                    if (holders.length) picks.push(holders[0].x);
+                }
+                if (!picks.length) {
+                    pool.sort(function (a, b) {
+                        return cmpMain(a, b, si);
+                    });
+                    picks.push(pool[0]);
+                    if (maxMainsOf(si) >= 2 && pool.length > 1) {
+                        var first = picks[0];
+                        var rest = pool.filter(function (x) {
+                            return x !== first;
+                        });
+                        var second = rest[0];
+                        var mate = rest.filter(function (x) {
+                            return first.mark && x.mark === first.mark;
+                        })[0];
+                        /* 同队标尽量同场：票差 ≤ PAIR_SLACK 才换人，差得多就按票量优先 */
+                        if (mate && second && mate !== second && mate.bal >= second.bal - PAIR_SLACK) second = mate;
+                        if (second) picks.push(second);
+                    }
+                }
+                picks.forEach(function (x) {
+                    if (!x || cap <= 0) return;
+                    var nat = Math.min(x.bal, cap);
+                    var bea = 0;
+                    if (s.night && x.bea >= cfg.beaconThreshold) bea = Math.min(x.bea, cap - nat);
+                    if (nat + bea <= 0) return;
+                    x.bal -= nat;
+                    x.bea -= bea;
+                    x.last = si;
+                    cap -= nat + bea;
+                    var note = [];
+                    if (bea > 0) {
+                        note.push("清标专场（信标 " + bea + "）");
+                        if (x.bea > 0 && x.bea < cfg.beaconThreshold) note.push("残余 " + x.bea + " 标低于门槛，存档待下个凌晨周期");
+                        else if (x.bea > 0) note.push("剩 " + x.bea + " 标存档，下个凌晨场继续清");
+                    } else if (si === 1) note.push("票荒场：取存量最高");
+                    if (nat === cfg.capNatural) note.push("满票出清");
+                    if (si === SESSIONS.length - 1) note.push("末场清票");
+                    plan[si].push({ id: x.id, natural: nat, beacon: bea, note: note.join("；") });
+                });
+            });
+            return plan;
+        }
+
+        /* ====================== 台账模拟 ====================== */
+        /* 回票口径：到账时刻只要还在场次窗口内就当场可用（场内到账也算） */
+        function simulate(players, plan) {
+            var cfg = S();
+            var st = {};
+            var res = {
+                rows: {},
+                totals: {
+                    runs: 0,
+                    natural: 0,
+                    beacon: 0,
+                    overflow: 0,
+                    carryNatural: 0,
+                    idleBeacon: 0
+                }
+            };
+            players.forEach(function (p) {
+                st[p.id] = { bal: Math.min(cfg.capNatural, p.tickets), bea: p.beacons };
+                res.rows[p.id] = [];
+            });
+            SESSIONS.forEach(function (s, si) {
+                var mains = (plan[si] || []).filter(function (m) {
+                    return st[m.id] !== undefined;
+                });
+                var sessRuns = 0;
+                players.forEach(function (p) {
+                    var x = st[p.id];
+                    var open = x.bal;
+                    var gain = gainOfSession(si);
+                    var pot = open + gain;
+                    var waste = Math.max(0, pot - cfg.capNatural);
+                    x.bal = Math.min(cfg.capNatural, pot);
+                    var m = mains.filter(function (mm) {
+                        return mm.id === p.id;
+                    })[0];
+                    var nat = m ? num(m.natural) : 0;
+                    var bea = m ? num(m.beacon) : 0;
+                    var over = Math.max(0, nat - x.bal);
+                    var beaOver = Math.max(0, bea - x.bea);
+                    x.bal = Math.max(0, x.bal - nat);
+                    x.bea = Math.max(0, x.bea - bea);
+                    sessRuns += nat + bea;
+                    res.totals.natural += nat;
+                    res.totals.beacon += bea;
+                    res.totals.runs += nat + bea;
+                    res.totals.overflow += waste;
+                    res.rows[p.id].push({
+                        si: si,
+                        open: open,
+                        gain: gain,
+                        waste: waste,
+                        avail: Math.min(cfg.capNatural, pot),
+                        nat: nat,
+                        bea: bea,
+                        beaIn: x.bea + bea,
+                        close: x.bal,
+                        beaClose: x.bea,
+                        over: over,
+                        beaOver: beaOver,
+                        note: m ? m.note || "" : ""
+                    });
+                });
+                res["sess" + si] = { runs: sessRuns, mains: mains.length };
+            });
+            /* 周期结束：最后一场之后到周日 21:00 的回票 + 存量一律结转，不作废 */
+            players.forEach(function (p) {
+                var x = st[p.id];
+                var gain = gainAfterSessions();
+                var open = x.bal;
+                var left = Math.min(cfg.capNatural, open + gain);
+                x.bal = left;
+                res.rows[p.id].push({ si: -1, open: open, gain: gain, waste: Math.max(0, open + gain - cfg.capNatural), avail: left, nat: 0, bea: 0, close: left, beaClose: x.bea, over: 0, beaOver: 0, beaIn: 0, note: "" });
+                res.totals.carryNatural += left;
+                if (x.bea > 0 && x.bea < cfg.beaconThreshold) res.totals.idleBeacon += x.bea;
+            });
+            return res;
+        }
+        function auditTeam(t) {
+            var players = teamPlayers(t);
+            var plan = planOf(t) || SESSIONS.map(function () { return []; });
+            var cfg = S();
+            var canon = simulate(players, plan);
+            var warn = [];
+            var push = function (si, id, lv, text) {
+                warn.push({ si: si, id: id, lv: lv, text: text });
+            };
+            players.forEach(function (p) {
+                canon.rows[p.id].forEach(function (r) {
+                    var si = r.si; // -1 = 周期结束行
+                    if (r.over > 0) push(si, p.id, "bad", "自然票超发 " + r.over + " 张（本场可用 " + r.avail + "）");
+                    if (r.bea > 0) {
+                        if (!SESSIONS[si].night) push(si, p.id, "bad", "白天场不得消耗信标");
+                        if (r.beaIn < cfg.beaconThreshold) push(si, p.id, "bad", "耗标时仅持有 " + r.beaIn + " 个＜门槛 " + cfg.beaconThreshold);
+                        if (r.beaOver > 0) push(si, p.id, "bad", "信标超发 " + r.beaOver + " 个");
+                        if (r.beaClose > 0 && r.beaClose < cfg.beaconThreshold) push(si, p.id, "warn", "清标后残余 " + r.beaClose + " 个低于门槛，本周期内用不上（可存档）");
+                        else if (r.beaClose >= cfg.beaconThreshold) push(si, p.id, "dim", "剩 " + r.beaClose + " 标存档，下个凌晨场继续清");
+                    }
+                    if (r.waste > 0) push(si, p.id, "warn", "封顶溢出丢弃 " + r.waste + " 张");
+                    if (si === SESSIONS.length - 1 && r.nat > 0 && r.nat < r.avail)
+                        push(si, p.id, "dim", "末场少跑 " + (r.avail - r.nat) + " 张（未打空，剩余结转下次活动）");
+                });
+                var end = canon.rows[p.id][SESSIONS.length];
+                if (end.close > 0)
+                    push(-1, p.id, "dim", "期末剩 " + end.close + " 票结转，下次开场即为 " + end.close + " 张底仓（场外不回票，全额带得过去）");
+                if (end.beaClose > 0 && end.beaClose < cfg.beaconThreshold)
+                    push(-1, p.id, "dim", "信标 " + end.beaClose + " 个整周期未达门槛（可跨周期存档）");
+                if (end.beaClose >= cfg.beaconThreshold) push(-1, p.id, "warn", "仍有 " + end.beaClose + " 标达门槛，但凌晨场已排完");
+            });
+            SESSIONS.forEach(function (s, si) {
+                var sess = canon["sess" + si];
+                var maxM = maxMainsOf(si);
+                if (sess.runs > cfg.sessionCap) push(si, "", "bad", "本场合计 " + sess.runs + " 次，超出单场上限 " + cfg.sessionCap);
+                if (sess.mains > maxM) push(si, "", "bad", "主跑 " + sess.mains + " 人，超出该场允许的 " + maxM + " 人");
+                if (sess.mains === 0) push(si, "", "dim", "该场无主跑（当时无人有可用票）");
+                /* 需求5：主跑者未将本场列入允许主跑场次 → 告警（手改可能造成） */
+                (plan[si] || []).forEach(function (m) {
+                    var mp = byId(m.id);
+                    if (mp && !canMain(mp, si)) push(si, m.id, "bad", "未将本场列入允许主跑场次");
+                });
+            });
+            return { team: t, players: players, plan: plan, sim: canon, warn: warn, totals: canon.totals };
+        }
+        function warnOf(a, si, id) {
+            return a.warn.filter(function (w) {
+                return w.si === si && (w.id === id || w.id === "");
+            });
+        }
+        function hasLevel(ws, lv) {
+            return ws.some(function (w) {
+                return w.lv === lv;
+            });
+        }
+
+        /* ====================== 重算入口 ====================== */
+        function regenAll(generate) {
+            if (generate) {
+                teams().forEach(function (t) {
+                    state.plans[t] = generateTeamPlan(teamPlayers(t));
+                });
+                save();
+            }
+            Object.keys(state.plans).forEach(function (t) {
+                if (teams().indexOf(t) < 0) delete state.plans[t];
+            });
+            renderTeamSummary();
+            renderPlan();
+            renderPersonal();
+            renderLedger();
+        }
+
+        /* ====================== 排班计划渲染 ====================== */
+        function mainSelectHtml(t, si, i, cur, blank) {
+            var ps = teamPlayers(t);
+            var used = {};
+            (state.plans[t][si] || []).forEach(function (m, idx) {
+                if (idx !== i) used[m.id] = 1;
+            });
+            var opts = ps
+                .filter(function (p) {
+                    /* 只列出未被占用且允许在本场主跑的人；当前已选者即使不允许也保留（不吞掉手改） */
+                    return (!used[p.id] || p.id === cur) && (canMain(p, si) || p.id === cur);
+                })
+                .map(function (p) {
+                    /* 选项只显示玩家名称；达门槛的信标量放进悬浮提示，供凌晨场选人参考 */
+                    var tip = p.beacons >= S().beaconThreshold ? "信标 " + p.beacons + " 个（达门槛）" : "";
+                    return (
+                        '<option value="' + p.id + '"' + (cur === p.id ? " selected" : "") + (tip ? ' title="' + esc(tip) + '"' : "") + ">" + esc(p.name) + "</option>"
+                    );
+                })
+                .join("");
+            var attrs = ' class="w-main" data-t="' + esc(t) + '" data-si="' + si + '" data-i="' + i + '"';
+            return '<select' + attrs + (blank ? ' data-add="1"' : "") + ' aria-label="主跑人选">' + (blank ? '<option value="">— 指派 —</option>' : "") + opts + "</select>";
+        }
+        function planRowsForTeam(t) {
+            var a = auditTeam(t);
+            var cap = S().sessionCap;
+            var out = [];
+            SESSIONS.forEach(function (s, si) {
+                var mains = a.plan[si] || [];
+                var slots = mains.slice();
+                if (slots.length < maxMainsOf(si)) slots.push(null);
+                var span = Math.max(1, slots.length);
+                var sess = a.sim["sess" + si];
+                slots.forEach(function (m, i) {
+                    var c = [];
+                    if (i === 0) {
+                        c.push('<td class="c-sess" rowspan="' + span + '">' + esc(s.label) + (s.night ? ' <span class="tag dim">凌晨</span>' : "") + "</td>");
+                    }
+                    if (m) {
+                        var p = byId(m.id) || { name: "?" };
+                        c.push("<td>" + mainSelectHtml(t, si, i, m.id, false) + "</td>");
+                        c.push('<td class="num"><input type="number" min="0" max="99" value="' + num(m.natural) + '" data-t="' + esc(t) + '" data-si="' + si + '" data-i="' + i + '" data-f="natural" aria-label="' + esc(p.name) + ' 自然票" /></td>');
+                        c.push('<td class="num"><input type="number" min="0" max="99" value="' + num(m.beacon) + '" data-t="' + esc(t) + '" data-si="' + si + '" data-i="' + i + '" data-f="beacon" aria-label="' + esc(p.name) + ' 信标" /></td>');
+                        c.push('<td class="c-note"><input type="text" value="' + esc(m.note || "") + '" data-t="' + esc(t) + '" data-si="' + si + '" data-i="' + i + '" data-f="note" aria-label="备注" /></td>');
+                    } else {
+                        c.push("<td>" + mainSelectHtml(t, si, mains.length, null, true) + "</td>");
+                        c.push('<td colspan="3" class="hint">未安排主跑</td>');
+                    }
+                    if (i === 0) {
+                        c.push('<td class="num" rowspan="' + span + '">' + (sess.runs || 0) + (sess.runs > cap ? '<span class="flag bad"> &gt;' + cap + "</span>" : "") + "</td>");
+                    }
+                    c.push(m ? '<td><button class="act" data-t="' + esc(t) + '" data-del-main="' + si + ':' + i + '">✕</button></td>' : "<td></td>");
+                    out.push('<tr' + (si % 2 ? ' class="zebra"' : "") + ">" + c.join("") + "</tr>");
+                });
+            });
+            return { html: out.join(""), audit: a };
+        }
+        function renderPlan() {
+            var host = document.getElementById("planHost");
+            var ts = teams();
+            if (!ts.length) {
+                host.innerHTML = '<div class="card"><p class="hint">没有成员，先到「成员录入」填表。</p></div>';
+                return;
+            }
+            if (
+                !ts.some(function (t) {
+                    return planOf(t);
+                })
+            ) {
+                ts.forEach(function (t) {
+                    state.plans[t] = generateTeamPlan(teamPlayers(t));
+                });
+                save();
+            }
+            var blocks = ts.map(function (t) {
+                var r = planRowsForTeam(t);
+                var a = r.audit;
+                var bad = a.warn.filter(function (x) {
+                    return x.lv === "bad";
+                }).length;
+                var lv = bad ? "bad" : a.warn.length ? "warn" : "ok";
+                var bar =
+                    '<span class="tag ok">总跑数 ' + a.totals.runs + "</span>" +
+                    '<span class="tag dim">自然票 ' + a.totals.natural + " · 信标 " + a.totals.beacon + "</span>" +
+                    '<span class="tag ' + lv + '">' + (bad ? bad + " 条违规" : a.warn.length ? a.warn.length + " 条提示" : "无告警") + "</span>" +
+                    '<span class="tag dim">期末结转票 ' + a.totals.carryNatural + "</span>";
+                return (
+                    '<div class="card" data-team="' + esc(t) + '"><h2>' + esc(t) + " 排班</h2><div class=\"bar\">" + bar + "</div>" +
+                    '<div style="overflow-x:auto"><table class="wide"><thead><tr><th class="c-sess">场次</th><th>主跑</th><th class="num">自然票</th><th class="num">信标</th><th class="c-note">备注</th><th class="num">合计</th><th></th></tr></thead><tbody>' +
+                    r.html +
+                    "</tbody></table></div></div>"
+                );
+            });
+            host.innerHTML = blocks.join("");
+            wirePlan(host);
+        }
+        function wirePlan(host) {
+            Array.prototype.slice.call(host.querySelectorAll("select[data-si]")).forEach(function (el) {
+                el.addEventListener("change", function () {
+                    var t = el.dataset.t;
+                    var si = Number(el.dataset.si);
+                    var plan = state.plans[t];
+                    if (!plan) return;
+                    if (el.dataset.add) {
+                        if (!el.value) return;
+                        plan[si].push({ id: el.value, natural: 0, beacon: 0, note: "" });
+                    } else {
+                        var m = plan[si][Number(el.dataset.i)];
+                        if (m) m.id = el.value;
+                    }
+                    save();
+                    renderPlan();
+                    renderLedger();
+                });
+            });
+            Array.prototype.slice.call(host.querySelectorAll("input[data-si]")).forEach(function (el) {
+                el.addEventListener("input", function () {
+                    var t = el.dataset.t;
+                    var m = ((state.plans[t] || [])[Number(el.dataset.si)] || [])[Number(el.dataset.i)];
+                    if (!m) return;
+                    m[el.dataset.f] = el.dataset.f === "note" ? el.value : num(el.value);
+                    save();
+                    renderLedger();
+                    if (el.dataset.f !== "note") updateTeamBar(el.closest(".card"), t);
+                });
+            });
+            Array.prototype.slice.call(host.querySelectorAll("[data-del-main]")).forEach(function (el) {
+                el.addEventListener("click", function () {
+                    var t = el.dataset.t;
+                    var ab = el.dataset.delMain.split(":");
+                    state.plans[t][Number(ab[0])].splice(Number(ab[1]), 1);
+                    save();
+                    renderPlan();
+                    renderLedger();
+                });
+            });
+        }
+        /* 数字格改动后只刷顶部统计条，不重建表格（避开输入焦点被抢） */
+        function updateTeamBar(card, t) {
+            if (!card) return;
+            var a = auditTeam(t);
+            var bad = a.warn.filter(function (x) {
+                return x.lv === "bad";
+            }).length;
+            var bar = card.querySelector(".bar");
+            if (bar)
+                bar.innerHTML =
+                    '<span class="tag ok">总跑数 ' + a.totals.runs + "</span>" +
+                    '<span class="tag dim">自然票 ' + a.totals.natural + " · 信标 " + a.totals.beacon + "</span>" +
+                    '<span class="tag ' + (bad ? "bad" : a.warn.length ? "warn" : "ok") + '">' + (bad ? bad + " 条违规" : a.warn.length ? a.warn.length + " 条提示" : "无告警") + "</span>" +
+                    '<span class="tag dim">期末结转票 ' + a.totals.carryNatural + "</span>";
+            var rows = card.querySelectorAll("tbody tr");
+            var k = 0;
+            SESSIONS.forEach(function (s, si) {
+                var mains = a.plan[si] || [];
+                var span = Math.max(1, mains.length + (mains.length < maxMainsOf(si) ? 1 : 0));
+                var head = rows[k];
+                if (head) {
+                    var cell = head.querySelector("td.num[rowspan]");
+                    if (cell) cell.innerHTML = a.sim["sess" + si].runs + (a.sim["sess" + si].runs > S().sessionCap ? '<span class="flag bad"> &gt;' + S().sessionCap + "</span>" : "");
+                }
+                k += span;
+            });
+        }
+
+        /* ====================== 台账渲染 ====================== */
+        function ledgerRows(a, p) {
+            var rows = a.sim.rows[p.id];
+            var trs = rows.map(function (r, i) {
+                var isEnd = r.si < 0;
+                var s = isEnd ? null : SESSIONS[r.si];
+                var fl = warnOf(a, r.si, p.id).map(function (w) {
+                    return '<span class="flag ' + w.lv + '" title="' + esc(w.text) + '">' + (w.lv === "bad" ? "✕ " : w.lv === "warn" ? "⚠ " : "· ") + esc(w.text) + "</span>";
+                });
+                var c = [];
+                if (i === 0)
+                    c.push(
+                        '<td rowspan="' +
+                        rows.length +
+                        '"><b>' +
+                        esc(p.name) +
+                        '</b><br /><span class="hint">初始票 ' +
+                        p.tickets +
+                        " · 初始标 " +
+                        p.beacons +
+                        (p.mark ? " · 队标 " + esc(p.mark) : "") +
+                        "</span></td>"
+                    );
+                c.push('<td class="c-sess">' + (isEnd ? "周期结束 21:00" : esc(s.label) + (s.night ? ' <span class="tag dim">凌晨</span>' : "")) + "</td>");
+                c.push('<td class="num">' + r.open + "</td>");
+                c.push('<td class="num">' + (r.gain ? "+" + r.gain : "0") + "</td>");
+                c.push('<td class="num">' + (r.waste ? "-" + r.waste : "0") + "</td>");
+                c.push('<td class="num"><b>' + r.avail + "</b></td>");
+                c.push('<td class="num">' + (r.nat || "-") + "</td>");
+                c.push('<td class="num">' + (r.bea || "-") + "</td>");
+                c.push('<td class="num">' + r.close + "</td>");
+                c.push('<td class="num">' + r.beaClose + "</td>");
+                c.push('<td class="flag c-flag">' + (fl.join("") || '<span class="flag dim">—</span>') + "</td>");
+                return '<tr class="' + (isEnd ? "zebra" : i % 2 ? "zebra" : "") + '">' + c.join("") + "</tr>";
+            });
+            var end = rows[rows.length - 1];
+            var usedNat = 0;
+            var usedBea = 0;
+            rows.forEach(function (r) {
+                usedNat += r.nat;
+                usedBea += r.bea;
+            });
+            trs.push(
+                '<tr><td colspan="11" class="hint">合计：初始 ' +
+                p.tickets +
+                " 票 · 消耗自然票 " +
+                usedNat +
+                " · 消耗信标 " +
+                usedBea +
+                " · 期末结转 " +
+                end.close +
+                " 票 / " +
+                end.beaClose +
+                " 标</td></tr>"
+            );
+            return trs.join("");
+        }
+        function renderLedger() {
+            var host = document.getElementById("ledgerHost");
+            var ts = teams();
+            if (!ts.length) {
+                host.innerHTML = '<div class="card"><p class="hint">没有成员。</p></div>';
+                document.getElementById("ledgerSummary").innerHTML = "";
+                return;
+            }
+            var totRuns = 0;
+            var totWarn = 0;
+            var blocks = ts.map(function (t) {
+                var a = auditTeam(t);
+                totRuns += a.totals.runs;
+                totWarn += a.warn.length;
+                var body = a.players
+                    .map(function (p) {
+                        return ledgerRows(a, p);
+                    })
+                    .join("");
+                var warnHtml = a.warn.length
+                    ? a.warn
+                        .map(function (w) {
+                            var p = w.id ? byId(w.id) : null;
+                            return (
+                                '<tr><td class="flag ' +
+                                w.lv +
+                                '">' +
+                                (w.lv === "bad" ? "✕ 红" : w.lv === "warn" ? "⚠ 黄" : "· 灰") +
+                                "</td><td>" +
+                                (w.si >= 0 ? esc(SESSIONS[w.si].label) : "周期结束") +
+                                "</td><td>" +
+                                esc(p ? p.name : t) +
+                                "</td><td>" +
+                                esc(w.text) +
+                                "</td></tr>"
+                            );
+                        })
+                        .join("")
+                    : '<tr><td colspan="4" class="hint">无告警：所有排班次数均落在当时可用票之内。</td></tr>';
+                return (
+                    '<div class="card"><h2>' +
+                    esc(t) +
+                    " 自然票台账</h2>" +
+                    '<div style="overflow-x:auto"><table><thead><tr><th>成员</th><th class="c-sess">场次</th><th class="num">期初</th><th class="num">回票</th><th class="num">溢出</th><th class="num">可用</th><th class="num">自然票</th><th class="num">信标</th><th class="num">期末票</th><th class="num">剩标</th><th class="c-flag">提示</th></tr></thead><tbody>' +
+                    body +
+                    "</tbody></table></div>" +
+                    '<div class="row" style="margin-top:12px"><b>告警清单</b><span class="hint">红＝违反硬约束，需改次数或换人；黄＝可接受但有风险；灰＝信息提示</span></div>' +
+                    '<table class="wide"><thead><tr><th style="width:64px">级别</th><th style="width:120px">场次</th><th style="width:100px">成员</th><th>内容</th></tr></thead><tbody>' +
+                    warnHtml +
+                    "</tbody></table></div>"
+                );
+            });
+            host.innerHTML = blocks.join("");
+            document.getElementById("ledgerSummary").innerHTML =
+                '<span class="tag ok">共 ' +
+                ts.length +
+                " 队 · 总跑数 " +
+                totRuns +
+                '</span><span class="tag ' +
+                (totWarn ? "warn" : "ok") +
+                '">' +
+                (totWarn ? totWarn + " 条告警" : "无告警") +
+                '</span><span class="tag dim">回票节点 ' +
+                tickList().join("h/") +
+                "h（自周五 03:00）</span>";
+        }
+
+        /* ====================== 导出 ====================== */
+        function planCells(a, si) {
+            var names = [];
+            var counts = [];
+            var notes = [];
+            (a.plan[si] || []).forEach(function (m) {
+                var p = byId(m.id) || { name: "?" };
+                names.push(p.name);
+                var c = num(m.natural) + (num(m.beacon) ? "+" + num(m.beacon) : "");
+                var bad = warnOf(a, si, m.id).filter(function (w) {
+                    return w.lv === "bad";
+                }).length;
+                counts.push(c + (bad ? "⚠" : ""));
+                if (m.note) notes.push(m.note);
+            });
+            warnOf(a, si, "").forEach(function (w) {
+                if (w.lv !== "dim" && notes.indexOf(w.text) < 0) notes.push(w.text);
+            });
+            return { names: names.join(" / ") || "-", counts: counts.join(" / ") || "-", notes: notes.join("；") };
+        }
+        /* ====================== 个人排班计划（按人汇总，只读） ======================
+           需求2：每人一行，列出其负责场次、票数/信标、先后搭配与备注；随排班计划自动更新。 */
+        function personalEntriesFor(a, pid) {
+            var out = [];
+            SESSIONS.forEach(function (s, si) {
+                var mains = a.plan[si] || [];
+                var mine = null;
+                var others = [];
+                mains.forEach(function (m) {
+                    if (m.id === pid) mine = m;
+                    else {
+                        var op = byId(m.id);
+                        others.push(op ? op.name : "?");
+                    }
+                });
+                if (!mine) return;
+                var n = num(mine.natural);
+                var b = num(mine.beacon);
+                var cnt = n + (b ? " 票+" + b + " 标" : " 票");
+                var over = warnOf(a, si, pid).some(function (w) {
+                    return w.lv === "bad";
+                });
+                out.push({
+                    label: s.label,
+                    night: !!s.night,
+                    count: cnt,
+                    alone: others.length === 0,
+                    partner: others.join("、"),
+                    order: mains.length > 1 ? "第" + (mains.indexOf(mine) + 1) + "个" : "",
+                    note: mine.note || "",
+                    bad: over,
+                });
+            });
+            return out;
+        }
+        function renderPersonal() {
+            var host = document.getElementById("personalHost");
+            if (!host) return;
+            var ts = teams();
+            if (!ts.length) {
+                host.innerHTML = '<div class="card"><p class="hint">没有成员，先到「成员录入」填表。</p></div>';
+                return;
+            }
+            host.innerHTML = ts
+                .map(function (t) {
+                    var a = auditTeam(t);
+                    var rows = a.players
+                        .map(function (p) {
+                            var entries = personalEntriesFor(a, p.id);
+                            var sessHtml;
+                            if (!entries.length) {
+                                sessHtml = '<span class="hint">本周期未安排主跑</span>';
+                            } else {
+                                sessHtml = entries
+                                    .map(function (e) {
+                                        var parts = [
+                                            '<b>' + esc(e.label) + "</b>" + (e.night ? ' <span class="tag dim">凌晨</span>' : ""),
+                                            esc(e.count) + (e.order ? "（" + esc(e.order) + "）" : ""),
+                                            e.alone ? "" : "与 " + esc(e.partner) + " 搭配",
+                                            e.note ? "※ " + esc(e.note) : "",
+                                        ].filter(Boolean);
+                                        return (
+                                            '<div class="pv-item">' +
+                                            parts.join(" · ") +
+                                            (e.bad ? ' <span class="flag bad">⚠</span>' : "") +
+                                            "</div>"
+                                        );
+                                    })
+                                    .join("");
+                            }
+                            return (
+                                '<tr><td class="c-name">' +
+                                esc(p.name || "新成员") +
+                                '</td><td class="num">' +
+                                entries.length +
+                                "</td><td>" +
+                                sessHtml +
+                                "</td></tr>"
+                            );
+                        })
+                        .join("");
+                    return (
+                        '<div class="card"><h2>' +
+                        esc(t) +
+                        " 个人计划</h2><table class=\"wide\"><thead><tr><th>成员</th><th class=\"num\">场次</th><th>负责场次与任务</th></tr></thead><tbody>" +
+                        rows +
+                        "</tbody></table></div>"
+                    );
+                })
+                .join("");
+        }
+        /* ====================== 事件绑定 ====================== */
+        function wire() {
+            document.getElementById("lsKey").textContent = LS_KEY;
+            document.getElementById("btnAddRow").addEventListener("click", addRow);
+            document.getElementById("btnSortRows").addEventListener("click", sortRows);
+            document.getElementById("btnWipeMembers").addEventListener("click", function () {
+                if (!confirm("确定清空全部成员？计划会一并重算。")) return;
+                state.players = [];
+                state.plans = {};
+                save();
+                renderMembers();
+                regenAll(false);
+            });
+            document.getElementById("btnSeed").addEventListener("click", function () {
+                state.players = SEED.map(normPlayer);
+                save();
+                renderMembers();
+                regenAll(true);
+            });
+            document.getElementById("btnGen").addEventListener("click", function () {
+                goTab("plan");
+                regenAll(true);
+                setPlanMsg("已按规则生成初稿（计划表仍可直接改）");
+                toast("已按规则生成初稿（计划表仍可直接改）");
+            });
+            document.getElementById("btnRegen").addEventListener("click", function () {
+                if (!confirm("重新生成会覆盖全部手改，确定？")) return;
+                regenAll(true);
+                setPlanMsg("已按规则重新生成，手改已被覆盖");
+            });
+            document.getElementById("btnClearPlan").addEventListener("click", function () {
+                // 写空槽而不是直接删 key：保留「计划结构」，否则 renderPlan 会立即重新生成，清空看上去无效
+                teams().forEach(function (t) {
+                    state.plans[t] = SESSIONS.map(function () {
+                        return [];
+                    });
+                });
+                save();
+                renderPlan();
+                renderPersonal();
+                renderLedger();
+                setPlanMsg("计划已清空，点「按规则重新生成」可回到初稿");
+            });
+            /* 需求4：队伍动态增删 */
+            document.getElementById("btnAddTeam").addEventListener("click", addTeam);
+            document.getElementById("btnDelTeam").addEventListener("click", deleteTeam);
+            /* 需求5：允许主跑场次弹层 */
+            document.getElementById("allowDlgAll").addEventListener("click", function () {
+                Array.prototype.slice.call(document.querySelectorAll("#allowDlgSess input")).forEach(function (el) {
+                    el.checked = true;
+                });
+            });
+            document.getElementById("allowDlgNone").addEventListener("click", function () {
+                Array.prototype.slice.call(document.querySelectorAll("#allowDlgSess input")).forEach(function (el) {
+                    el.checked = false;
+                });
+            });
+            document.getElementById("allowDlgSave").addEventListener("click", saveAllowDlg);
+            document.getElementById("allowDlgCancel").addEventListener("click", function () {
+                document.getElementById("allowDlg").close();
+            });
+            document.getElementById("btnWipeAll").addEventListener("click", function () {
+                if (!confirm("清除本机保存的成员/参数/计划（不可恢复）？")) return;
+                try {
+                    localStorage.removeItem(LS_KEY);
+                } catch (e) {
+                    /* 存不了也算清干了 */
+                }
+                state = { settings: {}, sessMax: DEFAULT_SESS_MAX.slice(), teams: [], players: [], plans: {}, seq: 1 };
+                SET_DEFS.forEach(function (d) {
+                    state.settings[d.key] = DEFAULTS[d.key];
+                });
+                save();
+                renderSettings();
+                renderMembers();
+                regenAll(false);
+                toast("已清除本机数据");
+            });
+        }
+
+        /* ====================== 启动 ====================== */
+        function hasAnyPlan() {
+            return teams().some(function (t) {
+                return !!planOf(t); // 有结构就算（包括已清空的那轮），不被后续自动生成推翻
+            });
+        }
+        function bootMsg() {
+            var filled = teams().some(function (t) {
+                var p = planOf(t);
+                return p && p.some(function (slot) {
+                    return slot && slot.length;
+                });
+            });
+            return filled ? "已恢复上次计划（含手改）" : "已恢复上次计划（本轮已清空）";
+        }
+        function boot() {
+            load();
+            initTabs();
+            renderSettings();
+            renderMembers();
+            wire();
+            var restored = hasAnyPlan(); // 必须在生成初稿之前取，否则生成后必为 true
+            regenAll(!restored);
+            setPlanMsg(restored ? bootMsg() : "已按规则生成初稿");
+        }
+        boot();
+
+    </script>
+</body>
+
+</html>

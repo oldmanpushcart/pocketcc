@@ -741,3 +741,36 @@ net.send(RequestId.CROSS_TREASURE_TEAM_MARCH=7519, {
 - **验证点①（过烧）**：`来袭保命·已消耗|消耗被拒 <技名>(<specId>)：round=N 来袭规模=M 预警龄=Xms`（每波一条 info，含受理结果）；无可用自保技时 `来袭保命·无可用自保技...` 走 debug（循环态不刷屏）。据此可判弱敌（来袭规模小）是否也在烧盾/闪现。
 - **验证点②（镜像复制幸运）**：溢出分流 `完美镜像·先知溢出(持有P+回合R>10)→转复制幸运降临|背包无幸运，本轮不复制` + 结果行 `完美镜像·复制 幸运降临(18)|先知(9) 已接受|被拒(见 reason)`；被拒时下行 sendPB 给具体 reason，直接回答 `copySkillSpecId=18` 是否被服务器接受。
 - **验证点③（回合盾末回合用掉）**：`末回合清空·已用|用被拒 <技名>(<specId>)：round=10 池剩K`，铜墙铁壁(2) 出现在此行即证实不再被排除。
+
+## 22. 各场模式矩阵：「按场次设置模式」开关 + 周五/六/日×三场两档矩阵（用户口径，2026-11-19，参考竞品B）
+
+活动持续周五/周六/周日三天、每天三场（03:00–05:00 / 11:00–13:00 / 19:00–21:00）。旧「玩法模式」单下拉只能全局一刀切，无法表达「周五晚固定陪跑、其余主跑」类诉求；参考竞品B设置界面引入按场矩阵。又因「无脑全局切换」与「按场定制」是正交需求，面板用**开关互斥两形态**（用户二次口径）：`modeBySession` 关=只显主设置下拉（与旧版逐字等价）；开=只显 3×3 矩阵（每格主跑/陪跑两档），另一种隐藏。
+
+### 22.1 面板与配置
+
+- 「按场次设置模式」checkbox（`modeBySession`，默认关）居组队段首。关：「玩法模式」下拉（main/helper）显形、矩阵隐藏且**引擎完全忽略格子值**（resolveMode 闸门）；开：下拉隐藏、矩阵显形，互斥显隐走 `fd.showIf`。
+- 矩阵 9 格（`ctrlrow` 三行，周五/六/日 × 第一/二/三场，周五行带列头 `fd.head`）每格**两档** `main`/`helper`。扁平键 `modeFri1..modeFri3 / modeSat1..3 / modeSun1..3`（`session-mode.js SESSION_KEYS` 单一真相）。
+- **播种**：`follow` 仅作内部「未定制」标记（defaults 全 follow）。开启开关瞬间经 checkbox 模块新增的通用 `fd.onChange(cfg, checked)` 描述符回调（commit 前 mutate，同 rallygrid `fd.onDeleteRow` 先例）调 `seedFollowModes` 把 follow 格回写为当时主设置——落盘与显示同源；已钉 main/helper 的格保留，**off→on 往返不抹定制**。`normalize` 同口径兜底（手改存档开启开关而未走面板回调时）。
+- **零迁移**：旧存档 `mode` 键原样保留；`modeBySession`+9 键由 registry 读盘合并 defaults 自动补齐，无需 version/migrate 钩子。开关默认关时有效模式=主设置，与旧行为完全一致（17 份录制×608 笔写×两态主设置=1216 次判定零漂移实证）。
+- `isMain`（showIf）：统一模式看主设置；矩阵模式看 9 格 effective（`anySessionMain(cfg, base)`，follow 残留按主设置计）——任一场次可能主跑就展开队长专属参数，全格陪跑才隐藏。
+- 显隐工程坑：ctrlrow 带列头是双根节点，而 fields.js 的 showIf `data-dep` 只标首根（会藏头不藏身）→ 带列头时头行+数据行包进单根 div（无类名无 data-fkey，不影响 dispatcher 内联路由）；note 无 key 反查不到 → 补 `key:'sessionNote'`。
+
+### 22.2 场次判定：数据驱动，不硬编码钟表时间
+
+`session-mode.js`（纯函数，同 skills.js/codebox.js 范式可独立单测）：
+
+- `sessionAt(slots, nowMs)`：slots 即引擎 `#slots`（7501 应答 `openTime[]` 经 `csHunt.parseSchedule`，每项 {begin,end} 服务器毫秒）。找含 now 的时段 →「周几」取 begin 的 `getDay()`（只认 5/6/0 → Fri/Sat/Sun）、「第几场」= 同日（`todayStr(begin/1000)` 同串）时段按 begin 排序的序号（1–3）。窗外/非活动星期/同日超 3 场/形态非法一律 null。
+- 星期/日界用**本地时区格式化服务器时间**（`todayStr` 口径，与 core/daily-stats「国服 UTC+8 对齐游戏日界」既定约定一致）。
+- `resolveMode(cfg, slots, nowMs)`：**开关关（`modeBySession!==true`）恒回 `cfg.mode`**；开关开且命中场次且该格钉 main/helper 取格值，否则回退主设置（follow 残留/窗外/未知时段同口径）。
+
+### 22.3 引擎注入：单点 #cfg() + 按局锁存
+
+- `TeamEngine.#cfg()` 是有效 mode 的**唯一注入点**：base=resolveMode；有队时按 team.id 锁存（`#modeTeamId/#modeVal`，首次见队解析一次），队伍清空解锁、无队期每拍实时解析；`#helperForced`（满次自动转陪跑）再叠其上。返回浅拷贝不改面板引用。
+- **按局锁存的必要性**：一局可跨场次边界（如 12:55 开跑 13:10 结束）、跑中改面板也不得漂移——否则 flow 的 isMain/7534-7535 闸会在局中翻转。END 计数 `bumpDailyRun` 用当局锁存模式，语义正确。stop() 复位 `#modeTeamId`。
+- 下游零改动：`#noTeam` 建队/找队分叉、7520 op:1/op:2 表态、每日上限闸、`engine-flow.js`（isMain/护奖/幸运/末回合陪跑排除项）全经 `#cfg()`（flow 经 `#flowHost().cfg()`）自动跟随。
+- tick 顶 `#helperForced` 复位条件的「主设置陪跑」判据同步改为 resolveMode 有效 base（场次切到陪跑格时强制位正确复位）。
+- `snapshot()` 增补 `session`（当前场次）与 `mode`（有效模式，与 #cfg() 同源）；面板状态行：统一模式「玩法模式：主跑（要奖励）」，矩阵模式「玩法模式：按场次矩阵（主设置兜底：主跑）｜本场 周五·第二场 → 陪跑」，未在场次时提示「到点按对应格子运行」。run() 日志追加 `bySession=on/off` 与 sessionModes 矩阵摘要；首次锁存留 info `session mode latched for team <id>: <mode> (session=<label>)`。
+
+### 22.4 叠加顺序与兜底
+
+有效模式 = `满次强制(helper) > 场次格覆盖(main/helper，仅开关开) > 主设置(cfg.mode)`。开关关、格子=follow（未播种残留）、时段表未知、窗外、非活动星期、同日超 3 场 → 沿用主设置（窗外写包本就被 §14/§15 双闸拦截，兜底只影响展示与决策语义）。

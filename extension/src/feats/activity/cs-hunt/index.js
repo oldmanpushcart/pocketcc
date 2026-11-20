@@ -32,6 +32,12 @@ import { bits } from '../../../core/game-api.js';
 import { csHunt } from './api.js';
 import { TeamEngine, getDailyRuns, DEFAULT_WAIT_MIN } from './engine-team.js';
 import { SKILL_GROUP_IDS, groupName, skillGroupRep } from './skills.js';
+import {
+  SESSION_KEYS,
+  sanitizeSessionModes,
+  seedFollowModes,
+  anySessionMain,
+} from './session-mode.js';
 import { EVENT_TYPE, LUCKY_GIFTS } from './constants.js';
 
 /** @type {ReturnType<createLog>} feat 日志器（tag=CSHUNT，与引擎同一命名空间） */
@@ -51,18 +57,24 @@ var installed = false;
 var engine = null;
 /**
  * 面板模块配置（configure 灌入，引擎经 env.cfg() 惰性读）。
- * @type {{mode:'main'|'helper', targetMemberNum:number, waitMin:number, rolePool:Array<{uid:string,name:string}>, rejectOutsidePool:boolean, useBeaconWhenShort:boolean, dailyRuns:number, autoSwitchToHelper:boolean, presetPool:number[], skillPool:number[], luckyRewards:Object<string,number[]>}}
+ *   modeBySession=「按场次设置模式」开关（默认关）：关=有效模式恒等 mode 主设置（矩阵隐藏且引擎忽略）；
+ *   开=附 9 个场次键 modeFri1..modeSun3（'main'|'helper'，见 session-mode.js SESSION_KEYS）按场覆盖，
+ *   follow 仅作未定制标记（开启瞬间播种为当时主设置）；引擎 #cfg() 按当前场次解析有效模式并按局锁存。
+ * @type {{mode:'main'|'helper', modeBySession:boolean, targetMemberNum:number, waitMin:number, rolePool:Array<{uid:string,name:string}>, rejectOutsidePool:boolean, useBeaconWhenShort:boolean, dailyRuns:number, autoSwitchToHelper:boolean, presetPool:number[], skillPool:number[], luckyRewards:Object<string,number[]>}}
  *   presetPool = 单元素数组（面板单选一个预设 1~8）；skillPool = 族代表 id 的优先级序（见 skills.js SKILL_GROUPS）。
  */
 var modCfg = normalize({});
 
 /**
- * 面板 showIf 闸门：仅「主跑」模式才展开建队/凑人/拒池外这些队长专属参数（陪跑只跟队，这些不参与）。
+ * 面板 showIf 闸门：统一模式看主设置；矩阵模式看 9 格 effective（follow 残留按主设置计）——
+ *   任一场次可能主跑就展开建队/凑人/拒池外这些队长专属参数（全格陪跑才隐藏）。
  * @param {object} cfg 当前配置
  * @returns {boolean}
  */
 function isMain(cfg) {
-  return !cfg || cfg.mode !== 'helper';
+  if (!cfg) return true;
+  if (cfg.modeBySession) return anySessionMain(cfg, cfg.mode === 'helper' ? 'helper' : 'main');
+  return cfg.mode !== 'helper';
 }
 
 /**
@@ -197,6 +209,51 @@ var luckyFields = [
 ];
 
 /**
+ * 各场模式矩阵（用户口径 2026-11-19，参考竞品B）：「按场次设置模式」开关开时显形，
+ *   周五/六/日 × 第一/二/三场每格两档 main/helper（与主设置下拉互斥显隐）；开启瞬间 follow
+ *   未定制格播种为当时主设置（fd.onChange 回写）。场次判定数据驱动（服务器 7501 openTime[]
+ *   时段表，见 session-mode.js）；已开跑的一局沿用开局模式（引擎按 team.id 锁存）。
+ * @type {Array<object>}
+ */
+var SESSION_TIMES = ['03:00–05:00', '11:00–13:00', '19:00–21:00'];
+var SESSION_OPTIONS = [
+  { value: 'main', label: '主跑' },
+  { value: 'helper', label: '陪跑' },
+];
+var bySessionOn = function (cfg) {
+  return !!(cfg && cfg.modeBySession);
+};
+var sessionFields = [
+  {
+    key: 'sessionNote',
+    type: 'note',
+    section: '组队',
+    showIf: bySessionOn,
+    text: '三列依次为第一场 03:00–05:00、第二场 11:00–13:00、第三场 19:00–21:00；场次按服务器夺宝时间表判定。每格主跑/陪跑二选一，开启本矩阵时未定制的格子已按当时主设置播种；修改立即生效，已开跑的一局沿用开局模式；不在场次内时沿用主设置兜底。',
+  },
+].concat(
+  ['Fri', 'Sat', 'Sun'].map(function (d, r) {
+    var label = ['周五', '周六', '周日'][r];
+    var fd = {
+      key: 'sessionMode' + d,
+      type: 'ctrlrow',
+      label: label,
+      section: '组队',
+      showIf: bySessionOn,
+      cells: [1, 2, 3].map(function (i) {
+        return {
+          key: 'mode' + d + i,
+          options: SESSION_OPTIONS,
+          title: label + '第' + i + '场（' + SESSION_TIMES[i - 1] + '）',
+        };
+      }),
+    };
+    if (r === 0) fd.head = ['第一场', '第二场', '第三场']; // 列头只挂周五行，三行共用同列宽
+    return fd;
+  }),
+);
+
+/**
  * 出征预设归一：单个战斗预设 1~8（面板改为单选，不再弄池）。
  *   兼容旧存档：无 preset 字段时取旧 presetPool[0]。非法/缺失回 0（引擎据空 presetPool 不发兵）。
  * @param {*} raw preset 面板原值（number），或旧 presetPool 数组首项
@@ -221,8 +278,9 @@ function normalize(raw) {
   if (n > 5) n = 5; // 主表 max_ppl_num=5（§9.1 实测），下限 2 由服务器校验（2 人可开整局，§9.3 实样）
   var wm = Number(raw.waitMin); // 竞对口径 waitmin 默认 3；显式 0=关（不超时、等人齐），非法/负值亦回默认
   if (!(wm >= 0)) wm = DEFAULT_WAIT_MIN;
-  return {
+  var out = {
     mode: mode,
+    modeBySession: !!raw.modeBySession,
     targetMemberNum: n,
     waitMin: wm,
     rolePool: sanitizePool(raw.rolePool),
@@ -247,6 +305,12 @@ function normalize(raw) {
       return m;
     })(),
   };
+  // 各场模式矩阵 9 键：开关开时 follow 未定制格播种为主设置（与面板 fd.onChange 同口径，兜底手改存档）；
+  //   开关关时原样透传（保留定制记忆，引擎 resolveMode 闸门忽略）；有效模式由引擎 #cfg() 按场次解析
+  return Object.assign(
+    out,
+    raw.modeBySession ? seedFollowModes(raw, mode) : sanitizeSessionModes(raw),
+  );
 }
 
 /**
@@ -259,12 +323,18 @@ function statusText() {
   var eng = engine && engine.snapshot();
   var team = st.team || (eng && eng.team) || null;
   var count = eng && eng.count != null ? eng.count : st.huntCount; // huntCount 唯一来源是推送 21375（7501 不带）
-  var lines = [
-    '剩余次数：' + count + '（未知显示 0）',
-    '玩法开关：' + st.open,
-    '玩法模式：' + (modCfg.mode === 'helper' ? '陪跑（不耗次数）' : '主跑（要奖励）'),
-  ];
-  if (modCfg.mode !== 'helper') {
+  var eff = eng && eng.mode ? eng.mode : modCfg.mode;
+  var bySession = !!modCfg.modeBySession;
+  var modeLine = bySession
+    ? '玩法模式：按场次矩阵（主设置兜底：' + (modCfg.mode === 'helper' ? '陪跑' : '主跑') + '）'
+    : '玩法模式：' + (modCfg.mode === 'helper' ? '陪跑（不耗次数）' : '主跑（要奖励）');
+  if (bySession && eng) {
+    modeLine += eng.session
+      ? '｜本场 ' + eng.session.label + ' → ' + (eff === 'helper' ? '陪跑' : '主跑')
+      : '｜未在场次（到点按对应格子运行）';
+  }
+  var lines = ['剩余次数：' + count + '（未知显示 0）', '玩法开关：' + st.open, modeLine];
+  if (eff !== 'helper') {
     var ran = getDailyRuns(); // -1=当日计数尚未读回
     var lim = modCfg.dailyRuns | 0;
     lines.push(
@@ -367,14 +437,19 @@ function run(ctx) {
   //   发包与应答落地都在引擎里（resp 订阅已挂），装配层只负责点火强拉一次
   engine.refreshInfo(true);
   log.info(
-    'started (mode=%s, targetMembers=%d, gatherTimeout=%dmin, marchPresets=%j, beaconRefill=%s, skillPool=%j, luckyPool(rollDice)=%s).',
+    'started (mode=%s, bySession=%s, targetMembers=%d, gatherTimeout=%dmin, marchPresets=%j, beaconRefill=%s, skillPool=%j, luckyPool(rollDice)=%s, sessionModes=%j).',
     modCfg.mode,
+    modCfg.modeBySession ? 'on' : 'off',
     modCfg.targetMemberNum,
     modCfg.waitMin,
     modCfg.presetPool,
     modCfg.useBeaconWhenShort ? 'on' : 'off',
     modCfg.skillPool,
     JSON.stringify(modCfg.luckyRewards.rollDice),
+    SESSION_KEYS.reduce(function (m, k) {
+      m[k] = modCfg[k];
+      return m;
+    }, {}),
   );
   cycle.kick();
 }
@@ -434,6 +509,18 @@ reactor.register({
   defaults: {
     enabled: false,
     mode: 'main',
+    // 按场次设置模式开关（默认关=统一主设置一刀切，矩阵隐藏且引擎忽略）；旧存档无键由 registry 合并默认值补齐
+    modeBySession: false,
+    // 矩阵 9 格默认 follow=未定制标记（开启开关瞬间播种为当时主设置）；已定制格跨开关往返保留
+    modeFri1: 'follow',
+    modeFri2: 'follow',
+    modeFri3: 'follow',
+    modeSat1: 'follow',
+    modeSat2: 'follow',
+    modeSat3: 'follow',
+    modeSun1: 'follow',
+    modeSun2: 'follow',
+    modeSun3: 'follow',
     targetMemberNum: 5,
     waitMin: DEFAULT_WAIT_MIN,
     rolePool: [],
@@ -457,16 +544,31 @@ reactor.register({
       hint: '只读：剩余次数与队伍态自动同步。',
     },
     {
+      key: 'modeBySession',
+      type: 'checkbox',
+      label: '按场次设置模式',
+      section: '组队',
+      hint: '关=只用下方「玩法模式」一刀切；开=隐藏该下拉，改由矩阵按周五/六/日×三场各自指定主跑/陪跑。开启瞬间未定制的格子自动播种为当前主设置，之后各格独立记忆（关再开不抹定制）。',
+      // 开启瞬间播种：follow 未定制格回写为当时主设置（commit 前 mutate，落盘+显示同源）；已钉格保留
+      onChange: function (c, on) {
+        if (on) Object.assign(c, seedFollowModes(c, c.mode === 'helper' ? 'helper' : 'main'));
+      },
+    },
+    {
       key: 'mode',
       type: 'select',
       label: '玩法模式',
       section: '组队',
+      showIf: function (cfg) {
+        return !bySessionOn(cfg);
+      },
       options: [
         { value: 'main', label: '主跑（要奖励·耗次数）' },
         { value: 'helper', label: '陪跑（不耗次数·无奖励）' },
       ],
-      hint: '主跑=建队开车或入队要奖励（耗次数）；陪跑=只跟队，不耗次数、无奖励。',
+      hint: '主跑=建队开车或入队要奖励（耗次数）；陪跑=只跟队，不耗次数、无奖励。想按场次分别指定，勾选上方「按场次设置模式」。',
     },
+    ...sessionFields,
     {
       key: 'targetMemberNum',
       type: 'number',

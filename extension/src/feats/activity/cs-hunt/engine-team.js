@@ -33,6 +33,7 @@
  *
  * P2 队员/陪跑（本期新增）：
  *   - 玩法模式 cfg.mode：'main'（主跑，要奖励耗次数）/ 'helper'（陪跑，op:2 不耗次数）；角色不再靠单列开关，而是 mode 驱动；
+ *     面板另有各场模式矩阵（9 键 follow/main/helper）：#cfg() 按当前场次解析有效模式（格覆盖否则跟随主设置）并按 team.id 按局锁存；
  *   - 无队且不该自己开车（仅 helper）→ 逐个玩家池成员用 630 PLAYER_INFO 取名 → 7530 按名（likeName）搜该玩家创建的未满队 → 7522 申请入队（不再扫 7526）；main 一律自己建队开车；
  *   - 次数不足且勾了 useBeaconWhenShort → 走通用使用物品 815 消耗定位信标(47001001) 补次数（§7-6 已报文关闭）。
  */
@@ -42,6 +43,7 @@ import { march } from '../../../core/march.js';
 import { CMD_GET_WORLD_INFO } from '../../../core/map.js';
 import { bits, gameData } from '../../../core/game-api.js';
 import { csHunt } from './api.js';
+import { resolveMode, sessionAt } from './session-mode.js';
 import { createLog } from '../../../core/log.js';
 import { storage } from '../../../core/storage.js';
 import { chatApi } from '../../../core/chat.js';
@@ -292,6 +294,16 @@ export class TeamEngine {
    */
   #helperForced = false;
   /**
+   * 各场模式矩阵按局锁存（用户口径 2026-11-19）：有效模式经 session-mode.resolveMode 解析
+   *   （当前场次格钉 main/helper 则覆盖，否则跟随主设置），并在「首次见到队伍」时按 team.id 锁存——
+   *   一局可能跨场次边界（如 12:55 开跑 13:10 结束）、跑中改面板也不得漂移；队伍清空（null）即解锁，
+   *   无队期每拍实时解析。END 计数 bumpDailyRun 用当局锁存模式，语义正确。
+   * @type {string}
+   */
+  #modeTeamId = '';
+  /** @type {'main'|'helper'} #modeTeamId 锁存的有效模式（仅锁存命中时有意义） */
+  #modeVal = 'main';
+  /**
    * 活动开关态（crossTreasureInfo.open：1=组队夺宝开、3=休赛，其余未开/雷达）。控制器不在场（子包未接管）时
    *   readState 恒 null，这是建队/找队前判「活动是否进行中」的唯一依据；由 7501 应答落地，null=本会话未收到（未知）。
    * @type {number|null}
@@ -378,17 +390,38 @@ export class TeamEngine {
   }
 
   /**
-   * 有效模块配置：⑥ 当本引擎已因「每日局数满·自动转陪跑」置 #helperForced 时，把 mode 覆写为 'helper' 后回吐，
-   *   其余字段原样透传（返回浅拷贝，绝不改指 env.cfg() 的面板 modCfg 引用）；未强制则直接回吐原配置。
+   * 有效模块配置：mode 经「各场解析 + 按局锁存 + ⑥ 满次强制」三层叠加注入——
+   *   base = session-mode.resolveMode（当前场次格钉 main/helper 则覆盖，否则跟随面板主设置）；
+   *   有队时按 team.id 锁存（跨场次边界/跑中改面板不漂移），队伍清空解锁；
+   *   #helperForced 置位时再叠 'helper'（满次自动转陪跑语义不变）。
+   *   返回浅拷贝，绝不改指 env.cfg() 的面板 modCfg 引用。
    *   引擎内所有「依赖 mode 的行为分叉」（tick 表态 wantReward / 计次 / FlowEngine.isMain 门 7534-7535）一律读本方法，
-   *   而非裸读 env.cfg()，使自动转陪跑的运行语义与面板手选陪跑完全一致。
+   *   而非裸读 env.cfg()，使各场覆盖/自动转陪跑的运行语义与面板手选完全一致。
    * @returns {object} 有效模块配置
    */
   #cfg() {
     var c = this.#env.cfg();
-    if (this.#helperForced && c && c.mode !== 'helper')
-      return Object.assign({}, c, { mode: 'helper' });
-    return c;
+    var mode;
+    if (this.#team) {
+      if (this.#modeTeamId !== this.#team.id) {
+        // 首次见队：解析并锁存（同局后续拍复用，不再重解析）
+        this.#modeTeamId = this.#team.id;
+        this.#modeVal = resolveMode(c, this.#slots, csHunt.serverMs());
+        var sess = sessionAt(this.#slots, csHunt.serverMs());
+        log.info(
+          'session mode latched for team %s: %s (session=%s)',
+          this.#team.id,
+          this.#modeVal,
+          sess ? sess.label : 'none',
+        );
+      }
+      mode = this.#modeVal;
+    } else {
+      this.#modeTeamId = '';
+      mode = resolveMode(c, this.#slots, csHunt.serverMs());
+    }
+    if (this.#helperForced && mode !== 'helper') mode = 'helper';
+    return Object.assign({}, c, { mode: mode });
   }
 
   /**
@@ -500,6 +533,7 @@ export class TeamEngine {
     this.#uidName.clear();
     this.#uidPower.clear();
     this.#helperForced = false;
+    this.#modeTeamId = '';
     this.#lastBeaconAt = 0;
     this.#endedTreasureId = '';
     this.#waitHome = null;
@@ -536,10 +570,17 @@ export class TeamEngine {
 
   /**
    * 面板只读快照（供 fields 的 text.get 直接展示，不做任何 IO）。
-   * @returns {{count:number|null, team:object|null, ctrl:object|null}}
+   *   session/mode 供状态行展示当前场次与有效模式（mode 与 #cfg() 同源：含按局锁存/满次强制叠加）。
+   * @returns {{count:number|null, team:object|null, ctrl:object|null, session:object|null, mode:string}}
    */
   snapshot() {
-    return { count: this.#count, team: this.#team, ctrl: csHunt.readState() };
+    return {
+      count: this.#count,
+      team: this.#team,
+      ctrl: csHunt.readState(),
+      session: sessionAt(this.#slots, csHunt.serverMs()),
+      mode: this.#cfg().mode,
+    };
   }
 
   // ── 推送落地（一律以应答/推送为准，不镜像游戏数据） ──────────────────
@@ -844,7 +885,7 @@ export class TeamEngine {
       this.#helperForced &&
       (!isDailyLimitReached(rawCfg.dailyRuns) ||
         !rawCfg.autoSwitchToHelper ||
-        rawCfg.mode === 'helper')
+        resolveMode(rawCfg, this.#slots, csHunt.serverMs()) === 'helper')
     ) {
       this.#helperForced = false;
       log.info(
