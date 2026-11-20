@@ -34,6 +34,8 @@ globalThis.setInterval = (fn, ms, ...rest) => {
 const mod = await import('../../extension/src/feats/player/quick-repair/index.js');
 const {
   normalize,
+  migrateConfig,
+  splitRepairingByType,
   quickFields,
   isThorArmy,
   splitWaitIds,
@@ -50,6 +52,7 @@ const {
   isPending,
   markPending,
   prunePendingByExit,
+  prunePendingConfirmed,
   repairingLeftSec,
   crossRepairingLeftSec,
   estimateGold,
@@ -67,6 +70,7 @@ const {
   CMD_ARMY_HEAL_LIST,
   CMD_ARMY_CROSS_HEAL,
   CMD_ORDER_QUEUE_ING_DONE,
+  CMD_ORDER_QUEUE_SPEED_UP,
   CMD_SPEEDUP_CROSS_GOLD,
   CMD_ITEM_USE,
   CMD_AVA_ASK,
@@ -96,28 +100,36 @@ test('协议常量字面（对拍/单测共用单一真相）：医院加速道�
   assert.equal(ORDER_TYPE_HEAL, 1);
 });
 
-test('normalize：freeRepair/resourceRepair 缺键恒视为 true（已不放面板），付费/带材料项缺省 false；goldDailyCap/keepItemNum 已废弃不再输出；poll 钳上下界', () => {
+test('normalize：commonRepair/resourceRepair 缺键恒 true、thorRepair 缺省 false、加速三态缺省 none；旧键 legacy 映射（钻石优先）；poll 钳上下界', () => {
   const d = normalize({});
-  assert.equal(d.freeRepair, true);
+  assert.equal(d.commonRepair, true);
   assert.equal(d.resourceRepair, true);
   assert.equal(d.thorRepair, false);
-  assert.equal(d.speedGold, false);
-  assert.equal(d.speedItem, false);
-  assert.equal(d.goldDailyCap, undefined);
-  assert.equal(d.keepItemNum, undefined);
+  assert.equal(d.speedCommon, 'none');
+  assert.equal(d.speedThor, 'none');
+  assert.equal(d.freeRepair, undefined);
+  assert.equal(d.speedGold, undefined);
+  assert.equal(d.speedItem, undefined);
   assert.equal(d.pollIntervalSec, 60);
 
   // poll 上界钳到 cfg.maxPollSec；非法值回默认 60
   assert.equal(normalize({ pollIntervalSec: 999999 }).pollIntervalSec, cfg.maxPollSec);
   assert.equal(normalize({ pollIntervalSec: 'x' }).pollIntervalSec, 60);
   // 显式 false 不被缺省 true 覆盖
-  assert.equal(normalize({ freeRepair: false }).freeRepair, false);
+  assert.equal(normalize({ commonRepair: false }).commonRepair, false);
   assert.equal(normalize({ resourceRepair: false }).resourceRepair, false);
-  assert.equal(normalize({ thorRepair: true, speedGold: true, speedItem: true }).thorRepair, true);
-  assert.equal(normalize({ resourceRepair: true }).resourceRepair, true);
-  // 即便旧存档带 cap/keep，也一律不透传
-  assert.equal(normalize({ goldDailyCap: 999, keepItemNum: 5 }).goldDailyCap, undefined);
-  assert.equal(normalize({ goldDailyCap: 999, keepItemNum: 5 }).keepItemNum, undefined);
+  assert.equal(normalize({ thorRepair: true }).thorRepair, true);
+  // 三态归一：只认 gold/item，非法值回 none
+  assert.equal(normalize({ speedCommon: 'gold', speedThor: 'item' }).speedCommon, 'gold');
+  assert.equal(normalize({ speedCommon: 'gold', speedThor: 'item' }).speedThor, 'item');
+  assert.equal(normalize({ speedCommon: 'bogus' }).speedCommon, 'none');
+  // 旧键 legacy 映射（缺新键时）：钻石优先
+  assert.equal(normalize({ speedGold: true, speedItem: true }).speedCommon, 'gold');
+  assert.equal(normalize({ speedGold: true, speedItem: true }).speedThor, 'gold');
+  assert.equal(normalize({ speedItem: true }).speedCommon, 'item');
+  assert.equal(normalize({ freeRepair: false }).commonRepair, false);
+  // 新键存在时不被旧键覆盖
+  assert.equal(normalize({ speedCommon: 'item', speedGold: true }).speedCommon, 'item');
 });
 
 // ─────────────────────────── quickFields（1785 投影）───────────────────────────
@@ -531,13 +543,13 @@ test('planActions：单笔 220 全发（修正十九）→ 发 snapshot 预算�
   assert.deepEqual(heal.dedup, ['1#a#1', '2#b#2', '3#c#3', '4#d#4', '5#e#5', '6#f#6', '7#g#7']);
 });
 
-test('planActions：freeRepair 关 → reason 记录、无 220；额度耗尽 → reason 不误发', () => {
-  const off = planActions(baseSnap({ commonIds: ['1'], mcfg: normalize({ freeRepair: false }) }));
+test('planActions：commonRepair 关 → reason 记录、无 220；额度耗尽 → reason 不误发', () => {
+  const off = planActions(baseSnap({ commonIds: ['1'], mcfg: normalize({ commonRepair: false }) }));
   assert.equal(
     off.actions.find((a) => a.cmd === CMD_ARMY_HEAL_LIST),
     undefined,
   );
-  assert.ok(off.reasons.some((r) => /freeRepair off/.test(r)));
+  assert.ok(off.reasons.some((r) => /commonRepair off/.test(r)));
 
   const exhausted = planActions(
     baseSnap({
@@ -733,6 +745,7 @@ test('planActions：全量道具加速（钻石关）pendingTokens 取同域 sta
 test('planActions：speedItem 开但背包无医院加速道具 → reason 记录、无 815', () => {
   const snap = baseSnap({
     repairing: 100,
+    localRepairing: 100,
     speedItem: null,
     mcfg: normalize({ speedItem: true }),
   });
@@ -836,7 +849,10 @@ test('planActions：枚数受持有量与单次上限夹取；持不足时按持
   assert.ok(empty.reasons.some((r) => /item speed num=0/.test(r)));
 });
 
-test('planActions：同域钻石全量完成已排入 → 道具线让位（同拍双花防护）', () => {
+test('planActions：旧 speedGold+speedItem 同开 → legacy 钻石优先（两 select 均 gold），只发钻石不发道具（三态单选天然互斥）', () => {
+  const m = normalize({ speedGold: true, speedItem: true });
+  assert.equal(m.speedCommon, 'gold');
+  assert.equal(m.speedThor, 'gold');
   const { actions, reasons } = planActions(
     baseSnap({
       repairing: 51030,
@@ -844,7 +860,7 @@ test('planActions：同域钻石全量完成已排入 → 道具线让位（同�
       gold: 999999,
       ratePerMin: 2,
       speedItem: SI8H,
-      mcfg: normalize({ speedGold: true, speedItem: true }),
+      mcfg: m,
     }),
   );
   assert.ok(actions.find((a) => a.kind === 'speed-gold-local'));
@@ -852,26 +868,31 @@ test('planActions：同域钻石全量完成已排入 → 道具线让位（同�
     actions.find((a) => a.kind === 'speed-item-local'),
     undefined,
   );
-  assert.ok(reasons.some((r) => /item speed local skipped \(gold done this tick\)/.test(r)));
-
-  // 跨服域钻石不影响本地道具线（分域判定：本地估价超余额 → 本地钻石不排，道具线照发）
-  const split = planActions(
-    baseSnap({
-      repairing: 51130,
-      localRepairing: 51030,
-      crossRepairing: 100,
-      gold: 100,
-      ratePerMin: 2,
-      speedItem: SI8H,
-      mcfg: normalize({ speedGold: true, speedItem: true }),
-    }),
-  );
-  assert.ok(split.actions.find((a) => a.kind === 'speed-gold-cross'));
+  // 道具方式未被选中 → 根本不进道具线，不再有「让位 skipped」reason
   assert.equal(
-    split.actions.find((a) => a.kind === 'speed-gold-local'),
+    reasons.find((r) => /skipped \(gold done this tick\)/.test(r)),
     undefined,
   );
-  assert.equal(split.actions.find((a) => a.kind === 'speed-item-local').body.amount, 2);
+});
+
+test('planActions：本地+跨服同拍钻石共享余额预算——本地估价扣减后跨服余额不足即静默（防同拍超支）', () => {
+  const { actions, reasons } = planActions(
+    baseSnap({
+      repairing: 240,
+      localRepairing: 120,
+      crossRepairing: 120,
+      gold: 5,
+      ratePerMin: 2,
+      mcfg: normalize({ speedCommon: 'gold', speedThor: 'gold' }),
+    }),
+  );
+  // 本地 ceil(120/60*2)=4 ≤5 → 排入并扣减；跨服估价 4 > 余额 1 → 静默
+  assert.ok(actions.find((a) => a.cmd === CMD_ORDER_QUEUE_ING_DONE));
+  assert.equal(
+    actions.find((a) => a.cmd === CMD_SPEEDUP_CROSS_GOLD),
+    undefined,
+  );
+  assert.ok(reasons.some((r) => /gold 1 < estimate 4 \(cross\)/.test(r)));
 });
 
 test('goldPlannedFor：按域判定钻石动作是否已排入', () => {
@@ -1088,8 +1109,8 @@ test('planActions 无双：批量修走模式 cure 命令（6311 {ids}），与�
   );
 });
 
-test('planActions 无双：道具加速走 speed 命令 {ids,itemId,num,useGold:0}；钻石余额不足/无持有都静默记 reason', () => {
-  const m = normalize({ speedItem: true, speedGold: true });
+test('planActions 无双：speedCommon=item → 道具加速走 speed 命令 {ids,itemId,num,useGold:0}；钻石线因方式非 gold 静默；无持有记 reason', () => {
+  const m = normalize({ speedCommon: 'item' });
   const itemSnap = avaSnap({
     gold: 0,
     ratePerMin: 2,
@@ -1102,9 +1123,9 @@ test('planActions 无双：道具加速走 speed 命令 {ids,itemId,num,useGold:
   assert.ok(use);
   assert.equal(use.cmd, CMD_AVA_SPEED);
   assert.deepEqual(use.body, { ids: ['b1'], itemId: AVA_HOSPITAL_SPEED_ITEM, num: 6, useGold: 0 });
-  assert.deepEqual(use.dedup, ['b1']); // speed-item-ava 并入逐令牌（ar 族）：令牌=state1 在修 id，在退出 state1 前恒 pending 防重烧
+  assert.deepEqual(use.dedup, ['b1']); // speed-item-ava 逐令牌（ar 族）：令牌=state1 在修 id，在退出 state1 前恒 pending 防重烧
   assert.equal(use.atomic, true); // 道具 num 池级折算→atomic：任一在途即整域跳过，不可拆子集（防超烧）
-  assert.ok(got.reasons.some((r) => /gold 0 < estimate/.test(r))); // 钻石余额不足 → 只拒 gold 线
+  assert.ok(got.reasons.some((r) => /speedCommon not gold \(ava\)/.test(r))); // 方式非 gold → 钻石线静默
   assert.equal(
     got.actions.find((a) => a.kind === 'speed-gold-ava'),
     undefined,
@@ -1115,12 +1136,12 @@ test('planActions 无双：道具加速走 speed 命令 {ids,itemId,num,useGold:
     nobag.actions.find((a) => a.kind === 'speed-item-ava'),
     undefined,
   );
-  assert.ok(nobag.reasons.some((r) => /no ava hospital speed item|item speed skipped/.test(r)));
+  assert.ok(nobag.reasons.some((r) => /no ava hospital speed item in bag/.test(r)));
 });
 
-// ─────────────────────── 无双同拍双发互斥（review 修正一）───────────────────────
-test('planActions 无双：钻石+道具同时可行动时只发钻石（同一 cmds.speed 目标同集，二选一钻石优先），道具记 skipped reason', () => {
-  const m = normalize({ speedGold: true, speedItem: true });
+// ─────────────────────── 无双加速三态单选互斥 ───────────────────────
+test('planActions 无双：speedCommon 三态单选天然互斥——gold 时只发钻石、道具线记 not item reason', () => {
+  const m = normalize({ speedCommon: 'gold' });
   const snap = avaSnap({
     gold: 99999,
     ratePerMin: 2,
@@ -1134,7 +1155,7 @@ test('planActions 无双：钻石+道具同时可行动时只发钻石（同一 
     actions.find((a) => a.kind === 'speed-item-ava'),
     undefined,
   );
-  assert.ok(reasons.some((r) => /ava item speed skipped \(gold done this tick\)/.test(r)));
+  assert.ok(reasons.some((r) => /speedCommon not item \(ava\)/.test(r)));
 });
 
 // ─────────────────────── 1426 门控归因（review 修正四）───────────────────────
@@ -1162,7 +1183,7 @@ test('planActions 无双：resourceRepair 关→不修；无待修/无在修记 
       avaRepairingIds: [],
       avaRepairingLeftSec: 0,
       avaBusy: 0,
-      mcfg: normalize({ speedGold: true, speedItem: true }),
+      mcfg: normalize({ speedCommon: 'gold' }),
     }),
   );
   assert.ok(idle.reasons.some((r) => /no ava wait/.test(r)));
@@ -1178,4 +1199,235 @@ test('planActions 无双：resourceRepair 关→不修；无待修/无在修记 
   );
   assert.equal(tm.actions.find((a) => a.kind === 'heal-ava').cmd, CMD_TM_CURE);
   assert.equal(tm.actions.find((a) => a.kind === 'speed-gold-ava').cmd, AVA_MODE_CMDS.tm.speed);
+});
+
+// ─────────────────── 存档迁移 migrateConfig（v1→v2）───────────────────
+test('migrateConfig：v1 旧三开关 → 新四字段（钻石优先）并删旧键；fromVersion>=2 不动', () => {
+  const c = {
+    enabled: true,
+    freeRepair: false,
+    speedGold: true,
+    speedItem: true,
+    thorRepair: true,
+    resourceRepair: true,
+    pollIntervalSec: 30,
+  };
+  const out = migrateConfig(c, 1);
+  assert.equal(out.speedCommon, 'gold');
+  assert.equal(out.speedThor, 'gold');
+  assert.equal(out.commonRepair, false);
+  assert.equal(out.thorRepair, true);
+  assert.equal(out.freeRepair, undefined);
+  assert.equal(out.speedGold, undefined);
+  assert.equal(out.speedItem, undefined);
+  // 仅道具旧键 → item
+  assert.equal(migrateConfig({ speedItem: true }, 0).speedCommon, 'item');
+  assert.equal(migrateConfig({ speedItem: true }, 0).speedThor, 'item');
+  // 旧键皆无 → none；freeRepair 缺省 → commonRepair true
+  const none = migrateConfig({}, 1);
+  assert.equal(none.speedCommon, 'none');
+  assert.equal(none.commonRepair, true);
+  // 已是 v2：不覆写、不删键
+  const c2 = { speedCommon: 'item', speedThor: 'none', commonRepair: true };
+  assert.deepEqual(migrateConfig(c2, 2), c2);
+});
+
+// ─────────────────── splitRepairingByType（在修队列按兵种拆分）───────────────────
+test('splitRepairingByType：state1 按 thorOf 分流、leftById 逐队列剩余秒；serverTime=0 秒和归零但 ids 仍集；缺 thorOf 全普通', () => {
+  const queues = [
+    { id: '1', orderId: 'a', type: 1, state: 1, endTime: 1000 },
+    { id: '2', orderId: 'b', type: 1, state: 1, endTime: 800 },
+    { id: '3', orderId: '0', type: 1, state: 1, endTime: 9999 }, // 空槽跳过
+    { id: '4', orderId: 'd', type: 1, state: 0, endTime: 5000 }, // 待修不计
+  ];
+  const thorOf = (oid) => oid === 'b';
+  const r = splitRepairingByType(queues, 500, thorOf);
+  assert.equal(r.commonLeft, 500); // 1000-500
+  assert.equal(r.thorLeft, 300); // 800-500
+  assert.deepEqual(r.commonIds, ['1']);
+  assert.deepEqual(r.thorIds, ['2']);
+  assert.equal(r.leftById['1'], 500);
+  assert.equal(r.leftById['2'], 300);
+  // 时刻不可判定：秒和恒 0（防 epoch 秒高估），但 ids 仍收集（供整域 skip 语义）
+  const z = splitRepairingByType(queues, 0, thorOf);
+  assert.equal(z.commonLeft, 0);
+  assert.equal(z.thorLeft, 0);
+  assert.deepEqual(z.commonIds, ['1']);
+  assert.deepEqual(z.thorIds, ['2']);
+  // 非数组 / 缺 thorOf
+  assert.deepEqual(splitRepairingByType(null, 500, thorOf).commonIds, []);
+  const all = splitRepairingByType(queues, 500, null);
+  assert.equal(all.commonLeft, 800);
+  assert.equal(all.thorLeft, 0);
+});
+
+// ─────────────────── 加速分流：两类都在修且方式不同 → 逐队列点名 ───────────────────
+test('planSpeedActions：普通钻石+雷神道具且两类都在修 → 本地逐队列 124 {id,useGold:1} / 815 param=队列id，不走全量 151', () => {
+  const snap = baseSnap({
+    localRepairing: 300,
+    localCommonRepairing: 120,
+    localThorRepairing: 180,
+    localCommonRepairingIds: ['c1'],
+    localThorRepairingIds: ['t1'],
+    localRepairingLeftById: { c1: 120, t1: 180 },
+    gold: 9999,
+    ratePerMin: 2,
+    speedItem: SI8H,
+    mcfg: normalize({ speedCommon: 'gold', speedThor: 'item' }),
+  });
+  const { actions } = planActions(snap);
+  const g = actions.find((a) => a.cmd === CMD_ORDER_QUEUE_SPEED_UP);
+  assert.ok(g);
+  assert.deepEqual(g.body, { id: 'c1', useGold: 1 });
+  assert.deepEqual(g.dedup, ['c1']);
+  assert.equal(g.goldCost, 4); // ceil(120/60*2)
+  const it = actions.find((a) => a.cmd === CMD_ITEM_USE);
+  assert.ok(it);
+  assert.equal(it.body.param, 't1'); // 本地单条 param=队列id
+  assert.equal(it.body.amount, 1); // ceil(180/28800)
+  assert.deepEqual(it.dedup, ['t1']);
+  assert.deepEqual(Object.keys(it.body).sort(), ['amount', 'itemid', 'param']);
+  // 不走全量不点名命令
+  assert.equal(
+    actions.find((a) => a.cmd === CMD_ORDER_QUEUE_ING_DONE),
+    undefined,
+  );
+});
+
+test('planSpeedActions：普通道具+雷神钻石（反向）→ 815 param=普通队列id / 124 雷神队列；逐队列钻石余额不足跳过该队列不影响其余', () => {
+  const snap = baseSnap({
+    localRepairing: 420,
+    localCommonRepairing: 240,
+    localThorRepairing: 180,
+    localCommonRepairingIds: ['c1', 'c2'],
+    localThorRepairingIds: ['t1'],
+    localRepairingLeftById: { c1: 120, c2: 120, t1: 180 },
+    gold: 5,
+    ratePerMin: 2,
+    speedItem: SI8H,
+    mcfg: normalize({ speedCommon: 'item', speedThor: 'gold' }),
+  });
+  const { actions, reasons } = planActions(snap);
+  // 普通道具：两队列各自 ceil(120/28800)=1，param 各为队列id
+  const items = actions.filter((a) => a.cmd === CMD_ITEM_USE);
+  assert.equal(items.length, 2);
+  assert.deepEqual(items.map((a) => a.body.param).sort(), ['c1', 'c2']);
+  // 雷神钻石：估价 6 > 余额 5 → 跳过记 reason（普通道具线不受影响）
+  assert.equal(
+    actions.find((a) => a.cmd === CMD_ORDER_QUEUE_SPEED_UP),
+    undefined,
+  );
+  assert.ok(reasons.some((r) => /gold 5 < estimate 6 \(thor queue t1\)/.test(r)));
+});
+
+test('planSpeedActions：方式不同但只有一类在修 → 该类全量一笔（151/815），不逐队列', () => {
+  const snap = baseSnap({
+    localRepairing: 120,
+    localCommonRepairing: 120,
+    localThorRepairing: 0,
+    localCommonRepairingIds: ['c1'],
+    localThorRepairingIds: [],
+    localRepairingLeftById: { c1: 120 },
+    gold: 9999,
+    ratePerMin: 2,
+    mcfg: normalize({ speedCommon: 'gold', speedThor: 'item' }),
+  });
+  const { actions } = planActions(snap);
+  const g = actions.find((a) => a.cmd === CMD_ORDER_QUEUE_ING_DONE);
+  assert.ok(g);
+  assert.equal(g.all, true);
+  assert.deepEqual(g.pendingTokens, ['c1']);
+  assert.equal(
+    actions.find((a) => a.cmd === CMD_ORDER_QUEUE_SPEED_UP),
+    undefined,
+  );
+});
+
+test('planSpeedActions：跨服加速跟随 speedThor——none 时跨服在修也不发 1428（记 reason）；gold 时发 1428', () => {
+  const off = planActions(
+    baseSnap({
+      localRepairing: 120,
+      localCommonRepairing: 120,
+      localCommonRepairingIds: ['c1'],
+      localRepairingLeftById: { c1: 120 },
+      crossRepairing: 60,
+      crossRepairingIds: ['x1'],
+      gold: 9999,
+      ratePerMin: 2,
+      mcfg: normalize({ speedCommon: 'gold', speedThor: 'none' }),
+    }),
+  );
+  assert.ok(off.actions.find((a) => a.cmd === CMD_ORDER_QUEUE_ING_DONE)); // 本地普通钻石照发
+  assert.equal(
+    off.actions.find((a) => a.cmd === CMD_SPEEDUP_CROSS_GOLD),
+    undefined,
+  );
+  assert.ok(off.reasons.some((r) => /cross speed off \(thor none\)/.test(r)));
+
+  const on = planActions(
+    baseSnap({
+      localRepairing: 120,
+      crossRepairing: 60,
+      crossRepairingIds: ['x1'],
+      gold: 9999,
+      ratePerMin: 2,
+      mcfg: normalize({ speedCommon: 'gold', speedThor: 'gold' }),
+    }),
+  );
+  const gc = on.actions.find((a) => a.cmd === CMD_SPEEDUP_CROSS_GOLD);
+  assert.ok(gc);
+  assert.deepEqual(gc.pendingTokens, ['x1']);
+});
+
+test('planActions 无双：commonRepair 关 → 不发 heal-ava（记 commonRepair off (ava cure)），加速线不受影响', () => {
+  const off = planActions(
+    avaSnap({
+      gold: 99999,
+      ratePerMin: 2,
+      mcfg: normalize({ commonRepair: false, speedCommon: 'gold' }),
+    }),
+  );
+  assert.equal(
+    off.actions.find((a) => a.kind === 'heal-ava'),
+    undefined,
+  );
+  assert.ok(off.reasons.some((r) => /commonRepair off \(ava cure\)/.test(r)));
+  assert.ok(off.actions.find((a) => a.kind === 'speed-gold-ava')); // 加速仍随 speedCommon
+});
+
+// ─────────────────── 道具线截断批：应答确认即清＋读后放行 ───────────────────
+test('道具线 pending 读序放行：prunePendingConfirmed 只清早于本次读的有限确认时刻、按族隔离；钻石/治疗 Infinity 不受影响', () => {
+  // 模拟 execAction 成功后登记：道具线带应答确认时刻，钻石/治疗线缺省 Infinity
+  markPending('speed-item-local', ['q1', 'q2'], 1000);
+  markPending('speed-item-cross', ['x1'], 1000);
+  markPending('speed-gold-local', ['q1']);
+  markPending('heal-local', ['t1']);
+  assert.equal(isPending('speed-item-local|q1'), true);
+  // 读时刻早于确认时刻（同拍 post-heal 二次决策不调用本函数；读序反了也不放行）
+  prunePendingConfirmed('lr', 999);
+  assert.equal(isPending('speed-item-local|q1'), true);
+  // 应答之后的一次权威读：本地族放行（截断批下拍可续发），跨服族不误清
+  prunePendingConfirmed('lr', 1500);
+  assert.equal(isPending('speed-item-local|q1'), false);
+  assert.equal(isPending('speed-item-local|q2'), false);
+  assert.equal(isPending('speed-item-cross|x1'), true);
+  // 钻石/治疗线 Infinity：确认读不放行，仍等目标 state 退出权威读
+  assert.equal(isPending('speed-gold-local|q1'), true);
+  assert.equal(isPending('heal-local|t1'), true);
+  prunePendingByExit('lr', new Set()); // q1 退出 state1 → 钻石令牌遗忘
+  assert.equal(isPending('speed-gold-local|q1'), false);
+  prunePendingConfirmed('cr', 1500);
+  assert.equal(isPending('speed-item-cross|x1'), false);
+  prunePendingByExit('lw', new Set());
+  assert.equal(isPending('heal-local|t1'), false);
+});
+
+test('道具线逐队列令牌同享读序放行：截断的单队列（left>useMax×单枚秒）下拍可重试、不永久锁', () => {
+  markPending('speed-item-local', ['huge'], 2000);
+  // 队列仍在修（未退出 state1）：exit-prune 不清
+  prunePendingByExit('lr', new Set(['huge']));
+  assert.equal(isPending('speed-item-local|huge'), true);
+  // 应答后权威读：放行 → 下拍可按新剩余秒再排截断批
+  prunePendingConfirmed('lr', 2500);
+  assert.equal(isPending('speed-item-local|huge'), false);
 });

@@ -2,8 +2,9 @@
  * 快速修理（英雄免费快速修理 + 医院加速，reactor 说明书形态，日常任务，多分支单链）
  *
  * 玩法：进医院（本地伤兵队列 / 跨服战场医院队列）后自动执行「英雄免费快速修理」
- *   （每日 77 个普通单位、零材料、零钻石），并按开关可选追加：钻石加速在修队列、
- *   医院加速道具加速、雷神兵修理（带材料）。免费线永远优先，付费线默认关闭并各带闸门。
+ *   （每日 77 个普通单位、零材料、零钻石）。面板分「修理 / 加速」两层：修理按兵种两个
+ *   checkbox（普通兵默认开、雷神兵默认关），加速按兵种两个三态 select（不加速/钻石/道具）。
+ *   免费线永远优先，付费线默认关闭并各带闸门。
  *
  * 协议字典（实录报文实证；源码 references/游戏逆向/extracted/
  *   subpack2/WareHouseControllerNew / HospitalComponentNew / Script/SpeedCDPanel / Script/UserData / Script/RequestId）：
@@ -38,7 +39,7 @@
  *          本地雷神兵亦走 220（与竞对 B/源码一致：getOrderQueuesByType(1) 的本地队列全量 → 220；本号 thor 免费额度=0 ⇒ 超出的自然扣材料）。
  *     1427 ARMY_CROSS_HEAL {ids:[跨服战场队列 id…]}：仅承载 getBattleFieldOrderQueue（跨服），实测伴随 thor_elements/oila 扣减 ⇒ 消耗材料。本地 id 混入必被服务器拒。
  *     151  ORDER_QUEUE_ING_DONE {armyType?}   钻石加速本地全部在修队列（源码 EndAllQueue：armyType=-1 时不带该键）
- *     124  ORDER_QUEUE_SPEED_UP {id,useGold:1} 钻石加速本地单条在修队列
+ *     124  ORDER_QUEUE_SPEED_UP {id,useGold:1} 钻石加速本地单条在修队列（普通/雷神加速方式不同时逐队列点名用）
  *     1428 SPEEDUP_CROSS_HOSPITAL_QUEUE_BY_GOLD {} 全量 / {id} 单条（跨服）
  *     815  ITEM_USE {itemid,amount,param}：param 编码加速目标（源码 SpeedCDPanel.hospitalUseItemSpeed + 真人 510002 成功样本实证）
  *          本地全量 param=null（"0|0" 被服务器拒 s=3/item_124017，实录实证）；本地单条 = 队列 id；跨服全量 "1,"+armyType 或 "1|0"；跨服单条 "1|"+queueId
@@ -57,10 +58,11 @@
  *     10120 ORDER_QUEUES_BATCH_INFO {orderQueues:[{id,orderId,state,itemId,type:1,endTime}]}（本地伤兵入队/改态）
  *     13006 CSB_HOSPITAL_QUEUE_ADD {queues:[{army,id,st,et}]}（跨服入队，辅以 13007 MODIFY / 13005 DELETE）
  *
- * 三场景统一去重（无抑制时钟，与竞品 B 事件驱动同构）：本 feat 发 220/1427/151/1428/815/6311/6312 都不经游戏回调，
- *   无去重即会逐拍撞同一批队列。策略：所有抑制墙钟全废（旧 speedGateMsFor 的 45s/10s 整批窗、markHealed/markDeadSlot
- *   的 5min/30min），改为「在途令牌 pending，仅由权威读确认清除、无 TTL」。
- *   不变式：新令牌（从没在途过的队列）即时放行；已发未确认的令牌绝不第二枪；令牌只在其「目标 state 退出权威读」时遗忘。
+ * 三场景统一去重（无抑制时钟）：本 feat 发 220/1427/151/124/1428/815/6311/6312 都不经游戏回调，
+ *   无去重即会逐拍撞同一批队列。策略：不用任何抑制墙钟，改为「在途令牌 pending，仅由权威读确认清除、无 TTL」。
+ *   不变式：新令牌（从没在途过的队列）即时放行；已发未确认的令牌绝不第二枪；钻石/治疗令牌只在其「目标 state 退出权威读」时遗忘；
+ *   道具线令牌以应答为权威消耗确认（登记时记确认时刻），经应答之后的一次权威队列读由 `prunePendingConfirmed` 放行——
+ *   截断批（useMax/持有修不完全部队列）下拍可续发、不锁整域；确认时刻只用于读序先后，不作 TTL 抑制窗。
  *   原语：execAction 成功后 `markPending`（逐令牌动作记实发令牌；全量 body={{}} 动作记该域活跃令牌集 pendingTokens，
  *   任一受影响令牌仍在途即整域跳过、不拆子集）；snapshot 每拍权威读后 `prunePendingByExit(族, 活跃集)` 按族确认清除——
  *   治疗族（lw/cw/aw）确认集=state0 待处理令牌、加速族（lr/cr/ar）确认集=state1 在修令牌（令牌口径逐族严格同形）。
@@ -77,13 +79,20 @@
  * 合规：全程只读游戏数据（经 game-api ACL）+ 直发上述协议。除上述「幻影回灌」借用游戏自带 UpdateOrderQueues
  *   （把服务器已下发的权威队列就地覆盖，非自造增删、不弹 UI）外，不调 StartAllQueue/OpenUI/Delete 等改写本地态
  *   或弹 UI 的原生方法（「feat 只读+发包」红线；UpdateOrderQueues 为 quickRepair 经用户批准的唯一例外）。
- * 普通兵单笔 220 全发（学竞品 B hospitalStart，修正十九）：不再拆免费/资源两批——可负担集内的普通伤兵一笔 220 全发，
- *   服务器内部优先扣「英雄免费额度」（common_max-common_use）、超出扣材料。旧两批拆分存在「第一批修好 → 回灌确认遗忘 →
- *   陈旧 push 推回 → 第二批重开修理」的幻影重烧窗口（实录实证浪费钻石/材料/免费额度），单笔从结构上消除。
- *   `freeRepair`/`resourceRepair` 均恒开、不放面板：后者显式 false（旧存档）时只发免费额度内、保持零消耗；
+ * 普通兵单笔 220 全发：可负担集内的普通伤兵一笔 220 全发，服务器内部优先扣「英雄免费额度」
+ *   （common_max-common_use）、超出扣材料。免费/资源不拆两批——两批拆分存在「第一批修好 → 回灌确认遗忘 →
+ *   陈旧 push 推回 → 第二批重开修理」的幻影重烧窗口，单笔从结构上消除。
+ *   普通兵修理由 commonRepair 闸（面板可见、默认开）；resourceRepair 系统内置，关时只发免费额度内、保持零消耗；
  *   可负担集按部队 `repair_cost` 累计持有量筛付费段（免费额度覆盖的前缀恒可发），买不起的静默跳过、不告警不进退避。
- * 日常任务形态：面板只暴露 3 个付费/带材料开关（雷神/钻石/道具）；免费修/资源续修恒开、自愈轮询间隔为系统内置，
- *   均不出现在面板。钻石日预算与道具保留下限两个闸门已废弃（钻石只受余额约束、道具持有即动用）。
+ * 面板形态（修理/加速拆开）：修理层两个 checkbox——普通兵（commonRepair，默认开）、
+ *   雷神兵（thorRepair，默认关，兼管跨服战场伤兵）；加速层两个三态 select——speedCommon/speedThor
+ *   （none/gold/item，默认 none）。跨服/无双队列无法可靠区分雷神/普通，加速各随其修理分组：
+ *   跨服跟 speedThor、无双跟 speedCommon。资源续修（resourceRepair）与自愈轮询间隔为系统内置不出面板；
+ *   钻石只受余额约束、道具持有即动用（无日预算/保留下限闸门）。
+ *   加速执行口径：两类兵方式相同、或只有一类有在修剩余秒 → 沿用全量一笔（151/815 全量，道具时间池不浪费）；
+ *   两类都有在修且方式不同 → 本地逐队列点名（124 钻石单条 / 815 param=队列 id），道具逐队列各自向上取整
+ *   会比时间池多耗几枚，只在该场景付。存档 _v<2 经 migrate 映射：speedGold/speedItem → 两 select
+ *   （钻石优先）、freeRepair → commonRepair。
  *   生命周期由 reactor 托管：places base/world、kinds homeland、不行军不参战故 offInCombat:false；
  *   pause 后 ctx.alive()=false，cycle 与在飞 await 自然停摆。
  */
@@ -100,6 +109,7 @@ import {
   CMD_GET_CROSS_HOSPITAL_QUEUES,
   CMD_ARMY_CROSS_HEAL,
   CMD_ORDER_QUEUE_ING_DONE,
+  CMD_ORDER_QUEUE_SPEED_UP,
   CMD_SPEEDUP_CROSS_GOLD,
   CMD_ITEM_USE,
   CMD_AVA_ASK,
@@ -167,6 +177,12 @@ const ITEM_TYPE_HOSPITAL_SPEED = 12;
 /** @type {number} 本地伤兵队列在 OrderQueues 里的 type 值（源码 getOrderQueuesByType(1)） */
 const ORDER_TYPE_HEAL = 1;
 
+/** @type {string} 本地钻石加速动作名（151 全量 / 124 逐队列共用同一 fp 令牌空间，lr 族） */
+const KIND_SPEED_GOLD_LOCAL = 'speed-gold-local';
+
+/** @type {string} 本地道具加速动作名（815 全量 / 逐队列共用同一 fp 令牌空间，lr 族） */
+const KIND_SPEED_ITEM_LOCAL = 'speed-item-local';
+
 /** @type {number} DATACONFIG 键：钻石加速每分钟单价（源码 getProfessionCDGold 同款费率） */
 const CFG_GOLD_PER_MIN = 61017;
 
@@ -196,7 +212,7 @@ const cfg = {
   maxPollSec: 60 * 60,
 };
 
-/** @type {{freeRepair:boolean, resourceRepair:boolean, thorRepair:boolean, speedGold:boolean, speedItem:boolean, pollIntervalSec:number}} 面板配置（configure 灌入 toModuleCfg 产物） */
+/** @type {{commonRepair:boolean, resourceRepair:boolean, thorRepair:boolean, speedCommon:string, speedThor:string, pollIntervalSec:number}} 面板配置（configure 灌入 toModuleCfg 产物） */
 var MCFG = normalize({});
 
 /** @type {object|null} 网络底座（promise 封装 pocketcc.net） */
@@ -230,9 +246,20 @@ function aliveFn() {
 // ─────────────────────────── 纯判据函数（单测/对拍直接消费） ───────────────────────────
 
 /**
+ * 加速方式三态归一：只认 'gold'/'item'，其余（含缺省/非法值）一律 'none'。
+ * @param {*} v 面板原始值
+ * @returns {'none'|'gold'|'item'}
+ */
+function speedModeOf(v) {
+  return v === 'gold' || v === 'item' ? v : 'none';
+}
+
+/**
  * 面板配置归一：每个键各自取字面语义，不做区间合并。
- * 免费线 boolean 缺省口径：freeRepair / resourceRepair 缺键一律视为 true（零成本/续修恒开，不再放面板）；
- * 其余付费/带材料项（thorRepair/speedGold/speedItem）缺省视为 false。
+ * 修理层：commonRepair 缺键视为 true（承接旧免费线恒开语义；旧存档显式 freeRepair:false 映射为关），
+ *   thorRepair 缺省 false；resourceRepair 缺键恒 true（资源续修恒开、不放面板）。
+ * 加速层：speedCommon/speedThor 三态（none/gold/item）；缺键时从旧 speedGold/speedItem 映射
+ *   （钻石优先，与旧「同拍双花让位」一致），旧键也无则 none。
  * @param {object} raw 面板原始配置
  * @returns {object} 归一后的模块配置
  */
@@ -241,14 +268,35 @@ function normalize(raw) {
   var poll = Math.floor(Number(raw.pollIntervalSec));
   if (!(poll > 0)) poll = 60;
   poll = Math.min(poll, cfg.maxPollSec);
+  var legacy = raw.speedGold ? 'gold' : raw.speedItem ? 'item' : 'none';
   return {
-    freeRepair: raw.freeRepair === undefined ? true : !!raw.freeRepair,
+    commonRepair: raw.commonRepair === undefined ? raw.freeRepair !== false : !!raw.commonRepair,
     resourceRepair: raw.resourceRepair === undefined ? true : !!raw.resourceRepair,
     thorRepair: !!raw.thorRepair,
-    speedGold: !!raw.speedGold,
-    speedItem: !!raw.speedItem,
+    speedCommon: raw.speedCommon === undefined ? legacy : speedModeOf(raw.speedCommon),
+    speedThor: raw.speedThor === undefined ? legacy : speedModeOf(raw.speedThor),
     pollIntervalSec: poll,
   };
+}
+
+/**
+ * 存档版本迁移（descriptor.migrate，纯函数）：v1→v2 把旧三开关映射到新四字段并删除旧键。
+ * registry 先合并 defaults+saved 再调本钩子，旧存档的 speedCommon 必为默认值——直接按旧键覆写。
+ * @param {object} c 合并后的配置（就地改写并返回）
+ * @param {number} fromVersion 存量版本（缺 _v 视为 0）
+ * @returns {object}
+ */
+function migrateConfig(c, fromVersion) {
+  if (fromVersion < 2) {
+    var legacy = c.speedGold ? 'gold' : c.speedItem ? 'item' : 'none';
+    c.speedCommon = legacy;
+    c.speedThor = legacy;
+    c.commonRepair = c.freeRepair !== false;
+    delete c.freeRepair;
+    delete c.speedGold;
+    delete c.speedItem;
+  }
+  return c;
 }
 
 /**
@@ -404,6 +452,48 @@ function localRepairingIdSet(queues) {
     if (id) s.add(id);
   }
   return s;
+}
+
+/**
+ * 本地 state1 在修队列按兵种拆分（加速层普通/雷神分流用）：过滤口径与 `repairingLeftSec`/
+ * `localRepairingIdSet` 严格同款（tolerate 缺失 type、`orderId!=="0" && state===1`），再按注入的
+ * thorOf 分流。leftById 记逐队列剩余秒（serverTime 不可判定时恒 0，同 repairingLeftSec 前置闸），
+ * 供逐队列点名时的钻石估价/道具枚数折算；ids 集与 localRepairingIdSet 同成员（含已过期槽）。
+ * @param {Array<object>|null} queues 本地伤兵队列
+ * @param {number} serverTime DATA.ServerTime（秒）
+ * @param {function(string):boolean} [thorOf] orderId → 是否雷神（缺省全部当普通兵）
+ * @returns {{commonLeft:number, thorLeft:number, commonIds:string[], thorIds:string[], leftById:Object<string,number>}}
+ */
+function splitRepairingByType(queues, serverTime, thorOf) {
+  var out = {
+    commonLeft: 0,
+    thorLeft: 0,
+    commonIds: [],
+    thorIds: [],
+    leftById: Object.create(null),
+  };
+  if (!Array.isArray(queues)) return out;
+  var st = Number(serverTime) > 0 ? Number(serverTime) : 0;
+  for (var i = 0; i < queues.length; i++) {
+    var q = queues[i];
+    if (!q || typeof q !== 'object') continue;
+    if (q.type != null && Number(q.type) !== ORDER_TYPE_HEAL) continue;
+    var orderId = q.orderId == null ? '' : String(q.orderId);
+    if (!orderId || orderId === '0') continue;
+    if (Number(q.state) !== 1) continue;
+    var id = q.id == null ? '' : String(q.id);
+    if (!id) continue;
+    var left = st > 0 ? Math.max(0, (Number(q.endTime) || 0) - st) : 0;
+    out.leftById[id] = left;
+    if (thorOf && thorOf(orderId)) {
+      out.thorIds.push(id);
+      out.thorLeft += left;
+    } else {
+      out.commonIds.push(id);
+      out.commonLeft += left;
+    }
+  }
+  return out;
 }
 
 /**
@@ -838,11 +928,11 @@ function planActions(snap) {
 function planHealActions(snap, m, actions, reasons) {
   var q = snap.quotas || quickFields(null);
 
-  // 1) 普通兵单笔 220 全发（学竞品 B，修正十九）：可发集由 snapshot 的 budgetHealIds 预算（免费前缀恒可发 +
-  //    付费段按材料可负担筛），服务器内部先扣免费额度、超出扣材料。不再拆免费/资源两批——消除「第一批修好 →
+  // 1) 普通兵单笔 220 全发：可发集由 snapshot 的 budgetHealIds 预算（免费前缀恒可发 +
+  //    付费段按材料可负担筛），服务器内部先扣免费额度、超出扣材料。免费/资源不拆两批——消除「第一批修好 →
   //    回灌遗忘 → 陈旧 push 推回 → 第二批重开修理」的幻影重烧窗口。
-  if (!m.freeRepair) {
-    reasons.push('freeRepair off');
+  if (!m.commonRepair) {
+    reasons.push('commonRepair off');
   } else if (!q) {
     reasons.push('quota unknown (1785 not parsed)');
   } else if (snap.commonIds.length === 0) {
@@ -858,7 +948,7 @@ function planHealActions(snap, m, actions, reasons) {
       label: 'heal ' + snap.healIds.length + '/' + snap.commonIds.length,
     });
   } else if (!m.resourceRepair && q.commonFreeLeft <= 0) {
-    // 免费额度耗尽且未开「用资源续修」（旧存档显式 false）：保持零消耗，不花材料修普通兵。
+    // 免费额度耗尽且未开「用资源续修」：保持零消耗，不花材料修普通兵。
     reasons.push('common free quota exhausted (' + q.commonUse + '/' + q.commonMax + ')');
   } else if (snap.healIds) {
     reasons.push('no affordable common repair (materials short)');
@@ -901,124 +991,311 @@ function planHealActions(snap, m, actions, reasons) {
 }
 
 /**
- * 加速层（3 钻石 + 4 道具）：纯判据产出 151/1428/815，累加进调用方容器。
+ * 加速层：按兵种三态开关（speedCommon/speedThor ∈ none/gold/item）产出 151/124/1428/815，累加进调用方容器。
  * 单独成函数是为了「同拍二次决策」：治疗层落地后就地重读在修秒和，只补跑本层（见 planOnce）。
  * 无返回值：结果只写进传入的 actions/reasons（调用方不得取返回值）。
- * 第 4 层道具按「时间池」模型折算枚数一次发足（服务器把 amount 当 Σ(枚数×para1) 的时间池、
- * 按队首顺序贪心消耗，实证见头部 815 条目）；同域钻石线本拍已排全量完成时道具线让位（同拍双花防护，同无双 5c）。
+ * 分流口径：两类加速方式相同、或只有一类有在修剩余秒 → 全量一笔（151/815 不区分兵种，道具时间池不浪费）；
+ *   两类都在修且方式不同 → 本地逐队列点名（124 钻石单条 {id,useGold:1} / 815 param=队列 id），
+ *   道具逐队列 ceil 折算的余量浪费只在该场景付。跨服医院无法区分兵种，加速跟随 speedThor（与其修理分组一致）。
+ * 道具按「时间池」模型折算枚数（服务器把 amount 当 Σ(枚数×para1) 的时间池、按队首顺序贪心消耗，实证见头部 815 条目）；
+ *   钻石余额与道具持有量在本层内共享预算投影（budget），本地/跨服同拍累计扣减防超支。
  * @param {object} snap 快照
  * @param {object} m 归一后的模块配置
  * @param {Array} actions 累加容器
  * @param {Array} reasons 累加容器
  */
 function planSpeedActions(snap, m, actions, reasons) {
-  // 3) 钻石加速在修队列（本地 151 + 跨服 1428）：本地/跨服各自按 leftSec 估价，只带余额闸（日预算闸门已废弃）
-  if (!m.speedGold) {
-    reasons.push('speedGold off');
-  } else if (snap.repairing <= 0) {
-    reasons.push('nothing under repair');
+  var mc = speedModeOf(m.speedCommon);
+  var mt = speedModeOf(m.speedThor);
+  // 未拆分快照（旧形态/纯单测）回退：本地在修全当普通兵
+  var cLeft =
+    snap.localCommonRepairing != null
+      ? Number(snap.localCommonRepairing) || 0
+      : Number(snap.localRepairing) || 0;
+  var tLeft = Number(snap.localThorRepairing) || 0;
+  var cIds = snap.localCommonRepairingIds || snap.localRepairingIds || [];
+  var tIds = snap.localThorRepairingIds || [];
+  var si = snap.speedItem;
+  var budget = {
+    gold: Number(snap.gold) || 0,
+    item: si ? Math.max(Number(si.usable == null ? si.amount : si.usable) || 0, 0) : 0,
+    si: si,
+  };
+  var localLeft = cLeft + tLeft;
+  if (mc === 'none' && mt === 'none') {
+    reasons.push('local speed off (none)');
+  } else if (localLeft <= 0) {
+    reasons.push('nothing under repair (local)');
+  } else if (mc === mt) {
+    planLocalWholeSpeed(snap, mc, localLeft, cIds.concat(tIds), budget, actions, reasons);
   } else {
-    if (snap.localRepairing > 0) {
-      var lc = estimateGold(snap.localRepairing, snap.ratePerMin);
-      if (!lc) {
-        reasons.push('local gold estimate unavailable (rate ' + snap.ratePerMin + ')');
-      } else if (Number(snap.gold) < lc) {
-        reasons.push('gold ' + snap.gold + ' < estimate ' + lc + ' (local)');
-      } else {
-        actions.push({
-          kind: 'speed-gold-local',
-          cmd: CMD_ORDER_QUEUE_ING_DONE,
-          body: {},
-          fp: 'speed-gold-local',
-          all: true,
-          pendingTokens: snap.localRepairingIds || [],
-          goldCost: lc,
-          label: 'gold speed local (leftSec ' + snap.localRepairing + ')',
-        });
-      }
-    }
-    if (snap.crossRepairing > 0) {
-      var cc = estimateGold(snap.crossRepairing, snap.ratePerMin);
-      if (!cc) {
-        reasons.push('cross gold estimate unavailable (rate ' + snap.ratePerMin + ')');
-      } else if (Number(snap.gold) < cc) {
-        reasons.push('gold ' + snap.gold + ' < estimate ' + cc + ' (cross)');
-      } else {
-        actions.push({
-          kind: 'speed-gold-cross',
-          cmd: CMD_SPEEDUP_CROSS_GOLD,
-          body: {},
-          fp: 'speed-gold-cross',
-          all: true,
-          pendingTokens: snap.crossRepairingIds || [],
-          goldCost: cc,
-          label: 'gold speed cross (leftSec ' + snap.crossRepairing + ')',
-        });
-      }
+    var cActive = cLeft > 0;
+    var tActive = tLeft > 0;
+    if (cActive && tActive) {
+      // 两类都在修且方式不同：逐队列点名，none 侧只记 reason 不发
+      if (mc === 'none') reasons.push('common speed off');
+      else
+        planLocalPerQueueSpeed(
+          snap,
+          mc,
+          cIds,
+          snap.localRepairingLeftById,
+          'common',
+          budget,
+          actions,
+          reasons,
+        );
+      if (mt === 'none') reasons.push('thor speed off');
+      else
+        planLocalPerQueueSpeed(
+          snap,
+          mt,
+          tIds,
+          snap.localRepairingLeftById,
+          'thor',
+          budget,
+          actions,
+          reasons,
+        );
+    } else if (cActive) {
+      if (mc === 'none') reasons.push('common speed off');
+      else planLocalWholeSpeed(snap, mc, cLeft, cIds, budget, actions, reasons);
+    } else if (tActive) {
+      if (mt === 'none') reasons.push('thor speed off');
+      else planLocalWholeSpeed(snap, mt, tLeft, tIds, budget, actions, reasons);
     }
   }
+  planCrossSpeed(snap, mt, budget, actions, reasons);
+}
 
-  // 4) 加速道具加速在修队列（815 ITEM_USE）：本地优先（param=null），否则跨服（param="1|0"）
-  if (!m.speedItem) {
-    reasons.push('speedItem off');
-  } else if (snap.repairing <= 0) {
-    reasons.push('nothing under repair for item speed');
-  } else if (!snap.speedItem) {
-    reasons.push('no hospital speed item in bag');
-  } else {
-    var x = snap.localRepairing <= 0 && snap.crossRepairing > 0;
-    var si = snap.speedItem;
-    if (goldPlannedFor(actions, x)) {
-      // 同域钻石全量完成已排在前面：道具再打同一批在修队列即同拍双花（钻石侧被拒/跳过时下一拍道具线照常补上）
-      reasons.push('item speed ' + (x ? 'cross' : 'local') + ' skipped (gold done this tick)');
+/**
+ * 钻石余额不足 reason（本地全量/逐队列/跨服/无双四处共用同一措辞）。
+ * @param {number} gold 可用钻石
+ * @param {number} est 估算花费
+ * @param {string} where 域标签（local/cross/ava/逐队列点名）
+ * @returns {string}
+ */
+function goldShortReason(gold, est, where) {
+  return 'gold ' + gold + ' < estimate ' + est + ' (' + where + ')';
+}
+
+/**
+ * 本地全量加速一笔（151 钻石 / 815 道具）：目标域在修队列不区分兵种，pendingTokens 带该域全部活跃 id。
+ * @param {object} snap 快照
+ * @param {'gold'|'item'} mode 加速方式
+ * @param {number} leftSec 目标域在修剩余秒和
+ * @param {string[]} ids 目标域 state1 活跃 id 集
+ * @param {{gold:number, item:number, si:object|null}} budget 共享预算投影（就地扣减）
+ * @param {Array} actions 累加容器
+ * @param {Array} reasons 累加容器
+ */
+function planLocalWholeSpeed(snap, mode, leftSec, ids, budget, actions, reasons) {
+  if (mode === 'gold') {
+    var lc = estimateGold(leftSec, snap.ratePerMin);
+    if (!lc) {
+      reasons.push('local gold estimate unavailable (rate ' + snap.ratePerMin + ')');
+    } else if (budget.gold < lc) {
+      reasons.push(goldShortReason(budget.gold, lc, 'local'));
     } else {
-      var spu = Number(si.secPerUse) || 0;
-      var leftSec = x ? snap.crossRepairing : snap.localRepairing;
-      var held = Math.max(Number(si.usable == null ? si.amount : si.usable) || 0, 0);
-      // para1 不可解（表列漂移）时回退单枚旧口径：宁少花不空转；无持有则归 0 走 reason，不发必拒的 amount:0/1 空包
-      var num = spu > 0 ? speedItemNum(leftSec, spu, held, Number(si.useMax)) : held > 0 ? 1 : 0;
+      budget.gold -= lc;
+      actions.push({
+        kind: KIND_SPEED_GOLD_LOCAL,
+        cmd: CMD_ORDER_QUEUE_ING_DONE,
+        body: {},
+        fp: KIND_SPEED_GOLD_LOCAL,
+        all: true,
+        pendingTokens: ids,
+        goldCost: lc,
+        label: 'gold speed local (leftSec ' + leftSec + ')',
+      });
+    }
+  } else if (mode === 'item') {
+    planItemWhole(false, leftSec, ids, budget, actions, reasons);
+  }
+}
+
+/**
+ * 815 道具全量加速一笔（本地 param=null / 跨服 param="1|0"）：枚数按时间池折算，共享预算扣减。
+ * para1 不可解（表列漂移）时回退单枚旧口径：宁少花不空转；无持有则归 0 走 reason，不发必拒的 amount:0 空包。
+ * @param {boolean} cross 是否跨服战场医院
+ * @param {number} leftSec 目标域在修剩余秒和
+ * @param {string[]} ids 目标域 state1 活跃 id 集
+ * @param {{gold:number, item:number, si:object|null}} budget 共享预算投影（就地扣减）
+ * @param {Array} actions 累加容器
+ * @param {Array} reasons 累加容器
+ */
+function planItemWhole(cross, leftSec, ids, budget, actions, reasons) {
+  var si = budget.si;
+  if (!si) {
+    reasons.push('no hospital speed item in bag');
+    return;
+  }
+  var spu = Number(si.secPerUse) || 0;
+  var num =
+    spu > 0 ? speedItemNum(leftSec, spu, budget.item, Number(si.useMax)) : budget.item > 0 ? 1 : 0;
+  if (!(num > 0)) {
+    reasons.push(
+      'item speed num=0 (secPerUse ' + spu + '; held ' + budget.item + '; leftSec ' + leftSec + ')',
+    );
+    return;
+  }
+  budget.item -= num;
+  actions.push({
+    kind: cross ? 'speed-item-cross' : KIND_SPEED_ITEM_LOCAL,
+    cmd: CMD_ITEM_USE,
+    body: { itemid: si.itemId, amount: num, param: itemSpeedParam(cross, null, -1) },
+    fp: cross ? 'speed-item-cross' : KIND_SPEED_ITEM_LOCAL,
+    all: true,
+    pendingTokens: ids,
+    label:
+      'item speed ' +
+      (cross ? 'cross' : 'local') +
+      ' #' +
+      si.itemId +
+      ' x' +
+      num +
+      ' (held ' +
+      si.amount +
+      '; leftSec ' +
+      leftSec +
+      ')',
+  });
+}
+
+/**
+ * 本地逐队列点名加速（两类都在修且方式不同时的分流路径）：124 钻石单条 {id,useGold:1} / 815 单条 param=队列 id。
+ * 逐队列独立估价/折算，共享预算累计扣减；余额不足的队列跳过（记 reason），不影响其余队列。
+ * 道具逐队列 ceil 折算有余量浪费（时间池不可跨队列共享），只在本场景付。
+ * @param {object} snap 快照
+ * @param {'gold'|'item'} mode 加速方式
+ * @param {string[]} ids 该兵种 state1 活跃 id 集
+ * @param {Object<string,number>|null} leftById 逐队列剩余秒（splitRepairingByType 产物）
+ * @param {string} typeName 兵种名（日志/reason 用）
+ * @param {{gold:number, item:number, si:object|null}} budget 共享预算投影（就地扣减）
+ * @param {Array} actions 累加容器
+ * @param {Array} reasons 累加容器
+ */
+function planLocalPerQueueSpeed(snap, mode, ids, leftById, typeName, budget, actions, reasons) {
+  if (!leftById) {
+    reasons.push(typeName + ' per-queue left unknown (snapshot not split)');
+    return;
+  }
+  var si = budget.si;
+  var spu = si ? Number(si.secPerUse) || 0 : 0;
+  for (var i = 0; i < ids.length; i++) {
+    var id = ids[i];
+    var left = Number(leftById[id]) || 0;
+    if (!(left > 0)) continue;
+    if (mode === 'gold') {
+      var gc = estimateGold(left, snap.ratePerMin);
+      if (!gc) {
+        reasons.push(typeName + ' gold estimate unavailable (rate ' + snap.ratePerMin + ')');
+        return;
+      }
+      if (budget.gold < gc) {
+        reasons.push(goldShortReason(budget.gold, gc, typeName + ' queue ' + id));
+        continue;
+      }
+      budget.gold -= gc;
+      actions.push({
+        kind: KIND_SPEED_GOLD_LOCAL,
+        cmd: CMD_ORDER_QUEUE_SPEED_UP,
+        body: { id: id, useGold: 1 },
+        fp: KIND_SPEED_GOLD_LOCAL,
+        dedup: [id],
+        goldCost: gc,
+        label: 'gold speed local ' + typeName + ' queue ' + id + ' (leftSec ' + left + ')',
+      });
+    } else {
+      if (!si) {
+        reasons.push('no hospital speed item in bag');
+        return;
+      }
+      var num =
+        spu > 0 ? speedItemNum(left, spu, budget.item, Number(si.useMax)) : budget.item > 0 ? 1 : 0;
       if (!(num > 0)) {
         reasons.push(
-          'item speed num=0 (secPerUse ' + spu + '; held ' + held + '; leftSec ' + leftSec + ')',
-        );
-      } else {
-        actions.push({
-          kind: x ? 'speed-item-cross' : 'speed-item-local',
-          cmd: CMD_ITEM_USE,
-          body: {
-            itemid: si.itemId,
-            amount: num,
-            param: itemSpeedParam(x, null, -1),
-          },
-          fp: x ? 'speed-item-cross' : 'speed-item-local',
-          all: true,
-          pendingTokens: (x ? snap.crossRepairingIds : snap.localRepairingIds) || [],
-          label:
-            'item speed ' +
-            (x ? 'cross' : 'local') +
-            ' #' +
-            si.itemId +
-            ' x' +
-            num +
-            ' (held ' +
-            si.amount +
+          'item speed num=0 (secPerUse ' +
+            spu +
+            '; held ' +
+            budget.item +
             '; leftSec ' +
-            leftSec +
+            left +
             ')',
-        });
+        );
+        return;
       }
+      budget.item -= num;
+      actions.push({
+        kind: KIND_SPEED_ITEM_LOCAL,
+        cmd: CMD_ITEM_USE,
+        body: { itemid: si.itemId, amount: num, param: itemSpeedParam(false, id) },
+        fp: KIND_SPEED_ITEM_LOCAL,
+        dedup: [id],
+        label:
+          'item speed local ' +
+          typeName +
+          ' queue ' +
+          id +
+          ' #' +
+          si.itemId +
+          ' x' +
+          num +
+          ' (leftSec ' +
+          left +
+          ')',
+      });
     }
   }
 }
 
 /**
- * 同域钻石加速是否已在本拍排入全量完成动作（供道具线让位判定）。
+ * 跨服战场医院加速（1428 钻石 / 815 道具 param="1|0"）：队列无法区分兵种，跟随 speedThor（与其修理分组一致）。
+ * @param {object} snap 快照
+ * @param {'none'|'gold'|'item'} mt 雷神兵加速方式（跨服跟随）
+ * @param {{gold:number, item:number, si:object|null}} budget 共享预算投影（就地扣减）
+ * @param {Array} actions 累加容器
+ * @param {Array} reasons 累加容器
+ */
+function planCrossSpeed(snap, mt, budget, actions, reasons) {
+  var left = Number(snap.crossRepairing) || 0;
+  if (!(left > 0)) return;
+  if (mt === 'none') {
+    reasons.push('cross speed off (thor none)');
+    return;
+  }
+  if (mt === 'gold') {
+    var cc = estimateGold(left, snap.ratePerMin);
+    if (!cc) {
+      reasons.push('cross gold estimate unavailable (rate ' + snap.ratePerMin + ')');
+    } else if (budget.gold < cc) {
+      reasons.push(goldShortReason(budget.gold, cc, 'cross'));
+    } else {
+      budget.gold -= cc;
+      actions.push({
+        kind: 'speed-gold-cross',
+        cmd: CMD_SPEEDUP_CROSS_GOLD,
+        body: {},
+        fp: 'speed-gold-cross',
+        all: true,
+        pendingTokens: snap.crossRepairingIds || [],
+        goldCost: cc,
+        label: 'gold speed cross (leftSec ' + left + ')',
+      });
+    }
+  } else {
+    planItemWhole(true, left, snap.crossRepairingIds || [], budget, actions, reasons);
+  }
+}
+
+/**
+ * 同域钻石加速是否已在本拍排入全量完成动作（纯查询，供单测/对拍断言）。
  * @param {Array<object>} actions 已规划动作
  * @param {boolean} cross 目标域是否跨服
  * @returns {boolean}
  */
 function goldPlannedFor(actions, cross) {
-  var want = cross ? 'speed-gold-cross' : 'speed-gold-local';
+  var want = cross ? 'speed-gold-cross' : KIND_SPEED_GOLD_LOCAL;
   for (var i = 0; i < actions.length; i++) {
     if (actions[i].kind === want) return true;
   }
@@ -1026,7 +1303,7 @@ function goldPlannedFor(actions, cross) {
 }
 
 /**
- * 无双（AVA 族）决策层：吃同一套面板开关（修伤兵跟 resourceRepair、加速跟 speedGold/speedItem），
+ * 无双（AVA 族）决策层：吃同一套面板开关（修伤兵跟 commonRepair+resourceRepair、加速跟 speedCommon），
  * 但走独立三件套：6311 批量修 state0、6312 钻石 {ids,useGold:1} / 道具 {ids,itemId,num,useGold:0} 加速 state1。
  * 无双无免费额度概念；余额闸用模式倍率估价（estimateAvaGold）；道具加速需持有专行 15100046 且 para1 可解。
  * 本函数纯判据、无副作用；去重与发包在 execAction（无双动作不入 LOCAL_SYNC_KINDS、不回灌，靠 push 21203/下拍 6310 刷新）。
@@ -1046,8 +1323,10 @@ function planAvaActions(snap, m, actions, reasons) {
     reasons.push('ava hospital read failed (' + snap.avaMode + ')');
     return;
   }
-  // 5a) 批量修待修（吃资源/时长，归「用资源续修」闸）
-  if (!m.resourceRepair) {
+  // 5a) 批量修待修（吃资源/时长，归「普通兵修理」+「用资源续修」双闸）
+  if (!m.commonRepair) {
+    reasons.push('commonRepair off (ava cure)');
+  } else if (!m.resourceRepair) {
     reasons.push('resourceRepair off (ava cure)');
   } else if (!snap.avaWaitIds.length) {
     reasons.push('no ava wait');
@@ -1062,9 +1341,9 @@ function planAvaActions(snap, m, actions, reasons) {
       label: 'ava heal(' + snap.avaMode + ') ' + snap.avaWaitIds.length,
     });
   }
-  // 5b) 钻石加速全部在修
-  if (!m.speedGold) {
-    reasons.push('speedGold off (ava)');
+  // 5b) 钻石加速全部在修（speedCommon=gold）
+  if (m.speedCommon !== 'gold') {
+    reasons.push('speedCommon not gold (ava)');
   } else if (!snap.avaRepairingIds.length) {
     reasons.push('no ava under repair');
   } else {
@@ -1072,7 +1351,7 @@ function planAvaActions(snap, m, actions, reasons) {
     if (!gc) {
       reasons.push('ava gold estimate unavailable (rate ' + snap.ratePerMin + ')');
     } else if (Number(snap.gold) < gc) {
-      reasons.push('gold ' + snap.gold + ' < estimate ' + gc + ' (ava)');
+      reasons.push(goldShortReason(Number(snap.gold), gc, 'ava'));
     } else {
       actions.push({
         kind: 'speed-gold-ava',
@@ -1093,16 +1372,10 @@ function planAvaActions(snap, m, actions, reasons) {
       });
     }
   }
-  // 5c) 道具加速全部在修（专行 15100046，枚数按 para1 折算）；与 5b 互斥：同一 cmds.speed 目标同集，
-  // 钻石全额完成已覆盖时再发道具属同拍双花（游戏 UI 本身也是二选一），钻石优先、道具兑底。
-  var avaGoldPlanned = false;
-  for (var ag = 0; ag < actions.length; ag++) {
-    if (actions[ag].kind === 'speed-gold-ava') avaGoldPlanned = true;
-  }
-  if (!m.speedItem) {
-    reasons.push('speedItem off (ava)');
-  } else if (avaGoldPlanned) {
-    reasons.push('ava item speed skipped (gold done this tick)');
+  // 5c) 道具加速全部在修（专行 15100046，枚数按 para1 折算）；speedCommon 三态单选天然与 5b 互斥，
+  // 同一 cmds.speed 目标同集不会同拍双花。
+  if (m.speedCommon !== 'item') {
+    reasons.push('speedCommon not item (ava)');
   } else if (!snap.avaRepairingIds.length) {
     reasons.push('no ava under repair for item speed');
   } else if (!snap.avaSpeedItem) {
@@ -1468,8 +1741,8 @@ var FP_FAMILY = {
   'heal-local-thor': 'lw',
   'heal-cross': 'cw',
   'heal-ava': 'aw',
-  'speed-gold-local': 'lr',
-  'speed-item-local': 'lr',
+  [KIND_SPEED_GOLD_LOCAL]: 'lr',
+  [KIND_SPEED_ITEM_LOCAL]: 'lr',
   'speed-gold-cross': 'cr',
   'speed-item-cross': 'cr',
   'speed-gold-ava': 'ar',
@@ -1477,7 +1750,15 @@ var FP_FAMILY = {
 };
 
 /**
- * 在途令牌是否仍在途（无 TTL：仅当 prunePendingByExit 观测到其目标 state 退出权威读后才删除）。
+ * 道具线加速动作名：815/6312 应答即服务器权威消耗确认（应答只回读剩余持有、不带队列），
+ * 登记时记确认时刻、经应答后一次权威队列读放行；钻石/治疗线仍等「目标 state 退出权威读」才遗忘。
+ * @type {Set<string>}
+ */
+var ITEM_SPEED_KINDS = new Set([KIND_SPEED_ITEM_LOCAL, 'speed-item-cross', 'speed-item-ava']);
+
+/**
+ * 在途令牌是否仍在途（无 TTL：钻石/治疗线仅当 prunePendingByExit 观测到其目标 state 退出权威读后才删除；
+ * 道具线经应答后一次权威队列读由 prunePendingConfirmed 放行）。
  * @param {string} k 指纹键（`动作名|去重令牌`）
  * @returns {boolean}
  */
@@ -1487,13 +1768,16 @@ function isPending(k) {
 
 /**
  * 登记在途令牌：逐令牌动作登记实际发送的去重令牌，全量动作登记该域活跃令牌集（act.pendingTokens）。
- * 值恒 Infinity（永不到期）；同槽再次受伤产生新令牌→新键→即时放行，旧令牌待其 state 退出时由 prune 遗忘。
+ * 钻石/治疗线值恒 Infinity（永不到期，待 state 退出遗忘）；道具线值=应答确认时刻（读序戳，供 prunePendingConfirmed 放行）。
+ * 同槽再次受伤产生新令牌→新键→即时放行，旧令牌待其 state 退出时由 prune 遗忘。
  * @param {string} key 动作名
  * @param {string[]} [tokens] 去重令牌列表
+ * @param {number} [confirmedTs] 道具线应答确认时刻（Date.now()）；缺省 Infinity
  */
-function markPending(key, tokens) {
+function markPending(key, tokens, confirmedTs) {
   if (!tokens || !tokens.length) return;
-  for (var i = 0; i < tokens.length; i++) sentFp[key + '|' + tokens[i]] = Infinity;
+  var v = confirmedTs == null ? Infinity : confirmedTs;
+  for (var i = 0; i < tokens.length; i++) sentFp[key + '|' + tokens[i]] = v;
 }
 
 /**
@@ -1509,6 +1793,24 @@ function prunePendingByExit(tag, activeSet) {
     if (i < 0) continue;
     if (FP_FAMILY[k.slice(0, i)] !== tag) continue;
     if (!activeSet.has(k.slice(i + 1))) delete sentFp[k];
+  }
+}
+
+/**
+ * 确认放行（道具线）：删除族代号 `tag` 下「值为有限确认时刻且早于本次读时刻」的在途项。
+ * 道具应答是权威消耗确认，但队列态刷新滞后应答一个 push（实录 40-65ms），故仅在「应答之后的一次权威队列读」
+ * （snapshot 按域守卫调用）才放行，防陈旧态重排重烧时间池；确认时刻只用于读序先后，不作 TTL 抑制窗。
+ * 钻石/治疗线值为 Infinity，不受本函数影响；同拍内（post-heal 二次决策）不调用，未读不放行。
+ * @param {string} tag FP_FAMILY 族代号（lr/cr/ar）
+ * @param {number} now 本次权威读时刻（Date.now()）
+ */
+function prunePendingConfirmed(tag, now) {
+  for (var k in sentFp) {
+    var i = k.indexOf('|');
+    if (i < 0) continue;
+    if (FP_FAMILY[k.slice(0, i)] !== tag) continue;
+    var v = sentFp[k];
+    if (v !== Infinity && v < now) delete sentFp[k];
   }
 }
 
@@ -1543,7 +1845,7 @@ function isHealBatchCmd(cmd) {
 var LOCAL_SYNC_KINDS = {
   'heal-local': true,
   'heal-local-thor': true,
-  'speed-gold-local': true,
+  [KIND_SPEED_GOLD_LOCAL]: true,
 };
 
 /**
@@ -1684,9 +1986,12 @@ async function execAction(act) {
     return 'rejected';
   }
   rejectStreak = 0;
-  // 成功：登记在途令牌（逐令牌=已发送 tokens；全量=该域活跃令牌集 pendingTokens），待其目标 state 退出权威读时由 prunePendingByExit 遗忘。
-  if (act.all) markPending(act.fp, act.pendingTokens);
-  else markPending(act.fp, tokens);
+  // 成功：登记在途令牌（逐令牌=已发送 tokens；全量=该域活跃令牌集 pendingTokens）。
+  //   钻石/治疗线待其目标 state 退出权威读时由 prunePendingByExit 遗忘；道具线记应答确认时刻，
+  //   经应答后一次权威队列读由 prunePendingConfirmed 放行（截断批下拍续发、不锁整域）。
+  var confTs = ITEM_SPEED_KINDS.has(act.kind) ? Date.now() : null;
+  if (act.all) markPending(act.fp, act.pendingTokens, confTs);
+  else markPending(act.fp, tokens, confTs);
   // 破例借用游戏官方 UpdateOrderQueues 把权威队列回灌本地态（从根消除幻影）：本地钻石 151/治疗 220 应答带 orderQueues，
   //   回灌成功后刚处理队列在下一读即消失，作为本地流在途令牌的「确认」源（配合 prunePendingByExit 遗忘）。
   var synced = syncLocalQueues(act, ret);
@@ -1803,6 +2108,7 @@ async function snapshot() {
   var quotas = quickFields(parseData(quotaRet && quotaRet.data));
   var crossData = parseData(crossRet && crossRet.data);
   var split = splitWaitIds(queues, thorOfOrderId);
+  var repSplit = splitRepairingByType(queues, serverTime, thorOfOrderId);
   var crossIds = crossWaitIds(crossData);
   var localRepairing = repairingLeftSec(queues, serverTime);
   var crossRepairing = crossRepairingLeftSec(crossData, serverTime);
@@ -1824,20 +2130,23 @@ async function snapshot() {
   if (localWaitTokens) {
     prunePendingByExit('lw', localWaitTokens);
     prunePendingByExit('lr', localRepairingSet);
+    prunePendingConfirmed('lr', Date.now());
   }
   if (crossRet && crossRet.ok && !crossSkipped) {
     prunePendingByExit('cw', crossWaitKeySet(crossData));
     prunePendingByExit('cr', new Set(crossRepairingIdArr));
+    prunePendingConfirmed('cr', Date.now());
   }
   if (avaList) {
     prunePendingByExit('aw', avaWaitIdSet(avaList));
     prunePendingByExit('ar', avaRepairingIdSet(avaList));
+    prunePendingConfirmed('ar', Date.now());
   }
-  // 普通兵单笔 220 可发集预算（学竞品 B，修正十九）：免费前缀恒可发 + 付费段按材料可负担筛；
-  // resourceRepair 关（旧存档）只发免费段。不再拆免费/资源两批，从结构上消除幻影重烧窗口。
+  // 普通兵单笔 220 可发集预算：免费前缀恒可发 + 付费段按材料可负担筛；
+  // resourceRepair 关时只发免费段。免费/资源不拆两批，从结构上消除幻影重烧窗口。
   var healIds = null;
   var healKeys = null;
-  if (MCFG.freeRepair && quotas && split.commonIds.length) {
+  if (MCFG.commonRepair && quotas && split.commonIds.length) {
     var hb = budgetHealIds(
       split,
       quotas.commonFreeLeft,
@@ -1864,6 +2173,11 @@ async function snapshot() {
     crossRepairing: crossRepairing,
     repairing: localRepairing + crossRepairing,
     localRepairingIds: localRepairingIds,
+    localCommonRepairing: repSplit.commonLeft,
+    localThorRepairing: repSplit.thorLeft,
+    localCommonRepairingIds: repSplit.commonIds,
+    localThorRepairingIds: repSplit.thorIds,
+    localRepairingLeftById: repSplit.leftById,
     crossRepairingIds: crossRepairingIdArr,
     gold: goldBalance(),
     ratePerMin: goldRatePerMin(),
@@ -1912,11 +2226,17 @@ function speedSnapshotAfterHeal(snap) {
   if (!queues) return null;
   var serverTime = gameData.serverTime ? gameData.serverTime() : 0;
   var local = repairingLeftSec(queues, serverTime);
+  var repSplit = splitRepairingByType(queues, serverTime, thorOfOrderId);
   return Object.assign({}, snap, {
     localRepairing: local,
     // 与 localRepairing 同源同拍重算 state1 活跃 id 集：刚治好转入 state1 的队列必须进入全量加速动作的 pendingTokens，
     //   否则成功后 markPending 漏登记它们→下拍仍见其 state1 即第二枪（双花钻石/重烧道具）。
     localRepairingIds: Array.from(localRepairingIdSet(queues)),
+    localCommonRepairing: repSplit.commonLeft,
+    localThorRepairing: repSplit.thorLeft,
+    localCommonRepairingIds: repSplit.commonIds,
+    localThorRepairingIds: repSplit.thorIds,
+    localRepairingLeftById: repSplit.leftById,
     repairing: local + (Number(snap.crossRepairing) || 0),
   });
 }
@@ -2029,12 +2349,12 @@ function run(ctx) {
   ctx.on.push(PUSH_MASTER_HOSPITAL_CHANGE, kick);
   ctx.on.push(PUSH_LEGEND_HOSPITAL_CHANGE, kick);
   log.info(
-    'started. free=%s;res=%s;thor=%s;gold=%s;item=%s;poll=%ds',
-    MCFG.freeRepair,
+    'started. common=%s;res=%s;thor=%s;sc=%s;st=%s;poll=%ds',
+    MCFG.commonRepair,
     MCFG.resourceRepair,
     MCFG.thorRepair,
-    MCFG.speedGold,
-    MCFG.speedItem,
+    MCFG.speedCommon,
+    MCFG.speedThor,
     MCFG.pollIntervalSec,
   );
   cycle.kick();
@@ -2056,8 +2376,10 @@ function configure(partial) {
  * 向 reactor 注册本功能说明书：战斗设置类，跟随战斗设置生效（不声明 offInCombat，战斗模式下照常修）。
  * kinds 覆盖本服 + 无双峡谷（AVA/TM/大师赛/传奇小队）+ 天梯三国 + 征服者 + 盟决，跨服战场图内持续自动修理；
  * 秘境（pab）由 world 门控隔离，不放行。places 限 base/world（医院 UI 所在场景）。
- * 字段只暴露需用户决策的 3 个付费/带材料开关（雷神/钻石/道具）；钻石只受余额约束、道具持有即动用（日预算/保留下限闸门已废弃）。
- * 免费修理（freeRepair）与超额花资源续修（resourceRepair）恒开、自愈轮询间隔（pollIntervalSec）为系统内置，均不进面板。
+ * 面板分「修理」「加速」两段：修理 = 普通兵/雷神兵两个 checkbox；加速 = 普通兵/雷神兵两个三态 select
+ * （不加速/钻石/道具）。钻石只受余额约束、道具持有即动用。跨服医院加速随 speedThor、无双医院加速随 speedCommon。
+ * 超额花资源续修（resourceRepair）与自愈轮询间隔（pollIntervalSec）为系统内置，不进面板。
+ * 存档版本 2：migrate 把旧版三开关存档映射到当前四字段（normalize 另对缺键做运行时兼容）。
  */
 reactor.register({
   id: 'quickRepair',
@@ -2067,33 +2389,55 @@ reactor.register({
   places: ['base', 'world'],
   kinds: ['homeland', 'wushuang', 'kvk', 'sphere', 'adp_war'],
   offInCombat: false,
+  version: 2,
+  migrate: migrateConfig,
   defaults: {
     enabled: false,
-    freeRepair: true,
+    commonRepair: true,
     resourceRepair: true,
     thorRepair: false,
-    speedGold: false,
-    speedItem: false,
+    speedCommon: 'none',
+    speedThor: 'none',
     pollIntervalSec: 60,
   },
   fields: [
     {
+      key: 'commonRepair',
+      label: '普通兵',
+      section: '修理',
+      type: 'checkbox',
+      hint: '普通兵伤兵修理：免费额度内零消耗，超额花材料续修。',
+    },
+    {
       key: 'thorRepair',
-      label: '修理雷神兵',
+      label: '雷神兵',
+      section: '修理',
       type: 'checkbox',
-      hint: '雷神兵与跨服医院伤兵：修理真花材料（无免费额度），默认关。',
+      hint: '雷神兵与跨服战场伤兵：修理真花材料（无免费额度），默认关。',
     },
     {
-      key: 'speedGold',
-      label: '使用钻石修',
-      type: 'checkbox',
-      hint: '对「修理中」队列一键全额完成；花费按每分钟价估算，钻石不足即跳过。',
+      key: 'speedCommon',
+      label: '普通兵加速方式',
+      section: '加速',
+      type: 'select',
+      options: [
+        { value: 'none', label: '不加速' },
+        { value: 'gold', label: '钻石' },
+        { value: 'item', label: '道具' },
+      ],
+      hint: '本地普通兵在修队列；无双战场医院同此设置。钻石按每分钟价估算、不足即跳过；道具按剩余时间折算枚数。',
     },
     {
-      key: 'speedItem',
-      label: '使用道具修',
-      type: 'checkbox',
-      hint: '用医院加速道具缩短在修队列：按剩余时间一次折算发足，不必逐枚连点；只要背包持有即动用。',
+      key: 'speedThor',
+      label: '雷神兵加速方式',
+      section: '加速',
+      type: 'select',
+      options: [
+        { value: 'none', label: '不加速' },
+        { value: 'gold', label: '钻石' },
+        { value: 'item', label: '道具' },
+      ],
+      hint: '本地雷神兵在修队列；跨服战场医院同此设置。',
     },
   ],
   toModuleCfg: function (c) {
@@ -2106,6 +2450,8 @@ reactor.register({
 
 export {
   normalize,
+  migrateConfig,
+  splitRepairingByType,
   quickFields,
   isThorArmy,
   splitWaitIds,
@@ -2175,8 +2521,10 @@ export {
   isPending,
   markPending,
   prunePendingByExit,
+  prunePendingConfirmed,
   HEAL_LANES,
   ITEM_TYPE_HOSPITAL_SPEED,
   ORDER_TYPE_HEAL,
   CFG_GOLD_PER_MIN,
+  CMD_ORDER_QUEUE_SPEED_UP,
 };

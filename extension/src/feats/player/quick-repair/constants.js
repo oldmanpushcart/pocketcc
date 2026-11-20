@@ -14,7 +14,8 @@ export const CMD_GET_CROSS_HOSPITAL_QUEUES = 1426;
 export const CMD_ARMY_CROSS_HEAL = 1427;
 /** @type {number} RequestId.ORDER_QUEUE_ING_DONE，钻石加速本地全部在修队列 */
 export const CMD_ORDER_QUEUE_ING_DONE = 151;
-// CMD_ORDER_QUEUE_SPEED_UP(124) RequestId.ORDER_QUEUE_SPEED_UP：钻石加速本地单条在修队列（本 feat 全量 151 口径，不适用单条，备查）。
+/** @type {number} RequestId.ORDER_QUEUE_SPEED_UP，钻石加速本地单条在修队列（普通/雷神加速方式不同时逐队列点名用） */
+export const CMD_ORDER_QUEUE_SPEED_UP = 124;
 /** @type {number} RequestId.SPEEDUP_CROSS_HOSPITAL_QUEUE_BY_GOLD，钻石加速跨服队列 */
 export const CMD_SPEEDUP_CROSS_GOLD = 1428;
 /** @type {number} RequestId.ITEM_USE，使用道具（医院加速道具走这一条） */

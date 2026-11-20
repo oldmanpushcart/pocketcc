@@ -8,10 +8,11 @@
  *      npm run verify:quick-repair
  *
  * 校验维度（真人录制对齐 feat 同一份协议字典）：
- *   D1 载荷逐键形态（HARD）：220/1427 req = {ids:string[]}（非空、逐元素十进制串）；1785/1426/1428 req = {}（1428 允许单条 {id}）
+ *   D1 载荷逐键形态（HARD）：220/1427 req = {ids:string[]}（非空、逐元素十进制串）；1785/1426/1428 req = {}（1428 允许单条 {id}）；
+ *      124 req = {id,useGold:1}（本地钻石逐队列单条：id 非空十进制串、useGold 恒 1）
  *   D2 发送通道（HARD）：本族写/读 req 的 dir 恒 = 'req:send'（V1 旧 JSON 链路，对齐 feat sendGuarded 缺省 protocol=send）
- *   D3 修理目标来源闸（HARD）：220 每个 id ∈ 本录制内 10120 见过的本地伤兵队列（type=1 且 orderId≠"0"）；
- *      1427 每个 id ∈ 13006/1426 见过的跨服战场医院队列 ⇒ 「发了不该发的队列」即违例
+ *   D3 修理/加速目标来源闸（HARD）：220 每个 id ∈ 本录制内 10120 见过的本地伤兵队列（type=1 且 orderId≠"0"）；
+ *      1427 每个 id ∈ 13006/1426 见过的跨服战场医院队列；124 单条 id ∈ 10120 本地伤兵队列集 ⇒ 「发了不该发的队列」即违例
  *   D4 免费额度守恒（观察）：1785 resp 序列里 common_use 非降、0≤use≤max、common_max 稳定；thor_max=0 时 free_thor 恒 0
  *   D5 前向完备（SOFT，不判负）：state=0 的本地伤兵是否最终被某笔 220 覆盖（真人可能延后/分批，只报量级）
  *   D6 应答配对与节奏（观察）：写请求应答配对率、code≠0 计数
@@ -31,8 +32,8 @@
  *      （`"0|0"` → 实证 item_124017）；无 param 键的 815（买油/礼包等非医院用途）不纳入本维度
  *   D11 815 枚数-持有守恒与批量度（观察）：同 itemid 相邻笔用「应答回读的剩余持有」算降幅，接受者降幅 ≥ 请求枚数；
  *      并统计 amount 区间、多枚同发笔数、最长「单枚连发」簇长度（量化“一个个加速” vs “一次发足”）
- *   D12 治疗→加速同周期节奏（观察）：每笔 220/1427 之后首笔同域加速（151/1428/医院 815）的间隔分布，
- *      ≤ INTER_SEND_MS 视为拍内同周期（修正十四②目标），≤ IDLE_TICK_MS 视为 push 边沿/心跳内补上（修正十八去勤扫后无 5s 勤扫档）
+ *   D12 治疗→加速同周期节奏（观察）：每笔 220/1427 之后首笔同域加速（151/124/1428/医院 815）的间隔分布，
+ *      ≤ INTER_SEND_MS 视为拍内同周期，≤ IDLE_TICK_MS 视为 push 边沿/心跳内补上（无勤扫档）
  *
  * 判据分级纪律（对齐 replay-conformance 技能）：退出码只对 HARD 严格。前向完备是 feat 策略、
  *   真人未必逐笔照做，故降为 SOFT（只报不 fail），避免以「真人没修满」冒充 HARD 违例；
@@ -82,6 +83,7 @@ const CMD_ARMY_HEAL_LIST = C.CMD_ARMY_HEAL_LIST; // 220
 const CMD_GET_CROSS_HOSPITAL_QUEUES = C.CMD_GET_CROSS_HOSPITAL_QUEUES; // 1426
 const CMD_ARMY_CROSS_HEAL = C.CMD_ARMY_CROSS_HEAL; // 1427
 const CMD_ORDER_QUEUE_ING_DONE = C.CMD_ORDER_QUEUE_ING_DONE; // 151
+const CMD_ORDER_QUEUE_SPEED_UP = C.CMD_ORDER_QUEUE_SPEED_UP; // 124
 const CMD_SPEEDUP_CROSS_GOLD = C.CMD_SPEEDUP_CROSS_GOLD; // 1428
 const CMD_ITEM_USE = C.CMD_ITEM_USE; // 815
 const PUSH_ORDER_QUEUES = C.PUSH_ORDER_QUEUES; // 10120
@@ -123,11 +125,12 @@ const AVA_ASK_CMDS = new Set([CMD_AVA_ASK, CMD_TM_ASK, CMD_MASTER_ASK, CMD_LEGEN
 const AVA_CURE_CMDS = new Set([CMD_AVA_CURE, CMD_TM_CURE, CMD_MASTER_CURE, CMD_LEGEND_CURE]);
 const AVA_SPEED_CMDS = new Set([CMD_AVA_SPEED, CMD_TM_SPEED, CMD_MASTER_SPEED, CMD_LEGEND_SPEED]);
 
-/** 本 feat 的写动作（进「写动作分布」统计与 D1/D3 判据）；151/1428 属钻石加速、本号可能缺席→无样本即 skip */
+/** 本 feat 的写动作（进「写动作分布」统计与 D1/D3 判据）；151/124/1428 属钻石加速、本号可能缺席→无样本即 skip */
 const WRITE_CMDS = new Set([
   CMD_ARMY_HEAL_LIST,
   CMD_ARMY_CROSS_HEAL,
   CMD_ORDER_QUEUE_ING_DONE,
+  CMD_ORDER_QUEUE_SPEED_UP,
   CMD_SPEEDUP_CROSS_GOLD,
   ...AVA_CURE_CMDS,
   ...AVA_SPEED_CMDS,
@@ -168,7 +171,7 @@ export default {
     const localQueues = new Map();
     /** 跨服队列 id 集（13006 push + 1426 resp）：id -> {st} */
     const crossQueues = new Map();
-    /** 写视图：reqTs -> {t,cmd,reqKeys,ids,code} */
+    /** 写视图：reqTs -> {t,cmd,reqKeys,ids,id,code} */
     const reqPending = new Map();
     /** dir 普查（cmd|dir -> n），供通道判据 */
     const dirCensus = new Map();
@@ -323,6 +326,7 @@ export default {
               cmd,
               reqKeys: keysOf(b),
               ids: Array.isArray(b && b.ids) ? b.ids.map(String) : null,
+              id: b && b.id != null ? String(b.id) : null,
               useGold: b && typeof b.useGold === 'number' ? b.useGold : null,
               itemId: b && b.itemId != null ? Number(b.itemId) : null,
               num: b && b.num != null ? Number(b.num) : null,
@@ -369,6 +373,7 @@ export default {
       healReqs: byCmd(CMD_ARMY_HEAL_LIST),
       thorReqs: byCmd(CMD_ARMY_CROSS_HEAL),
       goldReqs: byCmd(CMD_ORDER_QUEUE_ING_DONE).concat(byCmd(CMD_SPEEDUP_CROSS_GOLD)),
+      perQueueGoldReqs: byCmd(CMD_ORDER_QUEUE_SPEED_UP),
       avaCureReqs: reqs.filter((x) => AVA_CURE_CMDS.has(x.cmd)),
       avaSpeedReqs: reqs.filter((x) => AVA_SPEED_CMDS.has(x.cmd)),
       avaReads,
@@ -384,7 +389,7 @@ export default {
   runVerify(S, rep) {
     const D1 = '载荷逐键形态';
     const D2 = '发送通道';
-    const D3 = '修理目标来源闸';
+    const D3 = '修理/加速目标来源闸';
     const D4 = '免费额度守恒（观察）';
     const D5 = '前向完备（观察·SOFT）';
     const D6 = '应答配对与节奏（观察）';
@@ -461,11 +466,25 @@ export default {
           samples.push(`cmd=${w.cmd} req={${w.reqKeys.join(',')}} 期望 {} 或 {id}`);
         }
       }
+      for (const w of S.perQueueGoldReqs) {
+        // 124 本地钻石逐队列单条：{id,useGold:1}（与 151/1428 的 {}/{id} 期望不同，独立分支）
+        const keyOk = w.reqKeys.length === 2 && w.reqKeys.join(',') === 'id,useGold';
+        if (!keyOk) {
+          fail++;
+          samples.push(`cmd=${w.cmd} req={${w.reqKeys.join(',')}} 期望={id,useGold}`);
+        } else if (!w.id || !/^\d+$/.test(w.id)) {
+          fail++;
+          samples.push(`cmd=${w.cmd} id=${JSON.stringify(w.id)} 非「非空十进制串」`);
+        } else if (w.useGold !== 1) {
+          fail++;
+          samples.push(`cmd=${w.cmd} useGold=${JSON.stringify(w.useGold)} 期望 1`);
+        } else pass++;
+      }
       if (pass + fail === 0) {
         rep.check('本场无本族写样本，不判定', D1, 0, 0, 1, []);
       } else {
         rep.check(
-          '写请求键集/ids 形态（220·1427={ids}，151·1428={}/{id}）',
+          '写请求键集/ids 形态（220·1427={ids}，151·1428={}/{id}，124={id,useGold}）',
           D1,
           pass,
           fail,
@@ -497,10 +516,11 @@ export default {
       else rep.check('本族 req 通道恒为 req:send（V1 旧 JSON）', D2, pass, fail, 0, samples);
     }
 
-    // D3 修理目标来源闸（HARD）：ids 必须是本录制内确认过的伤兵/跨服队列
+    // D3 修理/加速目标来源闸（HARD）：ids 必须是本录制内确认过的伤兵/跨服队列
     if (healTargetIds.size || crossTargetIds.size) {
       let pass = 0;
       let fail = 0;
+      let skip = 0;
       const samples = [];
       for (const w of S.healReqs.concat(S.thorReqs)) {
         const isCross = w.cmd === CMD_ARMY_CROSS_HEAL;
@@ -514,15 +534,27 @@ export default {
           );
         }
       }
-      const n = S.healReqs.length + S.thorReqs.length;
-      if (!n) rep.check('本场无 220/1427 写样本，不判定目标来源', D3, 0, 0, 1, []);
+      for (const w of S.perQueueGoldReqs) {
+        // 124 单条目标必须是本地伤兵队列；本场无 10120 队列态样本时不可判定
+        if (!healTargetIds.size) {
+          skip++;
+          continue;
+        }
+        if (w.id && healTargetIds.has(w.id)) pass++;
+        else {
+          fail++;
+          samples.push(`cmd=${w.cmd} id=${JSON.stringify(w.id)} 不在本地伤兵(10120)队列集`);
+        }
+      }
+      const n = S.healReqs.length + S.thorReqs.length + S.perQueueGoldReqs.length;
+      if (!n) rep.check('本场无 220/1427/124 写样本，不判定目标来源', D3, 0, 0, 1, []);
       else
         rep.check(
-          '220/1427 目标 id 均源自权威队列态（反向防漏发/误发）',
+          '220/1427/124 目标 id 均源自权威队列态（反向防漏发/误发）',
           D3,
           pass,
           fail,
-          0,
+          skip,
           samples,
         );
     } else {
@@ -878,6 +910,7 @@ export default {
     {
       const heals = S.healReqs.concat(S.thorReqs).sort((a, b) => a.t - b.t);
       const speeds = S.goldReqs
+        .concat(S.perQueueGoldReqs)
         .concat(
           hospSpeed.map((w) => ({
             t: w.t,
@@ -931,7 +964,7 @@ export default {
           const samples = [
             `间隔（ms）：min=${same[0]} 中位=${med} max=${same[same.length - 1]}；可判 ${same.length}/${heals.length} 笔（无后续同域加速 ${noSpeed}）`,
             `拍内同周期（≤ INTER_SEND_MS=${INTER_SEND_MS}ms）${inTick}；push 边沿/心跳内（≤ IDLE_TICK_MS=${IDLE_TICK_MS}ms）${nextTick}；更久 ${slower}`,
-            '旧病灶：快照先读后治 → 本拍加速层被 nothing under repair 拦住，等到下拍才发；修正十四②为治疗落地后同拍补跑加速层，修正十八去勤扫后仅靠 push 边沿/kick 即时唤醒、慢心跳兜底',
+            'feat 在治疗落地后同拍补跑加速层，靠 push 边沿/kick 即时唤醒、慢心跳兜底',
             '真人录制的手动节奏（先修后看再点）也会计入「更久」，故只报量级不判负',
           ];
           rep.check(

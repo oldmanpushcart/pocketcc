@@ -36,6 +36,20 @@ export default [
     ],
   },
   {
+    cmd: 124,
+    dir: null,
+    note: '',
+    src: '',
+    fields: '',
+    usages: [
+      {
+        name: 'CMD_ORDER_QUEUE_SPEED_UP',
+        feat: 'quick-repair',
+        file: 'feats/player/quick-repair/constants.js',
+      },
+    ],
+  },
+  {
     cmd: 151,
     dir: 'C2S',
     note: '钻石加速本地全部在修队列',
