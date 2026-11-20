@@ -611,7 +611,9 @@ function enrichHeroes(db, version, getRow, loadTable, heroList) {
             ...info,
             kind: 'stone',
             skill_id: lib?.skill_id ?? null,
-            level: lib?.buff_value ?? null,
+            // 魔石等级＝星级（lib.star，1/2/3…）；star_max 为该模板满星。切勿用 buff_value 当等级（那是技能威力参考）。
+            star: lib?.star ?? null,
+            starMax: lib?.star_max ?? null,
             color: lib?.buff_value_color ?? null,
             name: lib
               ? resolveName(db, version, 'hero_equip_skill_rd_library', info?.templateId)

@@ -12,6 +12,7 @@ import { createLog } from './log.js';
 import { rawRelPath } from './link.js';
 import { toInt, toReal, toJson } from './db.js';
 import { normalizeReport } from './normalize.js';
+import { currentDictVersion } from './dict.js';
 import { kindOf, outcomeOf, buffRefOf } from './event-semantics.js';
 
 const log = createLog('PARSE');
@@ -273,7 +274,12 @@ export function parseReport(db, cfg, reportId) {
     insertEvents(db, id, b.process || []);
     upsertPlayers(db, id, b, body.logtime);
     normalizeReport(db, cfg, id);
-    db.prepare('UPDATE reports SET parsed_at = ? WHERE report_id = ?').run(Date.now(), id);
+    // 解析所用字典版本随行（schema 原则：每个解析产物都带 dict_version）。
+    // 不补这一笔，新解析的场次会一直是 NULL，要到下一次 `cli.js dict` 才被回填，中间无法复现解码口径。
+    const ver = currentDictVersion(db);
+    db.prepare(
+      'UPDATE reports SET parsed_at = ?, dict_version = COALESCE(?, dict_version) WHERE report_id = ?',
+    ).run(Date.now(), ver, id);
   });
   run();
 
