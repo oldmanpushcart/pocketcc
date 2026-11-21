@@ -143,6 +143,15 @@ export default [
     },
   },
 
+  // ---- devtools 浏览器控制台探针（tools/*.devtools.js）：手工贴进游戏页 console 执行的诊断脚本 ----
+  // cc 是游戏 bundle 注入 MAIN world 的全局符号（与 extension 段同一约定）
+  {
+    files: ['tools/*.devtools.js'],
+    languageOptions: {
+      globals: { ...globals.browser, cc: 'readonly' },
+    },
+  },
+
   // ---- tests：node:test 单测（驱动 extension/src 纯逻辑原语），跑在 Node ESM 环境 ----
   {
     files: ['tests/**/*.js'],

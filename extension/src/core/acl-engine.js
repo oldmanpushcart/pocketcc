@@ -20,6 +20,7 @@ const log = createLog('GAMEAPI');
 export const SYM = {
   modules: {
     localManager: 'LocalManager',
+    loadManager: 'LoadManager', // 资源加载收口：loadSpriteFrame(path, cb)（图标 dataURL 原语用，见 acl/hero-icon.js）
     tableManager: 'TableManager',
     tableName: 'TableName', // 配置表名枚举（成员名→游戏表名字符串，如 BOSS="boss"）
     dataCenter: 'DataCenter',
@@ -555,6 +556,25 @@ export function pathUtils() {
   return probe(SYM.modules.pathUtils, () => {
     var P = ns(game.get(SYM.modules.pathUtils));
     return P && typeof P.GetIconURL === 'function' ? P : null;
+  });
+}
+
+/**
+ * 资源加载器 LoadManager（静态方法 loadSpriteFrame(path, cb)）。
+ * 导出信封三形态实证都存在过（多形态兜底纪律）：命名空间顶层挂静态 / ES .default 类 /
+ * 具名导出 a.LoadManager（extracted 源尾部即 `a.LoadManager=l`、文件内无 a.default —— ns() 对它
+ * 不解包回壳，壳上无方法 → 曾误报 symbol drift，见 marchStorage 同款兜底先例）。
+ */
+export function loadManager() {
+  return probe(SYM.modules.loadManager, () => {
+    var m = game.get(SYM.modules.loadManager);
+    if (!m) return null;
+    var cands = [m, ns(m), m.LoadManager, m.default && m.default.LoadManager];
+    for (var i = 0; i < cands.length; i++) {
+      var L = cands[i];
+      if (L && typeof L.loadSpriteFrame === 'function') return L;
+    }
+    return null;
   });
 }
 
