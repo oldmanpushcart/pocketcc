@@ -7,7 +7,7 @@
 
 ## 0. 用法说明（先看这节）
 
-**它做什么**：玩家部队受伤进医院后，自动执行游戏里的「英雄免费快速修理」——每日 77 个普通单位、**零材料零钻石**；免费额度用尽后默认继续**花买得起的资源续修**普通伤兵。两者**合并为单笔 220 全发**（服务器内部先扣免费额度、超出扣材料，同游戏一键修理/竞品 B；不再拆两批，从结构上消除幻影重烧，见 §8 修正十九）。这两条零/低成本线**恒开、不需勾选**。面板只暴露三类**可选付费/带成本**动作的开关：`修理雷神兵`、`使用钻石修`、`使用道具修`（各自默认关，受余额/持有约束）。
+**它做什么**：玩家部队受伤进医院后，自动执行游戏里的「英雄免费快速修理」——每日 77 个普通单位、**零材料零钻石**；免费额度用尽后默认继续**花买得起的资源续修**普通伤兵。两者**合并为单笔 220 全发**（服务器内部先扣免费额度、超出扣材料，同游戏一键修理/竞品 B；不再拆两批，从结构上消除幻影重烧，见 §8 修正十九）。这两条零/低成本线**恒开、不需勾选**。面板只暴露两类**可选付费/带成本**开关：修理段「`普通兵`（默认开）+`雷神兵`（默认关）」两 checkbox、加速段「`普通兵加速方式`/`雷神兵加速方式`（none/gold/item，默认不加速）」两 select（受余额/持有约束）。本地医院、跨服战场与无双战场三个场景均按此分组执行。
 
 **怎么开**：
 
@@ -79,7 +79,7 @@
 - **普通兵每日免费额度** = `common_max - common_use`（实测本号 `common_max=77`，与英雄技能「免费修 77 个」一致）。雷神族 `*_max=0` ⇒ 雷神不可免费修。
 - **择时**（镜像 `getQuickRepairTipsType(wait,max,use)`）：取不到 max/use 或 `wait<=0 || max<=0 || max-use<=0` ⇒ 不可修；`max-use>=wait` ⇒ 可全免；否则部分免。
 - **本地待修队列**：直读 `UserData.OrderQueues`，过滤 `type===1(ORDER_TYPE_HEAL) && orderId!=="0"`：`state===0` 待修、`state===1` 修理中；`id` 即发包用的队列（槽）id。**去重令牌 = `id#orderId#endTime`**：① 槽 id 会被复用到不同伤兵（orderId 变），故含 orderId；② 同一部队（orderId 不变）会被反复打伤，每次受伤事件 `endTime` 变、而陈旧幻影（服务器已清、客户端未同步）`endTime` 不变，故含 endTime 以区分「需立修的再次受伤」与「须抑制的陈旧幻影」。
-- **雷神判定**：不依赖 `FlameController` 单例，改判 `getArmyByArmyUuid(orderId).Data.thor_group>0`（`isFlameArmyById` 即此判据）。
+- **雷神判定**：不依赖 `FlameController` 单例，改判 `getArmyByArmyUuid(orderId).Data.thor_group>0`（`isFlameArmyById` 即此判据）；同一判据注入 `splitRepairingByType`/`avaWaitIdsByClass`/`avaRepairingByClass` 做本地与无双队列的按兵种拆分，部队对象取不到归普通。
 - **钻石估价**：`max(1, ceil(在修剩余秒和 / 60 × GameTools.getDataConfigData(61017)))`（同 `getProfessionCDGold` 公式）。
 - **815 param 编码**（源码 `SpeedCDPanel.hospitalUseItemSpeed` + 真人成功样本 `{itemid:510002,amount:9,param:null} s=0` 实证）：**本地全量 `param=null`**（`"0|0"` 会被服务器拒 `s=3/item_124017`）、本地单条=队列 `id`；跨服全量 `"1|0"`（或 `"1,"+armyType`）、跨服单条 `"1|"+queueId`。
 - **战场抢修车间（1426）门控**（源码权威判据 `WareHouseControllerNew.isBattleFieldHospitalValid`）：`FunctionOn(cross_server_battle_hospital)` 且任一来源（`currentWorldMapCrossServerModel`/CQ25/CQ26 stormData）的 `HospitalEndTime - ServerTime > 0`；feat 优先 `game.get('WareHouseControllerNew')` 直调该方法，降级 `gameData.functionOnValue` 三态；两者都取不到 ⇒ 照旧轮询（宁多读不漏修）。无双模式在场时 1426 整体让位 6310 族。
@@ -93,16 +93,15 @@
 
 ## 3. 决策分层（`planOnce`）
 
-按开关逐层，条件不过即静默返回下一拍延时（日志带 `reason` 字段定位静默期）。决策拆为两个纯函数（`planHealActions` 治疗层 1-2 / `planSpeedActions` 加速层 3-4，另加 `planAvaActions` 无双层），`planActions` 只做 dispatcher——拆层是为了能「治疗落地后只补跑加速层」（见 §4）：
+按开关逐层，条件不过即静默返回下一拍延时（日志带 `reason` 字段定位静默期）。决策拆为纯函数（`planHealActions` 治疗层 1-2 / `planSpeedActions` 加速层 3-4 / `planAvaActions` 无双层，无双单域加速一笔抽 `planAvaSpeedOne` 复用），`planActions` 只做 dispatcher——拆层是为了能「治疗落地后只补跑加速层」（见 §4）：
 
 1. `freeRepair`（恒开，已不放面板）：普通伤兵**单笔 220 全发**（学竞品 B，修正十九）——可发集由 `snapshot` 的 `budgetHealIds` 预算：免费额度（`commonFreeLeft`）覆盖前 N 个（零消耗恒可发）；`resourceRepair`（也恒开）开 → 其余按部队 `repair_cost` 累计持有量筛「买得起」、关（旧存档显式 false）→ 只发免费段保持零消耗。服务器内部先扣免费额度、超出扣材料；买不起的静默跳过（reason `no affordable common repair`），不告警不进退避；免费耗尽且资源续修关 → reason `common free quota exhausted`。**不再拆免费/资源两批**——旧两批「第一批修好 → 回灌遗忘 → 陈旧 push 推回 → 第二批重开修理」的幻影重烧窗口（实录实证浪费钻石/材料/免费额度）从结构上消除；kind 统一 `heal-local`（`heal-local-resource` 已删）。
-2. `thorRepair`（默认关）：开关开 → **本地雷神 ids 走 220**（超免费额度自然扣材料）、**跨服 ids 走 1427**（不混批）。
-3. `speedGold`（默认关）：开关开 && `Gold>=goldEstimate` → 本地 `151` / 跨服 `1428`（只受余额约束，日预算闸门已废弃）。
-4. `speedItem`（默认关）：开关开 && 背包持有 `type=12` 道具（amount>0）→ `815 ITEM_USE`（本地优先 `param=null`，否则跨服 `param="1|0"`；保留下限闸门已废弃）。**枚数按 §2 时间池模型一次折算发足**（`num = min(ceil(leftSec/para1), 持有量, cfg(18002))`），日志 label 形如 `item speed local #510002 x9 (held 100; leftSec 255000)`；折算为 0（持有空/秒数不可用）时静默记 reason `item speed num=0`。**同域钻石全量完成已排入本拍时，道具线让位**（`goldPlannedFor(actions, cross)` 分域判定，避免同拍双花），reason `item speed local skipped (gold done this tick)`。
-5. **无双战场（`snap.avaMode` 在场时叠加，与普通族并行不互斥）**：
-   - `heal-ava`：`resourceRepair` 开 && 6310 读到 state0 待修 → 发模式 cure `{ids:全量 state0}`；
-   - `speed-gold-ava`（随 `speedGold`）：有在修（state1）且余额≥估价 → 发模式 speed `{ids:state1,useGold:1}`；
-   - `speed-item-ava`（随 `speedItem`）：持有 15100046 且 num>0 → 发模式 speed `{ids,itemId:15100046,num,useGold:0}`；**与钻石线互斥（二选一，钻石优先）**——两者同打 `cmds.speed` 同一目标集，同拍双发即双花（游戏 UI 本身也是二选一）；
+2. `thorRepair`（默认关）：开关开 → **本地雷神 ids 走 220**（超免费额度自然扣材料）、**跨服 ids 走 1427**、**无双雷神子集走模式 cure（6311）**（各域不混批）。
+3. 加速层 `speedCommon`/`speedThor`（两个三态 select，默认 none，按兵种各随其方式）：两类兵方式相同、或只有一类有在修剩余秒 → 全量一笔（151/815/1428 不区分兵种，道具时间池不浪费）；两类都在修且方式不同 → 本地逐队列点名（124 钻石单条 `{id,useGold:1}` / 815 单条 `param=队列 id`），道具逐队列 ceil 折算的余量浪费只在该场景付。钻石只受余额约束、道具持有即动用（日预算/保留下限闸门已废弃）；同域钻石全量完成已排入本拍时道具线让位（`goldPlannedFor(actions, cross)` 分域判定，避免同拍双花），reason `item speed local skipped (gold done this tick)`。
+4. **道具枚数按 §2 时间池模型一次折算发足**（`num = min(ceil(leftSec/para1), 持有量, cfg(18002))`），日志 label 形如 `item speed local #510002 x9 (held 100; leftSec 255000)`；折算为 0（持有空/秒数不可用）时静默记 reason `item speed num=0`。
+5. **无双战场（`snap.avaMode` 在场时叠加，与普通族并行不互斥）**：6310 队列 id=部队 uuid，按 `thor_group` 分类（`avaWaitIdsByClass`/`avaRepairingByClass`，部队对象取不到归普通），普通子集吃 `commonRepair`（修理还需 `resourceRepair`）/`speedCommon`、雷神子集吃 `thorRepair`/`speedThor`，与本地/跨服同构：
+   - 修理 `heal-ava`：两类开关同拍都开 → 合并一笔全量 `{ids:全量 state0}`；只开一类 → 发该类子集（雷神 kind 带 `-thor` 后缀）；
+   - 加速 `speed-gold-ava`/`speed-item-ava`（随对应类 select）：有在修（state1）且余额≥估价/num>0 → 发模式 speed；两类方式相同或仅一类有在修 → 合并全量一笔；**钻石与道具互斥（二选一，钻石优先）**——两者同打 `cmds.speed` 同一目标集，同拍双发即双花（游戏 UI 本身也是二选一）；
    - 6310 读失败 ⇒ 整层静默（reason `ava hospital read failed`）；无双写动作**不回灌 UpdateOrderQueues**（不入 `LOCAL_SYNC_KINDS`，靠 push 21203 唤醒 + 下拍 6310 权威读）。
 
 ---
@@ -115,12 +114,12 @@
 - **push 边沿唤醒**：`ctx.on.push(10120/13006, kick)` 即时 `cycle.kick()`；无双四模式队列变化 push 全订（21203 NewCAB / 21211 TM / 21465 Master / 21562 Legend，均 ResponseId 实证；只当唤醒提示、非本场模式的号不会到达，多订无副作用）；退订由 reactor 统一登记。**任一写动作成功后同样 `kick()`**，尽早拿到「确认读」缩小在途窗（与竞品 B 事件驱动同构）。因 `createCycle` 单飞：在飞期间的 `kick` 只置 `pending`，故 `cycleRun` 尾部必须读 `cycle.pending` 进「立即补一拍」（与全仓 22 个 feat 同模），否则写后 kick / 战场高频 push 会被吞、退化为只能等慢心跳。
 - **修理与加速同拍串联**（`planOnce` 二次决策，真机灰度修正十四②）：本拍快照在治前读，`snap.repairing` 不含刚开修的队列 → 旧实现会整拍静默等 `nothing under repair`。现改为：`execActions` 逐条发本拍动作并回报是否「治疗层落地」（`HEAL_LANES`：`heal-local`/`heal-local-thor`/`heal-cross`，不含 `heal-ava`）；落地后用 `speedSnapshotAfterHeal(snap)` **纯本地**重读 `healQueues()` + `repairingLeftSec()`（零网络；本地 220 成功已 `syncLocalQueues` 回灌 `OrderQueues`，故即时可见在修态），只补跑 `planSpeedActions`。拍内逐条发包仍隔 `INTER_SEND_MS`（1s）、`ctx.alive()=false` 即时中辍。跨服在修秒和沿用本拍 1426 读数（战场队列只能等下拍权威读）。
 - **在途令牌去重（无 TTL，`markPending`/`isPending`）**：所有抑制墙钟全废，改为「在途令牌 pending，仅由权威读确认清除」。去重键 = `动作名|去重令牌`（`sentFp` 表，值恒 `Infinity` 永不到期）：
-  - **逐令牌动作**（heal-local/heal-local-thor/heal-cross/heal-ava/speed-gold-ava/speed-item-ava）：`execAction` 成功后 `markPending(fp, 实发令牌)`；入口对 `dedup` 逐令牌 `isPending` 过滤，只发未在途子集，全部在途则整动作 `skipped`。本地治疗令牌沿用 `id#orderId#endTime`、跨服沿用 `id#army#et`、无双沿用 plain `id`。**例外：`speed-item-ava` 标 `atomic`**（道具 `num` 按全集 Σleft 池级折算、不可拆子集）——任一令牌在途即整域 skip，避免按全集 num 只加速部分队列而超烧非幂等道具（钻石 `useGold` 逐队列计费、仍可拆子集）。
+  - **逐令牌动作**（heal-local/heal-local-thor/heal-cross/heal-ava/heal-ava-thor/speed-gold-ava/speed-gold-ava-thor/speed-item-ava/speed-item-ava-thor）：`execAction` 成功后 `markPending(fp, 实发令牌)`；入口对 `dedup` 逐令牌 `isPending` 过滤，只发未在途子集，全部在途则整动作 `skipped`。本地治疗令牌沿用 `id#orderId#endTime`、跨服沿用 `id#army#et`、无双沿用 plain `id`。**例外：`speed-item-ava` 标 `atomic`**（道具 `num` 按全集 Σleft 池级折算、不可拆子集）——任一令牌在途即整域 skip，避免按全集 num 只加速部分队列而超烧非幂等道具（钻石 `useGold` 逐队列计费、仍可拆子集）。
   - **全量不点名动作**（`body={{}}` 的 151/1428 钻石、815 道具本地/跨服全量）：动作带 `all:true` + `pendingTokens`=本拍快照里该域 state1 活跃 id 集；`execAction` 入口只要 `pendingTokens` 里**任一**令牌仍在途即整域 `skipped`（全量不可拆子集，绝不第二枪），成功后 `markPending(fp, pendingTokens)` 逐项登记、可被逐项确认清除。
   - 业务拒绝（`rejected`/`not-sent`/`param error`）路径**不再登记任何时钟抑制**：`not-sent` 由 kick/心跳自然重试；`rejectStreak` 仅用于心跳×2 退避。
 - **确认清除（`prunePendingByExit(族, 活跃集)`）**：`snapshot` 每拍三场景权威读后分别按族遗忘「已退出目标 state」的在途令牌（六族代号见 `FP_FAMILY`：lw/cw/aw=本地/跨服/无双治疗，lr/cr/ar=本地/跨服/无双加速）。治疗族确认集 = state0 待处理令牌集，加速族确认集 = state1 在修令牌集；他族令牌不受本族 prune 影响。6310 读 OK 但 `list` 缺席/非数组时**不 prune**（避免形态漂移误清在途）。
 - **三场景活跃令牌集纯函数**（供上述 prune，派生自权威读、零额外发包）：本地 `localWaitTokenSet`（state0，`id#orderId#endTime`）/`localRepairingIdSet`（state1，plain id）；跨服 `crossWaitKeySet`（state0，`id#army#et`）/`crossRepairingIds`（state1）；无双 `avaWaitIdSet`（state0）/`avaRepairingIdSet`（state1）。与 `splitWaitIds`/`crossWaitIds`/`avaWaitIds` 的去重令牌口径逐字同形。
-- **无双去重**：`heal-ava`（aw）与 `speed-gold-ava`/`speed-item-ava`（ar）均走逐队列 `id` 令牌 pending——令牌在其目标 state（待修 state0 / 在修 state1）退出权威读前恒在途，故非幂等烧道具的 `speed-item-ava` 天然防重烧（无需旧的 `SPEED_FULL_FP_KINDS` 整批 + `SPEED_FALLBACK_MS`）；同队再次受伤 → 该 id 退出 state0 → prune 遗忘 → 即时放行。
+- **无双去重**：`heal-ava`/-thor（aw）与 `speed-gold-ava`/-thor、`speed-item-ava`/-thor（ar）均走逐队列 `id` 令牌 pending——令牌在其目标 state（待修 state0 / 在修 state1）退出权威读前恒在途，故非幂等烧道具的 `speed-item-ava` 天然防重烧（无需旧的 `SPEED_FULL_FP_KINDS` 整批 + `SPEED_FALLBACK_MS`）；同队再次受伤 → 该 id 退出 state0 → prune 遗忘 → 即时放行。
 - **批量 param error 逐 id 隔离**（`bisectHeal`，真机灰度修正四）：220 为**原子批量**——含一个空槽/无效 id 会连累整批被拒。被 `common_159995` 整批拒绝时**逐 id 单发**：单发成功者 `markPending` 并按 `syncLocalQueues` 回灌确认；单发仍 param error 者**不登记任何抑制**（旧 `markDeadSlot` 30min 长抑已废除）——若回灌能确认其退出 state0 则被 prune 自然遗忘，否则依无时钟模型在下次事件重试（可接受，见风险）。抽出 `isParamErrorRet`/`isHealBatchCmd` 仍在。
 - **幻影根治：回灌 `UpdateOrderQueues`**（`syncLocalQueues`，真机灰度修正六）：本地治疗/钻石加速（`heal-local`/`heal-local-thor`/`speed-gold-local`）成功后，借用游戏官方应答回调同款 `UserData.UpdateOrderQueues(resp.queues/orderQueues)` 把服务器权威队列按 `id` 就地覆盖回灌本地态——它**不是时钟、而是本地流的「确认」源**：回灌后该队列退出 state0/state1，正是 `prunePendingByExit` 遗忘其本地在途令牌的确认来源。`LOCAL_SYNC_KINDS` 只放行本地流；本地道具 815 应答不含队列（实录 34/34 仅 `{itemId,amount}`）、跨服/无双不回灌，各靠本场景每拍权威读（10120/1426/6310）确认。符号缺失/异常 `try/catch` 静默降级。
 
@@ -146,13 +145,19 @@
 
 ## 7. 验证
 
-- **单测**：[`tests/feats/quick-repair.test.js`](../../tests/feats/quick-repair.test.js)（桩化浏览器全局后动态 import 取导出纯函数，断言 `normalize/tipsType/splitWaitIds/budgetHealIds/estimateGold/itemSpeedParam/speedItemNum/planActions/planHealActions/planSpeedActions/goldPlannedFor/HEAL_LANES/nextDelayMs` 等择时、枚数折算与 param 编码）→ `node --test tests/feats/quick-repair.test.js`。
+- **单测**：[`tests/feats/quick-repair.test.js`](../../tests/feats/quick-repair.test.js)（桩化浏览器全局后动态 import 取导出纯函数，断言 `normalize/tipsType/splitWaitIds/budgetHealIds/estimateGold/itemSpeedParam/speedItemNum/planActions/planHealActions/planSpeedActions/goldPlannedFor/avaWaitIdsByClass/avaRepairingByClass/HEAL_LANES/nextDelayMs` 等择时、枚数折算与 param 编码）→ `node --test tests/feats/quick-repair.test.js`。
 - **对拍**：[`scripts/verify-manifests/quick-repair.mjs`](../../scripts/verify-manifests/quick-repair.mjs)（CMD_/PUSH_ 协议字典直 import feat 的 `constants.js` 共用同一份——B6 就近收编后纯常量模块可直 import，cs-hunt 同款；调参 `ORDER_TYPE_HEAL`/`INTER_SEND_MS`/`IDLE_TICK_MS` 留 index.js，仍从源码文本正则抽取（`featNum`/`featNumExpr`），抽不到即抛）→ `npm run verify:quick-repair`。HARD 维度：D1 载荷键集形态、D2 通道恒 `req:send`、D3 修理目标来源闸（反向防误发）、D7 无双载荷形态、D8 无双 ids 来源闸、**D10 815 医院加速道具形态**（键集 `{amount,itemid,param}`、`amount` 为正整数枚数、param 不得取 feat 源码记载的必拒形态 `"0|0"`）；SOFT/观察：D4 免费额度守恒、D5 前向完备、D6 应答配对、D9 无双队列态、**D11 815 枚数-持有守恒与批量度**（同 itemid 相邻笔用应答回读的剩余持有算降幅，并报 amount 区间/多枚同发笔数/最长「单枚连发」簇）、**D12 治疗→加速同周期节奏**（治疗后首笔同域加速间隔分布，≤`INTER_SEND_MS` 计拍内、≤`IDLE_TICK_MS` 计 push 边沿/心跳内（修正十八去勤扫后无 `ACTIVE_TICK_MS` 档））。医院加速道具样本靠「param 形态 + 应答 `{amount,itemId}` 回读签名（子集判定）」鉴定，不钉 itemid/para1 字面（避免与 feat 分叉）；已知局限：无 `param` 键的 815（全库 21 笔，如 `1700039/600001/5101101`）应答键集也是 `{amount,itemId}`，与「医院侧 param 漏发」不可区分，故该回归由单测而非对拍拦截。已实跑：清批场（真人 amount=9）/ 逐枚场（逐笔 1 枚 ×34）/ 跨服场（amount=43）/ 旧引擎逐枚场均 EXIT=0；负样本场（旧版 `param:"0|0"` ×5）能把 D10 扫红。
 
 ---
 
 ## 8. 变更记录
 
+- **2026-11-21 无双按兵种拆分：修理随 commonRepair/thorRepair、加速随 speedCommon/speedThor（修正二十）**（dashcam 录制+日志双轨诊断，用户报「快速修理在无双下不工作」）：
+  - 诊断：录制 `dashcam-rec-20261121T190208-普通无双` + 同日日志对拍——feat 发 4 笔 6311（31+23+10+2 ids）全 ret:0，逐笔探针对拍确认下一拍 6310 权威读里同批 id state0→state1，**修理线正常**；全程零 6312，每拍刷 `speedCommon not gold (ava)`/`speedCommon not item (ava)`。根因=无双队列此前整体跟随 `speedCommon`，用户配置 sc=none → 加速线被闸；无双队列 durationTime≈12h 不加速即困在医院，用户被迫手动钻石加速（同日 18:17 场录制 5 笔游戏自发 6312 `{ids,useGold:1}` ret:0 实证，形态与 feat 的 `speed-gold-ava` 完全一致）。
+  - 设计前提修正（用户领域知识）：无双修理厂可区分普通兵/雷神兵（6310 队列 id=部队 uuid，按 `getArmyByArmyUuid().Data.thor_group>0` 判定），推翻旧定稿「无双队列无法可靠区分兵种故整体跟随 speedCommon」。
+  - 修正：① 新增纯函数 `avaWaitIdsByClass`/`avaRepairingByClass`（6310 list 按兵种拆分+逐类剩余秒和，注入 `thorOfOrderId`，部队对象取不到归普通、与本地 `splitRepairingByType` 缺省一致）；② `planAvaActions` 重写——修理按类 gate（普通子集 `commonRepair&&resourceRepair`、雷神子集 `thorRepair`），加速按类各随 select，合并一笔条件=两类都开（修理）/方式相同或仅一类有在修（加速），钻石预算共享 budget `{gold,item,si}` 投影；③ 新增 kind `heal-ava-thor`/`speed-gold-ava-thor`/`speed-item-ava-thor`（FP_FAMILY 映射 aw/ar、ITEM_SPEED_KINDS 收编，令牌/prune/道具 atomic 语义与主 kind 同）；④ 快照装配拆分字段 `avaWaitCommonIds`/`avaWaitThorIds`/`avaRepairingCommonIds`/`avaRepairingThorIds`/`avaRepairingLeftCommon`/`avaRepairingLeftThor`（全集字段保留供 prune/对拍）；⑤ 面板 hint 与本文同步（commonRepair 兼管无双普通兵、thorRepair 兼管无双雷神、加速 select 按类归属；§0/§3 顺带把加速层旧 speedGold/speedItem 描述订正为现行 speedCommon/speedThor 口径）。
+  - 保留：本地/跨服行为零变化；6310/6311/6312 协议形态不变 → 对拍 D7/D8 判据不受影响（子集⊆全集）。
+  - 验证：`node --test tests/feats/quick-repair.test.js` 67/67（FP_FAMILY 三新 kind、分类纯函数（含缺省归普通）、sc=none/st=gold 分流+合并全量、修理按兵种分流）/ 全量 725/725 / lint 0 error / build Done / `verify:quick-repair` 印石场 + 无双三场（20261108T180936、20261121T181703、20261121T190208）全部关键不变量通过（D7/D8 无违例）。
 - **2026-11-14 单笔 220 全发：学竞品 B 废免费/资源两批拆分（修正十九，幻影重烧根治）**（用户指令「学竞品B」，报文实证确认浪费后实施）：
   - 动机：dashcam 录制（`dashcam-rec-20261114T195030-印石-我的日常`）铁证——旧两批拆分（先 `heal-local` 免费批 → 约 1.3s 后 `heal-local-resource` 资源批）存在幻影重烧窗口：免费批 220 resp 77/77 orderId=0（已修好）→ `syncLocalQueues` 回灌 → `prunePendingByExit` 遗忘令牌 → 陈旧 10120 push 把同槽推回 orderId≠0/state=0 → 资源批当新伤放行 → 服务器不校验「刚修好」直接重开 17030s 满额修理 → 151 全量加速对全部 90 队列收满额费（单价 1.72 与后续批次一致，证明 77 幻影也被全额计费），浪费 ~132 钻 + 2205 雷神元素中一部分 + 77 次免费额度。
   - 竞品 B 对照：`hospitalStart` 一笔 220 全发 state0（不拆免费/资源，服务器内分额度）+ 200ms 防抖读终态 + 纯事件驱动——架构上不存在两批中间态，故无幻影窗口。

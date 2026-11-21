@@ -86,8 +86,9 @@
  *   可负担集按部队 `repair_cost` 累计持有量筛付费段（免费额度覆盖的前缀恒可发），买不起的静默跳过、不告警不进退避。
  * 面板形态（修理/加速拆开）：修理层两个 checkbox——普通兵（commonRepair，默认开）、
  *   雷神兵（thorRepair，默认关，兼管跨服战场伤兵）；加速层两个三态 select——speedCommon/speedThor
- *   （none/gold/item，默认 none）。跨服/无双队列无法可靠区分雷神/普通，加速各随其修理分组：
- *   跨服跟 speedThor、无双跟 speedCommon。资源续修（resourceRepair）与自愈轮询间隔为系统内置不出面板；
+ *   （none/gold/item，默认 none）。跨服队列无法区分兵种，加速随 speedThor（与其修理分组一致）；无双队列
+ *   id=部队 uuid、可按 thor_group 分类（avaWaitIdsByClass/avaRepairingByClass，取不到部队对象归普通），
+ *   修理/加速按类各随其开关、两类同拍同开合并一笔全量批量。资源续修（resourceRepair）与自愈轮询间隔为系统内置不出面板；
  *   钻石只受余额约束、道具持有即动用（无日预算/保留下限闸门）。
  *   加速执行口径：两类兵方式相同、或只有一类有在修剩余秒 → 沿用全量一笔（151/815 全量，道具时间池不浪费）；
  *   两类都有在修且方式不同 → 本地逐队列点名（124 钻石单条 / 815 param=队列 id），道具逐队列各自向上取整
@@ -719,6 +720,57 @@ function avaRepairingLeftSec(list, serverTime) {
 }
 
 /**
+ * 6310 应答 list → 待修 id 集按兵种拆分：队列 id 即部队 uuid，thorOf(orderId)（UserData.getArmyByArmyUuid
+ * .Data.thor_group>0，与本地 splitRepairingByType 同款注入）为 true 归雷神、false/部队对象取不到归普通。
+ * @param {Array<object>|null} list 6310 应答 list 数组
+ * @param {function(string):boolean} thorOf orderId → 是否雷神
+ * @returns {{common:string[], thor:string[]}}
+ */
+function avaWaitIdsByClass(list, thorOf) {
+  var out = { common: [], thor: [] };
+  if (!Array.isArray(list)) return out;
+  for (var i = 0; i < list.length; i++) {
+    var q = list[i];
+    if (!q || typeof q !== 'object') continue;
+    var oid = q.orderId == null ? '' : String(q.orderId);
+    if (!oid || oid === '0') continue;
+    if (Number(q.state) !== 0) continue;
+    var id = q.id == null ? '' : String(q.id);
+    if (!id) continue;
+    out[thorOf && thorOf(oid) ? 'thor' : 'common'].push(id);
+  }
+  return out;
+}
+
+/**
+ * 6310 应答 list → 在修 id 集按兵种拆分 + 各自剩余秒和（口径同 avaRepairingLeftSec：state===1、
+ * Σ(endTime-serverTime) 单条不为负；serverTime 不可判定恒 0，6312 枚数/估价吃同一秒和不折算）。
+ * @param {Array<object>|null} list 6310 应答 list 数组
+ * @param {number} serverTime DATA.ServerTime（秒）
+ * @param {function(string):boolean} thorOf orderId → 是否雷神
+ * @returns {{commonIds:string[], thorIds:string[], commonLeft:number, thorLeft:number}}
+ */
+function avaRepairingByClass(list, serverTime, thorOf) {
+  var out = { commonIds: [], thorIds: [], commonLeft: 0, thorLeft: 0 };
+  if (!Array.isArray(list)) return out;
+  var st0 = Number(serverTime) > 0 ? Number(serverTime) : 0;
+  for (var i = 0; i < list.length; i++) {
+    var q = list[i];
+    if (!q || typeof q !== 'object') continue;
+    var oid = q.orderId == null ? '' : String(q.orderId);
+    if (!oid || oid === '0') continue;
+    if (Number(q.state) !== 1) continue;
+    var id = q.id == null ? '' : String(q.id);
+    if (!id) continue;
+    var isThor = !!(thorOf && thorOf(oid));
+    out[isThor ? 'thorIds' : 'commonIds'].push(id);
+    var left = st0 > 0 ? (Number(q.endTime) || 0) - st0 : 0;
+    if (left > 0) out[isThor ? 'thorLeft' : 'commonLeft'] += left;
+  }
+  return out;
+}
+
+/**
  * 无双钻石估价（源码 getAvaCureGoldByTime 口径：基价 GetCDGold(leftSec) × 模式倍率，至少 1）。
  * 诚实边界：GetCDGold 本体在逆向抽取里是空桩，此处以普通医院同款基价 ceil(leftSec/60×61017) 代估（与
  * getProfessionCDGold 同公式），仅用于「余额不够就跳过」的保守闸门；真实扣费由服务器裁决。
@@ -1303,15 +1355,111 @@ function goldPlannedFor(actions, cross) {
 }
 
 /**
- * 无双（AVA 族）决策层：吃同一套面板开关（修伤兵跟 commonRepair+resourceRepair、加速跟 speedCommon），
- * 但走独立三件套：6311 批量修 state0、6312 钻石 {ids,useGold:1} / 道具 {ids,itemId,num,useGold:0} 加速 state1。
- * 无双无免费额度概念；余额闸用模式倍率估价（estimateAvaGold）；道具加速需持有专行 15100046 且 para1 可解。
+ * 无双单域加速一笔：6312 钻石 {ids,useGold:1} / 道具 {ids,itemId,num,useGold:0}，估价/折算与预算投影同本地口径。
+ * kind 后缀仅雷神子集带（'-thor'；common 子集/合并全量沿用主 kind，与 FP_FAMILY/prune 族口径一致）；
+ * label 与 goldShortReason 的 where 域标随 tag。道具 num 按该域 Σleft 池级折算，atomic=true 任一在途即整域跳过。
+ * @param {object} snap 快照（含 avaMode/ratePerMin/avaGoldMult）
+ * @param {{cure:number, speed:number}} cmds AVA_MODE_CMDS[avaMode]（cure/speed 协议号）
+ * @param {'gold'|'item'} mode 加速方式
+ * @param {string[]} ids 该域 state1 活跃 id 集
+ * @param {number} leftSec 该域在修剩余秒和
+ * @param {''|'common'|'thor'} tag 域标（kind 后缀仅 thor 带，label 与 reason 用；''=合并全量/common 子集）
+ * @param {{gold:number, item:number, si:object|null}} budget 共享预算投影（就地扣减）
+ * @param {Array} actions 累加容器
+ * @param {Array} reasons 累加容器
+ */
+function planAvaSpeedOne(snap, cmds, mode, ids, leftSec, tag, budget, actions, reasons) {
+  if (!ids.length || !(leftSec > 0)) return;
+  // kind 后缀仅雷神子集带（common 子集/合并全量沿用主 kind，与 FP_FAMILY/prune 族口径一致）
+  var suffix = tag === 'thor' ? '-thor' : '';
+  if (mode === 'gold') {
+    var gc = estimateAvaGold(leftSec, snap.ratePerMin, snap.avaGoldMult);
+    if (!gc) {
+      reasons.push('ava gold estimate unavailable (rate ' + snap.ratePerMin + ')');
+      return;
+    }
+    if (budget.gold < gc) {
+      reasons.push(goldShortReason(budget.gold, gc, 'ava' + (tag ? ' ' + tag : '')));
+      return;
+    }
+    budget.gold -= gc;
+    actions.push({
+      kind: 'speed-gold-ava' + suffix,
+      cmd: cmds.speed,
+      body: { ids: ids, useGold: 1 },
+      fp: 'speed-gold-ava' + suffix,
+      ids: ids,
+      dedup: ids,
+      goldCost: gc,
+      label:
+        'gold speed ava(' +
+        snap.avaMode +
+        (tag ? ' ' + tag : '') +
+        ') ' +
+        ids.length +
+        ' (leftSec ' +
+        leftSec +
+        ')',
+    });
+    return;
+  }
+  var si = budget.si;
+  if (!si) {
+    reasons.push('no ava hospital speed item in bag');
+    return;
+  }
+  var num = speedItemNum(leftSec, Number(si.secPerUse) || 0, budget.item, Number(si.useMax));
+  if (num <= 0) {
+    reasons.push(
+      'ava item speed: num=0 (secPerUse ' +
+        si.secPerUse +
+        '; held ' +
+        budget.item +
+        '; leftSec ' +
+        leftSec +
+        ')',
+    );
+    return;
+  }
+  budget.item -= num;
+  actions.push({
+    kind: 'speed-item-ava' + suffix,
+    cmd: cmds.speed,
+    body: { ids: ids, itemId: si.itemId, num: num, useGold: 0 },
+    fp: 'speed-item-ava' + suffix,
+    ids: ids,
+    dedup: ids,
+    // 道具 num 按该域 Σleft 池级折算、不可拆子集：任一在途即整域跳过（否则会按该域 num 只加速部分队列→超烧非幂等道具）
+    atomic: true,
+    label:
+      'item speed ava(' +
+      snap.avaMode +
+      (tag ? ' ' + tag : '') +
+      ') #' +
+      si.itemId +
+      ' x' +
+      num +
+      ' (held ' +
+      si.amount +
+      ')',
+  });
+}
+
+/**
+ * 无双（AVA 族）决策层：队列 id 即部队 uuid，可按 thor_group 分类（avaWaitIdsByClass/avaRepairingByClass，
+ * 取不到部队对象归普通），修理/加速按兵种各随其面板开关——普通子集吃 commonRepair+resourceRepair/speedCommon、
+ * 雷神子集吃 thorRepair/speedThor（与本地、跨服同构）。独立三件套：6311 批量修 state0、
+ * 6312 钻石 {ids,useGold:1} / 道具 {ids,itemId,num,useGold:0} 加速 state1。修理层两类开关同拍都开 → 合并一笔
+ * 全量批量；加速层两类方式相同、或仅一类有在修 → 全量一笔（6312 body 按批天然分流，无需逐队列点名）。
+ * 无双无免费额度概念；余额闸用模式倍率估价（estimateAvaGold），钻石预算同拍两笔共享投影先普通后雷神累计
+ * 扣减；道具按该域 Σleft 池级折算、持有量共享投影，需持有专行 15100046 且 para1 可解。
  * 本函数纯判据、无副作用；去重与发包在 execAction（无双动作不入 LOCAL_SYNC_KINDS、不回灌，靠 push 21203/下拍 6310 刷新）。
- * 去重口径（与本地/跨服同构、无抑制时钟）：heal-ava（state0）与 speed-gold-ava/speed-item-ava（state1）均走逐队列 id 令牌：
+ * 去重口径（与本地/跨服同构、无抑制时钟）：heal-ava/-thor（state0）与 speed-gold-ava/-thor、speed-item-ava/-thor
+ * （state1）均走逐队列 id 令牌：
  *   新令牌（从没在途过的部队）即时放行，同 id 在途未确认绝不第二枪；令牌只在其目标 state 退出 6310 权威读时由
  *   `prunePendingByExit('aw'/'ar', …)` 遗忘（aw=state0 待修集、ar=state1 在修集）。无双 id≡orderId、state0 endTime=0，字段无法
  *   区分再受伤、故靠“退出目标 state 即遗忘”保证同一部队修完再伤即时放行（写成功后另由 execAction 的 kick 催一次确认读）。
- * @param {object} snap 快照（含 avaMode/avaWaitIds/avaRepairingIds/avaGoldMult/avaSpeedItem 等）
+ * @param {object} snap 快照（含 avaMode/avaWaitCommonIds/avaWaitThorIds/avaRepairingCommonIds/avaRepairingThorIds/avaGoldMult/avaSpeedItem 等）
  * @param {object} m 归一后的模块配置
  * @param {Array} actions 累加容器
  * @param {Array} reasons 累加容器
@@ -1323,100 +1471,122 @@ function planAvaActions(snap, m, actions, reasons) {
     reasons.push('ava hospital read failed (' + snap.avaMode + ')');
     return;
   }
-  // 5a) 批量修待修（吃资源/时长，归「普通兵修理」+「用资源续修」双闸）
-  if (!m.commonRepair) {
-    reasons.push('commonRepair off (ava cure)');
-  } else if (!m.resourceRepair) {
-    reasons.push('resourceRepair off (ava cure)');
-  } else if (!snap.avaWaitIds.length) {
+  var cW = snap.avaWaitCommonIds || [];
+  var tW = snap.avaWaitThorIds || [];
+  var cR = snap.avaRepairingCommonIds || [];
+  var tR = snap.avaRepairingThorIds || [];
+  // 5a) 批量修待修：队列可按兵种分类（avaWaitIdsByClass），普通子集吃 commonRepair+resourceRepair、
+  //     雷神子集吃 thorRepair（真花材料，与本地雷神同闸）；两类同拍都开 → 合并一笔全量批量。
+  var cureCommon = !!m.commonRepair && !!m.resourceRepair;
+  var cureThor = !!m.thorRepair;
+  if (!cW.length && !tW.length) {
     reasons.push('no ava wait');
   } else {
-    actions.push({
-      kind: 'heal-ava',
-      cmd: cmds.cure,
-      body: { ids: snap.avaWaitIds },
-      fp: 'heal-ava',
-      ids: snap.avaWaitIds,
-      dedup: snap.avaWaitIds,
-      label: 'ava heal(' + snap.avaMode + ') ' + snap.avaWaitIds.length,
-    });
-  }
-  // 5b) 钻石加速全部在修（speedCommon=gold）
-  if (m.speedCommon !== 'gold') {
-    reasons.push('speedCommon not gold (ava)');
-  } else if (!snap.avaRepairingIds.length) {
-    reasons.push('no ava under repair');
-  } else {
-    var gc = estimateAvaGold(snap.avaRepairingLeftSec, snap.ratePerMin, snap.avaGoldMult);
-    if (!gc) {
-      reasons.push('ava gold estimate unavailable (rate ' + snap.ratePerMin + ')');
-    } else if (Number(snap.gold) < gc) {
-      reasons.push(goldShortReason(Number(snap.gold), gc, 'ava'));
-    } else {
+    if (!m.commonRepair) reasons.push('commonRepair off (ava cure)');
+    else if (!m.resourceRepair) reasons.push('resourceRepair off (ava cure)');
+    if (!cureThor) reasons.push('thorRepair off (ava cure)');
+    if (cureCommon && cureThor) {
       actions.push({
-        kind: 'speed-gold-ava',
-        cmd: cmds.speed,
-        body: { ids: snap.avaRepairingIds, useGold: 1 },
-        fp: 'speed-gold-ava',
-        ids: snap.avaRepairingIds,
-        dedup: snap.avaRepairingIds,
-        goldCost: gc,
+        kind: 'heal-ava',
+        cmd: cmds.cure,
+        body: { ids: snap.avaWaitIds },
+        fp: 'heal-ava',
+        ids: snap.avaWaitIds,
+        dedup: snap.avaWaitIds,
         label:
-          'gold speed ava(' +
+          'ava heal(' +
           snap.avaMode +
           ') ' +
-          snap.avaRepairingIds.length +
-          ' (leftSec ' +
-          snap.avaRepairingLeftSec +
+          snap.avaWaitIds.length +
+          ' (common ' +
+          cW.length +
+          ' thor ' +
+          tW.length +
           ')',
       });
+    } else {
+      if (cureCommon && cW.length) {
+        actions.push({
+          kind: 'heal-ava',
+          cmd: cmds.cure,
+          body: { ids: cW },
+          fp: 'heal-ava',
+          ids: cW,
+          dedup: cW,
+          label: 'ava heal(' + snap.avaMode + ' common) ' + cW.length,
+        });
+      }
+      if (cureThor && tW.length) {
+        actions.push({
+          kind: 'heal-ava-thor',
+          cmd: cmds.cure,
+          body: { ids: tW },
+          fp: 'heal-ava-thor',
+          ids: tW,
+          dedup: tW,
+          label: 'ava heal(' + snap.avaMode + ' thor) ' + tW.length,
+        });
+      }
     }
   }
-  // 5c) 道具加速全部在修（专行 15100046，枚数按 para1 折算）；speedCommon 三态单选天然与 5b 互斥，
-  // 同一 cmds.speed 目标同集不会同拍双花。
-  if (m.speedCommon !== 'item') {
-    reasons.push('speedCommon not item (ava)');
-  } else if (!snap.avaRepairingIds.length) {
-    reasons.push('no ava under repair for item speed');
-  } else if (!snap.avaSpeedItem) {
-    reasons.push('no ava hospital speed item in bag');
-  } else {
-    var num = speedItemNum(
-      snap.avaRepairingLeftSec,
-      snap.avaSpeedItem.secPerUse,
-      snap.avaSpeedItem.amount,
-      snap.avaSpeedItem.useMax,
-    );
-    if (num <= 0) {
-      reasons.push(
-        'ava item speed: num=0 (secPerUse ' +
-          snap.avaSpeedItem.secPerUse +
-          '; held ' +
-          snap.avaSpeedItem.amount +
-          ')',
+  // 5b/5c) 加速按兵种各随 speedCommon/speedThor：两类同方式且都有在修 → 全量一笔（估价/时间池不拆不浪费）；
+  //     不同 → 各一笔（6312 body 按批天然分流，无需逐队列点名）。钻石预算/道具持有同拍两笔共享投影累计扣减。
+  if (!(cR.length + tR.length)) {
+    reasons.push('no ava under repair');
+    return;
+  }
+  var mc = speedModeOf(m.speedCommon);
+  var mt = speedModeOf(m.speedThor);
+  var budget = {
+    gold: Number(snap.gold) || 0,
+    item: snap.avaSpeedItem ? Number(snap.avaSpeedItem.amount) || 0 : 0,
+    si: snap.avaSpeedItem,
+  };
+  if (mc === mt) {
+    if (mc === 'none') reasons.push('ava speed off (none)');
+    else
+      planAvaSpeedOne(
+        snap,
+        cmds,
+        mc,
+        snap.avaRepairingIds,
+        snap.avaRepairingLeftSec,
+        '',
+        budget,
+        actions,
+        reasons,
       );
-    } else {
-      actions.push({
-        kind: 'speed-item-ava',
-        cmd: cmds.speed,
-        body: { ids: snap.avaRepairingIds, itemId: snap.avaSpeedItem.itemId, num: num, useGold: 0 },
-        fp: 'speed-item-ava',
-        ids: snap.avaRepairingIds,
-        dedup: snap.avaRepairingIds,
-        // 道具 num 按全集 Σleft 池级折算、不可拆子集：任一在途即整域跳过（否则会按全集 num 只加速部分队列→超烧非幂等道具）
-        atomic: true,
-        label:
-          'item speed ava(' +
-          snap.avaMode +
-          ') #' +
-          snap.avaSpeedItem.itemId +
-          ' x' +
-          num +
-          ' (held ' +
-          snap.avaSpeedItem.amount +
-          ')',
-      });
-    }
+    return;
+  }
+  if (cR.length) {
+    if (mc === 'none') reasons.push('common speed off (ava)');
+    else
+      planAvaSpeedOne(
+        snap,
+        cmds,
+        mc,
+        cR,
+        snap.avaRepairingLeftCommon,
+        'common',
+        budget,
+        actions,
+        reasons,
+      );
+  }
+  if (tR.length) {
+    if (mt === 'none') reasons.push('thor speed off (ava)');
+    else
+      planAvaSpeedOne(
+        snap,
+        cmds,
+        mt,
+        tR,
+        snap.avaRepairingLeftThor,
+        'thor',
+        budget,
+        actions,
+        reasons,
+      );
   }
 }
 
@@ -1741,12 +1911,15 @@ var FP_FAMILY = {
   'heal-local-thor': 'lw',
   'heal-cross': 'cw',
   'heal-ava': 'aw',
+  'heal-ava-thor': 'aw',
   [KIND_SPEED_GOLD_LOCAL]: 'lr',
   [KIND_SPEED_ITEM_LOCAL]: 'lr',
   'speed-gold-cross': 'cr',
   'speed-item-cross': 'cr',
   'speed-gold-ava': 'ar',
+  'speed-gold-ava-thor': 'ar',
   'speed-item-ava': 'ar',
+  'speed-item-ava-thor': 'ar',
 };
 
 /**
@@ -1754,7 +1927,12 @@ var FP_FAMILY = {
  * 登记时记确认时刻、经应答后一次权威队列读放行；钻石/治疗线仍等「目标 state 退出权威读」才遗忘。
  * @type {Set<string>}
  */
-var ITEM_SPEED_KINDS = new Set([KIND_SPEED_ITEM_LOCAL, 'speed-item-cross', 'speed-item-ava']);
+var ITEM_SPEED_KINDS = new Set([
+  KIND_SPEED_ITEM_LOCAL,
+  'speed-item-cross',
+  'speed-item-ava',
+  'speed-item-ava-thor',
+]);
 
 /**
  * 在途令牌是否仍在途（无 TTL：钻石/治疗线仅当 prunePendingByExit 观测到其目标 state 退出权威读后才删除；
@@ -2125,6 +2303,8 @@ async function snapshot() {
   }
   var avaW = avaWaitIds(avaList);
   var avaR = avaRepairingIds(avaList);
+  var avaWaitSplit = avaWaitIdsByClass(avaList, thorOfOrderId);
+  var avaRepSplit = avaRepairingByClass(avaList, serverTime, thorOfOrderId);
   // 确认清除（无抑制时钟）：各场景按「目标 state 退出权威读」遗忘在途令牌——治疗族确认集=state0、加速族确认集=state1。
   //   本地：queues 为有效数组才 prune；跨服：1426 读 OK 且未门控跳过才 prune；无双：6310 list 为有效数组才 prune。
   if (localWaitTokens) {
@@ -2186,8 +2366,14 @@ async function snapshot() {
     avaMode: mode,
     avaReadOk: !!avaList,
     avaWaitIds: avaW,
+    avaWaitCommonIds: avaWaitSplit.common,
+    avaWaitThorIds: avaWaitSplit.thor,
     avaRepairingIds: avaR,
+    avaRepairingCommonIds: avaRepSplit.commonIds,
+    avaRepairingThorIds: avaRepSplit.thorIds,
     avaRepairingLeftSec: avaRepairingLeftSec(avaList, serverTime),
+    avaRepairingLeftCommon: avaRepSplit.commonLeft,
+    avaRepairingLeftThor: avaRepSplit.thorLeft,
     avaGoldMult: mode ? avaGoldMultOf(mode) : 0,
     avaSpeedItem: mode ? avaSpeedItemInfo() : null,
   };
@@ -2377,7 +2563,9 @@ function configure(partial) {
  * kinds 覆盖本服 + 无双峡谷（AVA/TM/大师赛/传奇小队）+ 天梯三国 + 征服者 + 盟决，跨服战场图内持续自动修理；
  * 秘境（pab）由 world 门控隔离，不放行。places 限 base/world（医院 UI 所在场景）。
  * 面板分「修理」「加速」两段：修理 = 普通兵/雷神兵两个 checkbox；加速 = 普通兵/雷神兵两个三态 select
- * （不加速/钻石/道具）。钻石只受余额约束、道具持有即动用。跨服医院加速随 speedThor、无双医院加速随 speedCommon。
+ * （不加速/钻石/道具）。钻石只受余额约束、道具持有即动用。跨服医院（无法区分兵种）加速随 speedThor；
+ * 无双队列按部队 thor_group 分类，修理/加速按类各随其开关（普通子集跟 commonRepair/speedCommon、
+ * 雷神子集跟 thorRepair/speedThor），两类同拍同开合并一笔全量批量。
  * 超额花资源续修（resourceRepair）与自愈轮询间隔（pollIntervalSec）为系统内置，不进面板。
  * 存档版本 2：migrate 把旧版三开关存档映射到当前四字段（normalize 另对缺键做运行时兼容）。
  */
@@ -2406,14 +2594,14 @@ reactor.register({
       label: '普通兵',
       section: '修理',
       type: 'checkbox',
-      hint: '普通兵伤兵修理：免费额度内零消耗，超额花材料续修。',
+      hint: '普通兵伤兵修理：免费额度内零消耗，超额花材料续修；无双战场的普通兵部队（真花材料）同此开关。',
     },
     {
       key: 'thorRepair',
       label: '雷神兵',
       section: '修理',
       type: 'checkbox',
-      hint: '雷神兵与跨服战场伤兵：修理真花材料（无免费额度），默认关。',
+      hint: '雷神兵、跨服战场与无双战场的雷神部队：修理真花材料（无免费额度），默认关。',
     },
     {
       key: 'speedCommon',
@@ -2425,7 +2613,7 @@ reactor.register({
         { value: 'gold', label: '钻石' },
         { value: 'item', label: '道具' },
       ],
-      hint: '本地普通兵在修队列；无双战场医院同此设置。钻石按每分钟价估算、不足即跳过；道具按剩余时间折算枚数。',
+      hint: '本地普通兵与无双战场的普通兵部队在修队列。钻石按每分钟价估算、不足即跳过；道具按剩余时间折算枚数。',
     },
     {
       key: 'speedThor',
@@ -2437,7 +2625,7 @@ reactor.register({
         { value: 'gold', label: '钻石' },
         { value: 'item', label: '道具' },
       ],
-      hint: '本地雷神兵在修队列；跨服战场医院同此设置。',
+      hint: '本地雷神兵、跨服战场医院与无双战场的雷神部队在修队列。钻石按每分钟价估算、不足即跳过；道具按剩余时间折算枚数。',
     },
   ],
   toModuleCfg: function (c) {
@@ -2473,6 +2661,8 @@ export {
   avaWaitIdSet,
   avaRepairingIdSet,
   avaRepairingLeftSec,
+  avaWaitIdsByClass,
+  avaRepairingByClass,
   estimateAvaGold,
   speedItemNum,
   estimateGold,

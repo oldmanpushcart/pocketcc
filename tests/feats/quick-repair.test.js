@@ -87,6 +87,8 @@ const {
   avaWaitIdSet,
   avaRepairingIdSet,
   avaRepairingLeftSec,
+  avaWaitIdsByClass,
+  avaRepairingByClass,
   estimateAvaGold,
   speedItemNum,
   HEAL_LANES,
@@ -283,12 +285,15 @@ test('FP_FAMILY：三场景 × 治疗/加速 全族登记（治疗族 lw/cw/aw�
   assert.equal(FP_FAMILY['heal-local-resource'], undefined); // 修正十九：并入 heal-local 单笔，该 kind 已删
   assert.equal(FP_FAMILY['heal-cross'], 'cw');
   assert.equal(FP_FAMILY['heal-ava'], 'aw');
+  assert.equal(FP_FAMILY['heal-ava-thor'], 'aw');
   assert.equal(FP_FAMILY['speed-gold-local'], 'lr');
   assert.equal(FP_FAMILY['speed-item-local'], 'lr');
   assert.equal(FP_FAMILY['speed-gold-cross'], 'cr');
   assert.equal(FP_FAMILY['speed-item-cross'], 'cr');
   assert.equal(FP_FAMILY['speed-gold-ava'], 'ar');
+  assert.equal(FP_FAMILY['speed-gold-ava-thor'], 'ar');
   assert.equal(FP_FAMILY['speed-item-ava'], 'ar');
+  assert.equal(FP_FAMILY['speed-item-ava-thor'], 'ar');
 });
 
 test('markPending 恒在途（无 TTL）+ prunePendingByExit 仅按本族活跃集遗忘、他族不误删', () => {
@@ -1076,8 +1081,14 @@ function avaSnap(over) {
         avaMode: 'ava',
         avaReadOk: true,
         avaWaitIds: ['a1', 'a2'],
+        avaWaitCommonIds: ['a1', 'a2'],
+        avaWaitThorIds: [],
         avaRepairingIds: ['b1'],
+        avaRepairingCommonIds: ['b1'],
+        avaRepairingThorIds: [],
         avaRepairingLeftSec: 3600,
+        avaRepairingLeftCommon: 3600,
+        avaRepairingLeftThor: 0,
         avaBusy: 3,
         avaGoldMult: 1,
         avaSpeedItem: null,
@@ -1125,7 +1136,7 @@ test('planActions 无双：speedCommon=item → 道具加速走 speed 命令 {id
   assert.deepEqual(use.body, { ids: ['b1'], itemId: AVA_HOSPITAL_SPEED_ITEM, num: 6, useGold: 0 });
   assert.deepEqual(use.dedup, ['b1']); // speed-item-ava 逐令牌（ar 族）：令牌=state1 在修 id，在退出 state1 前恒 pending 防重烧
   assert.equal(use.atomic, true); // 道具 num 池级折算→atomic：任一在途即整域跳过，不可拆子集（防超烧）
-  assert.ok(got.reasons.some((r) => /speedCommon not gold \(ava\)/.test(r))); // 方式非 gold → 钻石线静默
+  assert.ok(!got.reasons.some((r) => /speed off \(ava\)|ava speed off/.test(r))); // sc=item 正常发、thor 无在修不记 off
   assert.equal(
     got.actions.find((a) => a.kind === 'speed-gold-ava'),
     undefined,
@@ -1155,7 +1166,113 @@ test('planActions 无双：speedCommon 三态单选天然互斥——gold 时只
     actions.find((a) => a.kind === 'speed-item-ava'),
     undefined,
   );
-  assert.ok(reasons.some((r) => /speedCommon not item \(ava\)/.test(r)));
+  assert.ok(!reasons.some((r) => /speed off \(ava\)|ava speed off/.test(r))); // gold 侧正常发、thor 无在修不记 off
+});
+
+// ─────────────────── 无双按兵种分类（thor_group 注入）───────────────────
+test('avaWaitIdsByClass/avaRepairingByClass：thorOf 注入分流，取不到部队对象归普通（与本地 splitRepairingByType 缺省一致）', () => {
+  const thorOf = (id) => id === 't1' || id === 't2';
+  const list = [
+    { orderId: 'c1', id: 'c1', state: 0, endTime: 0 },
+    { orderId: 't1', id: 't1', state: 0, endTime: 0 },
+    { orderId: 'x1', id: 'x1', state: 1, endTime: 1794160415 },
+    { orderId: 't2', id: 't2', state: 1, endTime: 1794160415 - 1800 },
+    { orderId: '0', id: 'slot', state: 0, endTime: 0 }, // 空槽
+  ];
+  assert.deepEqual(avaWaitIdsByClass(list, thorOf), { common: ['c1'], thor: ['t1'] });
+  const r = avaRepairingByClass(list, 1794160415 - 3600, thorOf);
+  assert.deepEqual(r.commonIds, ['x1']);
+  assert.deepEqual(r.thorIds, ['t2']);
+  assert.equal(r.commonLeft, 3600);
+  assert.equal(r.thorLeft, 1800);
+  // serverTime 不可判定 → 双 0（估价/枚数折算闸不吃脏秒和）
+  const r0 = avaRepairingByClass(list, 0, thorOf);
+  assert.equal(r0.commonLeft, 0);
+  assert.equal(r0.thorLeft, 0);
+  // thorOf 缺省 → 全归普通（纯函数不兜注入异常；真实注入 thorOfOrderId 自带 try/catch，与本地同构）
+  assert.deepEqual(avaWaitIdsByClass(list, null).thor, []);
+  assert.deepEqual(avaRepairingByClass(list, 1794160415 - 3600, null).thorIds, []);
+});
+
+test('planActions 无双按兵种分流：sc=none/st=gold → 只发雷神子集 speed-gold-ava-thor、普通侧记 off；两类都 gold → 合并一笔全量', () => {
+  const snap = avaSnap({
+    gold: 99999,
+    ratePerMin: 2,
+    avaRepairingIds: ['b1', 't9'],
+    avaRepairingCommonIds: ['b1'],
+    avaRepairingThorIds: ['t9'],
+    avaRepairingLeftSec: 5400,
+    avaRepairingLeftCommon: 3600,
+    avaRepairingLeftThor: 1800,
+    mcfg: normalize({ speedCommon: 'none', speedThor: 'gold' }),
+  });
+  const { actions, reasons } = planActions(snap);
+  const gold = actions.find((a) => a.kind === 'speed-gold-ava-thor');
+  assert.ok(gold, 'st=gold 时无双雷神在修必须被加速');
+  assert.deepEqual(gold.body, { ids: ['t9'], useGold: 1 });
+  assert.equal(gold.goldCost, estimateAvaGold(1800, 2, 1));
+  assert.ok(reasons.some((r) => /common speed off \(ava\)/.test(r)));
+  assert.equal(
+    actions.find((a) => a.kind === 'speed-gold-ava'),
+    undefined,
+  );
+
+  const both = planActions(
+    avaSnap({
+      gold: 99999,
+      ratePerMin: 2,
+      avaRepairingIds: ['b1', 't9'],
+      avaRepairingCommonIds: ['b1'],
+      avaRepairingThorIds: ['t9'],
+      avaRepairingLeftSec: 5400,
+      avaRepairingLeftCommon: 3600,
+      avaRepairingLeftThor: 1800,
+      mcfg: normalize({ speedCommon: 'gold', speedThor: 'gold' }),
+    }),
+  );
+  const whole = both.actions.find((a) => a.kind === 'speed-gold-ava');
+  assert.ok(whole);
+  assert.deepEqual(whole.body, { ids: ['b1', 't9'], useGold: 1 });
+  assert.equal(whole.goldCost, estimateAvaGold(5400, 2, 1));
+  assert.equal(
+    both.actions.find((a) => a.kind === 'speed-gold-ava-thor'),
+    undefined,
+  );
+});
+
+test('planActions 无双修理按兵种：thorRepair 开且普通关 → 只发雷神子集 heal-ava-thor；两类都开 → 合并一笔全量批量', () => {
+  const split = planActions(
+    avaSnap({
+      avaWaitIds: ['a1', 't9'],
+      avaWaitCommonIds: ['a1'],
+      avaWaitThorIds: ['t9'],
+      mcfg: normalize({ commonRepair: false, thorRepair: true }),
+    }),
+  );
+  const cure = split.actions.find((a) => a.kind === 'heal-ava-thor');
+  assert.ok(cure);
+  assert.deepEqual(cure.body, { ids: ['t9'] });
+  assert.equal(
+    split.actions.find((a) => a.kind === 'heal-ava'),
+    undefined,
+  );
+  assert.ok(split.reasons.some((r) => /commonRepair off \(ava cure\)/.test(r)));
+
+  const both = planActions(
+    avaSnap({
+      avaWaitIds: ['a1', 't9'],
+      avaWaitCommonIds: ['a1'],
+      avaWaitThorIds: ['t9'],
+      mcfg: normalize({ thorRepair: true }),
+    }),
+  );
+  const all = both.actions.find((a) => a.kind === 'heal-ava');
+  assert.ok(all);
+  assert.deepEqual(all.body, { ids: ['a1', 't9'] });
+  assert.equal(
+    both.actions.find((a) => a.kind === 'heal-ava-thor'),
+    undefined,
+  );
 });
 
 // ─────────────────────── 1426 门控归因（review 修正四）───────────────────────
@@ -1180,8 +1297,14 @@ test('planActions 无双：resourceRepair 关→不修；无待修/无在修记 
   const idle = planActions(
     avaSnap({
       avaWaitIds: [],
+      avaWaitCommonIds: [],
+      avaWaitThorIds: [],
       avaRepairingIds: [],
+      avaRepairingCommonIds: [],
+      avaRepairingThorIds: [],
       avaRepairingLeftSec: 0,
+      avaRepairingLeftCommon: 0,
+      avaRepairingLeftThor: 0,
       avaBusy: 0,
       mcfg: normalize({ speedCommon: 'gold' }),
     }),
