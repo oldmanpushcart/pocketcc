@@ -473,7 +473,18 @@ export class StealEngine {
       var eStealNum = Number(e.stealNum) || 0;
       // 单矿已被偷次数：表可用时直接过滤已偷满的矿；表取不到(Infinity)时保留候选，靠下面的排序让空矿沉底被名额截断
       var notFull = eStealNum < perMineCap;
-      if (specOk && Number(si.canSteal) === 1 && notFull && !this.#stealBlockedToday.has(key)) {
+      // 异战区闸门：inOtherWorld=1 是服务器镜像的「矿主与我不同战区」标志（与 mine_cave105「您与该盟友不在相同战区」拒绝同源，
+      //   口径同游戏 MineCaveHomeMineDetailPanel.onBtnClickGotoOther 的 inOtherWorld 分支）。偷/封/帮都打向该矿主，异战区必被
+      //   服务器 s=3 拒 → 游戏 NetMgr.onMessage(3==s) 无条件弹 toast（扩展把拒绝吞进 Ret 拦不住）→ 这里直接不出任务。
+      //   零额外发包：读的就是本轮 7415 应答 infos[] 自带字段。
+      var offZone = Number(e.inOtherWorld) === 1;
+      if (
+        !offZone &&
+        specOk &&
+        Number(si.canSteal) === 1 &&
+        notFull &&
+        !this.#stealBlockedToday.has(key)
+      ) {
         stealLine.push({
           k: 'steal',
           id: si.id,
@@ -484,6 +495,7 @@ export class StealEngine {
         });
       }
       if (
+        !offZone &&
         specOk &&
         Number(si.canPack) === 1 &&
         notFull &&
@@ -493,7 +505,7 @@ export class StealEngine {
         tasks.push({ k: 'pack', id: si.id, uid: uid });
         this.#packLeft--;
       }
-      if (Number(si.canHelp) === 1) tasks.push({ k: 'help', id: si.id, uid: uid });
+      if (!offZone && Number(si.canHelp) === 1) tasks.push({ k: 'help', id: si.id, uid: uid });
     }
     // 剩余容量大者优先（stealNum 升序）再高星：已偷光的矿自然沉底被当日名额截断，不再吃光名额饿死可偷矿
     // 拉黑集未知（读盘未回且未过 fail-open 宽限）：本轮不出偷取任务、置快速重试标记，
@@ -549,11 +561,13 @@ export class StealEngine {
     if (ret.ok) {
       log.info('steal ok. id=%s', idKey(task.id));
     }
-    // 被拒多为良性（今日已偷/被偷满，服务器回 code=3+全零体），无诊断价值 → 降 debug 不打载荷。
+    // 被拒多为良性（今日已偷/被偷满→mine_cave72；跨战区盟友→mine_cave105）。不透传真实文案键则两者在日志里同形、无法归因，
+    //   故带上 ret.reason（PBV2 header.d，net 在 s≠0 时写入）供 dashcam 单轨区分。异战区已被上面闸门滤掉，这里不应再频繁命中。
     else {
       log.debug(
-        'steal rejected code=%d (already stolen / full), skip. id=%s',
+        'steal rejected code=%d reason=%s. id=%s',
         ret.code,
+        ret.reason || '-',
         idKey(task.id),
       );
     }
@@ -564,14 +578,20 @@ export class StealEngine {
       log.debug('pack ok. id=%s', idKey(task.id));
     } else {
       this.#packBlockedToday.add(idKey(task.id) + '|' + task.uid);
-      log.info('pack rejected. code=%d;msg=%s', ret.code, rejectText(ret.data));
+      log.info(
+        'pack rejected. code=%d reason=%s msg=%s',
+        ret.code,
+        ret.reason || '-',
+        rejectText(ret.data),
+      );
     }
   }
   async #execHelp(task) {
     var ret = await this.#env.ask(CMD_HELP, { id: task.id, uid: task.uid }, 'help');
     log.debug(
-      ret.ok ? 'help ok.' : 'help rejected. code=%d;data=%s',
+      ret.ok ? 'help ok.' : 'help rejected. code=%d reason=%s data=%s',
       ret.code,
+      ret.reason || '-',
       rejectText(ret.data),
     );
   }
