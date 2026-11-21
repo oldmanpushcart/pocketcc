@@ -14,6 +14,8 @@
  *
  * 门控（复刻游戏 AllianceBehemothDonateComponent.onClick，全部只读判定后才发）：
  *   - 开启：在盟 && FunctionOn(FunctionKey.alliance_behemoth) && UserData.behemothIsOpen（见 gameData.allianceBehemoth().open）；
+ *   - 入盟冷却：Alliance.JoinTime + dataConfig(25009)（=24h）秒内服务器直接 s=3 拒（d=behemoth_donation_hint1），而游戏捐献面板不预拦→本 feat 发包前自闸，
+ *     未到点不发 7102、精准睡到解锁点（见 gameData.allianceBehemoth().donateReadyAt）；
  *   - 能量：EnergyType.ALLIANCE_BEHEMOTH_DONATE_NUM=13，Point<=0 不捐（游戏弹 alliance_120524）；
  *   - 目标：首个 isUnlock && level<levelCap（behemoth_cultivate.level_cap）的守卫；
  *   - 消耗：behemoth_level[currentLevel].lvup_cost = "costId,costCount"，itemAmount(costId) < costCount 则不捐（游戏弹 CommonItemGetPanel）。
@@ -110,7 +112,8 @@ function aliveFn() {
 function nextTickDelay(snap) {
   var ms;
   var e = snap && snap.energy;
-  if (snap && snap.donated) ms = CHAIN_GAP_MS;
+  if (snap && snap.waitMs) ms = snap.waitMs;
+  else if (snap && snap.donated) ms = CHAIN_GAP_MS;
   else if (e && e.point > 0) ms = rejectStreak >= 3 ? IDLE_TICK_MS : BUSY_TICK_MS;
   else if (e)
     ms = (e.nextRecoverSec > 0 ? e.nextRecoverSec : RECOVER_SEC) * 1000 + RECOVER_BUFFER_MS;
@@ -150,6 +153,7 @@ async function sendRawPB(cmd, body) {
   return {
     ok: !!(ret && ret.ok),
     code: ret ? ret.code : CODE_NOT_SENT,
+    reason: ret && ret.reason,
     payload: d && typeof d === 'object' ? d : null,
   };
 }
@@ -196,13 +200,25 @@ function pickTarget(items) {
 // ── 主流程 ────────────────────────────────────────────────────────────
 /**
  * 单轮主体：本地快照 → 能量闸 → 选目标 → 逐枚 7102 连捐（读应答兜底）。
- * @returns {Promise<object|null>} 排程线索 {donated, energy}；守卫未开/数据不可用返回 null（走闲档）
+ * @returns {Promise<object|null>} 排程线索 {donated, energy}；入盟冷却未过返回 {donated:false, waitMs}（精准睡到解锁点）；守卫未开/数据不可用返回 null（走闲档）
  */
 async function tickBody() {
   var bh = gameData.allianceBehemoth();
   if (!bh || !bh.open) {
     log.debug('behemoth unavailable or not open (not in alliance / feature off).');
     return null;
+  }
+  // 入盟捐赠冷却闸：服务器对入盟 24h 内的守卫捐献直接 s=3 拒（d=behemoth_donation_hint1「加入联盟{0}小时后可捐献」），
+  //   而游戏 AllianceBehemothDonateComponent.onClick 自己只校能量/道具、不预拦这条（真人点也会被服务器弹 toast）；扩展直发 7102
+  //   同样命中 NetMgr.onMessage(3==s) 无条件弹 toast（吞进 Ret 拦不住），且旧逻辑 streak>=3 后退 IDLE 档每 15min 重试刷一整天。
+  //   故这里自拦：零额外发包（读 Alliance.JoinTime + dataConfig(25009)=24h，秒口径同游戏机甲 canDonateAllianceBoss），未到解锁点直接不发并精准睡到点。
+  var now = gameData.serverTime();
+  if (bh.donateReadyAt > now) {
+    log.debug(
+      'behemoth in join-cooldown until unlock (%ds left), skip send.',
+      bh.donateReadyAt - now,
+    );
+    return { donated: false, waitMs: (bh.donateReadyAt - now) * 1000 + RECOVER_BUFFER_MS };
   }
   var energy = gameData.energy(ENERGY_BEHEMOTH);
   if (!energy) return { donated: false, energy: null };
@@ -261,6 +277,8 @@ async function tickBody() {
           : res.code === CODE_NOT_SENT
             ? 'not sent'
             : 'code=' + res.code;
+      // 不透传真实文案键（PBV1 header.d → ret.reason）则多种 s=3 拒在日志里同形、无法归因，故附带（入盟冷却已被上面闸门滤掉，这里不应再频繁命中）。
+      if (res.reason) msg += ';reason=' + res.reason;
       log.info(
         'behemoth donate rejected (streak #%d). id=%d;level=%d;%s',
         rejectStreak,

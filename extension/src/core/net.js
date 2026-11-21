@@ -602,11 +602,15 @@ export let netApi = null;
       new Promise((resolve, reject) => {
         net.sendPB(cmd, data, null, (ret) => {
           try {
-            const s = ret.pbAck.header.s;
+            const header = ret.pbAck.header || {};
+            const s = header.s;
             // V1 PB 的业务数据是 pbAck 下的命名子字段（如 allianceBehemothDonate/allianceBehemothList），
             // 不像 V2 那样有统一的 .data 包装；故整体返回 pbAck，调用方按 cmd 取自己的子字段。
             const d = ret.pbAck;
-            resolve(Ret.from(s, d));
+            const r = Ret.from(s, d);
+            // 拒绝原因的多语言 key 落在 header.d（非子字段），s≠0 时保留供上层判读（口径同 sendPBV2，否则上层只看到 code 无从区分具体拒因）。
+            if (s !== 0 && header.d != null) r.reason = header.d;
+            resolve(r);
           } catch (e) {
             reject(e);
           }

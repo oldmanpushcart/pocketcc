@@ -870,7 +870,9 @@ export const gameData = {
    * items：每项 {behemothId, level, exp, isUnlock, levelCap}，level/exp 取服务端回写的 serverData，
    *   levelCap 取 behemoth_cultivate 表行（level>=levelCap 即满级不可捐）。是否真能捐由 feat
    *   再叠加能量池 13 与升级消耗道具（behemoth_level[level].lvup_cost）判定，这里不做消耗校验。
-   * @returns {object|null} {open:boolean, items:[{behemothId,level,exp,isUnlock,levelCap}]}；UserData/Alliance 不可用返回 null
+   * donateReadyAt：入盟捐赠冷却解锁时刻（服务器秒）；> serverTime() 即仍在冷却不可捐（对齐游戏 canDonateAllianceBoss 的
+   *   JoinTime+dataConfig(25009) 闸）；配缺/无冷却为 0。
+   * @returns {object|null} {open:boolean, items:[{behemothId,level,exp,isUnlock,levelCap}], donateReadyAt:number}；UserData/Alliance 不可用返回 null
    */
   allianceBehemoth() {
     var u = userData();
@@ -883,11 +885,24 @@ export const gameData = {
       inAlliance = false;
     }
     if (!inAlliance || !gameData.functionOn('alliance_behemoth') || !u.behemothIsOpen) {
-      return { open: false, items: [] };
+      return { open: false, items: [], donateReadyAt: 0 };
+    }
+    // 入盟捐赠冷却解锁时刻（秒）：服务器对入盟 24h 内的守卫捐献（7102）直接 s=3 拒（d=behemoth_donation_hint1）；游戏捐献面板不预拦，
+    //   故本方法暴露解锁点供 feat 发包前自闸。冷却时长口径沿用联盟入盟冷却 DATACONFIG 25009（秒，同机甲 canDonateAllianceBoss 的
+    //   `JoinTime + parseInt(getDataConfigData(25009)) > ServerTime`，实证为秒口径）。
+    //   配缺/JoinTime 取不到时置 0（视为无冷却，交由 feat 的应答兜底 + 慢查退避，行为不劣于改前）。
+    var donateReadyAt = 0;
+    try {
+      var joinCdSec = parseInt(String(gameConf.dataConfig(25009)), 10) || 0;
+      var joinAt = Number(a.JoinTime) || 0;
+      if (joinCdSec > 0 && joinAt > 0) donateReadyAt = joinAt + joinCdSec;
+    } catch (e) {
+      donateReadyAt = 0;
     }
     // 现读、不缓存（同上：a=userData().Alliance 本调用内已实时取，其 behemoth 容器随 push 刷新）
     var src = a && a[SYM.dataProps.allianceBehemoth];
-    if (!src || typeof src.getAllianceBehemothData !== 'function') return { open: true, items: [] };
+    if (!src || typeof src.getAllianceBehemothData !== 'function')
+      return { open: true, items: [], donateReadyAt: donateReadyAt };
     try {
       var map = src.getAllianceBehemothData(); // Map<behemothId, AllianceBehemothItemData>
       var items = [];
@@ -904,9 +919,9 @@ export const gameData = {
           });
         });
       }
-      return { open: true, items: items };
+      return { open: true, items: items, donateReadyAt: donateReadyAt };
     } catch (e) {
-      return { open: true, items: [] };
+      return { open: true, items: [], donateReadyAt: donateReadyAt };
     }
   },
   /**
