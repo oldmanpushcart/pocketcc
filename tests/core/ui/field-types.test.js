@@ -37,6 +37,7 @@ const {
 const { rangesType } = await import('../../../extension/src/core/ui/field-types/ranges.js');
 const { huntlistType } = await import('../../../extension/src/core/ui/field-types/huntlist.js');
 const { farmrulesType } = await import('../../../extension/src/core/ui/field-types/farmrules.js');
+const { bus, EVT } = await import('../../../extension/src/core/bus.js');
 const { multioptsType } = await import('../../../extension/src/core/ui/field-types/multiopts.js');
 const { minerulesType } = await import('../../../extension/src/core/ui/field-types/minerules.js');
 const { timerangesType } = await import('../../../extension/src/core/ui/field-types/timeranges.js');
@@ -551,12 +552,39 @@ function frButton(kind, idx) {
 }
 const frEv = (sel) => farmrulesType.events.find((e) => e.sel === sel);
 
-test('farmrules events 声明：change(frkin/frsel) + click(增删)，mount 为函数', () => {
-  assert.equal(farmrulesType.events.length, 3);
+test('farmrules events 声明：change(frkin/frskillin/frsel) + click(增删/归还)，mount 为函数', () => {
+  assert.equal(farmrulesType.events.length, 5);
   assert.equal(frEv('.pc-frkin').on, 'change');
+  assert.equal(frEv('.pc-frskillin').on, 'change');
   assert.equal(frEv('.pc-frsel').on, 'change');
   assert.equal(frEv('.pc-frdel,.pc-fradd').on, 'click');
+  assert.equal(frEv('.pc-frrestore').on, 'click');
   assert.equal(typeof farmrulesType.mount, 'function');
+});
+
+test('farmrules skill 位：布尔写回 + commit 恰一次（不 refresh，独立类名不走 frkin 分流）', () => {
+  const list = [{ preset: 1, families: [7], kinds: ['tower'] }];
+  const { ctx, calls } = frCtx(list);
+  frEv('.pc-frskillin').run({ target: frEl(0, 'skill', { checked: true }) }, ctx);
+  assert.equal(list[0].skill, true);
+  assert.equal(calls.commit, 1);
+  assert.equal(calls.refresh, 0);
+  frEv('.pc-frskillin').run({ target: frEl(0, 'skill', { checked: false }) }, ctx);
+  assert.equal(list[0].skill, false);
+});
+
+test('farmrules 归还按钮：发 bus 固定事件 FARM_SKILL_RESTORE + commit（core/ui 不反查 feat）', () => {
+  const list = [{ preset: 1, families: [7], kinds: ['tower'] }];
+  const { ctx, calls } = frCtx(list);
+  const got = [];
+  const off = bus.on(EVT.FARM_SKILL_RESTORE, (p) => got.push(p));
+  try {
+    frEv('.pc-frrestore').run({ target: {} }, ctx);
+  } finally {
+    off();
+  }
+  assert.equal(got.length, 1);
+  assert.equal(calls.commit, 1);
 });
 
 test('farmrules family 勾选：families 存数字 + commit 恰一次（不 refresh）', () => {
@@ -2092,4 +2120,224 @@ test('syncTypeModules：只声明 assemble 无 sync 的 module 被跳过', () =>
   };
   syncTypeModules(root, () => ({}));
   assert.equal(asm, 0); // 无 sync 钩子 → 不调 assemble
+});
+
+// ── queueskills（自动下田队列技能，只读 box） ───────────────────────────
+
+// queueskills DOM 桩：外壳含 pc-fqhead（事件）与 pc-fqbody（渲染目标）；querySelectorAll 按正则从
+// body.innerHTML 提取 img 占位（fillIcons 用），展开/收起由 click 监听器驱动，与真实交互同路径
+function makeFqBox() {
+  const head = {
+    attrs: {},
+    listeners: {},
+    isOpen: false,
+    classList: {
+      add() {
+        head.isOpen = true;
+      },
+      remove() {
+        head.isOpen = false;
+      },
+    },
+    setAttribute(k, v) {
+      head.attrs[k] = v;
+    },
+    addEventListener(t, f) {
+      head.listeners[t] = f;
+    },
+    click() {
+      head.listeners.click && head.listeners.click();
+    },
+  };
+  const body = {
+    hidden: true,
+    innerHTML: '',
+    querySelectorAll(sel) {
+      const imgs = [];
+      if (sel === 'img[data-iconload]') {
+        const re = /data-iconload="([^"]+)"/g;
+        let m;
+        while ((m = re.exec(body.innerHTML))) {
+          imgs.push({
+            dataset: { iconload: m[1] },
+            removeAttribute() {},
+            hidden: true,
+            src: '',
+          });
+        }
+      }
+      return imgs;
+    },
+  };
+  const box = {
+    querySelector(sel) {
+      if (sel === '.pc-fqhead') return head;
+      if (sel === '.pc-fqbody') return body;
+      return null;
+    },
+  };
+  return { head, body, box };
+}
+
+const FQ_DATA = [
+  {
+    preset: 5,
+    fam: '金',
+    skill: true,
+    heroes: [
+      {
+        hid: 205,
+        name: '甘索',
+        level: 120,
+        star: 5, // 星级边框：≥5 金
+        icon: 'image/hero_icon/hero_icon205',
+        items: [
+          {
+            skillId: 2523506,
+            name: '野外采集速度',
+            tag: '稀',
+            icon: 'image/hero_skill/skill_icon020',
+            level: 6,
+          },
+          {
+            skillId: 2523507,
+            name: '部队负重增加',
+            tag: '普', // 普通技：白边框（icon 空回退 lv 文字分支仍覆盖）
+            icon: '',
+            level: 5,
+          },
+        ],
+        str: '',
+      },
+      {
+        hid: 104,
+        name: '泰温',
+        level: 113,
+        star: 4, // 星级边框：4 紫
+        icon: '',
+        items: null,
+        str: '21205 野外采集速度[稀] lv6',
+      },
+    ],
+  },
+  { preset: 6, fam: '粮', skill: false, heroes: [] },
+];
+
+test('queueskillsType：render 收起骨架（零 fd.get 读取、零图标加载）+ 注册断言', async () => {
+  const { queueskillsType } =
+    await import('../../../extension/src/core/ui/field-types/queueskills.js');
+  assert.equal(getTypeModule('queueskills'), queueskillsType); // index.js 装配即注册
+  let reads = 0;
+  const fd = {
+    label: '队列技能',
+    hint: '提示文案',
+    get: () => {
+      reads++;
+      return FQ_DATA;
+    },
+  };
+  const html = queueskillsType.render(undefined, fd, {});
+  assert.equal(reads, 0); // 懒读取：render 收起态不调 fd.get
+  assert.ok(html.includes('pc-fqhead')); // 可点击收起头
+  assert.ok(html.includes('aria-expanded="false"'));
+  assert.ok(html.includes('pc-fqbody" hidden')); // body 收起
+  assert.ok(!html.includes('data-iconload')); // 零图标加载
+  assert.ok(!html.includes('提示文案')); // hint 在 body 内，展开才见
+});
+
+test('queueskillsType：展开时才 fd.get 现算渲染（分节 + 等级角标 + 稀有度着色 + str 降级 + 图标占位）', async () => {
+  const { queueskillsType } =
+    await import('../../../extension/src/core/ui/field-types/queueskills.js');
+  let reads = 0;
+  const ctx = {
+    fid: 'autoFarm._skillInfo.expand',
+    fd: {
+      label: '队列技能',
+      hint: '提示文案',
+      get: () => {
+        reads++;
+        return FQ_DATA;
+      },
+    },
+    c: {},
+  };
+  const { head, body, box } = makeFqBox();
+  queueskillsType.assemble(box, ctx);
+  assert.equal(reads, 0); // 装配不读取
+  head.click(); // 展开
+  assert.equal(reads, 1); // 展开时才现算
+  assert.equal(body.hidden, false);
+  assert.ok(head.isOpen && head.attrs['aria-expanded'] === 'true');
+  const html = body.innerHTML;
+  assert.ok(html.includes('pc-fqsec'));
+  assert.ok(html.includes('预设5 · 金'));
+  assert.ok(html.includes('pc-fqlv">120</span>')); // 英雄等级移为头像右下角标
+  assert.ok(html.includes('pc-fqavwrap s5')); // 5 星头像金边框
+  assert.ok(html.includes('pc-fqavwrap s4')); // 4 星头像紫边框
+  assert.ok(html.includes('pc-fqskill rare')); // 稀有度着色（金边）
+  assert.ok(html.includes('pc-fqskill plain')); // 普通技白边框
+  assert.ok(html.includes('野外采集速度'));
+  assert.ok(html.includes('pc-fqicolv">6</span>')); // 技能等级移为图标角标
+  assert.ok(html.includes('pc-fqsklv">lv5')); // 无图标技能回退 lv 文字
+  assert.ok(!html.includes('>甘索<')); // 名字不再占版面（hover title 展示）
+  assert.ok(html.includes('title="甘索')); // 名字/编号移入头像 title
+  assert.ok(html.includes('pc-fqlegacy')); // items 缺失 → str 文本降级
+  assert.ok(html.includes('未启用技能装配')); // skill:false 标记
+  assert.ok(html.includes('英雄集未就绪')); // heroes 空占位
+  // 二期图标：icon 路径就绪 → hidden img 占位（data-iconload）+ 首字占位；icon 空 → 不出 img
+  assert.ok(html.includes('data-iconload="image/hero_icon/hero_icon205"'));
+  assert.ok(html.includes('pc-fqavph">甘</span>'));
+  assert.ok(html.includes('data-iconload="image/hero_skill/skill_icon020"'));
+  assert.ok(html.includes('pc-fqicowrap')); // 技能图标白底垫衬
+  assert.ok(html.includes('pc-fqavwrap')); // 甘索有头像位；泰温 icon 空但恒出首字占位
+  assert.ok(!html.includes('hero_icon104'));
+  assert.ok(html.includes('提示文案')); // hint 在 body 内
+  head.click(); // 收起
+  assert.equal(body.hidden, true);
+  assert.ok(!head.isOpen && head.attrs['aria-expanded'] === 'false');
+});
+
+test('queueskillsType：展开态跨 rebuild 恢复（assemble 直接展开+重渲）+ 无数据占位（桩环境 LM 缺失图标回退）', async () => {
+  const { queueskillsType } =
+    await import('../../../extension/src/core/ui/field-types/queueskills.js');
+  // 无数据：展开后占位 + hint
+  const ctxNull = {
+    fid: 'autoFarm._skillInfo.null',
+    fd: { label: '队列技能', hint: '提示文案', get: () => null },
+    c: {},
+  };
+  const b1 = makeFqBox();
+  queueskillsType.assemble(b1.box, ctxNull);
+  b1.head.click();
+  assert.ok(b1.body.innerHTML.includes('无下田规则行'));
+  assert.ok(b1.body.innerHTML.includes('提示文案'));
+
+  // 展开态恢复：同 fid 上一次展开后，rebuild（新 box）再 assemble 应直接展开并重渲
+  let reads = 0;
+  const ctxOpen = {
+    fid: 'autoFarm._skillInfo.restore',
+    fd: {
+      label: '队列技能',
+      get: () => {
+        reads++;
+        return FQ_DATA;
+      },
+    },
+    c: {},
+  };
+  const first = makeFqBox();
+  queueskillsType.assemble(first.box, ctxOpen);
+  first.head.click();
+  assert.equal(reads, 1);
+  const rebuilt = makeFqBox(); // 模拟 UI_REFRESH rebuild：全新收起骨架 + 同 fid
+  queueskillsType.assemble(rebuilt.box, ctxOpen);
+  assert.equal(rebuilt.body.hidden, false); // 直接恢复展开
+  assert.equal(reads, 2); // 恢复时重渲（新鲜数据）
+  assert.ok(rebuilt.body.innerHTML.includes('预设5 · 金'));
+
+  // 图标失败回退：桩环境 loadManager 缺失 → heroIcon.load 回 '' → img 保持 hidden 露文字占位
+  const imgs = rebuilt.body.querySelectorAll('img[data-iconload]');
+  assert.ok(imgs.length >= 2); // 头像 + 技能图占位
+  assert.equal(imgs[0].hidden, true);
+  assert.equal(imgs[0].src, '');
 });

@@ -11,6 +11,7 @@
  * 依赖面 = dom.js（escAttr）+ ctx + mount 传入的 panel/log；不反查 fields.js/wire.js。
  */
 import { escAttr } from '../dom.js';
+import { bus, EVT } from '../../bus.js';
 
 /**
  * 资源种类定义（值 → 下拉摘要短名 / 展开后的全名 / 说明）。雷神(family16) 无遗迹田，渲染时单独禁用。
@@ -82,8 +83,11 @@ function farmFamilySummary(families, options) {
  * 预设编队在整表内互斥：其它行已选用的值渲染成 disabled（本行自身仍可选），与 feat 侧 normalizeRules 的
  * 全局唯一口径对齐。雷神没有 6 级田，故**本行勾选的家族全都开不出遗迹**（只剩雷神）时遗迹选项置 disabled。
  * 行存在即生效；preset 改动与行增删整块重绘（disabled 要随之联动），family/kind 勾选只就地刷摘要
- *（两者都不影响其它行，重绘反而会把展开中的浮层关掉）。
- * @param {Array<{preset:number,families?:number[],kinds?:string[]}>} list 当前队伍规则表
+ *（两者都不影响其它行，重绘反而会把展开中的浮层关掉）。「技能」位（r.skill）= 派兵前给该编队英雄
+ * 自动装配采集技能（组1 模板复制进组2 + 补采集书，派完即卸归还），勾选只落数据、由 feat 侧执行。
+ * 标题行「归还技能组2」按钮：把被征用的技能组2 恢复到征用前原样并清除快照，走 bus 固定事件
+ * （core/ui 不反查 feat，执行方在 auto-farm 模块级常驻监听——按钮的价值恰在 feat 未运行时清理残留）。
+ * @param {Array<{preset:number,families?:number[],kinds?:string[],skill?:boolean}>} list 当前队伍规则表
  * @param {object} fd 字段描述符（label / familyOptions / presetOptions / hint）
  * @returns {string}
  */
@@ -141,6 +145,7 @@ function farmRulesInnerHTML(list, fd) {
         .map((f) => Number(f) || 0)
         .filter((f) => f > 0);
       const kinds = Array.isArray(r && r.kinds) ? r.kinds : [];
+      const skill = !!(r && r.skill);
       // 雷神没有 6 级田（遗迹邮件只开得出金/粮/油）：只剩雷神时遗迹不可下，与 normalizeRules 同口径
       const relicDis = families.length > 0 && families.every((f) => f === 16);
       const kindDefs = FARM_KIND_DEFS.map((k) => ({
@@ -158,6 +163,9 @@ function farmRulesInnerHTML(list, fd) {
           preset,
           usedPresets,
         )}</select>` +
+        `<span class="pc-frdiv" aria-hidden="true"></span>` +
+        `<label class="pc-frskill" title="派兵前自动装配采集技能：以组1 为模板复制进组2 并按资源族补采集书，派完即卸归还（书在编队间轮转）">` +
+        `<input type="checkbox" class="pc-frskillin" data-part="skill"${skill ? ' checked' : ''}><span>技能</span></label>` +
         `<span class="pc-frdiv" aria-hidden="true"></span>` +
         optCell(
           'family',
@@ -185,7 +193,10 @@ function farmRulesInnerHTML(list, fd) {
   return (
     `<div class="pc-fruletop">` +
     `<span class="pc-rngtitle">${escAttr(fd.label || '下田规则')}</span>` +
+    `<span class="pc-frtopbtns">` +
+    `<button class="pc-frrestore" type="button" title="把被征用的技能组2恢复到征用前原样并清除征用快照（feat 未运行、技能队已停时可清理残留）">归还技能组2</button>` +
     `<button class="pc-fradd" type="button" title="添加一支队伍" aria-label="添加一支队伍">＋</button>` +
+    `</span>` +
     `</div>` +
     (rows ||
       '<div class="pc-rnghint">未添加队伍 = 不下田；点＋添加的行即生效，同时会暂停总开关，配好后手动重新打开</div>') +
@@ -278,6 +289,27 @@ export const farmrulesType = {
           row.kinds = row.kinds.filter((k) => k !== 'relic');
         syncRowGroupsUi(el.closest('.pc-frrow'), row, ctx.fd);
         ctx.commit();
+      },
+    },
+    // 「技能」装配位（编队级布尔）：只落数据，执行在 feat 侧派兵挂点（skill-attach 借还流水）。
+    // 独立类名不走 .pc-frkin 的 family/kind 分流，避免被多选委托误当 kinds 处理。
+    {
+      on: 'change',
+      sel: '.pc-frskillin',
+      run(e, ctx) {
+        const r = resolveRow(ctx, e.target);
+        if (!r) return;
+        r.list[r.idx].skill = !!e.target.checked;
+        ctx.commit();
+      },
+    },
+    // 「归还技能组2」：发 bus 固定事件，auto-farm 模块级常驻监听执行快照还原（core/ui 不反查 feat）。
+    {
+      on: 'click',
+      sel: '.pc-frrestore',
+      run(e, ctx) {
+        ctx.commit();
+        bus.emit(EVT.FARM_SKILL_RESTORE);
       },
     },
     // 预设编队单选：改动要整块重绘同步其它行的 disabled（重绘会把展开中的多选列表收起）

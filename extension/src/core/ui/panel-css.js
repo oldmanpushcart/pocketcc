@@ -415,6 +415,48 @@ export const PANEL_CSS = `
       color:#ff9c9c;font:inherit;font-size:16px;line-height:24px;cursor:pointer;text-align:center;}
     @media (hover:hover){.pc-mrdel:hover{color:#ff6b6b;}}
     .pc-mrcap{flex:0 0 auto;margin-left:auto;font-size:11px;line-height:1;color:#8fa6c4;letter-spacing:.5px;}
+    /* 队列技能字段（type:'queueskills'，自动下田：逐预设分节，节内逐英雄 chip + 技能徽章链，只读）。
+       英雄 chip=名字+等级角标；技能徽章=名称+等级角标，稀有度着色（稀=金 / 主动=蓝）；旧档无结构化
+       items 时该英雄降级为一行文本。只读无事件，刷新走 feat 侧 UI_REFRESH{rebuild} 重绘本卡。 */
+    .pc-fqsk{display:flex;flex-direction:column;gap:8px;width:100%;margin:2px 0 6px;}
+    /* 收起头（默认收起 + 展开时才经 ctx.fd.get 懒读取，见 queueskills.js）：可点击行 + ▶ 旋转，同 .pc-fsectoggle 风格 */
+    .pc-fqhead{display:flex;align-items:center;gap:6px;cursor:pointer;user-select:none;
+      font-size:12px;color:#cfe0f5;padding:2px 0;}
+    @media (hover:hover){.pc-fqhead:hover{color:#eaf4ff;}}
+    .pc-fqchev{font-size:9px;opacity:.6;transition:transform .15s;}
+    .pc-fqhead.open .pc-fqchev{transform:rotate(90deg);}
+    .pc-fqheadtxt{font-weight:600;}
+    .pc-fqsub{font-size:10px;color:#7a8aa0;font-weight:400;}
+    .pc-fqgrp{display:flex;flex-direction:column;gap:4px;}
+    .pc-fqsec{display:flex;align-items:center;gap:6px;font-size:12px;color:#8fa6c4;letter-spacing:.5px;}
+    .pc-fqoff{font-size:11px;color:#7a8aa0;}
+    .pc-fqrow{display:flex;flex-wrap:wrap;align-items:center;gap:6px;min-width:0;}
+    /* 英雄 chip：右侧竖线分隔英雄组与技能链（视觉分组；legacy 文本行同样生效） */
+    .pc-fqhero{display:inline-flex;align-items:center;gap:4px;flex:0 0 auto;
+      padding-right:7px;margin-right:3px;border-right:1px solid rgba(255,255,255,.16);}
+    /* 技能徽章：图标即徽章本体（无边框；角标统一深底白字不着色，rare/plain/act 类仅作语义标记）；无图标回退 lv 文字 */
+    .pc-fqskill{display:inline-flex;align-items:center;}
+    .pc-fqsklv{font-size:10px;color:#d8e2f0;opacity:.85;}
+    .pc-fqlegacy{font-size:11px;color:#9fb0c8;white-space:normal;}
+    .pc-fqnone{font-size:11px;color:#7a8aa0;}
+    /* 图标（三期）：英雄头像与技能图标统一 36px 无边框满铺（角标恒深底白字，星级/稀有度不着色，
+       名字/编号 hover title 展示，不占版面）；data-iconload 占位由 queueskills assemble 钩子
+       走 acl/hero-icon 补 dataURL，失败保持 hidden 露占位 */
+    .pc-fqavwrap{position:relative;flex:0 0 auto;width:36px;height:36px;border-radius:6px;
+      background:#fff;}
+    .pc-fqav{position:absolute;inset:0;width:36px;height:36px;border-radius:6px;object-fit:cover;object-position:center;}
+    .pc-fqav:not([hidden])+.pc-fqavph{display:none;}
+    .pc-fqavph{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
+      border-radius:6px;background:rgba(216,222,240,.25);font-size:14px;color:#2b3550;}
+    /* 角标浮在图右下角上（无边框可占，right/bottom=2px 贴角） */
+    .pc-fqlv{position:absolute;right:2px;bottom:2px;padding:0 3px;border-radius:999px;
+      background:#1c2740;border:1px solid rgba(255,255,255,.4);font-size:9px;font-weight:700;
+      line-height:12px;color:#fff;box-shadow:0 1px 3px rgba(0,0,0,.5);}
+    .pc-fqicowrap{position:relative;flex:0 0 auto;width:36px;height:36px;border-radius:6px;}
+    .pc-fqico{position:absolute;inset:0;width:36px;height:36px;border-radius:6px;object-fit:cover;}
+    .pc-fqicolv{position:absolute;right:2px;bottom:2px;padding:0 3px;border-radius:999px;
+      background:#1c2740;border:1px solid rgba(255,255,255,.35);font-size:8px;font-weight:700;
+      line-height:11px;color:#fff;box-shadow:0 1px 3px rgba(0,0,0,.5);}
     /* gap 12px 使星心距 ≥24px（2.5.8）；button 化后清 UA 外观，星级键盘可达（原生 button） */
     .pc-mrstars{display:inline-flex;gap:12px;flex:0 0 auto;}
     .pc-mrstar{appearance:none;-webkit-appearance:none;border:none;background:transparent;padding:0;font-family:inherit;font-size:15px;line-height:1;cursor:pointer;color:rgba(255,255,255,.55);}
@@ -424,6 +466,12 @@ export const PANEL_CSS = `
        行盒可换行（窄卡尽量单行），× 与标题行＋右对齐；骨架同 minerules，交互走面板级事件委托（见 wirePanel）。 */
     .pc-frule{display:flex;flex-direction:column;gap:6px;width:100%;margin:2px 0 6px;}
     .pc-fruletop{display:flex;align-items:center;justify-content:space-between;gap:8px;}
+    .pc-frtopbtns{display:inline-flex;align-items:center;gap:6px;}
+    /* 归还技能组2（动作型按钮，非数据行）：文案式，点击发 bus 全局事件由 feat 侧执行；
+       面板不拿 feat 运行态（core/ui 不反查 feat），无快照/在借时点击在 feat 侧 log 后 no-op */
+    .pc-frrestore{flex:0 0 auto;height:20px;padding:0 8px;border-radius:6px;cursor:pointer;
+      border:1px dashed rgba(255,255,255,.4);background:transparent;color:#cfe8ff;font:inherit;font-size:12px;line-height:18px;}
+    @media (hover:hover){.pc-frrestore:hover{background:rgba(255,255,255,.1);}}
     .pc-fradd{flex:0 0 auto;width:22px;height:20px;padding:0;border-radius:6px;cursor:pointer;
       border:1px dashed rgba(255,255,255,.4);background:transparent;color:#cfe8ff;font:inherit;font-size:14px;line-height:18px;}
     @media (hover:hover){.pc-fradd:hover{background:rgba(255,255,255,.1);}}
@@ -435,6 +483,9 @@ export const PANEL_CSS = `
     .pc-frdiv{flex:0 0 auto;width:1px;align-self:stretch;margin:1px 2px;background:rgba(255,255,255,.22);}
     .pc-frsel{padding:3px 5px;border-radius:6px;border:1px solid rgba(255,255,255,.4);
       background:rgba(20,26,38,.9);color:#e8eef7;font:inherit;min-width:0;}
+    /* 采集技能装载位（v3）：行级布尔 checkbox，观感对齐 .pc-frkopt；独立 class 与 .pc-frkin 事件分流隔离 */
+    .pc-frskill{display:inline-flex;align-items:center;gap:4px;font-size:12px;color:#cfe3ff;cursor:pointer;white-space:nowrap;flex:0 0 auto;}
+    .pc-frskillin{width:13px;height:13px;margin:0;cursor:pointer;accent-color:#4a9eff;flex:0 0 auto;}
     /* 资源种类多选下拉（type:'farmrules'：遗迹/机械/普通）——按钮就是下拉触发器（观感对齐 .pc-frsel，只显示已选摘要），
        选项列表每项一个 checkbox。主路径（面板带 .pc-kindpop = 浏览器有 Popover API）：列表进 top layer 浮在按钮下方，
        不撑高卡片，也不被 .pc-panel/.pc-pane 的 overflow:auto、.pc-sec 的 overflow:hidden 和面板的 backdrop-filter 裁切
