@@ -4,7 +4,8 @@
  * 归属：本模块不是独立 feat，而是 autoFarm（feats/player/auto-farm/index.js）驱动的**子引擎**——
  *   生命周期（install/configure/run/pause）由 index.js 转发，共用 autoFarm 的 reactor ctx 与 alive 门控，
  *   自带一个 createCycle。与 autoFarm/tower-scanner 的关系：tower-scanner 只**采集别人建的**机械田；
- *   本引擎接管**自己建塔**。两者共用行军队列，故同样靠 march.freeSlots() 闸门，本引擎单拍最多占 1 个名额。
+ *   本引擎接管**自己建塔**。两者共用行军队列，故同样靠 march.freeSlots() 闸门；本引擎**串行建造**：
+ *   全引擎同时最多 1 条建造行军在飞（账本非空不派新单），一次只占 1 个行军队列，多族待建逐个排队。
  *
  * 受「下田时段」控制（index.js 注入 gate 回调）：仅在「子功能勾选启用 且（未启用时段 或 落在下田时段内）」时才建；
  *   停用或时段外 → 不允许新建，**先拉到权威 1031 且确认成功**，再把**活表里确认 st=2** 的塔逐座 1032 TOWER_REMOVE
@@ -59,6 +60,8 @@
  * 闸门与限流：非 world 场景不发包；准入闸 screen(getUid()) 每拍首行；派建前先过源码实证的本地闸——
  *   DATACONFIG 11001 玩家等级门槛 + march.freeSlots() 行军队列（与游戏 attackCallBack 同判据；建塔入口源码
  *   无造价预检字段，成本由服务器拒绝兜底）。单拍 ≤1 发 1033 + 选地若干发 906（逐级降序，命中即停）+ 1 发 1034；
+ *   且建造**全局串行**（2026-11-21 用户口径「只用 1 个队列建」）：任一在飞建造未撤回（账本非空）就不派下一单，
+ *   多族待建逐个排队；904 受理即转返程腾出行军名额，撤回成功拍即可接续派下一族（腾位拍没排上则 10s 短间隔补排）。
  *   被拒按归因分流：坐标类拒绝才拉黑落点，其余只族冷却；连续被拒达 rejectionStreakBackoff(3) 次下拍睡眠翻倍。
  *
  * 账本：storage.slot('autoFarm.mechBuild')（v2，UID 隔离；BL-4 加认领超时清理，旧 v1 档整份作废靠 1031 重建）落 family → {marchId,bid,towerId,x,y,
@@ -1281,8 +1284,14 @@ async function cyclePass() {
   if (!refreshed && !towersLoaded) return cfg.towerRetryMs; // 权威列表还没建立：不派建，防家族唯一性误判
   reconcileLedger();
   var serverSec = gameData.serverTime() | 0;
+  var inflightBefore = Object.keys(ledger).length; // 撤回前的在飞建造数：串行建造的「腾位拍」判据
   var recallDelay = await recallPass(serverSec);
   if (!aliveFn()) return 0;
+  // 串行建造闸（2026-11-21 用户口径「只用 1 个队列建」）：任一在飞建造未收尾（账本非空）就不派新单，
+  // 全引擎同时最多占 1 个行军队列；904 受理即转返程（march.isOccupying 口径 RETURNING 不占位）腾出名额，
+  // 本拍账本排空即可接续派下一族；跨会话遗留的多条账本也由此逐拍串行排空后才开始新派建。
+  var hasInflight = Object.keys(ledger).length > 0;
+  var recallFreed = inflightBefore > 0 && !hasInflight;
 
   var list = [];
   for (var id in towers) {
@@ -1304,6 +1313,16 @@ async function cyclePass() {
       continue;
     }
     if (dispatched) continue; // 单拍最多 1 发 1033
+    if (hasInflight) {
+      // 串行建造：在飞建造未撤回前不派任何新单（一次只占 1 个行军队列），等 recallPass 清账本后下一拍再排
+      log.debug(
+        'serial build: %d build(s) in flight, defer family=%d(%s)',
+        Object.keys(ledger).length,
+        f,
+        FAMILY_LABEL[f],
+      );
+      continue;
+    }
     if (familyCooldown[f] && familyCooldown[f] > now) {
       log.debug(
         'family=%d(%s) in cooldown until %s',
@@ -1320,13 +1339,13 @@ async function cyclePass() {
     }
     // BL-3：noop/blocked/rejected 一律 continue 试下一家族（单拍 1 发 1033 由 dispatched 闸保证），不 break 放弃后续家族。
   }
-  // 睡眠 = min(撤回复查, 到期补建, 派建后立即重排, idle 兜底)；连续被拒退避翻倍
+  // 睡眠 = min(撤回复查, 到期补建, 派建后立即重排, 串行腾位衔接, idle 兜底)；连续被拒退避翻倍
   var delay = cfg.idleScanMs;
   if (dispatched) delay = Math.min(delay, 1000 * 10);
   if (recallDelay > 0) delay = Math.min(delay, recallDelay);
   if (expiring > 0) delay = Math.min(delay, expiring);
-  var hasInflight = Object.keys(ledger).length > 0;
-  if (!dispatched && !hasInflight && expiring <= 0) delay = cfg.idleScanMs;
+  if (recallFreed && !dispatched) delay = Math.min(delay, 1000 * 10); // 本拍腾位但没排上下一单（同号在途/名额未刷新/族冷却）：短间隔尽快补排
+  if (!dispatched && !hasInflight && expiring <= 0 && !recallFreed) delay = cfg.idleScanMs;
   if (rejectStreak >= cfg.rejectStreakBackoff) delay = Math.min(delay * 2, cfg.idleScanMs * 4);
   return Math.max(0, Math.floor(delay));
 }
