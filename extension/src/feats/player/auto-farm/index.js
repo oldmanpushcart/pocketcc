@@ -68,6 +68,7 @@ import { parseData, sleep } from '../../../core/util.js';
 import { createLog } from '../../../core/log.js';
 import { reactor } from '../../../core/reactor.js';
 import { storage } from '../../../core/storage.js';
+import { bus, EVT } from '../../../core/bus.js';
 import { Battle } from '../../../core/battle.js';
 import { march } from '../../../core/march.js';
 import { createCycle } from '../../../core/cycle.js';
@@ -91,6 +92,9 @@ import { relic } from './lvl6-scanner.js';
 import { tower } from './tower-scanner.js';
 import { normal } from './normal-scan.js';
 import { mechBuild, normalizeMechFamilies, familyOptions } from './mech-build.js';
+import { skillAttach } from './skill-attach.js';
+import { heroIcon } from '../../../core/acl/hero-icon.js';
+import { l10n } from '../../../core/acl/l10n.js';
 
 import { CMD_MARCH_WORLD_POINT } from './constants.js';
 
@@ -295,6 +299,7 @@ function normalizeRules(raw) {
       preset: Math.max(1, Math.min(PRESET_MAX, r.preset | 0) || 1),
       families: fams,
       kinds: picked,
+      skill: !!(r.skill | 0), // v3：采集技能装载位（缺省关，旧行为不变）
     });
   }
   assignUniquePresets(out);
@@ -454,6 +459,68 @@ function rowPresetHeroes(row) {
   } catch (err) {
     return [];
   }
+}
+
+/**
+ * 面板「队列技能」只读区块数据（type:'queueskills' 的 fd.get 数据源）：逐规则行一节——
+ * [{preset, fam, skill, heroes:[{hid, name, level, items|null, str|null}]}]。英雄名/等级现场读
+ * HeroData（借还轮转不影响名字与等级）；items/str 是出发瞬间装配快照（旧档无 items 时 str 兜底成文本行）。
+ * 英雄集走 rowPresetHeroes（MarchData 口径，与派兵一致）。面板 get() 同步执行：slot 未加载 /
+ * 符号未就绪时英雄集为空（面板显示未就绪占位），随下一次面板刷新补齐。
+ * @param {Array} rules 面板配置的规则行（原始形状，内部 normalize）
+ * @returns {Array|null} 无规则行时 null（面板显示占位）
+ */
+function queueSkillData(rules) {
+  const rows = normalizeRules(rules || []);
+  if (!rows.length) return null;
+  const famLabel = function (family) {
+    for (let i = 0; i < RULE_OPTS.familyOptions.length; i++) {
+      if (RULE_OPTS.familyOptions[i].value === family) return RULE_OPTS.familyOptions[i].short;
+    }
+    return '';
+  };
+  const out = [];
+  for (let i = 0; i < rows.length; i++) {
+    const row = rows[i];
+    const heroes = rowPresetHeroes(row);
+    const hs = [];
+    for (let j = 0; j < heroes.length; j++) {
+      const hid = heroes[j] | 0;
+      const h = skillAttach.heroData(hid);
+      const info = skillAttach.loadoutInfo(hid);
+      hs.push({
+        hid: hid,
+        name: h && h._name ? l10n.text(h._name) || h._name : '英雄' + hid,
+        level: h ? h._level | 0 : 0,
+        // 星级（HeroData._star 底层直读，同 _level 口径）：头像边框色 ≥5金/4紫/3蓝，其余默认描边
+        star: h ? h._star | 0 : 0,
+        icon: heroIcon.heroPath(h),
+        // icon 是展示资产不进快照语义：渲染期一律按 skillId 现查表（skillInfo 权威分支：
+        // skill_type==1 走 hero_skill.skill_icon，其余 item 表反查）。快照 items 里的 icon 字段是
+        // 历史版本写入的查询产物，可能为废弃占位错值（skill_icon020 全表同值），不读。
+        items:
+          info && Array.isArray(info.items)
+            ? info.items.map(function (it) {
+                return {
+                  skillId: it.skillId | 0,
+                  name: it.name,
+                  tag: it.tag,
+                  icon: skillAttach.skillIconPath(it.skillId),
+                  level: it.level | 0,
+                };
+              })
+            : null,
+        str: info && info.str && info.str !== 'empty' ? info.str : '',
+      });
+    }
+    out.push({
+      preset: row.preset | 0,
+      fam: famLabel(row.family | 0),
+      skill: !!row.skill,
+      heroes: hs,
+    });
+  }
+  return out;
 }
 
 /**
@@ -955,7 +1022,31 @@ async function dispatchRows(rows, allow, taken) {
         break;
       }
       var ck = cand.x + ',' + cand.y;
-      var ret = await sendFarm(cand, plan);
+      // 采集技能装载（行级勾选 skill 时）：先装配（1345 切组2 + 复制组1 + 补采集书）再派兵——
+      // 增益在 902 受理瞬间写进行军快照，派完即卸归还书池（借还轮转）；release 必须进 finally，
+      // march 报错/中止也不能跳过，否则书被钉死在首批英雄身上后续队借不到（skill-attach 头注释）。
+      var skillOn =
+        !!row.skill && Array.isArray(plan.presetHeroIds) && plan.presetHeroIds.length > 0;
+      var ret; // try 内必赋值后才读；attach 抛错时 finally 归还后异常照抛，ret 永不被读
+      try {
+        if (skillOn) await skillAttach.attachHeroes(plan.presetHeroIds, cand.family, aliveFn);
+        // 装配期间开关被关：技能照还（finally），兵不再派——20261121 真机：在途轮跑完还把 902 发了
+        if (aliveFn()) {
+          ret = await sendFarm(cand, plan);
+        } else {
+          log.debug(
+            'farm march skipped. feat paused during attach (row=%d x=%d y=%d).',
+            idx,
+            cand.x,
+            cand.y,
+          );
+        }
+      } finally {
+        if (skillOn) await skillAttach.releaseHeroes(plan.presetHeroIds);
+      }
+      // 装配快照已写入：面板开着就重绘本卡（面板关着由 pendingRebuild 记账、开面板补），
+      // 让「队列技能」区块跟上最新一轮的实装清单
+      if (skillOn) bus.emit(EVT.UI_REFRESH, { rebuild: 'autoFarm' });
       if (!aliveFn()) return dispatched;
       if (ret.ok) {
         taken.add(ck);
@@ -1620,8 +1711,14 @@ function run(ctx) {
     kick(towerCycle, 'run (store restored)');
     kick(cycle, 'run (store restored)');
   });
-  // 机械田建造子引擎：复用宿主 ctx（ctx.on.push 退订由 reactor 在 pause 时统一摘除），自带一个 cycle
+  // 机械田建造子引擎：复用宿主 ctx（ctx.on.push 退订由 reactor 在 pause 时统一 摘除），自带一个 cycle
   mechBuild.run(ctx);
+  // 采集技能装载子引擎：10906 确认通道订阅同复用宿主 ctx；启动扫残留（台账 fill 项 + 快照 diff）
+  // ——重启/换 UID/刷新页都会重新走 run，残留归还全覆盖；pause 期不补扫（半挂起态不发包，下个 run 周期接管）
+  skillAttach.install(ctx);
+  skillAttach.reconcile().catch(function (err) {
+    log.warn('skill reconcile failed: %s', err && err.message);
+  });
 }
 
 /**
@@ -1638,6 +1735,7 @@ function pause(_ctx) {
     offGatherEdge = null;
   }
   mechBuild.pause(_ctx);
+  skillAttach.pause(); // 放行在途 10906 waiter（订阅已由 reactor 摘除，别挂满超时）
 }
 
 /**
@@ -1684,11 +1782,12 @@ reactor.register({
   offInCombat: true,
   /**
    * @type {number} 配置版本：v2 起规则行由「资源匹配队伍」改为「队伍匹配资源」
-   *（preset 单选 + families 多选 + kinds 多选）；当前存盘为 v1（无 _v 的更旧数据计 0）。
+   *（preset 单选 + families 多选 + kinds 多选）；v3 起规则行增加 skill 布尔位（采集技能装载）；
+   * 当前存盘为 v2，无 _v 的更旧数据计 0。
    */
-  version: 2,
+  version: 3,
   /**
-   * 旧档迁移：v0/v1 每行的单值 family → v2 的 families 数组。
+   * 旧档迁移：v0/v1 每行的单值 family → v2 的 families 数组；v2 及以下行补 skill:false（缺省关，旧行为不变）。
    * 只做形状换算、行序与 preset 不动（账本 rowIdx 仍对齐，不会把别人的田钉到本行），
    * 也不替用户猜新意愿：原来几个族、勾了哪些种类，迁移后照旧。
    * @param {object} c 存量配置（已与 defaults 合并）
@@ -1699,12 +1798,15 @@ reactor.register({
     var rules = Array.isArray(c.rules) ? c.rules : [];
     var out = rules.map(function (r) {
       var row = r || {};
-      if (Array.isArray(row.families)) return row; // 已是新形状（重复迁移保护）
-      var fam = row.family | 0;
-      // 旧档缺 family 时不能默认成金矿（那是 normalizeRules 旧版的兜底），否则凭空多出一个族
-      return { preset: row.preset | 0 || 1, families: fam ? [fam] : [], kinds: row.kinds || [] };
+      if (!Array.isArray(row.families)) {
+        var fam = row.family | 0;
+        // 旧档缺 family 时不能默认成金矿（那是 normalizeRules 旧版的兑底），否则 凭空多出一个族
+        row = { preset: row.preset | 0 || 1, families: fam ? [fam] : [], kinds: row.kinds || [] };
+      }
+      if (row.skill == null) row.skill = false; // v3：技能装载位缺省关（旧行为不变）
+      return row;
     });
-    log.info('rules migrated to v%d (from v%d): %d row(s).', 2, from | 0, out.length);
+    log.info('rules migrated to v%d (from v%d): %d row(s).', 3, from | 0, out.length);
     return Object.assign({}, c, { rules: out });
   },
   defaults: {
@@ -1758,6 +1860,17 @@ reactor.register({
       },
       hint: '仅在所列时段内下田；时段外撤回机械/普通田，遗迹田不受限。开始>结束视为跨午夜。',
     },
+    {
+      key: '_skillInfo',
+      label: '队列技能',
+      type: 'queueskills',
+      // 面板分段：与「下田时段」再分一刀
+      section: '队列技能',
+      hint: '每支队伍出发瞬间实际装配的技能书；出发后书自动归还背包（不影响已生效收益），下一轮出发前自动重新装配',
+      get: function (c) {
+        return queueSkillData(c.rules);
+      },
+    },
   ],
   toModuleCfg: function (c) {
     return {
@@ -1772,4 +1885,13 @@ reactor.register({
   configure: configure,
   run: run,
   pause: pause,
+});
+
+// 面板「归还技能组2」的执行方（farmrules 只发 bus 固定事件，core/ui 不反查 feat）。
+// 模块级常驻而非 run 期挂：按钮的价值恰在 feat 未运行时清理残留（征用快照恒存盘，restoreSnapshots
+// 自身按需 loadState，不依赖 reactor 生命周期）；多次点击幂等（快照清空后 no-op，只记 info）。
+bus.on(EVT.FARM_SKILL_RESTORE, function () {
+  skillAttach.restoreSnapshots().catch(function (err) {
+    log.warn('skill restore failed: %s', err && err.message);
+  });
 });

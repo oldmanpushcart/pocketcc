@@ -24,3 +24,18 @@ export const CMD_PUSH_ALLIANCE_RECORD = 10452;
 export const CMD_ALLIANCE_RECORD_DATA = 1193;
 /** @type {number} push PUSH_ALLIANCE_RECORD：联盟记录增量推送（新建成机械田即时并入活表） */
 export const PUSH_ALLIANCE_RECORD = 10452;
+/** @type {number} RequestId.STUDY_HERO_SKILL：英雄学习技能（装书）{heroId,index,itemId,isBuffSlot,skillsIndex}；
+ * 账目按 (heroId,itemId) 一份账：新登记扣账、同英雄跨组平装同款同档放行不扣账（20261121 温泰实验直证）；
+ * 同英雄已有同族更高档时装低档被拒（应答 data="hero_skill_equip001" 裸串且无 10906 跟随） */
+export const CMD_STUDY_HERO_SKILL = 897;
+/** @type {number} RequestId.FORGET_HERO_SKILL：英雄遗忘技能（卸书，按槽位寻址不需 itemId）{heroId,index,isBuffSlot,skillsIndex}；
+ * 注销最后一个登记→10401 amount+1 还账（实测 60ms 内）；另一组还有同款登记→不还账 */
+export const CMD_FORGET_HERO_SKILL = 898;
+/** @type {number} RequestId.ChangeHeroSkillsIndex：英雄技能组切换（纯指针零账变）{heroId,skillsIndex}；
+ * 受理后 10906 在 66~74ms 即时推送镜像翻转（先于 resp）并伴随 10012 战力重算 */
+export const CMD_CHANGE_HERO_SKILLS_INDEX = 1345;
+/** @type {number} push PUSH_HERO_INFO：英雄数据全量推送（897/898/1345 受理后 <100ms，hero 含 firstSkills/subSkills/skillsIndex）
+ * ——装配/切组的确认通道，实测 66~104ms，事件驱动替代盲等 */
+export const PUSH_HERO_INFO = 10906;
+/** @type {number} push PUSH_TOOL：背包物品数量推送 {itemId,amount}（897 新登记扣账 / 898 最后注销还账的回写） */
+export const PUSH_TOOL = 10401;

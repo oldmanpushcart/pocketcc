@@ -22,6 +22,7 @@
     "verify:cq26-train": "node scripts/replay/run.mjs --manifest cq26-train",
     "verify:cq26-wl-beast": "node scripts/replay/run.mjs --manifest cq26-wl-beast",
     "verify:quick-repair": "node scripts/replay/run.mjs --manifest quick-repair",
+    "verify:auto-farm-skill": "node scripts/replay/run.mjs --manifest auto-farm-skill",
     "verify:cq26-ice-shake": "node scripts/replay/run.mjs --manifest cq26-ice-shake",
     "verify:cq26-feast": "node scripts/replay/run.mjs --manifest cq26-feast",
     "protocol:extract": "node scripts/protocol/extract.mjs",

@@ -92,6 +92,34 @@ export default [
     ],
   },
   {
+    cmd: 897,
+    dir: null,
+    note: '',
+    src: '',
+    fields: '',
+    usages: [
+      {
+        name: 'CMD_STUDY_HERO_SKILL',
+        feat: 'auto-farm',
+        file: 'feats/player/auto-farm/constants.js',
+      },
+    ],
+  },
+  {
+    cmd: 898,
+    dir: null,
+    note: '',
+    src: '',
+    fields: '',
+    usages: [
+      {
+        name: 'CMD_FORGET_HERO_SKILL',
+        feat: 'auto-farm',
+        file: 'feats/player/auto-farm/constants.js',
+      },
+    ],
+  },
+  {
     cmd: 927,
     dir: 'C2S',
     note: '按 reportId 拉战报（旧 send 链路，reportStr 解析后含 battle.defender）',
@@ -225,6 +253,20 @@ export default [
         name: 'CMD_CREATE_RALLY',
         feat: 'radar-task',
         file: 'feats/player/radar-task/constants.js',
+      },
+    ],
+  },
+  {
+    cmd: 1345,
+    dir: null,
+    note: '',
+    src: '',
+    fields: '',
+    usages: [
+      {
+        name: 'CMD_CHANGE_HERO_SKILLS_INDEX',
+        feat: 'auto-farm',
+        file: 'feats/player/auto-farm/constants.js',
       },
     ],
   },
@@ -1255,6 +1297,20 @@ export default [
     ],
   },
   {
+    cmd: 10401,
+    dir: 'S2C',
+    note: '',
+    src: '',
+    fields: '',
+    usages: [
+      {
+        name: 'PUSH_TOOL',
+        feat: 'auto-farm',
+        file: 'feats/player/auto-farm/constants.js',
+      },
+    ],
+  },
+  {
     cmd: 10452,
     dir: 'S2C',
     note: 'push 联盟记录增量（建塔/毁塔事件；1031 重拉 kick 源 + 新机械田即时并入活表）',
@@ -1298,6 +1354,20 @@ export default [
         name: 'PUSH_FIND_REFUGEECAMP',
         feat: 'auto-hunt',
         file: 'feats/player/auto-hunt/constants.js',
+      },
+    ],
+  },
+  {
+    cmd: 10906,
+    dir: 'S2C',
+    note: '',
+    src: '',
+    fields: '',
+    usages: [
+      {
+        name: 'PUSH_HERO_INFO',
+        feat: 'auto-farm',
+        file: 'feats/player/auto-farm/constants.js',
       },
     ],
   },
