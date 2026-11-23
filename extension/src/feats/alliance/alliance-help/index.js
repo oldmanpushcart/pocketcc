@@ -30,8 +30,6 @@ import { createDrain } from '../../../core/drain.js';
 import { createCycle } from '../../../core/cycle.js';
 import { reactor } from '../../../core/reactor.js';
 import { item } from '../../../core/item.js';
-import { screen } from '../../../core/net-guard.js';
-import { getUid } from '../../../core/player.js';
 import { dailyText } from '../../../core/daily-stats.js';
 
 import {
@@ -165,9 +163,6 @@ var drain = createDrain({
  * @returns {Promise<number>} 下一次兜底扫描间隔（毫秒）
  */
 async function cycleRun() {
-  // 准入存活校验（O(1) 读缓存判定，不设限包恒真）：不过则本轮不生产不消费，
-  // 静默睡闲档不刷屏；不设限包永不命中此分支。
-  if (!screen(getUid())) return cfg.idleInterval;
   produce();
   if (!aliveFn()) return cfg.idleInterval;
   drain.consume().catch(function (err) {

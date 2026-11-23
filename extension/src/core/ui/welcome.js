@@ -1,8 +1,10 @@
-// 准入问候浮层（welcome）：授权包在游戏主城就绪、账号比对完成后展示的模态欢迎页。
+// 署名欢迎浮层（welcome）：主城就绪后展示的独立告知弹窗。
 // 独立 Shadow DOM host（与面板同款双向样式隔离，防游戏 CSS 污染/CSS 类名碰撞），极高 z-index 盖过游戏。
-// 两态：'ok' 绿色核验通过 + 「进入使用」按钮（按钮 resolve 启动编排等待的 promise）；
-//       'fail' 红色核验失败（不回显账号），模态不可关闭——此时功能链未被拉起，界面仅作明确告知。
-import { peerName, revision } from '../net-guard.js';
+// 非模态：不拦游戏交互、不做启动闸门——功能与面板由 boot.js 照常拉起，点不点「进入使用」都不影响使用。
+// 页脚摆版本号（快照通道另挂正文摘要前 8 位与通道名）；确有待生效版本时再追加一句「新版已就绪，刷新即生效」。
+import { identityOf, pendingNote, revision } from '../update.js';
+import { CHANNEL_NAME } from '../constants.js';
+import { updateSnapshot } from '../update-client.js';
 import { escAttr } from './dom.js';
 
 /**
@@ -12,28 +14,34 @@ import { escAttr } from './dom.js';
  */
 const CSS = `
 :host { all: initial; }
-.pcw-mask {
+.pcw-pop {
   position: fixed; inset: 0; z-index: 2147483646;
-  background: rgba(8, 10, 14, 0.72);
   display: flex; align-items: center; justify-content: center;
   font-family: "Microsoft YaHei", "PingFang SC", sans-serif;
+  /* 整层不吃事件：只有卡片本身可点，空白处的点击/滚轮都落到下层游戏页 */
+  pointer-events: none;
 }
 .pcw-card {
+  pointer-events: auto; position: relative;
   width: 420px; max-width: 92vw; box-sizing: border-box;
   padding: 26px 28px 18px; border-radius: 12px;
   background: linear-gradient(160deg, #1c2433, #12161f);
   border: 1px solid #3a4a63; box-shadow: 0 12px 48px rgba(0, 0, 0, 0.6);
   color: #d7dee9; text-align: center;
 }
-.pcw-title { font-size: 17px; font-weight: 700; margin-bottom: 14px; color: #f0d9a0; }
-.pcw-gift { font-size: 14px; line-height: 1.9; margin-bottom: 14px; }
-.pcw-gift .pcw-name { color: #7ecbff; font-weight: 700; }
-.pcw-gift .pcw-uid { color: #b4c0d1; font-size: 12px; }
-.pcw-verdict { font-size: 15px; font-weight: 700; margin: 10px 0 14px; }
-.pcw-verdict.ok { color: #59d17c; }
-.pcw-verdict.fail { color: #ff6b6b; }
+.pcw-close {
+  position: absolute; top: 6px; right: 8px; width: 24px; height: 24px;
+  border: 0; border-radius: 6px; cursor: pointer; background: transparent;
+  font-size: 16px; line-height: 1; color: #b4c0d1;
+}
+@media (hover:hover){.pcw-close:hover { background: rgba(255, 255, 255, 0.1); color: #e8eef7; }}
+.pcw-title { font-size: 17px; font-weight: 700; margin-bottom: 12px; color: #f0d9a0; }
+.pcw-sign { font-size: 15px; font-weight: 700; line-height: 1.8; margin-bottom: 14px; color: #e8eef7; }
+.pcw-sign .pcw-name { color: #7ecbff; }
+/* 开发者名与标题同金色：蓝色给「万恶秃为首」，金色给「晚风」，与卡片唯一的金色标题呼应 */
+.pcw-sign .pcw-author { color: #f0d9a0; }
 .pcw-decls {
-  font-size: 12px; line-height: 1.8; color: #b4c0d1;
+  font-size: 12px; line-height: 1.9; color: #b4c0d1;
   border-top: 1px dashed #3a4a63; margin-top: 6px; padding-top: 10px; text-align: left;
 }
 .pcw-btn {
@@ -46,120 +54,73 @@ const CSS = `
 `;
 
 /**
- * 账号打码展示：前 4 后 2 保留、中间省略（防截图对号入座）
- * @param {string|null|undefined} uid 运行期账号标识
+ * 构造升级提示口径（与面板横幅同源）：有待生效版本才回那句，否则空串。
+ * @param {object|null} snap 后台快照
  * @returns {string}
  */
-function maskUid(uid) {
-  const s = String(uid || '');
-  if (s.length <= 6) return s;
-  return `${s.slice(0, 4)}……${s.slice(-2)}`;
+function readyNote(snap) {
+  if (!snap) return '';
+  return pendingNote({
+    state: snap.state,
+    pendingId: snap.pendingId,
+    locked: snap.locked,
+    dismissedId: snap.dismissedId,
+  });
 }
 
 /**
- * @param {boolean} pass 是否放行
- * @param {string|null|undefined} uid 运行期账号标识（失败态不回显）
- * @returns {string} 卡片 HTML
+ * 卡片 HTML（纯渲染，真机与快照夹具共用一份）。
+ * @param {object|null} [snap] 升级通道快照；仅在有高于正在运行版本的已下载包时页脚追加那句
+ * @returns {string}
  */
-function cardHTML(pass, uid) {
-  // 昵称来自打包参数 --friend（scripts/package-friend.mjs 可外部调用），与 UID 一样按不可信输入处理：
-  //   本函数结果直接进 innerHTML，不转义则带 `<` 的名字会破版，被有意构造即成 MAIN world 注入点。
-  const name = escAttr(peerName());
-  // 打码后的 UID 与昵称同口径处理：maskUid 对短账号（≤6 位）是原样返回的，不能假定它一定是数字
-  const uidShown = escAttr(maskUid(uid));
-  const gift = pass
-    ? `万恶秃为首的晚风赠予他风情万种的朋友` +
-      `<span class="pcw-name">「${name}」</span><span class="pcw-uid">（UID：${uidShown}）</span>使用`
-    : '万恶秃为首的晚风的心意已送达，但来客身份与这份馈赠不相符';
-  const verdict = pass
-    ? '<div class="pcw-verdict ok">核验通过</div>'
-    : '<div class="pcw-verdict fail">核验失败</div>';
-  const btn = pass ? '<button class="pcw-btn" type="button">进入使用</button>' : '';
+export function welcomeCardHTML(snap) {
+  // 版本号与提示文案都来自外部（构建期 define / 后台清单 notes），按不可信输入同口径转义后再进 innerHTML
+  const note = readyNote(snap || null);
+  // 非正式通道在页脚版本号后挂一个通道名，让“这是快照包”在真机上一眼可辨；正式版不添字
+  const chan = CHANNEL_NAME === 'release' ? '' : ` · ${escAttr(CHANNEL_NAME)}`;
+  // 快照通道靠摘要而非版本号区分正文，故页脚那串版本号就得答得出“是哪一份”：身份串自带摘要前 8 位（正式通道下即纯版本号）
+  const ident = identityOf(revision(), snap && snap.runningSha);
+  const foot = `pocketcc v${escAttr(ident)}${chan}` + (note ? ` · ${escAttr(note)}` : '');
   return (
-    '<div class="pcw-card" role="dialog" aria-modal="true" aria-labelledby="pcw-title">' +
+    '<div class="pcw-card" role="dialog" aria-labelledby="pcw-title">' +
+    '<button class="pcw-close" type="button" aria-label="关闭" title="关闭">&times;</button>' +
     '<div class="pcw-title" id="pcw-title">口袋控制中心</div>' +
-    `<div class="pcw-gift">${gift}</div>` +
-    verdict +
+    '<div class="pcw-sign">由<span class="pcw-name">「万恶秃为首」</span>的<span class="pcw-author">晚风</span>开发并免费分享</div>' +
     '<div class="pcw-decls">' +
     '本插件仅供技术学习与交流，不涉及任何商业用途，终身免费。<br>' +
-    '本授权仅限特定游戏账号（UID）使用，请勿转发给任何第三人，亦勿用于其他游戏账号。' +
-    (pass ? '' : '<br>当前账号未获授权，功能已全部停用。') +
+    '请勿用于商业用途，或据此向任何人付费售卖。<br>' +
+    '自动化操作存在被游戏运营方限制的风险，请自行权衡后使用。' +
     '</div>' +
-    btn +
-    `<div class="pcw-foot">pocketcc v${revision()} · 赠予「${name}」</div>` +
+    '<button class="pcw-btn" type="button">进入使用</button>' +
+    `<div class="pcw-foot">${foot}</div>` +
     '</div>'
   );
 }
 
 /**
- * 弹出准入问候浮层。
- * @param {'ok'|'fail'} mode 展示态
- * @param {string|null|undefined} uid 运行期账号标识
- * @returns {Promise<void>} 'ok' 态点「进入使用」resolve；'fail' 态不可关闭（永不 resolve）
+ * 弹出署名欢迎浮层（纯告知：不拦截游戏交互，也不参与启动编排）。
+ * @returns {void} 已在场则跳过（幂等）
  */
-export function showWelcome(mode, uid) {
-  const pass = mode === 'ok';
-  if (document.getElementById('pocketcc-welcome-host')) {
-    return pass ? Promise.resolve() : new Promise(() => {});
-  }
-  return new Promise((resolve) => {
-    const host = document.createElement('div');
-    host.id = 'pocketcc-welcome-host';
-    host.style.cssText = 'all:initial;';
-    const root = host.attachShadow({ mode: 'open' });
+export function showWelcome() {
+  if (document.getElementById('pocketcc-welcome-host')) return;
+  const host = document.createElement('div');
+  host.id = 'pocketcc-welcome-host';
+  host.style.cssText = 'all:initial;';
+  const root = host.attachShadow({ mode: 'open' });
 
-    const style = document.createElement('style');
-    style.textContent = CSS;
-    root.appendChild(style);
+  const style = document.createElement('style');
+  style.textContent = CSS;
+  root.appendChild(style);
 
-    const mask = document.createElement('div');
-    mask.className = 'pcw-mask';
-    mask.innerHTML = cardHTML(pass, uid);
-    root.appendChild(mask);
-    document.body.appendChild(host);
+  const pop = document.createElement('div');
+  pop.className = 'pcw-pop';
+  pop.innerHTML = welcomeCardHTML(updateSnapshot());
+  root.appendChild(pop);
+  document.body.appendChild(host);
 
-    // 遮罩吞掉游戏侧交互（fail 态物理挡住页面点击，ok 态在放行前也不响应游戏）。
-    // 用冒泡阶段而非捕获：捕获期在祖先层 stopPropagation 会先于按钮目标层触发、吞掉「进入使用」点击；
-    // 冒泡期则按钮先处理，再于 mask 拦停事件外泄到下层游戏页。
-    const swallow = (e) => {
-      // 拦停冒泡到下层游戏页（遮罩已全屏覆盖，命中测试本不会点穿；此处再挡 document/window 级监听）。
-      e.stopPropagation();
-      // 仅对遮罩空白处 preventDefault（防拖拽/选中等副作用）；卡片内不 preventDefault，
-      // 以免 pointerdown 被 preventDefault 后抑制「进入使用」的后续 click。
-      if (e.target === mask) e.preventDefault();
-    };
-    mask.addEventListener('pointerdown', swallow);
-    mask.addEventListener('click', swallow);
-
-    // 模态语义：背景兄弟节点 inert（键盘/读屏不能穿透遮罩），焦点移入对话框；
-    // ok 态 Esc 等价「进入使用」，fail 态故意不可关闭（仅聚焦卡片供读屏播报）。
-    const inerted = [];
-    for (const el of document.body.children) {
-      if (el !== host && !el.inert) {
-        el.inert = true;
-        inerted.push(el);
-      }
-    }
-    const restore = () => {
-      for (const el of inerted) el.inert = false;
-    };
-
-    if (pass) {
-      const btn = root.querySelector('.pcw-btn');
-      const close = () => {
-        host.remove();
-        restore();
-        resolve();
-      };
-      btn.addEventListener('click', close);
-      mask.addEventListener('keydown', (e) => {
-        if (e.key === 'Escape') close();
-      });
-      btn.focus();
-    } else {
-      const card = root.querySelector('.pcw-card');
-      card.tabIndex = -1;
-      card.focus();
-    }
-  });
+  // 两个出口都是「关掉弹窗」这一件事：主按钮给读完告知的人，右上角 × 给想直接干活的人。
+  // 不做焦点抢占、不做背景 inert——弹窗浮在游戏之上，但游戏始终可玩。
+  const close = () => host.remove();
+  pop.querySelector('.pcw-btn').addEventListener('click', close);
+  pop.querySelector('.pcw-close').addEventListener('click', close);
 }

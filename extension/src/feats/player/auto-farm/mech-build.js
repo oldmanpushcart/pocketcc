@@ -57,7 +57,7 @@
  * 单兵 armyId 不硬编码：走 core/battle.js 的 Battle().plan().minimal().build()（游戏「快速派兵」同源口径，
  *   取最低级可派遣部队 1 支），实证样本 20096/30097/20098/10097 都是该口径的自然产物。
  *
- * 闸门与限流：非 world 场景不发包；准入闸 screen(getUid()) 每拍首行；派建前先过源码实证的本地闸——
+ * 闸门与限流：非 world 场景不发包；派建前先过源码实证的本地闸——
  *   DATACONFIG 11001 玩家等级门槛 + march.freeSlots() 行军队列（与游戏 attackCallBack 同判据；建塔入口源码
  *   无造价预检字段，成本由服务器拒绝兜底）。单拍 ≤1 发 1033 + 选地若干发 906（逐级降序，命中即停）+ 1 发 1034；
  *   且建造**全局串行**（2026-11-21 用户口径「只用 1 个队列建」）：任一在飞建造未撤回（账本非空）就不派下一单，
@@ -82,8 +82,6 @@ import { storage } from '../../../core/storage.js';
 import { Battle } from '../../../core/battle.js';
 import { march } from '../../../core/march.js';
 import { createCycle } from '../../../core/cycle.js';
-import { screen } from '../../../core/net-guard.js';
-import { getUid } from '../../../core/player.js';
 import { gameData, gameConf, l10n, checkCap } from '../../../core/game-api.js';
 import { map } from '../../../core/map.js';
 import { resource } from '../../../core/resource.js';
@@ -1224,11 +1222,10 @@ async function cancelOneBuild(job) {
 
 // ── 周期主体 ─────────────────────────────────────────────────────────
 /**
- * 一拍：准入/场景闸 → 1031 刷新 → 账本校正 → 建成撤回 → 家族规划 → 逐家族补建。
+ * 一拍：场景闸 → 1031 刷新 → 账本校正 → 建成撤回 → 家族规划 → 逐家族补建。
  * @returns {Promise<number>} 下一次睡眠毫秒（<=0 立即再跑）
  */
 async function cyclePass() {
-  if (!screen(getUid())) return cfg.idleScanMs;
   // 时段/启用闸（宿主 autoFarm 的「下田时段」）：子功能关闭、或时段生效且当前不在时段内 → 不新建，
   // 并把所有在建塔（st=2）逐座 1032 取消；**已建成（st=3）塔显式跳过**，保留给联盟采集。
   var allowed = MCFG.enabled && (!gate.active() || gate.isIn());

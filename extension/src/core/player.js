@@ -1,6 +1,7 @@
 // 玩家 UID 侦测与切换：配置按 UID 隔离的源头。
 // 轮询（1s，O(1) 读字段，与 session.js 活性监视同风格）侦测 UserData.UID：
-//   空 → 非空（登录完成）：给 storage 设 'pocketcc.u{uid}.' 前缀 → 广播 player.ready（启动编排据此加载配置）；
+//   空 → 非空（登录完成）：给 storage 设 'pocketcc[通道后缀].u{uid}.' 前缀（根段由 core/constants.js 按发布通道派生，
+//     正式无后缀）→ 广播 player.ready（启动编排据此加载配置）；
 //   a → b（不刷新型换号）：低频动作，直接整页 reload 重建——浏览器原子清空全部模块级状态与副作用
 //     （setInterval/监听/各 feat 的 installed/blacklist/queue 等），比 in-place 软重启可靠且零侵入 feat。
 //     恢复靠 auto-login 缓存 token 自动重登 + 本模块 waitUid → migrate → load → startFeatures 全链路，无需人工。
@@ -10,6 +11,7 @@ import { createLog } from './log.js';
 import { game } from './game.js';
 import { bus, EVT } from './bus.js';
 import { setNamespace, getNamespace } from './storage.js';
+import { STORAGE_ROOT } from './constants.js';
 
 /** @type {ReturnType<createLog>} 模块日志器（tag=PLAYER） */
 const log = createLog('PLAYER');
@@ -58,7 +60,7 @@ function apply(uid) {
   if (uid === currentUid) return;
   const prevUid = currentUid;
   currentUid = uid;
-  setNamespace(`pocketcc.u${uid}.`);
+  setNamespace(`${STORAGE_ROOT}.u${uid}.`);
   if (prevUid) {
     scheduleSwitchReload(prevUid, uid);
   } else {

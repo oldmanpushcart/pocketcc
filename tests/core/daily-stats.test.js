@@ -23,7 +23,7 @@ globalThis.chrome = globalThis.chrome || {
   runtime: { id: 'test', sendMessage() {}, getURL: (s) => s, onMessage: { addListener() {} } },
 };
 
-// core 链里的 session/net-guard 等模块在 import 期就挂常驻 setInterval——只对测试 harness 的定时器
+// core 链里的 session 等模块在 import 期就挂常驻 setInterval——只对测试 harness 的定时器
 // unref（否则 node --test 进程永不退出），不参与被测逻辑。
 const realSetInterval = globalThis.setInterval;
 globalThis.setInterval = (fn, ms, ...rest) => {

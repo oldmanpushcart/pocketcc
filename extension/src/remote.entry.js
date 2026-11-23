@@ -1,7 +1,8 @@
-// MAIN world 入口：按依赖顺序导入模块（IIFE 副作用执行），末尾拼接 curated 调试面。
+// 远程体入口（MAIN world）：按依赖顺序导入模块（IIFE 副作用执行），末尾拼接 curated 调试面。
+// 产物不直挂 manifest，而是由薄壳 shell.js 取回文本后在 MAIN world 执行（刷新页面即升级到最新版）；
+// 未配置远程通道时壳就执行包内同一份 dist/remote.js，行为与直挂完全一致。
 // feat 目录层级对齐面板菜单树（core/menu.js）五类别：player 玩家设置 / alliance 联盟设置 / activity 活动设置 / battle 战斗设置 / system 系统设置（chat 聊天窗口、map 全局地图与镜头跳转、hotkey 快捷键）。
-// 导入顺序 = 旧 manifest content_scripts 顺序：net 先于 feat，feat 先于编排器 boot；
-// 新增 feat 除在这里加 import 外，还须挂进 core/menu.js 菜单树，否则不会出现在面板。
+// 导入顺序 = 旧 manifest content_scripts 顺序：net 先于 feat，feat 先于编排器 boot；本文件的 import 次序即生命周期装配次序，不得随手重排。
 import './core/net.js';
 import './core/net-collect.js';
 import './core/log-collect.js';

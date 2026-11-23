@@ -72,8 +72,6 @@ import { bus, EVT } from '../../../core/bus.js';
 import { Battle } from '../../../core/battle.js';
 import { march } from '../../../core/march.js';
 import { createCycle } from '../../../core/cycle.js';
-import { screen } from '../../../core/net-guard.js';
-import { getUid } from '../../../core/player.js';
 import {
   KIND,
   KIND_ORDER,
@@ -1464,7 +1462,6 @@ function earliestDwellReady(rows, allow, now) {
  * @returns {Promise<void>}
  */
 async function cyclePass() {
-  if (!screen(getUid())) return; // 准入存活校验（每拍 O(1)）
   nextDwellReadyAt = 0; // 先清预告，下面的提前 return 分支不得留下上拍旧值
   reEvalPending = false; // 同上：抢田重评需求每拍重算，不拿上拍的旧候选结论驱动本轮排程
   var allow = globalAllowedKinds();

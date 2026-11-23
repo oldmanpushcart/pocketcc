@@ -28,8 +28,8 @@ pocketcc/
 ├─ extension/          Chrome MV3 扩展工程（详见 extension/README.md）
 ├─ dashcam/            报文录制接收服务（详见 dashcam/README.md）
 ├─ references/         只读逆向素材：游戏源码镜像 + 分析台账（不入库的大文件已 .gitignore）
-├─ esbuild.config.mjs  扩展三入口的打包配置
-└─ package.json        扩展构建脚本（npm run build / watch；dashcam 不在其中）
+├─ esbuild.config.mjs  扩展六入口（壳侧 + 远程体）的打包配置，升级基址唯一真相
+└─ package.json        扩展构建与发版脚本（npm run build / pack:release / publish:release；dashcam 不在其中）
 ```
 
 ## 快速开始
@@ -38,9 +38,17 @@ pocketcc/
 
 ```bash
 npm install
-npm run build                 # 产物落 extension/dist/
+npm run build                 # dev 档（日常调试）：产物落 extension/dist/，不启用远程升级
 # 浏览器 edge://extensions 开启「开发人员模式」→「加载解压缩的扩展」选择 extension/ 目录
+
+export PCC_UPDATE_KEY='<发版密钥>'   # 下面四条都要先设；Windows 设法见 extension/README
+npm run publish:release       # release 档日常发版：出 extension/out/release/oss/ 待上传件，传完 OSS 朋友刷新页面即升级
+npm run pack:release          # release 档换壳时才需要：出分发目录 extension/out/release/pocketcc-extension/
+npm run publish:snapshot      # snapshot 档：同上，只是走 OSS 的 /extension/snapshot/ 与本地 extension/out/snapshot/（自己先吃）
+npm run pack:snapshot         # snapshot 档只出壳：extension/out/snapshot/pocketcc-extension/
 ```
+
+三档发布通道（dev / snapshot / release）与版本号规则（三段式 X.Y.Z）见 [extension/README.md](extension/README.md#打包与发版)。
 
 **报文接收服务**（可选，仅当要开启扩展的「报文录制」时才需要）：
 
@@ -53,7 +61,7 @@ npm start                     # 等价 node server.js，监听 http://127.0.0.1:
 
 ## 技术栈
 
-- **扩展**：JavaScript（ES Module）+ [esbuild](https://esbuild.github.io/) 打包为 IIFE（`target: chrome110`、未压缩 + sourcemap），Chrome Manifest V3，双 content script（MAIN + ISOLATED world）+ background service worker。
+- **扩展**：JavaScript（ES Module）+ [esbuild](https://esbuild.github.io/) 打包为 IIFE（`target: chrome110`，dev 未压缩 + sourcemap、release minify），Chrome Manifest V3；分层为**本地薄壳 + OSS 远程体**（MAIN 壳 `shell.js` 取包并执行远程体，ISOLATED `bridge.js`，+ background service worker），刷新页面即升级。
 - **dashcam**：纯 Node.js（`node:http`），无第三方依赖，`engines.node >= 18`，ESM。
 - 无锁文件 / 私有源 / CI；版本在各自 `package.json` 手动维护。
 

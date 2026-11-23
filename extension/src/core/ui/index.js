@@ -7,6 +7,8 @@ import { bus, EVT } from '../bus.js';
 import { getUid } from '../player.js';
 import { configs, findFeature, applyFeature } from '../registry.js';
 import { gameData } from '../game-api.js';
+import { shouldBadge } from '../update.js';
+import { fetchSnapshot, runSource, updateSnapshot } from '../update-client.js';
 import { iconSVG } from './icon-svg.js';
 import { isCombat, setCombatMode } from '../mode.js';
 import { ICON_SIZE, PANEL_W, POS_KEY } from './consts.js';
@@ -14,10 +16,12 @@ import { PANEL_CSS } from './panel-css.js';
 import { clampPos, rescuePos, readIconPos } from './icon-pos.js';
 import {
   buildPanelHTML,
+  buildUpdateBanner,
   refreshFieldVisibility,
   refreshTabGates,
   refreshTexts,
   rerenderFeatureCard,
+  rerenderUpdateSys,
   syncControls,
   buildWorldStatus,
   buildDiamondStatus,
@@ -51,10 +55,24 @@ export async function mountUI() {
   icon.setAttribute('aria-expanded', 'false');
   icon.setAttribute('aria-controls', 'pc-panel');
 
+  /** 图标右上角小圆点：有已下载待刷新的另一份正文即点亮（不看「稍后」，那只是关掉横幅） */
+  function hasBadge() {
+    const s = updateSnapshot();
+    if (!s) return false;
+    return shouldBadge({
+      state: s.state,
+      pendingId: s.pendingId,
+      locked: s.locked,
+    });
+  }
+
   /** 图标随战斗态切换：换 SVG（冷/热）+ 切 .combat 类（光晕节奏/配色、外发光跟随）。 */
   function renderIcon() {
     icon.classList.toggle('combat', isCombat());
-    icon.innerHTML = '<span class="pc-halo"></span>' + iconSVG(isCombat(), ICON_SIZE);
+    icon.innerHTML =
+      '<span class="pc-halo"></span>' +
+      iconSVG(isCombat(), ICON_SIZE) +
+      (hasBadge() ? '<span class="pc-badge" title="新版本已就绪"></span>' : '');
   }
   renderIcon();
   bus.on(EVT.MODE_CHANGE, renderIcon);
@@ -104,6 +122,22 @@ export async function mountUI() {
   }
   renderDiamonds();
   bus.on(EVT.WORLD_CHANGE, renderDiamonds);
+
+  // 升级提示三层（面板横幅 / 图标角标 / 系统 tab 只读行）：状态单一来源是后台快照，
+  // 经 bridge 广播 → update-client 镜像 → EVT.UPDATE_STATE。本函数只把最新快照翻译成 DOM，
+  // 自身不取网络也不发命令（故重复调用幂等，命令的回执广播也走同一条路）。
+  function renderUpdateUI() {
+    const slot = panel.querySelector('#pc-upd-banner');
+    const src = runSource();
+    // 「本次跑了哪份、是不是降级跑的基线」只有壳知道（后台只知道本地最优），故这一维从交接信息补口径
+    const note = src.degraded && src.ver ? `；本次已回退到本地版本 v${src.ver}` : '';
+    if (slot) slot.innerHTML = buildUpdateBanner(updateSnapshot(), { note });
+    rerenderUpdateSys(panel);
+    renderIcon();
+  }
+  renderUpdateUI();
+  bus.on(EVT.UPDATE_STATE, renderUpdateUI);
+
   // F8 热键：战斗 / 日常 切换（setCombatMode 广播 mode.change → 图标/复选框/reactor 门控重算自动跟进）。
   // 必须用 window 捕获阶段（capture:true）：游戏自己也会处理 keydown 并在冒泡阶段 stopPropagation，
   // 导致面板收起（焦点在画布）时挂 document 冒泡监听收不到；捕获阶段先于游戏处理且不受焦点/stopPropagation 影响。
@@ -233,6 +267,8 @@ export async function mountUI() {
     refreshTabGates(panel); // 活动开/退常在面板收起期间发生，展开时按实时判据回算左 TAB 可点态
     renderWorldStatus(); // 展开时再核一次世界态（订阅已常驻，此处兜住极早期 world.change 先于挂订阅的窗口）
     renderDiamonds();
+    // 升级读数向后台现要一次（4h 一轮的 alarms 之间面板可能已开着）；回执经镜像广播 → renderUpdateUI 自动跟上
+    fetchSnapshot();
     if (gemTimer == null) gemTimer = setInterval(renderDiamonds, 2000);
     // 焦点移入面板首个可见可聚焦控件（键盘用户不必从图标一路 Tab 进来）；
     // 漫游 tabindex 的 inactive TAB（-1）与隐藏 pane 里的控件都跳过，preventScroll 免得带动游戏页滚动。

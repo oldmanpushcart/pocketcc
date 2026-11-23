@@ -1,7 +1,8 @@
 {
   "$schema": "https://unpkg.com/knip@latest/schema.json",
   "entry": [
-    "extension/src/content.entry.js",
+    "extension/src/shell.js",
+    "extension/src/remote.entry.js",
     "extension/src/background.js",
     "extension/src/popup.js",
     "extension/src/bridge.js",
@@ -22,7 +23,7 @@
   ],
   "ignore": [
     "extension/dist/**",
-    "release/**",
+    "extension/out/**",
     "warroom/**",
     "references/**",
     ".reviewtmp/**",

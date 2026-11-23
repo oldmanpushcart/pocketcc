@@ -1,4 +1,4 @@
-// 口袋控制中心 — MAIN world 入口 / 编排器。
+// 口袋控制中心 — 远程体内的 MAIN world 编排器（薄壳 shell.js exec 远程体后由本文件装配生命周期）。
 // 运行在页面自身 JS 上下文，可访问 cc / __require / CryptoJS 等游戏全局。
 // 设计依据见 references/历史文档/免扫码登录技术方案.md。
 //
@@ -8,23 +8,22 @@
 //   core/session.js    自动重连 + 活性监视 + 会话健康事件
 //   core/ui/           浮动图标 + 手风琴面板（index.js 编排 mountUI）
 //   core/scene-watcher 场景信号 → reactor 门控
-// 功能模块（net.js + feats/<层级>/*.js）由 content.entry.js 先于本文件加载并各自向 reactor 注册说明书，
+// 功能模块（net.js + feats/<层级>/*.js）由 remote.entry.js 先于本文件加载并各自向 reactor 注册说明书，
 // 面板层级由 core/menu.js 声明；本文件在主城就绪（HomeMapLoadFinish 或首次进入 Home/NWorldMap 场景，先到先触发）
 // 后经 registry.startFeatures() 推配置起停。
 // 另有 anti-throttle.js（document_start 入口）在隐藏标签页里接管 rAF/定时器并伪装可见性，
-// 主城就绪闸门里由本文件降为常驻档，常驻与否由面板「后台保活」（configs.keepAlive）定；
-// 授权被拒/降级这两条不 startFeatures、不 mountUI 的链路上，面板开关无从生效，由 antiThrottleOff() 直接交还原生。
+// 主城就绪闸门里由本文件降为常驻档，常驻与否由面板「后台保活」（configs.keepAlive）定。
 import { createLog } from './core/log.js';
 import { game } from './core/game.js';
 import { bus, EVT } from './core/bus.js';
-import { NS } from './core/constants.js';
 import { loadAllConfigs, startFeatures, migrateLegacyKeys } from './core/registry.js';
 import { startPlayerWatch, waitUid } from './core/player.js';
 import { installAutoLogin } from './core/auto-login.js';
 import { installReconnectHooks, installLaunchWatchdog, watchLoginSuccess } from './core/session.js';
 import { mountUI } from './core/ui/index.js';
 import { showWelcome } from './core/ui/welcome.js';
-import { screen, slotFree, revision } from './core/net-guard.js';
+import { revision } from './core/update.js';
+import { installUpdateMirror, runSource } from './core/update-client.js';
 import { startSceneWatcher, getCurrentScene } from './core/scene-watcher.js';
 import { installModeGate } from './core/mode.js';
 
@@ -40,15 +39,6 @@ import { installModeGate } from './core/mode.js';
 
   /** @type {string[]} 视为「主城就绪」的场景名：重启直落世界地图时不会触发 HomeMapLoadFinish，靠场景信号兜底 */
   const READY_SCENES = ['Home', 'NWorldMap'];
-
-  /**
-   * 撤除反节流：交还原生 rAF/定时器并恢复真实可见性（applyPolicy(false) 幂等）。
-   * 与 downshift() 的区别：降频只是把满速驱动收为常驻档，撤防才真正把可见性伪装摘掉。
-   */
-  function antiThrottleOff() {
-    const at = window.pocketccAntiThrottle;
-    if (at) at.applyPolicy(false);
-  }
 
   /**
    * 功能主控闸门：主城就绪放行，双路信号先到先触发（幂等只放行一次）：
@@ -97,39 +87,18 @@ import { installModeGate } from './core/mode.js';
    * 启动：等 cocos 引擎与场景就绪后再安装 hook、监听、挂载 UI。
    * 配置按 UID 隔离：先等 UID 就绪（超时降级用默认配置，不阻断自动重连），
    * 首个 UID 确定时把旧全局键迁入命名空间，再读盘填充 configs。
-   * 准入闸门（仅授权包生效）：UID 到手先过 screen 比对——不设限包恒真，dev 零变化；
-   * 不符则只弹告知页，后续配置/功能/重连全不拉起；通屏则等主城就绪弹问候页，
-   * 用户点「进入使用」后才继续（时序位置与现链路一致，满足「游戏正式加载后展示」）。
+   * 主城就绪后起功能与面板，并顺带弹一次署名欢迎页（只告知、不闸门：点不点都不影响启动）。
    */
   function start() {
+    installUpdateMirror();
     startSceneWatcher();
     installModeGate();
     installAutoLogin();
     startPlayerWatch();
-    /** @type {string|null} 本轮启动定屏的登录 UID（问候页展示用） */
-    let bootUid = null;
     configsReady = Promise.resolve()
       .then(() => waitUid())
       .then((uid) => {
-        bootUid = uid;
-        if (uid && !screen(uid)) {
-          logCore.info('greet: withheld (rev %s)', revision());
-          showWelcome('fail', uid);
-          // 阻断：返回永不 settle 的链——不迁移/不读盘/不装重连钩子，主城放行侧同样挂在此链上，功能全停
-          // 反节流同步撤防：后台保活是扩展赋予的增值行为，未授权不享受；
-          //   且此链上 mountUI 不执行，面板开关永无机会生效，不主动摘就只能靠刷新页面恢复
-          antiThrottleOff();
-          return new Promise(() => {});
-        }
-        if (!uid && !slotFree()) {
-          // 授权包降级态（登录卡死取不到 UID）：无从比对，同样挂起链不拉功能（与旧降级仍跑自动重连不同，授权优先）
-          logCore.info('greet: silent (no uid to match, rev %s)', revision());
-          antiThrottleOff();
-          return new Promise(() => {});
-        }
-        handOffBridge(uid); // 先放行 bridge 存储代理，再升配置读写
-        // uid 为 null 也要继续读盘（无限制包 slotFree 不走上面的挂起闸）：registry 检测 ns 未设时
-        // 落默认配置并置 degraded，player.ready 后补读盘。空分支须用 Promise 兜住，否则 .then 崩整条启动链。
+        // uid 为 null 也要继续读盘：registry 检测 ns 未设时落默认配置并置 degraded，player.ready 后补读盘。
         // 场景口径告知降级性质：还停在登录/启动场景（未扫码）是常态走 info；已进过主城却拿不到 UID 才是 warn。
         const preLogin = READY_SCENES.indexOf(getCurrentScene()) === -1;
         return Promise.resolve(uid ? migrateLegacyKeys(uid) : undefined).then(() =>
@@ -142,41 +111,26 @@ import { installModeGate } from './core/mode.js';
       });
     watchLoginSuccess();
     watchHomeMapReady(() => {
-      // 主城就绪：加载期专用的 60Hz 满速驱动到此为止，先降为常驻档兜底（授权挂起/配置未读到也收得住）；
+      // 主城就绪：加载期专用的 60Hz 满速驱动到此为止，先降为常驻档兜底（配置未读到也收得住）；
       // 真正「常驻还是彻底交还」由 configs.keepAlive 决定，registry.startFeatures 里 internal apply 随后精确落位
       if (window.pocketccAntiThrottle) window.pocketccAntiThrottle.downshift();
-      configsReady
-        .then(() => greet(bootUid))
-        .then(() => {
-          startFeatures();
-          mountUI();
-        });
+      configsReady.then(() => {
+        startFeatures();
+        mountUI();
+        // 欢迎页只同步挂载，不进启动链：等它的那份 promise 由用户的手速决定，不该压在功能与面板之前
+        showWelcome();
+      });
     });
-    logCore.info('initialized, rev %s', revision());
-  }
-
-  /**
-   * 主城就绪后的问候页：仅授权包且 UID 已定屏时弹；
-   * 不设限包/登录卡死降级态（UID 未取到）直接放行，不打扰流程。
-   * @param {string|null} uid 登录 UID
-   * @returns {Promise<void>}
-   */
-  function greet(uid) {
-    if (slotFree() || !uid) return Promise.resolve();
-    return showWelcome('ok', uid);
-  }
-
-  /**
-   * 把准入态同步给隔离世界的存储代理（bridge）：授权包读盘完成后夹带一次 uid，
-   * bridge 用自己 bundle 里的同源哨独立复验（不信任本侧断言），此后才代读写存储。
-   * 不设限包不发（bridge 侧构建期已标记不设限，零消息）。
-   * @param {string|null} uid 登录 UID
-   */
-  function handOffBridge(uid) {
-    if (slotFree() || !uid) return;
-    try {
-      window.postMessage({ __ns: NS, dir: 'main->bridge', op: 'hello', uid: String(uid) }, '*');
-    } catch (e) {} // bridge 未就位（上下文失效等）：静默，存储侧自会因未放行而拒绝服务
+    // 运行来源由壳交接（缓存远程体 / 包内基线 / 降级），真机排障时先看这一行再下结论
+    const src = runSource();
+    logCore.info(
+      'initialized, rev %s (bundle v%s from %s%s, shell v%s)',
+      revision(),
+      src.ver || '?',
+      src.from,
+      src.degraded ? ', degraded to packaged baseline' : '',
+      src.shellVer || '?',
+    );
   }
 
   /**

@@ -17,6 +17,24 @@
             --fill: rgba(255, 255, 255, 0.06);
             --focus: rgba(120, 180, 255, 0.55);
             --err: #ff8a8a;
+            /* 金色：只给「拖拽导入」这一块用，让它在一屏蓝色里成为唯一视觉焦点 */
+            --gold: #e3c07a;
+            --gold-line: rgba(227, 192, 122, 0.72);
+        }
+
+        /* 滚动条一律不出现、也不占位：它一出现就挤掉十几像素 → 文本重排 → 高度变化 → 滚动条又消失，
+           如此往复跳动；而且它给槽位留出的正是页面默认白底（就是那圈「白框」）。改成零占位隐藏后两件事一起
+           消失，内容超高时滚轮/触摸板仍能滚。底色画在 html 上并铺满画布，body 之外绝不露白。 */
+        html {
+            overflow-y: auto;
+            scrollbar-width: none;
+            background: linear-gradient(160deg, #1c2433, #12161f);
+        }
+
+        ::-webkit-scrollbar {
+            width: 0;
+            height: 0;
+            display: none;
         }
 
         body {
@@ -24,7 +42,6 @@
             margin: 0;
             padding: 14px;
             box-sizing: border-box;
-            background: linear-gradient(160deg, #1c2433, #12161f);
             color: var(--fg);
             font:
                 13px/1.6 system-ui,
@@ -137,7 +154,8 @@
             box-sizing: border-box;
             height: 68px;
             margin-top: 8px;
-            resize: vertical;
+            /* 不可拖大：拖大就会撑高内容→页内滚动条出现→整窗宽度被挤→高度跳动，且右下角把手多余 */
+            resize: none;
             padding: 5px 7px;
             border-radius: 6px;
             font:
@@ -161,26 +179,60 @@
             opacity: 0.55;
         }
 
-        /* 拖放区：把凭证 JSON 文件从资源管理器拖进来（不弹原生对话框，popup 不会因失焦被销毁） */
+        /* 拖放区：把凭证 JSON 文件从资源管理器拖进来（不弹原生对话框，popup 不会因失焦被销毁）。
+           命中区刻意做大（min-height + 宽松内边距 + 居中两行文案），金色描边区别于其余蓝色块。 */
         .drop {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            gap: 5px;
+            box-sizing: border-box;
+            min-height: 96px;
             margin-top: 8px;
-            padding: 10px;
-            border-radius: 8px;
-            border: 1px dashed var(--line-strong);
-            background: var(--fill);
+            padding: 18px 12px;
+            border-radius: 10px;
+            border: 1.5px dashed var(--gold-line);
+            background: rgba(227, 192, 122, 0.07);
             text-align: center;
-            font-size: 12px;
-            color: var(--muted);
+            cursor: copy;
             transition:
                 border-color 0.15s,
                 background 0.15s,
                 color 0.15s;
         }
 
+        .drop-t {
+            font-size: 13px;
+            font-weight: 600;
+            color: var(--gold);
+        }
+
+        .drop-s {
+            font-size: 11px;
+            line-height: 1.45;
+            color: var(--muted);
+        }
+
+        /* 内部文案不吃指针：否则拖拽掠过子节点会冒泡出 dragleave/dragenter，高亮态来回闪烁（命中区仍为整个 .drop） */
+        .drop-t,
+        .drop-s {
+            pointer-events: none;
+        }
+
+        .drop:hover {
+            border-color: var(--gold);
+            background: rgba(227, 192, 122, 0.12);
+        }
+
         .drop.over {
-            border-color: var(--focus);
-            background: rgba(120, 180, 255, 0.12);
-            color: var(--head);
+            border-color: var(--gold);
+            border-style: solid;
+            background: rgba(227, 192, 122, 0.2);
+        }
+
+        .drop.over .drop-t {
+            color: #f2d9a4;
         }
 
         .result {
@@ -229,7 +281,10 @@
         <div class="hint">
             把凭证 JSON 文件拖进下方虚线框（会自动填入粘贴框），或直接粘贴 JSON。写入成功后自动刷新游戏页，由免扫码链路重放登录。
         </div>
-        <div class="drop" id="drop">把凭证 JSON 文件拖到这里…</div>
+        <div class="drop" id="drop">
+            <div class="drop-t">把凭证 JSON 文件拖到这里…</div>
+            <div class="drop-s">松开即自动填入下方粘贴框</div>
+        </div>
         <textarea id="paste" placeholder='{"topwar_app_serverToken":"…"}' spellcheck="false"></textarea>
         <div class="row">
             <button id="btn-import-paste" class="primary">导入粘贴内容</button>

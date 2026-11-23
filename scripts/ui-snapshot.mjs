@@ -1,6 +1,8 @@
 // 字段渲染基线快照生成器（架构审查候选 1 · 字段类型 module 化，T0 地基）。
 // 遍历合成 descriptor（覆盖 22 个字段类型 + 4 张代表卡）× buildFieldsHTML，输出 HTML 到 tests/fixtures/ui-snapshots/。
 // 用途：T0-T5 逐类型迁移时核对「渲染行为零变化」——迁移前生成基线入库，迁移后 --check 逐字对拍。
+// 另走 render 钩子收升级通道展示层（欢迎页 / 面板横幅 / 系统 tab 升级区）：那些渲染函数不接 descriptor，
+// 但同样是「纯函数 → HTML」，合成快照造得确定（固定时间戳、revision() 在 node 侧恒为 'dev'），可逐字对拍。
 // 用法：
 //   node scripts/ui-snapshot.mjs          生成/覆盖基线夹具（tests/fixtures/ui-snapshots/）
 //   node scripts/ui-snapshot.mjs --check  生成到临时目录并与夹具逐文件比对，任一不符 exit 1
@@ -9,6 +11,9 @@ import { mkdirSync, writeFileSync, readFileSync, readdirSync, rmSync, existsSync
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { tmpdir } from 'node:os';
+
+// 展示层夹具里有绝对时间格式化（面板「最近检查」行），锁 UTC 使同一份代码在任何机器上逐字一致。
+process.env.TZ = 'UTC';
 
 globalThis.window = globalThis.window || {
   addEventListener() {},
@@ -31,6 +36,8 @@ const here = dirname(fileURLToPath(import.meta.url));
 const root = join(here, '..');
 const { buildFieldsHTML } = await import('../extension/src/core/ui/fields.js');
 const { configs, findFeature } = await import('../extension/src/core/registry.js');
+const { buildUpdateBanner, buildUpdateSys } = await import('../extension/src/core/ui/panel.js');
+const { welcomeCardHTML } = await import('../extension/src/core/ui/welcome.js');
 
 // ───────────── 合成 descriptor：每类型一条（fd 形状照真实 feat 的最小有效子集） ─────────────
 // 每条 = { name 文件名, fid 功能 id, f descriptor(含 fields), cfg 该功能配置 }。
@@ -568,15 +575,115 @@ CASES.push({
   },
 });
 
+// ───────────── 升级通道展示层（render 钩子，不走 descriptor）─────────────
+// 合成快照写死时间/摘要串，使夹具不随环境变化；面板上这些展示的唯一数据源就是后台快照，
+// 所以拿快照的几种典型形态（就绪 / 锁定 / 已停用 / 验签未过 / 熔断）逐一摆平即可覆盖全部门面文案分支。
+const UPD_TS = Date.UTC(2026, 3, 18, 9, 30); // 固定到分钟：面板「最近检查」行当场可核
+const UPD_SHA = '9f2c1b7ad4e80635f1cc07e2b83a4d6e5f70a9c1b2d3e4f506172839a0b1c2d3';
+const UPD_BASE_SHA = '11aa22bb33cc44dd55ee66ff77aa88bb99cc00dd11ee22ff33aa44bb55cc66dd';
+/** @type {object} 基准快照：新版已下载待刷新（ready 态的完整事实） */
+const UPD_READY = {
+  state: 'ready',
+  reason: 'newer',
+  runningVer: '1.3.0',
+  runningFrom: 'baseline',
+  runningSha: UPD_BASE_SHA,
+  readyVer: '1.4.0',
+  readySha: UPD_SHA,
+  pendingId: '1.4.0',
+  checkedAt: UPD_TS,
+  failCount: 0,
+  lastErr: '',
+  notes: '',
+  shellVer: '1.3.0',
+  autoCheck: true,
+  locked: false,
+  dismissedId: '',
+  blockedId: '',
+  fuseTripped: false,
+  revoked: false,
+};
+/** 壳交接的运行来源（真实值由 shell.js exec 前挂在 window.__pccShell__，此处合成同形对象） */
+const UPD_SRC = { ver: '1.3.0', from: 'baseline', degraded: false, shellVer: '1.3.0' };
+
+CASES.push(
+  {
+    name: 'upd-banner-ready',
+    render: () => buildUpdateBanner(UPD_READY),
+  },
+  {
+    // 锁定此版本后不应再有任何横幅（空文件本身就是断言）
+    name: 'upd-banner-locked',
+    render: () => buildUpdateBanner(Object.assign({}, UPD_READY, { locked: true })),
+  },
+  {
+    name: 'upd-banner-revoked',
+    render: () =>
+      buildUpdateBanner(
+        Object.assign({}, UPD_READY, {
+          state: 'failed',
+          reason: 'shell-outdated',
+          revoked: true,
+          pendingId: '',
+        }),
+      ),
+  },
+  {
+    name: 'upd-banner-integrity',
+    render: () =>
+      buildUpdateBanner(Object.assign({}, UPD_READY, { state: 'failed', reason: 'sha-mismatch' })),
+  },
+  {
+    // 快照未到体但壳已知本次降级跑基线：这一句必须仍然可见（后台推不了它，只有交接信息知道）
+    name: 'upd-banner-degraded',
+    render: () => buildUpdateBanner(null, { note: '；本次已回退到本地版本 v1.3.0' }),
+  },
+  {
+    name: 'upd-sys',
+    render: () => buildUpdateSys(UPD_READY, UPD_SRC),
+  },
+  {
+    // 熔断态：本地无已下载包 + 失败原因 + 暂停说明（readyVer 回拉到正在运行的基线，与 pendingId 为空自洽）
+    name: 'upd-sys-fused',
+    render: () =>
+      buildUpdateSys(
+        Object.assign({}, UPD_READY, {
+          state: 'failed',
+          reason: 'fused',
+          readyVer: '1.3.0',
+          readySha: UPD_BASE_SHA,
+          pendingId: '',
+          failCount: 3,
+          fuseTripped: true,
+          lastErr: 'latest.json 请求超时（1500ms）',
+        }),
+        UPD_SRC,
+      ),
+  },
+  {
+    name: 'welcome-card',
+    render: () => welcomeCardHTML(null),
+  },
+  {
+    name: 'welcome-card-ready',
+    render: () => welcomeCardHTML(UPD_READY),
+  },
+);
+
 const FIXTURE_DIR = join(root, 'tests/fixtures/ui-snapshots');
 
 /** 生成全部快照到 outDir，返回文件名列表（含 manifest.json）。 */
 function generate(outDir) {
   mkdirSync(outDir, { recursive: true });
   const names = [];
-  for (const { name, fid, f, cfg } of CASES) {
-    configs[fid] = cfg;
-    const html = buildFieldsHTML(fid, f);
+  for (const { name, fid, f, cfg, render } of CASES) {
+    let html;
+    if (render) {
+      html = render();
+    } else {
+      configs[fid] = cfg;
+      html = buildFieldsHTML(fid, f);
+    }
     writeFileSync(join(outDir, name + '.html'), html);
     names.push(name + '.html');
   }

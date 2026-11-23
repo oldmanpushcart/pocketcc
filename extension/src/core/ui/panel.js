@@ -4,6 +4,9 @@ import { configs, findFeature } from '../registry.js';
 import { MENU } from '../menu.js';
 import { list as hotkeyList } from '../hotkeys.js';
 import { gameData } from '../game-api.js';
+import { identityOf, revision, shouldPromptUpdate } from '../update.js';
+import { CHANNEL_NAME } from '../constants.js';
+import { runSource, updateSnapshot } from '../update-client.js';
 import { escAttr, findFieldDescriptor } from './dom.js';
 import { cardHead, buildFieldsHTML, refreshFieldBox } from './fields.js';
 import { getTypeModule, assembleTypeModules, syncTypeModules } from './field-types/index.js';
@@ -226,6 +229,185 @@ function renderHotkeysCard(node) {
 
 /** @type {string} 挂「登出 / 换号」按钮的类别 id（账号级操作，归入系统设置） */
 const LOGOUT_PANE_ID = 'system';
+
+// ───────────── 升级通道展示（四层提示中的两层：面板横幅 + 「系统」tab 只读行）─────────────
+/** 运行来源中文口径（快照 runningFrom / 壳交接 from 共用） */
+const SOURCE_ZH = { cache: '已下载的新版', baseline: '包内基线', none: '未就绪', unknown: '未知' };
+
+/**
+ * 检查时刻展示（面板与日志同一口径）：未检过回「从未」，否则绝对时间到分钟。
+ * 拿不到 Date 以外的时区数据，故不吹“多久以前”这类会陈旧的文案。
+ * @param {number} ts 时刻（毫秒）
+ * @returns {string}
+ */
+export function fmtCheckedAt(ts) {
+  const n = Number(ts) || 0;
+  if (!n) return '从未';
+  const d = new Date(n);
+  const p = (x) => String(x).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+
+/**
+ * 面板横幅要说什么（纯判据，不碰 DOM）：无话可说回 null。
+ * 三类可见提示互斥，优先级：已停止支持（必须换壳）> 验签未通过（被篡改的唯一信号）> 新版已就绪待刷新。
+ * @param {object|null} snap 后台升级快照
+ * @param {{note?:string}} [cfg] cfg.note：调用方附加口径（如降级跑基线那句）
+ * @returns {{tone:'warn'|'ready', text:string, canReload:boolean, dismissId:string}|null}
+ */
+export function updateBannerView(snap, cfg) {
+  const extra = (cfg && cfg.note) || '';
+  if (!snap) {
+    // 快照还没到手（后台未连通）也要能说壳自己知道的那件事：本次已降级跑基线
+    return extra
+      ? { tone: 'warn', text: extra.replace(/^[；;\s]+/, ''), canReload: false, dismissId: '' }
+      : null;
+  }
+  if (snap.revoked) {
+    return {
+      tone: 'warn',
+      text: '此版本已停止支持，请重新加载扩展' + extra,
+      canReload: false,
+      dismissId: '',
+    };
+  }
+  if (
+    snap.reason === 'sha-mismatch' ||
+    snap.reason === 'hmac-mismatch' ||
+    snap.reason === 'no-tag'
+  ) {
+    return {
+      tone: 'warn',
+      text: `更新包校验未通过，仍在使用 v${snap.runningVer || '?'}${extra}`,
+      canReload: false,
+      dismissId: String(snap.pendingId || ''),
+    };
+  }
+  if (
+    shouldPromptUpdate({
+      state: snap.state,
+      pendingId: snap.pendingId,
+      locked: snap.locked,
+      dismissedId: snap.dismissedId,
+    })
+  ) {
+    return {
+      tone: 'ready',
+      text: `新版 v${snap.pendingId} 已下载完成，刷新页面即生效${extra}`,
+      canReload: true,
+      dismissId: String(snap.pendingId || ''),
+    };
+  }
+  if (extra)
+    return { tone: 'warn', text: extra.replace(/^[；;]\s*/, ''), canReload: false, dismissId: '' };
+  return null;
+}
+
+/**
+ * 渲染面板顶部横幅（无事可说则渲染空串，不留空块）。
+ * @param {object|null} snap 后台快照
+ * @param {{note?:string}} [cfg] 同 updateBannerView
+ * @returns {string}
+ */
+export function buildUpdateBanner(snap, cfg) {
+  const v = updateBannerView(snap, cfg);
+  if (!v) return '';
+  const acts = [];
+  if (v.canReload) acts.push('<button class="pc-btn pc-upd-go" type="button">立即刷新</button>');
+  if (v.dismissId) acts.push('<button class="pc-btn pc-upd-later" type="button">稍后</button>');
+  if (v.tone === 'ready')
+    acts.push('<button class="pc-btn pc-upd-lock" type="button">锁定此版本</button>');
+  return (
+    `<div class="pc-upd" data-tone="${v.tone}" role="${v.tone === 'warn' ? 'alert' : 'status'}">` +
+    `<div class="pc-upd-msg">${escAttr(v.text)}</div>` +
+    (acts.length ? `<div class="pc-upd-acts">${acts.join('')}</div>` : '') +
+    '</div>'
+  );
+}
+
+/**
+ * 升级区卡体内容（只读行 + 开关 + 两个手动入口），卡片壳与重绘共用一份。
+ * @param {object} s 后台快照
+ * @param {{ver:string, from:string, degraded:boolean, shellVer:string}} r 壳交接的运行来源
+ * @returns {string}
+ */
+function updateSysBody(s, r) {
+  const row = (label, value, title) =>
+    `<div class="pc-urow">${'<span class="pc-ulab">' + escAttr(label) + '</span>'}` +
+    `<span class="pc-uv"${title ? ` title="${escAttr(title)}"` : ''}>${escAttr(value)}</span></div>`;
+  const fromZh = SOURCE_ZH[r.from] || r.from || SOURCE_ZH.none;
+  const shell = s.shellVer ? `v${s.shellVer}` : '—';
+  // 三个版本读数统一走 identityOf：正式通道就是版本号（一字不变），快照通道挂上摘要前 8 位，
+  // 于是「1.0.0」不再等于「说不清是哪一份」，报障时念得出正文、也对得上 OSS 上的文件名。
+  const running = r.ver
+    ? `v${identityOf(r.ver, s.runningSha)}（${fromZh}${r.degraded ? '，本次已回退本地版本' : ''}）`
+    : SOURCE_ZH.none;
+  const ready = s.readyVer ? `v${identityOf(s.readyVer, s.readySha)}` : SOURCE_ZH.none;
+  const pending = s.pendingId ? `v${s.pendingId}（刷新即生效）` : '无';
+  const fuse = s.fuseTripped ? '（连续失败已暂停，手动检查可恢复）' : '';
+  // 正式用户不显示这一行（对他们是常量、是噪音）；非正式通道必须显形，免得把 dev 包当正式版排查问题
+  const chan =
+    CHANNEL_NAME === 'release'
+      ? ''
+      : row('发布通道', CHANNEL_NAME, '非正式构建，数据与正式版互不相通');
+  return (
+    row('版本', `壳 ${shell} · 远程体 v${revision()}`, '壳与远程体各自版本，不同属正常') +
+    chan +
+    row('正在运行', running, '本次页面执行的远程体来源；快照通道另挂正文摘要前 8 位') +
+    row(
+      '本地已就绪',
+      ready,
+      '下次刷新会执行的版本（缓存与基线取高）；摘要与「正在运行」不同即为另一份正文',
+    ) +
+    row('待生效', pending) +
+    row(
+      '就绪包摘要',
+      s.readySha ? s.readySha.slice(0, 12) : '—',
+      '本地就绪那份正文的 sha256 前 12 位（排查用：与清单里的 sha256、正文文件名里那段同源）',
+    ) +
+    row(
+      '最近检查',
+      `${fmtCheckedAt(s.checkedAt)}${s.lastErr ? ' · 失败：' + s.lastErr : ''}${fuse}`,
+      s.lastErr || '',
+    ) +
+    `<label class="pc-row"><span>自动检查更新</span><input type="checkbox" class="pc-fchk pc-upd-auto"${
+      s.autoCheck === false ? '' : ' checked'
+    }></label>` +
+    '<div class="pc-upd-btns">' +
+    '<button class="pc-btn" id="pc-upd-check" type="button">检查更新</button>' +
+    '<button class="pc-btn" id="pc-upd-clear" type="button">清除已下载包</button>' +
+    '</div>'
+  );
+}
+
+/**
+ * 渲染「系统」tab 的升级区（只读行 + 手动入口）：常驻可见，不管有没有新版都摆事实。
+ * 卡片不做折叠（常驻只读卡，折叠后关键读数就藏起来了），cardHead 的 expandable 传 false。
+ * @param {object|null} snap 后台快照
+ * @param {{ver:string, from:string, degraded:boolean, shellVer:string}} [src] 壳交接的运行来源
+ * @returns {string}
+ */
+export function buildUpdateSys(snap, src) {
+  return (
+    '<div class="pc-sec" data-upd="1">' +
+    cardHead('软件更新', '', false) +
+    `<div class="pc-sec-body" data-upd-body="1">${updateSysBody(snap || {}, src || {})}</div></div>`
+  );
+}
+
+/**
+ * 就地重绘升级区卡体（状态广播到达时调用）。只换 body 内容、不换卡片壳：
+ * 标题行的折叠监听与升级按钮的事件委托都不因重绘而丢失。
+ * @param {Element} panel 面板根元素
+ * @returns {boolean} 是否真的重绘了（系统 pane 尚未构建时为 false）
+ */
+export function rerenderUpdateSys(panel) {
+  const body = panel.querySelector('[data-upd-body]');
+  if (!body) return false;
+  body.innerHTML = updateSysBody(updateSnapshot() || {}, runSource());
+  return true;
+}
+
 /**
  * 一个类别 = 右栏一个 pane，children 里 group/feature 分别渲染成卡片
  * @param {object} cat menu.js 类别节点
@@ -244,7 +426,7 @@ function renderCategoryPane(cat, active) {
     .join('');
   const extra =
     cat.id === LOGOUT_PANE_ID
-      ? `<button class="pc-btn pc-btn-danger" id="pc-logout">登出 / 换号</button>`
+      ? `${buildUpdateSys(updateSnapshot(), runSource())}<button class="pc-btn pc-btn-danger" id="pc-logout">登出 / 换号</button>`
       : '';
   return `<div class="pc-pane" id="pc-pane-${cat.id}" role="tabpanel" aria-labelledby="pc-tab-${cat.id}" tabindex="0" data-pane="${cat.id}"${active ? '' : ' hidden'}>${cards || '<div class="pc-empty">无内容</div>'}${extra}</div>`;
 }
@@ -265,6 +447,7 @@ export function buildPanelHTML() {
         <div class="pc-world" id="pc-world"></div>
         <div class="pc-gem" id="pc-gem"></div>
       </div>
+      <div id="pc-upd-banner"></div>
       <label class="pc-mode"><span>战斗模式</span><input type="checkbox" id="pc-combat"></label>
       <div class="pc-tabs">
         <div class="pc-tabbar" role="tablist" aria-orientation="vertical" aria-label="功能分类">${tabs}</div>
@@ -420,6 +603,7 @@ export function syncControls(panel) {
     if (c) cb.checked = !!c.enabled;
   });
   panel.querySelectorAll('input.pc-fchk').forEach((cb) => {
+    if (!cb.dataset.id) return; // 升级区的「自动检查更新」不带 data-id（它归后台偏好，不入 configs），强读会整段抛
     cb.checked = !!configs[cb.dataset.id][cb.dataset.key];
   });
   panel.querySelectorAll('input[type=number]').forEach((input) => {

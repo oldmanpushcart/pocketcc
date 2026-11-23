@@ -33,6 +33,8 @@ export const EVT = Object.freeze({
   SESSION_UNHEALTHY: 'session.unhealthy',
   /** 面板「归还技能组2」按钮（core/ui/field-types/farmrules.js 发，auto-farm feat 常驻监听执行快照还原） */
   FARM_SKILL_RESTORE: 'farm.skill-restore',
+  /** 升级通道状态快照变更（core/update-client.js 收 bridge 转发的后台广播后发；角标/面板横幅/系统 tab 共用） */
+  UPDATE_STATE: 'update.state',
 });
 
 /** @type {Map<string, Set<Function>>} type -> Set<handler> */

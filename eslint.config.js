@@ -8,7 +8,8 @@ export default [
     ignores: [
       'node_modules/**',
       'extension/dist/**',
-      'release/**',
+      // extension 的分发出口（minified 壳 + 待上传件，非源码；dev 不出包）
+      'extension/out/**',
       'dashcam/store/**',
       'references/**',
       '.qoder/**',
@@ -52,12 +53,12 @@ export default [
         __require: 'readonly',
         cc: 'readonly',
         CryptoJS: 'readonly',
-        // 构建期 define 注入的授权常量（core/net-guard.js 统一收口，其余模块不直接引用）
-        __LICENSE_HASH__: 'readonly',
-        __LICENSE_SALT__: 'readonly',
-        __LICENSE_FRIEND__: 'readonly',
+        // 构建期 define 注入的常量（版本与升级通道口径统一收口在 core/update.js，实例命名口径收口在 core/constants.js）
         __PCC_VERSION__: 'readonly',
-        // dev 调试探针编译期闸门（content.entry.js 引用，release 构建为 false）
+        __PCC_CHANNEL__: 'readonly',
+        __OSS_BASE__: 'readonly',
+        __UPDATE_KEY__: 'readonly',
+        // dev 调试探针编译期闸门（remote.entry.js / core/devtools.js 引用，release 构建为 false）
         __DEVTOOLS__: 'readonly',
       },
     },

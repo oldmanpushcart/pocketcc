@@ -51,6 +51,15 @@ module.exports = {
       to: { path: '^extension/src/core/ui/' },
     },
     {
+      name: 'shell-stays-thin',
+      severity: 'error',
+      comment:
+        '本地壳（shell/bridge/background/anti-throttle）不得依赖玩法与面板 UI：重活全在远程体（remote.entry.js）里，' +
+        '壳只做取包/执行/升级状态机与转发。壳一肥，每次发版就得重发所有人的扩展包，远程升级通道形同虚设',
+      from: { path: '^extension/src/(shell|bridge|background|anti-throttle)[.]js$' },
+      to: { path: '^extension/src/(feats/|core/ui/)' },
+    },
+    {
       name: 'acl-not-depend-on-domain-or-net',
       severity: 'error',
       comment:

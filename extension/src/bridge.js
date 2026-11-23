@@ -1,9 +1,6 @@
 // 隔离世界脚本：扩展中唯一能访问 chrome.* API 的地方。
 // MAIN world 的 boot.js 无法调用 chrome.storage，故通过 window.postMessage 代理读写。
-// 准入副闸（分布式闸门之二）：本 bundle 自带同源哨（net-guard），只认持有正确摘要的账号放行存储代理；
-// 不设限包构建期即短路放行（零行为变化），授权包未收/未过 'hello' 复验前 get 回空、写静默丢弃。
 import { NS } from './core/constants.js';
-import { screen, slotFree } from './core/net-guard.js';
 
 (() => {
   // 幂等守卫：同一 world 内 bridge 的 message 监听只允许绑定一次。
@@ -11,9 +8,6 @@ import { screen, slotFree } from './core/net-guard.js';
   // 造成 storage.js 侧 resolve/reject 竞态（往往是失效上下文那份先到 → 误报）；命中守卫即直接返回，不再叠加监听。
   if (window.__pocketccBridgeInited) return;
   window.__pocketccBridgeInited = true;
-
-  /** @type {boolean} 存储代理放行态：不设限包恒真；授权包由 'hello' 消息携带的账号经本侧独立复验后置真 */
-  let unlocked = slotFree();
 
   /**
    * @type {boolean} 扩展上下文失效哨兵：MV3 重载/停用后 chrome.runtime.* 一律抛 'Extension context invalidated'，
@@ -32,6 +26,61 @@ import { screen, slotFree } from './core/net-guard.js';
   }
 
   /**
+   * 升级通道请求中继：MAIN（壳 / 远程体）→ background 状态机，结果带同 id 以 dir='bridge->main' 回发。
+   * 与 dashcam 两条 fire-and-forget 通道不同，这里必须给回执——壳拿不到远程体文本就无法启动。
+   * @param {object} msg main->bridge 消息（op:'update-bundle' | 'update-cmd'）
+   */
+  function relayUpdate(msg) {
+    /**
+     * 统一回发包
+     * @param {*} result 成功结果
+     * @param {string} [error] 失败原因
+     */
+    const reply = (result, error) =>
+      window.postMessage({ __ns: NS, dir: 'bridge->main', id: msg.id, result, error }, '*');
+    if (contextDead) {
+      reply(undefined, 'extension context invalidated');
+      return;
+    }
+    try {
+      chrome.runtime.sendMessage(
+        {
+          type: 'pcc-update',
+          op: msg.op,
+          prefer: msg.prefer,
+          cmd: msg.cmd,
+          ver: msg.ver,
+          why: msg.why,
+          value: msg.value,
+        },
+        (resp) => {
+          // 必须读掉 lastError，否则 Chrome 就报 "Unchecked runtime.lastError"
+          const le = chrome.runtime.lastError;
+          if (le) reply(undefined, String(le.message || le));
+          else if (resp && resp.ok === false) reply(undefined, String(resp.err || 'update failed'));
+          else reply(resp && 'data' in resp ? resp.data : resp);
+        },
+      );
+    } catch (e) {
+      if (isContextGone(e)) contextDead = true;
+      reply(undefined, String((e && e.message) || e));
+    }
+  }
+
+  /**
+   * background 升级状态广播 → MAIN（EVT.UPDATE_STATE 的载体）。
+   * 只转发本命名协议关心的那一条，其余消息不响应（包括自己刚发出的请求的回执方向）。
+   */
+  chrome.runtime.onMessage.addListener((msg) => {
+    if (!msg || msg.type !== 'pcc-update-state') return undefined;
+    window.postMessage(
+      { __ns: NS, dir: 'bridge->main', ev: 'update-state', state: msg.state },
+      '*',
+    );
+    return undefined;
+  });
+
+  /**
    * 存储代理：只认本命名空间且 dir='main->bridge' 的消息，按 op 分发到 chrome.storage.local，
    * 结果带同 id 以 dir='bridge->main' 回发（get 回值，set/remove 回 true；异常回 error 字符串）
    * @param {MessageEvent} event window message 事件
@@ -42,16 +91,10 @@ import { screen, slotFree } from './core/net-guard.js';
     const msg = event.data;
     if (!msg || msg.__ns !== NS || msg.dir !== 'main->bridge') return;
 
-    // 准入交接：MAIN 侧首验后经此夹带账号，本侧用同源哨独立复验（不信任对岸断言，摘要对不上不放行）
-    if (msg.op === 'hello') {
-      if (!slotFree()) unlocked = screen(msg.uid);
-      return;
-    }
-
     // 报文录制落盘转发：MAIN(net-collect) → bridge → background service worker 代发 POST（绕页面 CSP）。
-    // fire-and-forget：不回发 MAIN（net-collect 不消费回执）；无接收器/后台错误只记一行，绝不阻断收发。
+    // fire-and-forget：不回发 MAIN（net-collect 不消费回执）；无接收器/后台错误只记一行，始终不阻断收发。
     if (msg.op === 'dashcam-flush') {
-      if (!unlocked || contextDead) return; // 未放行静默丢弃；上下文失效后彻底静默（避免逐批抛错刷屏）
+      if (contextDead) return; // 上下文失效后彻底静默（避免逐批抛错刷屏）
       try {
         chrome.runtime.sendMessage(
           {
@@ -79,9 +122,9 @@ import { screen, slotFree } from './core/net-guard.js';
     }
 
     // 日志上送落盘转发：MAIN(log-collect) → bridge → background 代发 POST /log。同报文通道纪律：
-    // fire-and-forget、未放行静默丢弃、失败只记一行不阻断。
+    // fire-and-forget、失败只记一行不阻断。
     if (msg.op === 'dashcam-log-flush') {
-      if (!unlocked || contextDead) return; // 未放行静默丢弃；上下文失效后彻底静默（避免逐批抛错刷屏）
+      if (contextDead) return; // 上下文失效后彻底静默（避免逐批抛错刷屏）
       try {
         chrome.runtime.sendMessage(
           {
@@ -105,15 +148,13 @@ import { screen, slotFree } from './core/net-guard.js';
       return;
     }
 
-    const { id, op, key, value } = msg;
-    // 准入副闸未开：读回空、写静默成功丢弃（与上下文失效降级同款容错风格：回真实形状、不 reject、不挂死在途队列）
-    if (!unlocked) {
-      window.postMessage(
-        { __ns: NS, dir: 'bridge->main', id, result: op === 'get' ? undefined : true },
-        '*',
-      );
+    // 升级通道：壳取待执行文本、远程体与面板发命令，都转交 background 状态机（它才是唯一出网口）。
+    if (msg.op === 'update-bundle' || msg.op === 'update-cmd') {
+      relayUpdate(msg);
       return;
     }
+
+    const { id, op, key, value } = msg;
     let result;
     let error;
     try {

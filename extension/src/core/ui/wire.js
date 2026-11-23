@@ -6,6 +6,7 @@ import { session } from '../game-api.js';
 import { configs, findFeature, saveFeature, saveGroup, applyFeature } from '../registry.js';
 import { collectFeatureIds } from '../menu.js';
 import { isCombat, setCombatMode } from '../mode.js';
+import { updateCmd, updateSnapshot } from '../update-client.js';
 import {
   findMenuNode,
   syncFeatureChecks,
@@ -160,6 +161,52 @@ export function wirePanel(panel) {
   //   换出来的新控件若不重走一遍绑定就一个监听都没有——表现是「照常可点、看着像勾上了，值却不落盘也不生效」（面板级委托只管容器型字段）。
   wireControls(panel);
   wireContainerFields(panel);
+
+  // 升级通道的手动入口（横幅三按钮 + 系统 tab 两按钮一开关）。
+  // 必须走面板级委派：横幅每次状态广播整块换 innerHTML、升级区卡体就地重绘，直接绑上去的监听会跟着 DOM 一起没了。
+  wireUpdate(panel);
+}
+
+/**
+ * 升级提示的交互绑定（命令一律转后台，新快照经广播回流再重画，本处不直接改任何读数）。
+ * @param {Element} panel 面板根元素
+ */
+function wireUpdate(panel) {
+  const pick = (e, sel) => (e.target && e.target.closest ? e.target.closest(sel) : null);
+
+  panel.addEventListener('click', (e) => {
+    const el = pick(e, '.pc-upd-go,.pc-upd-later,.pc-upd-lock,#pc-upd-check,#pc-upd-clear');
+    if (!el) return;
+    // 立即刷新：运行期永不热替换远程体（会打断在途行军与 reactor 态），刷新是唯一生效途径
+    if (el.classList.contains('pc-upd-go')) {
+      window.location.reload();
+      return;
+    }
+    // 稍后 = 本会话不再弹横幅（不清包、不锁定）；记的是发布身份，故下轮检到同号码的新正文仍会再提
+    if (el.classList.contains('pc-upd-later')) {
+      const s = updateSnapshot() || {};
+      updateCmd('dismiss', { ver: String(s.pendingId || '') });
+      return;
+    }
+    if (el.classList.contains('pc-upd-lock')) {
+      updateCmd('lock');
+      return;
+    }
+    if (el.id === 'pc-upd-check') {
+      updateCmd('refresh');
+      return;
+    }
+    if (el.id === 'pc-upd-clear') {
+      // 丢的就是已下载的新版包（不动当前运行），但不刷新就再下一遍，故先二次确认
+      if (window.confirm('确认清除已下载的新版包？下次检查更新会重新下载。')) updateCmd('clear');
+    }
+  });
+
+  // 自动检查开关：只改偏好并落盘，定时闹钟由后台同步（关掉即不再自动出网）
+  panel.addEventListener('change', (e) => {
+    const el = pick(e, '.pc-upd-auto');
+    if (el) updateCmd('auto', { value: !!el.checked });
+  });
 }
 
 /**

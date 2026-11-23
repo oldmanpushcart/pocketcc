@@ -26,6 +26,15 @@
     "card-containers.html",
     "card-lists.html",
     "card-sections.html",
-    "feat-alliance-boss-ranges.html"
+    "feat-alliance-boss-ranges.html",
+    "upd-banner-ready.html",
+    "upd-banner-locked.html",
+    "upd-banner-revoked.html",
+    "upd-banner-integrity.html",
+    "upd-banner-degraded.html",
+    "upd-sys.html",
+    "upd-sys-fused.html",
+    "welcome-card.html",
+    "welcome-card-ready.html"
   ]
 }

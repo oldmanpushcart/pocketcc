@@ -1,8 +1,8 @@
 node_modules/
 extension/dist/
 
-# 授权分发产物（含朋友昵称水印，不入公开仓库）
-release/
+# extension 的分发出口（extension/out/<通道>/{pocketcc-extension, oss}），不入公开仓库；dev 不出包，构建输出另在 extension/dist/
+extension/out/
 
 # 临时/工具产物（逆向探测、IDE 快照、Windows 保留名误生成）
 ref_probe.mjs
@@ -25,3 +25,6 @@ nul
 references/游戏逆向/raw/
 references/游戏逆向/extracted/
 references/游戏逆向/vibe_images/
+
+# 第三方辅助脚本的逆向素材：只作本地分析用，不入库（2026-11-23 重新停用入库）
+references/竞对逆向/

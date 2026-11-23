@@ -583,4 +583,24 @@ export const PANEL_CSS = `
        视觉尺寸与占位不变（flex 基宽不动），扩出的 3px 落在行间 gap 内，不抢相邻目标 */
     .pc-rngdel,.pc-rngadd,.pc-udel,.pc-rgdel,.pc-ppdel,.pc-ulistadd,.pc-mradd,.pc-fradd,.pc-tradd,.pc-ppadd,.pc-mrdel,.pc-frdel,.pc-tdel,.pc-rmv{position:relative;}
     .pc-rngdel::before,.pc-rngadd::before,.pc-udel::before,.pc-rgdel::before,.pc-ppdel::before,.pc-ulistadd::before,.pc-mradd::before,.pc-fradd::before,.pc-tradd::before,.pc-ppadd::before,.pc-mrdel::before,.pc-frdel::before,.pc-tdel::before,.pc-rmv::before{content:'';position:absolute;left:50%;top:50%;width:24px;height:24px;transform:translate(-50%,-50%);}
+    /* ── 升级通道（四层提示之三：图标角标 / 面板横幅 / 系统 tab 只读行；第四层欢迎页脚见 welcome.js）── */
+    /* 图标右上角小圆点：只在「新版已下载待刷新」时存在；pointer-events:none 不抢图标点击，z-index 压在光晕之上 */
+    .pc-badge{position:absolute;top:1px;right:1px;width:11px;height:11px;box-sizing:border-box;
+      border-radius:50%;background:#3ddc84;border:2px solid rgba(12,16,22,.85);
+      pointer-events:none;z-index:2;}
+    /* 面板顶部横幅：tone=ready 绿（已就绪待刷新），tone=warn 黄（需人工介入：校验未过 / 版本已停用）*/
+    .pc-upd{display:flex;align-items:center;gap:10px;margin:0 0 8px;padding:8px 10px;border-radius:8px;
+      font-size:12px;line-height:1.5;border:1px solid rgba(255,255,255,.16);background:rgba(255,255,255,.05);}
+    .pc-upd-msg{flex:1;min-width:0;}
+    .pc-upd-acts{display:flex;gap:6px;flex:0 0 auto;}
+    .pc-upd-acts .pc-btn{margin-top:0;width:auto;padding:4px 10px;font-size:12px;}
+    .pc-upd[data-tone="ready"]{border-color:rgba(80,220,140,.45);background:rgba(60,200,120,.12);color:#c8f5da;}
+    .pc-upd[data-tone="warn"]{border-color:rgba(255,170,80,.45);background:rgba(255,150,60,.13);color:#ffe1bd;}
+    /* 系统 tab 升级区只读行：左标签定宽、右值单行省略（sha / 失败原因看 title）*/
+    .pc-urow{display:flex;align-items:baseline;gap:12px;margin:6px 0;}
+    .pc-ulab{flex:0 0 84px;font-size:12px;opacity:.65;}
+    .pc-uv{flex:1;min-width:0;font-size:12px;font-variant-numeric:tabular-nums;
+      overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+    .pc-upd-btns{display:flex;gap:8px;}
+    .pc-upd-btns .pc-btn{margin-top:10px;width:auto;flex:1;padding:6px 0;}
   `;

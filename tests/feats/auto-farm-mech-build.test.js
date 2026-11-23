@@ -1,6 +1,6 @@
 // mechBuild（机械田自动建造）纯函数单测：家族唯一去重 + 完工判定→撤回口径。
 // 这两个判据是从 cyclePass 里抽出来的纯函数（不发包、不摸游戏符号），断言的是"计划决策"，不含择时曲线。
-// 说明：feat 模块的 import 链会触到浏览器全局（reactor/net-guard 等），故测试内先最小桩化 window/document/chrome，
+// 说明：feat 模块的 import 链会触到浏览器全局（reactor 等），故测试内先最小桩化 window/document/chrome，
 // 再用动态 import 取纯函数——不 stub 任何游戏符号（lifespanSec 在游戏表缺席时按「未知不拦」回 null，正是被测降级路径）。
 import { test } from 'node:test';
 import assert from 'node:assert/strict';

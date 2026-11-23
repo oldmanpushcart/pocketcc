@@ -1,0 +1,5 @@
+{
+  "//": "发布通道 manifest.key（SPKI 公钥 base64，只用来固定扩展 ID，不含私钥）。tracked 的 extension/manifest.json 本身存 dev key；scripts/package-release.mjs 出包时按 --channel 把这里的值注入到分发目录的 manifest.json。ID 由 key 派生，改任何一条即等于换一个全新扩展实例（storage 从零开始）。",
+  "release": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAzxJpCQzXtQz9aUbynro2BjHHIKpvjuadLZkYoJGAvkjgZkXUGLdrhFfYUnxn3ZmlTCQb4ae/bCTE7/g4yb4Jjzh0uFc366yZVeg32gkqWgCf/TaNsr/fTy6Q1GU+0LAmNJ0FFEeXmVAl8iv9JRl4q/EWU2hPn+9Bw38/g9VZVyoP/WueHCLljZzNVUDo/4d50Si3lG4BNeYW04ep04qNAenenXr1vdh4LTlAPJVEArUZq97NznIWPub44+mTQTKsbC/dmdfOnDhCcIiK8ng0VEpTRNCAP9CNSKx0/7PCtyJj613ZUUofMZP6McDrAedfTmhzC5fPO8Dw1dgcy+VXvQIDAQAB",
+  "snapshot": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA4Ggt5ssNigvafXbJgjW4m5+LYEqcMtPbS1JN2dRAehMMqf7OW7exkPlJp+3xdusFvFrQ9Pb/nAnjtY9fUh1RH0WUYHyRDQfmrgduyA41FnvZ6HyF/9Z/ke0JC9BEybTFQNU5cn0ejKwof+pe/06FBk1GHIPEd/wM/CUEIZygicK+F3L61rYnyE2FjQXh/1TiCq/OM2SvJXG1tPPRsDTIW3Cu4TGDb+OXjRjCXtVlzuZe+zCBOS0s+CZmHaEel9BBsjqWvwP84hkcifG6+mAW5VntNw4bs4l7q0weRbqX1yd3ACVj9guMy90xRkBfKUbjv4aDU6LJzPIu54q+TDynjwIDAQAB"
+}
