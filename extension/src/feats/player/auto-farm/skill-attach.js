@@ -9,6 +9,9 @@
  *   898 注销最后一个登记 → 10401 amount+1 还账（60ms 内）；另一组还有同款登记 → 不还账。
  *   同英雄已有同族更高档时装低档被拒（应答 data="hero_skill_equip001" 裸串且无 10906 跟随）。
  *   1345 切组纯指针：两组内容零变化、账零变化，10906 在 66~74ms 即时镜像翻转（先于 resp）。
+ *   排他粒度 = 英雄：一个英雄同族只能挂 1 本（planAttach 的 fams/taken 按英雄各建一份），但同一队
+ *   的不同英雄可以各挂一本——同款多本（同 itemId Amount>1）即为此准备：借出逐本消账（-1），
+ *   有 N 本就能同队发给 N 个英雄（20261122 用户实证「2 本 Lv5 野外稀每队却只装了 1 本」）。
  *   「技能族」的可靠键 = 能装出该技能的书 itemId 前缀 floor(id/100)：同前缀族内已有更高档挂载时
  *   装低档必拒；不同前缀（25235 稀有段 vs 25035 普通段）互不干扰、可并存（温泰实验 L77/L108 双向实证）。
  *
@@ -142,9 +145,10 @@ export function collectSkillWhitelist(items) {
  *   - 组2 已挂同族（书前缀相同）→ 跳过（组2 已挂 25235 族更高档时复制低档必撞 hero_skill_equip001；
  *     组2 的玩家手装非采集技能不在任何书族内，不拦复制）；
  *   - 表里查不到对应档位的书 → 跳过（不该发生，防脏表发盲包）。
- * 补书判定：
+ * 补书判定（以下 taken/fams 均为「本英雄范围内」的占用表，逐英雄重建——同队不同英雄互不影响，
+ *   同款多本可各装一本；单英雄同族仍只 1 本，与游戏排他一致）：
  *   - 背包 Amount>0 且书前缀 ∈ 该族优先级表；
- *   - 同款（para1 已被组2 挂载/复制计划占用）跳过；同族（前缀已被占用）跳过——一本就够，
+ *   - 同款（para1 已被组2 挂载/复制计划占用）跳过；同族（前缀已被占用）跳过——一个英雄同族就一本，
  *     同族第二本要么撞 equip001 要么挤占空槽；
  *   - 同 para1 多档书（如泰温专属 2503801~2503805）取背包有货的最高档；
  *   - 前缀表顺序即优先级（野外稀 → 专精稀 → 野外普 → 专精普，稀有段效率优先），逐槽从高到低填。
@@ -402,6 +406,22 @@ function bagFind(bag, itemId) {
   return null;
 }
 
+/**
+ * 借出一本实体书：内存 bag 按 itemId 逐本消账（Amount-1），清空才归零。
+ * 账目粒度是 (heroId,itemId)——同 itemId 有 N 本就能在同一次装配里发给 N 个不同英雄
+ * （每英雄同族仍只 1 本，由 planAttach 保证）；整条清零等于「同款全局只借一本」，
+ * 会让多本同款在一队里只有一位英雄用上（服务端 10401 也是 -1 而非清零）。
+ * @param {Array<{itemId:number,amount:number}>} bag bagSkillItems 摊平结果（就地消账）
+ * @param {number} itemId 借出的书
+ * @returns {boolean} 是否有货并完成消账
+ */
+export function consumeBagBook(bag, itemId) {
+  const bk = Array.isArray(bag) ? bagFind(bag, itemId) : null;
+  if (!bk || !(bk.amount | 0)) return false;
+  bk.amount = Math.max(0, (bk.amount | 0) - 1);
+  return true;
+}
+
 /** 槽位上下文格式化（debug 决策日志用）：`[20301:5,0:0,20205:5]`，空槽 0:0 */
 function slotsStr(arr) {
   return (
@@ -587,6 +607,9 @@ function rejectKey(ret) {
 var STUDY_GAP_MS = 4000;
 var lastStudyOkTs = 0; // 页面生命周期内共享；0=从未受理（首把立即发）；被拒不重置窗口
 
+/** @type {number} 单条台账 898 的最大重试轮数；超过即清账交 reconcile 的快照 diff 兜底（防永久残留逐轮撞拒刷屏） */
+var FORGET_RETRY_MAX = 3;
+
 /**
  * 切技能组（1345）。受理后等 10906 skillsIndex 翻转确认；超时则信任游戏本地态继续。
  * @param {number} heroId
@@ -713,7 +736,7 @@ async function forgetSlot(heroId, index) {
 /**
  * 装配（acquire）：逐英雄 快照组2 → 切组2 → 复制组1 → 空槽补采集书。
  * fill 项逐条入台账（kind:'fill'）；copy 项不入账（组1 原件占账，卸不还账，永不必卸）。
- * 同一实体书在本轮内跨槽/跨英雄只装一次（内存 bag 消账，服务端账目以 10401 为镜像）。
+ * 内存 bag 按实体本数逐本消账（consumeBagBook）：同款多本可同队发给多个英雄，账目镜像服务端 10401。
  * @param {number[]} heroIds 预设英雄集（plan.presetHeroIds）
  * @param {number} family 资源 family（cand.family，选书表键）
  * @param {function():boolean} [aliveFn] 宿主存活门（auto-farm 引擎 alive）：每英雄/每槽前检查，
@@ -789,13 +812,13 @@ async function attachHeroes(heroIds, family, aliveFn) {
     for (let f = 0; f < plan.fill.length; f++) {
       const pf = plan.fill[f];
       const bk = bagFind(bag, pf.itemId);
-      if (!bk) {
+      if (!bk || !(bk.amount | 0)) {
         log.info('skill book out of stock, skip. heroId=%d itemId=%d', hid, pf.itemId);
         continue;
       }
       if (!(await studySlot(hid, pf, aliveFn))) continue;
       done++;
-      bk.amount = 0; // 一本实体书本轮只借一次（跨英雄轮转靠 release 还账后重读背包）
+      consumeBagBook(bag, pf.itemId); // 逐本消账：同款还剩货就继续发给下一位英雄（跨队轮转靠 release 还账后重读背包）
       state.ledger.push({
         heroId: hid,
         index: pf.index,
@@ -850,6 +873,11 @@ async function attachHeroes(heroIds, family, aliveFn) {
 /**
  * 归还（release）：逐英雄 卸台账 fill 项（组2 生效态）→ 切回组1 → 清台账。
  * ❗调用方必须放 finally——march 抛错/中止也不能跳过本函数，否则书池被钉死。
+ * 收尾粒度 = 本轮派兵的英雄集（不是「有台账的英雄」）：纯 copy 装配不入账，按台账分组会把整位
+ * 英雄跳过——生效组停在组2、组2 留着采集镜像，直到下轮 reconcile 才擦净（真机 20261122 石太郎
+ * heroId=122：release 只报 heroes=2 slots=8，122 既没卸也没切回）。
+ * 卸书失败（898 被拒 / 未发出）的台账条目不整批清：留在账上下轮 release 重试，满 FORGET_RETRY_MAX
+ * 轮才清账并交给 reconcile 的快照 diff 兜底（槽已空则直接销账，不必每轮撞同一个拒）。
  * @param {number[]} heroIds
  * @returns {Promise<number>} 成功卸下的槽数
  */
@@ -867,24 +895,67 @@ async function releaseHeroes(heroIds) {
     (byHero[e.heroId] = byHero[e.heroId] || []).push(e);
   }
   let slots = 0;
-  for (const key in byHero) {
-    const hid = key | 0;
-    const list = byHero[key];
-    let h = heroData(hid);
-    if (!h) log.debug('hero %d data unavailable, skip release.', hid);
-    if (heroSkillsIndex(h) !== 2 && !(await switchGroup(hid, 2))) continue; // 异常态兜底：卸书须组2 生效（温泰口径）
-    for (let j = 0; j < list.length; j++) {
-      if (await forgetSlot(hid, list[j].index)) slots++;
+  let kept = 0;
+  let back = 0;
+  for (let i = 0; i < ids.length; i++) {
+    const hid = ids[i];
+    if (!hid) continue;
+    const list = byHero[hid];
+    if (list && list.length) {
+      let keep = list; // 默认整批留账：英雄数据读不到 / 切不到组2，一笔都没动
+      const h = heroData(hid);
+      if (h && (heroSkillsIndex(h) === 2 || (await switchGroup(hid, 2)))) {
+        keep = [];
+        const g2 = heroSkillSlots(h, 2); // h 是游戏 HeroData 活引用，此处读到的是卸书前的当下槽态
+        for (let j = 0; j < list.length; j++) {
+          const e = list[j];
+          if (await forgetSlot(hid, e.index)) {
+            slots++;
+            continue;
+          }
+          const cur = g2[e.index | 0] || {};
+          if (!(cur.skillId | 0)) continue; // 槽已空 = 书已不在身上（玩家手卸/重复归还），留账只会每轮撞拒
+          e.tries = (e.tries | 0) + 1;
+          if (e.tries >= FORGET_RETRY_MAX) {
+            log.warn(
+              'forget giving up after %d tries, leave to reconcile. heroId=%d index=%d itemId=%d',
+              e.tries,
+              hid,
+              e.index,
+              e.itemId | 0,
+            );
+            continue;
+          }
+          keep.push(e);
+        }
+      }
+      if (keep.length !== list.length) {
+        state.ledger = state.ledger.filter(function (e2) {
+          return (e2.heroId | 0) !== hid || keep.indexOf(e2) >= 0;
+        });
+      }
+      kept += keep.length;
+      log.debug(
+        'ledger settled. heroId=%d released=%d kept=%d',
+        hid,
+        list.length - keep.length,
+        keep.length,
+      );
     }
-    await switchGroup(hid, 1);
-    state.ledger = state.ledger.filter(function (e2) {
-      return (e2.heroId | 0) !== hid;
-    });
-    log.debug('ledger cleared. heroId=%d slots=%d', hid, list.length);
+    // 切回组1：feat 征用过的英雄（有快照）或本轮动过台账的都须还原生效组；玩家自己的组2（无快照）不干预
+    const hb = heroData(hid);
+    const borrowed = !!(list && list.length) || !!state.snapshot[String(hid)];
+    if (borrowed && hb && heroSkillsIndex(hb) === 2 && (await switchGroup(hid, 1))) back++;
   }
-  if (slots) persistState();
-  if (Object.keys(byHero).length) {
-    log.info('skill release done. heroes=%d slots=%d', Object.keys(byHero).length, slots);
+  if (slots || kept || back) {
+    persistState();
+    log.info(
+      'skill release done. heroes=%d slots=%d back=%d kept=%d',
+      Object.keys(byHero).length,
+      slots,
+      back,
+      kept,
+    );
   }
   return slots;
 }
@@ -1015,13 +1086,13 @@ async function restoreSnapshots(heroIds) {
       const itemId = itemIdForSkill(items, sid, want.level | 0);
       if (!itemId) continue;
       const bk = bagFind(bag, itemId);
-      if (!bk) {
+      if (!bk || !(bk.amount | 0)) {
         log.info('restore skip (book not in bag). heroId=%d itemId=%d', hid, itemId);
         continue;
       }
       if (await studySlot(hid, { index: s, skillId: sid, level: want.level | 0, itemId: itemId })) {
         ops++;
-        bk.amount = 0;
+        consumeBagBook(bag, itemId);
       }
     }
     await switchGroup(hid, 1);

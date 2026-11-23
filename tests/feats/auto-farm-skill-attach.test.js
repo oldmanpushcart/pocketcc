@@ -42,6 +42,7 @@ const {
   collectSkillWhitelist,
   planAttach,
   planDetachSlots,
+  consumeBagBook,
 } = mod;
 
 // ── ITEM 表 fixture（温泰样本 + 字典表语义，形状 = getTableGroup('item') 行表）──────
@@ -246,6 +247,40 @@ test('planAttach：fill 与 copy 不重复占同槽/同款；跨英雄共享 bag
   // copy 装的是 20301（25038 段）——25235 段未被 copy 占，fill 候选 2523506 → index1
   assert.equal(plan.fill[0].itemId, 2523506);
   assert.equal(plan.fill[0].index, 1);
+});
+
+test('同款多本：一个英雄同族只 1 本，但同队不同英雄可各装一本（逐本消账，库存耗尽才降级）', () => {
+  const items = makeItems();
+  const prefixes = SKILL_BOOK_FAMILIES[5];
+  const bag = [{ itemId: 2523505, amount: 2 }]; // 2 本 Lv5 野外采集速度（稀有段 25235）
+  const emptyG2 = [
+    { skillId: 0, level: 0 },
+    { skillId: 0, level: 0 },
+    { skillId: 0, level: 0 },
+  ];
+
+  // 规则 1：单英雄同族只 1 本——即使背包有 2 本，一位英雄的 fill 也只占 25235 一段
+  const pA = planAttach(items, G1_EMPTY, emptyG2, bag, prefixes);
+  assert.equal(pA.fill.length, 1);
+  assert.equal(pA.fill[0].itemId, 2523505);
+  assert.equal(pA.fill[0].skillId, 21204);
+  assert.equal(consumeBagBook(bag, 2523505), true);
+  assert.equal(bag[0].amount, 1);
+
+  // 规则 2：同队下一位英雄仍可拿到同款第二本（占用表逐英雄重建，不因队友装过就降级）
+  const pB = planAttach(items, G1_EMPTY, emptyG2, bag, prefixes);
+  assert.equal(pB.fill.length, 1);
+  assert.equal(pB.fill[0].itemId, 2523505);
+  assert.equal(consumeBagBook(bag, 2523505), true);
+  assert.equal(bag[0].amount, 0);
+
+  // 第三本不存在 → 无货降级（不盲发包）
+  const pC = planAttach(items, G1_EMPTY, emptyG2, bag, prefixes);
+  assert.deepEqual(pC.fill, []);
+  assert.ok(pC.trace.join(' | ').includes('no-stock prefix=25235'), pC.trace.join(' | '));
+  assert.equal(consumeBagBook(bag, 2523505), false);
+  assert.equal(consumeBagBook(bag, 9999999), false);
+  assert.equal(consumeBagBook(null, 2523505), false);
 });
 
 test('planDetachSlots：白名单内且快照没有 → 卸；快照同款与白名单外手装 → 留', () => {
