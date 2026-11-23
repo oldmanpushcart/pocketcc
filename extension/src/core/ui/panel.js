@@ -409,6 +409,30 @@ export function rerenderUpdateSys(panel) {
 }
 
 /**
+ * 渲染「系统」tab 的「设置备份」卡：导出 / 导入两个按钮 + 一行状态回显。
+ * 本函数只摆骨架：状态文字（导到哪了、导入几项、为什么被拒）由 wire.js 就地写进 [data-cfg-status]。
+ * 卡面那句话就是口径声明：备份只装设置（配置 blob），运行数据不带。
+ * 与升级区同形：常驻卡不做折叠，syncControls 只回写值不重建 DOM，故导入后的状态行不会被抹掉。
+ * @returns {string}
+ */
+export function buildSettingsSys() {
+  return (
+    '<div class="pc-sec" data-cfg="1">' +
+    cardHead('设置备份', '', false) +
+    '<div class="pc-sec-body">' +
+    '<div class="pc-cfg-hint">备份当前账号的全部设置（功能开关与参数、菜单组闸门、图标与浮窗位置）；' +
+    '运行数据（当日计数、扫描缓存等）不在备份内。文件名：pocketcc-账号-年月日-时分秒.json。</div>' +
+    '<div class="pc-upd-btns">' +
+    '<button class="pc-btn" id="pc-cfg-export" type="button">导出设置</button>' +
+    '<button class="pc-btn" id="pc-cfg-import" type="button">导入设置</button>' +
+    '</div>' +
+    '<input type="file" class="pc-cfg-file" accept="application/json,.json" aria-label="选择设置备份文件" hidden>' +
+    '<div class="pc-cfg-status" data-cfg-status="1" role="status" aria-live="polite"></div>' +
+    '</div></div>'
+  );
+}
+
+/**
  * 一个类别 = 右栏一个 pane，children 里 group/feature 分别渲染成卡片
  * @param {object} cat menu.js 类别节点
  * @param {boolean} active 是否为当前可见 pane
@@ -426,7 +450,7 @@ function renderCategoryPane(cat, active) {
     .join('');
   const extra =
     cat.id === LOGOUT_PANE_ID
-      ? `${buildUpdateSys(updateSnapshot(), runSource())}<button class="pc-btn pc-btn-danger" id="pc-logout">登出 / 换号</button>`
+      ? `${buildUpdateSys(updateSnapshot(), runSource())}${buildSettingsSys()}<button class="pc-btn pc-btn-danger" id="pc-logout">登出 / 换号</button>`
       : '';
   return `<div class="pc-pane" id="pc-pane-${cat.id}" role="tabpanel" aria-labelledby="pc-tab-${cat.id}" tabindex="0" data-pane="${cat.id}"${active ? '' : ' hidden'}>${cards || '<div class="pc-empty">无内容</div>'}${extra}</div>`;
 }

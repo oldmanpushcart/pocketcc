@@ -603,4 +603,10 @@ export const PANEL_CSS = `
       overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
     .pc-upd-btns{display:flex;gap:8px;}
     .pc-upd-btns .pc-btn{margin-top:10px;width:auto;flex:1;padding:6px 0;}
+    /* 设置备份卡（沿用 .pc-upd-btns 的并排按钮）：说明行弱一点，状态行回显文件名与项数；
+       文件名一串不短，word-break 保证窄面板里也能看完；失败态转红（与 .pc-btn-danger 同族色）*/
+    .pc-cfg-hint{font-size:12px;line-height:1.5;opacity:.65;}
+    .pc-cfg-status{margin-top:8px;font-size:12px;line-height:1.5;opacity:.85;word-break:break-all;}
+    .pc-cfg-status:empty{display:none;}
+    .pc-cfg-status[data-cfg-err="1"]{color:#ff9b8a;opacity:1;}
   `;

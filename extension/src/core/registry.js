@@ -468,14 +468,15 @@ export function startFeatures() {
   }
 }
 
-// ─────────────────────── 热切号（不刷新型换号）编排 ───────────────────────
+// ─────────────────────── 整批配置重载（降级补载 / 导入设置）───────────────────────
 /**
- * 降级补载：UID 迟列时先以默认配置跑着，ready 后补读盘并按真实配置全量重推（含未启用的，以纠偏先跑时偏错的启用态）。
- * UID 切换（换号）已改为整页 reload（见 player.js），故本函数仅服务降级补载。
+ * 读盘 + 全量重推 + 通知 UI 重同步（与面板热更同走 applyFeature 单一路径）。
+ * 两个调用方共用：降级补载（UID 迟列）、面板「导入设置」（盘上配置刚被整批改写，内存 configs 必须重读）。
+ * 全量重推含未启用的，以纠偏先跑时偏错的启用态（导入前关着的功能导入后要能开起来，反之亦然）。
  * @param {string} reason 触发缘由（日志）
  * @returns {Promise<void>}
  */
-async function reloadForPlayer(reason) {
+export async function reloadConfigsAndApply(reason) {
   log.info('%s, reloading configs for uid', reason);
   await loadAllConfigs(); // 存储层已按 UID 设前缀
   // 全量重推（含未启用的，以纠偏先跑时偏错的启用态）：与面板热更同走 applyFeature 单一路径。
@@ -489,5 +490,5 @@ async function reloadForPlayer(reason) {
 // 正常路径不触发（loadAllConfigs 已带盘数据，degraded 为 false）。不跑 migrateLegacyKeys，
 // 接受这种罕见路径下旧全局键不迁移。
 bus.on(EVT.PLAYER_READY, () => {
-  if (loadedDegraded) reloadForPlayer('player ready after degraded start');
+  if (loadedDegraded) reloadConfigsAndApply('player ready after degraded start');
 });

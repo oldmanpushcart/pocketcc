@@ -3,7 +3,19 @@
 // 从 core/ui.js 迁出。骨架渲染在 panel.js，有状态控件装配在 field-types 各 module（assemble 钩子），纯 HTML 在 fields.js。
 import { createLog } from '../log.js';
 import { session } from '../game-api.js';
-import { configs, findFeature, saveFeature, saveGroup, applyFeature } from '../registry.js';
+import {
+  configs,
+  findFeature,
+  saveFeature,
+  saveGroup,
+  applyFeature,
+  reloadConfigsAndApply,
+} from '../registry.js';
+import { storage } from '../storage.js';
+import { getUid } from '../player.js';
+import { revision } from '../update.js';
+import { CHANNEL_NAME } from '../constants.js';
+import { buildEnvelope, exportFileName, parseSettings } from '../settings-io.js';
 import { collectFeatureIds } from '../menu.js';
 import { isCombat, setCombatMode } from '../mode.js';
 import { updateCmd, updateSnapshot } from '../update-client.js';
@@ -165,6 +177,8 @@ export function wirePanel(panel) {
   // 升级通道的手动入口（横幅三按钮 + 系统 tab 两按钮一开关）。
   // 必须走面板级委派：横幅每次状态广播整块换 innerHTML、升级区卡体就地重绘，直接绑上去的监听会跟着 DOM 一起没了。
   wireUpdate(panel);
+  // 设置备份（导出/导入）：同走面板级委派，卡体不随卡重建，但状态行要现查不缓存（见 wireSettings 注释）。
+  wireSettings(panel);
 }
 
 /**
@@ -206,6 +220,148 @@ function wireUpdate(panel) {
   panel.addEventListener('change', (e) => {
     const el = pick(e, '.pc-upd-auto');
     if (el) updateCmd('auto', { value: !!el.checked });
+  });
+}
+
+/**
+ * 触发一次页面内下载（「导出设置」用）：blob + `<a download>`。
+ * 为什么不走 chrome.downloads：那要在**壳侧**加权限与消息通道，为一个导出功能改壳文件等于让所有人重新加载扩展；
+ * 为什么不走 showSaveFilePicker（popup.js 导出凭证走的就是它）：系统保存框会让玩家改名甚至改了后缀，
+ *   而「文件名可预期、按名称排序就是按时间排序」正是这个功能要给的保证，宁可直落下载文件夹。
+ * @param {string} name 文件名
+ * @param {string} text 文件内容
+ */
+function saveTextFile(name, text) {
+  const url = URL.createObjectURL(new Blob([text], { type: 'application/json' }));
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = name;
+  a.style.display = 'none';
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  // 立刻 revoke 会让部分浏览器来不及取走文件，留一拍再回收
+  setTimeout(() => URL.revokeObjectURL(url), 4000);
+}
+
+/**
+ * 「设置备份」卡交互：导出=读配置 blob → 套信封 → 页面内下载；导入=选文件 → 纯函数校验 → 二次确认
+ *   → 整块写回配置 blob → 重读盘并全量重推（即时生效，不必刷页）。
+ * 全部发生在 MAIN 侧，不动壳；判据（命名、信封、逐键取舍）一律在 core/settings-io.js，本处只做 I/O 与播报。
+ * 元素一律现查不缓存：面板整块重建（mountUI 重挂）后旧引用会指向孤儿节点，现查最多得到 null 而不报错。
+ * @param {Element} panel 面板根元素
+ */
+function wireSettings(panel) {
+  /**
+   * 写状态行（bad=true 转红）；元素不在（系统 pane 未构建）就当无事发生，导/导入的日志仍会落盘
+   * @param {string} text 文案
+   * @param {boolean} [bad] 是否失败态
+   */
+  const setStatus = (text, bad) => {
+    const el = panel.querySelector('[data-cfg-status]');
+    if (!el) return;
+    el.textContent = text;
+    if (bad) el.setAttribute('data-cfg-err', '1');
+    else el.removeAttribute('data-cfg-err');
+  };
+
+  /**
+   * 异常统一落到状态行 + 一行 warn（界面只说一句人话，堆栈留给日志）
+   * @param {string} head 动作口径（导出失败/导入失败）
+   * @param {string} what 日志定位用英文名
+   * @param {*} err 异常
+   */
+  const report = (head, what, err) => {
+    const msg = (err && err.message) || String(err);
+    setStatus(`${head}：${msg}`, true);
+    logCore.warn('%s failed: %s', what, msg);
+  };
+
+  /** 导出：取不到 UID 就先拦下（命名空间未设时读盘会 reject，那串英文异常不该上界面） */
+  const doExport = async () => {
+    const uid = getUid();
+    if (uid == null) {
+      setStatus('还没取到账号 ID（游戏未登录？），暂无设置可导出', true);
+      return;
+    }
+    setStatus('正在整理设置…');
+    const settings = await storage.getAllConfig();
+    const name = exportFileName(uid);
+    const env = buildEnvelope({
+      uid,
+      settings,
+      remoteVer: revision(),
+      channel: CHANNEL_NAME,
+    });
+    saveTextFile(name, JSON.stringify(env, null, 2));
+    const n = Object.keys(settings).length;
+    setStatus(`已导出 ${n} 项设置：${name}`);
+    logCore.info('settings exported: %s (items=%d)', name, n);
+  };
+
+  /**
+   * 导入：一句拒绝文案直接上状态行（parsed.error 已是人话），确认后才落盘
+   * @param {File} file 选中的备份件
+   * @returns {Promise<void>}
+   */
+  const doImport = async (file) => {
+    const parsed = parseSettings(await file.text());
+    if (!parsed.ok) {
+      setStatus(parsed.error, true);
+      logCore.warn('settings import rejected: %s (%s)', parsed.error, file.name);
+      return;
+    }
+    const items = Object.keys(parsed.settings).length;
+    const cur = getUid();
+    const cross =
+      parsed.meta.uid && cur != null && String(parsed.meta.uid) !== String(cur)
+        ? `；这份备份来自账号 ${parsed.meta.uid}，当前是 ${cur}`
+        : '';
+    const when = parsed.meta.exportedAt ? `（备份于 ${parsed.meta.exportedAt.slice(0, 10)}）` : '';
+    // 导入会盖掉当前账号的同名项，属破坏性动作，与登出/清包同口径先二次确认；Shadow DOM 内 showModal 不可用，用原生 confirm
+    if (
+      !window.confirm(`确认导入 ${items} 项设置${when}？同名项会覆盖当前账号的对应设置${cross}。`)
+    ) {
+      setStatus('已取消，未改动任何设置');
+      return;
+    }
+    const res = await storage.mergeConfig(parsed.settings);
+    await reloadConfigsAndApply('settings imported');
+    // 两类没落盘的项合并播报：dropped 是键名形态不合法（含注入键），rejected 是 blob 自身的保留键
+    const skipped = res.rejected.length + parsed.dropped.length;
+    const skip = skipped ? `，忽略 ${skipped} 项非设置键` : '';
+    setStatus(`已导入 ${res.applied.length} 项设置，即时生效${skip}`);
+    logCore.info(
+      'settings imported from %s: items=%d dropped=%d rejected=%d',
+      file.name,
+      res.applied.length,
+      parsed.dropped.length,
+      res.rejected.length,
+    );
+  };
+
+  panel.addEventListener('click', (e) => {
+    const el =
+      e.target && e.target.closest ? e.target.closest('#pc-cfg-export,#pc-cfg-import') : null;
+    if (!el) return;
+    if (el.id === 'pc-cfg-export') {
+      doExport().catch((err) => report('导出失败', 'settings export', err));
+      return;
+    }
+    const file = panel.querySelector('.pc-cfg-file');
+    if (!file) return;
+    file.value = ''; // 清掉上一次的选择：否则连选同一个文件不再触发 change
+    file.click();
+  });
+
+  // 文件选择器的 change 会冒泡到面板根，与字段控件的委托互不干扰（本件无 data-id/data-fkey）
+  panel.addEventListener('change', (e) => {
+    const el = e.target && e.target.closest ? e.target.closest('.pc-cfg-file') : null;
+    if (!el) return;
+    const file = el.files && el.files[0];
+    if (!file) return;
+    setStatus('正在读取备份…');
+    doImport(file).catch((err) => report('导入失败', 'settings import', err));
   });
 }
 

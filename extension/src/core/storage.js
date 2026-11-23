@@ -113,7 +113,7 @@ function call(op, key, value, raw) {
 
 // === 两块 JSON blob：配置 vs 数据，各占一个存储 key（UID 前缀下即两个键） ===
 //   CONFIG_KEY —— 用户配置（功能开关、详细参数、组闸门、图标位置、网络/事件日志、自动重连）。
-//                  面板编辑时才写；「导出配置」后续只需 getAllConfig()，与 data 完全解耦。
+//                  面板编辑时才写；「导出设置」就是 getAllConfig()，与 data 完全解耦。
 //   DATA_KEY   —— 运行期频繁写入的持久数据（联盟集结当日计数等）。与配置互不干扰，
 //                  配置导出/清理不会误动它；数据落盘也不会覆盖配置。
 // 读写模型：整块 blob 内存缓存（首次**成功**读盘时固化，见 loadBlob）；写入走 per-blob 串行队列，避免并发 read-modify-write 覆盖。
@@ -195,6 +195,37 @@ async function blobSet(blobKey, name, value) {
 }
 
 /**
+ * 批量并入配置 blob（「导入设置」专用）：逐键覆写、**整块只落一次盘**。
+ * 不走 blobSet 逐键写：那样 N 项就是 N 次整块 read-modify-write，中途任何一笔失败都留下半份导入态。
+ * 保留键（两个 blob 自身的字面键）拒收：外来文件把整份配置当成一个键塞进来会自我嵌套，而 data 根本不属于设置。
+ * 写入用 defineProperty：`b['__proto__'] = v` 会撞到 Object.prototype 上的 setter 而换掉整块 blob 的原型。
+ * @param {Object<string, *>} patch 逻辑键 -> 值
+ * @returns {Promise<{applied:string[], rejected:string[]}>} 已落盘的键与被拒的保留键
+ */
+async function mergeConfig(patch) {
+  return enqueue(CONFIG_KEY, async () => {
+    const b = await loadBlob(CONFIG_KEY); // 命名空间未设时 reject：认不出该写进哪个账号就不写
+    const applied = [];
+    const rejected = [];
+    for (const k of Object.keys(patch || {})) {
+      if (k === CONFIG_KEY || k === DATA_KEY) {
+        rejected.push(k);
+        continue;
+      }
+      Object.defineProperty(b, k, {
+        value: patch[k],
+        enumerable: true,
+        writable: true,
+        configurable: true,
+      });
+      applied.push(k);
+    }
+    await call('set', CONFIG_KEY, b);
+    return { applied, rejected };
+  });
+}
+
+/**
  * 独立键读写（UID 前缀下、脱离两块 blob）：给大体量且需按需分片的业务数据用，
  * 例如全局地图按视角桶切分的实体（一个桶一个键，只读需要的那片）。
  * 与 blobGet/blobSet 的区别：
@@ -217,8 +248,10 @@ export const storage = {
   get: (key) => blobGet(CONFIG_KEY, key),
   set: (key, value) => blobSet(CONFIG_KEY, key, value),
   remove: (key) => blobSet(CONFIG_KEY, key, undefined),
-  // 供后续「导出配置」使用：返回配置 blob 的浅拷贝（不含 data）。
+  // 「导出设置」入口：返回配置 blob 的浅拷贝（不含 data，也不含 slot 键）。
   getAllConfig: () => loadBlob(CONFIG_KEY).then((b) => Object.assign({}, b)),
+  // 「导入设置」入口：逐键并入配置 blob 后整块落一次盘（data blob 与 slot 键不受影响）。
+  mergeConfig,
   // 数据 blob：与配置完全分离，频繁写入互不干扰。
   data: {
     get: (name) => blobGet(DATA_KEY, name),

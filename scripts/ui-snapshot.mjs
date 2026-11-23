@@ -36,7 +36,8 @@ const here = dirname(fileURLToPath(import.meta.url));
 const root = join(here, '..');
 const { buildFieldsHTML } = await import('../extension/src/core/ui/fields.js');
 const { configs, findFeature } = await import('../extension/src/core/registry.js');
-const { buildUpdateBanner, buildUpdateSys } = await import('../extension/src/core/ui/panel.js');
+const { buildUpdateBanner, buildUpdateSys, buildSettingsSys } =
+  await import('../extension/src/core/ui/panel.js');
 const { welcomeCardHTML } = await import('../extension/src/core/ui/welcome.js');
 
 // ───────────── 合成 descriptor：每类型一条（fd 形状照真实 feat 的最小有效子集） ─────────────
@@ -659,6 +660,11 @@ CASES.push(
         }),
         UPD_SRC,
       ),
+  },
+  {
+    // 设置备份卡：「只导设置不导数据」那句口径与两个按钮的可达命名，逐字锁死
+    name: 'settings-sys',
+    render: () => buildSettingsSys(),
   },
   {
     name: 'welcome-card',
