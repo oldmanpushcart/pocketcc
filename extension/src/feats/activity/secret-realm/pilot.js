@@ -113,6 +113,17 @@ import {
 const KIND_BOSS_PLANE = 'boss-plane';
 
 /**
+ * 档位是否**以 BOSS 为目标**（派单前验真只对这些档做）：`boss` 开打 / `boss-plane` 邻域平台 /
+ *   `return` 逃袭后回攻。其余档（cruise/shop/resource/explore）即便被上层传了 BOSS 快照也不验，
+ *   以免给无关发车多敲一次 8522、或因「本体已死」误拦一趟普通采井。
+ * @param {string} kind #dispatch 的档位名
+ * @returns {boolean}
+ */
+function isBossTier(kind) {
+  return kind === 'boss' || kind === KIND_BOSS_PLANE || kind === 'return';
+}
+
+/**
  * 阶段 id → 本拍诊断面/发车 kind（只用于 `stage`/`lastBranch`/`lastDispatch` 与 #dispatch 的 `#toTag`）。
  * ⚠ 这张表是 probe 判读面的契约：`secret-realm-drive-probe.devtools.js` 靠
  *   `lastBranch` 的 `cruise/explore/shop/work/to` 分正常空转与卡点、靠
@@ -327,6 +338,8 @@ export class PilotEngine {
   #toKind = '';
   /** @type {string} 在途目标键 */
   #toXY = '';
+  /** @type {string} 在途 BOSS 档目标**本体**点键（''=非 BOSS 档）；死目标撤单与派单前验真都读它 */
+  #toBoss = '';
   /** @type {string} 在途档位名（`cruise`/`shop`/`boss`/`boss-plane`/`evade`/`return`/`explore`；被拒处置按它分流） */
   #toTag = '';
   /** @type {number} 本笔 8521 发出时刻 */
@@ -1592,6 +1605,55 @@ export class PilotEngine {
   // ══════════════════════════════════════════════════════════════════════
 
   /**
+   * 现场瓦片对某个 BOSS 候选的否决（21535 阶段切换不推、可滞后十余分钟，瓦片是唯一即时真相）：
+   *   墓碑 pt=0 = 服务器已确认该点被移除 → **整场粘滞**，不受 bossTileFreshMs 约束；
+   *   终局态（28/30）与 `state !== want` 只在新鲜窗内成立（超龄不据此判，fail-open）；
+   *   该点没有任何记录同样不判（缺证不误拦，撞 142/252 拒码自会兜底）。
+   * @param {number} bx BOSS 本体 x
+   * @param {number} by BOSS 本体 y
+   * @param {number} want 快照声称的现场应有 state（0=只认墓碑与终局态）
+   * @returns {string|null} 否决理由（null=不否决）
+   */
+  #bossTileVeto(bx, by, want) {
+    const vt = this.#tiles.get(tileKey(bx, by));
+    if (!vt) return null;
+    if (!vt.pt) return 'point removed (tile pt=0)';
+    if (Date.now() - (vt.at || 0) > (Number(tuning.bossTileFreshMs) || 0)) return null;
+    const st = Number(vt.state);
+    if (st === ST_BOSS_FIGHTING_END || st === ST_BOSS_DEAD_END) return 'live tile says state=' + st;
+    if (want && st !== want) return 'live tile says state=' + st;
+    return null;
+  }
+
+  /**
+   * 某 BOSS 的守石账本（21539）是否已榨干：有条目且所有点位 `rewardMaxNum>0 && rewardNum>=rewardMaxNum`
+   *   → 再打不再产出任何东西，平台白跑（与 boss.js 攻打档同判据）。
+   *   fail-open：账本未推 / `0/0` 初态 / 大BOSS 无组一律回 false，绝不拿缺证据当「领完」。
+   * @param {number} bossId 21535 条目的 bossId
+   * @returns {boolean}
+   */
+  #stoneExhausted(bossId) {
+    if (!bossId) return false;
+    const groups = this.#env.secret.getBossGuardRewardInfo();
+    if (!Array.isArray(groups) || !groups.length) return false;
+    let seen = false;
+    for (let i = 0; i < groups.length; i++) {
+      const g = groups[i];
+      if (!g || Number(g.bossId) !== bossId) continue;
+      seen = true;
+      const pts = Array.isArray(g.rewardInfo) ? g.rewardInfo : [];
+      for (let j = 0; j < pts.length; j++) {
+        const p = pts[j];
+        if (!p) continue;
+        const max = toNum(p.rewardMaxNum);
+        if (max > 0 && toNum(p.rewardNum) >= max) continue;
+        return false; // 有点位未满（含 0/0 初态）→ 还有产出可挣
+      }
+    }
+    return seen;
+  }
+
+  /**
    * BOSS 阶段：先找 state21（开打中且未散场）→ 再找 state22 且距开启 ≤ driveBossLeadMs（开台读秒窗）。
    *   两者的读法都只依赖 `bossBaseInfo[].pos`（**服务器权威坐标，与镜头无关**）→ 打 BOSS 不再需要先"看见" BOSS。
    *   候选先过 `#bossGuardOk`（guard_policy 四档）；读秒过期且仍在宽限窗内的 state22 也产 `open` 候选
@@ -1624,28 +1686,34 @@ export class PilotEngine {
       if (!(bx > 0) || !(by > 0)) continue;
       const st = Number(s.state) || 0;
       const end = toNum(s.stateEndTime);
+      // 派单前现场验真（21 开打 / 22 开台读秒 两条候选路共用）：不再只靠「已上平台」的 ④ 分支。
+      //   ① 新鲜瓦片/粘滞墓碑否决（#bossTileVeto）；② 守石领满 = 再打零产出（#stoneExhausted）。
+      //   #note 边沿去重：本函数每拍都跑（5s），同点每类否决各报一次，转正/换场（#told 清空）后可再报。
+      if (st === ST_BOSS_FIGHTING || st === ST_PLANE_MARCH) {
+        const veto = this.#bossTileVeto(bx, by, st === ST_BOSS_FIGHTING ? ST_BOSS_FIGHTING : 0);
+        if (veto) {
+          this.#note(
+            'boss-tile-veto|' + bx + ',' + by,
+            'pilot: boss (' + bx + ',' + by + ') ' + veto + ', drop candidate',
+          );
+          continue;
+        }
+        if (this.#stoneExhausted(Number(s.bossId))) {
+          this.#note(
+            'boss-stone-exhausted|' + bx + ',' + by,
+            'pilot: boss (' +
+              bx +
+              ',' +
+              by +
+              ') guard stones all claimed (bossId=' +
+              Number(s.bossId) +
+              '), drop candidate',
+          );
+          continue;
+        }
+      }
       if (st === ST_BOSS_FIGHTING) {
         if (end > 1e11 && now > end) continue; // 已散场
-        // 现场瓦片否决（与 boss.js #liveTileBlock 同判据、同 fail-open）：21535 说 state21，
-        //   但新鲜的 10018 快照证明该点已非 BOSS 本体（pt=0 或 state≠21）→ 跳过该候选（阶段切换 21535 不推、滞后）。
-        //   #note 边沿去重：本函数每拍都跑（5s），同点只报一次，转正/换场（#told 清空）后可再报。
-        const vt = this.#tiles.get(tileKey(bx, by));
-        if (vt && now - (vt.at || 0) <= (Number(tuning.bossTileFreshMs) || 0)) {
-          const vst = Number(vt.state);
-          if (!vt.pt || vst !== ST_BOSS_FIGHTING) {
-            this.#note(
-              'boss-tile-veto|' + bx + ',' + by,
-              'pilot: boss (' +
-                bx +
-                ',' +
-                by +
-                ') live tile says state=' +
-                vst +
-                ', drop candidate',
-            );
-            continue;
-          }
-        }
         const d = dist(cur.x, cur.y, bx, by);
         if (d < openD) {
           openD = d;
@@ -2050,8 +2118,9 @@ export class PilotEngine {
    * @param {string} kind 档位名（日志/诊断用；被拒处置按它分流：平台类只黑平台，不黑 BOSS 本体）
    * @param {{x:number,y:number}|null} cand 目标（null=本档无候选）
    * @param {boolean} [bypassGate=false] 绕过 `isSecretSending` 闸（幽灵条目自愈专用）
+   * @param {{x:number,y:number,bossId:number}|null} [boss] BOSS 档的本体目标（只有本体能定死活）
    */
-  #dispatch(kind, cand, bypassGate) {
+  #dispatch(kind, cand, bypassGate, boss) {
     const env = this.#env;
     this.#lastDispatch = kind + '|' + (cand ? cand.x + ',' + cand.y : 'none');
     if (!cand) {
@@ -2070,6 +2139,27 @@ export class PilotEngine {
         );
       }
       return;
+    }
+    // BOSS 档派单前现场验真（与 ④ HOLD 分支同验真原语，但不再依赖「已停在平台上」）：
+    //   先吃掉上一刀以 BOSS 为中心的 901（#bossAbsentVeto），再限速敲一次 8522 让 21535 尽快转正；
+    //   本体已确证死亡（粘滞墓碑/终局态/权威 28·30）→ 不派这笔车，下一拍重评自然落回其它档。
+    //   只对以 BOSS 为目标的档生效（isBossTier），且 `#toBoss` 与之一致——撤单闸读的就是它。
+    const bossTarget = isBossTier(kind) && boss && boss.x > 0 && boss.y > 0 ? boss : null;
+    if (bossTarget) {
+      const bossKey = tileKey(Math.floor(bossTarget.x), Math.floor(bossTarget.y));
+      this.#bossAbsentVeto(Math.floor(bossTarget.x), Math.floor(bossTarget.y));
+      this.#refreshBossState(Math.floor(bossTarget.x), Math.floor(bossTarget.y));
+      if (this.#bossDeadAt(bossKey)) {
+        this.#warnOnce(
+          'boss-dispatch-dead|' + bossKey,
+          'pilot: refuse to dispatch ' +
+            kind +
+            ' to dead boss (' +
+            bossKey +
+            '), fall back to regular tiers. reason=boss_dispatch_dead_target',
+        );
+        return;
+      }
     }
     const base = env.secret.getRoomBaseInfo();
     const curKey = base && base.startPoint ? tileKey(base.startPoint.x, base.startPoint.y) : '';
@@ -2114,6 +2204,7 @@ export class PilotEngine {
     this.#toKind = kind + '|(' + cand.x + ',' + cand.y + ')';
     this.#toTag = kind;
     this.#toXY = tileKey(cand.x, cand.y);
+    this.#toBoss = bossTarget ? tileKey(bossTarget.x, bossTarget.y) : '';
     this.#toAt = Date.now();
     // 派过车的点 60s 内不再选：治「到点没拿到→下一拍又选同一点」
     this.#marched.set(this.#toXY, this.#toAt + tuning.driveMarchedTtlMs);
@@ -2315,6 +2406,7 @@ export class PilotEngine {
     const marchStart = this.#toAt; // 清相位前先捕获：下方区分 exhausted 新旧标记用
     this.#toKind = '';
     this.#toXY = key;
+    this.#toBoss = ''; // 已到达：在途单结束，撤单闸不得再对驻留相位生效
     this.#toAt = 0;
     // 到点重评：只清**本次发车前**的「对我已采完」旧标记（若因面板/上限变了这次可能又要采）；
     //   行军途中 pickup 经 markTileExhausted 写的新标记（at≥发车时刻）说明「路上已确认没得采」，必须保留——
@@ -3073,7 +3165,7 @@ export class PilotEngine {
         this.#stage = dg.stage;
         if (s.obj === 'shop') this.#stageWhy = why;
         this.#lastBranch = branch;
-        this.#dispatch(kind, cand);
+        this.#dispatch(kind, cand, false, ctx.snap.boss);
         this.#heartbeat(now);
         return this.#sleepAfterDispatch();
       }
@@ -3116,7 +3208,7 @@ export class PilotEngine {
           );
         }
       }
-      this.#dispatch(kind, cand);
+      this.#dispatch(kind, cand, false, ctx.snap.boss);
       this.#heartbeat(now);
       return this.#sleepAfterDispatch();
     }
@@ -3229,6 +3321,9 @@ export class PilotEngine {
     this.#gateState('cfg-off', !b || !b.enabled, 'drive.enabled=false');
     if (!b || !b.enabled) {
       this.#lastBranch = 'cfg-off';
+      // drive 关闭时本函数不再重评路由（在途/驻留相位都走不到）：在途的通往死 BOSS 目标的车必须就地撤销，
+      //   否则下一次勾选会直接复用这笔单（实测挂 8min+ 到 march_timeout 才解脱）。
+      this.#cancelDeadBossTo('cfg-off');
       this.#heartbeat(now);
       return tuning.driveScanMs;
     }
@@ -3430,6 +3525,8 @@ export class PilotEngine {
     if (this.#toKind) {
       this.#lastBranch = 'to';
       this.#stage = 'to';
+      // 在途 BOSS 档目标已确证死亡 → 当拍撤单重评，不等 march_timeout（不重评路由的相位里这是唯一出口）
+      if (this.#cancelDeadBossTo('to-phase')) return tuning.driveScanMs;
       if (Number(base.marchState) === arrived && curKey && curKey === this.#toXY) {
         // 四-5：威胁到点首拍 evade 优先——本拍威胁块已判 hold 且可再逃、非安全点、有逃袭落点时，
         //   不进 WORK（免 kickShop/BOSS 驻留设置抢在 evade 前），清 TO 返 0：下一拍①威胁块
@@ -3625,7 +3722,7 @@ export class PilotEngine {
         this.#returnPending = false;
         this.#escapeFrom = null;
       } else {
-        this.#dispatch('return', win.boss);
+        this.#dispatch('return', win.boss, false, win.boss);
         this.#heartbeat(now);
         return this.#sleepAfterDispatch();
       }
@@ -3660,6 +3757,20 @@ export class PilotEngine {
         win = this.#bossWindow(Date.now(), cur);
       }
       if (win && this.#bossEngageableHere(curKey, win)) {
+        // 可观测性：hold 成立但本体点连一条瓦片记录都没有（或记录已超新鲜窗）= 只拿着 21535 的陈旧快照
+        //   为一只看不见的 BOSS 死等——这是「赖在平台不走」这类故障唯一的日志签名，每场每点报一次。
+        const holdBk = tileKey(win.boss.x, win.boss.y);
+        const holdT = this.#tiles.get(holdBk);
+        if (!holdT || now - (holdT.at || 0) > (Number(tuning.bossTileFreshMs) || 0)) {
+          this.#warnOnce(
+            'boss-hold-no-evidence|' + holdBk,
+            'pilot: holding plane ' +
+              curKey +
+              ' for boss (' +
+              holdBk +
+              ') on the 21535 snapshot alone, no live tile evidence at all. reason=boss_hold_no_evidence',
+          );
+        }
         this.#lastBranch = 'hold';
         this.#stage = 'hold';
         this.#gateState('hold', true, 'pt=' + curPt + ' mode=' + win.mode);
@@ -3874,7 +3985,31 @@ export class PilotEngine {
     this.#toKind = '';
     this.#toTag = '';
     this.#toXY = '';
+    this.#toBoss = '';
     this.#toAt = 0;
+  }
+
+  /**
+   * 在途 BOSS 档行军的目标本体已确证死亡（粘滞墓碑/终局态/权威 28·30）→ 撤单。
+   *   cfg-off 与在途相位都不重评路由，不撤就会把这笔通往死平台的行军挂到 march_timeout（实测 8min+），
+   *   用户再勾 drive 时还会立刻复用同一目标（「强行拉走又回到停泊平台」）。
+   *   撤单同时记消费，避免同一点被立刻重选；无在途 BOSS 单或无死亡证据一律回 false（fail-open）。
+   * @param {string} from 撤单来源（日志用：`cfg-off` / `to-phase`）
+   * @returns {boolean} true=已撤单（调用方当拍落回重评）
+   */
+  #cancelDeadBossTo(from) {
+    if (!this.#toKind) return false; // 只撤**在途行军**；驻留/空闲相位的 #toXY 不是这笔单的目标
+    if (!this.#toBoss) return false;
+    if (!this.#bossDeadAt(this.#toBoss)) return false;
+    this.#env.log.info(
+      'pilot: cancel in-flight %s to dead boss (%s), re-evaluate now. reason=dead_boss_target from=%s',
+      this.#toKind,
+      this.#toBoss,
+      from,
+    );
+    this.#consume(this.#toXY);
+    this.#clearTo();
+    return true;
   }
 
   /**
@@ -3915,6 +4050,18 @@ export class PilotEngine {
     if (this.#told[key]) return;
     this.#told[key] = 1;
     this.#env.log.info(msg);
+  }
+
+  /**
+   * 一次性 warn 边沿：与 #note 共用 #told 去重表（同键每场只报一次，换场随 #told 清空），
+   *   但等级抬到 warn——用于「引擎自己也不好、但已自愈」的真异常（为看不见/已死的 BOSS 死等）。
+   * @param {string} key 去重键
+   * @param {string} msg 完整日志文案（英文）
+   */
+  #warnOnce(key, msg) {
+    if (this.#told[key]) return;
+    this.#told[key] = 1;
+    this.#env.log.warn(msg);
   }
 
   /**
@@ -4155,6 +4302,7 @@ export class PilotEngine {
       phase: {
         toKind: this.#toKind,
         toXY: this.#toXY,
+        toBoss: this.#toBoss,
         toAgoMs: this.#toAt ? now - this.#toAt : 0,
         workMode: this.#workMode,
         workLeftMs: this.#workUntil ? this.#workUntil - now : 0,
