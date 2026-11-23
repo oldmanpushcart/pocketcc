@@ -853,14 +853,33 @@ export default {
                 );
             } else ok++;
           }
-          rep.check(
-            `159995 短黑窗(${Math.round(win / 1000)}s)内不重发同点 8521 [HARD]`,
-            '拒绝码/时序',
-            ok,
-            bad,
-            0,
-            fails,
-          );
+          // 录制日期护栏（记忆 4d6f6f42 #8「存量历史违例不当回归判负」）：
+          //   param 短黑消费者 #paramBlocked 首见提交 376d27f @ 2026-11-14T15:53+08；早于此刻开录的
+          //   录制，其运行时该机制尚不存在，重撞属历史行为 → 降级为无法判定、不判负，仅列明细供审计。
+          //   S.minTs 为录制首条 entry 的绝对 epoch 毫秒（本块回看明细亦用它作相对锚）。
+          const PARAM_BLACK_FIX_TS = Date.parse('2026-11-14T15:53:50+08:00');
+          if (S.minTs && S.minTs < PARAM_BLACK_FIX_TS) {
+            rep.check(
+              `159995 短黑窗(${Math.round(win / 1000)}s)内不重发同点 8521 [HARD·存量降级]`,
+              '拒绝码/时序',
+              0,
+              0,
+              rejections.length,
+              [
+                `录制早于 param 短黑修复 376d27f(2026-11-14)：历史 ${bad} 处重撞仅报量不判负`,
+                ...fails,
+              ],
+            );
+          } else {
+            rep.check(
+              `159995 短黑窗(${Math.round(win / 1000)}s)内不重发同点 8521 [HARD]`,
+              '拒绝码/时序',
+              ok,
+              bad,
+              0,
+              fails,
+            );
+          }
         }
       }
 
