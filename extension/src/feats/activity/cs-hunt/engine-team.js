@@ -35,6 +35,7 @@
  *   - 玩法模式 cfg.mode：'main'（主跑，要奖励耗次数）/ 'helper'（陪跑，op:2 不耗次数）；角色不再靠单列开关，而是 mode 驱动；
  *     面板另有各场模式矩阵（9 键 follow/main/helper）：#cfg() 按当前场次解析有效模式（格覆盖否则跟随主设置）并按 team.id 按局锁存；
  *   - 无队且不该自己开车（仅 helper）→ 逐个玩家池成员用 630 PLAYER_INFO 取名 → 7530 按名（likeName）搜该玩家创建的未满队 → 7522 申请入队（不再扫 7526）；main 一律自己建队开车；
+ *     每拍只搜 1 个成员，整池空转一圈升一档退避 5→10→15→20s 封顶（#joinGap，用户口径 2026-11-22；申请到队/散队即回落首档）；
  *   - 次数不足且勾了 useBeaconWhenShort → 走通用使用物品 815 消耗定位信标(47001001) 补次数（§7-6 已报文关闭）。
  */
 import { CODE_NOT_SENT, todayStr, rejectText } from '../../../core/util.js';
@@ -107,8 +108,14 @@ const TEAM_POLL_MS = 20000;
 const APPLY_LIST_POLL_MS = 20000;
 /** @type {number} 预警式防御 630 敌战力缓存鲜度窗（毫秒）：窗内同 uid 不重查，免每拍打 630；查无/异常亦缓存 0 防同一无果 uid 反复打网络 */
 const POWER_CACHE_MS = 60000;
-/** @type {number} 无队找队时按名搜队（630→7530→7522）每拍只搜 1 个池成员的最小间隔（毫秒）：游标轮转，杜绝一趟连打整池网络（2026-10-25 定 5s：单拍只发 1 次 7530，8 人池扫一圈 ~40s） */
+/** @type {number} 无队找队时按名搜队（630→7530→7522）每拍只搜 1 个池成员的最小间隔（毫秒）：游标轮转，杜绝一趟连打整池网络（2026-10-25 定 5s：单拍只发 1 次 7530，8 人池扫一圈 ~40s）。
+ *   此值为**首档**：整池走完一圈仍无可加之队即升一档（+5s），封顶 JOIN_POLL_CAP_MS（用户口径 2026-11-22：5→10→15→20s）；
+ *   发出 7522 申请或散队即回落首档。 */
 const JOIN_POLL_MS = 5000;
+/** @type {number} 找队无果退避封顶（毫秒）：空场期把 7530 频率压到首档的 1/4，又不致漏掉刚开车的队 */
+const JOIN_POLL_CAP_MS = 20000;
+/** @type {number} 被推送早醒时「本档剩余时间」重排的下限（毫秒）：防 gap-sinceLast 接近 0 时退化成紧循环 */
+const JOIN_GAP_FLOOR_MS = 300;
 /** @type {number} 同一目标定位信标消耗的最小间隔（毫秒）：防 21375 未到时逐拍重复消耗（每次都是真道具） */
 const BEACON_COOLDOWN_MS = 20000;
 /** @type {number} 终局后等飞船回城散队的兑底超时（毫秒）：主解除靠 10019 到家/21371 散队推送，此仅防漏推死等（实证散队约在 END 后 1-2 分钟，5 分钟富余） */
@@ -355,6 +362,10 @@ export class TeamEngine {
   #lastJoinAt = 0;
   /** @type {number} 陪跑找队轮转游标（rolePool 下标，每拍只搜 1 个成员，走到底回卷；stop 清） */
   #joinCursor = 0;
+  /** @type {number} 找队连续无果的「整池一圈」计数（每走完一圈 +1；发出 7522 申请或散队即归零）：本拍搜索间隔 = JOIN_POLL_MS×(该值+1)，封顶 JOIN_POLL_CAP_MS */
+  #joinIdleRounds = 0;
+  /** @type {number} 本圈锚定的池下标（搜索后游标回到该值即视为走完一圈）；-1=未锚定 */
+  #joinRoundMark = -1;
   /** @type {string} 已向哪个队发过 7522 申请（防找队快照滞后时重复申请同一队） */
   #appliedTeamId = '';
   /** @type {Map<string,string>} 引擎级 uid→昵称缓存（陪跑找队 630 取名用；查过不重查，查无记空串避免反复打网络；stop 清空） */
@@ -529,6 +540,8 @@ export class TeamEngine {
     this.#teamSince = 0;
     this.#lastJoinAt = 0;
     this.#joinCursor = 0;
+    this.#joinIdleRounds = 0;
+    this.#joinRoundMark = -1;
     this.#appliedTeamId = '';
     this.#uidName.clear();
     this.#uidPower.clear();
@@ -655,6 +668,8 @@ export class TeamEngine {
     this.#applyPending.clear();
     this.#noArmyLoggedTeamId = '';
     this.#appliedTeamId = ''; // 队已清空，允许重新找队申请
+    this.#joinIdleRounds = 0; // 新一轮找队从首档 5s 重新起步（不沿用上局的 20s 封顶）
+    this.#joinRoundMark = -1;
     this.#teamSince = 0;
     this.#wake();
   }
@@ -1197,7 +1212,8 @@ export class TeamEngine {
    *   轮转取池内下一个有效玩家（跳过自己/无效 uid）→
    *   ① 630 PLAYER_INFO 按 uid 取昵称（#lookupName，带缓存）→ ② 7530 按昵称 likeName 搜其创建的队 →
    *   ③ 命中未满、未申请、队长即该玩家的队 → 7522 op:1 申请加入，找到即停手。
-   *   每拍之间按 JOIN_POLL_MS 节流（原一趟连打整池已废弃）；游标走到底回卷重扫；申请后等 21371/21373 落地接管（不轮询等审批）。
+   *   每拍之间按 #joinGap() 节流（首档 JOIN_POLL_MS，整池空转一圈升一档，封顶 JOIN_POLL_CAP_MS）；游标走到底回卷重扫；
+   *   申请后等 21371/21373 落地接管（不轮询等审批）。
    *   报文实证实录：630 应答 data.playerInfo(JSON 串).username=昵称；7530 请求 {likeName}，
    *   应答 crossTreasureSearchTeamList.team[]（row.id/uid 为 Long，members/maxMembers/applied）；7522 {teamId:Long,op:1}。
    *   已知局限：likeName 是子串匹配，昵称含 emoji/空格时整串搜可能搜不到（真机手动也常剥字搜），故查无即跳过下一个成员。
@@ -1208,7 +1224,10 @@ export class TeamEngine {
     var net = this.#env.net();
     if (!net) return IDLE_TICK_MS;
     var now = Date.now();
-    if (now - this.#lastJoinAt < JOIN_POLL_MS) return IDLE_TICK_MS;
+    var since = now - this.#lastJoinAt;
+    var gap = this.#joinGap();
+    // 被推送早醒（#wake）而本档未到期：按「本档剩余」重排，不退 IDLE_TICK_MS 长睡（否则退避档位被 60s 兜底冲淡、升档失去意义）
+    if (since < gap) return Math.max(JOIN_GAP_FLOOR_MS, gap - since);
     this.#lastJoinAt = now;
     var pool = Array.isArray(cfg.rolePool) ? cfg.rolePool : [];
     var myUid = gameData.myUidStr();
@@ -1233,7 +1252,7 @@ export class TeamEngine {
         'nojoin',
         'player pool empty or all invalid uid / name not found, skip team search',
       );
-      return JOIN_POLL_MS;
+      return this.#joinGap(); // 本拍没打 7530（无网络压力），按当前档重排即可，不计入空转圈数
     }
     // 本拍只搜这一个：7530 按昵称搜其创建的队，命中未满/未申请/队长即该玩家的队即 7522 申请
     var ret = await this.#sendPB(REQ_SEARCH_TEAM_LIST, { likeName: name }, 'search-team-by-name');
@@ -1248,6 +1267,8 @@ export class TeamEngine {
       if (leaderUid && leaderUid !== uidStr) continue; // 只要「该玩家创建」的队（同名他人一律跳过）
       this.#blockedLoggedReason = '';
       this.#appliedTeamId = teamId;
+      this.#joinIdleRounds = 0; // 已锁定可申请的队 → 退避归零，散队后再找队从首档 5s 重新起步
+      this.#joinRoundMark = -1;
       await this.#sendPB(
         REQ_TEAM_APPLY_OR_CANCEL,
         { teamId: bits.int64(teamId), op: 1 },
@@ -1255,10 +1276,33 @@ export class TeamEngine {
       );
       return ACTIVE_TICK_MS;
     }
+    // 整池空转一圈的判定：本拍搜到的下标回到/越过本圈锚点（游标单调前移，回绕才会出现 ≤）——一圈全无队可加才升一档
+    if (this.#joinRoundMark < 0 || this.#joinRoundMark >= n) {
+      this.#joinRoundMark = idx; // 首次找队 / 换池（池变短）后重新锚定本圈起点
+    } else if (idx <= this.#joinRoundMark) {
+      this.#joinRoundMark = idx;
+      this.#joinIdleRounds++;
+      log.info(
+        'join-team: pool swept %d round(s) with no joinable team, back off next search to %ds (cap %ds)',
+        this.#joinIdleRounds,
+        Math.round(this.#joinGap() / 1000),
+        JOIN_POLL_CAP_MS / 1000,
+      );
+    }
     log.info(
       `search-team-by-name: searched ${name} this tick (pool ${n} rotating, next tick #${(idx + 1) % n}), no under-full team hit`,
     );
-    return JOIN_POLL_MS;
+    return this.#joinGap();
+  }
+
+  /**
+   * 当前找队搜索间隔（毫秒）：首档 JOIN_POLL_MS，整池空转一圈升一档（+一档 = 又一个 JOIN_POLL_MS），
+   *   封顶 JOIN_POLL_CAP_MS（用户口径 2026-11-22：5→10→15→20s 后不再增长）。
+   *   归零时机：发出 7522 申请、散队/换队（#clearTeam）、stop。
+   * @returns {number}
+   */
+  #joinGap() {
+    return Math.min(JOIN_POLL_MS * (this.#joinIdleRounds + 1), JOIN_POLL_CAP_MS);
   }
 
   /**
