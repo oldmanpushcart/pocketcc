@@ -207,7 +207,11 @@ test('E2 引擎重建恢复：done 闩活过 pause/resume（新建 PilotEngine �
     eng2.start({ on: { push: () => {}, req: () => {} } });
     eng2.onArriveWake();
     await flush();
-    assert.equal(eng2.debugState().phase.endgame, 'done', '新引擎从模块级闩恢复 done（fb 对上才认）');
+    assert.equal(
+      eng2.debugState().phase.endgame,
+      'done',
+      '新引擎从模块级闩恢复 done（fb 对上才认）',
+    );
     assert.equal(rig.sent.length, 0, '重建后同场零发包');
     await rig.step(20000);
     assert.equal(rig.sent.length, 0, '重建后长跑也不复活');

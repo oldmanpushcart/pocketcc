@@ -918,7 +918,12 @@ function onLuckyBagPush(ev) {
     var floatId = marchFloat.get(marchId);
     var keys = floatId ? ['arrive', 'arrive_' + floatId] : ['arrive'];
     if (!dailyLedger.countOnce(marchId + '#' + ord, keys)) continue;
-    log.info('cmd 21653 lucky bag arrived. marchId=%s;num=%s;float=%s', marchId, ord, floatId || 'unknown');
+    log.info(
+      'cmd 21653 lucky bag arrived. marchId=%s;num=%s;float=%s',
+      marchId,
+      ord,
+      floatId || 'unknown',
+    );
   }
 }
 
