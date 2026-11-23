@@ -6,7 +6,7 @@
 //   键名不硬编码——凡 topwar_*_serverToken 一律纳入，web/app 变体通吃）；
 //   popup 经 chrome.scripting 注函数到游戏 tab 的 MAIN world 读写（注入函数自包含、不 import 本包符号）；
 //   导入写完 tabs.reload → 页面重载 → boot 的 installAutoLogin 同步重放，闭环无需额外生效路径。
-// 合规红线（与 net-guard 口径一致）：凭证 = 账号登录权限，只做本地文件读写与剪贴板，零网络外发；
+// 合规红线：凭证 = 账号登录权限，只做本地文件读写与剪贴板，零网络外发；
 //   token 原文不进任何日志/状态文案（只展示平台名与前后片段掩码）。
 // 文件格式即用户定稿的扁平 JSON：{"topwar_app_serverToken":"<base64 token>"}。
 // 键名必须落在回放源上：auto-login 只读 app_serverToken（真键 topwar_app_serverToken），
