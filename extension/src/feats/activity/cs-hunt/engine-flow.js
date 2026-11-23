@@ -23,8 +23,11 @@
  *   - 战中策略（FIGHT 相位且**本回合真被掠袭过**才动手）：火线急救(27·择战损最大者定向施治) → 增益族逐个（FIGHT 是每回合必经结算相位，未挨打也进，无掠袭证据即不动）；
  *     掠袭回合内再叠加**敌强门控**（借鉴竞对 roundFight）：7578 双查军力，敌满员×1.3 > 我方最强 → 先垫一张毫发(26)；不达 ×1.5 → 弱敌不烧急救/增益留给强敌波；
  *     数据缺失 fail-open。此闸只管消耗路，不碰「预警即保命」自保路（用户口径 2026-10-24）；
- *   - 族级溢出提前烧（借鉴竞对 initRoundFight）：非末回合 FIGHT 相位，闪现(11)/百战(1/25)/铁壁(2) 任一「持有+回合 > ROUND_MAX」
- *     （族限窗 9 下剩余回合消化不完、终局必带出）→ 趁早烧一张回收，每拍至多一个写、每回合每 specId 尝试一次；
+ *   - 族级溢出提前烧（借鉴竞对 initRoundFight）：非末回合 FIGHT 相位，闪现(11)/百战(1/25)/铁壁(2)/幸运(18) 任一「持有+回合 > ROUND_MAX」
+ *     （此四族族限窗 9 → 每回合至多消化 1 张，剩余回合消化不完、终局必带出）→ 趁早烧一张回收，每拍至多一个写、每回合每 specId 尝试一次；
+ *     幸运入列是**场景无关补烧**（用户口径 2026-11-22「技能使用得考虑回合」）：有奖场景的 #tryLuckyOverflow 只在 pickReward/rollDice 有出手机会，
+ *     第 9 回合撞上 pickSkill/codeBox/defPVE/nothing 就整回合 0 机会，而末回合清空对同一 specId 每回合只发一次 7551（`round:flush:sid` 幂等键）
+ *     → 持 2 张时必有一张带出报废；FIGHT 是每回合必经相位，在此烧一张，翻倍效果顺延到下一次奖励，优于白攒（陪跑无奖励可翻，仍走 mode 闸排除）；
  *   - 末回合清空：round===ROUND_MAX(10) → **单拍串行清光**背包全部可用技（竞对 clearAllSkills 同回合连发 5+ 个 7551 实证服务器受理；
      旧逐拍一技会被掠袭保命拍挤占、回合窗内清不完；排除先知9/刷新23；**完美镜像22 排首位**，
    与转场同律带 `param:copySkillSpecId` 发（严格只复制先知、先知溢出转幸运18，无目标则跳过不空发）——
@@ -142,10 +145,13 @@ const WARN_POWER_RATIO = 1.4;
 const FIGHT_RATIO_HEAVY = 1.3;
 /** @type {number} 战中「敌强」轻阈（竞对 roundFight L16453 口径）：低于此值视为弱敌掠袭，急救/增益不烧、留给强敌波 */
 const FIGHT_RATIO_LIGHT = 1.5;
-/** @type {number[]} 族级溢出「不带出」提前烧清单（竞对 initRoundFight L16232-16240 的 闪现type7/百战type1/铁壁type2）：
- *   此三族族级限窗（SKILL_TYPE_LIMIT=9）下每回合至多消化 1 张，「持有+当前回合 > ROUND_MAX」即终局必带出——
- *   FIGHT 相位趁早各烧一张回收，好过带出亏空（竞对口径）。百战不倒 1/25 为同族两 specId（游戏改版新增 type15 行）。 */
-const DIGEST_OVERFLOW_SKILLS = [SKILL_FLASH, 1, 25, SKILL_SHIELD_ROUND];
+/** @type {number[]} 族级溢出「不带出」提前烧清单（竞对 initRoundFight L16232-16240 的 闪现type7/百战type1/铁壁type2，加 幸运type10）：
+ *   此四族族级限窗（SKILL_TYPE_LIMIT=9）下**每回合至多消化 1 张**，「持有+当前回合 > ROUND_MAX」即终局必带出——
+ *   FIGHT 相位趁早各烧一张回收，好过带出亏空（竞对口径）。百战不倒 1/25 为同族两 specId（游戏改版新增 type15 行）。
+ *   幸运降临 18（用户口径 2026-11-22）：它在有奖场景之外没有任何场景无关的消耗路（末回合清空同一 specId 每回合只发一次），
+ *   故 r9 持 2 张时只要本回合不是 pickReward/rollDice，就注定浪费一张——列首位抢下 FIGHT 首拍写额（窗仅 13~25s、4s 一拍，
+ *   还要给掠袭保命/预警防御让路，排末尾易整回合轮不上）。 */
+const DIGEST_OVERFLOW_SKILLS = [SKILL_LUCKY, SKILL_FLASH, 1, 25, SKILL_SHIELD_ROUND];
 
 /**
  * eventSpecId 六族 → scene 模块分派表（`Math.floor(eventSpecId/100)` 命中）。
@@ -781,16 +787,20 @@ export class FlowEngine {
       }
       if (!flushedOne) this.#flushedRound = round; // 池空或全部不可用→本回合清空收口（后续拍不再重扫）
     }
-    // 3) 族级溢出「不带出」提前烧（借鉴竞对 initRoundFight L16232-16240）：非末回合 FIGHT 相位，闪现/百战/铁壁
-    //   任一「持有+当前回合 > ROUND_MAX」（族限窗 9 下剩余回合消化不完）→ 趁早烧一张回收，每拍至多一个写。
-    //   阈值用 `>` 非 `>=`（与 pick-skill ③剪枝/#tryLuckyOverflow 同律，r9 差一教训）；走 #canSpend（持有+非生效+族限窗本回合去重），
-    //   尝试键记账到回合——被拒不回退，同回合不逐拍循环撞被拒写。
+    // 3) 族级溢出「不带出」提前烧（借鉴竞对 initRoundFight L16232-16240）：非末回合 FIGHT 相位，闪现/百战/铁壁/幸运
+    //   任一「持有+当前回合 > ROUND_MAX」（族限窗 9 下每回合至多消化 1 张、剩余回合消化不完）→ 趁早烧一张回收，每拍至多一个写。
+    //   幸运在此入列是它唯一的**场景无关**消耗路（#tryLuckyOverflow 只接在有奖场景，末回合清空同一 specId 每回合只发一次），
+    //   故列清单首位抢首拍写额（用户口径 2026-11-22：r9 持 2 张时本回合不烧就必有一张带出报废）。
+    //   阈值用 `>` 非 `>=`（与 pick-skill ③剪枝/#tryLuckyOverflow 同律，r9 差一教训）；走 #canSpend（持有+非生效+族限窗本回合去重，
+    //   所以上半场已在 rollDice 烧过一张就不会下半场叠烧），尝试键记账到回合——被拒不回退，同回合不逐拍循环撞被拒写。
     if (status === HUNT_STATUS.FIGHT && round > 0 && round < ROUND_MAX) {
       await this.#ensureBackpack();
       for (var dj = 0; dj < DIGEST_OVERFLOW_SKILLS.length; dj++) {
         var ovId = DIGEST_OVERFLOW_SKILLS[dj];
         var ovk = round + ':digest:' + ovId;
         if (this.#done.has(ovk)) continue;
+        // 幸运翻倍的是「下一次奖励」，陪跑全程无奖励可翻 → 不占本拍写额（与 #tryLuckyOverflow 的 mode 闸同口径）
+        if (ovId === SKILL_LUCKY && this.#host.cfg().mode === 'helper') continue;
         var ovHeld = this.#backpackCount(ovId);
         if (ovHeld + round <= ROUND_MAX) continue;
         if (!this.#canSpend(ovId)) continue;
@@ -1230,8 +1240,9 @@ export class FlowEngine {
 
   /**
    * 幸运降临：只在「这次我最大」(rollDice) 场景、掷骰中奖奖励命中已勾幸运池且有个人幸运(18) 时，先 7551 用之。
-   *   用户口径 2026-10-17：幸运降临仅服务于 rollDice（其余有奖场景不再触发）；背包剩余幸运的溢出兜底
-   *   由 2026-10-25 新增的 #tryLuckyOverflow（有奖场景动作前提前烧）+ 末回合清空 #flushCandidates 两层承接。场景参与判定：cfg.luckyRewards.rollDice 为空（一个都没勾）则直接跳过。
+   *   用户口径 2026-10-17：幸运降临仅服务于 rollDice（其余有奖场景不再触发）；背包剩余幸运的溢出兜底分三层：
+   *   ① 有奖场景动作前提前烧 #tryLuckyOverflow（2026-10-25）、② 非末回合 FIGHT 相位场景无关补烧（DIGEST_OVERFLOW_SKILLS，
+   *   2026-11-22：本回合不是 pickReward/rollDice 时唯一出路）、③ 末回合清空 #flushCandidates。场景参与判定：cfg.luckyRewards.rollDice 为空（一个都没勾）则直接跳过。
    * @param {string|number} treasureId 本跑 id
    * @param {string} sceneKey 场景 key（EVENT_TYPE 值：仅 rollDice 会真正触发）
    * @param {object|null} rewardResult 含 items:[{itemId,itemCount}] 的奖励体
@@ -1239,7 +1250,7 @@ export class FlowEngine {
    * @returns {Promise<boolean>} 是否已触发使用幸运
    */
   async #tryLucky(treasureId, sceneKey, rewardResult, label) {
-    if (sceneKey !== EVENT_TYPE.ROLL_DICE) return false; // 幸运只在 rollDice 用（溢出兜底走末回合清空）
+    if (sceneKey !== EVENT_TYPE.ROLL_DICE) return false; // 幸运只在 rollDice 用（溢出走下面三层兜底）
     var pools = this.#host.cfg().luckyRewards;
     var wl = (pools && pools[sceneKey]) || [];
     if (!wl.length) {
@@ -1293,6 +1304,9 @@ export class FlowEngine {
    *   剩余消化窗」——剩余窗=ROUND_MAX-round 回合（每回合至多消一张），持有>剩余窗即本回合不消必浪费（实证
    *   真机第三跑实录 round9 持 2 张、后两回合皆非 rollDice，引擎等到 round10 才由清空兑底、用户只能手动提前用）。
    *   溢出时不要求命中已勾池（翻倍落在何种奖励上都好过浪费）；走 #usable 闸（生效中不重施）；仅主跑。
+   *   本方法只覆盖**有奖场景**（pickReward/rollDice）；第 9 回合撞上 pickSkill/codeBox/defPVE/nothing 时根本没有本调用点，
+   *   那张多余幸运改由非末回合 FIGHT 相位的族级溢出补烧接住（DIGEST_OVERFLOW_SKILLS 含 SKILL_LUCKY，走 #canSpend 限窗去重，
+   *   故同回合已由本方法烧过就不会叠烧）。
    * @param {string|number} treasureId 本跑 id
    * @param {number} round 当前回合
    * @param {string} label 日志标签（场景名）
