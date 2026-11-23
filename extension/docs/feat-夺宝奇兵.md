@@ -255,7 +255,7 @@ net.send(RequestId.CROSS_TREASURE_TEAM_MARCH=7519, {
 - 主动使用：按 `skillPriority` 顺序择一可用（过 `checkSkillIsCanUse` 阶段门）发 7551。
 - **面板科技池 = 纯拖拽排序（无勾选）**（用户口径 2026-10-17）：`type:'sortlist'` 去 `checkable`/`offKey`，全量族代表项恒参与、只按拖拽序定优先级（越靠上越优先，取第一个可用）；旧 `skillPoolOff` 存档自然废弃。
 - **陪跑引擎侧自动排除「只对领奖有意义」的科技**（`HELPER_EXCLUDE_SKILLS = 幸运降临18 + 安全锁定17`）：因陪跑拿不到奖励，两者一个翻倍奖励、一个保护奖励均无意义。排除落在 **`pickSkill` 选技（`chooseByPool` exclude + 随机兜底）** 与 **`#flushCandidates` 末回合清空** 两处（与拖拽顺序无关，主跑不受影响）。其余 group=2 个人技（固定增强/完美镜像/全量刷新/数据转换）属战斗或功能增益、与领奖无关，陪跑保留；所有 group=1 队伍技 `#canUse` 已要求 `isLeader()`，陪跑（永不为队长）本就用不了。
-- **幸运降临的「溢出兜底」归本策略（末回合清空）**（用户口径 2026-10-17）：幸运只在 rollDice 主动用（详见 §5.3），但背包到末回合仍有剩余（rollDice 机会不够、溢出）时，`#flushCandidates` 会把它作为普通可用科技无脑清空用掉（主跑幸运 18 不列入 `FLUSH_EXCLUDE`）——即「不限场景直接无脑使用」只在末回合这一条策略里生效。
+- **幸运降临的「溢出兜底」分三层**（用户口径 2026-10-17 定两层、2026-11-22 补中间一层，详见 §23）：幸运只在 rollDice 主动用（详见 §5.3），但背包到末回合仍有剩余（rollDice 机会不够、溢出）时，`#flushCandidates` 会把它作为普通可用科技无脑清空用掉（主跑幸运 18 不列入 `FLUSH_EXCLUDE`）。非末回合则靠有奖场景动作前提前烧 + FIGHT 相位场景无关补烧两道前置（§5.3/§23）。
 
 ### 5.2 先知 + 选场景策略（需求：选场景一开始、仅队长；策略为用户口述 2026-10-16）
 
@@ -276,7 +276,7 @@ net.send(RequestId.CROSS_TREASURE_TEAM_MARCH=7519, {
   - 面板 = **只渲染 rollDice 一组 `multiopts`（不再折叠、不再列其余场景）**，底层 `cfg.luckyRewards = {rollDice: itemId[]}`（normalize 只读 `luckyRollDice`，旧 `luckyPickReward/luckyCodeBox/luckyDefPVE` 即便存档残留也不读）。
   - 引擎 `#tryLucky(treasureId, sceneKey, rewardResult, label)` 首行硬闸 `if (sceneKey !== EVENT_TYPE.ROLL_DICE) return false`（单一真相，独立于面板/场景接线）；rollDice 再按 `cfg.luckyRewards.rollDice` 为空即跳过、非空看掷骰中奖奖励 ∩ 勾选。
   - 场景侧：`roll-dice.js` 保留 `tryLucky('rollDice', rdi.winRewardResult, …)`；`pick-reward.js`/`code-box.js` 删除 tryLucky 调用，`def-pve.js` 退化为无动作占位（同 `nothing.js`）。
-- **溢出兜底归「科技使用策略·末回合清空」**：若一局里 rollDice 机会不足以消化背包累积的幸运（10 轮下来正好用光、甚至溢出），剩余幸运**到末回合由 `#flushCandidates` 无脑清空用掉**（幸运 18 不列入 `FLUSH_EXCLUDE`，主跑天然参与清空；陪跑仍由 `HELPER_EXCLUDE_SKILLS` 排除）。即「不限场景直接无脑使用」的例外只落在末回合清空这一条策略里，不回到各有奖场景的即时判定。
+- **溢出兜底分三层**：若一局里 rollDice 机会不足以消化背包累积的幸运（10 轮下来正好用光、甚至溢出），依次由 ① 有奖场景动作前的 `#tryLuckyOverflow`（2026-10-25）、② 非末回合 FIGHT 相位的族级溢出补烧 `DIGEST_OVERFLOW_SKILLS`（2026-11-22 纳入幸运 18，见 §23）、③ 末回合 `#flushCandidates` 无脑清空承接（幸运 18 不列入 `FLUSH_EXCLUDE`，主跑天然参与清空；陪跑三层均走 mode/HELPER_EXCLUDE 闸排除）。旧口径「例外只落在末回合清空这一条策略里」已被 §23 推翻——r9 持 2 张而 r9 不是有奖场景时，光靠末回合清不掉多余那张。
 - 触发实现：读 `sendUseSkill` 后观察 21384 `REWARD_MULTIPLE_TAKE_EFFECT`（生效文案 `cs_treasure331='幸运降临科技生效，本次奖励翻倍'`）确认翻倍挂上，用 round+skillSpecId 去重避免重复触发。陪跑全程不持有幸运（幸运唯一来源 pickSkill 场景已对陪跑 `exclude=[SKILL_LUCKY]`），`#usable(18)` 天然 false，rollDice 的 `tryLucky` 对陪跑 no-op（且 roll-dice 本身 `!isMain` 早退）。
 - "神器除外"落地：`grail_reward`（神器 47002001..）仅 rollDice 行携带——可见奖励为神器则**不开幸运**（翻倍无效还白耗技能）。
 - **候选只取中奖奖励（win-only）**：面板 rollDice 组的候选 = 引擎喂给 `#tryLucky` 的 `eventRollDiceInfo.winRewardResult` 所能出现的 itemId。**`failRewardResult`（未中奖保底）与 `grail_reward`（神器）一律不作候选**：引擎只翻倍中奖奖励、幸运又「神器除外」，把保底/神器列进面板会是勾了永不命中的**死开关**（曾误把 rollDice 的 7 个 fail 保底项当候选，2026-10-17 报文逐字段复核后剔除）。
@@ -645,7 +645,7 @@ net.send(RequestId.CROSS_TREASURE_TEAM_MARCH=7519, {
 
 ### 16.5 陪跑主动找队（630 取名→7530 按名搜→7522 申请）
 
-用户要求「主动挨个搜玩家池」。`#joinTeam(cfg)` 重写：遍历 `rolePool` 每个 uid（跳过自己）→ `#lookupName(net,uid)`（`net.send(630,{uid:String})`，解析 `data.playerInfo`(JSON 串).username，`#uidName` 缓存、查无记空串）→ `#sendPB(7530,{likeName:name})` 搜其创建的队 → 命中未满、未申请、`row.uid===该 uid`（同名他人跳过）的队即 `#sendPB(7522,{teamId:Long,op:1})` 申请，找到即停；整趟 `JOIN_POLL_MS` 节流。630/7530/7522 报文逐键实证陪跑趟实录（`likeName:"老陈"` 命中 `username:"书院🍁桂K老陈"` 创建的队）。**已知局限**：likeName 子串匹配，昵称含 emoji/空格时整串可能搜不到（真机手动也常剥字搜），查无即跳过下一成员。
+用户要求「主动挨个搜玩家池」。`#joinTeam(cfg)` 重写：遍历 `rolePool` 每个 uid（跳过自己）→ `#lookupName(net,uid)`（`net.send(630,{uid:String})`，解析 `data.playerInfo`(JSON 串).username，`#uidName` 缓存、查无记空串）→ `#sendPB(7530,{likeName:name})` 搜其创建的队 → 命中未满、未申请、`row.uid===该 uid`（同名他人跳过）的队即 `#sendPB(7522,{teamId:Long,op:1})` 申请，找到即停；整按 `#joinGap()` 节流（退避档位见 §24）。630/7530/7522 报文逐键实证陪跑趟实录（`likeName:"老陈"` 命中 `username:"书院🍁桂K老陈"` 创建的队）。**已知局限**：likeName 子串匹配，昵称含 emoji/空格时整串可能搜不到（真机手动也常剥字搜），查无即跳过下一成员。
 
 **常量**：`CMD_PLAYER_INFO=630`（feat 内私有 const，不入 net.js）；`REQ_SEARCH_TEAM_LIST=7530/ACK_SEARCH_TEAM_LIST='crossTreasureSearchTeamList'` 已在 `constants.js`；`REQ_TEAM_LIST=7526` 保留但找队不再引用。引擎字段 `#uidName`（stop 清空）。
 
@@ -774,3 +774,41 @@ net.send(RequestId.CROSS_TREASURE_TEAM_MARCH=7519, {
 ### 22.4 叠加顺序与兜底
 
 有效模式 = `满次强制(helper) > 场次格覆盖(main/helper，仅开关开) > 主设置(cfg.mode)`。开关关、格子=follow（未播种残留）、时段表未知、窗外、非活动星期、同日超 3 场 → 沿用主设置（窗外写包本就被 §14/§15 双闸拦截，兜底只影响展示与决策语义）。
+
+## 23. 幸运降临补上「场景无关」的溢出消耗路（用户口径，2026-11-22）
+
+**口径**：技能的使用得按回合算账。幸运降临 `type=10` 落在 `SKILL_TYPE_LIMIT=9` 限窗内，**第 9 回合及之前每回合至多消化 1 张**。第 9 回合背包还持 2 张时，剩余窗只剩第 10 回合一次消耗机会——第 9 回合不烧就注定有一张带出报废，**无论第 9 回合撞上什么场景**。
+
+**旧缺口**：溢出提前烧 `#tryLuckyOverflow` 只接在两个有奖场景（`scenes/pick-reward.js` 点宝前、`scenes/roll-dice.js` 白名单未命中）。r9 若是 pickSkill/codeBox/defPVE/nothing，整回合没有调用点；而末回合清空 `#flushCandidates` 对同一 specId 每回合只发一次 7551（`round:flush:sid` 幂等键），第 10 回合只能清掉一张 → 第二张白攒到终局。
+
+**改法**：`DIGEST_OVERFLOW_SKILLS` 加入 `SKILL_LUCKY`（原闪现 11/百战 1、25/铁壁 2 本就以「族限窗 9 → 每回合至多消化 1 张」为判据，幸运同属该族语义，不必另开一条支路）。FIGHT 是每回合必经结算相位，故烧技与场景无关。判据与闸门全沿用既有那套，不新造：
+
+- `held + round > ROUND_MAX`（与 `#tryLuckyOverflow`、`pick-skill` ③剪枝、镜像复制四处统一的 `>` 口径，见 §21.1 与差一教训）；
+- `#canSpend`（= `#usable` 持有且非生效中 + 同族本回合去重）——所以 r9 已在 rollDice 由白名单或 `#tryLuckyOverflow` 烧过一张，FIGHT 就不会再叠烧；
+- `${round}:digest:${specId}` 尝试键（每回合每 specId 至多一次，被拒不回退）；
+- 陪跑 `mode==='helper'` 跳过（翻倍的是「下一次奖励」，陪跑全程无奖励可翻，与 `#tryLuckyOverflow` 同闸）。
+
+幸运列在清单**首位**：FIGHT 窗仅 13~25s、4s 一拍，同拍还要给掠袭保命/预警式防御让路（`#autoStrategies` 在掠袭处置后非末回合直接 `return`），排末尾有整回合轮不上的风险。
+
+**效果语义**：翻倍挂在「下一次您所获得的奖励」上，r9 FIGHT 烧的这张顺延到 r10 的奖励。若 r10 是 rollDice 且命中已勾池，`#tryLucky` 会因 `#pending` 记 `inEffect=Y` 跳过——由 r9 那张生效中的效果完成翻倍，不亏。
+
+**已知无解边界**：中途入局直接落在第 10 回合且持 2 张（或第 9 回合持 3 张）——服务器每回合限一张，多出的那张本就无法消化；`pick-skill` ③剪枝已保证正常节奏不会攒到这个量。
+
+**日志**：`overflow-burn: burned 幸运降临(18). round=9 held 2 + 9 > 10 (family window cannot digest the rest in remaining rounds)`，sendPB 标签 `overflow-burn`；真机按 `overflow-burn` 关键字即可核对是否补烧成功。
+
+## 24. 陪跑找队退避：整池空转一圈升一档 5→10→15→20s 封顶（用户口径，2026-11-22）
+
+**旧行为**：`#joinTeam` 每拍固定 5s（`JOIN_POLL_MS`），游标走完全池自然回卷，**没有圈数计数也没有降频** —— 空场期（池里没人开车）会以 5s 一发 7530 无限持续，8 人池约每 40s 重扫一遍整池。
+
+**新口径**：以「整池走完一圈仍无可加之队」为一个升档单位，每圈 +一个 `JOIN_POLL_MS`，封顶 `JOIN_POLL_CAP_MS=20000` → **5s → 10s → 15s → 20s（此后不再增长）**。升档只在真打过 7530 且无果的链路上发生（池空 / 全无效 uid 的分支本拍不发搜索，按当前档重排、不计圈）。
+
+**实现要点**（`engine-team.js`）：
+
+- `#joinGap() = min(JOIN_POLL_MS × (#joinIdleRounds + 1), JOIN_POLL_CAP_MS)`，即档位 = 空转圈数 + 1；
+- `#joinIdleRounds`（空转圈数）+ `#joinRoundMark`（本圈锚点下标）：游标单调前移，故「本拍搜到的下标 ≤ 锚点」等价于刚走完一圈（尾部无效项被跳过而直接回绕也能命中，不依赖 `cursor===0`）；池被编辑变短（`mark >= n`）即重新锚定，不误升档；
+- **归零三处**：发出 7522 申请（已锁定目标队）、散队/换队 `#clearTeam`（新一局找队重回首档，不沿用上一局的 20s）、`stop()`；
+- 顶部的节流闸改为按当前档判定，且被推送 `#wake` 早醒时返回「本档剩余」（下限 `JOIN_GAP_FLOOR_MS=300ms` 防紧循环），不再退回 `IDLE_TICK_MS=60s` 长睡 —— 否则 20s 封顶会被 60s 兜底冲淡、升档形同虚设。
+
+**收益账**：稳态下 8 人池一圈 = 8 × 20s = 160s（旧为 40s），7530 频率降到首档的 1/4；同时保留逐成员轮转，新开车队伍最迟 160s 内会被搜到（另受 21371/21373 推送即时 `#wake` 补扫加速）。
+
+**日志**：升档时 info 一行 `join-team: pool swept N round(s) with no joinable team, back off next search to Xs (cap 20s)`；真机按 `pool swept` 关键字即可核对退避是否按档上行。
