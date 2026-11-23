@@ -958,8 +958,10 @@ export class PilotEngine {
     if (!TRACKED_PT[type]) {
       // 墓碑（问题14/15）：901/10018 报本格 pt=0 = 服务器确认该点已移除（BOSS 死亡等，报文实证 20261114 队长场）。
       //   只覆盖「这里曾记录过跟踪点」的键——视口每刀约两百个空格子不新建条目，#tiles 不膨胀；
-      //   写入后 #bossDwellLeave / #bossWindow 的瓦片否决才读得到死亡证据（旧实现 pt=0 直接跳过，陈旧快照永不被纠正）。
-      if (type === 0 && prev && prev.pt) {
+      //   墓碑覆盖墓碑时同样重写本条：每次现网证据都刷新 `at`，死亡证据不因超龄失效
+      //   （21535 的阶段转正可滞后十余分钟，比 bossTileFreshMs 长两个数量级）。
+      //   写入后 #bossDwellLeave / #bossWindow / #pickPlane 的否决才读得到这份证据。
+      if (type === 0 && prev) {
         this.#tiles.set(k, {
           k: k,
           pt: 0,
@@ -1697,8 +1699,7 @@ export class PilotEngine {
     const now = Date.now();
     if (now - (dbg.at || 0) > (Number(tuning.bossTileFreshMs) || 0)) return;
     const k = tileKey(bx, by);
-    const prev = this.#tiles.get(k);
-    if (!prev || !prev.pt) return; // 没跟踪过/已是墓碑 → 无陈旧态可纠
+    if (!this.#tiles.get(k)) return; // 该点从未被跟踪过 → 无条目可写成墓碑
     const pts = this.#viewPoints || [];
     for (let i = 0; i < pts.length; i++) {
       const p = pts[i];
@@ -2447,8 +2448,8 @@ export class PilotEngine {
   #bossDwellLeave(key) {
     const now = Date.now();
     const t = this.#tiles.get(key);
+    if (t && !t.pt) return 'point removed (tile pt=0)'; // 墓碑整场粘滞，不等新鲜窗
     if (t && now - (t.at || 0) <= (Number(tuning.bossTileFreshMs) || 0)) {
-      if (!t.pt) return 'point removed (tile pt=0)';
       const st = Number(t.state);
       if (st === ST_BOSS_FIGHTING_END || st === ST_BOSS_DEAD_END) return 'tile says state=' + st;
     }
@@ -2506,7 +2507,7 @@ export class PilotEngine {
   }
 
   /**
-   * 本点 BOSS 是否已确证死亡（1115 问题4③）：新鲜瓦片墓碑（pt=0）或终局态（28/30），
+   * 本点 BOSS 是否已确证死亡（1115 问题4③）：瓦片墓碑（pt=0）**整场粘滞**、新鲜终局态（28/30），
    *   或权威 bossBaseInfo state28/30。fail-open：无证据/证据超龄一律回 false（不误清回攻/不拦派台）。
    * @param {string} key 点位键
    * @returns {boolean}
@@ -2515,8 +2516,8 @@ export class PilotEngine {
     if (!key) return false;
     const now = Date.now();
     const t = this.#tiles.get(key);
+    if (t && !t.pt) return true; // 墓碑：服务器已确认该点移除，不因超龄失效（21535 转正可滞后十余分钟）
     if (t && now - (t.at || 0) <= (Number(tuning.bossTileFreshMs) || 0)) {
-      if (!t.pt) return true;
       const st = Number(t.state);
       if (st === ST_BOSS_FIGHTING_END || st === ST_BOSS_DEAD_END) return true;
     }
