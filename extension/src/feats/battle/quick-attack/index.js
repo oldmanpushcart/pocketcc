@@ -13,6 +13,8 @@
  *   activePanel 单引用即可；onKeyDown 再复查 comp.isValid && node.activeInHierarchy 兜底防漏触发误发。
  *
  * 依赖游戏运行时只「读 + 发包」，不调任何 Update/Delete 改写类方法（遵守 feat 只读+发包约束）。
+ * 部分场景带面板态前置闸（spec.gate，按键瞬间只读复查）：游戏自己会拦的（如夺宝飞船「今日次数已用完」）
+ * 不白发包，命中即一行 info 收摊，不发 902。
  * 门控（B 档，可行性报告 §7.2）：places:['world']（NWorldMap 场景）+ kinds:['homeland','wushuang','kvk']——跨服战场图里
  * 照样要打（marchApi.resolve 已按战场换算 marchType），秘境由 world 门的 kind===pab 隔离自动拦、征服者球体/盟决不在场。
  * 属「战斗设置」：快捷战斗只在目标面板开着时按快捷键才发一波，是战斗时的手动辅助，
@@ -25,7 +27,7 @@
 import { sleep } from '../../../core/util.js';
 import { createLog } from '../../../core/log.js';
 import { game } from '../../../core/game.js';
-import { march as marchApi } from '../../../core/game-api.js';
+import { march as marchApi, gameConf } from '../../../core/game-api.js';
 import { reactor } from '../../../core/reactor.js';
 import { isTypingTarget } from '../../../core/hotkeys.js';
 import { Battle } from '../../../core/battle.js';
@@ -41,9 +43,10 @@ import { CMD_MARCH_WORLD_POINT } from './constants.js';
  *         marchTypes.attack 本服基础 NMarchType（发包前由 marchApi.resolve 做跨服漂移换算）,
  *         marchTypes.attackV2 可选：同面板二期实体（按 tileInfo.type 分流）的行军类型（兜底值）,
  *         marchMembers 可选：行军类型以游戏 MarchType 枚举成员名为权威源（marchApi.typeOf 运行时取名，
- *           成员名收在 core/game-api.js SYM.marchEnum），marchTypes 数值仅作符号漂移兜底 }
+ *           成员名收在 core/game-api.js SYM.marchEnum），marchTypes 数值仅作符号漂移兜底,
+ *         gate 可选：按键瞬间的面板态前置闸 (comp)=>string|null，返回串=拒绝原因（不发 902）、null=放行 };
  * NMarchType 见 extracted/Script/WorldMapCommon__WorldMapCommon.js 的 MarchType 枚举。
- * @type {Array<{key:string, label:string, cls:string, field:string, marchTypes:{attack:number, attackV2?:number}, marchMembers?:{attack:string, attackV2?:string}}>}
+ * @type {Array<{key:string, label:string, cls:string, field:string, marchTypes:{attack:number, attackV2?:number}, marchMembers?:{attack:string, attackV2?:string}, gate?:function(object):(string|null)}>}
  */
 const QUICK_ATTACK_TARGETS = [
   {
@@ -84,7 +87,54 @@ const QUICK_ATTACK_TARGETS = [
     marchTypes: { attack: 14, attackV2: 298 },
     marchMembers: { attack: 'attackWorldBoss', attackV2: 'attackWorldBossV2' },
   },
+  // 夺宝飞船（截图中「XX小队的夺宝团」弹窗）：点世界地图 pointType=133 的点打开
+  // NWorldMapCrossTreasure（NWorldMapTileClickUtils.clickCrossTreasure），「拦截」按钮走
+  // BattleType.CROSS_TREASURE_ATTACK_TREASURE → 902 marchType=138 CS_ATTACK_TREASURE（实录实证：
+  // 应答 target.targetType=133、body 与其余场景同形，无额外字段）。坐标取 onShow 填好的 _tileInfo.tileX/tileY。
+  {
+    key: 'csShip',
+    label: '夺宝飞船',
+    cls: 'NWorldMapCrossTreasure',
+    field: '_tileInfo',
+    marchTypes: { attack: 138 },
+    marchMembers: { attack: 'csAttackTreasure' },
+    gate: csShipGate,
+  },
 ];
+
+/**
+ * DATACONFIG 配置号：每日可拦截夺宝飞船的次数上限（源码实证 NWorldMapCrossTreasure.onBtnClickAttck：
+ * `Number(getDataConfigData(290022)) - pointInfo.fightNum <= 0` → tips cs_treasure266，游戏自己不发）。
+ * 取不到配置按 0（不设次数闸，交由服务器拒）。
+ * @type {number}
+ */
+const CFG_CS_SHIP_ATTACK_LIMIT = 290022;
+
+/**
+ * 夺宝飞船面板前置闸：逐条复刻游戏 onBtnClickAttck 的三道只读判定，命中即回拒绝原因串、放行回 null。
+ * 数据源是面板自己的 7571 CROSS_TREASURE_POINT_INFO 应答（_crossTreasurePointInfo），本函数不发包；
+ * 应答尚未落地（面板刚打开）时一律放行——无从判定交给服务器，宁多打一个被拒的包也不误拦能打的目标。
+ * @param {object} comp NWorldMapCrossTreasure 组件实例
+ * @returns {string|null} 拒绝原因；null=可发
+ */
+function csShipGate(comp) {
+  var info = comp._crossTreasurePointInfo;
+  if (!info) return null;
+  // 黑名单（游戏弹 cs_treasure489）：实录里服务器多数时候不下发该键，undefined 即假
+  if (info.inBlackList) return 'inBlackList';
+  // 归属闸：只有 pointSid==本人 ServerId（本服队伍派出的飞船）游戏才绘出「拦截」按钮
+  var ud = (dataCenter && dataCenter.UserData) || null;
+  var mine = ud && ud.ServerId;
+  if (mine != null && info.pointSid != null && Number(info.pointSid) !== Number(mine)) {
+    return 'notMyServer pointSid=' + info.pointSid + ';mine=' + mine;
+  }
+  // 每日次数：fightNum 为今日已拦截次数
+  var limit = Number(gameConf.dataConfig(CFG_CS_SHIP_ATTACK_LIMIT)) || 0;
+  if (limit && (info.fightNum | 0) >= limit) {
+    return 'daily-limit ' + (info.fightNum | 0) + '/' + limit;
+  }
+  return null;
+}
 
 /**
  * marchType 兜底数值表：只在游戏枚举/判定器符号漂移时兜底（主路径向游戏运行时取名值）。
@@ -117,7 +167,7 @@ const log = createLog('QUICK_ATTACK');
 
 /** @type {object|null} 网络底座（install 时取） */
 var net;
-/** @type {object|null} DataCenter.DATA（提供行军上限） */
+/** @type {object|null} DataCenter.DATA（install 依赖符；夺宝飞船归属闸读 UserData.ServerId） */
 var dataCenter;
 
 /** @type {object|null} reactor 注入的上下文；alive() 反映运行态，pause 后置否让在飞三连自然中断 */
@@ -330,18 +380,41 @@ function onKeyDown(e) {
   var hk = readHotkey(e);
   if (!hk.digit) return;
 
-  var t = cfg.targets[activePanel.spec.key];
+  var spec = activePanel.spec;
+  var target = activePanel.target;
+  var t = cfg.targets[spec.key];
   if (!t || !t.enabled) return;
 
   e.preventDefault();
   e.stopPropagation();
+
+  // 面板态前置闸（可选 spec.gate）：游戏自己就会拦的场景（次数用完/黑名单/非本服飞船）不白发 902。
+  // 闸内只读面板已有数据，抛错时按放行处理（宁被服务器拒也不因判据异常而静默失灵）。
+  if (spec.gate) {
+    var why = null;
+    try {
+      why = spec.gate(comp);
+    } catch (err) {
+      log.warn('panel gate threw, send anyway. key=%s', spec.key, err);
+    }
+    if (why) {
+      log.info(
+        'attack blocked by panel gate. key=%s;reason=%s;x=%d;y=%d',
+        spec.key,
+        why,
+        target.x,
+        target.y,
+      );
+      return;
+    }
+  }
 
   var planList = [{ kind: 'preset', index: hk.digit }];
   if (hk.triple) {
     planList.push({ kind: 'minimal' }, { kind: 'minimal' });
   }
 
-  attackFlow(activePanel.spec, activePanel.target, planList).catch(function (err) {
+  attackFlow(spec, target, planList).catch(function (err) {
     log.warn('attack flow threw!', err);
   });
 }

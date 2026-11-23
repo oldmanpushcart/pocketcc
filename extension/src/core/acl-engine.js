@@ -117,6 +117,7 @@ export const SYM = {
     teamLegendAttackPlayer: 'TEAM_LEGEND_ATTACK_PLAYER', // 181 无双峡谷-小队赛/传奇赛（legend_team_match_101）
     attackWorldBoss: 'ATTACK_WORLDBOSS', // 14 普通世界 boss（quick-attack/imperial-decree 经 typeOf 取名值）
     attackWorldBossV2: 'ATTACK_WORLD_BOSS_V2', // 298 bossV2 世界 boss（同上；source-of-war 本地写死 298 未走此）
+    csAttackTreasure: 'CS_ATTACK_TREASURE', // 138 拦截夺宝飞船（quick-attack 经 typeOf 取名值；同块 CROSS_TREASURE_SHIP=160 是别的玩法，别混）
   },
   entityEnum: { obj: 'WorldMapEntityType', boss: 'BOSS', bossV2: 'BOSS_V2' },
   /** ProcedureManager.PROCE 单例上的场景程序成员名（各 Procedure 自带 sceneName，Run 时按 sceneName 判断是否切换） */
