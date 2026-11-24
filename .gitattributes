@@ -13,9 +13,6 @@
 #
 # 已核实的现状：346 个追踪文件的索引 blob 本就 100% 无 CR（`git add --renormalize .`
 # 暂存为空），所以这份文件不重写任何 blob，只约束签出与后续提交。
-# 例外：references/竞对逆向/竞品A/ 下若干文件带只读属性（取证快照的防误改手段），
-# 归一脚本不改权限、故它们磁盘上仍是 CRLF；因 eol=lf 在读取时按 LF 比对，
-# `git status` 依旧干净，只是 `git checkout` 若强制重写会失败——遇到时先撤只读位。
 * text=auto eol=lf
 
 # 二进制：既不换行尾，也不做行级文本 diff / merge
