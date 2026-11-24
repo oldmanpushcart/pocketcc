@@ -508,7 +508,7 @@ export default {
 
     // ── 维度：radar_event 查表键契约（HARD）键 = 事件实例 id，不是 taskId ────────
     // 权威口径三处实证：游戏 RadarTaskPrefab.initData / RadarController.askBeginTask 均以 e.id 查表，
-    //   竞品 B server-js.js:19868 同为 getTableDataById(TableName.radar_event, e["id"])；taskId 是另一张表 radar_task 的键。
+    // 竞品 B 同为 getTableDataById(TableName.radar_event, e["id"])；taskId 是另一张表 radar_task 的键。
     // 反例（线上事故）：曾按 taskId 查，10001 命中同号不同物的槽位行 type=205，把据点任务派成零部队援助 902/67 吃 code=3
     //   （实证 dashcam store/log/15596140531952/dashcam-log-20261106.ndjson）。此处用「只对实例 id 返回权威行、对 taskId 返回毒药行」的桩钉死契约。
     {

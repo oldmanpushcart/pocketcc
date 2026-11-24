@@ -1,12 +1,12 @@
 // 协议注册表 · activity 域 —— 机械抽取 + 人工标注（dir/note/src/fields 重跑保留，usages 重跑重建）。
 // 生成：node scripts/protocol/extract.mjs；闸门：tests/protocol-registry.test.js（npm test）。
-// 条目键 = 协议号；名字是 feat 局部别名（同名异号是局部命名，非漂移）。只链不搬：src 指 references/ 出处。
+// 条目键 = 协议号；名字是 feat 局部别名（同名异号是局部命名，非漂移）。src 为人工标注的出处说明，渐进补充。
 export default [
   {
     cmd: 1055,
     dir: 'C2S',
     note: '占领发射井活动信息 + 4 井归属（JSON send，{}）',
-    src: 'references/游戏逆向/占领发射井分析报告.md',
+    src: '',
     fields: '',
     usages: [
       {
@@ -20,7 +20,7 @@ export default [
     cmd: 1057,
     dir: 'C2S',
     note: '发射井个人积分与已领档位（JSON send，{}）',
-    src: 'references/游戏逆向/占领发射井分析报告.md',
+    src: '',
     fields: '',
     usages: [
       {
@@ -34,7 +34,7 @@ export default [
     cmd: 1058,
     dir: 'C2S',
     note: '领取发射井某档位积分奖励（JSON send，{score:num}）',
-    src: 'references/游戏逆向/占领发射井分析报告.md',
+    src: '',
     fields: '',
     usages: [
       {
@@ -62,7 +62,7 @@ export default [
     cmd: 3756,
     dir: 'C2S',
     note: '查询当前可攻打世界 boss（海上夺宝，{activityId} → {bossInfos}）',
-    src: 'references/历史文档/海上夺宝.md',
+    src: '',
     fields: '',
     usages: [
       {
@@ -76,7 +76,7 @@ export default [
     cmd: 8521,
     dir: 'C2S',
     note: '秘境行军移动（被拒是常态：158 小队尚未抵达/163 目标点不能行军/17 战场即将封闭）',
-    src: 'references/游戏逆向/异能秘境模块分析报告.md',
+    src: '',
     fields: 'req {x,y} 整数（teamIsMooring 串行；拒 158/163/17 是常态）',
     usages: [
       {
@@ -90,7 +90,7 @@ export default [
     cmd: 8522,
     dir: 'C2S',
     note: '秘境单点驻军详情（{x,y}；8522→8521 同点配对是人工点流复刻）',
-    src: 'references/游戏逆向/异能秘境模块分析报告.md',
+    src: '',
     fields: '',
     usages: [
       {
@@ -104,7 +104,7 @@ export default [
     cmd: 8526,
     dir: 'C2S',
     note: '秘境资源点明细（{x,y} → bagInfo[]/buffInfo[]/bagGetNum/buffGetNum/refreshTime）',
-    src: 'references/游戏逆向/异能秘境模块分析报告.md',
+    src: '',
     fields: 'req {x,y} → resp {bagInfo[],buffInfo[],bagGetNum,buffGetNum,refreshTime}',
     usages: [
       {
@@ -118,7 +118,7 @@ export default [
     cmd: 8527,
     dir: 'C2S',
     note: '领一个资源 bag（{rId}，无 x,y）',
-    src: 'references/游戏逆向/异能秘境模块分析报告.md',
+    src: '',
     fields: 'req {rId:十进制字符串}（无 x,y）',
     usages: [
       {
@@ -132,7 +132,7 @@ export default [
     cmd: 8532,
     dir: 'C2S',
     note: '秘境遗落之箱查询',
-    src: 'references/游戏逆向/异能秘境模块分析报告.md',
+    src: '',
     fields: 'req {x,y} 整数（遗落之箱查询）',
     usages: [
       {
@@ -146,7 +146,7 @@ export default [
     cmd: 8533,
     dir: 'C2S',
     note: '领取一个掉落项/宠物（{x,y,rId}，rId=dropId 字符串）',
-    src: 'references/游戏逆向/异能秘境模块分析报告.md',
+    src: '',
     fields: 'req {x,y,rId:十进制字符串}（rId=dropId）',
     usages: [
       {
@@ -160,7 +160,7 @@ export default [
     cmd: 8534,
     dir: 'C2S',
     note: '使用秘境背包道具（{info:{itemId,itemCount},marchId}）——编队治疗动作口',
-    src: 'references/游戏逆向/异能秘境BOSS与治疗设计方案.md',
+    src: '',
     fields: '',
     usages: [
       {
@@ -174,7 +174,7 @@ export default [
     cmd: 8535,
     dir: 'C2S',
     note: '共享背包版道具使用（治疗只用私有背包，本键留档）',
-    src: 'references/游戏逆向/异能秘境模块分析报告.md',
+    src: '',
     fields: '',
     usages: [
       {
@@ -188,7 +188,7 @@ export default [
     cmd: 8536,
     dir: 'C2S',
     note: '秘境兽点信息（侦察前无 beastId，侦察后带 beastId 可查 quality）',
-    src: 'references/游戏逆向/异能秘境模块分析报告.md',
+    src: '',
     fields: 'req {x,y} → resp {beastType,pveId[,beastId]}（侦察前无 beastId，侦察后带）',
     usages: [
       {
@@ -202,7 +202,7 @@ export default [
     cmd: 8537,
     dir: 'C2S',
     note: '全地形勘察车侦察（耗 41001 道具；先 8536 免费预检再花道具）',
-    src: 'references/游戏逆向/异能秘境模块分析报告.md',
+    src: '',
     fields: 'req {x,y}（耗 41001 道具）→ resp 比 8536 多 beastId',
     usages: [
       {
@@ -216,7 +216,7 @@ export default [
     cmd: 8538,
     dir: 'C2S',
     note: '领一个增益 buff（异能井，{rId,pos}）',
-    src: 'references/游戏逆向/异能秘境模块分析报告.md',
+    src: '',
     fields: 'req {rId:十进制字符串,pos}（异能井增益，仅队长）',
     usages: [
       {
@@ -230,7 +230,7 @@ export default [
     cmd: 8540,
     dir: 'C2S',
     note: '秘境商店查询（应答不带 x,y；会把非 type3 货位 getTime 归零，增量须以本次应答为基准）',
-    src: 'references/游戏逆向/异能秘境模块分析报告.md',
+    src: '',
     fields:
       'req {x,y} → resp 不带 x,y（点位身份从 req 侧取，按 reqTime 配对）；会把非 type3 货位 getTime 归零',
     usages: [
@@ -245,7 +245,7 @@ export default [
     cmd: 8541,
     dir: 'C2S',
     note: '商店「我已就绪」勾选（{x,y,ready:0|1}，与补货无关）',
-    src: 'references/游戏逆向/异能秘境模块分析报告.md',
+    src: '',
     fields: '',
     usages: [
       {
@@ -259,7 +259,7 @@ export default [
     cmd: 8542,
     dir: 'C2S',
     note: '秘境商店买一件（{specId,num} 无坐标，商店身份服务器自持）',
-    src: 'references/游戏逆向/异能秘境模块分析报告.md',
+    src: '',
     fields: 'req {specId,num} 整数（无坐标，商店身份服务器自持）→ resp {items}',
     usages: [
       {
@@ -273,7 +273,7 @@ export default [
     cmd: 8543,
     dir: 'C2S',
     note: '秘境商店刷新（扣 1 个 41010 人造水晶，只归零非 type3 货位 getTime）',
-    src: 'references/游戏逆向/异能秘境模块分析报告.md',
+    src: '',
     fields: 'req {x,y}（扣 1 个 41010 人造水晶，只归零非 type3 货位 getTime）',
     usages: [
       {
@@ -287,7 +287,7 @@ export default [
     cmd: 8544,
     dir: 'C2S',
     note: '秘境 BOSS 伤害榜（游戏侧每 5s 拉一次；成员名漏下划线非笔误）',
-    src: 'references/游戏逆向/异能秘境BOSS与治疗设计方案.md',
+    src: '',
     fields: '',
     usages: [
       {
@@ -301,7 +301,7 @@ export default [
     cmd: 8546,
     dir: 'C2S',
     note: '拍宠物投喂一拍（{specId}；feat 走原生 petCaptureOperation 不直发，留档）',
-    src: 'references/游戏逆向/异能秘境BOSS与治疗设计方案.md',
+    src: '',
     fields:
       'req {specId} 整数（1=免费手拍；5|6=投喂道具档）→ resp {feedInfo:{allFavor},changeScore}',
     usages: [
@@ -316,7 +316,7 @@ export default [
     cmd: 8547,
     dir: 'C2S',
     note: '小 BOSS 石头奖励主动查询口（客户端 0 调用方，账本全靠 push 21539；只登记不接入）',
-    src: 'references/游戏逆向/异能秘境BOSS与治疗设计方案.md',
+    src: '',
     fields: '',
     usages: [
       {
@@ -330,7 +330,7 @@ export default [
     cmd: 8548,
     dir: 'C2S',
     note: '领石头（不要求队伍站在石头点位上；拒绝码只有 enigma_realm 族，无 158）',
-    src: 'references/游戏逆向/异能秘境BOSS与治疗设计方案.md',
+    src: '',
     fields:
       'req {x,y}（不带 bossId，不要求队伍站在石头点上）→ resp {rewardResult[,boxOpen,boxOpenBeast]}；拒 enigma_realm60/179/162',
     usages: [
@@ -387,7 +387,7 @@ export default [
     cmd: 8581,
     dir: 'C2S',
     note: '撤离带出选择（配合 21521 roomBagInfo.backItemIds/backBeasts；线路形态仅源码级依据）',
-    src: 'references/游戏逆向/异能秘境模块分析报告.md',
+    src: '',
     fields: 'req {uuIds:Int64对象[],itemIds:[]}（撤离带出选择；线路形态仅源码级依据）',
     usages: [
       {
@@ -401,7 +401,7 @@ export default [
     cmd: 8584,
     dir: 'C2S',
     note: '拉编队各支军队血量（{uid:字符串} → infos[].armyPower/maxArmyPower/marchId:Int64）',
-    src: 'references/游戏逆向/异能秘境BOSS与治疗设计方案.md',
+    src: '',
     fields: '',
     usages: [
       {
@@ -415,7 +415,7 @@ export default [
     cmd: 8589,
     dir: 'C2S',
     note: '退出 BOSS 战区（{uid:UID+""}，ok===1 后游戏 pabFightQuit()）',
-    src: 'references/游戏逆向/异能秘境模块分析报告.md',
+    src: '',
     fields: 'req {uid:本人UID} → resp ok===1 后游戏 pabFightQuit()',
     usages: [
       {
@@ -429,7 +429,7 @@ export default [
     cmd: 8623,
     dir: 'C2S',
     note: '夺宝矿脉列表查询（应答 data.otherKuangList，gatherStatus 标可挖状态）',
-    src: 'references/游戏逆向/夺宝奇兵分析报告.md',
+    src: '',
     fields: '',
     usages: [
       {
@@ -457,7 +457,7 @@ export default [
     cmd: 8852,
     dir: 'C2S',
     note: '芯片空投可领箱全局查询（{queryType:1,marchType:dropType[,marchIdStr]} → {x,y} 非瓦片通路）',
-    src: 'references/历史文档/芯片空投.md',
+    src: '',
     fields: '',
     usages: [
       {
@@ -485,7 +485,7 @@ export default [
     cmd: 10029,
     dir: 'S2C',
     note: 'push 发射井个人积分/已领档位刷新',
-    src: 'references/游戏逆向/占领发射井分析报告.md',
+    src: '',
     fields: '',
     usages: [
       {
@@ -513,7 +513,7 @@ export default [
     cmd: 10912,
     dir: 'S2C',
     note: 'push 活动 extra 更新（{aid,extra}；新矿脉诞生时推它）',
-    src: 'references/历史文档/海上夺宝.md',
+    src: '',
     fields: '',
     usages: [
       {
@@ -537,7 +537,7 @@ export default [
     cmd: 11017,
     dir: 'S2C',
     note: 'push 发射井单井归属/占领增量',
-    src: 'references/游戏逆向/占领发射井分析报告.md',
+    src: '',
     fields: '',
     usages: [
       {
@@ -593,7 +593,7 @@ export default [
     cmd: 21371,
     dir: 'S2C',
     note: 'push 夺宝队伍整体变更（含 ARRIVE 清态）',
-    src: 'references/游戏逆向/夺宝奇兵分析报告.md',
+    src: '',
     fields: 'push {crossTreasureTeamChange:{team:{uid,…}}}（队伍整体变更，含 ARRIVE 清态）',
     usages: [
       {
@@ -607,7 +607,7 @@ export default [
     cmd: 21372,
     dir: 'S2C',
     note: 'push 夺宝出发召集（{teamId:Long,readyMember:Long[],readyStartTimeMill:Long}）',
-    src: 'references/历史文档/夺宝奇兵.md',
+    src: '',
     fields:
       'push {crossTreasureTeamReadyChange:{teamId:Long,readyMember:Long[],readyStartTimeMill:Long}}（存在即召集时刻）',
     usages: [
@@ -622,7 +622,7 @@ export default [
     cmd: 21373,
     dir: 'S2C',
     note: 'push 夺宝成员增删改（{teamId,type,member:{uid,playerInfo,power,level,aTag,help,marchId}}）',
-    src: 'references/游戏逆向/夺宝奇兵分析报告.md',
+    src: '',
     fields: '',
     usages: [
       {
@@ -636,7 +636,7 @@ export default [
     cmd: 21374,
     dir: 'S2C',
     note: 'push 夺宝入队申请变更（{teamId,uid,op,apply}）',
-    src: 'references/游戏逆向/夺宝奇兵分析报告.md',
+    src: '',
     fields: '',
     usages: [
       {
@@ -650,7 +650,7 @@ export default [
     cmd: 21375,
     dir: 'S2C',
     note: 'push 本人夺宝次数变更（huntCount 唯一来源，{count:Long,lastRecoverTimeMill:Long,mark}）',
-    src: 'references/游戏逆向/夺宝奇兵分析报告.md',
+    src: '',
     fields: '',
     usages: [
       {
@@ -664,7 +664,7 @@ export default [
     cmd: 21376,
     dir: 'S2C',
     note: 'push 夺宝状态机主推送（round/status/eventInfo/waitInfo/fightInfo/lootInfo/returnInfo）',
-    src: 'references/游戏逆向/夺宝奇兵分析报告.md',
+    src: '',
     fields:
       'push {crossTreasureHuntInfoChange:{treasureId,status,round,eventInfo:{eventSpecId,status,eventDecideInfo:{phase,uidDecide}},waitInfo,fightInfo,lootInfo,returnInfo}}（状态机主推送）',
     usages: [
@@ -679,7 +679,7 @@ export default [
     cmd: 21377,
     dir: 'S2C',
     note: 'push 夺宝活动信息变更',
-    src: 'references/游戏逆向/夺宝奇兵分析报告.md',
+    src: '',
     fields: '',
     usages: [
       {
@@ -693,7 +693,7 @@ export default [
     cmd: 21378,
     dir: 'S2C',
     note: 'push 夺宝科技生效（字段名 skillEventSpecId；存在无 7551 前置的自动生效）',
-    src: 'references/游戏逆向/夺宝奇兵分析报告.md',
+    src: '',
     fields: '',
     usages: [
       {
@@ -707,7 +707,7 @@ export default [
     cmd: 21379,
     dir: 'S2C',
     note: 'push 夺宝掠夺成功（可领奖励）',
-    src: 'references/游戏逆向/夺宝奇兵分析报告.md',
+    src: '',
     fields: '',
     usages: [
       {
@@ -721,7 +721,7 @@ export default [
     cmd: 21383,
     dir: 'S2C',
     note: 'push 夺宝玩家来袭规模（{treasureId,marchSize,playerInfos:JSON 串需二次 parse}）',
-    src: 'references/游戏逆向/夺宝奇兵分析报告.md',
+    src: '',
     fields: '',
     usages: [
       {
@@ -735,7 +735,7 @@ export default [
     cmd: 21384,
     dir: 'S2C',
     note: 'push 夺宝幸运降临生效（奖励翻倍，神器除外）',
-    src: 'references/游戏逆向/夺宝奇兵分析报告.md',
+    src: '',
     fields: '',
     usages: [
       {
@@ -749,7 +749,7 @@ export default [
     cmd: 21521,
     dir: 'S2C',
     note: 'push 秘境房间基础信息（约 17s 一条 + 行军状态变化补发；marchState 与瓦片 PabFightStageState 两套枚举勿互用）',
-    src: 'references/游戏逆向/异能秘境BOSS与治疗设计方案.md',
+    src: '',
     fields:
       'push {info:roomBaseInfo}（或扁平；startPoint/marchState/pointType；约 17s 一条+行军变状态补发；marchState 2=ARRIVED，与瓦片枚举勿互用）',
     usages: [
@@ -792,7 +792,7 @@ export default [
     cmd: 21525,
     dir: 'S2C',
     note: 'push 秘境房间背包刷新（治疗余量随它变）',
-    src: 'references/游戏逆向/异能秘境BOSS与治疗设计方案.md',
+    src: '',
     fields: 'push {bagInfo:[{itemId,itemCount}]}（房间背包，治疗余量随它变）',
     usages: [
       {
@@ -806,7 +806,7 @@ export default [
     cmd: 21527,
     dir: 'S2C',
     note: 'push 秘境兽事件（无 eventType/eventEndTime；只作轮询兜底候选来源）',
-    src: 'references/游戏逆向/异能秘境BOSS与治疗设计方案.md',
+    src: '',
     fields: '',
     usages: [
       {
@@ -820,7 +820,7 @@ export default [
     cmd: 21529,
     dir: 'S2C',
     note: 'push 秘境队伍到达（{x,y,pointType}；8521→10007→8522→21529 时序链）',
-    src: 'references/游戏逆向/异能秘境模块分析报告.md',
+    src: '',
     fields: '',
     usages: [
       {
@@ -834,7 +834,7 @@ export default [
     cmd: 21530,
     dir: 'S2C',
     note: 'push 秘境拍宠物进度（只用于识别换宠/收尾，闸门直读游戏现场 capturingPetPos）',
-    src: 'references/游戏逆向/异能秘境模块分析报告.md',
+    src: '',
     fields: 'push {x,y,boss:0|1}（capturingPetPos 写；闸门直读游戏现场）',
     usages: [
       {
@@ -862,7 +862,7 @@ export default [
     cmd: 21534,
     dir: 'S2C',
     note: 'push 秘境被攻击预警计数（{num}；纯展示无撤离按钮，转移即消警）',
-    src: 'references/游戏逆向/异能秘境BOSS与治疗设计方案.md',
+    src: '',
     fields: '',
     usages: [
       {
@@ -876,7 +876,7 @@ export default [
     cmd: 21535,
     dir: 'S2C',
     note: 'push 秘境 BOSS 状态（稀疏只作 kick 源；state21=战斗窗口结束）',
-    src: 'references/游戏逆向/异能秘境BOSS与治疗设计方案.md',
+    src: '',
     fields:
       'push {stateInfo:[{bossId,pos:{x,y,k,rid},state,stateEndTime秒}]}（或扁平数组；整表替换，稀疏只作 kick 源）',
     usages: [
@@ -905,7 +905,7 @@ export default [
     cmd: 21539,
     dir: 'S2C',
     note: 'push 小 BOSS 石头账本（rewardNum<rewardMaxNum && isFight===1 才可领，不以 BOSS 死亡为前置）',
-    src: 'references/游戏逆向/异能秘境BOSS与治疗设计方案.md',
+    src: '',
     fields:
       'push {rewardInfo:[{bossId,fightTime:Int64,rewardInfo:[{pos:{x,y,k,rid},rewardNum,rewardMaxNum,isFight}×5]}]}（每次全量；可领=isFight===1 && rewardNum<rewardMaxNum）',
     usages: [
@@ -920,7 +920,7 @@ export default [
     cmd: 21540,
     dir: 'S2C',
     note: 'push BOSS 投喂他人视图（只登记留档，链路未接入）',
-    src: 'references/游戏逆向/异能秘境BOSS与治疗设计方案.md',
+    src: '',
     fields: '',
     usages: [
       {

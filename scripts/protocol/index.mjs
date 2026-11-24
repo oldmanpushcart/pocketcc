@@ -2,7 +2,7 @@
  * 协议注册表 —— 协议知识的单一真相（开发期 module，不进运行期 bundle）。
  *
  * 背景：CMD 号 → 语义 → 方向 → 出处这条知识链原先涂抹在三处（feat 本地常量 /
- * references 逆向文档 / replay manifests），查一个协议要三处跳读，撞号与漂移无闸门。
+ * 本地逆向台账 / replay manifests），查一个协议要三处跳读，撞号与漂移无闸门。
  * 注册表把知识收进一个 deep module：对外只有查询 interface，号段归属、别名、
  * 消费者清单收进 implementation。feat 保留本地常量（零运行期改动），一致性由
  * tests/protocol-registry.test.js 闸门断言（随 npm test 跑）。
@@ -23,7 +23,7 @@
  * @property {number} cmd 协议号（条目键）
  * @property {'C2S'|'S2C'|null} dir 方向（人工标注，渐进；null=未标注）
  * @property {string} note 语义名/说明（人工标注，渐进）
- * @property {string} src 逆向出处链接（人工标注，references/ 相对路径，只链不搬）
+ * @property {string} src 出处说明（人工标注，渐进；空=未标注）
  * @property {string} fields 载荷字段典（人工标注，manifest 覆盖协议渐进；空=未标注）
  * @property {ProtoUsage[]} usages feat 局部常量用法清单（机器维护，重跑重建）
  */

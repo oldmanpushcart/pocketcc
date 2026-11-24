@@ -1,6 +1,6 @@
 // 协议注册表 · alliance 域 —— 机械抽取 + 人工标注（dir/note/src/fields 重跑保留，usages 重跑重建）。
 // 生成：node scripts/protocol/extract.mjs；闸门：tests/protocol-registry.test.js（npm test）。
-// 条目键 = 协议号；名字是 feat 局部别名（同名异号是局部命名，非漂移）。只链不搬：src 指 references/ 出处。
+// 条目键 = 协议号；名字是 feat 局部别名（同名异号是局部命名，非漂移）。src 为人工标注的出处说明，渐进补充。
 export default [
   {
     cmd: 1067,
@@ -48,7 +48,7 @@ export default [
     cmd: 1144,
     dir: 'C2S',
     note: '捐赠联盟科技（源码拼写即 ALLIANCE_DOANTE_SCIENCE）',
-    src: 'references/历史文档/联盟科技.md',
+    src: '',
     fields: '',
     usages: [
       {
@@ -62,7 +62,7 @@ export default [
     cmd: 1160,
     dir: 'C2S',
     note: '主动查联盟机甲全量信息（ALLIANCE_BOSS_GET_INFO）',
-    src: 'references/历史文档/联盟机甲.md',
+    src: '',
     fields: '',
     usages: [
       {
@@ -76,7 +76,7 @@ export default [
     cmd: 1161,
     dir: 'C2S',
     note: '捐献机甲碎片（count:0 为每日免费一枚）',
-    src: 'references/历史文档/联盟机甲.md',
+    src: '',
     fields: '',
     usages: [
       {
@@ -90,7 +90,7 @@ export default [
     cmd: 1177,
     dir: 'C2S',
     note: '一键领取某类联盟礼物（{type}）',
-    src: 'references/历史文档/联盟礼物.md',
+    src: '',
     fields: '',
     usages: [
       {
@@ -132,7 +132,7 @@ export default [
     cmd: 1204,
     dir: 'C2S',
     note: '加入集结（ALLIANCE_Assembly_Join）',
-    src: 'references/历史文档/联盟集结.md',
+    src: '',
     fields: '',
     usages: [
       {
@@ -146,7 +146,7 @@ export default [
     cmd: 1353,
     dir: 'C2S',
     note: '联盟保卫战展示时刻（GET_ALLIANCE_DISPLAY_TIME，req {}；resp {st,et,det,siegeStatus,actSpec,redDot}，et 为展示结束非战斗结束，redDot[42] 个人可领档数、redDot[43] 排行奖可领标记）',
-    src: 'references/游戏逆向/extracted/Script/RequestId__RequestId.js',
+    src: '',
     fields: 'st,et,det,siegeStatus,actSpec,redDot',
     usages: [
       {
@@ -160,7 +160,7 @@ export default [
     cmd: 1355,
     dir: 'C2S',
     note: '联盟保卫战排行奖领取（AWARD_AL_MONSTER_SIEGE_RANK，req {}；resp {reward}；活动结束后才放出，redDot[43]>0 为闸，与 1792 双 type 无关）',
-    src: 'references/游戏逆向/extracted/Script/RequestId__RequestId.js',
+    src: '',
     fields: '',
     usages: [
       {
@@ -174,7 +174,7 @@ export default [
     cmd: 1792,
     dir: 'C2S',
     note: '活动奖励批量领取（ACTIVITY_GET_REWARD，req {aid,type}；type42 个人积分 / type47 联盟累计，一次领完该组全部可领行）',
-    src: 'references/游戏逆向/extracted/Script/RequestId__RequestId.js',
+    src: '',
     fields: 'aid,type',
     usages: [
       {
@@ -230,7 +230,7 @@ export default [
     cmd: 10435,
     dir: 'S2C',
     note: 'push 联盟机甲状态（游戏自己已刷新本地数据）',
-    src: 'references/历史文档/联盟机甲.md',
+    src: '',
     fields: '',
     usages: [
       {
@@ -286,7 +286,7 @@ export default [
     cmd: 11104,
     dir: 'S2C',
     note: 'push 联盟保卫战战斗态（ALLIANCE_MONSTER_SIEGE_INFO，{alMonsterSiege:{startTime,endTime,isEnd,nextTime,targetId,round,…}}，收尾 isEnd=1/endTime>0）',
-    src: 'references/游戏逆向/extracted/Script/ResponseId__ResponseId.js',
+    src: '',
     fields: 'alMonsterSiege',
     usages: [
       {
@@ -300,7 +300,7 @@ export default [
     cmd: 12003,
     dir: 'S2C',
     note: 'push 联盟集结创建（快照池 offer 的触发源）',
-    src: 'references/历史文档/联盟集结.md',
+    src: '',
     fields: '',
     usages: [
       {

@@ -1,6 +1,6 @@
 // 协议注册表 · shared 域 —— 机械抽取 + 人工标注（dir/note/src/fields 重跑保留，usages 重跑重建）。
 // 生成：node scripts/protocol/extract.mjs；闸门：tests/protocol-registry.test.js（npm test）。
-// 条目键 = 协议号；名字是 feat 局部别名（同名异号是局部命名，非漂移）。只链不搬：src 指 references/ 出处。
+// 条目键 = 协议号；名字是 feat 局部别名（同名异号是局部命名，非漂移）。src 为人工标注的出处说明，渐进补充。
 export default [
   {
     cmd: 630,
@@ -60,7 +60,7 @@ export default [
     cmd: 841,
     dir: 'C2S',
     note: '活动数据总查询（GET_ACTIVITY_DATA，req {}；resp {alist:[{type,id,alMonsterSiege,atarget,…}]}，type26=联盟保卫战，.id=活动 aid）',
-    src: 'references/游戏逆向/extracted/Script/RequestId__RequestId.js',
+    src: '',
     fields: 'alist',
     usages: [
       {
@@ -79,7 +79,7 @@ export default [
     cmd: 856,
     dir: 'C2S',
     note: '全量本人行军（视口无关 Home 亦有）——行军列表权威源',
-    src: 'references/游戏逆向/地图模块分析报告.md',
+    src: '',
     fields: '',
     usages: [
       {
@@ -93,7 +93,7 @@ export default [
     cmd: 901,
     dir: 'C2S',
     note: '视口地块拉取（客户端自报 x/y/width/height）；315/310 地块 m.specIndex/leftTimes 唯一通道',
-    src: 'references/游戏逆向/全局地图知识点归档.md',
+    src: '',
     fields:
       'req {x,y,k,rid,width,height,marchInfo,viewLevel}（x,y=回点区中心，窗口硬上限≈117×78）→ resp {pointList[],iceList[]}（仅 resp 带，req:send 不带）；315/310 行 m.specIndex/leftTimes，iceList[].initSid 老家服，p.shieldTime 秒级',
     usages: [
@@ -123,7 +123,7 @@ export default [
     cmd: 902,
     dir: 'C2S',
     note: '世界地图行军（攻打机甲 marchType=18；亦作同 cmd 在途频控判据）',
-    src: 'references/六级田采集.md',
+    src: '',
     fields:
       'req {marchType,x,y,armyList,armyListNew,heroList,…}（机甲 18/雷达族各型）→ resp {status,marchInfo}',
     usages: [
@@ -198,7 +198,7 @@ export default [
     cmd: 904,
     dir: 'C2S',
     note: '撤回单条行军（{marchId}；撤回不立即释放名额，需返程 state=4）',
-    src: 'references/游戏逆向/占领发射井分析报告.md',
+    src: '',
     fields: '',
     usages: [
       {
@@ -226,7 +226,7 @@ export default [
     cmd: 920,
     dir: 'C2S',
     note: '对一条在途行军使用加速道具（{marchId,itemId}）',
-    src: 'references/游戏逆向/战斗模块分析报告.md',
+    src: '',
     fields: '',
     usages: [
       {
@@ -240,7 +240,7 @@ export default [
     cmd: 10007,
     dir: 'S2C',
     note: 'push 行军信息（state 1 行军/2 到达/12 交战；marchId 字符串，target.targetType=目标 pointType）',
-    src: 'references/游戏逆向/分析报告.md',
+    src: '',
     fields: '',
     usages: [
       {
@@ -264,7 +264,7 @@ export default [
     cmd: 10018,
     dir: 'S2C',
     note: 'push 瓦片增量（315 宝箱行 + 310 巨熊宝藏行；玩家城 p.cityReward 挂 pointType=1；m.state 口径 PabFightStageState）',
-    src: 'references/历史文档/芯片空投.md',
+    src: '',
     fields:
       'push {pointInfos[],iceList[]}（315 宝箱行+310 巨熊宝藏行；玩家城 p.cityReward 挂 pointType=1；m.state 口径 PabFightStageState；iceList[].initSid）',
     usages: [

@@ -1,6 +1,6 @@
 // 协议注册表 · player 域 —— 机械抽取 + 人工标注（dir/note/src/fields 重跑保留，usages 重跑重建）。
 // 生成：node scripts/protocol/extract.mjs；闸门：tests/protocol-registry.test.js（npm test）。
-// 条目键 = 协议号；名字是 feat 局部别名（同名异号是局部命名，非漂移）。只链不搬：src 指 references/ 出处。
+// 条目键 = 协议号；名字是 feat 局部别名（同名异号是局部命名，非漂移）。src 为人工标注的出处说明，渐进补充。
 export default [
   {
     cmd: 1,
@@ -193,7 +193,7 @@ export default [
     cmd: 1033,
     dir: 'C2S',
     note: '建塔行军（V1 net.send 非 PB）',
-    src: 'references/游戏逆向/战斗模块分析报告.md',
+    src: '',
     fields: '',
     usages: [
       {
@@ -235,7 +235,7 @@ export default [
     cmd: 1201,
     dir: 'C2S',
     note: '创建联盟集结（ALLIANCE_Assembly_Create；机甲/惧星/战锤 feat 直发）',
-    src: 'references/游戏逆向/联盟机甲模块分析报告.md',
+    src: '',
     fields:
       'req {marchType:8,x,y,time:集结秒,armyList,armyListNew,heroList,trapList,formation,formationV2[,extraArmy]}（JSON send）',
     usages: [
@@ -654,7 +654,7 @@ export default [
     cmd: 3821,
     dir: 'C2S',
     note: '给某玩家点赞（LIKE_OTHER，{uid,type,instanceIdStr}）',
-    src: 'references/历史文档/玩家点赞.md',
+    src: '',
     fields: '',
     usages: [
       {
@@ -823,7 +823,7 @@ export default [
     cmd: 6473,
     dir: 'C2S',
     note: '打开可拦截车队列表（ESCORT_TRUCK_LOOT_TRUCK_VIEW_OPEN）',
-    src: 'references/游戏逆向/卡车争夺模块分析报告.md',
+    src: '',
     fields: '',
     usages: [
       {
@@ -837,7 +837,7 @@ export default [
     cmd: 6474,
     dir: 'C2S',
     note: '刷新（重随机）可拦截列表（ESCORT_TRUCK_LOOT_TRUCK_VIEW_RELOAD）',
-    src: 'references/历史文档/卡车争夺.md',
+    src: '',
     fields: '',
     usages: [
       {
@@ -851,7 +851,7 @@ export default [
     cmd: 6476,
     dir: 'C2S',
     note: '对某车队发起拦截掠夺（ESCORT_TRUCK_LOOT，核心战斗请求）',
-    src: 'references/历史文档/卡车争夺.md',
+    src: '',
     fields: '',
     usages: [
       {
@@ -865,7 +865,7 @@ export default [
     cmd: 6486,
     dir: 'C2S',
     note: '拉卡车拦截每日次数与刷新时间点（ESCORT_TRUCK_GET_REFRESH_INFO）',
-    src: 'references/历史文档/卡车争夺.md',
+    src: '',
     fields: '',
     usages: [
       {
@@ -879,7 +879,7 @@ export default [
     cmd: 7414,
     dir: 'C2S',
     note: '盟矿列表·控制器版（OTHER_MINE_CAVE_INFO，{uid} → data.infos 完整矿条目）',
-    src: 'references/游戏逆向/次元矿洞模块分析报告.md',
+    src: '',
     fields: '',
     usages: [
       {
@@ -893,7 +893,7 @@ export default [
     cmd: 7415,
     dir: 'C2S',
     note: '世界矿（WORLD_MINE_CAVE_INFO，{refresh}：0 进入拉取/1 刷新）',
-    src: 'references/游戏逆向/次元矿洞模块分析报告.md',
+    src: '',
     fields: '',
     usages: [
       {
@@ -907,7 +907,7 @@ export default [
     cmd: 7416,
     dir: 'C2S',
     note: '能量裂隙探测刷新全部自矿（MINE_CAVE_REFRESH，{isAll:1} → {isOk,todayRefreshNum}）',
-    src: 'references/游戏逆向/次元矿洞模块分析报告.md',
+    src: '',
     fields: '',
     usages: [
       {
@@ -921,7 +921,7 @@ export default [
     cmd: 7417,
     dir: 'C2S',
     note: '派英雄占领矿（MINE_CAVE_OCCUPY，{id,uid,heroIds}，先过 getIsHaveOccupyNum）',
-    src: 'references/游戏逆向/次元矿洞模块分析报告.md',
+    src: '',
     fields: '',
     usages: [
       {
@@ -935,7 +935,7 @@ export default [
     cmd: 7418,
     dir: 'C2S',
     note: '帮助盟友采集（MINE_CAVE_HELP，{id,uid}，针对 canHelp=1 的 GATHERING 矿）',
-    src: 'references/游戏逆向/次元矿洞模块分析报告.md',
+    src: '',
     fields: '',
     usages: [
       {
@@ -949,7 +949,7 @@ export default [
     cmd: 7419,
     dir: 'C2S',
     note: '偷取世界矿（MINE_CAVE_STEAL，{id,uid,serverId}；stealNum≥上限拒 mine_cave72）',
-    src: 'references/游戏逆向/次元矿洞模块分析报告.md',
+    src: '',
     fields: '',
     usages: [
       {
@@ -963,7 +963,7 @@ export default [
     cmd: 7420,
     dir: 'C2S',
     note: '帮盟友打包（MINE_CAVE_HELP_PACK，{id,uid} → packNum/packAllNum，目标矿 state=4）',
-    src: 'references/游戏逆向/次元矿洞模块分析报告.md',
+    src: '',
     fields: '',
     usages: [
       {
@@ -977,7 +977,7 @@ export default [
     cmd: 7421,
     dir: 'C2S',
     note: '单矿详情（MINE_CAVE_SINGLE_INFO，{id,uid} → allGatherNum/gatherTime/usedHeroIds 等）',
-    src: 'references/游戏逆向/次元矿洞模块分析报告.md',
+    src: '',
     fields: '',
     usages: [
       {
@@ -991,7 +991,7 @@ export default [
     cmd: 7422,
     dir: 'C2S',
     note: '领取采集完成奖励（MINE_CAVE_REWARD，{id} → reward）',
-    src: 'references/游戏逆向/次元矿洞模块分析报告.md',
+    src: '',
     fields: '',
     usages: [
       {
@@ -1005,7 +1005,7 @@ export default [
     cmd: 7424,
     dir: 'C2S',
     note: '领「他人来采」我方矿分成（MINE_CAVE_GET_OTHER_GATHER_REWARD，{pos}）',
-    src: 'references/游戏逆向/次元矿洞模块分析报告.md',
+    src: '',
     fields: '',
     usages: [
       {
@@ -1019,7 +1019,7 @@ export default [
     cmd: 7425,
     dir: 'C2S',
     note: '盟友矿洞面板版（OTHER_MINE_CAVE_INFO2，{} → infos[] 含 uid/playerInfo/list[5槽]）',
-    src: 'references/游戏逆向/次元矿洞模块分析报告.md',
+    src: '',
     fields: '',
     usages: [
       {
@@ -1033,7 +1033,7 @@ export default [
     cmd: 7427,
     dir: 'C2S',
     note: '采集前校验（MINE_CAVE_CHECK_SHARE_GATHER，{uid,id}，isOk=1 才开面板）',
-    src: 'references/游戏逆向/次元矿洞模块分析报告.md',
+    src: '',
     fields: '',
     usages: [
       {
@@ -1047,7 +1047,7 @@ export default [
     cmd: 7428,
     dir: 'C2S',
     note: '自矿聚合（SELF_MINE_CAVE_INFO2，{openPanel} → selfMineInfo）',
-    src: 'references/游戏逆向/次元矿洞模块分析报告.md',
+    src: '',
     fields: '',
     usages: [
       {
@@ -1061,7 +1061,7 @@ export default [
     cmd: 7429,
     dir: 'C2S',
     note: '领取联盟矿洞奖励（MINE_CAVE_GET_ALLIANCE_REWARD）',
-    src: 'references/游戏逆向/次元矿洞模块分析报告.md',
+    src: '',
     fields: '',
     usages: [
       {
@@ -1201,7 +1201,7 @@ export default [
     cmd: 9952,
     dir: 'C2S',
     note: '战争之源攻击次数奖励领取（{attackCount:门槛}，1/3/5 三档真机实证）',
-    src: 'references/游戏逆向/战争之源模块分析报告.md',
+    src: '',
     fields: '',
     usages: [
       {
@@ -1215,7 +1215,7 @@ export default [
     cmd: 9956,
     dir: 'C2S',
     note: '查询当前战争之源 BOSS（旧 JSON send → {bossId,id,x,y,reason}）',
-    src: 'references/游戏逆向/战争之源模块分析报告.md',
+    src: '',
     fields: '',
     usages: [
       {
@@ -1501,7 +1501,7 @@ export default [
     cmd: 21351,
     dir: 'S2C',
     note: 'push 矿洞单矿变更全量快照（7416/7417/7419/7418/7420 后推对应单矿）',
-    src: 'references/游戏逆向/次元矿洞模块分析报告.md',
+    src: '',
     fields: '',
     usages: [
       {
@@ -1529,7 +1529,7 @@ export default [
     cmd: 21551,
     dir: 'S2C',
     note: 'push 卡车拦截次数/刷新变化（结构同 6486）',
-    src: 'references/游戏逆向/卡车争夺模块分析报告.md',
+    src: '',
     fields: '',
     usages: [
       {
@@ -1557,7 +1557,7 @@ export default [
     cmd: 21923,
     dir: 'S2C',
     note: 'push 战争之源今日攻打次数更新（只 updateAttackBossCnt，不带已领列表）',
-    src: 'references/游戏逆向/战争之源模块分析报告.md',
+    src: '',
     fields: '',
     usages: [
       {
@@ -1571,7 +1571,7 @@ export default [
     cmd: 21924,
     dir: 'S2C',
     note: 'push 战争之源每日重置/登录全量（覆写 attackCount + claimedAttackCountRewardList）',
-    src: 'references/游戏逆向/战争之源模块分析报告.md',
+    src: '',
     fields: '',
     usages: [
       {

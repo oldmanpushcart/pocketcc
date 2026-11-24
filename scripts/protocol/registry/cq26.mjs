@@ -1,6 +1,6 @@
 // 协议注册表 · cq26 域 —— 机械抽取 + 人工标注（dir/note/src/fields 重跑保留，usages 重跑重建）。
 // 生成：node scripts/protocol/extract.mjs；闸门：tests/protocol-registry.test.js（npm test）。
-// 条目键 = 协议号；名字是 feat 局部别名（同名异号是局部命名，非漂移）。只链不搬：src 指 references/ 出处。
+// 条目键 = 协议号；名字是 feat 局部别名（同名异号是局部命名，非漂移）。src 为人工标注的出处说明，渐进补充。
 export default [
   {
     cmd: 2103,
