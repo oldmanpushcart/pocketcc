@@ -1,7 +1,7 @@
 // 战斗过程回放事件语义解码 —— 纯函数模块（无 DB 依赖），风格对齐 buff-source.js。
 //
 // process[] 是游戏做"战斗回放"的权威时序流水，每条 {t, ...}。`t` 的取值来自游戏源码
-// 枚举 NBattlePvPDataProcessType（references/游戏逆向/extracted/Script/NBattleCommon__NBattleCommon.js），
+// 枚举 NBattlePvPDataProcessType（游戏源码 `NBattleCommon`），
 // 命中/闪避/暴击判定来自 PvPBattleController.pushAttack 对 NBattleDamageFlags 的映射，
 // 元素类型来自 NBattleElementType。此处逐字转录这些枚举，供 parse.js 把事件语义结构化落列。
 //

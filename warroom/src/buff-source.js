@@ -1,4 +1,4 @@
-// 服务端"增益表"来源枚举 —— 反混淆自游戏源码 subpack/BattleBuffCommon
+// 服务端"增益表"来源枚举 —— 反混淆自游戏源码 BattleBuffCommon
 // (BattleBuffServerSourceType)。战报 side.traceEffectBuffs 是服务端汇总的权威属性加成总账：
 // 每条 {id(effect_buff), s(来源码), val}，`s` 即此枚举，指明该 buff 由哪个编配维度提供
 // （科学/英雄技/天赋/装备/装饰/机甲/皮肤/精通/收藏/异能兽/军阵…）。归一为 `trace:<NAME>` 视图后，
