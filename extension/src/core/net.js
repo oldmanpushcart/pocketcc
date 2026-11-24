@@ -48,7 +48,7 @@ export let netApi = null;
   // 三个 bus 命名空间：`net.<cmd>`（推送）、`net.resp.<cmd>`（应答）、`net.req.<cmd>`（本端发包，见 onReq）。
   /** @type {boolean} log 总开关；开=挂发送 hook+入站打印，关=摘发送 hook+入站直通 */
   var logEnabled = false;
-  /** @type {number} install 时读 net._heartbeatCode（=RequestId.NO_QUEUE_HEART=0，NetMgr.js:153）；只取不到时留 -1，取到值一律入 hbCodes */
+  /** @type {number} install 时读 net._heartbeatCode（=RequestId.NO_QUEUE_HEART=0，NetMgr）；只取不到时留 -1，取到值一律入 hbCodes */
   var heartbeatCode = -1;
   /**
    * 已知心跳号集合（两条通道各一个）：主通道 install 时放入，次通道由发送 wrapper 读
@@ -61,7 +61,7 @@ export let netApi = null;
   var hbCodes = new Set();
   /** @type {boolean} 次通道心跳号「读出来不是 number」是否已告警过（字段改名才会走到，只报一次防刷屏） */
   var hbWarned = false;
-  /** @type {boolean} 重入标志：sendPB 降级会同步转调 this.send（NetMgr.js sendPB 末尾），置位让嵌套 send 跳过打印以消重 */
+  /** @type {boolean} 重入标志：sendPB 降级会同步转调 this.send（NetMgr sendPB 末尾），置位让嵌套 send 跳过打印以消重 */
   var inPB = false;
   /** @type {Array<{host:object, key:string, orig:Function, mine:Function}>} 发送 hook 还原表；有 log/collect 需求时非空 */
   var sendHooks = [];
@@ -240,9 +240,9 @@ export let netApi = null;
 
   /**
    * 挂到 NetReciver.getInstance().onMessage —— 游戏自己的推送分发器。
-   * NetMgr.js:578 每处理一条报文就实时属性查找调它一次，替换实例方法即可被看到，
-   * 没有 NetMgr.js:160 那个 bind 陷阱：单点、无嵌套、可干净还原。
-   * 缓存态（disableOnMessage）的报文根本到不了 578，等重放（NetMgr.js:104）时才走这里，天然只派发一次。
+   * NetMgr 每处理一条报文就实时属性查找调它一次，替换实例方法即可被看到，
+   * 没有 NetMgr 那个 bind 陷阱：单点、无嵌套、可干净还原。
+   * 缓存态（disableOnMessage）的报文根本到不了那一处理点，等重放（NetMgr）时才走这里，天然只派发一次。
    * @returns {boolean} 挂钩成功（NetReciver 缺失时 false）
    */
   function hook() {
@@ -255,7 +255,7 @@ export let netApi = null;
     recv = inst;
     recvOrig = inst.onMessage;
     recvMine = function (e, t) {
-      // t 由 NetMgr.js:578 传入：推送 = void 0，应答 = _.reqTime（数字，见 :247/:327/:419）
+      // t 由 NetMgr 传入：推送 = void 0，应答 = _.reqTime（数字）
       // 「抢在原生处理器之前」的观察点：仅当有 pre-inbound 订阅（如需赶在游戏飞镜头前登记坐标）才付出
       //   构造 Event 的代价；热路径靠 preSubs 计数把关，无人订阅则完全跳过。
       if (preSubs > 0) {
@@ -265,7 +265,7 @@ export let netApi = null;
           log.warn('preInbound cmd[%d] occur error!', e && e.c, err);
         }
       }
-      // 先调 orig 让游戏自己的推送处理器跑完（NetReciver.js:34-44），再派发给我们的 listener
+      // 先调 orig 让游戏自己的推送处理器跑完（NetReciver），再派发给我们的 listener
       var ret = recvOrig.apply(this, arguments);
       if (installed && e) {
         // 单拍共享：日志 / bus 派发 / 采集三处消费者共用同一个 Event——e.d 的 JSON.parse 每包只付一次
@@ -281,7 +281,7 @@ export let netApi = null;
             log.warn('log inbound cmd[%d] occur error!', e.c, err);
           }
         }
-        // 推送走 net.<cmd>，应答走 net.resp.<cmd>（t 由 NetMgr.js:578 传入：推送=void 0，应答=_.reqTime）
+        // 推送走 net.<cmd>，应答走 net.resp.<cmd>（t 由 NetMgr 传入：推送=void 0，应答=_.reqTime）
         try {
           ev = dispatch(e, t, ev) || ev;
         } catch (err) {
@@ -528,7 +528,7 @@ export let netApi = null;
 
   /**
    * 发送应答超时（毫秒）。NetMgr.send 把回调存进 _requestPacks[gid]，只在收到匹配应答时触发；
-   * 我们以 ensureServerResponse=false 发送（NetMgr.js:382,421，:592 仅 true 才重发），
+   * 我们以 ensureServerResponse=false 发送（NetMgr，仅 true 才重发），
    * 故服务器一旦不应答该 gid，回调永不触发、Promise 永不 settle。
    * 调用方（drain/execTask）的 await 会就此挂死，consuming 闸门卡 true，整个功能队列停摆
    * （真机：联盟帮助 RECEIVE 在途时一条 1141 无应答，HELP_ALL/RECEIVE 永久 "already queued"）。

@@ -2,7 +2,7 @@
 // 活性监视（轮询 O(1) 字段覆盖静默断线）、登录成功信号，并把健康态翻转广播成 session.* 事件。
 //
 // 目前 session.* 仅供观察（日志 / 控制台），未接 reactor 门控——功能不因断线暂停，行为与重构前一致。
-// 依据目标源码 NetMgr.js：showPanel(1/2/3) 是「通讯中断」弹窗唯一出口(1=onError 2=onTimeOut 3=onClose)；
+// 依据目标源码 NetMgr：showPanel(1/2/3) 是「通讯中断」弹窗唯一出口(1=onError 2=onTimeOut 3=onClose)；
 // setWaitStatus 标记连接中；onConnect 为连接成功。纯事件驱动，无 UI 遍历。配置实时读 configs.reconnect。
 import { createLog } from './log.js';
 import { game } from './game.js';
@@ -183,7 +183,7 @@ export function installReconnectHooks() {
 
 // ─────────────────────────── 活性监视：覆盖静默断线 ───────────────────────────
 //   如「账号重复登录」场景客户端走 NetMgr.close()→Socket.close()，只把 _states 置 CLOSED(2)，
-//   不触发 onClose/onError/showPanel/setWaitStatus 任何回调（见 Socket.js:304），故只能轮询 O(1) 字段：
+// 不触发 onClose/onError/showPanel/setWaitStatus 任何回调（见 Socket），故只能轮询 O(1) 字段：
 //   信号1 states !== SocketStates.CONNECTED(1)；信号2 lastReceiveTime 停滞超过阈值（服务器不再回包，含心跳）。
 /** @type {number} 断线持续起始时刻；0=正常 */
 let stuckSince = 0;

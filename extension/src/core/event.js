@@ -1,6 +1,6 @@
 /**
  * pocketcc.event
- * 游戏 EventCenter（cc.EventTarget 单例，EventCenter.js:111 导出为 EVENT）的薄封装：
+ * 游戏 EventCenter（cc.EventTarget 单例，EventCenter 导出为 EVENT）的薄封装：
  * 订阅按需挂（不常驻包 EVENT.on）；每个订阅包一层只做异常隔离的 wrapper（回调抛错不打断游戏侧其余监听）；
  * 日志才包 EVENT.emit，且只在“事件日志”开启期间存在，关闭即摘。
  * 口径参照 net.js：单点 hook、先跑原函数再打印、只当最外层还是自己时才还原。
@@ -261,7 +261,7 @@ export let eventApi = null;
   }
 
   /**
-   * 安装：取 EVENT 单例并置位。EVENT 在模块加载期即创建（EventCenter.js:111），无登录时机依赖。
+   * 安装：取 EVENT 单例并置位。EVENT 在模块加载期即创建（EventCenter），无登录时机依赖。
    * 不挂任何全局 hook（日志 hook 由 setLog 管理）。
    * @returns {boolean} 安装成功
    */

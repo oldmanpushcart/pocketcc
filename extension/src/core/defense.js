@@ -4,11 +4,11 @@
  * 职责边界：
  *   - 收口自动防御三策略共用的「道具选择 + 迁城落点搜索」两块重活，供 feats/battle/auto-defense/index.js 消费；
  *   - 护盾/迁城卡的 itemId 是稳定服务器内容常量（发协议就近定义，同 march.js 的 520001/520002），不归 core/item.js；
- *   - 迁城落点合法性走「四闸联合、逐 footprint 格」（对齐服务端 911，真机 + extracted 源码双重实证）：
+ *   - 迁城落点合法性走「四闸联合、逐 footprint 格」（对齐服务端 911，真机 + 游戏源码双重实证）：
  *     ① 地形/王座/已加载实体：游戏权威 gameData.canMoveCity(x,y)===true（false 必拦、null 无从判定）；其内部 checkIsPlainTileBySize 已逐 footprint 格判障碍+他人城皮，但 ignoreSelf=true 会放行「压自己城」的格；
- *     ② 实体占用（对齐 extracted checkIsPlainTile）：主动一发 901 取 pointList，除自己主城外「任何实体」footprint 格入占用集——含野怪/资源田/难民/宝藏/他人城塔，不信易失的本地 entities（实证：邻城/野怪未入库时 canMoveCity 对真空地假阳性放行，落点被服务器拒「位置被占用」）。仅 KVK 战场图豁免 judgeTileIfCanCover 可覆盖类（怪/雷达宝藏/国度/援助/难民营/世界宝藏），标准本服图这些点同样占位；
+ *     ② 实体占用（对齐游戏侧 checkIsPlainTile）：主动一发 901 取 pointList，除自己主城外「任何实体」footprint 格入占用集——含野怪/资源田/难民/宝藏/他人城塔，不信易失的本地 entities（实证：邻城/野怪未入库时 canMoveCity 对真空地假阳性放行，落点被服务器拒「位置被占用」）。仅 KVK 战场图豁免 judgeTileIfCanCover 可覆盖类（怪/雷达宝藏/国度/援助/难民营/世界宝藏），标准本服图这些点同样占位；
  *     ③ self-overlap 硬闸：候选 footprint 命中我方现主城 footprint 扩格集即拦（补① ignoreSelf 漏，实证 (337,476) 压现城被服务器拒「位置被占用」）；
- *     ④ 联盟堡垒禁迁区（仅 `!isKVK() && ServerState!=Fight` 时启用，对齐游戏 moveCity 权威条件）：主动发 1001 取 infos（陈旧模型不可信）推旋转系「实心菱形区间」（奇偶无关，避开 AlliancePointPool 采样盲区），逐 footprint 格判越界外扩 margin=1（实证：越界 1 格仍被服务器 csb_tips_005 拒），排除己方 aid；KVK 图或作战态（ServerState==Fight）整图放开别盟领地→跳过 1001 且不建区间（实证 extracted WorldMapController.moveCity：禁迁仅在 (!isKVK||!八国色) && ServerState!=Fight && owner>0 && owner!=我的Aid 时拒绝）。
+ *     ④ 联盟堡垒禁迁区（仅 `!isKVK() && ServerState!=Fight` 时启用，对齐游戏 moveCity 权威条件）：主动发 1001 取 infos（陈旧模型不可信）推旋转系「实心菱形区间」（奇偶无关，避开 AlliancePointPool 采样盲区），逐 footprint 格判越界外扩 margin=1（实证：越界 1 格仍被服务器 csb_tips_005 拒），排除己方 aid；KVK 图或作战态（ServerState==Fight）整图放开别盟领地→跳过 1001 且不建区间（实证游戏侧 WorldMapController.moveCity：禁迁仅在 (!isKVK||!八国色) && ServerState!=Fight && owner>0 && owner!=我的Aid 时拒绝）。
  *     判定前先 flyTo 锚点 + 订阅 net.901 + 主动 901 触发加载，经 settle 就绪门（新 901 & canMoveCity 为 boolean & 静默 800ms & 邻域 placeFlags 命中>0）后才采信；未进世界图 / 符号不可得 / 领地模型未就绪（canMoveCity 恒 null 或 901 报了领土点但 AllianceTerritory 空）即判「无从判定」返回 null 交上层顺延，绝不猜测。
  *   - 迁城逃避「扇区轮换重试」（借鉴竞品B randomPoint 的 3×3 大扇区撒点，relocateAwayWithSectorRetry）：我城 ±AWAY_RADIUS 带内无背向落点时，
  *     不再直接放弃，而是把全图按 3×3 切成大扇区、取离敌最远的扇区中心（跳过我城所在扇区），逐轮（≤RELOC_SECTOR_TRIES）flyTo+建 judge 后在中心
@@ -62,10 +62,10 @@ const WORLD_BOUNDS = { xMax: SERVER.gameXMax, yMax: SERVER.gameYMax };
 const RELOC_TERR_MARGIN = 1;
 
 /**
- * @type {Set<number>} 「KVK 战场图」上游戏允许压覆的可覆盖类 pointType（extracted judgeTileIfCanCover 权威集：
+ * @type {Set<number>} 「KVK 战场图」上游戏允许压覆的可覆盖类 pointType（游戏侧 judgeTileIfCanCover 权威集：
  *   难民营18 / 世界宝藏26 / 野怪73 / 集结怪74 / 雷达宝藏75 / 国度76 / 援助77）。
  * 仅当 isKVK() 时这些点不计入占用；标准本服图（非 KVK）它们与一切实体同样阻塞迁城落点——
- *   因为 extracted checkIsPlainTile 的「可覆盖」豁免写成 `isKVK() && judgeTileIfCanCover(p)`，非 KVK 时任何实体在位即 return !1。
+ *   因为游戏侧 checkIsPlainTile 的「可覆盖」豁免写成 `isKVK() && judgeTileIfCanCover(p)`，非 KVK 时任何实体在位即 return !1。
  *   （旧实现误把怪/资源/难民当成恒可覆盖排除，导致选了压野怪的落点被服务器拒「位置被占用」。）
  */
 const RELOC_KVK_COVERABLE = new Set([18, 26, 73, 74, 75, 76, 77]);
@@ -115,7 +115,7 @@ function terrViol(b, gx, gy) {
 }
 
 /**
- * 构造逐候选合法性判定器 (x,y)=>boolean：对齐服务端 911 的「逐 footprint 格」口径（真机 + extracted 源码双重实证，任一闸不过即不可落）。
+ * 构造逐候选合法性判定器 (x,y)=>boolean：对齐服务端 911 的「逐 footprint 格」口径（真机 + 游戏源码双重实证，任一闸不过即不可落）。
  *   ① 地形/王座/已加载实体：游戏权威 gameData.canMoveCity===true（false 必拦、null 无从判定）；内部 checkIsPlainTileBySize 已逐格判障碍+他人城皮，但 ignoreSelf 会放行「压自己城」。
  *   ② 实体占用：主动一发 901 取 pointList，除自己主城外任何实体按 footprint 扩格入占用集（标准图含野怪/资源/难民/宝藏，仅 KVK 豁免可覆盖类），候选 footprint 命中即拦。
  *   ③ self-overlap 硬闸：候选 footprint 命中我方现主城 footprint 扩格集 → 拦（补① ignoreSelf 漏，防「压现城」落点，实证 (337,476) 服务器拒）。
@@ -175,7 +175,7 @@ async function makeJudge(anchor, opts) {
           var pid = Number(pickSub(p, ['p', 'b', 'r', 't', 'm'], ['pid', 'ownerId'])) || 0;
           if (pid && pid === myPid) continue; // 自己主城 footprint 由 self-overlap 硬闸处理
           if (isK && RELOC_KVK_COVERABLE.has(pt)) continue; // 仅 KVK：野怪/难民/宝藏等可压覆 → 不占位
-          // 其余实体（标准图上的野怪/资源田/难民/宝藏 + 一切他人城/塔/BOSS…）一律占位（对齐 extracted checkIsPlainTile）
+          // 其余实体（标准图上的野怪/资源田/难民/宝藏 + 一切他人城/塔/BOSS…）一律占位（对齐游戏侧 checkIsPlainTile）
           var L = 1;
           if (pt === 1) {
             var sk = pickSub(p, ['p', 'b', 'r', 't', 'm'], ['skinId']);
@@ -219,7 +219,7 @@ async function makeJudge(anchor, opts) {
     // 4) 敌盟禁迁区主动自取 1001（GET_TERRITORY_INFO 应答 infos 即锚点视口领地，服务端扩窗 60×60）。
     //    不读游戏模型：远程切视口时模型仍是旧视口数据——真机实录实证新视口 1001 回包比 911 晚 2ms 落地，
     //    陈旧领地放行 (412,415)（实入敌盟 buildId=101 区间）被服务器拒 csb_tips_005。net 不可用才退回读模型（同视口场景可信）。
-    //    禁迁闸门控对齐游戏 moveCity 权威条件（extracted WorldMapController）：别盟堡垒领地禁迁仅在
+    //    禁迁闸门控对齐游戏 moveCity 权威条件（游戏侧 WorldMapController）：别盟堡垒领地禁迁仅在
     //    (!isKVK() || !八国色号) && ServerState != Fight 时生效——KVK 图或作战态(ServerState==Fight)整图放开别盟领地，
     //    此时跳过 1001 取领地（省一次发包）并不建 enemyBounds。八国色号那条只在「KVK 且无色号」罕见边缘收紧，此处保守沿用 KVK 即放行。
     //    口径迁 worldState（P3 附带清理，语义不变）：matchesKind(['kvk']) 与 GameTools.isKVK 同走 eightServerType 形态位，

@@ -12,7 +12,7 @@
  *     （实证陷阱：viewServerId() 在 Home 返回 -1，绝不可作 k，见 fetchWindow JSDoc）。
  *     906 请求体无坐标/视口无关，groupType/pointType 的语义由各调用方决定（资源/野怪/集结/惧星…）。
  *
- * 数值来源均有实证（references/游戏逆向/全局地图知识点归档.md、地图模块分析报告.md、实录报文）：
+ * 数值来源均有实证（游戏源码 + 实录报文）：
  *   瓦片 224×162 / 半宽高 112/81、缩放档、本服 cols=408/rows=952、单窗回点窗 x±58/y±39、pointType=NWorldMapEntityType。
  */
 import { parseData } from './util.js';

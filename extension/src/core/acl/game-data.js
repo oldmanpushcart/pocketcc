@@ -108,7 +108,7 @@ function taskRelaxTypeOpen(type) {
 // coinState/mirrorOf/COIN_* 常量已迁 feats/player/auto-coin-collect/api.js（领域算法下沉，单消费方）
 
 /**
- * 游戏日界偏移（秒）：每日 0 点刷新对应的 UTC 秒内偏移。真相来自 extracted DateUtils.getOffsetDaysByTime
+ * 游戏日界偏移（秒）：每日 0 点刷新对应的 UTC 秒内偏移。真相来自游戏侧 DateUtils.getOffsetDaysByTime
  * 的归日式 `(t-57600)%86400`，57600=16h → 日界线落在 UTC 16:00 = 服务器本地 0:00（UTC+8）。
  * 符号/常量知识收口 ACL（只读口径）；实证服务器秒与本地 UTC+8 墙钟对齐。
  * @type {number}
@@ -495,7 +495,7 @@ export const gameData = {
   },
   /**
    * 本服是否属于 KVK（跨战区天梯）形态（GameTools.isKVK = isC4||isC8||isC8S2）。
-   * **它是形态位、不是图位**（取证 extracted/GameTools__GameTools.js@34412）：三支全部走
+   * **它是形态位、不是图位**（取证 GameTools）：三支全部走
    * `judgeKVK(e) = (1|UserData.eightServerType)-1 === e`（四国 8 / 八国 4 / 八国 S2 6），
    * 即「你这台整个赛季都算 KVK 阵营」，人回了原战区仍为真（与 CrossUtils 同名谓词同源，@1651/@1898）。
    * 需要「此刻真在跨服战场图上」的口径请读 worldState.crossMap()，不要拿本函数凑数。
@@ -519,7 +519,7 @@ export const gameData = {
   },
   /**
    * 本服是否处于「战区/跨服对战态」（UserData.ServerState === GameDefine.ServerState.Fight）。
-   * 迁城落点权威豁免源（实证 extracted WorldMapController.moveCity）：服务端「别盟堡垒领地禁迁」
+   * 迁城落点权威豁免源（实证游戏侧 WorldMapController.moveCity）：服务端「别盟堡垒领地禁迁」
    * 仅在 `(!isKVK() || !八国色号) && ServerState != Fight && owner>0 && owner!=我的Aid` 时拒绝迁入——
    * 即 ServerState==Fight（作战态）时整图放开别盟领地，与本服/KVK 图无关。符号不可得保守返回 false
    * （维持禁落，宁可不迁也不误迁）。
@@ -961,7 +961,7 @@ export const gameData = {
     }
   },
   /**
-   * 异能兽培育玩法开启闸只读查询（源码锚点 extracted/subpack/RealEnigmaBeastController 的 isOpenFunc(BeastOpenType.BREED, false)）：
+   * 异能兽培育玩法开启闸只读查询（源码锚点 RealEnigmaBeastController 的 isOpenFunc(BeastOpenType.BREED, false)）：
    *   FunctionOn(enigma_beast_breeding) && openState ≥ BeastServerStatus.BREED —— suppressTips 传 false，纯查询不弹提示。
    * 「活动未开始/未解锁」时服务器对 1570/1582/1583/1585 干脆不回包（15s 超时），调用方据此整轮闭嘴；
    *   控制器/枚举符号缺失（subpack 未接管）一律回 false（未证实可开 = 不开，宁不发也不撞超时）。
@@ -984,7 +984,7 @@ export const gameData = {
   /**
    * 「一键领取 / 集中领取」(TaskRelax) 可用行只读枚举 —— 复刻游戏 TaskRelaxTool.getOpenQuickSweepList 的三级开启闸，
    *   返回空数组即代表该玩家不具备此功能（游戏主城里 bot 入口不会显示），调用方据此整功能挂起。
-   *   源码锚点 extracted/subpack/TaskRelaxTool__TaskRelaxTool.js；报文实证（5684 INFO / 5685 REWARD）。
+   * 源码锚点 TaskRelaxTool；报文实证（5684 INFO / 5685 REWARD）。
    *   开启闸（全部只读，不发包、不改写本地数据）：
    *     ① 账号总闸 FunctionOn(task_relax_claim_all)；
    *     ② 服务器灰度闸 serverTransferRange 命中 DataConfig 79089 白名单（缺配=未放量）；
@@ -1385,7 +1385,7 @@ export const gameData = {
   },
 
   // ── CQ26 战区宝藏（中立城挖掘点 EXCAV：地图实体 311 / marchType 332）────────────
-  // 符号实证（extracted/Script/CQ26NeutralController）：单例持三个私有数组态——
+  // 符号实证（CQ26NeutralController）：单例持三个私有数组态——
   //   _excavOpenSiteList（push 22062 全量灌入）/ _claimedSiteIds（push 22063 全量灌入，
   //   服务端持久、跨刷新仍在）/ _selfInfo.mSid（本服服号，来自 push 22001）。
   // 世界地图快捷按钮（NWorldUIActBtnSetting.checkCQ26NeutralExcavShow）的显隐判据就是
@@ -1397,7 +1397,7 @@ export const gameData = {
   _cq26Neutral() {
     // **只缓存类、每次现取单例**（同 mechaTowerOpen / beastBreedOpen 口径）：
     //   probe 命中即永久返回缓存值，而 ResetGame.purgeData() 里会 `He.default.getInstance().purge()`
-    //   （实证 extracted/Script/ResetGame，He=CQ26NeutralController；purge 内 `t.instance=null`）。
+    // （实证 ResetGame，He=CQ26NeutralController；purge 内 `t.instance=null`）。
     //   缓存实例的话，跨服/重置流程后 ACL 会一直读那个僵尸对象——返回的是**非 null 陈旧数组**，
     //   于是 feat 侧「投影优先」的分支永占上风，22062 推送缓存这条回落通道被结构性屏蔽（只能刷页自愈）。
     var C = probe('CQ26NeutralController.ctor', () => {
@@ -1466,9 +1466,9 @@ export const gameData = {
 
   // ── CQ26 印石·中立城商店（霜之密所 CNC Shop：2441~2447 / push 22030）──────────────
   // 货架行来自 ConquerorSession.getTableName(conqueror_2025_cnc_shop) 的**替换后**表名——CQ26 开启时
-  //   游戏把它换成 series_frost_cnc_shop（实证 extracted/Script/ConquerorSession.initReplaceMap，只换这一张表，
+  // 游戏把它换成 series_frost_cnc_shop（实证 ConquerorSession.initReplaceMap，只换这一张表，
   //   cnc_city_level 两期共用故不换），本投影直用替换后的语义名，因此**只在 CQ26 期有数据**。
-  // 行字段实证（extracted/subpack/CQ25CNCShopItem.onDataChange/onClickBuy 的取值链）：
+  // 行字段实证（CQ25CNCShopItem.onDataChange/onClickBuy 的取值链）：
   //   id / item_id / item_num / need_gold / need_score / buy_limit（本人限买） / buy_limit_all（全服共享库存） / order（显示序）。
 
   /**

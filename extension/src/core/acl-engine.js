@@ -57,7 +57,7 @@ export const SYM = {
     gameTools: 'GameTools', // 游戏工具：isKVK() 读 eightServerType 形态位（整季为真，不是「此刻在哪张图」），迁城落点「仅本服图拦别盟领地」分区闸门（符号缺失保守当本服）
     mechaTowerCtrl: 'MechaTowerController', // 重装母舰（Mecha 塔）控制器门面：具名导出 MechaTowerController 类，静态 getInstance() 由 subpack2 Real 接管后实例才有 isOpenFunc（一键领取子玩法闸只读查询）
     enigmaBeastCtrl: 'EnigmaBeastController', // 异能兽控制器门面：default=类（静态 getInstance() 由 subpack Real 接管后才有实例），模块顶层还导出 BeastOpenType/BeastServerStatus 枚举（培育开启闸只读查询）
-    mailData: 'MailData', // 邮件数据层（CommonJS 直挂 exports）：MailShowGroupType 展示分组枚举 + mailManager（NMailModel 实例，由 subpack/SubpackMain 载入时 `m.mailManager=new I.default` 挂上，故晚于核心就绪）
+    mailData: 'MailData', // 邮件数据层（CommonJS 直挂 exports）：MailShowGroupType 展示分组枚举 + mailManager（NMailModel 实例，由 SubpackMain 载入时 `m.mailManager=new I.default` 挂上，故晚于核心就绪）
   },
   /** 新图单例属性链：module[cls][inst]，枚举对象 module[goType] */
   newMap: { cls: 'NWorldMapTodoController', inst: 'instance', goType: 'NWorldMapGoType' },
@@ -71,7 +71,7 @@ export const SYM = {
     tileClick: 'JUMP_TO_TILE_CLICK',
     marchClick: 'JUMP_TO_MARCH_CLICK',
   },
-  /** 语义表名 → 游戏 TableName 字符串值（TableName.js 实证） */
+  /** 语义表名 → 游戏 TableName 字符串值（TableName 实证） */
   tables: {
     emotion: 'emotion',
     emotionNew: 'emotion_new',
@@ -109,8 +109,7 @@ export const SYM = {
     // 「无双峡谷」是玩法族名而非单个 marchType（字典铁证：ava_ui_001=无双峡谷；TeamMatchBeginMatch 弹的
     // 文案 legen_team_match_052=「即将前往无双峡谷，将会重新登录」），AVA/TM/大师/传奇四代实现都进它；
     // 旧「雷神峡谷」（cab_ui_info_078）已死（CrossUtils.isCAB() 恒 false）。「双子星」是城市皮肤名
-    // （skin_name_1901000=柏拉图双子星），与战场无关。命名定谳见
-    // references/游戏逆向/场景识别与门控改造可行性报告.md §2。
+    // （skin_name_1901000=柏拉图双子星），与战场无关。
     tmAttackPlayer: 'TM_ATTACK_PLAYER', // 150 无双峡谷·TeamMatch 代（组队赛，字典无独立词条）
     masterAttackPlayer: 'MASTER_ATTACK_PLAYER', // 170 环球大师赛（master_match_21）/无双峡谷-王者赛
     avaAttackPlayer: 'AVA_ATTACK_PLAYER', // 110 无双峡谷·AVA 代（mapType=new_cab）
@@ -201,7 +200,7 @@ export const SYM = {
     commonRewardPanel: 'CommonRewardPanel',
   },
   /**
-   * 世界态可订阅事件名（值就是 EventId 常量值本身，实证 extracted EventId.js：
+   * 世界态可订阅事件名（值就是 EventId 常量值本身，实证游戏侧 EventId：
    * e.CHANGE_SCENE="CHANGE_SCENE"、e.MapTypeChange="MapTypeChange"、
    * e.CrossServerStateUpdate="CrossServerStateUpdate"，pocketcc.event.on 直接拿值订阅）
    */
@@ -563,7 +562,7 @@ export function pathUtils() {
 /**
  * 资源加载器 LoadManager（静态方法 loadSpriteFrame(path, cb)）。
  * 导出信封三形态实证都存在过（多形态兜底纪律）：命名空间顶层挂静态 / ES .default 类 /
- * 具名导出 a.LoadManager（extracted 源尾部即 `a.LoadManager=l`、文件内无 a.default —— ns() 对它
+ * 具名导出 a.LoadManager（游戏反编译源码尾部即 `a.LoadManager=l`、文件内无 a.default —— ns() 对它
  * 不解包回壳，壳上无方法 → 曾误报 symbol drift，见 marchStorage 同款兜底先例）。
  */
 export function loadManager() {

@@ -9,7 +9,7 @@ import { SYM, probe } from '../acl-engine.js';
 // ─────────────────────── 邮件（只读缓存 / 原生拉取） ───────────────────────
 
 /**
- * 邮件管理器（MailData.mailManager = NMailModel 实例）：由 subpack/SubpackMain 载入时挂上，
+ * 邮件管理器（MailData.mailManager = NMailModel 实例）：由 SubpackMain 载入时挂上，
  * 早于它探测会拿不到——probe 失败不缓存，下次调用自愈重探。
  * @returns {object|null}
  */

@@ -6,7 +6,7 @@
 //   单拍共享 Event（日志/bus 派发/采集三处共用一次 JSON.parse）由 net.js recvMine 持有并递入。
 
 /**
- * 推送事件，载荷口径与 NetReciver.js:38 一致。
+ * 推送事件，载荷口径与 NetReciver 一致。
  * 字段：cmd 命令号 / status 状态码 / data 业务数据 / ord 序号 / ts 接收时刻 / reqTime 该应答对应请求的发出时刻 / raw 原始报文（只读，池化复用）。
  */
 export class Event {
@@ -199,7 +199,7 @@ export function createObserve(deps) {
   }
 
   /**
-   * PB 协议 cmd 在枚举表里查不到名，用 ProtoBufBiz.getReqName 兜底（NetMgr.js:205 同款口径）
+   * PB 协议 cmd 在枚举表里查不到名，用 ProtoBufBiz.getReqName 兜底（NetMgr 同款口径）
    * @param {number} cmd 命令号
    * @returns {string|null} 请求名，查不到返回 null
    */
@@ -248,7 +248,7 @@ export function createObserve(deps) {
   }
 
   /**
-   * 入站：t===undefined 为推送，t 为数字（reqTime）为应答（NetMgr.js:578）。
+   * 入站：t===undefined 为推送，t 为数字（reqTime）为应答（NetMgr）。
    * 心跳剪除与 Event 构造都在调用方（recvMine）做完，这里只负责打印。
    * @param {number|undefined} t 应答时刻；推送为 undefined
    * @param {object} ev 本拍共享的 Event

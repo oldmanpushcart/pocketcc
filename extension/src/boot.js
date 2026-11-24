@@ -1,6 +1,5 @@
 // 口袋控制中心 — 远程体内的 MAIN world 编排器（薄壳 shell.js exec 远程体后由本文件装配生命周期）。
 // 运行在页面自身 JS 上下文，可访问 cc / __require / CryptoJS 等游戏全局。
-// 设计依据见 references/历史文档/免扫码登录技术方案.md。
 //
 // 本文件只剩编排：按 cocos 引擎/场景就绪时机，串起各 core 模块。
 //   core/registry.js   特征注册表（面板 UI + 存储 + 运行时编排单一真相）
@@ -46,7 +45,7 @@ import { installModeGate } from './core/mode.js';
    *   2) scene.change 且场景为 Home/NWorldMap——重启直落世界地图等不触发 HomeMapLoadFinish 的场景。
    * 事件走 pocketcc.event 封装（on 内部会兜底 install，早于 startFeatures 也安全），
    * 场景走 bus（startSceneWatcher 已在本闸门调用前挂上）。
-   * 事件名是 EventId 的值（字符串 "HomeMapLoadFinish"，EventId.js:732）。2026-09-22 真机已验证触发。
+   * 事件名是 EventId 的值（字符串 "HomeMapLoadFinish"）。2026-09-22 真机已验证触发。
    * deferInit 在首个场景首个子节点加入时即 start()，远早于主城加载，一次性事件不会错过。
    * 这是文档里承认的“框架级长订阅”例外：只此一条、跟页面同生命周期；就绪后主动退订场景信号，事件路留幂等标志。
    * @param {function():void} onReady 主城就绪回调（只放行一次）

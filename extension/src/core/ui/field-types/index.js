@@ -5,7 +5,7 @@
 // T4 迁内联无状态 checkbox/number/select/string/button/text/note、T5 迁有状态清单 uidlist/sortlist/itemlist + uid/tripick/ctrlrow/rallygrid。
 // 全 22 类型收编完毕（strangler 终态）：fields.js 两旧渲染表（FIELD_BOXES/FIELD_INLINE）与 wire.js 旧逐元素 handler 全退役，widgets.js 删除。
 //
-// module interface（grilling 定稿形状，详见临时目录 architecture-c1-decisions-20261113.md）：
+// module interface（grilling 定稿形状）：
 //   {
 //     type: string,                 // 字段类型名（= descriptor.fields[].type）
 //     kind: 'box' | 'inline',       // box 带 fieldBox 外壳（容器型）；inline 无外壳（内联型）

@@ -91,7 +91,7 @@ function toArmyEntry(item) {
 
 /**
  * 英雄 id 列表 → 请求 heroList：纯 id 数字数组 [id, ...]（不是 {heroId} 对象数组）。
- * 口径：游戏 heroList 直接取 attackerHeros（RealNBattleModel.js:159 attackerHeros = o.heroIds），
+ * 口径：游戏 heroList 直接取 attackerHeros（RealNBattleModel attackerHeros = o.heroIds），
  * 902 start_commonMarch 与 1204 ALLIANCE_Assembly_Join 都发 `heroList: this.attackerHeros`——英雄 id 数字数组。
  * @param {number[]} ids
  * @returns {number[]}

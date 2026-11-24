@@ -368,7 +368,7 @@ export const heroIcon = {
     }
     try {
       // 游戏收口 doCallbackResource 是 err-first 双参：失败 o(err,null) / 成功 o(null,asset)
-      // （LoadManager__LoadManager.js 源码实锤）；特征兜底防形态漂移——谁有 getRect 谁是帧
+      // （LoadManager 源码实锤）；特征兜底防形态漂移——谁有 getRect 谁是帧
       L.loadSpriteFrame(p, function (err, sf) {
         var frame =
           sf && typeof sf.getRect === 'function'

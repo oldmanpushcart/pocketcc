@@ -45,7 +45,7 @@ const ITEM_SPEED_UP_NORMAL = 520001;
 const ITEM_SPEED_UP_ADVANCED = 520002;
 
 /**
- * 行军状态语义数值（NMarchState：subpack2/NWorldMapMarchCommon）。
+ * 行军状态语义数值（NMarchState：NWorldMapMarchCommon）。
  * 稳定枚举，作本地权威副本（真机符号漂移时不至全线瘫痪）。
  * @type {{INIT:number,MARCHING:number,ARRIVED:number,RETURNING:number,ARRIVED_HOME:number,GATHERING:number}}
  */

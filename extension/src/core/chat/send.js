@@ -44,7 +44,7 @@ export function defaultCustom(uid, opts, chan) {
 }
 
 /**
- * 发文本消息（主协议 PostChatMsg，真机探得口径，字段表见 references/历史文档/聊天.md；
+ * 发文本消息（主协议 PostChatMsg，真机探得口径；
  * 应答走主 socket（status=0；ret.data 为应答字符串原文，net 不做 JSON_PARSE——成功时是
  * '{"success":1,m:...}' JSON 串需自行 parse 判 success===1，业务拒时为 '<文案键,参数>' 裸串 parse 得 null），
  * 消息回声另经聊天 socket 推回：
@@ -90,7 +90,7 @@ export function send(text, opts) {
  * 发坐标分享链接（真机 2026-09-26 实证：同 PostChatMsg，m="link"，llm={t:0, st, p:{x,y,z}, ...} JSON 串）。
  * 默认按「纯坐标」形态（t=0 + st=6）：位置渲染器 NNewShareLinkPosItem 的两个 switch 都未特化 st=6，
  *   卡片只留无条件的坐标行「S:服号 X:.. Y:..」、不画任何实体图标；跳转只读 p（+ sMap）。
- * ⚠ 收侧 parseLink（newChatInfoData.js）对位置卡 t=0（不在特殊类型白名单）硬要求 st/p/s/icon **四者均非空**，
+ * ⚠ 收侧 parseLink（newChatInfoData）对位置卡 t=0（不在特殊类型白名单）硬要求 st/p/s/icon **四者均非空**，
  *   任一为空即 break、不当链接卡→退化成纯文本 "link"。所以 icon/s 仍需非空（st=6 下不渲染，仅用于过守卫）。
  *   若要带具体实体卡（基地/资源等），由调用方显式传 st=4 + pid + 头像 icon（或 st=0/3 + 对应 icon）。
  * @param {number} x 世界坐标 x

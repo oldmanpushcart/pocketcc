@@ -11,8 +11,7 @@
  * 快照另带两个派生位：watching（真观战，不含秘境——PAB 也占 watchingType 位）、
  * crossMap（mapType 口径的「此刻真在跨服/副本图上」，比 kind 严）。
  *
- * 设计取舍与真机验证口径全文见 extension/docs/core/world-state.md；
- * 游戏侧源码证据链见 references/游戏逆向/场景识别与门控改造可行性报告.md。
+ * 设计取舍与真机验证口径全文见 extension/docs/core/world-state.md。
  *
  * 分层立场：本文件不出现任何游戏符号名（判据一律经 game-api.worldSignals），也不 import reactor
  * （门控由 core/scene-watcher.js 注册）——它只是「读 + 归类 + 缓存 + 广播」的纯查询面，
