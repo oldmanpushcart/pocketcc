@@ -77,6 +77,29 @@
 
 > 需要说明的是：使用任何第三方辅助都可能违反游戏用户协议，封号风险由使用者自行承担。这个项目能够担保的只是工具本身——不下毒、不窃凭证、不静默下发未经你审阅的行为。
 
+## 快速开始
+
+前置条件：Edge 或 Chrome（无需 Node.js，不用编译）。
+
+**安装**（三步）：
+
+1. [下载安装包](https://pocketcc.oss-cn-beijing.aliyuncs.com/extension/snapshot/pocketcc-extension-1.0.0.zip)并解压，得到 `pocketcc-extension/` 目录（正式版安装包敬请期待，当前提供的是快照版）；
+2. 地址栏进入 `edge://extensions`（或 `chrome://extensions`），打开「开发人员模式」，点「加载解压缩的扩展」，选择**上述那一层目录**（误选压缩包外层目录会报清单缺失）；
+3. 打开游戏页登录，主城就绪后右下角出现浮动图标。
+
+> Chrome/Edge 会定期弹「请停用开发者扩展」提醒，属正常现象，保留即可。
+
+装好后日常升级无需任何操作：后台每 4 小时检查一次，新正文经双验（SHA-256 + HMAC）后只写入缓存，面板提示「刷新页面即生效」——**运行期永不热替换**，不会打断进行中的行军。OSS 不可用时照旧运行包内基线。这套分发的设计缘由（含为何不发 CRX）见 [extension/README.md · 打包与发版](./extension/README.md#打包与发版)。
+
+想从源码自行编译的读者（面向贡献者与审计者）：请转 [extension/README.md · 构建与安装](./extension/README.md#构建与安装)。
+
+**可选：启用报文录制**（仅在你需要自行逆向或核对协议时）：
+
+```bash
+cd dashcam
+npm start        # 监听 http://127.0.0.1:7391，面板「系统设置」里打开开关即可
+```
+
 ## 功能一览
 
 面板是游戏页右下角的浮动图标（可拖拽），Shadow DOM 左右两栏：左侧类别 TAB，右侧功能卡片，改动即存档生效。**所有玩法功能默认关闭**——未经你启用，扩展不会替你向游戏发送任何请求；只有会话层的「自动重连」与「后台保活」默认开启。层级定义在 [extension/src/core/menu.js](./extension/src/core/menu.js)，六个类别与实际面板 1:1：
@@ -127,29 +150,6 @@ node cli.js parse && node cli.js html     # 解码入库 → 渲染 analysis/<id
 ```
 
 三者的依赖面，审计时值得先知道：`extension/` 运行期零第三方依赖，只在构建期使用 esbuild；`dashcam/` 纯 `node:http`，同样零依赖；`warroom/` 是全仓库唯一引入三方依赖的工程——`better-sqlite3`（含原生二进制）。根 `package.json` 的 `devDependencies` 只服务构建、检查与测试，不进入任何产物。
-
-## 快速开始
-
-前置条件：Edge 或 Chrome（无需 Node.js，不用编译）。
-
-**安装**（三步）：
-
-1. [下载安装包](https://pocketcc.oss-cn-beijing.aliyuncs.com/extension/snapshot/pocketcc-extension-1.0.0.zip)并解压，得到 `pocketcc-extension/` 目录（正式版安装包敬请期待，当前提供的是快照版）；
-2. 地址栏进入 `edge://extensions`（或 `chrome://extensions`），打开「开发人员模式」，点「加载解压缩的扩展」，选择**上述那一层目录**（误选压缩包外层目录会报清单缺失）；
-3. 打开游戏页登录，主城就绪后右下角出现浮动图标。
-
-> Chrome/Edge 会定期弹「请停用开发者扩展」提醒，属正常现象，保留即可。
-
-装好后日常升级无需任何操作：后台每 4 小时检查一次，新正文经双验（SHA-256 + HMAC）后只写入缓存，面板提示「刷新页面即生效」——**运行期永不热替换**，不会打断进行中的行军。OSS 不可用时照旧运行包内基线。这套分发的设计缘由（含为何不发 CRX）见 [extension/README.md · 打包与发版](./extension/README.md#打包与发版)。
-
-想从源码自行编译的读者（面向贡献者与审计者）：请转 [extension/README.md · 构建与安装](./extension/README.md#构建与安装)。
-
-**可选：启用报文录制**（仅在你需要自行逆向或核对协议时）：
-
-```bash
-cd dashcam
-npm start        # 监听 http://127.0.0.1:7391，面板「系统设置」里打开开关即可
-```
 
 ## 仓库布局
 
