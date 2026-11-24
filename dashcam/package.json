@@ -1,9 +1,10 @@
 {
   "name": "dashcam",
   "version": "0.1.0",
-  "description": "pocketcc 行车记录仪：接收扩展 background 代发的 NDJSON，报文按会话落盘、日志按小时轮转，供离线分析",
+  "description": "pocketcc 行车记录仪：接收扩展 background 代发的 NDJSON，报文按会话定稿落盘、日志按天直写滚段，供离线分析",
   "type": "module",
   "private": true,
+  "license": "GPL-3.0-only",
   "scripts": {
     "start": "node server.js",
     "rec": "node cli.js"

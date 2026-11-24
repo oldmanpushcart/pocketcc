@@ -13,18 +13,19 @@
 - [环境变量](#环境变量)
 - [与扩展的链路](#与扩展的链路)
 - [路由](#路由)
-- [报文命名规范](#报文命名规范一次开--关--一个文件)
+- [报文命名规范](#报文命名规范)
 - [日志命名与轮转](#日志命名与轮转长期常开按天直写)
-- [索引侧车](#索引侧车-storerecuid-dashcam-rec-indexndjson)
+- [索引侧车](#索引侧车)
 - [落盘格式](#落盘格式)
-- [离线分析 CLI](#离线分析-clidashcamclij)
+- [离线分析 CLI](#离线分析-cli)
 - [安全](#安全)
 
 ## 启动
 
 ```bash
 cd dashcam
-npm start          # 等价 node server.js
+npm start          # 等价 node server.js，起接收服务
+npm run rec        # 等价 node cli.js，跑下文「离线分析 CLI」（不进服务，一次性查询）
 ```
 
 无三方依赖（纯 `node:http`），需 **Node >= 18**，ESM。
@@ -35,7 +36,7 @@ npm start          # 等价 node server.js
 | -------------------- | --------------- | -------------------------------------- |
 | `DASHCAM_PORT`       | `7391`          | 监听端口（仅绑 `127.0.0.1`）           |
 | `DASHCAM_OUT`        | `dashcam/store` | 落盘根目录（已在 `.gitignore`）        |
-| `DASHCAM_LOG_MAXSEG` | `32MB`          | 日志单段字节保险丝（超限滚下一序号段） |
+| `DASHCAM_LOG_MAXSEG` | `33554432`     | 日志单段字节保险丝（超限滚下一序号段）。**只收数字字节数**，写 `32MB` 这类字符串会被 `Number()` 判非数并回落到默认值 |
 
 ## 与扩展的链路
 
@@ -52,11 +53,13 @@ npm start          # 等价 node server.js
 
 ## 路由
 
-- `GET /` — 健康检查，返回 `{ service, out, port, activeSessions }`，可在浏览器直接打开验证服务在跑。
-- `POST /ingest` — 请求头 `x-session` / `x-uid` / `x-start` / `x-note`（percent 编码）/ `x-done`，body 为 NDJSON（每行一条报文）。
-- `POST /log` — 请求头 `x-uid` / `x-run`，body 为 NDJSON（每行一条日志 `{ts,lvl,mod,msg,n}`）。
+- `GET /`（`/health` 同义）— 健康检查，返回 `{ service, out, port, activeSessions }`，可在浏览器直接打开验证服务在跑。
+- `POST /ingest` — 请求头 `x-session` / `x-uid` / `x-start` / `x-note`（percent 编码；`sanitizeNote` 去路径与控制字符后**截 40 字**）/ `x-done`，body 为 NDJSON（每行一条报文）。
+- `POST /log` — 请求头 `x-uid`（决定落盘目录，缺省归 `anon`）；`x-run` 由扩展上送但**服务端当前不消费**（仅在 CORS 白名单与函数签名里保留，为将来按 run 分段留位），body 为 NDJSON（每行一条日志 `{ts,lvl,mod,msg,n}`）。
 
-## 报文命名规范（一次开→关 = 一个文件）
+## 报文命名规范
+
+一次「开 → 关」= 一个文件：
 
 ```
 store/rec/<uid>/dashcam-rec-<startLocal>[-<note>][-<slug>].ndjson
@@ -85,21 +88,23 @@ store/log/<uid>/dashcam-log-<YYYYMMDD>[-NN].ndjson
 
 **与报文会话的配对是查询时软引用**：报文定稿时 index 行写入 `logRef:{dir,from,to}`（日志自己不带业务标签，业务窗口由报文侧供给），CLI 能自动解析。
 
-## 索引侧车 `store/rec/<uid>/dashcam-rec-index.ndjson`
+## 索引侧车
 
-每定稿一次会话追加一行（按 `start` 升序整体重写），作为「行程表」。固定机器友好名 `dashcam-rec-index.ndjson`（与同目录 `dashcam-rec-*.ndjson` 录制体共用前缀，但不带时间戳不会归入录制）：
+路径 `store/rec/<uid>/dashcam-rec-index.ndjson`。每定稿一次会话追加一行（按 `start` 升序整体重写），作为「行程表」。固定机器友好名 `dashcam-rec-index.ndjson`（与同目录 `dashcam-rec-*.ndjson` 录制体共用前缀，但不带时间戳不会归入录制）：
 
 ```json
 {"file":"rec/<uid>/dashcam-rec-<name>.ndjson","uid":...,"sessionId":...,"start":...,"end":...,"durMs":...,"lines":...,"slug":"...","note":"...","finalized":true,"top":[["GET_WORLD_INFO",19]],"logRef":{"dir":"log/<uid>","from":...,"to":...}}
 ```
 
 > `file` / `logRef.dir` 均为相对 `DASHCAM_OUT`（store 根）的路径：录制在 `rec/<uid>/…`，日志在 `log/<uid>/…`。
+>
+> `end` / `durMs` 取的是**服务端最后一批到达时刻**（`session.lastSeen`），不是末条报文的 `ts`——空闲兜底定稿时两者会差出一个静默期，跨源对时请以报文行的 `ts` 为准。
 
 ## 落盘格式
 
 ### 报文（/ingest）
 
-每行是一条 net entry（由扩展 `core/net.js` 构造）：
+每行是一条 net entry（扩展侧由 `core/net-observe.js` 的 `makeEntry` 构造，`core/net.js` 负责驱动与派发）：
 
 ```json
 {
@@ -124,17 +129,17 @@ store/log/<uid>/dashcam-log-<YYYYMMDD>[-NN].ndjson
 每行一条结构化日志（由扩展 `core/log.js` tee + `core/log-collect.js` 产出）：
 
 ```json
-{ "ts": 1730000000000, "lvl": "warn", "mod": "SECRET", "msg": "dispatch stall, retry 2", "n": 3 }
+{ "ts": 1730000000000, "lvl": "warn", "mod": "SECRETM", "msg": "dispatch stall, retry 2", "n": 3 }
 ```
 
 - `lvl`：`error`（确定性停摆/不变量违例）| `warn`（真异常但可恢复/已降级）| `info`（关键动作/可预期业务拒绝）| `debug`（调度细节）；面板可调最低档
-- `mod`：`createLog` 的模块标记（如 NET / SECRET / REC）；`msg`：printf 自拼后的完整单行文本
+- `mod`：`createLog` 的模块标记（如 NET / SECRETM / REC / LOGREC）；`msg`：printf 自拼后的完整单行文本
 - `n`：**折叠重复计数**——连续同 `(lvl,mod,msg)` 合并成一条（缺省 1）；溢出时批头会插一条 `[dropped N]` 审计行
 - ⚠️ 隐私：扩展同时开「网络日志」+「日志上送」时，req/resp 载荷会拼进 msg 落盘（含玩家名/坐标等），单行扩展侧截 2048 字符；日常只上送决策日志建议保持 minLvl=info 且关网络日志
 
-## 离线分析 CLI（`dashcam/cli.js`）
+## 离线分析 CLI
 
-录制读取原语（纯格式层，`lib/rec.js`）+ 六个子命令，无三方依赖：
+入口 `dashcam/cli.js`：录制读取原语（纯格式层，`lib/rec.js`）+ 六个子命令，无三方依赖：
 
 ```bash
 cd dashcam
@@ -146,7 +151,7 @@ node cli.js push   <file> --cmd 21534 --field num --gt 0 # 推送标量分布/�
 node cli.js log    <目录|段文件|报文会话文件> --grep stall # 日志流/聚合（双轨对照）
 ```
 
-旗标：`--dir=req|resp|push`（req:* 归一为 req）、`--from/--to` 相对首行 ts 的秒（`--anchor` 改锚点）、`--limit`、`--json`（机器可读）、`--width`（截断宽）。大文件流式扫，153MB 单命令约 10s。
+通用旗标（`cli.js` 的 usage 为准）：`--cmd` 命令号、`--dir=req|resp|push`（req:* 归一为 req）、`--from/--to` 相对首行 ts 的秒（`--anchor` 改锚点）、`--limit`（缺省 200）、`--fields x,y` 抽字段、`--json`（机器可读）、`--width`（截断宽）。子命令专属：`shape` 的 `--min`/`--all`（低覆盖字段默认折叠）、`push` 的 `--field` + `--eq/--ne/--gt` 标量过滤。大文件流式扫，153MB 单命令约 10s。
 
 log 专属旗标：`--hour=20261104` 选段（天粒度；旧版 `--hour=20261104T15` 小时段仍兼容）、`--ms=from[,to]` 绝对毫秒窗（接 slice 窗口的双轨对照；缺 to 意为「此刻往后」，与软引用窗同时给则取**交集**）、`--lvl` 最低档（debug|info|warn|error 只升不降）、`--mod`/`--grep` 子串过滤、`--group=mod|lvl|modlvl` 聚合计数（诊断哪个模块在刷屏）。位置参数传**报文会话文件**时自动经 `dashcam-rec-index.ndjson` 的 `logRef` 解析日志目录并限定会话窗。
 
@@ -186,4 +191,4 @@ Get-Content store/rec/*/*.ndjson | ForEach-Object { ($_ | ConvertFrom-Json).cmd 
 
 ## 许可
 
-未声明开源许可的个人项目（私有、暂不授权再分发）。
+[GNU GPLv3](../LICENSE) —— 衍生版本必须以同样许可开源。详见 [pocketcc README · 许可](../README.md#许可)。
