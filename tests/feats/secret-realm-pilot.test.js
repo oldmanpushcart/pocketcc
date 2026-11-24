@@ -292,7 +292,7 @@ test('resolveHop：hopMaxDist=Infinity 时不封顶→任何距离都直冲（�
   assert.ok(!got.waypoint, 'goal.d0<=hopMaxDist 不应挂 waypoint');
 });
 
-test('resourceCost：打分随"距起点/未领奖BOSS/无香肠店"三锚加权（竞品 L24712）', () => {
+test('resourceCost：打分随"距起点/未领奖BOSS/无香肠店"三锚加权（竞品口径）', () => {
   const p = { x: 10, y: 0 };
   const base = resourceCost(p, { startPoint: { x: 0, y: 0 } });
   const withBoss = resourceCost(p, {

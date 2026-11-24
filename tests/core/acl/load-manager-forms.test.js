@@ -1,4 +1,4 @@
-// LoadManager 导出信封多形态兜底契约（实证事故：extracted 源尾部是具名导出 `a.LoadManager=类`、
+// LoadManager 导出信封多形态兜底契约（实证事故：游戏反编译源码尾部是具名导出 `a.LoadManager=类`、
 // 文件内无 a.default —— ns() 对它不解包回壳，壳上无 loadSpriteFrame，probe 误报「symbol drift」）。
 // 纪律：游戏 bundle 模块信封三形态（命名空间顶层挂静态 / ES .default 类 / 具名导出类）都实测存在过，
 // getter 必须逐形态兜底。用 globalThis.__require 现挂桩（game.isReady 调用点读全局，随设随生效）。

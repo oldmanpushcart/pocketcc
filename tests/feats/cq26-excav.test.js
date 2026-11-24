@@ -37,7 +37,7 @@ const { gameData } = await import('../../extension/src/core/game-api.js');
 const { game } = await import('../../extension/src/core/game.js');
 
 /**
- * 游戏原式（extracted/Script/CQ26NeutralController.prototype.getFirstOpenEnableSite 逐字翻回）：
+ * 游戏原式（CQ26NeutralController.prototype.getFirstOpenEnableSite 逐字翻回）：
  * 跳过已采 → 命中本服的第一个即 break → 否则取 endTime 最小者。作为等价性参照实现。
  * 归属比较刻意保留游戏的**松散相等**（`n.ownerSid == o`）：ACL 投影侧已把两侧 Number 化，
  *   故 mSid 为字符串形态时两实现结论仍一致（另有专例校验）。

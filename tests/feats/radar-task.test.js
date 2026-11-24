@@ -515,7 +515,7 @@ test('defenseGate：八分支逐条钉住（开关/触发/幂等/满格/拒阈/�
 
   // 基线：真人录制那一刻的态（开关开、有触发、sign=4 未满、幂等未记、战力达标）
   assert.deepEqual(g(), { fire: true, reason: 'fire' });
-  // 与竞品 B `server-js.js:19892` 的口径差异：它另加 `radarSignNum <= 3` 是给 3517 免费增强留位；
+  // 与竞品 B 的口径差异：它另加 `radarSignNum <= 3` 是给 3517 免费增强留位；
   //   本 feat 不做 3517，sign=4 仍应放行（击退本身就把功率顶满，早做晚做都是净收益）
   assert.equal(g({ sign: 4 }).fire, true);
 
