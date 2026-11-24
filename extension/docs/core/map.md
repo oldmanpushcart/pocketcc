@@ -37,7 +37,7 @@
 
 ## 3. API 契约
 
-**常量**（值均有实证，见 `references/游戏逆向/全局地图知识点归档.md`）：
+**常量**（值均有实证）：
 
 | 符号                          | 形态                                            | 语义                                                                                                                                                                    |
 | ----------------------------- | ----------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -74,7 +74,7 @@ for (var p of r.points) {
 
 **imperial-decree 目标点探测**（同默认窗）：`fetchWindow` 后按 `(p.x|0)===x && (p.y|0)===y` 找实体点，命中返点对象、查无返 null、请求失败返 undefined。
 
-**906 逐级降序搜普通田**（`auto-farm/normal-scan` 与 `mech-build` 选地共用；`groupType` 由 [`core/resource.js`](resource.js) 的 `groupTypeFor` 得出，本模块只管发包与取点）：
+**906 逐级降序搜普通田**（`auto-farm/normal-scan` 与 `mech-build` 选地共用；`groupType` 由 [`core/resource.js`](../../src/core/resource.js) 的 `groupTypeFor` 得出，本模块只管发包与取点）：
 
 ```js
 // 田家族搜资源传 pointType:2；野怪/集结/惧星是另外的 (pointType,groupType)，由各自 feat 决定
@@ -122,7 +122,7 @@ searchPoint: body{groupType,minLevel,maxLevel,pointType}, cmd=906
 - **k（服号）必须是 `UserData.ServerId|0`**：`viewServerId()` 在 Home 场景返回 -1，`Number(-1)||0` 仍是 -1，发出 k=-1 → 服务端判非法、应答无 pointList（实证 status=3 / `world_130512`）。非正数应跳过发包。
 - **901 请求 `(x,y)` 是回点区「中心」非左上角**：全图逐块扫描须按**块中心**发请求，否则漏扫最右列/最下行（该逻辑在 `feats/system/map/scanner.js`，本模块只提供单窗骨架）。
 - **Int64 精度**：塔 id 等大整数从 901 取回须 `String()` 承载，防 `number` 截断。
-- **迁城占用集留 defense**：那是「迁城哪些点算阻塞」的业务判据，非地图真相，不下沉。口径为「除自己主城外一切实体 footprint 均占位」，仅 `isKVK()` 时豁免权威可覆盖集 `RELOC_KVK_COVERABLE`（难民营18/世界宝藏26/野怪73/集结怪74/雷达宝藏75/国度76/援助77）——对齐 extracted `checkIsPlainTile` 的 `isKVK() && judgeTileIfCanCover(p)`，标准本服图这些点同样阻塞落点。（插件侧调用的不是游戏符号而是 `worldState.matchesKind(['kvk'])`——两者同走 `eightServerType` 形态位（整季为真），语义一致。）
+- **迁城占用集留 defense**：那是「迁城哪些点算阻塞」的业务判据，非地图真相，不下沉。口径为「除自己主城外一切实体 footprint 均占位」，仅 `isKVK()` 时豁免权威可覆盖集 `RELOC_KVK_COVERABLE`（难民营18/世界宝藏26/野怪73/集结怪74/雷达宝藏75/国度76/援助77）——对齐游戏侧 `checkIsPlainTile` 的 `isKVK() && judgeTileIfCanCover(p)`，标准本服图这些点同样阻塞落点。（插件侧调用的不是游戏符号而是 `worldState.matchesKind(['kvk'])`——两者同走 `eightServerType` 形态位（整季为真），语义一致。）
 - **窗口默认 20×20/viewLevel1/marchInfo=false**：仅够单点探针；覆盖搜索带须显式传大窗 opts。
 - **906 视口无关、每级只回一个点**：`searchPoint` 请求体无坐标/半径，服务端一次只回单点，不带排序；「优先高级/多候选轮换」靠调用方逐级降序 + 拉黑坐标实现，不保证同级换第二个点（mech-build 建塔低频场景已接受此退化）。
 - **906 的 `(pointType,groupType)` 随目标而变**：资源田 `pointType:2`、野怪 `1/61`、集结 `3/44`、惧星 `9/9100`（均非实体类型，是搜索 tab）；且应答点载荷分家——资源回 `point.r{itemId,…}`、野怪/惧星回 `point.m{itemId,level,…}`。本模块只原样回吐 `point`，读 r 还是 m 交调用方。

@@ -1,6 +1,6 @@
 # 夺宝奇兵（CS-HUNT）feat 设计方案
 
-> 依据：`references/游戏逆向/夺宝奇兵分析报告.md`（协议/状态机全量实证）+ 本次对 `extracted/` 事件面板/技能面板/组队面板/战斗装配源码的逐行核验。
+> 依据：协议/状态机全量实证 + 本次对事件面板/技能面板/组队面板/战斗装配源码的逐行核验。
 > 目标：把用户口头设计转成「决策完备、可直接开工」的 feat 方案；对每条业务断言标注**源码证据**与**待真机确认项**。
 
 ---
@@ -28,7 +28,7 @@
 - `window.pocketcc.net` 已暴露 `sendPB / sendPBV2 / send / isSending`——7xxx PB 命令可直接调用。
 - 出征 7519 走 `NET.send(RequestId.CROSS_TREASURE_TEAM_MARCH, {marchType:137, armyList, armyListNew, heroList, trapList, formation, formationV2, extraArmy})`（**满编、无 x/y**，非 sendPB、非 902）；`utils/battle.js` 的 `plan().preset().adjust().build()` 产出 5 字段 MarchData 可直接喂入，需新增一个 7519 发送动词（`march.attack` 现走 902）。
 
-### 0.1 科技使用闸门实证（`subpack2/CSHuntGetSkillPanel` · 2026-10-17 逆向定稿）
+### 0.1 科技使用闸门实证（`CSHuntGetSkillPanel` · 2026-10-17 逆向定稿）
 
 用户三条「何时能用 / 能用几次」的诉求，逐条命中游戏客户端代码——**权威判定在服务端（应答 `errorKey`），客户端只做阶段门 + 按钮置灰 + 背包/生效两栏搬运**：
 
@@ -572,7 +572,7 @@ net.send(RequestId.CROSS_TREASURE_TEAM_MARCH=7519, {
    - 修法：给 `core/ui/widgets.js` 的 `mountSortList` 加通用 **`fd.migrate(arr, cfg) → number[]`** 钩子（在 `all` 追加之前跑，就地收敛、变了才 `saveFeature+applyFeature`，幂等）。cs-hunt 的 `skillPool` 字段提供 `migrate`：用 `skills.js` 新增的 `skillGroupRep(specId)`（成员→族代表反查）把 28 行收敛成 ~17 族项并去重，同步收敛 `skillPoolOff`。
 
 2. **幸运池为空 = 运行期枚举拿不到，需静态保底**。`cross_treasure_event` 解包在活动未开/符号缺失时回 []（面板就是空）。
-   - 修法：`constants.js` 新增 **`LUCKY_GIFTS`** 静态目录（报文实证 2026-10-16 主跑/陪跑四趟真人实录 `winRewardResult`/`posInfoList.rewardResult` 去重出 27 件礼品，名取自 `字典表.txt`）。`index.js` 的 `rewardPool()` 改为 **运行期枚举优先、空则回退 LUCKY_GIFTS**，保证面板不空、开局前即可勾选。
+   - 修法：`constants.js` 新增 **`LUCKY_GIFTS`** 静态目录（报文实证 2026-10-16 主跑/陪跑四趟真人实录 `winRewardResult`/`posInfoList.rewardResult` 去重出 27 件礼品，名取自游戏本地化字典）。`index.js` 的 `rewardPool()` 改为 **运行期枚举优先、空则回退 LUCKY_GIFTS**，保证面板不空、开局前即可勾选。
 
 **闸门**：`npm run build` OK、cs-hunt 目录 `eslint` 0 problem（widgets.js 仅 2 条既有告警、非本次区域）、`npm run arch` 无违规（112 modules）、Prettier 通过。`fd.migrate` 是通用能力，其它 sortlist 需要收敛旧口径时可直接复用。
 
@@ -670,7 +670,7 @@ net.send(RequestId.CROSS_TREASURE_TEAM_MARCH=7519, {
 
 **现象**：本次小队出征结束后，`engine-flow` 仍每拍对已消亡的 `treasureId` 补拉 7531，`#sendPB` 持续打 `拉本跑详情 rejected. cmd=7531 code=3 reason=cs_treasure294`，且游戏界面一直弹「小队不存在」提示（这提示正是我们反复空拉触发服务端报错回抛的副作用）。
 
-**拒因核对**：`references/字典表.txt` L42336 → `cs_treasure294=夺宝奇兵小队不存在`。确认即「本队已不存在」的服务器权威终局信号。
+**拒因核对**：游戏本地化字典 → `cs_treasure294=夺宝奇兵小队不存在`。确认即「本队已不存在」的服务器权威终局信号。
 
 **修法**（`engine-team.js`）：新增 `HUNT_OVER_REASONS=Set(['cs_treasure294'])`；`#sendPB` 在 7531 命中该终局拒因时调 `#endHunt(reason)`——记下死 `treasureId`（`#endedTreasureId`，防陈旧控制器把同一死队从 `readState().team` 回填后再次空拉）、`#flow.reset()` 停对死 id 的空拉、`#clearTeam()` 清队伍快照与全部编排闸并唤醒，下一拍即走无队分支（`#gateActivity`→建队/找队）尽快进入下一轮。`tick` 的 readState 交叉回填加 `stTid !== #endedTreasureId` 闸；`stop()` 清 `#endedTreasureId`。**分层**：`cs_treasure294` 是本玩法业务终局语义，收口在 feat 内 `#sendPB`/`#endHunt`，不上抬通用网络层。
 

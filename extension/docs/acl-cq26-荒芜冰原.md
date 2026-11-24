@@ -3,7 +3,7 @@
 > 代码落点：`extension/src/core/acl/game-data.js` 的 `── CQ26 印石·荒芜冰原 ──` 区段 —— **星路大地图「身份三元组」三投影 + wl-chest 宝箱子集（§5）已实现**；额度/分区/点位/配置之外的其余签名待实现
 > 消费方：`feats/cq26/wl-gather/`（**一个 feat 三腿**：采集 / 协助 / 盗采，设计见 [`feat-荒芜冰原采集.md`](feat-荒芜冰原采集.md)）、`feats/cq26/wl-chest/index.js`（遗失之箱，**已落地**，接线口径见 §6 该行修订）、`feats/cq26/wl-beast/index.js`（冰原巨兽，待立项）
 > 形态口径：**不再与 [`feat-战区宝藏.md`](feat-战区宝藏.md) 同族** —— 战区宝藏可纯靠 push 快照，本玩法的点位判据（`initSid`/`gNum`/名单）**只在 901 应答 `pointList[].m`（即游戏实体 `extData`）里**，2201 全图只给到「哪个分区属于哪个服、什么类型/状态」这一层，故 wl-gather 必然带「一次 2201 全图 + 按候选平铺 901」的扫描成本（取舍见 §2.5、§6）
-> 证据：`references/游戏逆向/extracted/`（源码）+ 真人报文录制（176 个会话文件，本文普查脚本 `.reviewtmp/cq26wl-fielddict.mjs`；三腿与 2201 实证来自印石日常主跑趟实录，脚本 `.reviewtmp/star-land-2201.mjs` / `shownum-is-index.mjs` / `star-land-crosstab.mjs` / `beast-status-scan.mjs` / `beast-xfile.mjs` / `nwl-writes-census.mjs` / `pointtype-census.mjs` / `help-quota.mjs`）
+> 证据：真人报文录制（176 个会话文件，本文普查脚本 `.reviewtmp/cq26wl-fielddict.mjs`；三腿与 2201 实证来自印石日常主跑趟实录，脚本 `.reviewtmp/star-land-2201.mjs` / `shownum-is-index.mjs` / `star-land-crosstab.mjs` / `beast-status-scan.mjs` / `beast-xfile.mjs` / `nwl-writes-census.mjs` / `pointtype-census.mjs` / `help-quota.mjs`）
 
 一句话职责：把「荒芜冰原 16 个分区 + 分区里三种玩法」的**运行时状态与身份基准**从游戏内存与推送里投影成标量，让 feat 能像玩家眼睛一样判断"哪个区开着、哪种玩法、还有多少额度、点位属于哪个服"。投影本身零发包；但 wl-gather 的点位级判据不在投影里，必须配合 `2201 + 2120 + 901` 的扫描（§2.5），**不得把本文误读为"全部玩法都可零扫描"**。
 
@@ -34,7 +34,7 @@
 
 ### 2.1 为什么数据源选"推送缓存 + 内存投影"双通道
 
-游戏侧自己就是这么活的：`CQ26WasteLandData` 三个 push handler 把服务器推的快照直接存成字段，面板只读它 —— 实证 `extracted/subpack/CQ26WasteLandData__CQ26WasteLandData.js`：
+游戏侧自己就是这么活的：`CQ26WasteLandData` 三个 push handler 把服务器推的快照直接存成字段，面板只读它 —— 实证 `CQ26WasteLandData` 源码：
 
 ```js
 onNWlListPush(e){ this.wlList=e; this.wlListMap={}; for(...of e.wastelandList) this.wlListMap[a.wastelandIndex]=a;
@@ -102,7 +102,7 @@ onWastelandChestPosPush(e){ this._WlBossRwardPBDataPos=e.pos||[]; EVENT.emit(Eve
 
 1. `RealCQ26Controller.updateSelfInfo`：`this.selfInfo?.group !== e.group` ⇒ 置位后 `mapData.requestData({group, force:!0})` —— 换组即整图重拉；
 2. `RealCQ26Controller.updateStatusData`：`e.isRegroupRound` 且 `round` 变化 ⇒ `onRoundChange()` —— **每轮可能重新分组**，所以 group 不是常量；
-3. `CQ26MapDataMgr`:17 `t.group = t.group || ctrl.selfInfo.group`，且 `t.group === selfInfo.group` 才复用权威 `mapData` 单例，否则 `new CQ26MapData()`；`CQ26MapUI`:12/18 用同一判据决定隐藏 `infoContent`/`filterNode` —— 游戏自己看别组地图时都不显示本组信息面板，投影侧同样**禁止跨组混用**。
+3. `CQ26MapDataMgr` `t.group = t.group || ctrl.selfInfo.group`，且 `t.group === selfInfo.group` 才复用权威 `mapData` 单例，否则 `new CQ26MapData()`；`CQ26MapUI` 用同一判据决定隐藏 `infoContent`/`filterNode` —— 游戏自己看别组地图时都不显示本组信息面板，投影侧同样**禁止跨组混用**。
 
 **region 主键 = `(mSid, showNum)`**，且 **`showNum === wastelandIndex`**（实证 `.reviewtmp/shownum-is-index.mjs`：本服 17 个 region 中 16 个与 2111 `wastelandList` 逐条 `type/status` 全等；唯一"不符"的那条是 `showNum=0` 的 type5 援助地块，它本来就不在 16 分区表里）⇒ 拿到候选后可直接 `2120 {wastelandIndex: showNum, sid: mSid}` 定中心点，无须任何中间换算。注意源码侧把这个值当 `showId` 传给渲染层（`applyWastelandRegions` 里 `var i=t.showNum||0`），"相等"是**报文实证**而非源码断言，故实现里要保留一次校验（同分区 type/status 对不上就 warn 并退回逐房间路径）。
 
@@ -253,7 +253,7 @@ onWastelandChestPosPush(e){ this._WlBossRwardPBDataPos=e.pos||[]; EVENT.emit(Eve
 | `gNum` / `oNum`                   | 已采量 / 单次可得量（`oNum = floor(gatherSpeed/2)`，不跨档叠加；`gNum = floor(在采秒/60) × gatherSpeed / 60`）                                                | 同上 + 三次实测                                                  |
 | `stealUidList` / `protectUidList` | 已盗采者 / 已守护者 StrUid 名单；`两者长度之和 >= conf(52000364)` ⇒ 谁都动不了                                                                                | 同上                                                             |
 
-**三腿资格谓词逐字对齐**（源码 `subpack2/NWICQ26WLResource`，闸门按序，**任何实现不得改序**）：
+**三腿资格谓词逐字对齐**（源码 `NWICQ26WLResource`，闸门按序，**任何实现不得改序**）：
 
 | 序  | `canSteal`（盗采，外服腿）                                   | `canHelp`（协助，本服腿）                               |
 | --- | ------------------------------------------------------------ | ------------------------------------------------------- |
@@ -310,7 +310,7 @@ onWastelandChestPosPush(e){ this._WlBossRwardPBDataPos=e.pos||[]; EVENT.emit(Eve
 
 **`beastStatus`（用户问题③的答复）**：
 
-- **源码零消费**：`grep -rn beastStatus references/游戏逆向/extracted/` 全库 0 命中（形近的 `PBEnumBattleEnigmaBeastStatus` 属异能战斗，无关）；`CQ26MapData.applyWastelandRegions` 只读 `showNum/pos/id/mSid`，根本不看它 ⇒ 客户端渲染层不使用，只能从报文推语义。
+- **源码零消费**：游戏反编译源码全库检索 `beastStatus` 0 命中（形近的 `PBEnumBattleEnigmaBeastStatus` 属异能战斗，无关）；`CQ26MapData.applyWastelandRegions` 只读 `showNum/pos/id/mSid`，根本不看它 ⇒ 客户端渲染层不使用，只能从报文推语义。
 - **只在 2201 的 type5 region 上出现**：跨 5 个会话文件 / 12 份 2201 快照统计（`.reviewtmp/beast-xfile.mjs`、`beast-mSid.mjs`），`beastStatus` 从不伴随其他 type；取值 `0×12 / 1×288 / 2×132`（每快照 36 个 type5 region）。
 - **完全相关**：`beastStatus===0 ⟺ mSid===0`（无归属空槽，12/12 份快照恰各 1 个）；1/2 均带归属服；从没有出现 3。
 - **候选枚举**（值域吻合，但**未被证实是哪个**）：`PBEnumSeriesFrostWarzoneIceBeastState{NONE=0, IDLE=1, SUMMONING=2, SUMMONED=3}` ⇒ 暂定语义为「冰原巨兽援助地块（HELP_BOSS）上巨兽的召唤状态」。
@@ -455,8 +455,8 @@ wl-gather 三腿专用通道（§2.5）：
 
 ## 8. 证据索引
 
-- 源码：`extracted/subpack/CQ26WasteLandData__CQ26WasteLandData.js`（三个 push handler / `checkWlOpening` / `getOpenedChestSta` / `meltIce` / `sendChallengeWlBoss` / 四个额度 getter）、`CQ26WLOpen{Base,Gather,Boss,Ice}Component`、`CQ26WLWorldGatherPop`、`CQ26WLWorldRewardBoxPop`、`CQ26WLWorldResourceBubble`（`onClickSteal/onClickHelp` 取 `entity.serverId` 当 `wkid`）、`subpack2/NWICQ26WLResource`（**`canSteal`/`canHelp`/`hasGatherOwner`/`isGatheringResource`/`needShowResourceBubble` 全文，§4.4 的逐字依据**）、`CQ26MapData`（`requestData`/`updateData`/`applyWastelandRegions`/`fillRenderRect`）、`CQ26MapDataMgr`:17、`CQ26MapUI`:12/18、`RealCQ26Controller`（`updateSelfInfo`/`updateStatusData`/`onRoundChange`）、`subpack2/CQ26Response`（22001 Handler）、`Script/CQ26Common`（枚举）、`Script/CQ26MapCommon`（`WASTELAND_1x1_1=2/_1x1_2=3/_2x2=4`、`CQ26_MAP_FACTOR=4`）、`Script/PBMsgClient`（`PBEnumSeriesFrost*Beast*State` 三套枚举）、`Script/N{Request,Response}IdV2`
+- 源码：`CQ26WasteLandData`（三个 push handler / `checkWlOpening` / `getOpenedChestSta` / `meltIce` / `sendChallengeWlBoss` / 四个额度 getter）、`CQ26WLOpen{Base,Gather,Boss,Ice}Component`、`CQ26WLWorldGatherPop`、`CQ26WLWorldRewardBoxPop`、`CQ26WLWorldResourceBubble`（`onClickSteal/onClickHelp` 取 `entity.serverId` 当 `wkid`）、`NWICQ26WLResource`（**`canSteal`/`canHelp`/`hasGatherOwner`/`isGatheringResource`/`needShowResourceBubble` 全文，§4.4 的逐字依据**）、`CQ26MapData`（`requestData`/`updateData`/`applyWastelandRegions`/`fillRenderRect`）、`CQ26MapDataMgr`、`CQ26MapUI`、`RealCQ26Controller`（`updateSelfInfo`/`updateStatusData`/`onRoundChange`）、`CQ26Response`（22001 Handler）、`CQ26Common`（枚举）、`CQ26MapCommon`（`WASTELAND_1x1_1=2/_1x1_2=3/_2x2=4`、`CQ26_MAP_FACTOR=4`）、`PBMsgClient`（`PBEnumSeriesFrost*Beast*State` 三套枚举）、`N{Request,Response}IdV2`
 - 报文：印石战区真人录制会话（连开箱场、小游戏/最近冰点场、发掘场、2124/2125 同秒伤害跳变场、2116 守护 + 2117 融冰场、**印石日常主跑趟三腿与 2201 主证据**）
 - 脚本（本文可复跑）：`.reviewtmp/cq26wl-fielddict.mjs`（字段形态普查）、`.reviewtmp/cq26wl-probe.mjs`（逐协议样本）、`.reviewtmp/cq26wl-codes.mjs`（应答码分布）、`.reviewtmp/send-probe.mjs`（源码调用点）、`.reviewtmp/sf-map.mjs`（符号→号对照）；本轮新增：`.reviewtmp/star-land-2201.mjs`（2201 解剖）、`star-land-region-stat.mjs`（612 region 统计）、`star-land-crosstab.mjs`（type×status×归属服交叉）、`shownum-is-index.mjs`（`showNum===wastelandIndex` 终判据）、`beast-status-scan.mjs`/`beast-xfile.mjs`/`beast-mSid.mjs`（beastStatus 全库普查）、`nwl-writes-census.mjs`（写动作形状）、`pointtype-census.mjs`（901 点型与 `m` 键集）、`steal-verify.mjs`/`steal-tile-track.mjs`/`guard-vs-steal-deduct.mjs`（扣减铁证）、`help-quota.mjs`（22072 与写动作同秒时间线）、`march-src-probe.mjs`（2121 前后行军上下文）
 - wl-chest 专用（本文可复跑）：`.reviewtmp/chest-kmap-session.mjs`（坑 14 三条反证的取证：`2120` 应答 `k` vs 同房间 315 地块 `specIndex`、宝箱分区 `wastelandType`、单 status4 分区覆两房间）、`.reviewtmp/chest-replay-check.mjs`（离线回放对拍：真人 5 发 2118 的 `wastelandIndex` 与我方地块推导逐键一致 5/5、“下一份 22077 快照已消失”命中 5/5）；单测 `tests/feats/cq26-wl-chest.test.js`。报文会话为印石日常趟实录（坑 15 的报文序铁证：四发 `2118` 均为 `req → 22072(remain−1) → 22077 → resp`，额度 5→4→3→2→1，单颗往返 45–59ms）。
-- 竞品B：`references/竞对逆向/竞品B/assistant/payload/server-js.js` 快照内**无任何 CQ26 NWL 实现**（`SERIES_FROST_*` 符号、2114/2118/2456 等号段、中文关键词三层扫描均 0 命中），只有 CQ25/CQ24 世代 `CQ25Gather`/`conquerorGather` 的"赛季矿山"状态机形状可参考 —— 本设计**不抄**它。
+- 竞品B：其快照内**无任何 CQ26 NWL 实现**（`SERIES_FROST_*` 符号、2114/2118/2456 等号段、中文关键词三层扫描均 0 命中），只有 CQ25/CQ24 世代 `CQ25Gather`/`conquerorGather` 的"赛季矿山"状态机形状可参考 —— 本设计**不抄**它。

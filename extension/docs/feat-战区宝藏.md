@@ -48,7 +48,7 @@
 
 ## 2. 发现通道选型（本篇的核心取舍）
 
-玩家侧的真相只有一个：世界地图左下角那一列活动按钮里的宝藏 icon。它的显隐判据（`subpack2/NWorldUIActBtnSetting`）是
+玩家侧的真相只有一个：世界地图左下角那一列活动按钮里的宝藏 icon。它的显隐判据（`NWorldUIActBtnSetting`）是
 
 ```js
 checkCQ26NeutralExcavShow = () =>
@@ -74,7 +74,7 @@ checkCQ26NeutralExcavShow = () =>
 ### 3.1 与 `getFirstOpenEnableSite` 逐行对齐
 
 ```js
-// 游戏原式（extracted/Script/CQ26NeutralController）
+// 游戏原式（CQ26NeutralController）
 for (n of _excavOpenSiteList) {
   if (checkExcavSiteClaimed(n.siteId)) continue; // _claimedSiteIds.indexOf >= 0
   if (null != o && n.ownerSid == o) {
@@ -127,7 +127,7 @@ feat 侧 `buildQueue()` 把它拆为两个纯函数（`pickOpen` 闸门过滤 + 
 这两条都是实测/源码级踩坑，改 ACL 时勿回退：
 
 1. **只缓存类，单例每次现取**。`probe` 命中即永久返回缓存值，而 `ResetGame.purgeData()` 会执行
-   `He.default.getInstance().purge()`（实证 `extracted/Script/ResetGame`，`He` = CQ26NeutralController；`purge` 内 `t.instance = null`）。
+ `He.default.getInstance.purge`（实证 `ResetGame`，`He` = CQ26NeutralController；`purge` 内 `t.instance = null`）。
    缓存实例 ⇒ 跨服/重置流程后投影永远读僵尸对象，且返回的是**非 null 陈旧数组**，
    于是「投影优先」分支永占上风、22062 回落通道被结构性屏蔽（只能刷页自愈）。回归用例见「purge 重建单例后投影必须跟上新实例」。
    对照：`CQ26Controller` **无** `prototype.purge`，故 `_cq26()` 缓存实例无此风险（别照抄本节的顾虑过去）。

@@ -6,7 +6,7 @@ status: accepted
 
 不发商店、也走不通 CRX：普通 Windows 设备上自托管 `update_url` 会被标 `[BLOCKED]`、sideload 的 CRX 会被自动禁用，而「每次发版重打压缩包 + 让朋友重新加载」成本高到实际上没人更新。改成两层：日常只把新的**远程体**传到阿里云 OSS，玩家刷新页面即用新版；**壳**季度级才换一次。
 
-可行性前提已实测：`https://warh5.rivergame.net/webgame/index.html` 的响应头里**没有任何 `Content-Security-Policy`**（tencent-cos 直出，也无 meta CSP），所以 MAIN world 的 `new Function` 不受页面限制——被限制的只有扩展自身页面（SW 里 eval 仍被 MV3 禁死，故 exec 必须发生在 MAIN world）。竞品B 在同一游戏生产在用同一原语（`references/竞对逆向/竞品B/assistant/inject.js:661`：取 payload 文本 → `new Function(...)()`，且其「已安装更新包」就是把正文文本存本地再 eval）。
+可行性前提已实测：`https://warh5.rivergame.net/webgame/index.html` 的响应头里**没有任何 `Content-Security-Policy`**（tencent-cos 直出，也无 meta CSP），所以 MAIN world 的 `new Function` 不受页面限制——被限制的只有扩展自身页面（SW 里 eval 仍被 MV3 禁死，故 exec 必须发生在 MAIN world）。竞品B 在同一游戏生产在用同一原语（取 payload 文本 → `new Function(...)()`，且其「已安装更新包」就是把正文文本存本地再 eval）。
 
 这是对「拒绝远程下发」的**有意反转**。早先分析竞对时，我方把「服务端下发闭源逻辑」判为供应链风险，并以此为镜强调本地可审计是护城河。现在选择承担这份风险，因为「发不出去版」的代价已经高于它，缓解手段随之定死：
 

@@ -402,4 +402,4 @@ L2: 901 {x, y, k:wkid, width, height, viewLevel} → pointList[pointType=316] �
 - [acl-cq26-荒芜冰原.md](acl-cq26-荒芜冰原.md) — 19 协议完整字段字典
 - [feat-荒芜冰原采集.md](feat-荒芜冰原采集.md) — 采集腿历史详细设计（wl-mine 前身）
 - 录制样本：`dashcam/store/11981629951662/dashcam-rec-20261109T043951-*.ndjson`（15.5h 无棋盘 push）
-- 游戏源码：`references/游戏逆向/extracted/subpack/CQ26WLOpenBaseComponent__*.js`、`CQ26WLOpenMain__*.js`、`CQ26WasteLandData__*.js`、`CQ26Response__*.js`
+- 游戏源码：`CQ26WLOpenBaseComponent`、`CQ26WLOpenMain`、`CQ26WasteLandData`、`CQ26Response`

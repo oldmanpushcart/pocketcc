@@ -15,9 +15,9 @@
 
 「霜之密所」= **CQ26 中立城商店（CNC Shop / Mystery Shop）**，不是 `SERIES_FROST_SHOP_*`(2169/2170，捐赠/战功双页签的密宝商店)，也不是 `SERIES_FROST_SECRET_*`(2471+，组队开车族)。三条独立证据：
 
-1. `Script/ConquerorSession.initReplaceMap()`：CQ26 开启时把整套 `CQ2025_CNC_SHOP_*` 协议号替换为 `SERIES_FROST_NEUTRAL_CITY_SHOP_*`，表名 `conqueror_2025_cnc_shop` → `series_frost_cnc_shop`。**UI 与逻辑完全复用 CQ25，只换号换表**。
+1. `ConquerorSession.initReplaceMap`：CQ26 开启时把整套 `CQ2025_CNC_SHOP_*` 协议号替换为 `SERIES_FROST_NEUTRAL_CITY_SHOP_*`，表名 `conqueror_2025_cnc_shop` → `series_frost_cnc_shop`。**UI 与逻辑完全复用 CQ25，只换号换表**。
 2. `CQ25CNCShopCityComp` 的入口常量是 `FakeActivityId.CQ25MysteryShop / CQ26MysteryShop`（Mystery Shop = 密所）。
-3. 竞品 A `server-js.js` 里该模块中文名 `'cncShop': { text: "印石密所" }`。
+3. 竞品 A 快照里该模块中文名 `'cncShop': { text: "印石密所" }`。
 
 `cnc_city_level`（城档表）**两期共用、不在替换表里** ⇒ feat 现查它拿档位高低。
 
@@ -78,7 +78,7 @@ playerInfo:"JSON 串", alTag:"304%", status, statusEndSec, buyCnt:{cfgId:已售�
 备钻（页脚） = 把勾选商品的可买份数 min(全服剩余, 本人限购余量)（并过积分门槛）按单价降序展开，取最贵的 N 份求和   // N = 本期剩余总次数
 ```
 
-> **货币单位（已核）**：表列名 `need_gold`、游戏枚举 `ResourceType.Gold=10` 都叫“Gold”，但 `ResourceNameConst[10]` 指向 loc `100017`＝**钻石**（`references/字典表.txt`），两个竞品的 `buyItem` 也都拿 `getResource(ResourceType.Gold)` 与 `need_gold` 比较——即玩家侧实际扣的是**钻石**，不是金币。本 feat 面板/文案统一写“钻石”，内部仍沿用 `gold`/`need_gold`/`spentGold` 以对齐报文与枚举。
+> **货币单位（已核）**：表列名 `need_gold`、游戏枚举 `ResourceType.Gold=10` 都叫“Gold”，但 `ResourceNameConst[10]` 指向 loc `100017`＝**钻石**（游戏本地化字典），两个竞品的 `buyItem` 也都拿 `getResource(ResourceType.Gold)` 与 `need_gold` 比较——即玩家侧实际扣的是**钻石**，不是金币。本 feat 面板/文案统一写“钻石”，内部仍沿用 `gold`/`need_gold`/`spentGold` 以对齐报文与枚举。
 >
 > **商品身份 = 品种 + 数量（已核）**：用户口径「只有品种+数量才能构成一个商品」——实测橙色万能碎片有 `x15` 与 `x3` 两档，在面板上是**两个商品**（只出品种会撞成两行看不出差别）；游戏侧行名同口径（竞品 B `cname = item_num + "个" + 物品名`）。本 feat 行名 = 物品名 + `x数量`（`goodsLabel`，`item_num` 由 `cq26ShopRows` 投影成 `num`）。
 > 反过来，**同一 `(item_id, item_num)` 在普通城/高级城各占一行**（如 cfg 5 与 105）时是**同一个商品**：`productsOfRows()` 按 `productKey = 'i'+itemId+'x'+num` 合成一行、共用勾选、总数量相加；下单时再展开到该商品在这一所上架的全部 cfg 行——因为报文侧的库存/限购**始终按 cfg 行计**（`buy_limit_all` 在表上、`buyCnt`/`selfBuyCnt` 的键就是 cfg id），商品只是「同货的若干 cfg 行」的别名。

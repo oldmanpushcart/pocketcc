@@ -79,7 +79,7 @@ itemId   ──label───────▶ ITEM_NAMES 命中 ─▶ 中文
 - **别拿 `fromReward().rawName` 当身份**：它是 loc 键，匹配必须用 `.itemId`。rawName 只是喂 `label()` 的兜底翻译输入。
 - **`ITEM_NAMES` 未登记 ≠ 物品不存在**：`label()` 会走 l10n/占位兜底；但 `sortResolve()` 严格——未登记返回 null（面板不列该项）。新池物品要在 feat 池 + 视需要补登记。
 - **函数内局部变量勿命名为 `item`**：会与模块导入 `item` 冲突（alliance-help 的 `getItemAmount` 形参已从 `item` 改名 `it` 以避免遮蔽）。
-- **`amount` 走的是 `gameData.itemAmount` 的 UserData**，与游戏面板 `getItemAmount(reward_param)` 同源口径（联盟帮助对齐 AllianceHelpSelectPanel_New.js:70,177）。
+- **`amount` 走的是 `gameData.itemAmount` 的 UserData**，与游戏面板 `getItemAmount(reward_param)` 同源口径（联盟帮助对齐 AllianceHelpSelectPanel_New）。
 
 ## 7. 调试面
 

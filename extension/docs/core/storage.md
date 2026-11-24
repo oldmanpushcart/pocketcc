@@ -18,7 +18,7 @@
 
 **不管什么**（铁律）：
 
-- **不做配置合并/迁移语义**：读盘后如何按 defaults 合并、版本迁移属 [`registry.js`](registry.js)；本模块只管键值读写。
+- **不做配置合并/迁移语义**：读盘后如何按 defaults 合并、版本迁移属 [`registry.js`](../../src/core/registry.js)；本模块只管键值读写。
 - **不主动设命名空间**：`setNamespace` 由 player.js 在 UID 就绪时调用。
 - **MAIN 侧禁止直接 `chrome.storage`**：那是 bridge.js 的职责。
 

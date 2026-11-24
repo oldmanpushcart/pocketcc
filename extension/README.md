@@ -21,58 +21,71 @@
 
 - **免扫码自动登录** — 缓存游戏自己的 `serverToken` 并在下次启动时重放，跳过扫码页；补一个「登出 / 换号」按钮（游戏在自动复用 token 后默认无法主动换号）。
 - **自动重连** — 监听断线弹窗与流量停滞，按配置间隔调度整页重载恢复会话；会话恢复健康后自动清零计数。
+- **后台保活** — `document_start` 的反节流补丁 + 帧驱动：标签页切到后台仍按 `idleHz` 跑引擎帧与定时器，隐藏页自动化不停摆（默认开启，可关回浏览器行为）。
 - **泰坦祝福** — 推送驱动：活动推送一到即领取，零轮询。
 - **联盟帮助** — 轮询各类帮助石头并自动协助/领取，按 kind 去重。
-- **采集与限时活动自动化** — 领域寻宝（挖矿）、海上夺宝、占领发射井、花车空投、自动下田、遗迹奖励：以「推送 + 主动扫描 + 兜底定时」组合触发拉取目标，名额判定后逐条派遣；被服务器以「剩余时间不足以行军」拒派或撞限额的目标当日拉黑，等它从名单消失才解禁。
-- **联盟协作** — 联盟集结（按战锤/惧星/难民营分段设置）、联盟礼物、联盟科技、联盟机甲，覆盖捐赠/协助/出征的日常协作。
+- **一键型日常** — 每日补给 / 广告领钻石 / 自动收取金币 / 军火库生产材料 / 秘密武器空投 / 一键领取 / 每日特惠 / 生日祝福：只出勾选，不带参数，一律走 descriptor 默认值。
+- **采集与限时活动自动化** — 领域寻宝（挖矿）、海上夺宝、占领发射井、花车空投、自动下田、自动打野、雷达任务、遗迹奖励：以「推送 + 主动扫描 + 兜底定时」组合触发拉取目标，名额判定后逐条派遣；被服务器以「剩余时间不足以行军」拒派或撞限额的目标当日拉黑，等它从名单消失才解禁。
+- **联盟协作** — 联盟集结（按战锤/惧星/难民营分段设置）、联盟礼物、联盟科技、联盟守卫、联盟保卫战、联盟机甲，覆盖捐赠/协助/出征的日常协作。
 - **战争之源** — 限时世界 BOSS：以回包 `finishTime` 为在场窗口排表、慢扫补派，不轮询空跑。
 - **次元矿洞** — 挖矿与盗窃封存双引擎，预算驱动（剩余次数 / 时间窗 / 冷热加权）规划动作。
-- **城市技能 / 玩家点赞** — 日常一键操作自动化。
-- **快捷战斗 / 奉旨出征** — 战斗辅助：面板驱动的快捷攻击（`Shift+1-8` 三连：先派预设再最小出征）与奉旨出征批量发包。
+- **城市技能 / 玩家点赞 / 异能兽培育 / 卡车争夺 / 惧星集结** — 日常一键与养成循环类自动化。
+- **机械制药 / 快速修理** — 制药 lane 单飞排产；英雄免费快速修理 + 医院加速，支持「只开免费线」的灰度用法。
+- **假面舞会** — 2026 万圣节基地宝箱：派对分享卡推送一到即领，只出勾选。
+- **异能秘境** — 秘境世界（`kind='pab'`）内的多引擎协同：拍宠物（免费手拍打底 + 拖拽推送即拍 + 能量满放持续拍）、拾取（掉落箱/资源点三类合并，按道具 ID 聚合目标持有量）、增益井（队长三槽不重复分类）、编队治疗、BOSS 攻打与投喂、商店低保；自动驾驶（含攻击警告应对）为面板开关，默认关。
+- **夺宝奇兵（CS-HUNT）** — 限时组队夺宝：建队/审批/入队一条引擎，探索回合的事件族场景机（选场景 → 拾奖 / 掷骰 / 码盒 / 择技）+ 技能池择优，P4 全自动默认开（保命盾、隐身闪现、末回合清空背包）。
+- **CQ26印石（赛季 TAB）** — 11 个玩法成组：战区宝藏、遗失之箱、能量补充车队、急速解冻、雪原列车、霜之密所抢购、荒芜冰原矿区、猛犸突袭、冰原巨熊、保卫能量、巨兽盛宴。整个 TAB 由活动闸门 `cq26Open` 门控——活动未开启（含符号投影不可得）时整页不可点。
+- **快捷战斗 / 奉旨出征 / 自动防御** — 战斗辅助：面板驱动的快捷攻击（`Shift+1-8` 三连：先派预设再最小出征）、奉旨出征批量发包、受袭自动防御。
 - **全局地图** — Shadow DOM 浮层：分区扫描全图点位、按归属/等级/护盾筛选、色块底图，支持跳转/取点，几何与扫描数据落盘（`Ctrl+M` 开合）。
 - **聊天窗口** — 半透明浮层：世界/联盟等多频道收发的独立视图，支持 @点名、引用、坐标跳转、撤回、玩家信息卡；只读游戏态、经 `pocketcc.chat` 收发，不改写游戏任何状态（`Ctrl+K` 开合）。
 - **游戏内快捷键** — `Tab` 飞回基地、`H` 基地↔大世界、`B` 背包、`Esc` 关闭当前弹窗、`1-8`+`G` 在战斗面板选预设并出征；`F8` 切日常/战斗模式。全局输入层单监听统一分派（打字自动让位、修饰键放行、按场景门控）。
 - **报文录制（黑匣子）** — 默认关闭，开启时仅 tap 缓冲 + 定时批量落盘，绝不阻断游戏真实收发；落盘由本仓库的 [`dashcam/`](../dashcam/README.md) 承接（见[架构](#架构)）。
 - **日志上送** — 与报文录制平行的独立开关（不同存储键/不同端点）：`core/log.js` 单点 tee 到 `core/log-collect.js`，缓冲+连续同文案折叠后批量 POST 到 dashcam `/log`；长期常开设计，热路径仅一次判空+push（序列化/网络全部延迟到 flush），录制器自身日志走 quiet 豁免防自录回声。
+- **设置备份** — 导出/导入配置 blob（不含运行数据），导入逐键并入、写完重读盘并全量重推，即时生效不必刷新页面。判据在 `core/settings-io.js`，口径见[使用 · 设置备份](#设置备份导出--导入)。
 - **战斗模式总开关** — 面板上的全局开关（或热键 `F8`）：开启时派行军类的功能主动挂起，纯发包类与会话看门狗继续跑；浮动图标同步切换日常/战斗双态并带呼吸光晕。
 - **在线自动升级** — 本地壳季度级换一次，日常只把新远程体传 OSS：后台每 4h 检查、下正文、双验（SHA-256 + HMAC）后只落缓存，面板/角标/欢迎页脚提示「刷新页面即生效」；OSS 挂了照旧跑包内基线，零中断。
-- **菜单树驱动面板** — Shadow DOM 左右两栏：左为类别 TAB（日常设置 / 战斗设置 / 地图设置 / 系统设置，切换只换右栏），右为卡片列表（组卡片带主闸门开关，关则级联停用子项；功能卡片带启用开关，可展开详细字段）。层级定义在 `core/menu.js`，字段/存储/默认值仍在各功能 descriptor；日常任务与快捷战斗只出 checkbox 不需详细参数，改动即存档即生效。
+- **菜单树驱动面板** — Shadow DOM 左右两栏：左为类别 TAB（**玩家设置 / 联盟设置 / 活动设置 / CQ26印石 / 战斗设置 / 系统设置** 六个，切换只换右栏），右为卡片列表（组卡片带主闸门开关，关则级联停用子项；功能卡片带启用开关，可展开详细字段）。层级定义在 `core/menu.js`，字段/存储/默认值仍在各功能 descriptor；一键型日常与快捷战斗只出 checkbox 不需详细参数，改动即存档即生效。
 
 ## 架构
 
-Chrome MV3。清单只引用 `dist/*` 的 esbuild 产物（IIFE；dev 构建未压缩 + sourcemap 以保控制台栈可读，release 构建 minify 且去 sourcemap）。注入目标 `https://warh5.rivergame.net/*`：
+Chrome MV3。注入目标 `https://warh5.rivergame.net/*`，清单只声明**壳侧**四条产物（IIFE；dev 构建未压缩 + sourcemap 以保控制台栈可读，release 构建 minify 且去 sourcemap）：
 
-| 入口                   | world          | 职责                                                                                           |
-| ---------------------- | -------------- | ---------------------------------------------------------------------------------------------- |
-| `dist/anti-throttle.js`| MAIN           | `document_start` 就位：对抗后台标签页的定时器/RAF 节流，必须早于游戏与壳                          |
-| `dist/shell.js`        | MAIN           | **本地壳**：向 bridge 取「本地已就绪的最优远程体」并 `new Function` 执行；不等网络，执行报错则当场降级跑包内基线 |
-| `dist/remote.js`       | MAIN           | **远程体**（feats + core 全量）：与游戏同域同上下文，hook 游戏网络层与控制器，跑全部功能。同一个文件既上传 OSS、也留在包内作离线基线 |
-| `dist/bridge.js`       | ISOLATED       | 唯一持 `chrome.*` 的一侧：代理 `chrome.storage` 读写给 MAIN；把报文转发给 background；中继升级命令与状态广播 |
-| `dist/background.js`   | Service Worker | 唯一出网口：代发 `fetch POST http://127.0.0.1:7391/ingest` 到本地 dashcam；跑升级状态机（拉清单/下正文/验签/写缓存/`alarms` 定时复检） |
-| `dist/popup.js`        | 扩展弹窗       | 登录凭证导入导出                                                                                 |
+| 入口                    | world          | 职责                                                                                           |
+| ----------------------- | -------------- | ---------------------------------------------------------------------------------------------- |
+| `dist/anti-throttle.js` | MAIN           | `document_start` 就位：对抗后台标签页的定时器/RAF 节流，必须早于游戏与壳                          |
+| `dist/shell.js`         | MAIN           | **本地壳**（`document_idle`）：向 bridge 取「本地已就绪的最优远程体」并 `new Function` 执行；不等网络，执行报错则当场降级跑包内基线 |
+| `dist/bridge.js`        | ISOLATED       | 唯一持 `chrome.*` 的一侧（`document_idle`）：代理 `chrome.storage` 读写给 MAIN；把报文/日志转发给 background；中继升级命令与状态广播 |
+| `dist/background.js`    | Service Worker | 唯一出网口：代发 `fetch POST http://127.0.0.1:7391/ingest`、`/log` 到本地 dashcam；跑升级状态机（拉清单/下正文/验签/写缓存/`alarms` 定时复检），并经 `chrome.runtime.getURL` 读包内基线 |
+| `dist/popup.html` + `dist/popup.js` | 扩展弹窗 | 登录凭证导入导出（`action.default_popup` 指 HTML，esbuild 只打包 JS、HTML 原样拷贝） |
 
-`manifest.json` 权限：`storage` / `unlimitedStorage` / `scripting` / `activeTab` / `alarms`；`host_permissions`：`http://127.0.0.1/*`、`http://localhost/*`（报文录制 POST 到本地 dashcam）+ 升级域名（发布构建按通道基址自动追加，缺则 SW 的 GET 被拦）。顶层 `key` 固定扩展 ID，供 OSS CORS 与长期身份复用；tracked 这份存的是 **dev key**，正式与快照的 key 在 `channel-keys.json`，打包时按通道注入（见「发布通道」）。
+`dist/remote.js`（**远程体** = feats + core 全量，与游戏同域同上下文，hook 游戏网络层与控制器）**不出现在清单里**：同一个文件既上传 OSS、也由后台经 `BASELINE_URL` 读作包内基线，运行时由壳取到并 exec——不设第二份副本。
+
+`manifest.json` 权限：`storage` / `unlimitedStorage` / `scripting` / `activeTab` / `alarms`；`host_permissions`：`http://127.0.0.1/*`、`http://localhost/*`（报文/日志 POST 到本地 dashcam）+ 升级域名（传 `--oss-base=` 时由构建把其 origin 补进数组，「基址与 host_permissions 同值」由构建保证而非人肉；dev 构建不动 manifest）。顶层 `key` 固定扩展 ID，供 OSS CORS 与长期身份复用；tracked 这份存的是 **dev key**，正式与快照的 key 在 `channel-keys.json`，打包时按通道注入（见「发布通道」）。
 
 核心是 **EventBus + 两层 reactor**：
 
-- **EventBus**（`core/bus.js`）— 事件类：`net.<cmd>`（游戏推送/应答）、`session.*`（会话健康）、`scene.*`（cc 场景切换）、`mode.change`（战斗模式）、`tick.*`（定时）。
-- **reactor**（`core/reactor.js`）— 功能以「说明书」形态注册（触发器 + 可选 produce→queue→drain）；门控是**可注册集合**（`shouldRun = enabled && 所有门控通过`），现有 scene 门控（`Home`/`NWorldMap` 白名单）与 mode 门控（`offInCombat`）。门控翻 false 走 pause（退订推送、停定时、在飞流程自然退出、保留队列与配置），翻回 true 走 resume 并补扫一轮。
-- **底座自注册全局** — `net`/`event`/`chat`/`net-collect` 挂在 `window.pocketcc.*`，各功能经全局访问而非互相 import，避免循环依赖：
-  - **net**（`core/net.js`）— `NetMgr` 的 promise 封装（`send`/`sendPBV2`/`isSending`/`Ret`，15s 应答超时防 await 挂死）+ `NetReciver.onMessage` 单点 hook，把游戏推送派发到 bus；`collecting()` fluent builder 提供报文观测面。
+- **EventBus**（`core/bus.js`）— 单例、`emit` 恒同步。固定事件名收在导出的 `EVT` 字典里（`ui.refresh`、`mode.change`、`world.change`、`scene.change`、`player.ready`、`player.configs-reloaded`、`session.healthy`、`session.unhealthy`、`farm.skill-restore`、`update.state`）；动态类只有三条报文族：`net.<cmd>`（推送）、`net.resp.<cmd>`（应答）、`net.req.<cmd>`（本端发包），载荷是 `core/net-observe.js` 的 `Event`。**帧定时不进 bus**（`createCycle` 的 tick 由 reactor 合成，见下），**聊天推送也不进 bus**（`ctx.on.chat` 直连聊天 socket）。
+- **reactor**（`core/reactor.js`）— 功能以「说明书」（spec）形态注册（`install`→`configure`→`run`→`pause`），排程靠三个 core 调度原语：A `createCycle`（`core/cycle.js`，电平调和循环）、B `createDrain`（`core/drain.js`，逐条串行消费）、D `createSnapshotPool`（`core/snapshot-pool.js`，边沿推送入池 + TTL + 一次性消耗）；分类里的 C（N 实例各自计时的堆排程）尚无 core 底座，目前只有 `feats/activity/floatcar/` 的局部实现；门控是**可注册集合**（`registerGate`，`shouldRun = installed && enabled && 所有 gate.ok(spec)`），今天只有两个：
+  - **`mode` 门控**（`core/mode.js`）— `!(combat && spec.offInCombat)`：战斗模式下挂起派行军类功能。
+  - **`world` 门控**（`core/scene-watcher.js` 安装，判据在 `core/world/state.js`）— spec 声明 `kinds` / `places`，对世界态快照（Kind × Place × Phase）求值；空/缺省列表一律放行。**旧的 `scene` 门控（`spec.scenes` 白名单）已退役**，等价迁移到 `places`（`Home`→`base`、`NWorldMap`→`world`）。秘境（`kind='pab'`）是隔离特例：必须显式声明 `kinds:['pab']` 才可能在秘境内运行。
+  门控翻 false 走 pause（退订推送、停定时、在飞流程自然退出、保留队列与配置），翻回 true 走 resume 并补扫一轮。
+- **底座自注册全局** — `net`/`chat`/`event`/`netCollect`/`logCollect` 五个底座在自己模块底部挂 `window.pocketcc.*`（reactor 功能则**不再**挂全局，`remote.entry.js` 只并入 core 工具）：
+  - **net**（`core/net.js`）— `NetMgr` 的 promise 封装（`send`/`sendPB`/`sendPBV2`/`sendGuarded`/`isSending`/`Ret`，15s 应答超时防 await 挂死）+ `NetReciver.onMessage` 单点 hook，把游戏推送/应答派发到 bus；观测面（`collecting`/`stream`/报文归一）拆在 `core/net-observe.js`，载荷归一在 `core/net-payload.js`。
   - **event**（`core/event.js`）— `EventCenter` 的按需订阅封装（`ctx.on.event` 退订自动登记、pause 统一摘除）。
-  - **chat**（`core/chat.js`）— 对 `NetChatClient` 的薄封装，只读 + 发包。
+  - **chat**（`core/chat.js` + `core/chat/`）— 聊天底座装配薄壳，实际分五面：`client`（生命周期/连接态）、`send`（主 socket 发包）、`proxy`（签名 REST 读数据）、`receive`（直连 socket 收信 + 自愈重挂）、`normalize`（推送 schema 归一），另加 `context`（共享依赖叶子）与 `log`（日志面开关）。
+  - **march / battle**（`core/march.js`、`core/battle.js`）— 行军的统一行为层（856 取列表 / 902·904·920 发撤加速 / 10019 生命周期单点订阅→边沿检测→内部复播）与发包载荷构造器（`plan().preset(n).adjust().build()`，只造数据不发包），均走 ESM import 直取，不挂全局。
 
 报文录制链路（跨进程，绕页面 CSP）：
 
 ```
 MAIN core/net-collect.js  ──postMessage──▶  bridge.js  ──chrome.runtime──▶  background.js  ──fetch POST──▶  dashcam /ingest
-   (缓冲 NDJSON)                            (ISOLATED)                      (service worker)                (按会话落盘 .ndjson)
+   (缓冲 NDJSON)                            (ISOLATED)                      (service worker)                (按会话定稿落盘 .ndjson)
 ```
 
 日志上送链路（同一通道、不同 op/端点，两个开关互不依赖）：
 
 ```
-MAIN core/log.js sink tee ──▶ core/log-collect.js（缓冲+折叠）──postMessage(op=dashcam-log-flush)──▶ bridge ──▶ background ──▶ dashcam /log（按小时轮转）
+MAIN core/log.js sink tee ──▶ core/log-collect.js（缓冲+折叠）──postMessage(op=dashcam-log-flush)──▶ bridge ──▶ background ──▶ dashcam /log（按天直写，超保险丝滚 -NN 段）
 ```
 
 两个开关都关时 dashcam 无需运行，扩展完全独立可用。
@@ -81,62 +94,99 @@ MAIN core/log.js sink tee ──▶ core/log-collect.js（缓冲+折叠）──
 
 ```
 extension/
-├─ docs/                     设计文档：核心 API（一模块一篇：职责边界/取舍/契约/降级）+ `adr/` 架构决策记录，见 [docs/README](docs/README.md)
-├─ manifest.json             MV3 清单（只引用 dist/*；顶层 key 存的是 dev 通道那一条）
+├─ docs/                     设计文档：核心 API（一模块一篇：职责边界/取舍/契约/降级）+ feat 台账 + `adr/` 架构决策记录，见 [docs/README](docs/README.md)
+├─ manifest.json             MV3 清单（只引用壳侧 dist/*；顶层 key 存的是 dev 通道那一条）
 ├─ channel-keys.json         snapshot / release 两档的 manifest.key（仅公钥派生物、不含私钥），打包时按通道注入
 ├─ assets/                   图标 16/48/128 三档 PNG
 ├─ dist/                     esbuild 产物（gitignore，不入库）
-└─ src/
-   ├─ shell.js              MAIN 薄壳入口（document_idle）：取本地就绪的远程体 → exec → 报错即降级跑包内基线
-   ├─ remote.entry.js       远程体入口；import 顺序即加载顺序：底座 → feats → boot
-   ├─ anti-throttle.js      document_start 反节流（MAIN，早于壳与游戏）
+└─ src/                      共 4 个壳侧入口 + 1 个远程体入口 + popup
+   ├─ shell.js               MAIN 薄壳入口（document_idle）：取本地就绪的远程体 → exec → 报错即降级跑包内基线
+   ├─ remote.entry.js        远程体入口（= dist/remote.js）；import 顺序即加载顺序：底座 → feats → boot；末段把 core 工具并入 window.pocketcc
+   ├─ anti-throttle.js       document_start 反节流（MAIN，早于壳与游戏）；挂 window.pocketccAntiThrottle
    ├─ bridge.js              ISOLATED 入口（chrome.storage 代理 + 转发 background + 中继升级状态）
-   ├─ background.js          service worker（代发 POST 到 dashcam、升级状态机，均绕开页面 CSP）
-   ├─ boot.js                编排器（场景监视/自动登录/重连 hook/启动闸/UI 挂载）
-   ├─ core/                  全部跨玩法底座 + reactor 生命周期层
-   │  ├─ net.js             网络底座（window.pocketcc.net：NetMgr 封装 + 推送派发）
-   │  ├─ update.js          升级通道判据单一真相（版本/清单解析/地址拼接/就绪选择/下载决策/验签/提示口径），纯函数无 I/O
-   │  ├─ update-client.js   MAIN 侧只读镜像：向 bridge 取快照、订阅状态广播，供面板/角标/欢迎页脚消费
-   │  ├─ net-collect.js     报文黑匣子流式录制（window.pocketcc.netCollect）
-   │  ├─ net-payload.js     报文编解码辅助
-   │  ├─ event.js           EventCenter 封装（window.pocketcc.event，按需订阅/退订）
-   │  ├─ chat.js            聊天通道薄封装（window.pocketcc.chat）
-   │  ├─ battle.js          行军发包载荷构造（预设 / 最小出征，跨战斗 feat 共享）
-   │  ├─ bus.js             EventBus（单例、emit 恒同步）
-   │  ├─ reactor.js         两层模型 + 可注册门控（说明书生命周期）
-   │  ├─ registry.js        descriptor 驱动配置单一真相（组配置读盘/存档、intent 补全）
-   │  ├─ menu.js            面板菜单树（类别→组/功能）单一真相，组闸门语义在此声明
-   │  ├─ game.js            游戏模块 hub（__require 集中；缺失软失败返回 null）
-   │  ├─ game-api.js        ACL 防腐层共享区段（l10n / gameData / worldMap / march 等；活动适配器已下沉各 feat 的 api.js）
-   │  ├─ acl-engine.js      ACL 引擎核（SYM 共享表 / probe 惰性探测 / CAPS 自检 / createAcl 工厂，feat api.js 经它共用单例）
-   │  ├─ player.js          UID 与玩家态
-   │  ├─ storage.js         MAIN 侧 chrome.storage 代理客户端（UID 前缀下 config/data 两个 blob）
-   │  ├─ session.js         会话健康广播 + 自动重连
-   │  ├─ auto-login.js      token 缓存重放（免扫码）
-   │  ├─ scene-watcher.js   cc 场景信号（EVENT_AFTER_SCENE_LAUNCH）→ scene.* 事件
-   │  ├─ mode.js            战斗模式布尔 + mode 门控（不持久化，默认日常）
-   │  ├─ hotkeys.js         全局快捷键注册表（单监听统一分派：打字让位 / 修饰键放行 / 场景门控）
-   │  ├─ drain.js           通用消费循环（produce→queue→drain 的 drain 段）
-   │  ├─ ui/                表现层（拆自旧 ui.js）：Shadow DOM 浮动图标 + 左 TAB 右卡片面板
-   │  │                     index.js 编排 mountUI；panel/fields/widgets/wire 渲染与事件；welcome.js 启动署名告知页；
-   │  │                     consts/dom/icon-pos/panel-css/icon-svg 为零依赖叶子原语
-   │  ├─ log.js             统一日志 [POCKETCC://MODULE]
-   │  └─ constants.js       实例命名收口：两 world 的 postMessage 协议命名空间 NS、存储前缀根段与发布通道后缀
-   └─ feats/                功能模块（目录层级对齐面板菜单树五类别，均向 reactor 注册说明书）
-      ├─ player/            玩家设置：daily-supply / armory-material / secret-weapon-drop / one-click-claim /
-      │                     player-like / source-of-war/ / truck-intercept / auto-farm / auto-hunt /
-      │                     fear-star-rally / mine-cave/ / beast-breed / city-skill
-      ├─ alliance/          联盟设置：alliance-help / alliance-gift / alliance-science / alliance-behemoth /
-      │                     alliance-rally / alliance-boss / relic-reward
-      ├─ activity/          活动设置：sea-treasure / mecha-treasure / domain-treasure / titan-blessing /
-      │                     floatcar / launch-silo / secret-realm/
-      ├─ battle/            战斗设置：quick-attack（快捷战斗）/ imperial-decree（奉旨出征）/ auto-defense（自动防御）
-      └─ system/            系统设置
-         ├─ chat/           聊天窗口：chat-window / chat-overlay / classify
-         ├─ map/            全局地图与镜头跳转：global-map（+ render / scanner / store / terrain / map-overlay / map-meta）/
-         │                  quick-jump（+ jump-overlay）
+   ├─ background.js          service worker（代发 POST 到 dashcam、升级状态机、读包内基线，均绕开页面 CSP）
+   ├─ popup.html / popup.js  扩展弹窗（凭证导入导出）
+   ├─ boot.js                编排器（世界态监视/自动登录/重连 hook/启动闸/UI 挂载）
+   ├─ core/                  跨玩法底座 + reactor 生命周期层（100 个 .js，按下面五组）
+   │  ├─ 网络与调度
+   │  │  ├─ net.js           网络底座（window.pocketcc.net：hook 装配 + 入站路由 + send/sendPB/sendPBV2/sendGuarded）
+   │  │  ├─ net-observe.js   net 观测面切片：报文归一 Event 类、cmd 名表、采集 collecting/stream
+   │  │  ├─ net-payload.js   应答载荷归一（收口旧 JSON 链路 Ret.data 的形态不对称）
+   │  │  ├─ net-collect.js   报文黑匣子流式录制（window.pocketcc.netCollect）
+   │  │  ├─ bus.js           EventBus（单例、emit 恒同步）+ 固定事件名字典 EVT
+   │  │  ├─ reactor.js       说明书生命周期 + 可注册门控（register/setConfig/registerGate/list）
+   │  │  ├─ feat-ctx.js      createCtx(entry, deps)：注入给 spec 的唯一接触面（零 import 工厂，单测可直驱）
+   │  │  ├─ cycle.js         A 原语 createCycle（电平调和循环：单飞闸门 + 触发合并 + 看门狗）
+   │  │  ├─ drain.js         B 原语 createDrain（逐条串行消费）
+   │  │  ├─ snapshot-pool.js D 原语 createSnapshotPool（键控去重 + TTL + wake.at 一次性消耗）
+   │  │  ├─ daily-stats.js   当日次数统计原语 createDailyLedger（跳日归零/落盘/按 id 去重）
+   │  │  ├─ march.js         行军统一行为层（856 取列表 / 902·904·920 发撤加速 / 10019 边沿检测→复播）
+   │  │  ├─ battle.js        行军发包载荷构造器（plan().preset/minimal().adjust().build()，只造数据不发包）
+   │  │  └─ defense.js       自动防御行为层（道具选择 + 迁城落点四闸联合搜索 + 扇区轮换）
+   │  ├─ 游戏接入（ACL）
+   │  │  ├─ game.js          游戏模块 hub（__require 集中；缺失软失败返回 null）
+   │  │  ├─ acl-engine.js    ACL 引擎核（SYM 共享表 / probe 惰性探测 / CAPS 自检 / createAcl 工厂 / 插槽注册）
+   │  │  ├─ game-api.js      ACL 组装薄壳：import core/acl/* 切片并 re-export + 调试面 debug
+   │  │  ├─ acl/             防腐层切片：l10n / bits（Int64 归一）/ session / mail / scene / ui / world（世界态原始信号）/
+   │  │  │                   battle-preset / avatar / nav（跳转+镜头抑制）/ march / game-data / hero-icon
+   │  │  ├─ event.js         EventCenter 封装（window.pocketcc.event，按需订阅/退订）
+   │  │  ├─ chat.js          聊天底座装配薄壳（window.pocketcc.chat）
+   │  │  ├─ chat/            聊天五面：client（生命周期/连接态）/ send / proxy（签名 REST 读数据）/ receive（收信自愈）/
+   │  │  │                   normalize / context（共享叶子）/ log
+   │  │  ├─ home-snap.js     HomeMap 离场景快照（钩 onSceneEnded 克隆冻结，供秘密武器空投原生选点）
+   │  │  ├─ world/           世界态：contracts.js（KIND/PLACE/PHASE/GEN 纯词表 + 谓词）+ state.js（四路信号→快照、matchesKind/matchesPlace/actionable/dump）
+   │  │  ├─ map.js           世界地图常量真相 + 坐标三系互转 + 只读查询（901 视口 / 906 搜索）
+   │  │  ├─ resource.js      资源田「编号真相 + 纯查询」薄底座（family↔groupType↔itemId、遗迹判定）
+   │  │  └─ item.js          物品查询/标识薄层（背包持有量、itemId→中文名、奖励 id→主道具）
+   │  ├─ 引擎周边与生命周期
+   │  │  ├─ registry.js      descriptor 单一真相（configs 读盘/存档、intent 补全、version/migrate 演化、INTERNAL_FEATURES）
+   │  │  ├─ menu.js          面板菜单树（六类别→组/功能）单一真相，组闸门语义在此声明
+   │  │  ├─ mode.js          战斗模式布尔 + `mode` 门控（不持久化，默认日常）
+   │  │  ├─ scene-watcher.js 世界态采集驱动 + `world` 门控安装器（事件驱动 + 2s 兜底轮询）
+   │  │  ├─ session.js       会话健康广播 + 自动重连（断线弹窗/流量停滞/启动看门狗）
+   │  │  ├─ player.js        UID 侦测与切换（配置按 UID 隔离的源头）
+   │  │  ├─ auto-login.js    token 缓存重放（免扫码）+ 补登出能力
+   │  │  ├─ hotkeys.js       全局快捷键注册表（单监听统一分派：打字让位 / 修饰键放行 / scenes+kinds+places 三层门控）
+   │  │  └─ constants.js     实例命名收口：两 world 的 postMessage 命名空间 NS、存储前缀根段、发布通道后缀
+   │  ├─ 存储 / 升级 / 日志
+   │  │  ├─ storage.js       MAIN→bridge 代理读写 chrome.storage（UID 前缀下 config/data 两个 blob + slot 分片 + raw 通道）
+   │  │  ├─ settings-io.js   设置备份导出/导入判据纯函数（信封 schema/文件名/逐键取舍），不碰 DOM 与 storage
+   │  │  ├─ update.js        升级通道判据单一真相（版本/清单/地址/就绪选择/下载决策/验签/提示口径），纯函数无 I/O；`BASELINE_URL` 声明处
+   │  │  ├─ update-client.js MAIN 侧只读镜像：向 bridge 取快照、订阅状态广播，供面板/角标/欢迎页脚消费
+   │  │  ├─ log.js           统一日志 [POCKETCC://MODULE] + sink tee 口
+   │  │  ├─ log-collect.js   日志上送器（window.pocketcc.logCollect）：缓冲 + 折叠 + 批量 POST dashcam /log
+   │  │  └─ util.js          跨 feat 纯函数叶子（sleep/createWaker/parseData/todayStr/safeStringify/serverTimeSec…）
+   │  └─ ui/                 表现层：Shadow DOM 浮动图标 + 左 TAB 右卡片面板（10 文件 + field-types/ 27 = 37）
+   │     ├─ index.js         mountUI 编排（图标/面板/热态）
+   │     ├─ panel.js         菜单树→卡片/pane 渲染、世界态与钻石读数、升级横幅；wire.js 绑事件
+   │     ├─ fields.js        descriptor.fields[] → 面板行纯构建器（具体类型渲染已迁 field-types/）
+   │     ├─ field-types/     字段类型 module 注册表：23 个类型各一文件（number/string/text/select/uid/uidlist/sortlist/
+   │     │                   ranges/timeranges/multiopts/tripick/ctrlrow/infogrid/itemlist/huntlist/farmrules/minerules/
+   │     │                   presetpool/rallygrid/queueskills/button/checkbox/note）+ index 注册表 + ctx/row-drag/uid-core 共享核
+   │     ├─ welcome.js       启动署名告知页（非模态，不参与任何准入判定）
+   │     └─ consts/dom/icon-pos/icon-svg/panel-css  零依赖叶子原语
+   └─ feats/                 功能模块：目录层级对齐面板六类别，54 个 reactor 注册点 = 52 个 index.js（含 system/chat）+ system/map 簇的两个独立入口
+      ├─ player/            玩家设置（20）：daily-supply / ad-diamond / auto-coin-collect / armory-material /
+      │                     secret-weapon-drop / one-click-claim / daily-deal / birthday-bless / potion-craft /
+      │                     player-like / source-of-war / truck-intercept / auto-farm / auto-hunt / fear-star-rally /
+      │                     radar-task / mine-cave / beast-breed / city-skill / quick-repair
+      │                     （quick-repair 实现归玩家侧，面板挂在「战斗设置」TAB——目录按实现归属，TAB 按使用场景）
+      ├─ alliance/          联盟设置（8）：alliance-help / alliance-gift / alliance-science / alliance-behemoth /
+      │                     alliance-defender / alliance-rally / alliance-boss（联盟机甲）/ relic-reward
+      ├─ activity/          活动设置（9）：sea-treasure / mecha-treasure / domain-treasure / mask-dance /
+      │                     titan-blessing / floatcar / launch-silo / secret-realm（异能秘境）/ cs-hunt（夺宝奇兵）
+      ├─ cq26/              CQ26印石赛季（11）：excav（战区宝藏）/ wl-chest（遗失之箱）/ energy-convoy（能量补充车队）/
+      │                     ice-shake（急速解冻）/ train（雪原列车）/ shop（霜之密所抢购）/ wl-mine（荒芜冰原矿区）/
+      │                     mammoth（猛犸突袭）/ wl-beast（冰原巨熊）/ ark-energy（保卫能量）/ feast（巨兽盛宴）
+      ├─ battle/            战斗设置（3）：quick-attack（快捷战斗）/ imperial-decree（奉旨出征）/ auto-defense（自动防御）
+      └─ system/            系统设置（3 个簇目录，簇内可含多个 feat 入口）
+         ├─ chat/           聊天窗口：index / chat-overlay / channels / classify / constants / context / history / jump / normalize / send
+         ├─ map/            全局地图与镜头跳转：global-map + quick-jump 两个 feat 入口（+ jump-overlay / map-meta / map-overlay / render / scanner / store / terrain）
          └─ hotkey/         游戏内快捷键行为：fly-home / scene-toggle / open-bag / close-popup / battle-panel / aux-docs
+                            （无 index.js：逐文件 bind() 自激活）
 ```
+
+feat 目录的固定形态是**目录 + `index.js` + `constants.js`**（42 个 feat 只有这两个文件）：`index.js` 是装配层（唯一 `reactor.register`，spec + 面板 descriptor + env 注入），`constants.js` 只收「服务器↔客户端契约号 + 内置调参」。复杂玩法在其上按「只读扫描 / 写动作 / 纯判据 / 引擎 / 共享叶子」分层（如 `cq26/wl-mine/` 的 survey+act+legs+items+march-loop、`player/mine-cave/` 的 mining+steal-pack+match），活动专属的游戏符号收在 `api.js`（`alliance-defender` / `auto-coin-collect` / `secret-weapon-drop`）。
 
 ## 构建与安装
 
@@ -173,7 +223,7 @@ npm run build     # 或 npm run watch（壳侧 + 远程体各入口并行监听�
 
 | 层 | 内容 | 变更频率 | 朋友侧动作 |
 | --- | --- | --- | --- |
-| 本地壳 | `manifest.json` + `dist/{shell,bridge,background,anti-throttle,popup}.js` + `dist/remote.js`（兼离线基线）+ `assets/` | 季度级重发一次 | 一次性「加载解压缩的扩展」 |
+| 本地壳 | `manifest.json` + `dist/{shell,bridge,background,anti-throttle,popup}.js` + `dist/popup.html` + `dist/remote.js`（兼离线基线）+ `assets/` | 季度级重发一次 | 一次性「加载解压缩的扩展」 |
 | OSS 远程体 | `pocketcc-remote-<ver>.js`（快照通道多一段摘要：`pocketcc-remote-<ver>-<sha8>.js`，见「快照通道的发布身份」）+ `latest.json` | 每次发版 | 无，刷新页面即升级 |
 
 ### 版本号规则（三段式 X.Y.Z）
@@ -423,16 +473,17 @@ dev 通道刻意没发布命令：`publish-oss.mjs --channel=dev` 会直接中�
 
 ## 使用
 
-- 游戏页右下角浮动图标（可拖拽，位置记忆）；点开为左 TAB + 右卡片面板，五个类别（与 feats/ 目录层级 1:1）：
-  - **玩家设置** — 「基础设置」组（每日补给 / 军火库生产材料 / 秘密武器空投 / 一键领取，只出勾选）；玩家点赞、战争之源、卡车争夺、自动下田、自动打野、惧星集结、次元矿洞、异能兽培育、城市技能各自为独立卡片（可展开详细参数）。
-  - **联盟设置** — 「基础设置」组（联盟帮助 / 联盟礼物 / 联盟科技 / 联盟守卫）；联盟集结、联盟机甲、遗迹奖励为独立卡片。
-  - **活动设置** — 「基础设置」组（海上夺宝 / 重装母舰 / 领域寻宝）；泰坦祝福、花车空投、占领发射井、异能秘境为独立卡片。
-  - **战斗设置** — 快捷战斗、奉旨出征、自动防御。
-  - **系统设置** — 聊天窗口、全局地图、镜头跳转、自动重连、网络日志、事件日志、报文录制、日志上送，以及只读的「软件更新」（版本与来源/已就绪版本/最近检查时刻）、「设置备份」（导出 / 导入，见下文）与「快捷键一览」。
-- 组开关是主闸门：关掉整组即停用全部子项，重新打开恢复各子项之前的勾选（意图存 `intentEnabled`，不丢失）；子项仍可单独勾选。改动即存即生效。新功能默认关闭（不未经同意发游戏包），自动重连默认开启。
-- 只出 checkbox 的功能（日常任务各项、快捷战斗）不展示详细参数，也就不把这些参数写入 local，一律用 descriptor 默认值（只持久化启用/意图两个开关态）；展示字段的功能（联盟集结、次元矿洞、自动重连等）才全量持久化。
+- 游戏页右下角浮动图标（可拖拽，位置记忆）；点开为左 TAB + 右卡片面板，六个类别（与 `core/menu.js` 的 `CATEGORIES` 1:1，也与 `feats/` 目录层级对齐）：
+  - **玩家设置** — 「基础设置」组（每日补给 / 广告领钻石 / 自动收取金币 / 军火库生产材料 / 秘密武器空投 / 一键领取 / 每日特惠 / 生日祝福，只出勾选，组内子项把当日次数内联到开关行）；机械制药、玩家点赞、战争之源、卡车争夺、自动下田、自动打野、惧星集结、雷达任务、次元矿洞、异能兽培育、城市技能各自为独立卡片（可展开详细参数）。
+  - **联盟设置** — 「基础设置」组（联盟帮助 / 联盟礼物 / 联盟科技 / 联盟守卫 / 联盟保卫战，只出勾选）；联盟集结、联盟机甲、遗迹奖励为独立卡片。
+  - **活动设置** — 「基础设置」组（海上夺宝 / 重装母舰 / 领域寻宝 / 假面舞会，只出勾选）；泰坦祝福、花车空投、占领发射井、异能秘境、夺宝奇兵为独立卡片。
+  - **CQ26印石** — 「基础设置」组（战区宝藏 / 遗失之箱 / 能量补充车队 / 急速解冻，只出勾选）；雪原列车、霜之密所抢购、荒芜冰原矿区、猛犸突袭、冰原巨熊、保卫能量、巨兽盛宴为独立卡片。**整个 TAB 受活动闸门 `cq26Open` 管**：赛季未开启（含符号投影不可得）时该 TAB 置灰不可点，不误导玩家「开了却没跑」。
+  - **战斗设置** — 快捷战斗（只出勾选）、奉旨出征、自动防御、快速修理。
+  - **系统设置** — 聊天窗口、全局地图、镜头跳转、自动重连、后台保活、网络日志、事件日志、报文录制、日志上送，以及只读的「软件更新」（版本与来源/已就绪版本/最近检查时刻）、「设置备份」（导出 / 导入，见下文）与「快捷键一览」。
+- 组开关是主闸门：关掉整组即停用全部子项，重新打开恢复各子项之前的勾选（意图存 `intentEnabled`，不丢失）；子项仍可单独勾选。改动即存即生效。新功能默认关闭（不未经同意发游戏包），只有会话层的自动重连与后台保活默认开启。
+- 只出 checkbox 的功能（各组日常项、快捷战斗）不展示详细参数，也就不把这些参数写入 local，一律用 descriptor 默认值（只持久化启用/意图两个开关态）；展示字段的功能（联盟集结、次元矿洞、自动重连等）才全量持久化。
 - 面板顶部「战斗模式」为全局开关（或热键 `F8` 直接切换日常/战斗）：开启后派行军类功能挂起、图标转红热态；关闭即恢复并补扫一轮。
-- 快捷键一览见面板「系统设置」，或直接记：`Tab` 飞回基地 / `H` 基地↔大世界 / `B` 背包 / `Q` 关弹窗 / `1-8`+`G` 战斗面板选预设并出征 / `Shift+1-8` 快捷三连攻击 / `F8` 战斗模式 / `Ctrl+K` 聊天浮层 / `Ctrl+M` 全局地图浮层。
+- 快捷键一览见面板「系统设置」（读 `core/hotkeys.js` 注册表实时渲染），或直接记：`Tab` 飞回基地 / `H` 基地↔大世界 / `B` 背包 / `Esc` 关弹窗回退 / `1-8`+`G` 战斗面板选预设并出征 / `Shift+1-8` 快捷三连攻击 / `F8` 战斗模式 / `Ctrl+K` 聊天浮层 / `Ctrl+M` 全局地图浮层 / `Ctrl+G` 镜头跳转浮层。
 - 配置存于扩展自己的 `chrome.storage.local`，**每个 UID 下固定两个键**：`pocketcc.config`（用户配置 blob：功能开关/参数/组闸门/图标位置/日志开关）与 `pocketcc.data`（运行期数据 blob：联盟集结当日计数、矿洞预算账本等，写入频繁）。两者互不干扰，「设置备份」只读前者、也只写前者。键统一 `pocketcc.` 前缀；**游戏自身的 LocalStorage 键（登录态等）原样不动**。
 
 ### 设置备份（导出 / 导入）
@@ -452,28 +503,39 @@ MAIN world 暴露 `window.pocketcc`，逆向时直接戳：
 ```js
 pocketcc.game.get('DataCenter').DATA.UserData.UID; // 取游戏单例
 pocketcc.bus.has('net.10912'); // 查某推送有无功能订阅
-pocketcc.bus.emit('scene.change', { name: 'NWorldMap' }); // 模拟切场景测门控
 pocketcc.net.sendPBV2(8623, { activityId: 0, type: 2 }); // 手动发包看 Ret
 pocketcc.reactor.list(); // 列出全部功能与运行态
 pocketcc.reactor.isRunning('floatCar'); // 看某功能是否起
-pocketcc.battle.buildFromPreset(0, 0); // 看预设部队造出的行军字段
+pocketcc.worldState.dump(); // 当前世界态快照（kind/place/phase/gen/watching）+ 一条 info 日志
+pocketcc.worldState.refresh(); // 强制重采一轮（改完游戏侧状态后立刻验门控）
+pocketcc.gameApi.march.flags(); // 战场判定器是否解析成功；march.resolve(13) 看基础行军类型在当前战场漂成哪个值
+pocketcc.gameApi.probeStatus(); // 符号探测三态：ok / warned（解析失败且已警报）/ deferred（bundle 未加载而推迟）
+pocketcc.gameApi.reprobe('TableManager.TABLE'); // 就地重探一个符号，不必刷页
 pocketcc.chat.status(); // 聊天连接与房间；pocketcc.chat.on('push', fn) 收频道消息
+pocketcc.storage.getAllConfig(); // 读当前 UID 的配置 blob 浅拷贝（设置备份的正文）
+pocketcc.storage.get('pocketcc.feat.allianceRally'); // 读某一个功能的配置项
 ```
+
+> 全局挂载面就是这些：`bus` / `game` / `gameApi` / `storage` / `reactor` / `defense` / `worldState` / `worldSignals`（`remote.entry.js` 并入）+ `net` / `chat` / `event` / `netCollect` / `logCollect`（各底座自挂）。feat 一律**不挂全局**（旧 `window.pocketcc.<feat>` 已废），`core/battle.js`、`core/march.js`、`core/map.js` 等也只走 ESM import——控制台上没有 `pocketcc.battle`。dev 构建另有 `exposeDebug()` 代挂的调试句柄（如 `pocketcc.secretRealmDrive`），release 构建被 `__DEVTOOLS__` 死代码消除。
 
 ## 开发约定
 
 - 日志统一 `[POCKETCC://模块] 英文消息`；info=生命周期、debug=逐条调度、warn=异常/被拒。
-- 加功能 = 写一个 `feats/<类别>/<name>.js` 调 `reactor.register(spec)`（含面板 descriptor），**再在 `core/menu.js` 菜单树挂节点、`remote.entry.js` 加 import**（两处登记缺一则功能不出现/不加载）；UI 渲染与配置存取零改动。
+- 加功能 = 建目录 `feats/<类别>/<name>/`，在 `index.js` 调 `reactor.register(spec)`（含面板 descriptor）、契约号收在 `constants.js`，**再在 `core/menu.js` 菜单树挂节点、`remote.entry.js` 加 import**（两处登记缺一则功能不出现/不加载）；UI 渲染与配置存取零改动。spec 靠 `kinds`/`places` 声明在哪个世界跑、靠 `offInCombat` 声明是否让位于战斗模式，配置结构要演化就加 `version` + `migrate(cfg, fromVersion)`。
+- 判据不靠假设：新 feat 落地后用真人录制对拍核验写动作——`scripts/verify-manifests/<id>.mjs` + `npm run verify:<feat>`（见 [replay-conformance 技能](../skills/replay-conformance/SKILL.md)），协议号须与 `scripts/protocol/` 注册表同源，闸门由 `npm test` 断言。
 - **壳文件禁改清单**：`shell.js` / `bridge.js` / `background.js` / `anti-throttle.js` / `popup.js` 属本地壳，改了就得让所有人重新加载扩展——新增玩法/面板能力一律只挂远程体侧（`remote.entry.js` 及其依赖），架构红线由 `.dependency-cruiser.cjs` 的禁边守住（壳不得 import `feats/**` 与 `core/ui/**`）。
 - feat 只读游戏态、只发包，绝不调用游戏 Update/Delete 改写本地数据；生命周期完全让渡给 reactor（不手写 `off()`，一律 `ctx.on.*` 托管退订）。
-- 判据/hook 点以 [`references/`](../references/) 内的游戏源码镜像与真机探针为准，不按假设设计；该目录只读。
+- 判据/hook 点以游戏源码镜像与真机探针为准（逆向素材只在本机、不入库），不按假设设计。
 - 不建第二个游戏消息总线（`core/net.js` 已是）；trigger API 保持极小，不加投机旋钮。
 
 ## 路线图
 
-- 联盟机甲、奉旨出征、全局地图、聊天窗口、次元矿洞等已落地；后续按 `references/` 逆向素材继续扩充活动/日常类 feat。
-- 报文录制可选加落盘保留/清理策略（在 dashcam 侧）。
+日常功能基本覆盖完（面板六个 TAB 共 60 个开关位，`feats/` 下 54 个注册点，含整条 CQ26印石赛季线）。剩下的不是待办清单，而是三类受外部条件约束的扩充：
+
+- **等新活动开**：新增玩法的前提是先拿到那段真人录制——一场活动没开就得等（见 [pocketcc README · 参与](../README.md#参与)）。已建模、/但尚未落成 feat 的玩法台账见 [docs/README.md](docs/README.md)。
+- **等账号进度**：部分判据要账号推进到能触发那个行为才验得了（秘境、跨服、赛季 BOSS 一类），这是项目节奏偏慢的直接原因。
+- **工具侧收尾**：报文录制的落盘保留/清理策略（在 dashcam 侧）、`warroom/` 的战报复盘建模。
 
 ## 许可
 
-未声明开源许可的个人项目（私有、暂不授权再分发）。
+[GNU GPLv3](../LICENSE) —— 衍生版本必须以同样许可开源。详见 [pocketcc README · 许可](../README.md#许可)。

@@ -139,7 +139,7 @@ push 10018 PUSH_TILEINFO             该城 p.cityReward.num 由 26 → 27
 - `p.z` 在 t=48 卡上恒为 `cc.v2` 的 0 假值，**真实服号只在 `extra.jumpServerId`**（与仓内
   `feats/system/chat/classify.js` 的取号口径同源）；本 feat 按 `jumpServerId → p.z → p.s` 取首个 >0。
 
-## 3. 客户端源码实证（2026-11-01 更新后的 `extracted/subpack/UserItemCityReward*`）
+## 3. 客户端源码实证（2026-11-01 更新后的 `UserItemCityReward*`）
 
 ```js
 // UserItemCityRewardBtn.init：配置表按 **item_id 列**查，不是按主键
@@ -180,7 +180,7 @@ if (!NET.checkRequestIdNoRes(NRequestIdV2.DANCE_GET_REWARD))
 | 4   | `mask_mystery_party` 整表：`item_id`/`daily_limit`/`reward_num`/`cruis_times`/`msg_type` **实值**         | **列名已由源码坐实**（feat 直接按这些列读），行实值与派对新道具号仍待探针 §2 |
 | 5   | 活动 `38015600` 的 `type_para7`（= 2504 请求的 itemId）                                                   | 待探针 §2                                                                    |
 
-> 表行实值拿不到的原因：配置表数据不在分包 JS 里（`extracted/resources` 只有 `manifest.json`，行数据是
+> 表行实值拿不到的原因：配置表数据不在分包 JS 里（资源目录只有 `manifest.json`，行数据是
 > 运行时加载的表资源），所以只能从源码拿到**列名与用法**，拿不到**具体数字**。feat 已设成「表就绪则全自动
 > 适配来年换皮号，表未就绪则兜底 10 次/天 + 已知道具族」，不依赖人工回填。
 
@@ -288,7 +288,7 @@ eslint 看不出，运行期却是「每一拍 cycle 抛 TypeError、只在 warn
     （`daily_limit > itemCityRewardReceivedNum[itemId]`，竞对B 同判据）→ 多道具年份提前静默封顶。
     改 `claimedByItem`/`dailyLimitOf`/`itemCapped` 三个逐道具函数，长睡改 `allItemsCapped`，
     `claimedCount()` 降为只供日志；旧版全局 `claims` 存档主动丢弃。
-  - 竞对B（`assistant/payload/server-js.js`）交叉印证：卡片只当坐标用 → `getTile` 拿 `extData.cityReward` →
+  - 竞对B 快照交叉印证：卡片只当坐标用 → `getTile` 拿 `extData.cityReward` →
     过期/逐道具 `daily_limit`/`itemCityRewardReceivedInstIds` 三闸 → `asendPBV2(2503,{targetUidStr})`；
     它会给 `itemCityRewardReceivedInstIds.push(…)` 改写本地数据，我们仍只读不回写。
   - build / lint(0 err) / arch / test(17) / prettier 全绿。

@@ -29,7 +29,7 @@
 
 预设里的 `Num` 是**保存那一刻**的上限快照；真实上限由 `Buff(BattleArmyAddNum) 聚合 + 英雄统率加成 + 等级格子数 + 当前可派兵池` 共同决定，且兵池是**逐格消耗**的（同一份预设实测：兵全在家可派 250，部分在外则 126 且尾部两格拿不满）。这种分配任何手写公式都复现不出来，所以首选路径是调游戏自带的 `checkPreMarchExtraList`（经 `game-api.js` 的 `battlePreset.recalc` 防腐层）。
 
-两条实证约束决定了接入细节（证据：`references/游戏逆向/extracted/subpack2/RealMarchStorageController__RealMarchStorageController.js`）：
+两条实证约束决定了接入细节（证据：游戏侧 `RealMarchStorageController` 源码）：
 
 - 重算器语义是「发满」（给 1 支也补到格上限）→ 结果与预设 `Num` **取小**，保住「预设故意少摆」的语义；
 - 重算器**就地改写**传入对象 → 只喂自建副本，绝不传 PresetMarchData 本体。

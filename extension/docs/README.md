@@ -4,7 +4,7 @@
 
 > 与仓库其他文档的分工：
 >
-> - [`references/`](../../references/) — **游戏怎么实现的**（只读分析素材）。
+> - 游戏侧反编译源码与逆向台账 — **游戏怎么实现的**（只读分析素材，作者本机目录，不入库）。
 > - `.qoder/repowiki/` — 工具**自动生成**的 wiki（会被重生成覆盖，非手写真相）。
 > - 本目录 — **pocketcc 自己的 API 怎么设计的、为什么**（决策与取舍的单一真相，随代码演进手工维护）。
 
@@ -17,6 +17,8 @@
 | [core/item.md](core/item.md)               | `src/core/item.js`        | 物品查询/标识薄工具层（持有量/中文名/奖励解析），收口 4 个 feat                           |
 | [core/map.md](core/map.md)                 | `src/core/map.js`         | 世界地图常量真相+三系坐标转换+单窗 901 只读查询底座，收口 map-meta/coord 与 3 处 901 探针 |
 | [core/cycle.md](core/cycle.md)             | `src/core/cycle.js`       | A 原语：电平调和循环驱动器（单飞/合并/绝不停摆），已收口 P0 四 feat                       |
+| [core/snapshot-pool.md](core/snapshot-pool.md) | `src/core/snapshot-pool.js` | D 原语：快照观测池（边沿推送即事实、无重放读通道时的入池/键控去重/延迟消耗）              |
+| [core/resource.md](core/resource.md)       | `src/core/resource.js`    | 资源田编号真相+只读查询薄底座（groupType/族级天花板/`RESOURCE_MAX_LEVEL`）                |
 | [core/world-state.md](core/world-state.md) | `src/core/world/state.js` | 世界态归一层（Kind/Place/Phase/Gen），为 `world` 门控与跨服图降级提供单一真相             |
 | [core/reactor.md](core/reactor.md)         | `src/core/reactor.js`     | 功能调度中枢：spec 说明书驱动的生命周期装配、门控重算、`ctx.on.*` 退订托管                |
 | [core/net.md](core/net.md)                 | `src/core/net.js`         | 网络底座：双通道 hook + 三 bus 命名空间 + promise 发包 + req↔resp reqTime 配对            |
@@ -34,13 +36,17 @@
 > [`feat-战区宝藏.md`](feat-战区宝藏.md)（`src/feats/cq26/excav/index.js`，含「为什么不嗅探地图地块 / 不用 EventCenter」的通道选型取舍）、
 > [`feat-霜之密所抢购.md`](feat-霜之密所抢购.md)（`src/feats/cq26/shop/index.js`，含「为何 burst 必须 `gate:false` 裸发 + 本地镜像收敛」「push 与 status 1→2 同秒 ⇒ 无可提前量」的取舍）、
 > [`feat-机械制药.md`](feat-机械制药.md)（`src/feats/player/potion-craft/index.js`，制药 lane 单飞排产）、
-> [`feat-快速修理.md`](feat-快速修理.md)（`src/feats/player/quick-repair/index.js`，英雄免费快速修理 + 医院加速，含「只开免费线」灰度用法）。
+> [`feat-快速修理.md`](feat-快速修理.md)（`src/feats/player/quick-repair/index.js`，英雄免费快速修理 + 医院加速，含「只开免费线」灰度用法）、
+> [`feat-假面舞会.md`](feat-假面舞会.md)（`src/feats/activity/mask-dance/`，2026 万圣节基地宝箱领取，含「协议已实证 + 运行时缺口待探针」的取证状态表）、
+> [`feat-夺宝奇兵.md`](feat-夺宝奇兵.md)（`src/feats/activity/cs-hunt/`，事件/技能/组队/战斗装配四面板的逐行源码核验与方案定稿）。
 >
 > [`荒芜冰原-巨熊盛宴.md`](荒芜冰原-巨熊盛宴.md)（CQ26 **BWL 线**「巨熊盛宴」玩法说明，**纯逆向 + 录制实证、未实现 feat**）—— 阶段机（GATHER→FEED→SHOW，22032）+ 融冰 2103 / 小游戏 2129 / 礼盒 2106 / 密礼 2108·22064 / 能量喂养 22044 / **巨熊宝藏**（奖励宝箱 实体 315·2104/2105）逐条协议与实录数值；与采集线（NWL）互斥独立。
 >
 > [`acl-cq26-荒芜冰原.md`](acl-cq26-荒芜冰原.md)（`src/core/acl/game-data.js` 的 NWL 区段，**待实现**）—— 荒芜冰原 2111~2130 / 22071~22077 字段字典与投影契约，含「一个分区只有一种玩法」「`k` 就是 `wkid`」「`todayCanGatherTime` 是剩余、`todayCollectDuration` 是已用」等判据。
 >
-> [`feat-荒芜冰原采集.md`](feat-荒芜冰原采集.md)（`src/feats/cq26/wl-gather/`，**设计定稿、未实现**）—— 一个 feat 三腿（采集 2114 / 协助 2116 / 盗采 2115）的组织与决策文档：为何合一、`2201→2120→901` 三层扫描的成本口径、三腿谓词与配额、对拍规则表、8 条已知缺口；协议与判据的真相源在 ACL，本篇只写「怎么组织与怎么决策」。
+> [`feat-荒芜冰原-采集.md`](feat-荒芜冰原-采集.md)（**取证中 / 设计中**）—— 采集区域三腿（采集 2114 / 协助 2116 / 盗采 2115）当前的协议实证、扫描策略与调度设计；字段表指向 [`acl-cq26-荒芜冰原.md`](acl-cq26-荒芜冰原.md)，挑战区域指向 [`荒芜冰原-巨熊盛宴.md`](荒芜冰原-巨熊盛宴.md)。
+>
+> [`feat-荒芜冰原采集.md`](feat-荒芜冰原采集.md)（**历史稿，已重构**）—— 旧 `cq26WlGather` 的设计定稿：为何一个 feat 三腿合一、`2201→2120→901` 三层扫描的成本口径、三腿谓词与配额、对拍规则表。该实现已重构为 `cq26WlMine`「荒芜冰原矿区」（`src/feats/cq26/wl-mine/`），`legs.*`/`reserveSec`/`recallOnMature`/`speedUp` 全部废弃、配置经 v1→v2→v3 的 `migrate()` 折算，本篇仅作对照留档。
 
 ## 决策记录（`adr/`）
 
@@ -70,5 +76,5 @@
 ## 维护约定
 
 - **源码头部 JSDoc 与本目录文档同步改**：JSDoc 保留精简版（签名 + 一句话语义），设计思路与取舍的完整版只写在 docs；改 API 不动对应 `.md` 视为改动未完成。
-- 文档内引用游戏源码结论时，标注证据出处（`references/` 路径或真机探针）。
+- 文档内引用游戏源码结论时，只写游戏符号与报文实证，不写本机素材路径、文件名与行号（那些文件不入库，链接必死）。
 - 事实以代码为准：文档与 `src/core/*.js` 冲突时，先读码核实，再修文档。

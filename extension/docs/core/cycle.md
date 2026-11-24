@@ -16,7 +16,7 @@
 **不管什么**（刻意单薄，铁律）：
 
 - **「下一拍睡多久」的决策全归调用方**：退避曲线 / 静默冷却 / 时段表 / active-idle 选档 / `endTime−now` 预测——一律由 `run()` 的返回值表达，cycle 只照返回值择时，不解读其含义。
-- **不拥有队列、不做逐条消费**：队列的创建/替换/清空/去重是 feat 业务，归 [`drain.js`](drain.js) 或 feat 自持（见 §2 与归类文档 §5「A 产 B 消」）。
+- **不拥有队列、不做逐条消费**：队列的创建/替换/清空/去重是 feat 业务，归 [`drain.js`](../../src/core/drain.js) 或 feat 自持（见 §2 与归类文档 §5「A 产 B 消」）。
 - **不含流程 DSL**：不引入状态机 / 步骤编排（`BackoffStrategy`/`DelayPolicy` 等抽象）——上一轮重型 `reconcile.js` 正因吞下这些被整量回滚。
 
 **对外契约**：`createCycle(o)` 返回 `{ kick, pending }`——`kick()` 是外部触发汇入口，`pending` 为只读属性。无任何可变状态对外暴露。

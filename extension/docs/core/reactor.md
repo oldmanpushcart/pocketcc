@@ -15,7 +15,7 @@
 **不管什么**（铁律）：
 
 - **不拥有 feat 自建引擎实例与绕过 ctx 的裸定时器**：`run()` 里 `new` 出来的东西归 feat，裸 `setTimeout`/在飞循环不受托管，resume 后拿陈旧快照的风险由 spec 声明 `pause` 钩子自收（见 §6）。生命周期类定时器应优先走 `ctx.setTimeout/setInterval` 托管（pause 自动清）。
-- **不解读配置字段含义**：`setConfig` 只透传 `{enabled, ...}` 给 `configure`；字段演化与迁移属 [`registry.js`](registry.js)。
+- **不解读配置字段含义**：`setConfig` 只透传 `{enabled, ...}` 给 `configure`；字段演化与迁移属 [`registry.js`](../../src/core/registry.js)。
 - **不反向依赖 feats**：依赖方向 `feats → core` 不可逆，由 `npm run arch` 强制。
 
 ## 2. 设计思路与取舍

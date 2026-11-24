@@ -22,8 +22,8 @@
 | 1389  | `SPEED_UP_FORMULA`           | `{}`              | `rewardResults.items=[{itemId:1600041,itemCount:1}]`（加速即发货）                    | **登记不接线**                |
 | 1390  | `CANCEL_FORMULA`             | `{}`              | —                                                                                     | **登记不接线**                |
 
-源码锚点：`RequestId`（协议号）、`ProductingData`（判据）、`subpack2/ProductionFactoryPanelNew`（写动作形态）、
-`subpack2/PushResponse.Push_FORMULA_MAKE_COMPLETE`（推送分支）、`subpack/CommonTools.getProductionFactoryData`（读通道）。
+源码锚点：`RequestId`（协议号）、`ProductingData`（判据）、`ProductionFactoryPanelNew`（写动作形态）、
+`PushResponse.Push_FORMULA_MAKE_COMPLETE`（推送分支）、`CommonTools.getProductionFactoryData`（读通道）。
 
 ### 1389 钻石加速（本轮刻意不做）
 
