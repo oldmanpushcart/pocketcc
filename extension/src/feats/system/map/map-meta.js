@@ -3,7 +3,7 @@
  * 渲染样式、面板默认值、归属过滤谓词（classifyPoint/playerPass）——只服务「全局地图」这个 feat。
  * 跨 feat 复用的地图真相（瓦片/尺寸/pointType 字典/坐标转换/901 查询）已下沉 core/map.js，本处只引用。
  *
- * SCAN_GRID 数值来源（实证，见 references/游戏逆向/全局地图知识点归档.md）：
+ * SCAN_GRID 数值来源（实证）：
  *   单窗 94×99 被服务器完整受理 59 次（扫描报文实录）；回点窗 x±58.4/y±39.2。
  */
 import { SERVER, CITY_POINT_TYPE } from '../../../core/map.js';

@@ -8,7 +8,7 @@
  *   三条协议铁律（target=null、ensureServerResponse=false、无 clickInfo）由 net 封装内部固定，这里不再关心。
  *   注意：net.send 的 ret.data 是原始 JSON 字符串 d（Ret 不再自动 parse），需自行 JSON.parse。
  *
- * 判据（口径同游戏 PlayerSkillCastleItem，见 references/游戏逆向/extracted）：
+ * 判据（口径同游戏 PlayerSkillCastleItem）：
  *   读 DataCenter.DATA：
  *     - DATA.ServerTime：服务器时钟，单位「秒」。
  *     - DATA.UserData.MyCastleFace[skinId]：皮肤是否拥有且生效——d && (d.endTime > ServerTime || d.endTime === -1)。

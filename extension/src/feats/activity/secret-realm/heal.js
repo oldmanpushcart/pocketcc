@@ -16,7 +16,7 @@
  *      本引擎在其上加系统常量阈值：`armyPower/maxArmyPower <= 1 - tuning.healLossPct/100`（达阈即伤员）。
  *   ③ 道具白名单**不硬编码**：源码 `getDataConfigData(3035).split('|')`，逐个
  *      `getItemNumById(id) > 0` 才画按钮（本 feat 用到的是 41002 急救绷带 / 41003 全科医疗包）。
- *      按**伤情分档选药**（竞品 recuperate L25042 同旨）：`ratio<0.9` 重伤优先 41003（急救箱），
+ * 按**伤情分档选药**（竞品 recuperate 同旨）：`ratio<0.9` 重伤优先 41003（急救箱），
  *      否则优先 41002（绷带）；首选不在白名单/缺货/被拉黑则落回白名单（3035）常规序，档位只在白名单内生效。
  *   ④ `8534 ENIGMA_SECRET_ROOM_BAG_USE {info:{itemId,itemCount:1}, marchId}` —— 源码
  *      NWorldPabTeamSelfItem.useItem；**`itemCount` 恒为 1**（游戏是逐件点击语义），
@@ -309,7 +309,7 @@ export class HealEngine {
   }
 
   /**
-   * 按「伤情分档优先（竞品 recuperate L25042）+ 游戏 3035 白名单序」挑第一件**背包有货且未被本会话拉黑**的道具。
+   * 按「伤情分档优先（竞品 recuperate）+ 游戏 3035 白名单序」挑第一件**背包有货且未被本会话拉黑**的道具。
    *   重伤（`armyPower/maxArmyPower < 0.9`）先试 41003 急救箱，其余先试 41002 绷带；
    *   首选不在白名单/缺货/被拉黑 → 落回白名单（3035）常规序（保守：不因为分档把可用药拦在门外；
    *   副作用是白名单序把 41003 排前时，轻伤也可能花掉急救箱，与竞品双档 fallback 略有出入，属取舍）。

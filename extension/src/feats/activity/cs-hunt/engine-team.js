@@ -131,7 +131,7 @@ const HOME_POLL_MS = 10000;
 export const DEFAULT_WAIT_MIN = 3;
 /**
  * @type {Set<string>} 7531 拉本跑详情命中即「本次出征已结束」的服务器权威终局拒因（多语言键）：
- *   cs_treasure294=夺宝奇兵小队不存在（字典表.txt L42336，实证日志 `code=3 reason=cs_treasure294`）。
+ *   cs_treasure294=夺宝奇兵小队不存在（游戏本地化字典，实证日志 `code=3 reason=cs_treasure294`）。
  *   命中即停止对已消亡 treasureId 的空拉（否则游戏会一直弹「小队不存在」），清队转下一轮。
  */
 const HUNT_OVER_REASONS = new Set(['cs_treasure294']);
@@ -999,7 +999,7 @@ export class TeamEngine {
     //    任一角色收到 21372 召集（readyMember 含本人）后表态同意。
     //    闸门语义是「当前召集窗口内本人未表态」而非「本队终身一次」：窗口重开时 #onReadyChange 会重武装
     //    #marchStartTeamId；快照 readyUids/#selfReadySeen 已含本人则不重发（7527 若是切换语义会误取消准备）。
-    //    凑人超时（借鉴竞对 waitmin L16064-16076）：人数未达目标但已到位成员皆派兵成功，等满 waitMin 分钟也发车，
+    // 凑人超时（借鉴竞对 waitmin）：人数未达目标但已到位成员皆派兵成功，等满 waitMin 分钟也发车，
     //    否则 targetMemberNum 调高（最大 5）而现场只来 2~3 人时会永久等待；仍守住 allMarched（服务器对未派兵者会拒
     //    common_159995，拒后回滚闸门交下拍重试，故超时只放宽「人数」不放宽「出兵」）。
     var selfReady =

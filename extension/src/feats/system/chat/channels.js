@@ -902,7 +902,7 @@ function findMemberArray(d) {
 }
 
 /**
- * 把 1132 应答体解析成 {uid,name} 列表。应答 schema 已实证（AlliancePermissionPopup.js:60-68）：
+ * 把 1132 应答体解析成 {uid,name} 列表。应答 schema 已实证（AlliancePermissionPopup）：
  * 顶层含 members 数组，条目带 rank 与 playerInfo（内层 JSON 串，昵称在其 username 里）。
  * @param {object|Array} d parse 后的应答体
  * @param {string[]} diag 诊断输出收集器
@@ -941,7 +941,7 @@ function parseMemberList(d, diag) {
 
 /**
  * 确保联盟成员表就绪（1132 只读查询，10min 缓存）。参数与应答 schema 已实证
- * （AlliancePermissionPopup.js：{allianceId: Aid} → {members:[{rank, playerInfo(内层串)…}]}）。
+ * （AlliancePermissionPopup：{allianceId: Aid} → {members:[{rank, playerInfo(内层串)…}]}）。
  * 失败返空数组（选人退化为近期发言者）。
  * @returns {Promise<Array<{uid:string, name:string}>>}
  */

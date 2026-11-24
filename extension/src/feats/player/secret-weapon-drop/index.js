@@ -514,7 +514,7 @@ function run(ctx) {
   dropLedger.ensureLoaded();
   ctx.on.push(10101, onPushBuilding); // Home 快路径：单建筑推送直接带实例 id
   ctx.on.push(10109, onBuildingsSnapshot); // 批量建筑快照（含回主城/登录全量）→ 权威播种
-  // 事件名是 EventId 的值（字符串 "HomeMapLoadFinish"，EventId.js:732；boot.js 主城门控已真机验证触发）。
+  // 事件名是 EventId 的值（字符串 "HomeMapLoadFinish"；boot.js 主城门控已真机验证触发）。
   ctx.on.event('HomeMapLoadFinish', onBuildingsSnapshot);
   // 开机播种：开启前地面上已存的空投不会重推 10101，直接扫 Buildings 入待收队，首个 cycleRun 的 collectPending 领取。
   seedFromBuildings();

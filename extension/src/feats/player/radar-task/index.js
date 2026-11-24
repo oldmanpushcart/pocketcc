@@ -44,7 +44,7 @@
  * type 反查口径（遵循本仓「游戏本地表反查而非硬编码」ADR）：**radar_event 表按「事件实例 id」索引，不是 taskId**——
  *   `l10n.tableRow('radar_event', 实例 id).type/quality`。三处独立实证同一口径：游戏 `RadarTaskPrefab.initData`
  *   （`getTableDataById(TableName.radar_event, String(this._eventId))`，_eventId 即 3505 req 里那个 id）、
- *   游戏 `RadarController.askBeginTask`（认领应答回环里同样是拿事件 id 查表）、竞品 B `server-js.js:19868`
+ * 游戏 `RadarController.askBeginTask`（认领应答回环里同样是拿事件 id 查表）、竞品 B
  *   （`getTableDataById(TableName.radar_event, e["id"])`）。taskId 是**另一张表 radar_task** 的键（name/des/cost_energy/condition_num，任务内容），
  *   拿 taskId 查 radar_event 会命中「同号不同物」的槽位行：本 feat 首版就这么错查过，黑暗军团据点（taskId=10001，实例 id 1099006/7/8）
  *   被读成 type=205 而发出零部队援助 902 → 服务器 code=3 连拒（真机日志实证）。
@@ -565,7 +565,7 @@ async function fetchInfo() {
 /**
  * 账本条目 → radar_event 表行（type/quality）。
  * 查表键 = **事件实例 id**（不是 taskId）：游戏 `RadarTaskPrefab.initData`/`RadarController.askBeginTask` 与竞品 B
- *   `server-js.js:19868` 三处一致都用 `e.id`；taskId 是另一张表 radar_task 的键，混用会命中同号不同物的槽位行（实证过：错查出 code=3）。
+ * 三处一致都用 `e.id`；taskId 是另一张表 radar_task 的键，混用会命中同号不同物的槽位行（实证过：错查出 code=3）。
  * 兜底纪律：只有「读数面整体不可用」（tableReady=false，游戏 bundle 未就绪）才按 taskId 走录制经验表；
  *   表可读但该槽位无行 → type=0（未知），调用侧不发包。
  * @param {{id:string|number,taskId:number}} evt 账本条目（只需 id 与 taskId 两键）
@@ -715,7 +715,7 @@ function energyWakeMs(nextRecoverSec) {
 /**
  * 干扰攻击击退闸判定（纯决策，单测与对拍直驱）。
  * 口径来源：游戏 `RadarDefPop` 的门槛就是「战力 ≥ PLAYER_LEVEL[等级].att_new」，不足则按钮置灰；
- *   竞品 B `server-js.js:19892` 同条另加 `radarSignNum <= 3`——那是给 3517「免费增强信号」留位（本 feat 不做 3517），
+ * 竞品 B 同条另加 `radarSignNum <= 3`——那是给 3517「免费增强信号」留位（本 feat 不做 3517），
  *   我方只按 `sign<满格` 放行：击退本身就是把功率顶满，早做晚做都是净收益。
  * @param {{open:boolean,deBeginTime:number,sign:number,maxSign:number,handled:number,rejects:number,limit:number,power:number|null,needPower:number|null}} s 快照
  * @returns {{fire:boolean,reason:string}} reason: off|no-trigger|handled|full|reject-limit|no-reading|weak|fire

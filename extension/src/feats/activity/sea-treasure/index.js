@@ -7,7 +7,7 @@
  * 网络一律走 reactor 注入的 ctx.net（promise 封装）：send/sendPBV2(cmd, data) → Promise<Ret{code,data,ok}>，isSending(cmd) 查在途。
  * 三条协议铁律（target=null、ensureServerResponse=false、无 clickInfo）由 net 封装内部固定，这里不再关心。
  *
- * 三条协议（见 references/历史文档/海上夺宝.md）：
+ * 三条协议（真机报文实证）：
  *   1) push 10912（PUSH_ONE_ACTIVITYEXTRA，载荷 {aid,extra}）：活动 extra 更新（新 boss 刷出等）→ aid 反查是海上夺宝 → 触发扫描；
  *   2) req sendPBV2 3756（SEIZE_SEA_TREASURE_QUERY_WORLD_BOSS）{activityId} → resp {bossInfos:[{bossId,pointX,pointY,endTime,myLeftAttackTimes,...}]}；
  *   3) req send 902（MARCH_WORLD_POINT）{marchType:178, x, y} → 攻打该坐标 boss。与领域夺宝挖矿同为"零部队三键"派遣，不带 armyList/heroList。
@@ -49,7 +49,7 @@ import {
 const log = createLog('SEA-TREASURE');
 
 /**
- * 海上夺宝活动 showUiType（来源：NWorldUIActBtnSetting.js:309 世界按钮 ActivityShowUIType.FightAircraftCarrier；
+ * 海上夺宝活动 showUiType（来源：NWorldUIActBtnSetting 世界按钮 ActivityShowUIType.FightAircraftCarrier；
  * 与本仓 CHIP_BLESSING 同口径——枚举值等于键名字符串）
  * @type {string}
  */
@@ -385,7 +385,7 @@ async function loadingBosses(activity) {
 
 /**
  * 派兵攻打 boss（902 行军）。永不 reject：闸门未放开 / 发送异常都回落到 CODE_NOT_SENT 的哨兵 Ret
- * 零部队三键载荷（见 references/历史文档/海上夺宝.md），与领域夺宝挖矿同口径，不带 armyList/heroList。
+ * 零部队三键载荷，与领域夺宝挖矿同口径，不带 armyList/heroList。
  * @param {object} boss boss 信息 {x,y,bossId}
  * @returns {Promise<Ret>} 整个 902 的 Ret，code=902 状态码，data=成功载荷或 null
  */

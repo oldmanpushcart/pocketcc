@@ -6,8 +6,8 @@
  *   checkbox（普通兵默认开、雷神兵默认关），加速按兵种两个三态 select（不加速/钻石/道具）。
  *   免费线永远优先，付费线默认关闭并各带闸门。
  *
- * 协议字典（实录报文实证；源码 references/游戏逆向/extracted/
- *   subpack2/WareHouseControllerNew / HospitalComponentNew / Script/SpeedCDPanel / Script/UserData / Script/RequestId）：
+ * 协议字典（实录报文实证；源码锚点
+ *   `WareHouseControllerNew` / `HospitalComponentNew` / `SpeedCDPanel` / `UserData` / `RequestId`）：
  *   读（V1 send 旧 JSON 链路，ret.data 为原始 JSON 串需自 parse）
  *     1785 GET_QUICK_REPARE_INFO {} →
  *       {common_max,common_use,landThor_max/use,navyThor_max/use,airThor_max/use,thor_max/use,

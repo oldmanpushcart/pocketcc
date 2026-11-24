@@ -12,7 +12,7 @@
  *   攻打改由 attackOnce 内部判 isCombat()——战斗态只停派兵、领奖全天照跑。
  * 全部「只读+发包」：不改写游戏本地数据、不 OpenUI、不模拟点击。
  *
- * 命名与换代（详见 references/游戏逆向/战争之源模块分析报告.md）：
+ * 命名与换代：
  *   总开关 UserData.bossV2Open（push 21922）为真时走 SOW 新链路，行军类型 NMarchType.ATTACK_WORLD_BOSS_V2 = 298，
  *   经 MARCH_WORLD_POINT(902) 派遣；旧链路（=false）用 14。本功能只在 SOW 生效时工作——非二期时 9956 无有效应答，自然空转。
  */

@@ -15,7 +15,7 @@
  *   新增漏到第二天，用户侧表现为「游戏里明明还能领，脚本一整天不动」。现调度定为
  *   **「日锚 + 日内 CLAIM_GAP_MS 兜底」取先到者**：0 点那次必领，日内每 2h 复领一批（全天约 12 拍）。
  *
- * 协议（实录报文实证；源码锚点 extracted/subpack 的
+ * 协议（实录报文实证；源码锚点游戏侧
  *   TaskRelaxTool / OpenBuildingBotNode / OpenBuildingBotDetailPop）：
  *   5684 TASK_RELAX_ONE_CLICK_GET_INFO，sendPBV2，载荷 {}：
  *     应答 data = {detail:[{id,param,code?}…], limitTimeSec}。limitTimeSec 是**绝对服务器秒**=下次可领时刻

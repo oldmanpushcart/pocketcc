@@ -374,7 +374,7 @@ function itemTable() {
   // 裸 game.get('TableName').ITEM 恒 undefined → getTableGroup(undefined) 游戏侧静默返回 undefined
   //（真机 20261121 实证：两支队伍间隔 10s 都撞「item table unavailable」，非时序问题是形态问题）。
   const T = TABLE();
-  const E = tableNameEnum(); // TableName 枚举成员 ITEM="item"（TableName.js 实证，大小写混合）
+  const E = tableNameEnum(); // TableName 枚举成员 ITEM="item"（TableName 实证，大小写混合）
   const name = (E && E.ITEM) || (SYM.tables && SYM.tables.item) || 'item';
   let grp; // try/catch 两分支必赋值（eslint no-useless-assignment：初始值不写）
   try {

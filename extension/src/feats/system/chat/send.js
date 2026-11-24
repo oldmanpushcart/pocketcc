@@ -11,7 +11,7 @@ import { CMD_RECALL_CHAT } from './constants.js';
 import { familyOf, chanOfKey, myUid, hhmm, locText, decodeAtCodes } from './normalize.js';
 
 /**
- * 撤回自己的消息（游戏 revokeMsg 同源口径，newChatController.js:4049-4069）：
+ * 撤回自己的消息（游戏 revokeMsg 同源口径，newChatController）：
  * sendPBV2(254, {roomId, uuid, channel, toUid})；toUid：私聊房标识是无下划线的纯 uid →
  * Int64.fromString(roomId)，其余房间 → Int64.fromNumber(0)。时限配置表 630061（默认 60s）。
  * 成功后服务器会广播 chatdel 移除各端条目，本地 delOne 兜底。

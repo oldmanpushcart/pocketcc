@@ -154,7 +154,7 @@ const CARD_CACHE_TTL_MS = 10 * 60 * 1000;
 const CARD_PAGE_SIZE = 32;
 /**
  * @type {number} 雪原列车「奖励预览」配置 id：data_config[此值] → REWARD 表行键，该行 item/num 列即列车可掠奖池物品清单。
- * 实证 extracted/subpack/CQ26TransportData.getPreviewRewardItems（面板 CQ26TrainRewardPreviewPop.onShow 同源调用）。
+ * 实证 CQ26TransportData.getPreviewRewardItems（面板 CQ26TrainRewardPreviewPop.onShow 同源调用）。
  */
 const REWARD_PREVIEW_CFG = 52000030;
 /**
@@ -746,7 +746,7 @@ var rewardNameCache = null;
 /**
  * 从游戏「奖励列表」提取雪原列车可掠物品（itemId 有序去重）：
  *   data_config[REWARD_PREVIEW_CFG] → REWARD 行键 → gameData.rewardItems(id) 的道具清单（.id=itemId、.name=未译 loc 键）。
- *   口径同 extracted CQ26TransportData.getPreviewRewardItems（面板奖励预览同源）。表读不到则回 TRAIN_ITEM_POOL 兑底。
+ *   口径同游戏侧 CQ26TransportData.getPreviewRewardItems（面板奖励预览同源）。表读不到则回 TRAIN_ITEM_POOL 兑底。
  *   顺带回填 rewardNameCache（itemId→展示名），供面板 sortlist resolve 使用。
  * @returns {number[]} 可掠奖池的 itemId 列表（读不到时回录兑底池）
  */

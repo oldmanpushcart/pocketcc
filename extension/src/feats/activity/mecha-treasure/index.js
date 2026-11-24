@@ -20,7 +20,7 @@
  *      worldUIRed（世界有可打使徒的红点，实证攻击前=1、攻击后=0）、attackMonsterIds（我已攻打过的使徒 uuid 串数组，服务端权威）、
  *      groupId（我的匹配组，跨组攻击会被拒）。
  *
- * 四条游戏侧闸门（subpack2/WorldMechaTreasureBossPop.onAttackBtnClick，逐条抄成脚本判据）：
+ * 四条游戏侧闸门（WorldMechaTreasureBossPop.onAttackBtnClick，逐条抄成脚本判据）：
  *   a) extra.attackMonsterIds 含该 uuid → 已打过；b) uid === UserData.UID → 不能打自己发现的（backup_mecha_lottery_11）；
  *   c) 瓦片 groupId !== extra.groupId → 跨匹配组不可打（-12）；d) 我已有 marchType=189 且同 target_tx/ty 的行军 ≥1 条
  *      → 被拒并提示「每个使徒只能被同一指挥官攻击 1 次」（-21）。
@@ -78,7 +78,7 @@ const MONSTER_LIST_TYPE_WORLD = 2;
 
 /**
  * 行军类型：攻打重装母舰使徒。
- * 定义：NWorldMapMarchCommon.NMarchType.MECHA_TREASURE_BOSS = 189（Script/WorldMapCommon 同值）
+ * 定义：NWorldMapMarchCommon.NMarchType.MECHA_TREASURE_BOSS = 189（WorldMapCommon 同值）
  * @type {number}
  */
 const MARCH_TYPE = 189;

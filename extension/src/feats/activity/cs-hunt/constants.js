@@ -6,7 +6,7 @@
  *   core/game-api.js（ACL），此处不出现任何 require 名。策略私货（默认人数/时段退避等）留 index.js。
  *
  * 证据来源：
- *   - cmd 号：references/游戏逆向/extracted/Script/NRequestId__NRequestId.js / NResponseId__NResponseId.js 逐值核；
+ *   - cmd 号：游戏侧 `NRequestId` / `NResponseId` 逐值核；
  *   - 报文形态与字段名：四趟夺宝实况（主跑×2、陪跑×2），
  *     设计文档 extension/docs/feat-夺宝奇兵.md §9.4 已逐条归档；
  *   - 表名/道具 id：同文档 §9 真机 dump（活动未开始期可读）。
@@ -339,7 +339,7 @@ export const LUCKY_SCENES = [
 /**
  * 幸运降临(18) 可翻倍的礼品目录（面板展示名，协议匹配一律用 itemId 数字）。
  *   来源：11 趟主/陪跑实录报文的 winRewardResult / posInfoList.rewardResult 去重，
- *   名取自 references/字典表.txt。作为面板幸运池的**保底源**：运行期若能从 cross_treasure_event 解包出更全的池则用之，
+ *   名取自游戏本地化字典。作为面板幸运池的**保底源**：运行期若能从 cross_treasure_event 解包出更全的池则用之，
  *   否则（活动未开/表未下发/符号缺失）回退本表，保证面板不空、开局前即可勾选。
  *   scenes：该道具作为**可翻倍奖励**实际出现的场景族——只认引擎会喂给 #tryLucky 的字段（winRewardResult /
  *     posInfoList.rewardResult），**不含 failRewardResult 未中奖保底、不含 grail 神器**（引擎只翻倍中奖奖励，

@@ -1,7 +1,7 @@
 /**
  * 异能秘境自动驾驶 · 开车方案（Plan）层——纯数据 + 纯判据，无副作用、不发包、不摸引擎。
  *
- * 三层切分（见 docs/feat-异能秘境自动驾驶-v4竞品B对齐重写.md §15）：
+ * 三层切分：
  *   Engine(pilot.js #tick)  机制与安全前置（时钟/#cd/mooring/#dispatch/EVADE/拒绝退避/占用/单飞/回合硬闸）——方案共享
  *   Objectives(pilot-select) 选点纯函数（resource/beast/shop/buff/plane）——方案复用
  *   Plan(本文件)            阶段**顺序** + 进入/退出**条件** + 每目标参数——每方案一份

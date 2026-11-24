@@ -44,17 +44,17 @@ import {
 const log = createLog('ALLIANCE_HELP');
 
 /** @type {string} 1139 拒绝应答 data 里的“超过每日联盟帮助请求上限”文案键（真机样本 data="alliance_120503,10"，
- *  逗号后参数 {0}=上限值；字典表.txt:1588）。code=3 本身只代表服务器拒绝、不携带业务含义，
+ *  逗号后参数 {0}=上限值）。code=3 本身只代表服务器拒绝、不携带业务含义，
  *  “当日已满”只认这个显式标记 */
 const ERR_ALLIANCE_DAILY_HELP_LIMIT = 'alliance_120503';
 
 /** @type {string} 1141 领取被拒：该自助帮助在服务器已不存在。根因——游戏把领取成功后的 DeleteSelfHelpList 绑在 UI 那次 NET.send 的回调里（AllianceHelpPanel_New2 / AllianceHelpSelectPanel_New），脚本裸发 net.send(1141) 不触发它，本地 _selfHelpList 残留满进度条目 → 每轮重复领、连撞 120518。命中即按条目签名停领 */
 const ERR_ALLIANCE_HELP_NOT_EXIST = 'alliance_120518';
 
-/** @type {string} TableName.ALLIANCE_HELP（TableName.js:29），helpNum 运行时读表行 rewards_num */
+/** @type {string} TableName.ALLIANCE_HELP（TableName），helpNum 运行时读表行 rewards_num */
 const TABLE_NAME_ALLIANCE_HELP = 'alliance_help';
 
-/** @type {number} 申请帮助载荷/表行的 type 固定为 4（AllianceHelpSelectPanel_New.js:180） */
+/** @type {number} 申请帮助载荷/表行的 type 固定为 4（AllianceHelpSelectPanel_New） */
 const HELP_TYPE_ITEM = 4;
 
 /** @type {string} 任务种类：帮助全员（1195） */
@@ -90,7 +90,7 @@ const cfg = {
   /**
    * 申请帮助候选物品：只在这4个石头里选持有数量最少的。
    * id=alliance_help 表行 id；reward=行内 reward_param，用于 getItemAmount 读持有量
-   * （已对过游戏面板取值路径 AllianceHelpSelectPanel_New.js:70,177）
+   * （已对过游戏面板取值路径 AllianceHelpSelectPanel_New）
    */
   items: [
     { id: 10005, reward: 3500005, name: '玛瑙石' },
@@ -193,7 +193,7 @@ function produce() {
   }
 
   // 计数未落地前绝不发申请：盲发会因占位 0 被判“未满”而撞墙（真机：启动即申请 code=3、data=alliance_120503）。
-  // 口径同游戏 canAskHelp（AllianceController.js:133-138）的 !!UpdatedSelfHelp 且 AllianceHelpMax 已填。
+  // 口径同游戏 canAskHelp（AllianceController）的 !!UpdatedSelfHelp 且 AllianceHelpMax 已填。
   if (!alliance.UpdatedSelfHelp) {
     log.debug('help data not synced by game yet (UpdatedSelfHelp=false), wait next tick.');
     return;
@@ -213,7 +213,7 @@ function produce() {
   if (selfHelpList.length > 0) {
     var full = findFullSelfHelp(selfHelpList);
     if (full) {
-      // 集齐判据同游戏排序器（AllianceHelpPanel_New2.js:127）：HelpCount >= MaxCount。
+      // 集齐判据同游戏排序器（AllianceHelpPanel_New2）：HelpCount >= MaxCount。
       // 用 >= 不用 ===：盟友可超量帮（样本见 count:16/max:10），HelpCount 会越过 MaxCount，
       // 严格相等会漏判满进度、永不领取（真机：第10次求助集齐后不领）。
       // 入队只存 Type 与签名、不存对象引用——push 10453 会整体重建 _selfHelpList，旧引用执行前必失效（真机：满进度迟迟不领）
@@ -335,7 +335,7 @@ function nextInterval() {
 
 /**
  * 帮助全部是否值得发：荣誉分未到当日上限（到了再帮零收益），且本地列表里确有人可帮。
- * 列表判空口径与游戏 helpAllClick 一致（AllianceHelpPanel_New2.js:369-371）。
+ * 列表判空口径与游戏 helpAllClick 一致（AllianceHelpPanel_New2）。
  * @returns {boolean}
  */
 function needHelpAll() {
@@ -343,7 +343,7 @@ function needHelpAll() {
   if (alliance.AllianceHelpHonorCount >= getHonorMax(alliance)) return false;
   // 可帮判据直接复用游戏口径：AllianceHelpList（自己/他人的物品类求助）非空，
   // 或 getOtherCanHelpAssistList()（他人的援助请求，已排除我自己、以及我已帮过的）非空。
-  // 与游戏 helpAllClick 的判空逻辑一一对应（AllianceHelpPanel_New2.js:369-371）
+  // 与游戏 helpAllClick 的判空逻辑一一对应（AllianceHelpPanel_New2）
   return alliance.AllianceHelpList.length > 0 || alliance.getOtherCanHelpAssistList().length > 0;
 }
 
@@ -361,7 +361,7 @@ function isQuotaReached(alliance) {
 
 /**
  * 计数通道是否已同步：alliance.AllianceHelpMax（原始值，不走兜底读表）> 0。
- * 该字段仅由 UpdateAllianceHelpCountAndHonor 惰性填充（==0 时读配置 130062，AllianceData.js:463），
+ * 该字段仅由 UpdateAllianceHelpCountAndHonor 惰性填充（==0 时读配置 130062，AllianceData），
  * 而该函数只在游戏收到含 alhtdcnt 的下发（10453 / 1138 / 任一申请应答）时被调——故它≠0 说明
  * AllianceHelpCount 已被同步为真值；而 push 10446（只更新 selfHelps）不碰此字段，无法误开这道闸门。
  * @param {object} alliance DATA.UserData.Alliance
@@ -386,7 +386,7 @@ function rejectErrKey(data) {
 
 /**
  * 荣誉分当日上限。AllianceHelpHonorMax 只在收到相关应答时才被游戏填上，
- * 为 0 时按游戏同款口径惰性读配置 9910（AllianceData.js:464），读不到返回 Infinity（判"未满"，不拦正常流程）
+ * 为 0 时按游戏同款口径惰性读配置 9910（AllianceData），读不到返回 Infinity（判"未满"，不拦正常流程）
  * @param {object} alliance DATA.UserData.Alliance
  * @returns {number}
  */
@@ -397,7 +397,7 @@ function getHonorMax(alliance) {
 }
 
 /**
- * 申请帮助次数当日上限。AllianceHelpMax 为 0 时按游戏同款口径惰性读配置 130062（AllianceData.js:463），
+ * 申请帮助次数当日上限。AllianceHelpMax 为 0 时按游戏同款口径惰性读配置 130062（AllianceData），
  * 读不到返回 0（判"次数已用完"，宁可不发申请）
  * @param {object} alliance DATA.UserData.Alliance
  * @returns {number}
@@ -411,7 +411,7 @@ function getHelpMax(alliance) {
 /**
  * 在 cfg.items 里选持有数量最少的物品；helpNum 运行时读表行 rewards_num，读不到即弃选该行。
  * 未达解锁条件的行直接弃选（口径同游戏申请面板 initAwardItem，见 rowSelectable）。
- * 持有量口径同游戏面板：getItemAmount(row.reward_param)（AllianceHelpSelectPanel_New.js:70,177）
+ * 持有量口径同游戏面板：getItemAmount(row.reward_param)（AllianceHelpSelectPanel_New）
  * @returns {object|null} {item, amount, helpNum}；没有可选行时返回 null
  */
 function pickLeastItem() {
@@ -436,7 +436,7 @@ function pickLeastItem() {
 }
 
 /**
- * 表行是否达到解锁条件（同游戏申请面板 initAwardItem 的过滤，AllianceHelpSelectPanel_New.js:166）：
+ * 表行是否达到解锁条件（同游戏申请面板 initAwardItem 的过滤，AllianceHelpSelectPanel_New）：
  * unlock_type=1 需等级 ≥ unlock_level；unlock_type=2 需等级恰等于 unlock_level；其余取值视为不可选——
  * 不发面板上根本申请不到的东西
  * @param {object} row alliance_help 表行

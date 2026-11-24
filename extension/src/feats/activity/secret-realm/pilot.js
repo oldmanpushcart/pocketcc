@@ -363,7 +363,7 @@ export class PilotEngine {
   #exhausted = new TtlLedger();
   /**
    * @type {Object<string,number>} cd 账（毫秒时刻，与全局 Date.now 同口径；E 阶段迁 serverTime 时一并换）：
-   *   `march`=行军最小间隔（竞品 cd_time.march：L24974 决策前 +3s，§2.3 唯一的「TO 锁」），
+   * `march`=行军最小间隔（竞品 cd_time.march：决策前 +3s，§2.3 唯一的「TO 锁」），
    *   `boss`/`beast`=对应 901 查询节流（§2.3）。闸门走 #can、记账走 #setCd，**一律先记后动**。
    */
   #cd = {};
@@ -1282,7 +1282,7 @@ export class PilotEngine {
   /**
    * `#marched`（点键→过期毫秒）→ 竞品 `marched_list` 形状 `[{x,y,t:秒}]`（§5.1 闸 3a）。
    *   注意口径差：我方存的是「过期时刻」（`toAt + driveMarchedTtlMs`），竞品存的是「派发时刻」
-   *   （L24717 `ServerTime - e.t < 60`）→ `t = (until - driveMarchedTtlMs) / 1000`。driveMarchedTtlMs=60000 恰等于竞品 60s 窗。
+   * （`ServerTime - e.t < 60`）→ `t = (until - driveMarchedTtlMs) / 1000`。driveMarchedTtlMs=60000 恰等于竞品 60s 窗。
    * @returns {Array<{x:number,y:number,t:number}>}
    */
   #marchedListArr() {
@@ -1994,11 +1994,11 @@ export class PilotEngine {
     //   所以 #bossEsrId() 在做决策时永远非 null。服务器推送的直接归属关系，无需几何推断。
     const esr = this.#bossEsrId(boss);
     const self = this;
-    // drivePlanePolicy（v4.1 实装，对齐竞品 plane_policy L24867-24868）：
+    // drivePlanePolicy（v4.1 实装，对齐竞品 plane_policy）：
     //   0=近优先（缺省，占用/在途三筛全开） / 1=无视占用与在途硬占（竞品 `plane_policy==1 ||` 短路同位） /
     //   2=远优先（竞品 `(policy < 2 ? 1 : -1)` 的距离方向位，打分取正）。
     const pol = Number(tuning.drivePlanePolicy) || 0;
-    // §11（竞品 L24623）：平台候选**硬筛** `state===22`（可派兵/读秒窗）。报文实证：区域可判时
+    // §11（竞品口径）：平台候选**硬筛** `state===22`（可派兵/读秒窗）。报文实证：区域可判时
     //   关键相位（lead60/fight）同区 176 平台恒 state=22 → 硬筛不会把机会筛空；anyBest 兜底仅留给
     //   「判区失效」的改版退路。
     //   174 兜底删除：两场实录全程 0 块，属无证据路径。
@@ -2011,11 +2011,11 @@ export class PilotEngine {
       if (self.#dayBlack.has(t.k)) return;
       if (self.#paramBlocked(t.k)) return; // 159995 短黑窗内的平台不再选（该点当前不可打，窗过自然恢复）
       if (t.k === curKey) return; // 同点短路由 #dispatch 处理，这里只需给出目标
-      // 占用三筛：policy==1（硬占派）整体短路（竞品 L24867 同位；到达可能撞 252/217 拒码，由拒码分流兜底）
+      // 占用三筛：policy==1（硬占派）整体短路（竞品同位；到达可能撞 252/217 拒码，由拒码分流兜底）
       if (pol !== 1) {
         if (t.isFight) return; // 平台在战斗中（enigma_realm217）
         if (t.teams > 0) return; // 已有队伍驻军（enigma_realm252）
-        // 差异B补齐（对齐竞品 L24867 `marches.find(target_tx/ty 命中)`）：别人的在途行军已指向该平台 → 不选，
+        // 差异B补齐（对齐竞品 `marches.find(target_tx/ty 命中)`）：别人的在途行军已指向该平台 → 不选，
         //   否则到达必撞 REJ_PLANE_TAKEN。复用巡航/打野同款闸：`driveMarchPolicy==1` 跟队派豁免、
         //   快照陈旧（driveMarchStaleMs）自动脱闸，不会因 901 降级而一锁锁死全部平台。
         if (self.#marchBlocked(t.x, t.y)) return;
@@ -2024,7 +2024,7 @@ export class PilotEngine {
       //   缺证放行（防御：换图改版或极端时序，宁不拦不误拦，撞 142 拒码分流自会兜底）。
       if (esr && t.esrId && t.esrId !== esr) return;
       const d = dist(t.x, t.y, boss.x, boss.y);
-      const score = pol >= 2 ? d : -d; // 0/1=近优先，2=远优先（竞品 L24868 方向位）
+      const score = pol >= 2 ? d : -d; // 0/1=近优先，2=远优先（竞品方向位）
       if (t.state === ST_PLANE_MARCH && score > readyScore) {
         readyScore = score;
         readyBest = t;
@@ -2050,7 +2050,7 @@ export class PilotEngine {
 
   /**
    * 窄筛（§5.1）用的商店引力锚：取**「还没买过香肠的店里最近的一家」**，
-   *   **空则不回退**（竞品 L24718 `t.filter(e=>0==sausage).sort(byDist)[0]`：无一家免香肠店就
+   * **空则不回退**（竞品 `t.filter(e=>0==sausage).sort(byDist)[0]`：无一家免香肠店就
    *   不挂锚，成本项计 0）。未建账的店视为 sausage=0（还没买过）。
    * @param {{x:number,y:number}} cur 当前坐标
    * @returns {{x:number,y:number}|null}
@@ -2191,7 +2191,7 @@ export class PilotEngine {
         : null;
       this.#returnPending = isBossish(curPt);
     }
-    // 先记 cd 后发 8521（§2.3 硬要求：竞品 L24974 决策前即写 cd_time.march）——行军最小间隔的唯一「TO 锁」。
+    // 先记 cd 后发 8521（§2.3 硬要求：竞品决策前即写 cd_time.march）——行军最小间隔的唯一「TO 锁」。
     //   对所有发车档统一记（BOSS/逃袭/回攻也顺带抬一次 march cd，与竞品 cd 语义一致，不单独网开一面）。
     this.#setCd('march', Number(tuning.driveMarchCdSec) || 3);
     const ret = bypassGate
@@ -3459,7 +3459,7 @@ export class PilotEngine {
             'pilot: threat but no flee/explore hop available, fall through to normal ladder. reason=no_flee_target',
           );
         }
-        // 交战中挪队只会把部队撒在路上：原地驻守等本窗结束（竞品 L24906 state==12 同语义，两档都保留）
+        // 交战中挪队只会把部队撒在路上：原地驻守等本窗结束（竞品 state==12 同语义，两档都保留）
         const ct0 = this.#tiles.get(curKey);
         if (ct0 && (ct0.state === ST_PVP_READY || ct0.state === ST_PVP_FIGHTING)) {
           this.#stage = 'evade';

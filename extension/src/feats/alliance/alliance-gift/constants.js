@@ -4,9 +4,9 @@
  * 注册表：scripts/protocol/（开发期单一真相）；改动后须重跑 npm run protocol:extract。
  */
 
-/** @type {number} RequestId.Receive_Alliance_Gift_Small_All（RequestId.js:408），一键领取某类联盟礼物，载荷 {type} */
+/** @type {number} RequestId.Receive_Alliance_Gift_Small_All（RequestId），一键领取某类联盟礼物，载荷 {type} */
 export const CMD_RECEIVE_GIFT_ALL = 1177;
-/** @type {number} RequestId.Receive_Alliance_Gift_Big（RequestId.js:409），领 1 箱联盟珍藏礼物，载荷 {} */
+/** @type {number} RequestId.Receive_Alliance_Gift_Big（RequestId），领 1 箱联盟珍藏礼物，载荷 {} */
 export const CMD_RECEIVE_GIFT_BIG = 1178;
-/** @type {number} ResponseId.PUSH_ALLIANCE_GIFT_INFO（ResponseId.js:192），联盟礼物信息更新推送；仅作唤醒源，不读载荷 */
+/** @type {number} ResponseId.PUSH_ALLIANCE_GIFT_INFO（ResponseId），联盟礼物信息更新推送；仅作唤醒源，不读载荷 */
 export const CMD_PUSH_ALLIANCE_GIFT_INFO = 10442;

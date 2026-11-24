@@ -9,7 +9,7 @@
  *   isSending(cmd) 查在途。三条协议铁律（target=null、ensureServerResponse=false、无 clickInfo）由 net
  *   封装内部固定，这里不再关心。注意：ret.data 可能是原始 JSON 字符串，也可能已是对象，需兜底 parse。
  *
- * 协议（见 references/历史文档/玩家点赞.md）：
+ * 协议（真机抓包实证）：
  *   req sendPBV2 LIKE_OTHER(3821) {uid:"<字符串>", type:1, instanceIdStr:""}
  *   → 正常 header.s=0；示例给出的是 s=3（超过点赞上限）的错误应答，d 里带 selfTodayCanLikeNum。
  *

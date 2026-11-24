@@ -4,8 +4,8 @@
  * 归一为「语义描述子 + 联动动作」，供 chat-window 渲染分派与 P5 跳转执行器消费。
  *
  * 数值来源（均已源码实证）：
- *   ChatShareLinkType（GameDefine.js:3290-3367）、ChatShareLinkSubType（:3369-3386）、
- *   parseLink 白名单（newChatInfoData.js:1074）、UpdateData 判定链（:707-748）。
+ * ChatShareLinkType（GameDefine）、ChatShareLinkSubType、
+ * parseLink 白名单（newChatInfoData）、UpdateData 判定链。
  * 与游戏口径的刻意差异：游戏对「未识别链接」整体隐藏（_isShow=false），
  *   我们输出 kind:'unknown' 占位卡而非隐藏——真机才能攒出漏网 t 值的样本。
  */
@@ -169,7 +169,7 @@ export const SUB_LABEL = {
   15: '废土建筑',
 };
 
-/** @type {number[]} parseLink 白名单（newChatInfoData.js:1074，去重后；命中即视为可识别链接） */
+/** @type {number[]} parseLink 白名单（newChatInfoData，去重后；命中即视为可识别链接） */
 const WHITELIST = [
   8, 3, 4, 5, 6, 9, 10, 11, 12, 13, 20, 14, 37, 18, 15, 21, 31, 17, 16, 22, 19, 24, 25, 33, 35, 50,
   51, 61, 26, 29, 43, 54, 57, 27, 28, 32, 30, 34, 48, 36, 40, 38, 39, 44, 46, 41, 42, 45, 47, 49,
@@ -192,7 +192,7 @@ const CT_LABEL = {
   5: '寻人',
 };
 
-/** @type {Object<string,string>} ChatCustomSystemType 值→中文标签（GameDefine.js:4158-4164） */
+/** @type {Object<string,string>} ChatCustomSystemType 值→中文标签（GameDefine） */
 export const CST_LABEL = {
   557: '洞穴BOSS大奖',
   564: '芯片祝福彩蛋',

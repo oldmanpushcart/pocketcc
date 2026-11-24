@@ -248,7 +248,7 @@ export class PickupEngine {
   #gapMs = tuning.getGapMs;
   /**
    * @type {Map<string,number>} §9.3/§9.4 **主动补拉去重窗**（竞品 `drop_list` 等价物）：键 `r@x,y`/`d@x,y` → 静默到期（毫秒）。
-   * 发前置记 now+tuning.selfFetchTtlMs；8532 应答带箱 `endTime`（Int64，毫秒）时覆盖为按箱到期静默（竞品 L25232 同维）。
+   * 发前置记 now+tuning.selfFetchTtlMs；8532 应答带箱 `endTime`（Int64，毫秒）时覆盖为按箱到期静默（竞品同维）。
    */
   #selfFetch = new Map();
   /** @type {number|null} 21529 到点补拉的延迟定时器（等 21521 先行落账后复核 startPoint，与 pilot「不信事件时序」同口径） */
@@ -414,7 +414,7 @@ export class PickupEngine {
   }
 
   /**
-   * §9.4：10018 瓦片刷新 → 发现本队的掉落箱。竞品 `onUpdateTileInfo`（L25231）判据照搬：
+   * §9.4：10018 瓦片刷新 → 发现本队的掉落箱。竞品 `onUpdateTileInfo` 判据照搬：
    *   `pointType==PAB_DROP && roomBaseInfo.teamId==m.teamId && m.iNum>0 && drop_list 未记该点未过期` → 主动 8532 拉箱。
    * 两处我方化的收窄（与竞品的有意差异，§9.4 已录）：
    *   ① 只拉「队伍当前所在点位」（#tileGate 在位核对）：竞品把远箱缓存进 mooring.drop 到点再拾，而我方 #pending
@@ -1310,7 +1310,7 @@ export class PickupEngine {
    *      不这么处理就会把同类增益装到两个槽上（用户要求的「三个不能重复」）；
    *   2) 无同类已装 → 取首个空槽（buffMap[pos]=0/未定义）；
    *   3) 都无 → 回 0，调用方跳过装备。
-   * §9.4 竞品对照（L25155-25190，2026-11-03 核对）：buff_para 比较内核一致（同类更强才替换，否则不装）；
+   * §9.4 竞品对照（2026-11-03 核对）：buff_para 比较内核一致（同类更强才替换，否则不装）；
    *   两处**有意分歧**保留我方口径：① 竞品写死三类白名单（buff_icon 含 enigma_speed/enigma_attack/enigma_damage），
    *     我方走面板 buffEffects 类勾选（空=不限，用户口径优先于字面量）；② 竞品把「槽里是非三类 buff」的占位也当可覆盖
    *     （`r = r || n`），我方只填空槽与同类更强替换——不覆盖用户槽里其它类别的已装 buff（安全优先）。

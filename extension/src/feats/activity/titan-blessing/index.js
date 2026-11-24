@@ -73,7 +73,7 @@ const log = createLog('TITAN_BLESSING');
 /** @type {number} 泰坦祝福活动 type；同一 push 载荷 showUiType="ActivityTitanBlessing"，无独立枚举，值已真机验证 */
 const ACTIVITY_TYPE_TITAN_BLESSING = 271;
 
-/** @type {number} NMarchType.Titan_Blessing_Gift（NWorldMapMarchCommon.js:141），泰坦祝福拾取行军类型，902 派遣用（值已真机验证） */
+/** @type {number} NMarchType.Titan_Blessing_Gift（NWorldMapMarchCommon），泰坦祝福拾取行军类型，902 派遣用（值已真机验证） */
 const MARCH_TYPE_TITAN_BLESSING_GIFT = 143;
 
 /** @type {number} 队列逐条消费之间的休眠毫秒（固定调优常量，不在面板暴露）：规避 902 限流（march_time_control_info001） */

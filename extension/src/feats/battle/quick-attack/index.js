@@ -45,7 +45,7 @@ import { CMD_MARCH_WORLD_POINT } from './constants.js';
  *         marchMembers 可选：行军类型以游戏 MarchType 枚举成员名为权威源（marchApi.typeOf 运行时取名，
  *           成员名收在 core/game-api.js SYM.marchEnum），marchTypes 数值仅作符号漂移兜底,
  *         gate 可选：按键瞬间的面板态前置闸 (comp)=>string|null，返回串=拒绝原因（不发 902）、null=放行 };
- * NMarchType 见 extracted/Script/WorldMapCommon__WorldMapCommon.js 的 MarchType 枚举。
+ * NMarchType 见 WorldMapCommon 的 MarchType 枚举。
  * @type {Array<{key:string, label:string, cls:string, field:string, marchTypes:{attack:number, attackV2?:number}, marchMembers?:{attack:string, attackV2?:string}, gate?:function(object):(string|null)}>}
  */
 const QUICK_ATTACK_TARGETS = [

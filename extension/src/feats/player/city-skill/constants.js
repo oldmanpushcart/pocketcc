@@ -4,7 +4,7 @@
  * 注册表：scripts/protocol/（开发期单一真相）；改动后须重跑 npm run protocol:extract。
  */
 
-/** @type {number} RequestId.USE_CITY_SKILL（RequestId.js），使用/赠送城市皮肤技能，载荷 {skinId,targetUid} */
+/** @type {number} RequestId.USE_CITY_SKILL（RequestId），使用/赠送城市皮肤技能，载荷 {skinId,targetUid} */
 export const CMD_USE_CITY_SKILL = 1753;
-/** @type {number} RequestId.GET_CITY_SKILL_DATA（RequestId.js），拉取城市皮肤技能冷却数据，载荷 {}，应答 d={skinSkills:[...]} */
+/** @type {number} RequestId.GET_CITY_SKILL_DATA（RequestId），拉取城市皮肤技能冷却数据，载荷 {}，应答 d={skinSkills:[...]} */
 export const CMD_GET_CITY_SKILL_DATA = 1752;

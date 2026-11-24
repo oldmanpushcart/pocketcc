@@ -24,7 +24,7 @@
  *      `Math.max(1, Math.ceil(剩余秒/60 * DATACONFIG 61017))`，余额读 UserData.Resource.Gold，
  *      源码 GameTimeTools.getProfessionCDGold）与 1390 CANCEL_FORMULA {}（取消）。本 feat 明确不花钻石。
  *
- * 判据（镜像源码 ProductingData + subpack2/ProductionFactoryPanelNew，全部只读）：
+ * 判据（镜像源码 ProductingData + ProductionFactoryPanelNew，全部只读）：
  *   在产 = making.id>0 && making.et>0；state===1 = 完成待领取；et<=ServerTime 而 state 仍 0 = 到期未结算。
  *   可制作（排产前逐条过，全过才发 1388）= 目标已选 + 目标 ∈ unlock（科技/职业限制）
  *     +「resources 首段 resId|count 够」+「needItem 每段 itemId|count 够」（材料限制）。

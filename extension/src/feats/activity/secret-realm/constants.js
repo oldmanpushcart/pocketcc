@@ -645,7 +645,7 @@ export const TABLE_EFFECT_BUFF = 'EFFECTBUFF';
  * 源码 PabShopItem.updateShopItem：`getTableDataById(enigma_secret_realm_shop, specId)` →
  *   字段 `id / item_id / item_num / cost / buy_times / type`（`_lastNum = max(buy_times - getTime, 0)`，
  *   `type===3` 时显示 `enigma_realm242`「本期所有商店限量」）。
- * ⚠ **本表离线无数据**（references/游戏逆向/{extracted,raw} 全查过，只有 TableName 枚举与两处 UI 引用）
+ * ⚠ **本表离线无数据**（游戏反编译源码全查过，只有 TableName 枚举与两处 UI 引用）
  *   → **商品全量只能运行时 `l10n.tableRows(TABLE_SHOP)` 枚举**，不能写死。（specId→itemId 的已反出部分见 SHOP_SPEC_ECONOMY）
  * @type {string}
  */
@@ -681,7 +681,7 @@ export const TABLE_REALM = 'enigma_secret_realm';
  * 反法：对每次 8542/8543 后的 21525 背包快照做差分（多会话交叉验证）：
  *   • specId 19 → **41011 全素香肠**，单价 41009 扣 500/件（买 10 次 → 41011 +10、41009 −5000）；
  *   • specId 16 → **41006 强异能诱饵**（8534 造点用），单价扣 3000；
- *   • specId 20 → **38006601 传奇百兽箱碎片自选箱**（×40，名字取 references/字典表.txt `item_name_38006601`），
+ *   • specId 20 → **38006601 传奇百兽箱碎片自选箱**（×40，名字取游戏本地化字典 `item_name_38006601`），
  *     单价扣 2000、且 41009 总扣 2000 = `cost`；本项 `type===3` → **跨店共享额度**。
  *   未反出的：specId 11/12/13/14/15/17（getTime 始终 0 = 从未买过）。
  * @type {Object<number,{itemId:number,price:number,note:string}>}
@@ -1407,7 +1407,7 @@ export const tuning = {
    */
   driveMarchCdSec: 3,
   /**
-   * pilot：**战败复活(8552)后的行军锁定**（秒，对齐竞品 §9.5 L25332「发 8552 后 cd.march=now+2」）。
+   * pilot：**战败复活(8552)后的行军锁定**（秒，对齐竞品 §9.5 「发 8552 后 cd.march=now+2」）。
    *   给复活落地留窗，防同拍又发 8521 把刚复活的队再拖走。
    * @type {number}
    */
@@ -1425,9 +1425,9 @@ export const tuning = {
    */
   driveBossCdSec: 1,
   /**
-   * pilot：**平台（176）挑选策略**（对齐竞品 `plane_policy`，L24187；v4.1 已在 pilot.js #pickPlane 实装）。
-   *   0=近优先（缺省，含占用/在途筛） / 1=无视占用与在途硬占（竞品 L24867 `plane_policy==1 ||` 短路同位） /
-   *   2=远优先（竞品 L24868 `(policy < 2 ? 1 : -1)` 的距离排序方向位）。
+   * pilot：**平台（176）挑选策略**（对齐竞品 `plane_policy`，v4.1 已在 pilot.js #pickPlane 实装）。
+   * 0=近优先（缺省，含占用/在途筛） / 1=无视占用与在途硬占（竞品 `plane_policy==1 ||` 短路同位） /
+   * 2=远优先（竞品 `(policy < 2 ? 1 : -1)` 的距离排序方向位）。
    * @type {number}
    */
   drivePlanePolicy: 0,

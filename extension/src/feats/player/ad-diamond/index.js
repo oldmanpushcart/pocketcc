@@ -5,7 +5,7 @@
  *   每领一次进入该槽位冷却 cd，配额跑完等日切重置。本 feat 复刻同口径判据，把冷却到点的槽位领回。
  *   只做钻石线（9707 逐槽位领取），不碰月卡/礼包充值（canPay 相关分支一概不走）。
  *
- * 协议（抓包实证；源码锚点 extracted/Script/MonthCardController）：
+ * 协议（抓包实证；源码锚点 MonthCardController）：
  *   9706 GET_AD_MONTH_CARD_WATCH_INFO，sendPBV2，载荷 {} → 应答 data =
  *     {adMonthCardWatchInfos:[{adNewId,viewCount,lastViewTime(Int64 毫秒)}], endTimeWithSwitchClosed(Int64)}。
  *     viewCount 是**服务器侧当日已领次数**（实录里那台号 adNewId=1 直接回 20），故每轮重读即权威，

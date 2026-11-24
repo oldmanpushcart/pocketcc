@@ -86,7 +86,7 @@ export const csHunt = {
   },
   /**
    * 当前被掠夺行军数（csHuntCtrl().lootMarchNum）：控制器权威态，由推送 21383 HURT_MARCH_SIZE 直接写入
-   *   （`lootMarchNum = marchSize`，见 references/游戏逆向/夺宝奇兵分析报告.md「21383 直接写 lootMarchNum」）。
+   *   （`lootMarchNum = marchSize`：21383 直接写 lootMarchNum）。
    *   借鉴竞对 roundFight 以 `lootMarchNum > 0` 作「正在被真人掠夺」的一手判据。#7 真实收益：它是游戏侧写的权威计数，
    *   **不被 feat 侧处置时把 #raidSize 置 0 的清零污染**，故能跨回合持续反映仍在场的掠袭（而非「漏推兜底」：
    *   lootMarchNum 本身也是由游戏侧 21383 handler 写入，漏推时两侧同失）；且 21383 有 ~40s 心跳复位 0，无陈旧 >0 长期误武装风险。

@@ -7,7 +7,6 @@
  * 时钟/队 ID/回合开放/品质等**外部料一律由调用方预解析后经 ctx 注入**，函数本身只吃数据做纯计算——
  * 这样错归因时能从报文反推，而不是把选点与调度绑在一起（上一轮重写的教训）。
  *
- * 竞品行号索引见 docs/feat-异能秘境自动驾驶-v4竞品B对齐重写.md。
  * 红线：一律引用 constants 常量名（PAB_*），禁止裸 pointType 数字。
  */
 import {
@@ -22,7 +21,7 @@ import {
 import { dist } from './util.js';
 
 /**
- * 归属判定（竞品 L24804 `!callTId || callTId==teamId`，抓兽/打野的隐藏闸）。
+ * 归属判定（竞品 `!callTId || callTId==teamId`，抓兽/打野的隐藏闸）。
  * ⚠ 报文实证：`callTId` 是 901 里的 JSON number 且尾部恒被 Int64→double 抹零，`roomBaseInfo.teamId` 是精确串/Int64——
  *   **不能字符串比**，必须两边同转 double（本仓「64 位不 Number 化」红线在此的一个受控例外，要的是模糊等值）。
  * @param {number|string|null|undefined} callTId 野怪 m.callTId（无归属为空/0）
@@ -35,7 +34,7 @@ export function beastOwnedByMeOrFree(callTId, myTeamIdNum) {
   return Number(callTId) === Number(myTeamIdNum);
 }
 
-/** 该点是否被 marched_list（60s 窗）拦下：竞品 L24717 `ServerTime - e.t < 60`。 */
+/** 该点是否被 marched_list（60s 窗）拦下：竞品 `ServerTime - e.t < 60`。 */
 function inMarchedList(marchedList, x, y, serverTimeSec) {
   if (!Array.isArray(marchedList)) return false;
   for (let i = 0; i < marchedList.length; i++) {
@@ -51,7 +50,7 @@ function inMarchedList(marchedList, x, y, serverTimeSec) {
   return false;
 }
 
-/** 是否已有在途行军（state==1）指向该点：竞品 L24737 `o.marchList.find(t.target.tx==x && t.target.ty==y && t.state==1)`。
+/** 是否已有在途行军（state==1）指向该点：竞品 `o.marchList.find(t.target.tx==x && t.target.ty==y && t.state==1)`。
  *  marchPolicy==1（跟队派）跳过本检查。 */
 function hasMarchTargeting(marches, x, y, marchPolicy) {
   if (marchPolicy === 1) return false;
@@ -65,7 +64,7 @@ function hasMarchTargeting(marches, x, y, marchPolicy) {
 }
 
 /**
- * 资源点成本打分（竞品 L24712 `r(p, n)`）：越小越"顺路"，选点键 `iNum - r` 越大越好。
+ * 资源点成本打分（竞品 `r(p, n)`）：越小越"顺路"，选点键 `iNum - r` 越大越好。
  *   `r(p, n) = d(p,起点)/2 + d(p,未领奖BOSS)/5 + (n ? d(p,无香肠店)/6 : 0)`
  * @param {{x:number,y:number}} p
  * @param {{startPoint:{x:number,y:number}, firstUnrewardedBoss?:{x:number,y:number}|null, nearestNoSausageShop?:{x:number,y:number}|null}} ctx
@@ -82,7 +81,7 @@ export function resourceCost(p, ctx) {
 }
 
 /**
- * 选资源井（竞品 `marchResource` L24708-24770）。筛子**收敛到 4 道**：类型 / 回合 / iNum+距离 / 空位无在途。
+ * 选资源井（竞品 `marchResource`）。筛子**收敛到 4 道**：类型 / 回合 / iNum+距离 / 空位无在途。
  * ⚠ 我方 v3 的 `rTime>now` 判空 与 `consumed` 10min 黑名单**在此一律不看**（竞品无此闸，误删是"不回头补拿"的根因，§5.1）。
  *   唯一本地附加 `isExhausted`（问题19）：pickup 已判「对我无可采」的井，服务器看非空但去了白跑。
  * @param {Array} points 901 原样 pointList（每点 {x,y,pointType,m:{iNum,state,teams,esrId}}）
@@ -199,7 +198,7 @@ export function resolveHop(cands, goal, hopMaxDist) {
 }
 
 /**
- * 选异能兽（竞品 `marchBeast` L24772-24826 主路，本地 entities 部分按 §3.1 全换视口 901）。
+ * 选异能兽（竞品 `marchBeast` 主路，本地 entities 部分按 §3.1 全换视口 901）。
  * 归属闸用 `beastOwnedByMeOrFree`（double 比）。品质经 ctx.qualityFor 注入（未侦察回 null → 按 2 计）。
  * @param {Array} points
  * @param {{
@@ -243,11 +242,11 @@ export function pickBeast(points, ctx) {
   return best;
 }
 
-// ─────────── 阶段网关（§4，竞品 exitStage/shopStage/beastStage L24560-24594）───────────
+// ─────────── 阶段网关（§4，竞品 exitStage/shopStage/beastStage）───────────
 // 外部料（背包/BOSS 态/增益/buff_color）一律由 pilot 预解析进 ctx，网关只做纯布尔决策。
 
 /**
- * 收场判据（竞品 exitStageWant L24560-24576）。按 team_type 分级 + 整场到点兜底。
+ * 收场判据（竞品 exitStageWant）。按 team_type 分级 + 整场到点兜底。
  * @param {{teamType:number, pieceShop:boolean, boss30:boolean, beastsFull:boolean, serverMSTime:number, fightEndTime:number}} ctx
  * @returns {boolean}
  */
@@ -262,7 +261,7 @@ export function exitStageWant(ctx) {
 }
 
 /**
- * 该去商店判据（竞品 shopStageWant L24577-24586）。
+ * 该去商店判据（竞品 shopStageWant）。
  * team_type==0 只看「距最近一次真到店」超节拍；否则避开台前 0~120s 禁店窗，再叠「开台后 120~180s 高光窗可加密」。
  * 单位：shopIntervalSec 已是**秒**（§8 driveShopIntervalSec=480），竞品源是 shop_interval(分)*60，此处不再乘 60。
  * @param {{teamType:number, sinceShopSec:number, shopIntervalSec:number, bossOpeningSoon:boolean, nearEndWindow:boolean}} ctx
@@ -276,7 +275,7 @@ export function shopStageWant(ctx) {
 }
 
 /**
- * 可安心抓百兽判据（竞品 beastStageWant L24587-24594）。
+ * 可安心抓百兽判据（竞品 beastStageWant）。
  * 新知识：buffMap 中 buff_color==5 的增益数 ≥ 3 才算“安心”（§4.3）。
  * @param {{teamType:number, pieceShop:boolean, allBossCleared:boolean, cureOk:boolean, bandageOk:boolean, sausageOk:boolean, color5Count:number, beastsNotFull:boolean, bossIn90sWindow:boolean}} ctx
  * @returns {boolean}
@@ -296,7 +295,7 @@ export function beastStageWant(ctx) {
 }
 
 /**
- * 选商店（竞品 marchShop L24840-24849）——**本次重写最直接的补丁点**：链尾兜底店必须过三连前置。
+ * 选商店（竞品 marchShop）——**本次重写最直接的补丁点**：链尾兜底店必须过三连前置。
  * 前置任一不满足直接 null（暖机 63s 内不去 / 全店共享 3s 冷却 / 已在 161 不重派）。
  * @param {Array<{pos:{x:number,y:number}, time:number, sausage:number}>} shops time=秒（sausage=0 代“无香肠”）
  * @param {{serverMSTime:number, fightBeginTime:number, curPointType:number, preferNoSausage?:boolean, startPoint?:{x:number,y:number}}} ctx

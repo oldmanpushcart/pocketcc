@@ -8,7 +8,7 @@
  *   `item_id / share_msg_key / msg_type / daily_limit`（客户端源码 UserItemCityRewardBtn/Panel 实证），
  *   所以本 feat 一律以配置表为准、不按道具号写死。完整协议分析与运行时缺口见 extension/docs/feat-假面舞会.md。
  *
- * 协议（报文实证；源码实证 extracted/subpack/UserItemCityReward*）：
+ * 协议（报文实证；源码实证 UserItemCityReward*）：
  *   2503 DANCE_GET_REWARD  sendPBV2 {targetUidStr:"<开启者 pid 字符串>"}
  *     → {header:{s:0}, data:{rewardResult:{items:[{itemId:260617006,itemCount:1}]}}}
  *   push 10053 {danceRec:{"260617005":1}, myReceiveDance:["4909640309826248704"]}

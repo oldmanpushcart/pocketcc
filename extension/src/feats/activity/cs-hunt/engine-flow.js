@@ -13,7 +13,7 @@
  *   - 结束：无动作（交 TeamEngine/游戏）。
  *
  * 横切自动项（默认开、无 UI）：
- *   - 预警式防御（竞对 onAttacking 同义，server-js.js L16548-16591）：队长节流（WARN_POLL_MS）主动轮询 901 marchInfo 抓飞向本据点敌行军
+ * - 预警式防御（竞对 onAttacking 同义）：队长节流（WARN_POLL_MS）主动轮询 901 marchInfo 抓飞向本据点敌行军
  *     → 630 取敌战力、仅 `敌 power×WARN_POWER_RATIO > 队内最强 power` 才提前布防 → 按到达 ETA：`<WARN_ETA_MS` 隐形(10) 否则闪现(11)，皆不可用兜底毫发(26)/铜墙(2)；
  *     抢在 21383 结算前规避被掠。全程 fail-safe（数据缺失不动作），与下方「来袭保命」分占 marchId/回合幂等键不叠烧；
  *   - 来袭保命：21383 marchSize>0 即立即执行（不再等战力门控）→ 队长按 DEFENSE_PRIORITY（隐形10>闪现11>毫发盾26=回合盾2>其他战中增益族）用一；
@@ -31,7 +31,7 @@
  *   - 末回合清空：round===ROUND_MAX(10) → **单拍串行清光**背包全部可用技（竞对 clearAllSkills 同回合连发 5+ 个 7551 实证服务器受理；
      旧逐拍一技会被掠袭保命拍挤占、回合窗内清不完；排除先知9/刷新23；**完美镜像22 排首位**，
    与转场同律带 `param:copySkillSpecId` 发（严格只复制先知、先知溢出转幸运18，无目标则跳过不空发）——
-   竞对 clearAllSkills COPY 先行把余技复制出来再清，不带走不亏（server-js.js L16149-16159）；
+ 竞对 clearAllSkills COPY 先行把余技复制出来再清，不带走不亏；
    回合盾2 不再排除——第 10 回合后仍有「返程回合」可被攻击，铜墙铁壁抵御的正是返程，陪跑仅 personal；掠袭保命拍在末回合处置后同拍继续清空）。
  *
  * 选场景（indexDecide=1-based）——先知感知（**emit 前置：`uidDecide === 我方 uid` 轮值闸**）：
@@ -141,11 +141,11 @@ const WARN_POLL_MS = 7000;
 const WARN_ETA_MS = 60000;
 /** @type {number} 预警式防御敌强门控倍率：仅当 `敌 power×此值 > 队内最强 power` 才提前布防（竞对 1.4 同口径；避免对弱敌过烧隐形/闪现） */
 const WARN_POWER_RATIO = 1.4;
-/** @type {number} 战中「敌强碾压」重阈（竞对 roundFight L16450 口径）：敌最弱在途军的满员战力×此值 > 我方最强在途军的现员战力 → 整队被碾压，先垫一张毫发无伤(26) */
+/** @type {number} 战中「敌强碾压」重阈（竞对 roundFight 口径）：敌最弱在途军的满员战力×此值 > 我方最强在途军的现员战力 → 整队被碾压，先垫一张毫发无伤(26) */
 const FIGHT_RATIO_HEAVY = 1.3;
-/** @type {number} 战中「敌强」轻阈（竞对 roundFight L16453 口径）：低于此值视为弱敌掠袭，急救/增益不烧、留给强敌波 */
+/** @type {number} 战中「敌强」轻阈（竞对 roundFight 口径）：低于此值视为弱敌掠袭，急救/增益不烧、留给强敌波 */
 const FIGHT_RATIO_LIGHT = 1.5;
-/** @type {number[]} 族级溢出「不带出」提前烧清单（竞对 initRoundFight L16232-16240 的 闪现type7/百战type1/铁壁type2，加 幸运type10）：
+/** @type {number[]} 族级溢出「不带出」提前烧清单（竞对 initRoundFight 的 闪现type7/百战type1/铁壁type2，加 幸运type10）：
  *   此四族族级限窗（SKILL_TYPE_LIMIT=9）下**每回合至多消化 1 张**，「持有+当前回合 > ROUND_MAX」即终局必带出——
  *   FIGHT 相位趁早各烧一张回收，好过带出亏空（竞对口径）。百战不倒 1/25 为同族两 specId（游戏改版新增 type15 行）。
  *   幸运降临 18（用户口径 2026-11-22）：它在有奖场景之外没有任何场景无关的消耗路（末回合清空同一 specId 每回合只发一次），
@@ -733,7 +733,7 @@ export class FlowEngine {
       // 末回合不 return（借鉴竞对 clearAllSkills 与保命路并行不互斥）：保命拍不再挤占清空进度，同拍继续往下串行清空
       if (round !== ROUND_MAX) return;
     }
-    // 2) 末回合清空：round===ROUND_MAX 时**单拍串行清光**全部可用技（借鉴竞对 clearAllSkills L16149-16193——
+    // 2) 末回合清空：round===ROUND_MAX 时**单拍串行清光**全部可用技（借鉴竞对 clearAllSkills ——
     //   竞对同回合格斗相位连发 5+ 个 7551 实证服务器受理，逐拍一技会被掠袭保命拍挤占、回合窗内清不完背包；
     //   我方 #sendPB 在途去重使 await 串行天然逐条排队，每次 7551 应答内嵌背包回写让下一条 #usable 反映最新持有。
     //   排除先知/刷新；陪跑只刷 personal）
@@ -752,7 +752,7 @@ export class FlowEngine {
         if (!this.#usable(sid) || this.#done.has(fk)) continue;
         this.#done.add(fk);
         // 完美镜像(22) 置顶项须带 `param:copySkillSpecId` 才被服务器受理（协议实证见 #explorationSkills 正路，
-        //   竞对 clearAllSkills L16154 同律）；无 param 的裸 7551{22} 是畸形包。择目标与转场同策略：
+        // 竞对 clearAllSkills 同律）；无 param 的裸 7551{22} 是畸形包。择目标与转场同策略：
         //   严格只复制先知(9)，先知溢出（持有>剩余窗）转幸运(18)；皆不可用则记键跳过、继续清池内下一技（不卡死清空）。
         var flushOpt = null;
         if (sid === SKILL_COPY) {
@@ -787,7 +787,7 @@ export class FlowEngine {
       }
       if (!flushedOne) this.#flushedRound = round; // 池空或全部不可用→本回合清空收口（后续拍不再重扫）
     }
-    // 3) 族级溢出「不带出」提前烧（借鉴竞对 initRoundFight L16232-16240）：非末回合 FIGHT 相位，闪现/百战/铁壁/幸运
+    // 3) 族级溢出「不带出」提前烧（借鉴竞对 initRoundFight）：非末回合 FIGHT 相位，闪现/百战/铁壁/幸运
     //   任一「持有+当前回合 > ROUND_MAX」（族限窗 9 下每回合至多消化 1 张、剩余回合消化不完）→ 趁早烧一张回收，每拍至多一个写。
     //   幸运在此入列是它唯一的**场景无关**消耗路（#tryLuckyOverflow 只接在有奖场景，末回合清空同一 specId 每回合只发一次），
     //   故列清单首位抢首拍写额（用户口径 2026-11-22：r9 持 2 张时本回合不烧就必有一张带出报废）。
@@ -822,7 +822,7 @@ export class FlowEngine {
   }
 
   /**
-   * 预警式防御（借鉴竞对 onAttacking，server-js.js L16548-16591）：队长节流主动轮询 901，
+   * 预警式防御（借鉴竞对 onAttacking）：队长节流主动轮询 901，
    *   抓飞向本据点（tInfo sid/x/y）的敌掠袭行军（marchType138/state1/目标=本据点坐标）→ 630 取敌战力
    *   → 仅 `敌 power×1.4 > 队内最强 power`（竞对对弱敌不响应，省自保技）才布防 → 按到达 ETA 分流：
    *   `marchArrive-服务器时刻 < 60s` 用隐形(10)、否则闪现(11)，皆不可用兜底毫发(26)/铜墙(2)。
@@ -1009,7 +1009,7 @@ export class FlowEngine {
    * 战中自动项（status=FIGHT 相位，每拍至多一个写动作）：
    *   **前提闸一：本回合须真被真人掠袭过（#raidRounds.has(round)）**——实证 FIGHT 是每回合必经的结算相位（无任何 21383 掠袭也逐回合推 fightWin 0→3），
    *     若只判 status=FIGHT 会每回合白烧一发急救 + 提前耗光增益，违背用户口径「无人受伤不治疗」。
-   *   **前提闸二（③ 敌强门控，借鉴竞对 roundFight L16442-16458）：掠袭回合内再按 7578 双查战力分流**——
+   * **前提闸二（③ 敌强门控，借鉴竞对 roundFight）：掠袭回合内再按 7578 双查战力分流**——
    *     敌「最弱在途军的满员战力×FIGHT_RATIO_HEAVY > 我方最强在途军的现员战力」→ 整队被碾压，先垫一张毫发无伤(26)（每回合一次、烧成即收手）；
    *     仍不达 ×FIGHT_RATIO_LIGHT → 弱敌掠袭，急救/增益不烧留给强敌波。侦察数据缺失（敌或我空）fail-open 保留无条件烧。
    *     注：此闸只管**消耗路**（急救/增益/垫盾），不碰「预警即保命」自保路（用户口径 2026-10-24 保命无战力门控）。
@@ -1029,7 +1029,7 @@ export class FlowEngine {
     var fi = this.#hunt && this.#hunt.fightInfo;
     if (fi && fi.fightWin != null && Number(fi.fightWin) !== 0) return;
     await this.#ensureBackpack();
-    // ③ 敌强门控（借鉴竞对 roundFight L16442-16458）：7578 双查比对军力后决定消耗动作——
+    // ③ 敌强门控（借鉴竞对 roundFight）：7578 双查比对军力后决定消耗动作——
     //   敌最弱在途军的满员战力(eCap)×1.3 > 我方最强在途军的现员战力(mPow) → 整队被碾压：先垫一张毫发无伤(26)（竞对 useSkill(16) 同位）；
     //   不达 ×1.5 → 弱敌掠袭，急救/增益一张不烧（留给强敌波）。数据缺失（敌或我任一为空）fail-open 保留旧无条件行为。
     //   竞对口径逐字采用：敌侧取 armyPower 最小者的 maxArmyPower（保守判据：连敌最弱队的满员都压过我方最强，才算碾压）。
