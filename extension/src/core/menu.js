@@ -2,7 +2,7 @@
 // 与 registry 的分工：descriptor（reactor.list() + INTERNAL_FEATURES）仍是字段/存储/默认值的真相，
 // 本文件只决定层级归属、显示标签覆写与是否渲染详细字段。
 // 节点：
-//   kind:'category' 类别 = 面板左侧一个 TAB（玩家设置/联盟设置/活动设置/战斗设置/系统设置），本身不可开关；children=右栏卡片数组。
+//   kind:'category' 类别 = 面板左侧一个 TAB（玩家设置/联盟设置/活动设置/CQ26印石/战斗设置/系统设置），本身不可开关；children=右栏卡片数组。
 //     赛季型类别可声明 gate（如 cq26 -> 'cq26Open'），活动未开启时该 TAB 不可点。
 //   kind:'group'    组卡片：标题行带主闸门 checkbox，展开=子项 checkbox 列表（如玩家/联盟基础设置）。
 //   kind:'feature'  功能卡片：标题行带启用 checkbox；showFields=true 时展开 descriptor 的详细字段。
@@ -42,7 +42,7 @@ export const CATEGORIES = {
 };
 
 /**
- * 面板菜单树根（五个类别节点）
+ * 面板菜单树根（六个类别节点）
  * @type {MenuNode[]}
  */
 export const MENU = [

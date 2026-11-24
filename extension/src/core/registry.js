@@ -115,7 +115,7 @@ const INTERNAL_FEATURES = [
   },
   {
     // 日志上送（dashcam 双记录之二）：与报文录制平行的**独立开关**——生命周期不同：
-    // 报文是会话制（带业务标签 note、定稿命名），日志长期常开（无业务语义，接收端按小时轮转直写）。
+    // 报文是会话制（带业务标签 note、定稿命名），日志长期常开（无业务语义，接收端按天归段直写、超保险丝滚 -NN 序号段）。
     // 开启→log-collect start(cfg) 挂 log.js sink；关闭→stop() 摘钩（hot path 回落一次判空）。
     // 句柄走 log-collect.js 具名导出 logCollectApi（与总线同源）。
     id: 'logRecord',
