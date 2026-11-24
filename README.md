@@ -1,70 +1,186 @@
-# pocketcc（口袋控制中心）
+# POCKETCC（口袋控制中心）
 
-口袋奇兵（Top War，`warh5.rivergame.net`）H5 页游的**个人逆向辅助工具集**。本仓库并列两个**相互独立**的工程，各自有自己的 `package.json` 与 README：
+《口袋奇兵》（Top War，`warh5.rivergame.net`）H5 页游的**开源自动化辅助**，以 Chrome/Edge MV3 扩展的形式运行在玩家自己的浏览器中。源码公开，可自行编译，永不收费。许可：[GNU GPLv3](./LICENSE)。
+
+| 你想做什么 | 直接看 |
+|---|---|
+| 装上就能用 | [快速开始](#快速开始) |
+| 想知道它会不会动我的账号 | [我们的承诺](#我们的承诺) · [凭什么信这三条](#凭什么信这三条) |
+| 想看有哪些功能 | [功能一览](#功能一览) |
+| 想读代码 / 一起开发 | [工程构成](#工程构成) · [从源码编译](#从源码编译) · [extension/docs/](./extension/docs/) |
+
+---
+
+## 写在前面
+
+口袋控制中心是网页游戏《口袋奇兵》的自动化辅助工具。
+
+这个念头源自 2026 年 8 月那桩臭名昭著的「盗版外挂」事件。一家外挂厂商为打压竞争对手，在自己的软件里埋了「毒」：毒发之时，受害账号会在世界频道反复播报「我使用盗版外挂，我要被封了」，继而受程序驱使，做出大量违规操作，直到封禁落地。一场厂商之间的战争，最终由毫不知情的玩家用账号结清。
+
+普通玩家并没有分辨「正版」的能力。厂商之间的竞争竟以无辜用户为代价，这是整件事最恶劣之处——而把商业争斗的代价转嫁给用户，上一回还是腾讯与 360 的「3Q 大战」。
+
+所以这个项目只做一件事：**让《口袋奇兵》的玩家能安心使用一款辅助，不再被外挂厂商绑架。** 为此我花了三个月，用 Qoder 从协议报文开始从零写起。
+
+## 我们的承诺
+
+以下三条是立项前提，不设期限，也不接受任何形式的后续变更：
+
+1. **永不上传玩家的登录凭证**——凭据只存在于玩家自己的浏览器中；
+2. **永远保持代码开源公开**——任何人皆可审计、审查，并自行编译使用；
+3. **永不向玩家收取使用费用**——不设会员，不做增值功能，不出售授权。
+
+## 它不是什么
+
+口袋控制中心不是市面上任何一款同类产品的复制品。它是一点一点逆向出来的：逐报文抓取，逐函数阅读，逐个玩法验证。有些判据必须等——等一场活动开启，等自己的账号推进到足以触发那个行为的进度，等上两周乃至一个月是常态。
+
+它的功能面也不按「竞品有什么」来裁剪，而是依照我个人的游玩习惯设计，进度则受限于我当前账号的游戏进度。例如：
+
+- 没有「4 国 / 8 国」相关功能，是因为动手时并无对应活动；
+- 没有「补给获得」活动的拉箱子功能，是因为我的账号已不再需要拉箱子；
+- 多数活动未做自动领取，是因为我自己用不上。
+
+我不打算复刻一款成熟的商业产品，对既有的外挂市场也毫无兴趣。这个项目想做的，只是一件让自己和朋友都能安心使用的小事。
+
+## 凭什么信这三条
+
+承诺若只停在意愿层面，在这个行业里一文不值。所以这一节给的是可以逐条核对代码的事实；你也可以完全不读源码，自行编译一份（见[从源码编译](#从源码编译)）——**你手上那份产物的行为由你界定，不由我声明。**
+
+**登录凭证不出本机。** 免扫码登录复用的是游戏自行写入浏览器 `localStorage` 的 `topwar_app_serverToken`（[extension/src/core/auto-login.js](./extension/src/core/auto-login.js)）——缓存、回放、清除皆在本地完成，扩展不为其发起任何上行请求。扩展自身的配置落在 `chrome.storage.local`，同样只存本机。项目没有账号系统、没有统计埋点、没有云端配置：唯一的远端是一个存放 JS 正文的公开 OSS bucket，仅用于[在线自动升级](./extension/README.md#检测与提示)的只读下载。全部出网面收敛在 `manifest.json` 的 `host_permissions` 中，共三条：`http://127.0.0.1/*` 与 `http://localhost/*`（可选的本地[报文录制](./dashcam/README.md)／日志上送服务），以及发布构建追加的 OSS 更新域名。
+
+这条出网面只属于扩展。仓库里另外两个工程不随扩展分发，也接触不到凭据：`dashcam/` 只监听 `127.0.0.1`；`warroom/` 只按战报 ID 从游戏自己的报告 OSS 与配置 CDN 拉取本就公开的数据、缓存在本机。warroom 为后续的大模型复盘预留了接口位（密钥走环境变量，`config.json` 不入库），**目前尚无任何调用实现**；真正接线时，本节会同步写明它将向模型端点提交哪些字段。
+
+**代码可审计。** 发布构建只做 minify，**不做二次混淆**——远程体执行的正是仓库中的这份代码，标识符、日志文案与判据注释均保留原义。每个玩法是一块独立的 `feats/` 模块，以「说明书」形式注册进统一的 reactor 生命周期，读懂一个玩法不必先读懂全局。判据可溯源：协议号集中于[协议注册表](./GLOSSARY.md#协议注册表protocol-registry)，行为以真人录制的报文离线对拍验证（`npm run verify:<feat>`）。
+
+**永不收费。** 仓库中不存在支付、卡密、激活码或「VIP 功能」之类的实现，将来也不会引入。许可层面同理：任何人都不能把这份代码闭源之后转售，见[许可](#许可)。
+
+> 需要说明的是：使用任何第三方辅助都可能违反游戏用户协议，封号风险由使用者自行承担。这个项目能够担保的只是工具本身——不下毒、不窃凭证、不静默下发未经你审阅的行为。
+
+## 功能一览
+
+面板是游戏页右下角的浮动图标（可拖拽），Shadow DOM 左右两栏：左侧类别 TAB，右侧功能卡片，改动即存档生效。**所有玩法功能默认关闭**——未经你启用，扩展不会替你向游戏发送任何请求；只有会话层的「自动重连」与「后台保活」默认开启。层级定义在 [extension/src/core/menu.js](./extension/src/core/menu.js)，六个类别与实际面板 1:1：
+
+| 类别 | 功能 |
+|---|---|
+| **玩家设置** | 每日补给 · 广告领钻石 · 自动收取金币 · 军火库生产材料 · 秘密武器空投 · 一键领取 · 每日特惠 · 生日祝福 · 机械制药 · 玩家点赞 · 战争之源 · 卡车争夺 · 自动下田 · 自动打野 · 惧星集结 · 雷达任务 · 次元矿洞 · 异能兽培育 · 城市技能 |
+| **联盟设置** | 联盟帮助 · 联盟礼物 · 联盟科技 · 联盟守卫 · 联盟保卫战 · 联盟集结 · 联盟机甲 · 遗迹奖励 |
+| **活动设置** | 海上夺宝 · 重装母舰 · 领域寻宝 · 假面舞会 · 泰坦祝福 · 花车空投 · 占领发射井 · 异能秘境 · 夺宝奇兵 |
+| **CQ26印石** | 战区宝藏 · 遗失之箱 · 能量补充车队 · 急速解冻 · 雪原列车 · 霜之密所抢购 · 荒芜冰原矿区 · 猛犸突袭 · 冰原巨熊 · 保卫能量 · 巨兽盛宴（活动未开启时整个 TAB 不可点） |
+| **战斗设置** | 快捷战斗（`Shift+1-8` 三连） · 奉旨出征 · 自动防御 · 快速修理 |
+| **系统设置** | 聊天窗口 · 全局地图 · 镜头跳转 · 自动重连 · 后台保活 · 网络日志 · 事件日志 · 报文录制 · 日志上送 · 快捷键一览 |
+
+此外还有一批不经面板、始终在生效的会话层能力：**免扫码自动登录**（含游戏本体并不提供的登出／换号入口）、**断线自动重连**、**战斗模式总开关**（`F8`，一键挂起所有派行军类功能）、**游戏内快捷键**（`Tab` 飞回基地、`H` 基地↔大世界、`B` 背包、`Ctrl+K` 聊天、`Ctrl+M` 全局地图）。
+
+功能的设计口径、门控语义与逐条实现细节见 [extension/README.md](./extension/README.md)。
+
+## 工程构成
+
+仓库并列三个**相互独立**的工程，各有自己的 `package.json`，互不参与对方的构建：
 
 | 工程 | 类型 | 说明 | 文档 |
 |---|---|---|---|
-| [`extension/`](./extension/) | Chrome MV3 扩展 | 跑在游戏页 MAIN world 的自动化辅助：免扫码登录、自动重连、日常/活动任务、地图侦察、聊天、报文录制 | [`extension/README.md`](./extension/README.md) |
-| [`dashcam/`](./dashcam/) | Node.js HTTP 服务 | 扩展「报文录制」落盘的接收端：按会话/日期把 NDJSON 报文写盘，供离线逆向分析 | [`dashcam/README.md`](./dashcam/README.md) |
+| [`extension/`](./extension/) | Chrome MV3 扩展 | 发给玩家的那一份：注入游戏页 MAIN world 的自动化辅助主体——会话恢复、日常/活动/战斗自动化、地图与聊天浮层、报文录制 | [extension/README.md](./extension/README.md) |
+| [`dashcam/`](./dashcam/) | Node.js HTTP 服务 | 本地接收端：把扩展上送的 NDJSON 报文与引擎日志按会话/日期落盘，附只读分析 CLI，供逆向回放 | [dashcam/README.md](./dashcam/README.md) |
+| [`warroom/`](./warroom/) | Node.js CLI + 静态工作台 | 战报复盘系统：按战报 ID 从游戏自己的报告 OSS 永久缓存原文，解码入库（SQLite），渲染成单文件、零 JavaScript 的战报工作台 HTML | [warroom/README.md](./warroom/README.md) |
 
-> 个人逆向学习与自用项目。使用第三方辅助可能违反游戏用户协议，风险自负。
+只有 `extension/` 会分发出去；`dashcam/` 与 `warroom/` 是逆向与分析侧的两件工具，都不打进扩展包，也不参与根 `esbuild` 构建。
 
-## 两者的关系
-
-两个工程**没有运行时依赖**，只通过一条本地 HTTP 链路松耦合——扩展负责采集，dashcam 负责落盘：
+扩展与 dashcam 之间只有单向的数据链路——扩展采集，dashcam 落盘——且链路上的两个开关默认均为关闭：
 
 ```
-游戏页 MAIN world                         扩展自有进程                本地服务
-core/net-collect.js  ──postMessage──▶  bridge.js  ──runtime──▶  background.js  ──fetch POST──▶  dashcam /ingest
-   (缓冲 NDJSON)                        (ISOLATED)              (service worker, 绕页面 CSP)      (按会话落盘 .ndjson)
+游戏页 MAIN world                        扩展自有进程                    本地服务
+core/net-collect.js ──postMessage──▶ bridge.js ──runtime──▶ background.js ──fetch POST──▶ dashcam /ingest
+   (缓冲 NDJSON)                      (ISOLATED)             (service worker, 绕页面 CSP)     (按会话落盘 .ndjson)
 ```
 
-不启用「报文录制」时，`dashcam/` 完全不需要运行；扩展可独立使用。
+只要不开启「报文录制」与「日志上送」，`dashcam/` 便无需运行，扩展可独立使用。`warroom/` 与扩展之间没有链路：它读的是游戏在战斗结算后自行上传的报告正文，输入只有一个战报 ID——而游戏侧的报告链接限时有效，所以本工程的第一要务是「抓到即永久留档」。
+
+跑起 warroom（Node ≥ 18，唯一三方依赖是原生模块 `better-sqlite3`）：
+
+```bash
+cd warroom
+npm install
+cp config.example.json config.json        # config.json 与 data/、analysis/ 均已 gitignore
+node cli.js fetch 4878890640079697925     # 下载原文并永久留档（幂等，本地已有则不走网络）
+node cli.js parse && node cli.js html     # 解码入库 → 渲染 analysis/<id>.html，双击即开
+```
+
+三者的依赖面，审计时值得先知道：`extension/` 运行期零第三方依赖，只在构建期使用 esbuild；`dashcam/` 纯 `node:http`，同样零依赖；`warroom/` 是全仓库唯一引入三方依赖的工程——`better-sqlite3`（含原生二进制）。根 `package.json` 的 `devDependencies` 只服务构建、检查与测试，不进入任何产物。
+
+## 快速开始
+
+前置条件：Edge 或 Chrome。除非自行编译，否则不需要 Node.js。
+
+**安装发布包**（日常用法）：向我索取当前壳包 `pocketcc-extension/`——解压后应为直接包含 `manifest.json` 的那一层目录，然后：
+
+1. 地址栏进入 `edge://extensions`（或 `chrome://extensions`），打开「开发人员模式」；
+2. 「加载解压缩的扩展」选择**上述那一层目录**（误选仓库根或 `dist/` 会报清单缺失）；
+3. 打开游戏页登录，主城就绪后右下角出现浮动图标。
+
+此后日常升级无需任何操作：后台每 4 小时检查一次，新正文经双验（SHA-256 + HMAC）后只写入缓存，面板提示「刷新页面即生效」——**运行期永不热替换**，不会打断进行中的行军。OSS 不可用时照旧运行包内基线。这套分发的设计缘由（含为何不发 CRX）见 [extension/README.md · 打包与发版](./extension/README.md#打包与发版)。
+
+**可选：启用报文录制**（仅在你需要自行逆向或核对协议时）：
+
+```bash
+cd dashcam
+npm start        # 监听 http://127.0.0.1:7391，面板「系统设置」里打开开关即可
+```
+
+## 从源码编译
+
+这条路径面向两类人：不打算相信我的人，以及贡献者。
+
+```bash
+npm install
+npm run build                  # dev 档：产物落 extension/dist/，远程升级整条通道短路
+npm test                       # 单测 + 协议注册表闸门（Node 自带 test runner，无第三方框架）
+npm run arch                   # 架构红线（dependency-cruiser 禁边 + 尺寸/切片守卫）
+npm run lint                   # eslint
+```
+
+随后按[快速开始](#快速开始)的三步加载 **`extension/`** 这一层目录。dev 构建不需要任何密钥，也不会发出升级请求——运行的正是你刚编译出的那份文件。改动源码后需重新 `npm run build` 并 **F5 刷新游戏页**（仅重载扩展不够：MAIN world 的 monkey-patch 只有干净页面才能清除）。
+
+若要搭建自己的更新通道（例如只分发给你的朋友）：修改 `esbuild.config.mjs` 顶部的 `UPDATE_BASES`，设置 `PCC_UPDATE_KEY`，再执行 `npm run pack:release`（出壳）或 `npm run publish:release`（出待上传件）。**更换任何一条 `manifest.key` 都等于启用一个新的扩展实例**（数据从零开始），三条通道的 key 见 [extension/channel-keys.json](./extension/channel-keys.json)。
 
 ## 仓库布局
 
 ```
 pocketcc/
-├─ extension/          Chrome MV3 扩展工程（详见 extension/README.md）
-├─ dashcam/            报文录制接收服务（详见 dashcam/README.md）
-├─ references/         只读逆向素材：游戏源码镜像 + 分析台账（不入库的大文件已 .gitignore）
-├─ esbuild.config.mjs  扩展六入口（壳侧 + 远程体）的打包配置，升级基址唯一真相
-└─ package.json        扩展构建与发版脚本（npm run build / pack:release / publish:release；dashcam 不在其中）
+├─ extension/            Chrome MV3 扩展工程：薄壳（本地）+ 远程体（OSS 分发），详见 extension/README.md
+│  └─ docs/              核心模块设计文档 + adr/ 架构决策记录
+├─ dashcam/              报文/日志接收服务 + 离线分析 CLI，详见 dashcam/README.md
+├─ warroom/              战报下载·解码·复盘工作台（SQLite + 单文件 HTML），详见 warroom/README.md
+├─ scripts/              构建发版、架构守卫、协议注册表抽取、录制对拍内核
+├─ tests/                判据层单测（node:test）
+├─ GLOSSARY.md           业务与架构术语表
+└─ esbuild.config.mjs    六入口打包配置，升级基址的唯一真相
 ```
 
-## 快速开始
+## 参与
 
-**扩展**（Node.js 环境，开发用 esbuild，无运行时依赖）：
+若你恰好有兴趣、也有时间，欢迎一起来把它做完整。
 
-```bash
-npm install
-npm run build                 # dev 档（日常调试）：产物落 extension/dist/，不启用远程升级
-# 浏览器 edge://extensions 开启「开发人员模式」→「加载解压缩的扩展」选择 extension/ 目录
+这是一个逆向驱动的项目，所以「如何参与」与普通开源略有不同：
 
-export PCC_UPDATE_KEY='<发版密钥>'   # 下面四条都要先设；Windows 设法见 extension/README
-npm run publish:release       # release 档日常发版：出 extension/out/release/oss/ 待上传件，传完 OSS 朋友刷新页面即升级
-npm run pack:release          # release 档换壳时才需要：出分发目录 extension/out/release/pocketcc-extension/
-npm run publish:snapshot      # snapshot 档：同上，只是走 OSS 的 /extension/snapshot/ 与本地 extension/out/snapshot/（自己先吃）
-npm run pack:snapshot         # snapshot 档只出壳：extension/out/snapshot/pocketcc-extension/
-```
-
-三档发布通道（dev / snapshot / release）与版本号规则（三段式 X.Y.Z）见 [extension/README.md](extension/README.md#打包与发版)。
-
-**报文接收服务**（可选，仅当要开启扩展的「报文录制」时才需要）：
-
-```bash
-cd dashcam
-npm start                     # 等价 node server.js，监听 http://127.0.0.1:7391
-```
-
-装好扩展进游戏页后，右下角浮动图标即控制面板。详细用法见 [`extension/README.md`](./extension/README.md)。
-
-## 技术栈
-
-- **扩展**：JavaScript（ES Module）+ [esbuild](https://esbuild.github.io/) 打包为 IIFE（`target: chrome110`，dev 未压缩 + sourcemap、release minify），Chrome Manifest V3；分层为**本地薄壳 + OSS 远程体**（MAIN 壳 `shell.js` 取包并执行远程体，ISOLATED `bridge.js`，+ background service worker），刷新页面即升级。
-- **dashcam**：纯 Node.js（`node:http`），无第三方依赖，`engines.node >= 18`，ESM。
-- 无锁文件 / 私有源 / CI；版本在各自 `package.json` 手动维护。
+- **想加功能**：前提是先掌握那个玩法的真实协议。仓库的工作方式是：用 `dashcam` 录制真人报文 → 对照报文与游戏源码确定判据 → 编写 feat → `npm run verify:<feat>` 以录制回放对拍核验写动作。缺一段录制，就得先等那场活动开启——这也是项目节奏偏慢的原因（见[它不是什么](#它不是什么)）。
+- **想一起做逆向或复盘**：报文侧是 `dashcam/`——录制、落盘、六个只读分析子命令（`index`/`series`/`shape`/`slice`/`push`/`log`）；战报侧是 `warroom/`——按 ID 永久留档原文、解码入库、渲染成可双击打开的工作台 HTML。两个工程的判据与建模口径各自成文，动手前请先读它们的 README。
+- **想改代码**：从 [extension/README.md · 架构](./extension/README.md#架构) 与 [extension/docs/](./extension/docs/) 读起。架构红线（壳不得 import `feats/**`）由 `npm run arch` 守住，请勿绕过。
+- **只想反馈问题**：提 issue 时请附上现象、大致时间点与能否复现。若你常开「日志上送」，引擎的决策日志会落在 `dashcam/store/log/<uid>/`，那份记录远比一张截图有用。
+- 提交 PR 前请跑一遍 `npm run format:check && npm run lint && npm test && npm run arch`——这四条是本仓库的门禁。
 
 ## 许可
 
-未声明开源许可的个人项目（私有、暂不授权再分发）。若后续开源会在此补充许可证。
+本项目以 **GNU GPLv3**（GNU General Public License v3.0）发布，全文见 [LICENSE](./LICENSE)。
+
+```
+口袋控制中心 (pocketcc) — 口袋奇兵 H5 页游开源自动化辅助
+Copyright (C) 2026 oldmanpushcart <oldmanpushcart@gmail.com>
+```
+
+选择 GPL 而非 MIT，是为了让[我们的承诺](#我们的承诺)在法律层面同样成立：任何人基于这份代码做出的衍生版本——无论改名、换皮还是打包分发——**必须以同一许可继续开源**；将源码闭合后再分发给玩家，是被明确禁止的行为。换言之，2026 年 8 月那类「玩家被外挂厂商绑架」的局面，无法靠 fork 这个项目重演。
+
+两点需要说明，以免日后产生歧义：
+
+- 「永不收费」约束的是本项目自身，而非 GPL。GPL 允许任何人自由复制与再分发，也允许他在履行开源义务的前提下就分发行为收费；本项目保证的是自己永远免费、永远公开。
+- 已按 GPLv3 发布的版本，其许可不可撤回。即便日后本项目的许可策略发生变化，此前流出的版本仍依 GPLv3 约束。
+
+> 使用本软件不构成对游戏本体的任何权利主张，亦不能免除《口袋奇兵》用户协议的约束；风险由使用者自行承担（见[凭什么信这三条](#凭什么信这三条)末尾的说明）。

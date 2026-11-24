@@ -1,5 +1,6 @@
 node_modules/
 .replaytmp/
+.reviewtmp/
 extension/dist/
 # extension 的分发出口（minified 壳 + 待上传件；dev 不出包）
 extension/out/
