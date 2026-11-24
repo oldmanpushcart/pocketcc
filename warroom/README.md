@@ -17,6 +17,7 @@
 - [渲染层（战报工作台 HTML）](#渲染层战报工作台-html)
 - [开发约定](#开发约定)
 - [路线图](#路线图)
+- [许可](#许可)
 
 ## 定位与命名
 
@@ -61,6 +62,7 @@ Copy-Item config.example.json config.json   # PowerShell
 - **AK 走环境变量**：`config.json` 里 `"apiKey": "${WARROOM_LLM_AK}"` 会被自动展开为同名环境变量值；
   环境变量缺失时该字段解析为 `null` 并记录，**不会**把占位符原文写库，也不阻断 `fetch`/`info`。
 - 路径均可用 `WARROOM_DATA` 覆盖数据根目录；`WARROOM_DEBUG=1` 打开 debug 级日志。
+- **`storage` 里只有 `dataDir` 生效**：`dbPath` / `rawDir` / `dictDir` 三键由 `src/config.js` 用 `dataDir` 派生覆盖（`warroom.db` / `raw` / `dicts`），写在配置里只是给读者看的形态说明，改它们不影响落点。
 
 ## 使用
 
@@ -96,8 +98,15 @@ node cli.js info
 2. **64 位 ID 一律 TEXT**：`report_id`/`uuid`/`march_id`/`uid` 超 `2^53`，绝不 `Number` 化，杜绝精度丢失。
 3. **字典版本随行**：`reports.dict_version` + `dict_entries` 带版本键，历史战报可按当时代码复现。
 
-表清单：`reports` · `battle_marches` · `sides` · `side_players` · `side_units` ·
-`unit_instances` · `battle_events` · `players` · `dict_entries` · `rule_findings` · `analyses`。
+表清单（`PRAGMA user_version` 当前为 **4**，`MIGRATIONS` 逐版累加）：`reports` · `battle_marches` · `sides` ·
+`side_players` · `side_units` · `unit_instances` · `battle_events` · `players` · `dict_entries` ·
+`rule_findings` · `analyses`，另加两张归一表 —— **`buff_effects`**（v2：把散落在各编配视图的数值加成统一成一行一
+buff，每行带 `source_view` 供分源聚合且不重复计数）与 **`damage_sources`**（v3：伤害归因行）。
+`battle_events` 在 v4 从「只有 `raw` JSON」升级为带语义列（`kind` / `outcome` / `act_type` / `e_type` /
+`e_value` / `old_hit` / `trigger_type` / `ev_id` / `targets` / `nums` / `buff_src` 由 parse 直算，
+`buff_name` / `buff_type` / `buff_is_minus` / `buff_target` / `buff_value_type` / `buff_sustained` /
+`buff_debuff_time` / `skill_name` / `hero_name` 由字典回填），并建 `kind` / `buff_id` 两个索引——
+历史库需重跑 `node cli.js parse` 才有这些列。
 其中 `analyses.scope` 取 `overall/attacker/defender`，正好对应三份报告。
 
 ## 渲染层（战报工作台 HTML）
@@ -202,6 +211,11 @@ node cli.js info
 旧版本此处的「43 场 / 76,956 事件 / 199 回合」已于二次复核作废、第二行的时长条口径又经三次复核改写，逐条见
 [回合与时长维的二次复核](#回合与时长维的二次复核又抓到两条错判据) 与
 [增益三角色的三次复核](#增益三角色的三次复核removeskillbuffsource-不是施加者)）：
+
+> **本节及下文各表的「N 场」是台账快照口径**：数字记录的是**下结论那一刻的语料**（45 场 / 83,515 事件），
+> 本机库现在已随抓取增长（现测 47 场 / 90,304 事件）。这些结论是「战报下发边界」类判据（某列全空、
+> 某字段不点名），新增场次只会加固、不会翻案；但**比例与条数不可按现在的库复算**，要复现得先把语料钉回那 45 场。
+> 拿新语料重测出不同数字时，改的是这一句，不是上表的判据。
 
 | 做不出                 | 实测判据                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
 | ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
@@ -335,8 +349,10 @@ node cli.js info
   总行」（覆盖不变量，`modAgg` 内置未命中入「其他编配系统」兜底）；逐回合增益「`roundAgg.applyAttr` 各回合属性合计 ≤ 该回合施加总数」。
   逐回合兵力另有一条（`forceAgg` 构造保证）：「走势柱某侧某回合末剩余 == 该侧九宫格九槽 `atRound`（≤该回合最近快照、否则 `max_power`）之和」；
   `power` 列在被击方的同一槽位应沿 `idx` 单调不增（实测 41/45 场成立，4 场早期结算阶段场次不带此列、走势卡显式回落）。
-- 临时探针脚本用完即删，避免污染 lint 与仓库基线。
-- 数据目录 `data/`、`config.json`、`node_modules/` 均已 gitignore。
+- 探针脚本放 `warroom/scripts/`，**结论进了本文档的才留档**（现有 26 个：`dict-*` / `*-probe` / `*-scan` 是各次取证的可复现入口，
+  换字典版本或新语料时要靠它们重跑，不许删）；一次性试跑、结论没进台账的用完即删，别把仓库当草稿纸。
+- 忽略项：`node_modules/`、`data/`（原文 + 字典 + SQLite）、`config.json`（含本机路径与密钥引用）、`analysis/`
+  （HTML 渲染产物，可由 `node cli.js html` 再生）、`*.part`（原子落盘中间态）。
 
 ## 路线图
 
@@ -375,3 +391,7 @@ node cli.js info
       ⑦ catch-all 组标签从「其他来源」重命名为「其他编配系统」，并在卡片 note 解释 rowCnt（本组 views 全部行）≠ pairs（仅匹配 BUFF_ATTR_RE 且中文名的属性行）属数据特性；⑧ staticConfig 副标题同步新口径。normalize.js 变更已 `node cli.js parse` 全量重入库 + `node cli.js html` 全量重渲染；产物样本 4883545741242523653 实测 ★出现 118 次、chipMatrix 引用 0、「其他编配系统」1 次、芯片表 thead 存。
 - [ ] **Phase 3**：`players` 聚合统计（战力曲线、胜败/被攻 TopN）
 - [ ] **Phase 4**：规则/统计报告 + LLM 三路输出（整体 / 攻方 / 守方三份）
+
+## 许可
+
+[GNU GPLv3](../LICENSE) —— 衍生版本必须以同样许可开源。详见 [pocketcc README · 许可](../README.md#许可)。

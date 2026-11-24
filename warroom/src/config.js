@@ -1,6 +1,7 @@
 // Config loader: reads warroom/config.json (falling back to config.example.json),
-// then deep-expands "${VAR}" placeholders from process.env. Missing env for a
-// placeholder is a hard error (fail-fast) so an empty AK is never silently used.
+// then deep-expands "${VAR}" placeholders from process.env. A missing env resolves that
+// field to null and is logged (debug) — it must never leak the literal "${VAR}" downstream,
+// but it does not block fetch/parse/html, which need no LLM key.
 import { readFileSync, existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join, resolve } from 'node:path';

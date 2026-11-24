@@ -125,7 +125,7 @@ async function main() {
     console.log('  node cli.js import <file.json> <reportId>    ingest a locally-saved raw file');
     console.log('  node cli.js parse [reportId...]              decode raw -> structured tables');
     console.log(
-      '  node cli.js html [reportId...]               render five-act HTML -> analysis/<id>.html',
+      '  node cli.js html [reportId...]               render 3-tab HTML workbench -> analysis/<id>.html',
     );
     console.log(
       '  node cli.js dict [--force]                   download+decode CDN dict -> dict_entries',
