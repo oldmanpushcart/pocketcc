@@ -172,7 +172,8 @@ export const MENU = [
     kind: 'category',
     label: CATEGORIES.battle,
     children: [
-      { id: 'quickAttack', kind: 'feature', label: '快捷战斗' },
+      // 快捷战斗：除总开关外还有「城皮切换」区段（两张皮 + 待机档），需详细参数区才能渲染并落盘
+      { id: 'quickAttack', kind: 'feature', label: '快捷战斗', showFields: true },
       { id: 'imperialDecree', kind: 'feature', label: '奉旨出征', showFields: true },
       { id: 'autoDefense', kind: 'feature', label: '自动防御', showFields: true },
       { id: 'quickRepair', kind: 'feature', label: '快速修理', showFields: true },

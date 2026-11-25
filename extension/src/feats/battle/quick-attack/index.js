@@ -24,8 +24,25 @@
  * marchType 跨服漂移（无双峡谷等跨服战场实测）：注册表里存的是「本服基础值」，发包前经
  * core/game-api.js 的 march.resolve() 按当前战场换算（游戏原生 WorldUtils.dealMarchTypeWithSpecialMarch
  * 优先，符号漂移时降级本地兜底表 MARCH_FALLBACK）——跨服服下直接拿 13 打玩家城会被服务器拒。
+ *
+ * 出征自动切城皮（可选，默认关）：城皮 buff 收敛到 BattleArmyAddNum(153) → 每格出征上限 → 官方重算器算出膨胀兵数，
+ * 而服务器按「发出时刻的上限」收兵、按「到达时刻的皮肤」结算。故面板开启后每满编波走四相位：
+ *   A 预切出征皮（重算器吃到高上限）→ B 902 出征 → C 受理立即切回主战皮（部队带着主战 buff 到达）
+ *   → D 开始返程按面板「待机皮肤」归位（比到家早 6–15s）；协议、RT 实测与全部取舍见同目录 skin-swap.js 头注释（报文实证）。
+ * 三连只有波1 是满编有效战力（走 A→D 并入在途账本），波2/波3 的 minimal 陪次数不切皮；
+ * 未启用/未选皮/两皮相同/皮未拥有 → 整条链短路（一个 855 也不发），行为与开关不存在时逐字节一致。
+ * 节奏（报文实证 dashcam 20261126T025211 / 031109 / 034023 / 035440-城皮切换）：服务器把 855 换皮也计入 902 那条
+ * `march_time_control_info001`（“操作过快”）全局节奏，且是**一条全局时钟**：距上一发被受理的 855 ≤1.863s 的 902 全拒、
+ * ≥2.012s 的全过（15 样本零重叠）。反向：855→855 实测 2.05s / 4.16s 均 ret=0（四场 21 发零被拒），
+ * 即切皮自身并不占用一道独立 CD（客户端那道 133310 CD 只装在 CastleSkinChangeView 里，直发 855 不经它）。
+ * 因此：每波 902 前都要凑满距**任何一相位**最后一发 855
+ * 的 SKIN_MARCH_GAP_MS（不只是本波 A 相——待机归位/在途回切那两发一样占节奏；退避重发也一样再过一道）；三连次间 TRIPLE_INTERVAL_MS；
+ * 两个间隔定档 2000（五场 15 样本按结果分隔干净：≤1.863s 全拒、≥2.012s 全过；探测档 1800 已被 dashcam
+ * 20261126T035440 证伪：since855 1.37/1.82/1.86s 三发全限流）；每波 902 上线时
+ * 把实际间隔记成 `since855` 进日志，日后想再压档直接按「间隔 → 过/拒」对表；仍撞限流 → 同一载荷退避重发（不限流类拒绝依旧“被拒即中止”，不拿空兵白打）；
+ * 本波确定没打出去 → 按待机档归位（revertSkinOnAbort），不让皮整场停在出征皮。
  */
-import { sleep } from '../../../core/util.js';
+import { sleep, parseData } from '../../../core/util.js';
 import { createLog } from '../../../core/log.js';
 import { game } from '../../../core/game.js';
 import { march as marchApi, gameConf, gameData } from '../../../core/game-api.js';
@@ -35,6 +52,20 @@ import { Battle } from '../../../core/battle.js';
 import { march } from '../../../core/march.js';
 
 import { CMD_MARCH_WORLD_POINT } from './constants.js';
+import {
+  IDLE_MODE,
+  SKIN_UNSET,
+  REASON,
+  normalizeSkinSwapCfg,
+  preMarchSwap,
+  afterMarchSwap,
+  restoreIdleSkin,
+  loadOf,
+  arm as armSkinSwap,
+  disarm as disarmSkinSwap,
+  selfHeal as selfHealSkinSwap,
+  msSinceLastSkinSend,
+} from './skin-swap.js';
 
 /**
  * 可攻击面板注册表（可扩展的唯一入口）：新增一个可攻击面板 = 往此数组追加一条 spec，
@@ -436,20 +467,87 @@ const MARCH_FALLBACK = {
   worldSite: 17,
 };
 
-/** @type {number} 三连次间间隔（毫秒，内置常量，不在面板配置） */
-const TRIPLE_INTERVAL_MS = 1000;
+/** @type {number} 三连次间间隔（毫秒，内置常量，不在面板配置）；与节奏闸同属一条服务器窗，取同档 2000 */
+const TRIPLE_INTERVAL_MS = 2000;
 
 /**
- * 生成模块 cfg：全部为内置常量——各场景默认启用、行军类型取自注册表，三连间隔用 TRIPLE_INTERVAL_MS。
- * 不从面板读取（面板只出 enabled 一个开关）。
- * @returns {object} { tripleIntervalMs, targets: { <key>: { enabled, marchTypes } } }
+ * 902 拒绝载荷里的「操作过快」限流键（报文实证 dashcam 20261126T025211-城皮切换：`code=3`、
+ * 载荷裸串 `march_time_control_info001`）：服务器对行军类操作的全局节奏控制，**瞬时可恢复信号**，
+ * 与「目标被抢/失效」不同类——不能当成终拒直接掉整串三连（同口径先例：floatcar、auto-farm）。
  */
-function buildModuleCfg() {
+const ERR_RATE_LIMIT = 'march_time_control_info001';
+
+/** @type {number} 撞限流后同一波的重试次数上限（超过才放弃本波） */
+const RATE_RETRY_MAX = 2;
+
+/**
+ * 撞限流后的重试等待（毫秒）。报文实证：上一发 902 后 1.1s 再发必拒，隔 2.5s 与 7.2s 的都过。
+ * 取 2500 而非与 SKIN_MARCH_GAP_MS 同值：退避落点必须已越过实测过档（2012ms）并留量，否则“Retry 又白打一发”。
+ * 重发前的节奏闸只补剩余差额，最坏两段等待相接 ≈ 4.5s，仅当退避窗内又发过 855 才会发生。
+ */
+const RATE_RETRY_MS = 2500;
+
+/**
+ * 发 902 前必须凑满的「距上一发真上线的 855」间隔（毫秒）。五场录制共 15 个可用样本（全为 855→902 对），
+ * 按结果完美分隔：≤1863ms 的全拒（58/62/1062/1373/1569/1570/1820/1863）、≥2012ms 的全过（2012/2541/2555/2557/2579/2583）
+ * ⇒ 阈值落在 (1.863, 2.012] 之间，取上界内侧的 2000。
+ * （1800 曾作探测档上过真机，dashcam 20261126T035440：三发 902 全以 since855=1373/1820/1863 撞限流，当场否掉。）
+ * 上一发 855 由 skin-swap.js 记账（A/C/D/revert 四个出口共用一条时钟）：从未发过 = Infinity = 零等待。
+ */
+const SKIN_MARCH_GAP_MS = 2000;
+
+/**
+ * 902 上线瞬间「距上一发真上线的 855」已过多少毫秒（节奏常量定档用的探针读数）。
+ * @returns {number} 毫秒；-1 = 本场从未发过 855（零等待基准）
+ */
+function gapSinceSkinSend() {
+  var v = msSinceLastSkinSend();
+  return Number.isFinite(v) ? Math.round(v) : -1;
+}
+
+/**
+ * 行军节奏闸：距「最后一发真上线的 855」不足 SKIN_MARCH_GAP_MS 就补足差值再放行。
+ * **每一次 902 上线前都要过一遍**（首发与退避重发同等）：重发等待窗内相位 D/C 可能又发了 855
+ * 把全局时钟重置（报文实证 dashcam 20261126T035440：D 相归位落在两次重发之间，第二次重发时 since855 只剩 1.373s，必拒）。
+ * @param {string} key 目标键（日志定位）
+ * @param {number} stepNo 本串三连的第几波（1 起）
+ * @returns {Promise<boolean>} false = 等待期间被停用，调用方直接收流
+ */
+async function waitMarchRhythm(key, stepNo) {
+  var rhythm = SKIN_MARCH_GAP_MS - msSinceLastSkinSend();
+  if (rhythm <= 0) return true;
+  log.debug('wait march rhythm before 902. key=%s;step=%d;wait=%dms', key, stepNo, rhythm);
+  await sleep(rhythm, ctxRef && ctxRef.signal);
+  return aliveFn();
+}
+
+/**
+ * 从 902 拒绝应答里取文案键（与 floatcar 同口径）：被拒应答的 data 本就是文本，首个逗号前即语言键。
+ * @param {*} data net.Ret.data
+ * @returns {string|null} 键名；非串/空回 null
+ */
+function rejectErrKey(data) {
+  if (typeof data !== 'string' || !data) return null;
+  var comma = data.indexOf(',');
+  return comma >= 0 ? data.slice(0, comma) : data;
+}
+
+/**
+ * 生成模块 cfg：内置常量（各场景默认启用、行军类型取自注册表、三连间隔）+ 面板「城皮切换」区段归一。
+ * @param {object} [c] 面板 cfg（registry.applyFeature 推入）；缺省时切皮区段回落「未启用 + 未选择」，
+ *   与旧版无面板字段时的行为逐字节一致（零回归）。
+ * @returns {object} { tripleIntervalMs, targets: { <key>: { enabled, marchTypes } }, skinSwap }
+ */
+function buildModuleCfg(c) {
   var targets = {};
   QUICK_ATTACK_TARGETS.forEach(function (spec) {
     targets[spec.key] = { enabled: true, marchTypes: Object.assign({}, spec.marchTypes) };
   });
-  return { tripleIntervalMs: TRIPLE_INTERVAL_MS, targets: targets };
+  return {
+    tripleIntervalMs: TRIPLE_INTERVAL_MS,
+    targets: targets,
+    skinSwap: normalizeSkinSwapCfg(c || {}),
+  };
 }
 
 /** @type {ReturnType<createLog>} 模块日志器（tag=QUICK_ATTACK） */
@@ -491,6 +589,15 @@ var installed = false;
  */
 function aliveFn() {
   return ctxRef ? ctxRef.alive() : false;
+}
+
+/**
+ * 切皮宿主面（skin-swap 相位 D 收尾链 / 看门狗 / 自愈的唯一依赖入口）。
+ * cfg 取闭包现值（面板热更即时生效，不必重挂），net/ctx 同样现读（install 前为 null 则由对侧短路）。
+ * @returns {{net:object|null, ctx:object|null, cfg:function():object, alive:function():boolean}}
+ */
+function swapHost() {
+  return { net: net, ctx: ctxRef, cfg: () => cfg.skinSwap, alive: aliveFn };
 }
 
 // ── 键盘监听挂/摘 ──────────────────────────────────────────────────────
@@ -718,8 +825,36 @@ function onKeyDown(e) {
 }
 
 /**
+ * 本波确定没打出去时的收尾：A 相真切过出征皮就把皮按待机档归位。
+ * 报文实证 dashcam 20261126T025211：902 被拒时相位 C（只在回包 ok 时跑）不执行，皮整场停在出征皮
+ * ——下一波只能拿一行 `pre skip already-on-target` 兼说“其实上一波没打”。
+ * 账本里还有在途波次时 restoreIdleSkin 自己会让位给相位 D，不抢切。
+ * @param {boolean} full 本波是否满编（只有满编波才会走 A 相）
+ * @param {object|null} swap preMarchSwap 产物
+ * @returns {Promise<void>}
+ */
+async function revertSkinOnAbort(full, swap) {
+  if (!full || !swap || swap.skipped || swap.reason !== REASON.SWITCH) return;
+  var r = await restoreIdleSkin({
+    cfg: cfg.skinSwap,
+    net: net,
+    signal: ctxRef && ctxRef.signal,
+  });
+  // 真发了包（切成果/被拒）才 info；链不在场、已在目标皮、账本非空（交相位 D）都是循环态 no-op
+  var emit = r.reason === REASON.SWITCH || r.reason === REASON.REJECTED ? log.info : log.debug;
+  emit(
+    'skin revert after abort. reason=%s;landed=%s;code=%d;rt=%dms',
+    r.reason,
+    r.landed,
+    r.code,
+    r.rtMs,
+  );
+}
+
+/**
  * 一串行军流程：串行逐发、同步等待回包，永不 reject。每发前复查闸门（存活/行军槽/902 在途/兵量），
- * 发空兵或被拒即中止后续（不派空兵打世界目标）；本发回包后 sleep(tripleIntervalMs) 再发下一发。
+ * 发空兵或被拒即中止后续（不派空兵打世界目标）；**例外**：`march_time_control_info001` 是服务器瞬时限流，
+ * 同一载荷退避重发最多 RATE_RETRY_MAX 次（不拉黑、不掉整串三连）；本发回包后 sleep(tripleIntervalMs) 再发下一发。
  * @param {object} spec 场景定义
  * @param {object} target {x,y,entityType}
  * @param {object[]} planList 逐项 {kind:'preset'|'minimal', index?}
@@ -732,6 +867,7 @@ async function attackFlow(spec, target, planList) {
     return;
   }
   var marchType = resolveMarchType(spec, target);
+  var swapCfg = cfg.skinSwap;
 
   for (var i = 0; i < planList.length; i++) {
     if (!aliveFn()) return;
@@ -746,22 +882,90 @@ async function attackFlow(spec, target, planList) {
     }
 
     var step = planList[i];
+    // 三连只有波1 是满编预设（有效战力）：切皮只跟满编波走，陪次数的 minimal 波照发不切、不入账
+    var full = step.kind === 'preset';
+
+    // ── 相位 A 预切（仅满编波）：切出征皮 → 等兵数重算膨胀；未落地一律照常出征。
+    // 未启用/未选皮/两皮相同/未拥有时 preMarchSwap 自己短路（零发包），这里只留一行 debug 原因。
+    var swap = null;
+    if (full) {
+      swap = await preMarchSwap({
+        cfg: swapCfg,
+        net: net,
+        signal: ctxRef && ctxRef.signal,
+        presetIndex: step.index,
+      });
+      if (!aliveFn()) return;
+      if (swap.skipped) {
+        log.debug('skin swap pre skip. key=%s;step=%d;reason=%s', spec.key, i + 1, swap.reason);
+      } else {
+        log.info(
+          'skin swap pre. key=%s;step=%d;reason=%s;landed=%s;code=%d;rt=%dms;base=%s;load=%s',
+          spec.key,
+          i + 1,
+          swap.reason,
+          swap.landed,
+          swap.code,
+          swap.rtMs,
+          swap.base,
+          swap.load,
+        );
+      }
+    }
+
+    // 行军节奏闸：902 必须距「我们最后一发真上线的 855」凑满 SKIN_MARCH_GAP_MS（实测分隔带 (1.863s, 2.012s]，定档 2000）。
+    // 不区分是哪一相位发的：待机归位(D) / 在途回切(C) / 放弃回切(revert) 占同一条全局时钟——
+    // 「待机=出征皮」时 A 相 no-op，玩家一见部队返程就按键，撞的正是 D 相刚发的那发，只看本波 A 相兜不住。
+    // 从未发过 855（未启用/未选皮）= Infinity → 零等待，与无切皮功能时逐字节一致。
+    if (!(await waitMarchRhythm(spec.key, i + 1))) return;
+
     var plan = new Battle().plan();
-    if (step.kind === 'preset') plan.preset(step.index).adjust();
+    if (full) plan.preset(step.index).adjust();
     else plan.minimal();
     var marchData = plan.build();
 
     if (!marchData.armyListNew.length) {
       log.warn('no army to dispatch, abort. key=%s;step=%d;kind=%s', spec.key, i + 1, step.kind);
+      await revertSkinOnAbort(full, swap);
       return;
     }
+    var sentLoad = loadOf(marchData);
 
+    // since855：902 上线时距上一发 855 的真实毫秒数（-1 = 本场未切过皮），节奏常量定档用的读数
+    var sentGap855 = gapSinceSkinSend();
     var ret = await march.attack({ marchType: marchType, target: target, data: marchData });
     if (!aliveFn()) return;
 
+    // 限流（操作过快）不是“这波不能打”，只是“这一刻不给打”：同一载荷退避重发，最多 RATE_RETRY_MAX 次。
+    // 不拉黑目标、不中止整串三连（目标仍然有效）；非限流拒 / 退避耗尽才落到下面的终拒分支。
+    for (var attempt = 0; !ret.ok && attempt < RATE_RETRY_MAX; attempt++) {
+      if (rejectErrKey(ret.data) !== ERR_RATE_LIMIT) break;
+      log.info(
+        '902 rate limited, retry same wave. key=%s;step=%d;attempt=%d;wait=%dms;since855=%d;data=%s',
+        spec.key,
+        i + 1,
+        attempt + 1,
+        RATE_RETRY_MS,
+        sentGap855,
+        ret.data,
+      );
+      await sleep(RATE_RETRY_MS, ctxRef && ctxRef.signal);
+      if (!aliveFn()) return;
+      if (!march.canMarch()) {
+        log.info('no free march slot before retry, abort. key=%s;step=%d', spec.key, i + 1);
+        await revertSkinOnAbort(full, swap);
+        return;
+      }
+      // 退避窗内又发过 855（相位 D 归位/C 相回切落在睡眠里）→ 时钟已被重置，重发前重新凑满间隔，否则这一发照样限流
+      if (!(await waitMarchRhythm(spec.key, i + 1))) return;
+      sentGap855 = gapSinceSkinSend();
+      ret = await march.attack({ marchType: marchType, target: target, data: marchData });
+      if (!aliveFn()) return;
+    }
+
     if (ret.ok) {
       log.info(
-        'attack ok. key=%s;step=%d/%d;marchType=%d(base=%d);x=%d;y=%d',
+        'attack ok. key=%s;step=%d/%d;marchType=%d(base=%d);x=%d;y=%d;load=%d;preSwapBase=%s;since855=%d',
         spec.key,
         i + 1,
         planList.length,
@@ -769,18 +973,39 @@ async function attackFlow(spec, target, planList) {
         base,
         target.x,
         target.y,
+        sentLoad,
+        swap && swap.base != null ? swap.base : '-',
+        sentGap855,
       );
+      // ── 相位 C 在途回切：902 一回包就穿回主战皮（不等落地），并把本波登记进在途账本等相位 D ──
+      if (full) {
+        var d902 = parseData(ret.data);
+        var c = await afterMarchSwap({
+          cfg: swapCfg,
+          net: net,
+          signal: ctxRef && ctxRef.signal,
+          marchId: (d902 && d902.marchInfo && d902.marchInfo.marchId) || null,
+        });
+        var line = 'skin swap post. key=%s;step=%d;reason=%s;landed=%s;code=%d;rt=%dms;tracked=%s';
+        // 真发了包（切成果 / 被服务器拒）才 info；链不在场与零发包 no-op 走 debug（循环态降噪）
+        var emit =
+          c.reason === REASON.SWITCH || c.reason === REASON.REJECTED ? log.info : log.debug;
+        emit(line, spec.key, i + 1, c.reason, c.landed, c.code, c.rtMs, c.tracked);
+        if (!aliveFn()) return;
+      }
     } else {
       log.info(
-        'attack rejected, abort combo. key=%s;step=%d;code=%d;marchType=%d;base=%d;flags=%s;data=%s',
+        'attack rejected, abort combo. key=%s;step=%d;code=%d;marchType=%d;base=%d;flags=%s;since855=%d;data=%s',
         spec.key,
         i + 1,
         ret.code,
         marchType,
         base,
         JSON.stringify(marchApi.flags()),
+        sentGap855,
         ret.data,
       );
+      await revertSkinOnAbort(full, swap);
       return;
     }
 
@@ -833,9 +1058,10 @@ function resolveMarchType(spec, target) {
 }
 
 /**
- * 注入模块配置（toModuleCfg 产出的是内置常量，非面板可调项：面板仅出 enabled 开关）。
+ * 注入模块配置：`tripleIntervalMs`/`targets` 是内置常量（面板不出这两项，随 toModuleCfg 原样推入），
+ * `skinSwap` 是面板「城皮切换」区段的可调项 —— 热更后下一波攻击即生效（相位 D 的宿主面现读 cfg()，无需重挂订阅）。
  * enabled=false 时顺带摘净钩子（reactor 稍后会 pause；此处保证停用不留常驻包装）。
- * @param {object} partial { enabled, tripleIntervalMs, targets:{ <key>:{enabled,marchTypes} } }
+ * @param {object} partial { enabled, tripleIntervalMs, targets:{ <key>:{enabled,marchTypes} }, skinSwap }
  * @returns {object} 当前 cfg
  */
 function configure(partial) {
@@ -857,6 +1083,8 @@ function configure(partial) {
       }
     });
   }
+  // 城皮切换：只认归一后的区段（normalizeSkinSwapCfg 幂等，面板键形态与已归一形态都吃得下）
+  if (partial.skinSwap) cfg.skinSwap = normalizeSkinSwapCfg(partial.skinSwap);
   if (partial.enabled === false) unhookAll();
   return cfg;
 }
@@ -908,8 +1136,96 @@ function run(ctx) {
   activePanel = null;
   detachKey();
   QUICK_ATTACK_TARGETS.forEach(hookSpec);
-  log.info('started, hooks=%d; battlefield=%s', hooks.size, JSON.stringify(marchApi.flags()));
+  // 相位 D（部队一开始返程就归位待机皮）的订阅是 feat 自持的 march.onStateChange，不在 reactor 触发器清单里：
+  //   run 挂（arm 内部先摘再挂，resume 重跑不会重复注册）、pause 摘。
+  armSkinSwap(swapHost());
+  log.info(
+    'started, hooks=%d;skinSwap=%s;battlefield=%s',
+    hooks.size,
+    cfg.skinSwap && cfg.skinSwap.enabled ? 'on' : 'off',
+    JSON.stringify(marchApi.flags()),
+  );
+  // 自愈一次（不 await：它带一次 855 往返，不能拖住快捷键挂载）；抛错只 warn，切皮失败绝不影响打靶
+  selfHealSkinSwap(swapHost()).catch(function (err) {
+    log.warn('855 self-heal threw.', err);
+  });
 }
+
+/**
+ * 停用：摘掉切皮链（march.onStateChange 订阅 + 在途账本 + 看门狗句柄引用）。
+ * 不摘就会在功能停用后仍按陈旧配置切皮肤（reactor 的触发器摘除管不到这条自持订阅）。
+ */
+function pause() {
+  disarmSkinSwap();
+}
+
+// ── 面板 descriptor（「城皮切换」区段）───────────────────────────────────
+/**
+ * 「出征皮肤 / 主战皮肤」下拉数据源：哨兵项（未选择 = 整条切皮链短路）+ gameData.castleFaces() 逐项。
+ * 同步求值、**不发包**（它是 buildPanelHTML 求值链上的一环，口径同 potion-craft 的 formulaOptions）；
+ * 清单为空（本场还没同步过 854/10905、或符号漂移）只给一条提示项，不出空下拉。
+ * @returns {Array<{value:number, label:string}>}
+ */
+function skinOptions() {
+  var faces = gameData.castleFaces() || [];
+  if (!faces.length) return [{ value: SKIN_UNSET, label: '无有效城皮（不自动切皮）' }];
+  return [{ value: SKIN_UNSET, label: '未选择（不自动切皮）' }].concat(
+    faces.map(function (f) {
+      return { value: f.skinId, label: f.name };
+    }),
+  );
+}
+
+/** @type {Array<{value:number, label:string}>} 「待机皮肤」两档（值即 skin-swap 的 IDLE_MODE，面板与决策层同源） */
+const IDLE_MODE_OPTIONS = [
+  { value: IDLE_MODE.BATTLE, label: '主战皮肤（攻击间隙防御 buff 最强）' },
+  { value: IDLE_MODE.MARCH, label: '出征皮肤（省掉每次出征前的预切）' },
+];
+
+/**
+ * 面板字段：开关 + 两张皮 + 待机档 + 两行说明。
+ * 说明文字用 type:'note'（renderCheckbox 不消费 hint，挂在开关上会静默不渲染）。
+ * 三张皮的选择**不做 showIf 收起**：玩家要在翻开关之前就能先把皮挑好（选项表同步读本地数据，不发包）。
+ * @type {Array<object>}
+ */
+const SKIN_SWAP_FIELDS = [
+  { key: 'skinSwapEnabled', type: 'checkbox', label: '出征自动切城皮', section: '城皮切换' },
+  {
+    key: '_skinSwapNote',
+    type: 'note',
+    section: '城皮切换',
+    text:
+      '出征前穿「出征皮肤」（每格出征数↑，重算器据此算兵数），902 受理就立即穿回「主战皮肤」（部队到达时身上是主战 buff）；' +
+      '每次攻击多发 2 个切换包（实测 RT 49-128ms）。任一皮肤选「未选择」、或两皮相同 = 不切皮。',
+  },
+  {
+    key: 'swapSkinMarch',
+    type: 'select',
+    label: '出征皮肤',
+    section: '城皮切换',
+    options: skinOptions,
+  },
+  {
+    key: 'swapSkinBattle',
+    type: 'select',
+    label: '主战皮肤',
+    section: '城皮切换',
+    options: skinOptions,
+  },
+  {
+    key: 'swapIdleMode',
+    type: 'select',
+    label: '待机皮肤',
+    section: '城皮切换',
+    options: IDLE_MODE_OPTIONS,
+  },
+  {
+    key: '_skinIdleNote',
+    type: 'note',
+    section: '城皮切换',
+    text: '待机皮肤 = 出征皮肤时不再预切（少发一个包），代价是攻击间隙的防御 buff 弱一档；两皮都需为已拥有的有效城皮。',
+  },
+];
 
 /**
  * 向 reactor 注册本功能说明书：places:['world'] + kinds:['homeland','wushuang','kvk']（B 档），不声明 offInCombat（战斗设置本就是战斗时的手动辅助）。
@@ -933,10 +1249,18 @@ reactor.register({
   kinds: ['homeland', 'wushuang', 'kvk'],
   places: ['world'],
   // 战斗设置类：不声明 offInCombat，战斗模式下依然生效（快捷战斗本就是战斗时的手动辅）
-  defaults: { enabled: false },
-  fields: [],
+  defaults: {
+    enabled: false,
+    // 城皮切换：默认关 + 两皮未选（哨兵）+ 待机回主战皮——未动面板时行为与改前逐字节一致
+    skinSwapEnabled: false,
+    swapSkinMarch: SKIN_UNSET,
+    swapSkinBattle: SKIN_UNSET,
+    swapIdleMode: IDLE_MODE.BATTLE,
+  },
+  fields: SKIN_SWAP_FIELDS,
   toModuleCfg: buildModuleCfg,
   install: install,
   configure: configure,
   run: run,
+  pause: pause,
 });
