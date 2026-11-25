@@ -4,6 +4,8 @@
  * 世界地图打开目标面板时，用键盘快捷键对面板目标发起行军（902 MARCH_WORLD_POINT）：
  *   [1]-[8]      以对应预设编队单次攻击；
  *   Shift+[1]-[8] 三连：第 1 发该预设，随后 2 发最小出征（Battle.plan().minimal()），次间固定间隔 TRIPLE_INTERVAL_MS。
+ * 一个面板吃两个动作时（钢铁战车「上阵 / 进攻」）不额外占键位：[1]-[8] 仍是预设号，具体发哪个行军类型由
+ * spec.branchOf 按面板态分流，Shift 的三连语义在该场景让位（spec.noTriple），见注册表 xl2 条目。
  *
  * 目标区/坐标来自「方案2」：拦截面板 prototype.onShow，游戏原逻辑填好目标数据后我们读它拷成纯标量存进
  * activePanel（默认读 this[spec.field] 的 tileX/tileY；坐标形状不同时由 spec.read 接管，如遗迹面板只有
@@ -77,11 +79,16 @@ import {
  *           的行军类型兜底值（世界 BOSS 面板一 class 多吃：BOSS_V2→attackV2、宝藏守卫→treasure、联盟机甲→alliance）,
  *         marchMembers 可选：行军类型以游戏 MarchType 枚举成员名为权威源（marchApi.typeOf 运行时取名，
  *           成员名收在 core/game-api.js SYM.marchEnum），marchTypes 数值仅作符号漂移兜底,
- *         gate 可选：按键瞬间的面板态前置闸 (comp)=>string|null，返回串=拒绝原因（不发 902）、null=放行,
+ *         gate 可选：按键瞬间的面板态前置闸 (comp, branch)=>string|null，返回串=拒绝原因（不发 902）、null=放行,
+ *         branchOf 可选：一个面板吃两个动作时（区别不在地块实体类型，而在面板此刻的状态）由它决定本轮走 marchTypes
+ *           的哪个分支键：(comp)=>分支键|null，返回 null=面板没有可做的动作（不发）；缺省走 pickBranch 的实体类型分流,
+ *         noTriple 可选：true 时 Shift+[1-8] 不追加 minimal 波（一键一包、重复打同地块必被游戏自拦的场景）,
+ *         uniqueTarget 可选：true 时每一波上线前查「该地块是否已有本人在途行军」（gate 是同步的，这条要 await march
+ *           快照，故落在 attackFlow 里），命中即中止本串，不发也不切皮,
  *         read 可选：目标适配器 (comp)=>{x,y,siteId?,serverId?,entityType?}|null——面板把坐标存在非 tileInfo
  *           形状时由它接管（见 readSiteTarget：遗迹面板只有 _siteData.X/Y）；缺省读 field 指向的 tileX/tileY };
  * NMarchType 见 WorldMapCommon 的 MarchType 枚举。
- * @type {Array<{key:string, label:string, cls:string, field:string, marchTypes:{attack:number, attackV2?:number, treasure?:number, alliance?:number}, marchMembers?:{attack:string, attackV2?:string, treasure?:string, alliance?:string}, gate?:function(object):(string|null), read?:function(object):(object|null)}>}
+ * @type {Array<{key:string, label:string, cls:string, field:string, marchTypes:object, marchMembers?:object, gate?:function(object,string):(string|null), read?:function(object):(object|null), branchOf?:function(object):string, noTriple?:boolean, uniqueTarget?:boolean}>}
  */
 const QUICK_ATTACK_TARGETS = [
   {
@@ -175,6 +182,26 @@ const QUICK_ATTACK_TARGETS = [
     marchMembers: { attack: 'worldSite' },
     read: readSiteDetailTarget,
     gate: siteGate,
+  },
+  // 钢铁战车（XL2 战区对决）：我方龙与敌方龙共用一个面板 WorldDragonKingDuelPop（subpack2，点地块由
+  // NWorldMapTileClickUtils 开），「上阵」与「进攻」是两个行军类型。两个按钮在游戏 refreshUI 里互斥绘制
+  // （joinBtn 仅「我方龙 + MATCH_DAY」、battleBtn 仅「敌方龙 + FIGHT_DAY」），故 [1]-[8] 由 xl2Branch 看面板态
+  // 分流即可，不需额外键位。载荷已由真人录制逐键对过（dashcam 20261126T050256-钢铁战车 seq=2147，应答成功）：
+  //   marchType=267、armyList===armyListNew（条目只 pos/armyId/armyNum）、break=0、formation=0、
+  //   formationV2=预设军阵号、extraArmy={}、**无 ext 键**；应答为单条行军（9 个兵格共用一个 marchId）。
+  // 268 与 267 同出面板 joinBattleClick → start_SH_FIRST_STAGE_DEFEND，只换行军类型号（未录到，同构外推）；
+  // 269 FAKE_MARCH 是同地块上的系统假行军，勿混。行军类型以游戏 MarchType 成员名为权威源，数值仅漂移兜底。
+  {
+    key: 'xl2',
+    label: '钢铁战车',
+    cls: 'WorldDragonKingDuelPop',
+    field: '_tileInfo',
+    marchTypes: { join: 267, battle: 268 },
+    marchMembers: { join: 'xl2DuelJoin', battle: 'xl2DuelBattle' },
+    branchOf: xl2Branch,
+    gate: xl2Gate,
+    noTriple: true,
+    uniqueTarget: true,
   },
 ];
 
@@ -316,6 +343,59 @@ function csShipGate(comp) {
   var limit = Number(gameConf.dataConfig(CFG_CS_SHIP_ATTACK_LIMIT)) || 0;
   if (limit && (info.fightNum | 0) >= limit) {
     return 'daily-limit ' + (info.fightNum | 0) + '/' + limit;
+  }
+  return null;
+}
+
+/**
+ * 钢铁战车面板的动作分流（spec.branchOf）：同一个 class 靠「我方龙 / 敌方龙」分两个动作，判据直接读面板
+ * 自己算好的 `_isEnemy`（onShow：`Number(_tileInfo.extData.childType)===EDragonKingType.ENEMY`），不重造枚举。
+ * 敌龙→进攻（battle）、我方龙→上阵（join）；该阶段能不能真发由 xl2Gate 复查按钮绘制态。
+ * @param {object} comp WorldDragonKingDuelPop 组件实例
+ * @returns {string} marchTypes / marchMembers 里的分支键名
+ */
+function xl2Branch(comp) {
+  return comp._isEnemy ? 'battle' : 'join';
+}
+
+/**
+ * 钢铁战车前置闸：逐条复刻 refreshUI 绘制两个按钮的条件与 joinBattleClick 里的自拦，不另造规则。
+ *   battle（敌方龙·进攻 268）：battleBtn 只在 `_isEnemy && state===FIGHT_DAY` 绘制，`interactable` 还要
+ *     `_fightStateInfo.state===EDuelFightState.FIGHT`（布防期按钮是灰的，游戏自己不给点）；今日剩余次数
+ *     `_canFightNum<=0` 时游戏 ShowTips("xl_fight_error_04") 且不发。
+ *   join（我方龙·上阵 267）：joinBtn 只在 `!_isEnemy && state===MATCH_DAY` 绘制，其余阶段（开战后/结算/未开）
+ *     根本不显示这个按钮。
+ * 与其余闸「读不到就放行」相反：这里读的是面板 onShow 已填好的字段，缺了就是没落地，放行只会把一个
+ * 游戏一定不会发的包丢给服务器，故按钮取不到时按「不在场」拦，表现为一行 info 日志。
+ * @param {object} comp WorldDragonKingDuelPop 组件实例
+ * @param {string} branch xl2Branch 给出的分支键
+ * @returns {string|null} 拒绝原因；null=可发
+ */
+function xl2Gate(comp, branch) {
+  if (branch === 'battle') {
+    var b = comp.battleBtn;
+    if (!b || !b.node || b.node.active === false) return 'battle-btn-hidden';
+    if (b.interactable === false) return 'battle-btn-disabled';
+    if ((comp._canFightNum | 0) <= 0) return 'no-fight-times';
+    return null;
+  }
+  var j = comp.joinBtn;
+  if (!j || !j.node || j.node.active === false) return 'join-btn-hidden';
+  return null;
+}
+
+/**
+ * 该地块是否已有本人在途行军（等价面板的第一道闸：`getAllMyMarches()` 比 `target_tx/ty` → ShowTips("xl_fight_error_03")
+ * 且不发）。数据源是 march 的内存快照（856 播种 + 10019 边沿维护，稳态零网络），读不到回空数组即「未知不拦」。
+ * @param {object} target {x,y}
+ * @returns {Promise<string|null>} 占用中的行军 id；无则 null
+ */
+async function busyMarchAt(target) {
+  var ms = await march.list({ cache: true });
+  for (var i = 0; i < ms.length; i++) {
+    var m = ms[i];
+    if (!m || !m.target || m.target.x !== target.x || m.target.y !== target.y) continue;
+    if (march.isOccupying(m)) return m.id;
   }
   return null;
 }
@@ -793,19 +873,36 @@ function onKeyDown(e) {
   e.preventDefault();
   e.stopPropagation();
 
-  // 面板态前置闸（可选 spec.gate）：游戏自己就会拦的场景（次数用完/黑名单/非本服飞船）不白发 902。
+  // 面板态分支（可选 spec.branchOf）：一个面板吃两个动作时先定本轮发哪个行军类型（如钢铁战车上阵/进攻），
+  // 再连同分支一起交给前置闸与发包链。判据抛错/无动作时直接收摊：发错动作比不发难查得多。
+  var branch = null;
+  if (spec.branchOf) {
+    try {
+      branch = spec.branchOf(comp) || null;
+    } catch (err) {
+      log.warn('branch resolver threw, skip. key=%s', spec.key, err);
+      return;
+    }
+    if (!branch) {
+      log.info('panel offers no action, skip. key=%s', spec.key);
+      return;
+    }
+  }
+
+  // 面板态前置闸（可选 spec.gate，收 branch）：游戏自己就会拦的场景（次数用完/黑名单/非本服飞船）不白发 902。
   // 闸内只读面板已有数据，抛错时按放行处理（宁被服务器拒也不因判据异常而静默失灵）。
   if (spec.gate) {
     var why = null;
     try {
-      why = spec.gate(comp);
+      why = spec.gate(comp, branch);
     } catch (err) {
       log.warn('panel gate threw, send anyway. key=%s', spec.key, err);
     }
     if (why) {
       log.info(
-        'attack blocked by panel gate. key=%s;reason=%s;x=%d;y=%d',
+        'attack blocked by panel gate. key=%s;branch=%s;reason=%s;x=%d;y=%d',
         spec.key,
+        branch || 'attack',
         why,
         target.x,
         target.y,
@@ -815,11 +912,12 @@ function onKeyDown(e) {
   }
 
   var planList = [{ kind: 'preset', index: hk.digit }];
-  if (hk.triple) {
+  // Shift = 三连；一键一包的场景（spec.noTriple，如钢铁战车同地块重复派必被游戏自拦）让位，不白掉两波队列名额
+  if (hk.triple && !spec.noTriple) {
     planList.push({ kind: 'minimal' }, { kind: 'minimal' });
   }
 
-  attackFlow(spec, target, planList).catch(function (err) {
+  attackFlow(spec, target, planList, branch).catch(function (err) {
     log.warn('attack flow threw!', err);
   });
 }
@@ -858,15 +956,17 @@ async function revertSkinOnAbort(full, swap) {
  * @param {object} spec 场景定义
  * @param {object} target {x,y,entityType}
  * @param {object[]} planList 逐项 {kind:'preset'|'minimal', index?}
+ * @param {string} [branch] 面板态分支键（spec.branchOf 给出）；缺省时按地块实体类型分流
  */
-async function attackFlow(spec, target, planList) {
+async function attackFlow(spec, target, planList, branch) {
   var t = (cfg.targets[spec.key] && cfg.targets[spec.key].marchTypes) || {};
-  var base = t[pickBranch(spec, target)] | 0;
+  var key = branch || pickBranch(spec, target);
+  var base = t[key] | 0;
   if (!base) {
-    log.warn('no marchType configured, abort. key=%s', spec.key);
+    log.warn('no marchType configured, abort. key=%s;branch=%s', spec.key, key);
     return;
   }
-  var marchType = resolveMarchType(spec, target);
+  var marchType = resolveMarchType(spec, target, key);
   var swapCfg = cfg.skinSwap;
 
   for (var i = 0; i < planList.length; i++) {
@@ -878,6 +978,18 @@ async function attackFlow(spec, target, planList) {
     }
     if (net.isSending(CMD_MARCH_WORLD_POINT)) {
       log.info('902 in flight, abort. key=%s;step=%d', spec.key, i + 1);
+      return;
+    }
+    // 同地块唯一闸（spec.uniqueTarget）：面板自己的第一道闸就是「该点已有本人行军」→ xl_fight_error_03 且不发。
+    // 放在切皮之前查，免得白切一趟城皮；gate 是同步的，这条要 await march 快照，故落在流程里。
+    if (spec.uniqueTarget && (await busyMarchAt(target))) {
+      log.info(
+        'own march already on this tile, abort. key=%s;step=%d;x=%d;y=%d',
+        spec.key,
+        i + 1,
+        target.x,
+        target.y,
+      );
       return;
     }
 
@@ -1033,18 +1145,19 @@ function pickBranch(spec, target) {
 }
 
 /**
- * 本次出征的 marchType：先按地块实体类型分流（世界 BOSS 面板四型），再做跨服战场漂移换算。
+ * 本次出征的 marchType：先定分支（面板态 branchOf 优先，否则按地块实体类型分流），再做跨服战场漂移换算。
  * target 一并交给 resolve：遗迹的 17→103 要看 siteId（其余场景 resolve 不读它）。
  * @param {object} spec 场景定义
  * @param {object} target {x,y,entityType,siteId?}
+ * @param {string} [branch] 已定分支键（attackFlow 传入）
  * @returns {number}
  */
-function resolveMarchType(spec, target) {
+function resolveMarchType(spec, target, branch) {
   var t = (cfg.targets[spec.key] && cfg.targets[spec.key].marchTypes) || {};
-  var branch = pickBranch(spec, target);
-  // 声明了枚举成员名的分支（世界 BOSS 四型/遗迹）：以游戏 MarchType 运行时值为权威源，marchTypes 数值仅漂移兜底
-  var member = spec.marchMembers && spec.marchMembers[branch];
-  var base = member ? marchApi.typeOf(member, t[branch] | 0) : t[branch] | 0;
+  var bkey = branch || pickBranch(spec, target);
+  // 声明了枚举成员名的分支（世界 BOSS 四型/遗迹/钢铁战车）：以游戏 MarchType 运行时值为权威源，marchTypes 数值仅漂移兜底
+  var member = spec.marchMembers && spec.marchMembers[bkey];
+  var base = member ? marchApi.typeOf(member, t[bkey] | 0) : t[bkey] | 0;
   var resolved = marchApi.resolve(base, MARCH_FALLBACK, target);
   if (resolved !== base)
     log.warn(

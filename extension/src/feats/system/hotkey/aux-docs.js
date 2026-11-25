@@ -8,6 +8,7 @@
  * - Ctrl+G      镜头跳转浮层开关：feat 级，监听在 feats/system/map/quick-jump.js（依赖该功能激活）。
  * - Shift+1-8   一键三连：feat 级，监听在 feats/battle/quick-attack/index.js（document keydown 捕获；
  *               目标面板在场时生效，单次出征走 1-8 与战斗面板共用键位、由面板在场与否自然分流）。
+ *               一键一包的场景（注册表 spec.noTriple，如钢铁战车上阵/进攻）不叠加三连，Shift 与裸键同义。
  * 它们或带修饰键（注册表 dispatch 对 Ctrl/Alt/Meta 直接放行不处理），或依赖 feat 生命周期，
  * 故只在此用 hotkeys.doc() 登记键位说明，让「快捷键一览」完整可见；改动上述任一实现时同步更新此处。
  */
