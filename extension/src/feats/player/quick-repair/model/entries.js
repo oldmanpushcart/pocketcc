@@ -169,10 +169,10 @@ export function sumLeft(entries) {
 }
 
 /**
- * 是否雷神档（普通雷神 + 超级雷神）：无双 6311/6312 的动作 kind 后缀按此分档。
- * @param {string} tier normal/thor/super
+ * 是否雷神档：无双 6311/6312 的动作 kind 后缀按此分档。
+ * @param {string} tier normal/thor
  * @returns {boolean}
  */
 export function isThorBand(tier) {
-  return tier === 'thor' || tier === 'super';
+  return tier === 'thor';
 }

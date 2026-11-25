@@ -86,12 +86,12 @@
  * 普通兵单笔 220 全发：服务器内部优先扣「英雄免费额度」（common_max-common_use）、超出扣材料。
  *   修理范围只按勾选集合过滤（repairBase/repairCsb/repairAva 的军种×类型码集合），不按材料持有量预算
  *   （服务器超限会拒绝且日志可见，少一层「买不起静默跳过」的隐式闸）。
- * 面板形态（场地 × 军种 × 类型全配）：基地修理厂段 = repairBase 多选（九类码 1..9）+ 普通档/雷神档加速；
- *   战场抢修车间段 = repairCsb 多选（仅雷神两类档码）+ 单键加速；无双修理厂段 = repairAva 多选 + 普通档/雷神档加速；
+ * 面板形态（场地 × 军种 × 类型全配）：基地修理厂段 = repairBase 多选（六类码 1..6）+ 普通档/雷神档加速；
+ *   战场抢修车间段 = repairCsb 多选（仅雷神档码）+ 单键加速；无双修理厂段 = repairAva 多选 + 普通档/雷神档加速；
  *   加速预算段 = goldDailyCap（钻石日上限，0/空 = 不限，跨场地共享、日账按服务器日界归零）。
  *   加速执行口径：同场地同档方式相同 → 全量一笔（151/815 全量，道具时间池不浪费）；方式混排 → 逐队列点名
  *   （124 钻石单条 / 815 param=队列 id），道具逐队列各自向上取整会比时间池多耗几枚，只在该场景付。
- *   存档 _v=3：migrate 把 v1 三开关 / v2 四字段映射到类型码集合与五键加速方式（钻石优先/道具/不加速）。
+ *   存档 _v=4：migrate 把 v1 三开关 / v2 四字段 / v3 九码映射到类型码集合与五键加速方式（钻石优先/道具/不加速）。
  *   生命周期由 reactor 托管：places base/world、kinds homeland、不行军不参战故 offInCombat:false；
  *   pause 后 ctx.alive()=false，cycle 与在飞 await 自然停摆。
  */
@@ -141,7 +141,7 @@ import {
   csbOpen,
   csbClosingSoon,
 } from './model/gates.js';
-import { normalize, migrateConfig, defaultConfig, venueOptions } from './model/schema.js';
+import { normalize, migrateConfig, defaultConfig, venueOptions, venueMatrixField } from './model/schema.js';
 import {
   avaEntries,
   baseRepairEntries,
@@ -1290,7 +1290,7 @@ reactor.register({
   places: ['base', 'world'],
   kinds: ['homeland', 'wushuang', 'kvk', 'sphere', 'adp_war'],
   offInCombat: false,
-  version: 3,
+  version: 4,
   migrate: migrateConfig,
   defaults: Object.assign({ enabled: false }, DEFAULT_CFG),
   fields: [
@@ -1299,8 +1299,8 @@ reactor.register({
       label: '修理范围',
       section: '基地修理厂',
       type: 'multiopts',
-      options: venueOptions('base'),
-      gridMin: 84,
+      options: venueMatrixField('base').options,
+      matrix: venueMatrixField('base').matrix,
       hint: '勾选要修的军种×类型。普通兵优先扣每日英雄免费额度、超出扣材料；雷神兵直接扣材料。',
     },
     {
@@ -1317,15 +1317,15 @@ reactor.register({
       section: '基地修理厂',
       type: 'select',
       options: SPEED_OPTS,
-      hint: '雷神/超级雷神在修队列。与普通档方式不同时逐队列点名，避免把另一档也加速。',
+      hint: '雷神在修队列。与普通档方式不同时逐队列点名，避免把另一档也加速。',
     },
     {
       key: 'repairCsb',
       label: '修理范围（仅雷神）',
       section: '战场抢修车间',
       type: 'multiopts',
-      options: venueOptions('csb'),
-      gridMin: 84,
+      options: venueMatrixField('csb').options,
+      matrix: venueMatrixField('csb').matrix,
       hint: '跨服天梯赛战场医院，只收雷神兵。赛事窗口内自动处理；关闸前 10 分钟优先加速本场地。',
     },
     {
@@ -1341,8 +1341,8 @@ reactor.register({
       label: '修理范围',
       section: '无双修理厂',
       type: 'multiopts',
-      options: venueOptions('ava'),
-      gridMin: 84,
+      options: venueMatrixField('ava').options,
+      matrix: venueMatrixField('ava').matrix,
       hint: '无双四模式（AVA/TM/大师赛/传奇小队）。修理免费、不耗材料，只按勾选集合排队。',
     },
     {
@@ -1359,7 +1359,7 @@ reactor.register({
       section: '无双修理厂',
       type: 'select',
       options: SPEED_OPTS,
-      hint: '雷神/超级雷神在修队列。',
+      hint: '雷神在修队列。',
     },
     {
       key: 'goldDailyCap',
@@ -1386,6 +1386,7 @@ export {
   migrateConfig,
   defaultConfig,
   venueOptions,
+  venueMatrixField,
   quickFields,
   isParamErrorRet,
   isHealBatchCmd,

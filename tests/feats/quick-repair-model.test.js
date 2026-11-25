@@ -6,7 +6,6 @@ import assert from 'node:assert/strict';
 import {
   ARMS,
   TIERS,
-  SUPER_THOR_GROUP,
   armOf,
   tierOf,
   classifyUnit,
@@ -47,16 +46,16 @@ test('classify：军种取 army.Data.type 101/201/301，缺失或非法归陆', 
   assert.equal(classifyUnit(army(999)).arm, 'land');
 });
 
-test('classify：类型按 thor_group / glorious_science_group 分普通/普通雷神/超级雷神', () => {
-  assert.deepEqual(TIERS, ['normal', 'thor', 'super']);
+test('classify：类型按 thor_group / glorious_science_group 分普通/雷神（超级合并）', () => {
+  assert.deepEqual(TIERS, ['normal', 'thor']);
   assert.equal(tierOf(army(101, 0)), 'normal');
   assert.equal(tierOf({ Data: { type: 101 } }), 'normal');
   assert.equal(tierOf(army(101, 1)), 'thor');
   assert.equal(tierOf(army(101, 15)), 'thor');
-  assert.equal(tierOf(army(101, SUPER_THOR_GROUP)), 'super');
-  assert.equal(tierOf(army(101, 600)), 'super');
-  assert.equal(tierOf(army(101, 0, 10000)), 'super');
-  assert.equal(tierOf(army(101, 0, 20000)), 'super');
+  assert.equal(tierOf(army(101, 100)), 'thor');
+  assert.equal(tierOf(army(101, 600)), 'thor');
+  assert.equal(tierOf(army(101, 0, 10000)), 'thor');
+  assert.equal(tierOf(army(101, 0, 20000)), 'thor');
   assert.equal(tierOf(null), 'normal');
 });
 
@@ -69,9 +68,8 @@ test('classify：classifyUnit 判据缺失走「陆·普通」兜底并标 exact
 test('classify：isThorTier / unitClassKey 口径', () => {
   assert.equal(isThorTier('normal'), false);
   assert.equal(isThorTier('thor'), true);
-  assert.equal(isThorTier('super'), true);
   assert.equal(unitClassKey('base', 'land', 'normal'), 'base.land.normal');
-  assert.equal(unitClassKey('csb', 'air', 'super'), 'csb.air.super');
+  assert.equal(unitClassKey('csb', 'air', 'thor'), 'csb.air.thor');
 });
 
 test('cost：钻石估价 = ceil(秒/60×价) 且至少 1；费率不可用归 0', () => {
@@ -156,7 +154,7 @@ test('quota：freeLeftFor 按 类型×军种 取池，军种缺失回退合计�
   });
   assert.equal(freeLeftFor(q, 'normal', 'land'), 18);
   assert.equal(freeLeftFor(q, 'thor', 'land'), 2);
-  assert.equal(freeLeftFor(q, 'super', 'navy'), 0);
+  assert.equal(freeLeftFor(q, 'thor', 'navy'), 0);
   assert.equal(freeLeftFor(q, 'thor', null), 6);
   assert.equal(freeLeftFor(null, 'normal', 'land'), 0);
   assert.equal(allFreeCovered(q, 18), true);

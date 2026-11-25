@@ -58,7 +58,7 @@ export function parseQuota(info) {
 /**
  * 指定类型的免费额度剩余：普通兵取 common 池，雷神两点取对应军种的雷神池；军种缺失回退合计池。
  * @param {object|null} quota parseQuota 产物
- * @param {string} tier normal/thor/super
+ * @param {string} tier normal/thor
  * @param {string} arm land/navy/air
  * @returns {number} 剩余额度；quota 缺失返回 0
  */

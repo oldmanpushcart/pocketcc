@@ -4,13 +4,13 @@
  * 源码锚点：
  *   - 军种 = `army.Data.type` ∈ GameDefine.ArmyType（Land 101 / Sea 201 / Air 301）；
  *   - 雷神线 = `army.Data.thor_group>0`（FlameController.isFlameArmyById 同款判据）；
- *   - 超级雷神 = `thor_group>=100`（90xxxx 科技线）或 `glorious_science_group>0`（10000/20000），
- *     普通雷神 = 1~15（84xxxx 线）。两条线在 army 表里 thor_group 无空档取值，故无需 id 白名单。
+ *     超级雷神（`thor_group>=100` 或 `glorious_science_group>0`）与普通雷神（`thor_group` 1~15）
+ *     在游戏中不会同时存在（升级超级后所有雷神变为超级），面板合并为单一「雷神」类型。
  *
  * 配置表对拍（解码 dynres/config_optim2_1.5.11775.txt 与 1.5.12631.txt，tools/parse-config-tables.py）：
  *   army_type_hospital===2 ⇔ thor_group>0，两版 177 行零违例（84xxxx 雷神兵 45 行 thor_group 1~15；
  *   90xxxx 超雷神 132 行 thor_group 100~600 + glorious_science_group 10000）；===1 是普通兵 780 行，空为非修理单位。
- *   该列只是「雷神系」二值标签，分不出普通/超雷神，且医院代码不读它——本地/跨服/无双分流统一用
+ *   该列只是「雷神系」二值标签，医院代码不区分普通/超雷神——本地/跨服/无双分流统一用
  *   FlameController.isFlameArmyById（实现即 thor_group>0），故本模块判据与游戏同源。
  *
  * 判据缺失（部队对象拿不到 / type 非三值）按「陆·普通」归并（tierOf 取不到部队返回 normal）：
@@ -21,19 +21,16 @@
 export const ARMS = ['land', 'navy', 'air'];
 
 /** @type {string[]} 类型枚举顺序（面板行顺序，由低到高） */
-export const TIERS = ['normal', 'thor', 'super'];
+export const TIERS = ['normal', 'thor'];
 
 /** @type {Object<string, string>} army.Data.type → 军种 */
 const ARM_BY_TYPE = { 101: 'land', 201: 'navy', 301: 'air' };
-
-/** @type {number} 超级雷神 thor_group 下界（≥100 即超级线；普通雷神 1~15） */
-export const SUPER_THOR_GROUP = 100;
 
 /** @type {Object<string, string>} 军种短名（日志/面板） */
 export const ARM_LABEL = { land: '陆', navy: '海', air: '空' };
 
 /** @type {Object<string, string>} 类型短名（日志/面板） */
-export const TIER_LABEL = { normal: '普通', thor: '雷神', super: '超级雷神' };
+export const TIER_LABEL = { normal: '普通', thor: '雷神' };
 
 /**
  * 军种判定：army.Data.type 101/201/301 → land/navy/air。
@@ -46,16 +43,17 @@ export function armOf(army) {
 }
 
 /**
- * 类型判定：thor_group/glorious_science_group → normal/thor/super。
+ * 类型判定：thor_group/glorious_science_group → normal/thor。
+ * 雷神与超级雷神不会同时出现（升级后全部变为超级），合并为单一 'thor' 类型。
  * @param {object|null} army 部队对象
- * @returns {'normal'|'thor'|'super'} 判据缺失按 normal（旧版兜底口径）
+ * @returns {'normal'|'thor'} 判据缺失按 normal（旧版兜底口径）
  */
 export function tierOf(army) {
   const d = army && army.Data;
   if (!d) return 'normal';
   const tg = Number(d.thor_group) || 0;
-  if (tg >= SUPER_THOR_GROUP || Number(d.glorious_science_group) > 0) return 'super';
-  return tg > 0 ? 'thor' : 'normal';
+  if (tg > 0 || Number(d.glorious_science_group) > 0) return 'thor';
+  return 'normal';
 }
 
 /**
@@ -77,12 +75,12 @@ export function classifyUnit(army, fallback) {
 }
 
 /**
- * 是否雷神类型（普通雷神或超级雷神）。
+ * 是否雷神类型。
  * @param {string} tier 类型
  * @returns {boolean}
  */
 export function isThorTier(tier) {
-  return tier === 'thor' || tier === 'super';
+  return tier === 'thor';
 }
 
 /**

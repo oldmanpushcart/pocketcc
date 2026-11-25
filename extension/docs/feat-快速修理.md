@@ -10,7 +10,7 @@
 **它做什么**：玩家部队受伤进医院后，按三个场地分别自动修理并按需加速（面板按场地分段全配）：
 
 - **基地修理厂**（本地医院）：普通兵先扣英雄每日免费额度（77 个）、超出扣材料；雷神兵直接扣材料。修理 = 勾选类型集合一笔 220 全发。
-- **战场抢修车间**（跨服天梯赛战场医院）：只收雷神（普通/超级）；赛事项圈内才可读，关闸前 10 分钟优先加速本场地，避免未修完随关闸损毁。
+- **战场抢修车间**（跨服天梯赛战场医院）：只收雷神；赛事项圈内才可读，关闸前 10 分钟优先加速本场地，避免未修完随关闸损毁。
 - **无双修理厂**（NewCAB/AVA、TM、大师赛、传奇小队）：**修理免费**（不耗材料），只按勾选集合排队；加速按模式倍率估价。
 
 每个场地一组配置：**修理范围**（军种 × 类型多选）+ **加速方式**（不加速/钻石/道具，默认一律不加速）。基地与无双分普通档/雷神档两个加速键；抢修车间只收雷神，单键。所有场地钻石加速共享一个 **钻石日上限**（跨场地累计，服务器日界归零；0/空 = 不限）。
@@ -36,10 +36,10 @@
 | `speedAvaNormal` / `speedAvaThor` | 三态 | none | 无双普通档/雷神档加速（6312 族，钻石按模式倍率） |
 | `goldDailyCap` 钻石日上限 | 数字（0=不限） | 0 | 全场地钻石加速共享的当日花销上限，按服务器日界归零 |
 
-> 类型码：1 陆普通 · 2 陆雷神 · 3 陆超级 · 4 海普通 · 5 海雷神 · 6 海超级 · 7 空普通 · 8 空雷神 · 9 空超级（`army.Data.type` 101/201/301 × `thor_group`/`glorious_science_group` 判定）。
+> 类型码：1 陆普通 · 2 陆雷神 · 3 海普通 · 4 海雷神 · 5 空普通 · 6 空雷神（`army.Data.type` 101/201/301 × `thor_group`/`glorious_science_group` 判定；雷神与超级雷神不会同时存在，已合并为单一「雷神」类型）。
 > 节奏：治疗与加速在**同一拍内串联**——治疗落地后就地重读在修态补跑加速决策，不再等下一拍（见 §4）。
 > 不进面板的内置项：`pollIntervalSec`（自愈轮询间隔，默认 60s）、抢修车间关闸前优先窗口（`cfg.csbClosingSoonSec`=600s）。
-> 已废弃：`resourceRepair`（材料按用户口径视为充足，不再做持有量预算——服务器超限会拒绝且日志可见）、`commonRepair`/`thorRepair`/`speedCommon`/`speedThor`/`freeRepair`/`speedGold`/`speedItem`（v3 存档迁移一次性折算，见 `model/schema.js`）。
+> 已废弃：`resourceRepair`（材料按用户口径视为充足，不再做持有量预算——服务器超限会拒绝且日志可见）、`commonRepair`/`thorRepair`/`speedCommon`/`speedThor`/`freeRepair`/`speedGold`/`speedItem`（v4 存档迁移一次性折算，见 `model/schema.js`）。
 
 ---
 
@@ -86,8 +86,8 @@
 - **普通兵每日免费额度** = `common_max - common_use`（实测本号 `common_max=77`，与英雄技能「免费修 77 个」一致）。雷神族 `*_max=0` ⇒ 雷神不可免费修。
 - **择时**（镜像 `getQuickRepairTipsType(wait,max,use)`）：取不到 max/use 或 `wait<=0 || max<=0 || max-use<=0` ⇒ 不可修；`max-use>=wait` ⇒ 可全免；否则部分免。
 - **本地待修队列**：直读 `UserData.OrderQueues`，过滤 `type===1(ORDER_TYPE_HEAL) && orderId!=="0"`：`state===0` 待修、`state===1` 修理中；`id` 即发包用的队列（槽）id。**去重令牌 = `id#orderId#endTime`**：① 槽 id 会被复用到不同伤兵（orderId 变），故含 orderId；② 同一部队（orderId 不变）会被反复打伤，每次受伤事件 `endTime` 变、而陈旧幻影（服务器已清、客户端未同步）`endTime` 不变，故含 endTime 以区分「需立修的再次受伤」与「须抑制的陈旧幻影」。
-- **单位分类（军种 × 类型）**：军种 = `army.Data.type`（`GameDefine.ArmyType` 101 陆 / 201 海 / 301 空）；类型 = 普通（`thor_group===0 && glorious_science_group<=0`）/ 普通雷神（`1<=thor_group<100`）/ 超级雷神（`thor_group>=100` 或 `glorious_science_group>0`）。分类纯函数在 `model/classify.js`（`classifyUnit`/`tierOf`），不依赖 `FlameController` 单例；部队对象取不到时按 fallback 归并——本地/无双缺省「陆·普通」（不漏修普通兵），抢修车间缺省「雷神」（该场地只收雷神）。配置表对拍（解码 `config_optim2` 1.5.11775 / 1.5.12631）：`army_type_hospital===2 ⇔ thor_group>0`，177 行零违例（84xxxx 雷神 45 行 / 90xxxx 超雷神 132 行）；该列只是「雷神系」二值标签、分不出普通/超雷神，且医院代码不读它（`FlameController.isFlameArmyById` 即 `thor_group>0`），故 `thor_group` 判据与游戏同源。
-- **面板修理范围 → 类型码**：`code = 1..9`，按 军种×类型 顺序（见 §0）；`normalize` 把多选值过滤到场地可选集（抢修车间仅 2/3/5/6/8/9）并去重。决策侧 `repairIncludes(cfg, venue, arm, tier)` 逐条目判定。
+- **单位分类（军种 × 类型）**：军种 = `army.Data.type`（`GameDefine.ArmyType` 101 陆 / 201 海 / 301 空）；类型 = 普通（`thor_group===0 && glorious_science_group<=0`）/ 雷神（`thor_group>0` 或 `glorious_science_group>0`，包含原普通雷神与超级雷神，两者不会同时存在）。分类纯函数在 `model/classify.js`（`classifyUnit`/`tierOf`），不依赖 `FlameController` 单例；部队对象取不到时按 fallback 归并——本地/无双缺省「陆·普通」（不漏修普通兵），抢修车间缺省「雷神」（该场地只收雷神）。配置表对拍（解码 `config_optim2` 1.5.11775 / 1.5.12631）：`army_type_hospital===2 ⇔ thor_group>0`，177 行零违例（84xxxx 雷神 45 行 / 90xxxx 超雷神 132 行）；该列只是「雷神系」二值标签，医院代码不区分普通/超雷神（`FlameController.isFlameArmyById` 即 `thor_group>0`），故 `thor_group` 判据与游戏同源。
+- **面板修理范围 → 类型码**：`code = 1..6`，按 军种×类型 顺序（见 §0）；`normalize` 把多选值过滤到场地可选集（抢修车间仅 2/4/6）并去重。决策侧 `repairIncludes(cfg, venue, arm, tier)` 逐条目判定。
 - **钻石估价**：`max(1, ceil(在修剩余秒和 / 60 × GameTools.getDataConfigData(61017)))`（同 `getProfessionCDGold` 公式）。
 - **815 param 编码**（源码 `SpeedCDPanel.hospitalUseItemSpeed` + 真人成功样本 `{itemid:510002,amount:9,param:null} s=0` 实证）：**本地全量 `param=null`**（`"0|0"` 会被服务器拒 `s=3/item_124017`）、本地单条=队列 `id`；跨服全量 `"1|0"`（或 `"1,"+armyType`）、跨服单条 `"1|"+queueId`。
 - **战场抢修车间（1426）门控**（源码权威判据 `WareHouseControllerNew.isBattleFieldHospitalValid`）：`FunctionOn(cross_server_battle_hospital)` 且任一来源（`currentWorldMapCrossServerModel`/CQ25/CQ26 stormData）的 `HospitalEndTime - ServerTime > 0`；feat 优先 `game.get('WareHouseControllerNew')` 直调该方法，降级 `gameData.functionOnValue` 三态；两者都取不到 ⇒ 照旧轮询（宁多读不漏修）。无双模式在场时 1426 整体让位 6310 族。
@@ -164,10 +164,10 @@
 ## 8. 变更记录
 
 - **2026-11-25 v3 三场地全配（基地 / 战场抢修车间 / 无双；军种×类型 + 钻石日上限）**（用户需求：按真实游戏修理单位重构，面板全配）：
-  - 面板：`commonRepair/thorRepair/speedCommon/speedThor` 两开关两 select → 三场地各「修理范围多选（类型码 1..9；抢修车间仅雷神 6 码）+ 加速三态（基地/无双分普通档/雷神档，抢修车间单键）」，新增 `goldDailyCap` 钻石日上限（全场地共享、服务器日界归零、0=不限，日账走 `core/daily-stats.js`）；`pollIntervalSec` 保留但默认 60s、上限 3600s。
-  - 模块拆分：`model/`（`classify` 军种×类型三档 / `schema` 类型码·归一·迁移 / `entries` 队列投影 / `gates` 抢修车间窗口 / `cost`·`quota`·`kinds`）与 `venues/`（`base`/`csb`/`ava`/`shared` 预算与 param 编码），`index.js` 只留协议收发/编排/生命周期。manifest 契约（`ORDER_TYPE_HEAL`、`INTER_SEND_MS`、`IDLE_TICK_MS`、文档串）不变。
+  - 面板：`commonRepair/thorRepair/speedCommon/speedThor` 两开关两 select → 三场地各「修理范围多选（类型码 1..6；抢修车间仅雷神 3 码）+ 加速三态（基地/无双分普通档/雷神档，抢修车间单键）」，新增 `goldDailyCap` 钻石日上限（全场地共享、服务器日界归零、0=不限，日账走 `core/daily-stats.js`）；`pollIntervalSec` 保留但默认 60s、上限 3600s。
+  - 模块拆分：`model/`（`classify` 军种×类型两档 / `schema` 类型码·归一·迁移 / `entries` 队列投影 / `gates` 抢修车间窗口 / `cost`·`quota`·`kinds`）与 `venues/`（`base`/`csb`/`ava`/`shared` 预算与 param 编码），`index.js` 只留协议收发/编排/生命周期。manifest 契约（`ORDER_TYPE_HEAL`、`INTER_SEND_MS`、`IDLE_TICK_MS`、文档串）不变。
   - 行为变化：① 修理范围只按勾选集合过滤，**不再做材料持有量预算**（`resourceRepair` 废弃，服务器超限会拒绝）；② 无双修理明确免费、只按勾选排队；③ 抢修车间关闸前 10 分钟置顶；④ 无双加速不再与本地互斥「钻石优先」，而是按类型档各随其方式（6312 带 `{ids}` 天然支持子集）。
-  - 存档：`version: 3`；`migrateConfig(c, fromVersion<3)` 只在存档确有旧键时把 v1 三开关 / v2 四字段展开到三场地类型码集合与五键加速方式（钻石优先/道具/不加速），随后删除旧键；fresh install 保持默认不被推断覆盖。
+  - 存档：`version: 4`；`migrateConfig(c, fromVersion)` 把 v1/v2 旧开关展开到三场地类型码集合，v3 九码映射为 v4 六码（super合并到 thor）；fresh install 保持默认不被推断覆盖。
   - 模块规范收口（同日晚）：`index.js` 内与 `model/entries.js` 重复的 18 个队列投影纯函数（`splitWaitIds`/`localWaitTokenSet`/`splitRepairingByType`/`crossWait*`/`avaWait*`/`repairingLeftSec` 等）全部删除，snapshot 只保留 `entries` 投影 + `tokenSet`/`idSet`/`sumLeft` 三个投影小件；`pickSpeedItem` 去掉已废弃的 `keepItemNum` 形参；`army_type_hospital` 配置表对拍证据写入 `classify.js` 头注与 §2。
   - 验证：`quick-repair.test.js` 54 + `quick-repair-model.test.js` 15 全过；`npm run format:check && npm run lint && npm test && npm run arch` 四门禁全绿（全量 794）。`verify:quick-repair` 需本地 dashcam 录制，随 P0 实录刷新后复跑。
 - **2026-11-21 无双按兵种拆分：修理随 commonRepair/thorRepair、加速随 speedCommon/speedThor（修正二十）**（dashcam 录制+日志双轨诊断，用户报「快速修理在无双下不工作」）：

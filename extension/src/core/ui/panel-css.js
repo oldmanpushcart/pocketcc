@@ -355,6 +355,18 @@ export const PANEL_CSS = `
     .pc-mopt.pc-moptdis{opacity:.42;cursor:default;}
     .pc-mopt input[type=checkbox]:disabled{cursor:default;}
     .pc-mopt span,.pc-mopt{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+    /* 矩阵布局（fd.matrix）：原生 table，border-spacing:0 + 单侧边框避免双线，圆角生效 */
+    table.pc-mmtx{width:100%;border-collapse:separate;border-spacing:0;font-size:11px;
+      border:1px solid rgba(255,255,255,.15);border-radius:6px;overflow:hidden;}
+    .pc-mmtx th,.pc-mmtx td{padding:5px 8px;text-align:center;
+      border-right:1px solid rgba(255,255,255,.08);border-bottom:1px solid rgba(255,255,255,.08);}
+    .pc-mmtx th:last-child,.pc-mmtx td:last-child{border-right:none;}
+    .pc-mmtx tr:last-child td{border-bottom:none;}
+    .pc-mmtx-corner{width:36px;}
+    .pc-mmtx-col{font-weight:600;opacity:.85;}
+    .pc-mmtx thead th{border-bottom:1px solid rgba(255,255,255,.13);}
+    .pc-mmtx-row{font-weight:500;opacity:.85;white-space:nowrap;}
+    .pc-mmtx-cell .pc-mopt{justify-content:center;}
     .pc-rngadd{flex:0 0 auto;width:22px;height:20px;padding:0;border-radius:6px;cursor:pointer;
       border:1px dashed rgba(255,255,255,.4);background:transparent;color:#cfe8ff;font:inherit;font-size:14px;line-height:18px;}
     @media (hover:hover){.pc-rngadd:hover{background:rgba(255,255,255,.1);}}
