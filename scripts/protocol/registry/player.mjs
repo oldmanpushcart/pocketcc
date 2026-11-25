@@ -121,6 +121,20 @@ export default [
     ],
   },
   {
+    cmd: 750,
+    dir: 'C2S',
+    note: '领取计时月卡当日礼包（V1 send；公开客户端 PrefabMonthlyAdvanceCard 源码）',
+    src: 'game-source Script bundle: PrefabMonthlyAdvanceCard.monthlyCardGetRewardBtnClick',
+    fields: 'req {cardId:number}；resp d=JSON 串（游戏回调 JSON_PARSE）',
+    usages: [
+      {
+        name: 'CMD_GET_TIMECARD_REWARD',
+        feat: 'monthly-card',
+        file: 'feats/player/monthly-card/constants.js',
+      },
+    ],
+  },
+  {
     cmd: 825,
     dir: 'C2S',
     note: '领取每日补给免费计时奖励（V1 send）',
@@ -1210,6 +1224,11 @@ export default [
         feat: 'ad-diamond',
         file: 'feats/player/ad-diamond/constants.js',
       },
+      {
+        name: 'CMD_GET_AD_MONTH_CARD_WATCH_INFO',
+        feat: 'ad-privilege',
+        file: 'feats/player/ad-privilege/constants.js',
+      },
     ],
   },
   {
@@ -1223,6 +1242,20 @@ export default [
         name: 'CMD_WATCH_REWARD',
         feat: 'ad-diamond',
         file: 'feats/player/ad-diamond/constants.js',
+      },
+    ],
+  },
+  {
+    cmd: 9708,
+    dir: 'C2S',
+    note: '一次领取广告月卡当前全部 ready x2 奖励（sendPBV2；公开客户端源码）',
+    src: 'game-source Script bundle: MonthCardController.getAdRewardAll',
+    fields: 'req {}；resp data {adMonthCardWatchInfos,reward}',
+    usages: [
+      {
+        name: 'CMD_GET_ALL_AD_MONTH_CARD_REWARD',
+        feat: 'ad-privilege',
+        file: 'feats/player/ad-privilege/constants.js',
       },
     ],
   },

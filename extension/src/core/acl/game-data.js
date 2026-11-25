@@ -176,6 +176,43 @@ export const gameData = {
     return dayStart + 86400;
   },
   /**
+   * 计时月卡状态（只读 UserData.TimeCards；游戏 updateTimeCards 的标量投影）。
+   * 月卡 UI 直接消费 cardId/endTime/nextRewardTime；ID 按字符串读，时刻按 epoch 秒归一，
+   * 不把游戏私有对象或引用暴露给玩法层。未登录/数据未同步返回 []。
+   * @returns {{cardId:string, endTime:number, nextRewardTime:number}[]}
+   */
+  timeCards() {
+    var u = userData();
+    var list = u && u.TimeCards;
+    if (!Array.isArray(list)) return [];
+    var out = [];
+    for (var i = 0; i < list.length; i++) {
+      var c = list[i];
+      var id = bits.int64Str(c && c.cardId);
+      if (!id) continue;
+      out.push({
+        cardId: id,
+        endTime: bits.int64ToNum(c.endTime),
+        nextRewardTime: bits.int64ToNum(c.nextRewardTime),
+      });
+    }
+    return out;
+  },
+  /**
+   * 按 ID 查一张计时月卡（只读，timeCards 的字符串精确匹配）。
+   * @param {number|string} cardId 商店档位 ID（如高级月卡 15001、广告月卡 5003）
+   * @returns {{cardId:string, endTime:number, nextRewardTime:number}|null}
+   */
+  monthlyCard(cardId) {
+    var want = bits.int64Str(cardId);
+    if (!want) return null;
+    var list = gameData.timeCards();
+    for (var i = 0; i < list.length; i++) {
+      if (list[i].cardId === want) return list[i];
+    }
+    return null;
+  },
+  /**
    * 每日悬赏任务只读投影（UserData.DailyQuests，登录下发 + 游戏侧 push 维护）。
    * 只暴露标量，不把 QuestData 私有对象/引用交给玩法层；ID 按字符串读避免 64 位精度问题。
    * @returns {{id:string, progress:number, state:number}[]}

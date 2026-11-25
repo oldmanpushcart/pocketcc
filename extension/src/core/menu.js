@@ -61,7 +61,9 @@ export const MENU = [
         children: [
           // 当日次数统计（定稿口径）：各子项 descriptor 首行 type:'text' 只读进度经 inlineStatus 内联到开关行
           { id: 'dailySupply', kind: 'feature', label: '每日补给', inlineStatus: true },
+          { id: 'monthlyCard', kind: 'feature', label: '至尊月卡每日礼包', inlineStatus: true },
           { id: 'adDiamond', kind: 'feature', label: '广告领钻石', inlineStatus: true },
+          { id: 'adPrivilege', kind: 'feature', label: '广告特权每日x2', inlineStatus: true },
           { id: 'bountyQuest', kind: 'feature', label: '悬赏任务自动领取', inlineStatus: true },
           { id: 'autoCoinCollect', kind: 'feature', label: '自动收取金币', inlineStatus: true },
           { id: 'armoryMaterial', kind: 'feature', label: '军火库生产材料', inlineStatus: true },
@@ -188,6 +190,7 @@ export const MENU = [
       { id: 'globalMap', kind: 'feature', label: '全局地图', showFields: true },
       { id: 'quickJump', kind: 'feature', label: '镜头跳转', showFields: true },
       { id: 'reconnect', kind: 'feature', label: '自动重连', showFields: true },
+      { id: 'dailyRefresh', kind: 'feature', label: '每日零点刷新' },
       { id: 'keepAlive', kind: 'feature', label: '后台保活', showFields: true },
       { id: 'netLog', kind: 'feature', label: '网络日志' },
       { id: 'eventLog', kind: 'feature', label: '事件日志' },
