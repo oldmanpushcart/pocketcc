@@ -3,20 +3,24 @@
  *
  * 玩法：盟友在假面迷城活动里用掉「假面舞会 / 假面-藏宝图 / 假面-机甲 / 假面-复合资源」类道具后，
  *   其基地头顶出现一座限时宝箱（约 30 分钟），本联盟每人对每个舞会实例可点一次领奖，
- *   每日上限由配置表 `mask_mystery_party.daily_limit` **按宝箱道具逐条**决定（用户口径 10 次/天）。
+ *   每日上限由配置表 `mask_mystery_party.daily_limit` **按宝箱道具逐条**决定（用户口径：藏宝图/机甲/复合资源各 20 次/天）。
  *   「假面舞会」与「万圣节派对」是同一套机制、同一张表、同一个 2503，只差道具行的
  *   `item_id / share_msg_key / msg_type / daily_limit`（客户端源码 UserItemCityRewardBtn/Panel 实证），
  *   所以本 feat 一律以配置表为准、不按道具号写死。完整协议分析与运行时缺口见 extension/docs/feat-假面舞会.md。
  *
  * 协议（报文实证；源码实证 UserItemCityReward*）：
  *   2503 DANCE_GET_REWARD  sendPBV2 {targetUidStr:"<开启者 pid 字符串>"}
- *     → {header:{s:0}, data:{rewardResult:{items:[{itemId:260617006,itemCount:1}]}}}
- *   push 10053 {danceRec:{"260617005":1}, myReceiveDance:["4909640309826248704"]}
+ *     → {header:{s:0}, data:{rewardResult:{items:[{itemId:260604017,itemCount:1}]}}}
+ *     实录到账物随载体道具分条：260617002 藏宝图→260604017、260617003 机甲→260604018、260617004 复合资源→260604019；
+ *     基地在别的服时 2503 同样受理（实录 7 笔跨服领取均返回 rewardResult.items，无一条被拒）。
+ *   push 10053 {danceRec:{"260617002":5,"260617003":1,"260617004":1}, myReceiveDance:["4944437316498538499",…]}（每次领取后即时下发）
  *     · danceRec    = 按宝箱道具 id 计的今日已领次数（**逐道具**限额的权威分子）
  *     · myReceiveDance = 今日已领过的舞会实例 id 字符串数组（幂等判据，同实例只领一次）
  *     · UserData 落地字段名已由源码坐实：itemCityRewardReceivedNum / itemCityRewardReceivedInstIds
  *   push 10018 / resp 901 玩家城 `p.cityReward = {itemId, instanceId(字符串), num, players[], endTimeMilli}`
- *     （实录报文）；`players[]` 只是展示名单**不含 uid**，不可作「我领没领」的判据
+ *     （实录报文）；`players[]` 只是展示名单**不含 uid**，不可作「我领没领」的判据；
+ *     `num` **不是本场已领次数**（实录：同一实例 63s 内 482→740，远超任何 reward_num 量级），
+ *     故不可拿 `reward_num - num` 当领取闸门，名额是否用完只由服务器裁决。
  *   聊天卡两种形态，都只保证给坐标，**给不给 pid 看发卡路径**：
  *     A. 坐标分享卡  llm={t:0, st:4, p:{x,y,z}, pid:"863595288866"}
  *     B. 活动分享卡  llm={t:48, icon, s:<share_msg_key>, p:{x,y}, extra:{btnKey:102385, aid,
@@ -43,9 +47,15 @@
  *      push 10053 到达时以服务器权威值覆盖（对齐 daily-supply 的 mirror 范式）；
  *   5) **频道不做硬白名单**——实录里这张分享卡是发在世界频道（c=0）的（报文实证），
  *      而非玩法口径所说的联盟频道，故接全部频道的坐标卡；噪声卡由闸门链里的两道对称闸拦住：
- *      「901 实查该点基地带 cityReward」+「itemId 在 `mask_mystery_party` 有行」（代价仅一次 901 查询，不发包领取）。
+ *      「901 实查该点基地带 cityReward」+「itemId 在 `mask_mystery_party` 有行」（代价仅一次 901 查询，不发包领取）；
+ *   6) **跨服卡照查、转发卡不依赖 pid**——玩家会把**别人的**基地坐标卡转发出来，卡面 pid 不肯定向于城主人，
+ *      所以 pid 未命中时回落按坐标认城（实录：卡面 S:4301 X:456 Y:420 与目标城点位逐等，而城 pid=15346158112973）；
+ *      卡面服号（`extra.jumpServerId` / `p.z`）直接当 901 的 k——实录实证本服 4402 发 k=4301 能完整换回目标城及其 cityReward；
+ *   7) **重复卡探针短路**——拉黑键是 instanceId、只有查完 901 才拿得到（实录：一天 62 次探针只覆盖 27 个唯一目标），
+ *      故另记一份「目标服:坐标 → 上轮查到的实例与窗口末点」：那场仍 live 且已定局（已领/已拉黑）就不再白送 901；
+ *      卡面 `extra.expireTime` 与记档末点不等即当作新一场放行重查，判据取不到也一律放行（宁可多查一次也不漏领）。
  *
- * 内置参数（无面板选项，均自适应）：逐道具上限读 `mask_mystery_party.daily_limit`（读不到兜底 10）；
+ * 内置参数（无面板选项，均自适应）：逐道具上限读 `mask_mystery_party.daily_limit`（读不到兜底 20）；
  *   宝箱道具 id 用假面迷城已知族兜底 + 运行期**经 `mask_mystery_party` 表核验后**学习（来年换皮号无需改码）。
  *
  * 合规：只读游戏数据（经 game-api ACL）+ 发 2503/901，不调任何 Update/Delete、不 OpenUI。
@@ -86,8 +96,8 @@ const LINK_ST_BASE = 4;
  */
 const DEFAULT_BOX_ITEMS = '260617001,260617002,260617003,260617004,260617005';
 
-/** @type {number} 配置表 `mask_mystery_party.daily_limit` 读不到时的逐道具每日上限兜底（用户口径 10 次/天） */
-const DAILY_LIMIT_FALLBACK = 10;
+/** @type {number} 配置表 `mask_mystery_party.daily_limit` 读不到时的逐道具每日上限兜底（用户口径：藏宝图/机甲/复合资源各 20 次/天） */
+const DAILY_LIMIT_FALLBACK = 20;
 
 /**
  * 901 单窗探针的 viewLevel。取 0（全量点）而非 fetchWindow 默认的 1：
@@ -95,6 +105,13 @@ const DAILY_LIMIT_FALLBACK = 10;
  * @type {number}
  */
 const PROBE_VIEW_LEVEL = 0;
+
+/**
+ * 901 单窗探针的窗尺寸：对齐游戏自己跳图时的 20×30（实录 901 请求体为 19×33，竞对B 用 20×30）。
+ * 默认 20×20 纵向偏窄，卡片坐标与点位有一格偏差就会把目标城掉在窗外。
+ * @type {{width:number,height:number}}
+ */
+const PROBE_WINDOW = { width: 20, height: 30 };
 
 /** @type {number} 队列排空/数据未就绪时的巡检间隔（毫秒） */
 const IDLE_TICK_MS = 1000 * 60 * 5;
@@ -111,6 +128,14 @@ const QUEUE_MAX = 60;
 /** @type {number} 当日拉黑实例 id 上界（FIFO 淘汰） */
 const BLACKLIST_MAX = 300;
 
+/**
+ * 探针短路记档上界（FIFO 淘汰），键为「目标服:坐标」。
+ * 实录口径：一天 62 次 901 探针只覆盖 27 个唯一目标——同一座城被反复分享时，拉黑键是 instanceId、
+ * 只有查完 901 才拿得到，于是每次重复都白送一次 901。记档按坐标前置拦截，把这个浪费吃掉。
+ * @type {number}
+ */
+const PROBE_MEMO_MAX = 200;
+
 /** @type {number} 同一候选的重试上界（只重试只读 901，不重发写请求），防网络抖动导致一次性聊天卡候选永久漏领 */
 const CLAIM_RETRY_MAX = 3;
 
@@ -123,7 +148,7 @@ var net;
 /** @type {object|null} reactor 上下文；alive() 反映运行态 */
 var ctxRef = null;
 
-/** @type {Array<{key:string,pid:string,x:number,y:number,sid:number,src:string,attempts:number}>} 待领候选队列（按 key 去重：有 pid 用 pid，无 pid 用坐标） */
+/** @type {Array<{key:string,pid:string,x:number,y:number,sid:number,exp:number,src:string,attempts:number}>} 待领候选队列（按 key 去重：有 pid 用 pid，无 pid 用坐标） */
 var queue = [];
 
 /** @type {Set<string>} 队列内已存在的候选键（去重闸门） */
@@ -131,6 +156,12 @@ var queuedKeys = new Set();
 
 /** @type {Set<string>} 当日拉黑的舞会实例 id（已领/过期/名额满） */
 var blacklisted = new Set();
+
+/** @type {Map<string,{inst:string,endSec:number}>} 「目标服:坐标」→ 上一轮 901 查到的舞会实例与窗口末点（当日有效，供重复卡短路探针） */
+var probeMemo = new Map();
+
+/** @type {Object<string,string>} 逐道具限额来源（table/fallback）的一次性记日志标记，防每次判定都刷一行 */
+var limitSourceSeen = {};
 
 /** @type {Object<string,boolean>} 已知宝箱道具 id 集（内置假面迷城族 + 运行期学习值） */
 var boxItemIds = {};
@@ -210,7 +241,7 @@ function isMaskDanceItem(itemId) {
 }
 
 /**
- * 跨日复位：镜像、拉黑名单、队列一律清空（未读回前不动，防半截态）
+ * 跨日复位：镜像、拉黑名单、探针记档、限额来源标记、队列一律清空（未读回前不动，防半截态）
  */
 function rollDayIfNeeded() {
   if (!mirrorLoaded) return;
@@ -220,6 +251,8 @@ function rollDayIfNeeded() {
   todayByItem = {};
   mirrorInstIds = [];
   blacklisted.clear();
+  probeMemo.clear();
+  limitSourceSeen = {};
   queue = [];
   queuedKeys.clear();
   persistMirror();
@@ -236,6 +269,55 @@ function markBlacklist(instId) {
     if (oldest != null) blacklisted.delete(oldest);
   }
   blacklisted.add(instId);
+}
+
+/**
+ * 探针记档键：目标服号 + 坐标（同一坐标在不同服上是两场舞会，必须分开记）
+ * @param {number} sid 901 请求体 k（目标服号）
+ * @param {number} x 基地 game x
+ * @param {number} y 基地 game y
+ * @returns {string}
+ */
+function memoKey(sid, x, y) {
+  return (sid | 0) + ':' + (x | 0) + ':' + (y | 0);
+}
+
+/**
+ * 记下一次 901 实查结论：该坐标上这场舞会的实例 id 与窗口末点（服务器秒）
+ * @param {number} sid 目标服号
+ * @param {number} x 命中点位 game x
+ * @param {number} y 命中点位 game y
+ * @param {string} instId 舞会实例 id
+ * @param {*} endTimeMilli 该实例窗口末点（毫秒）
+ */
+function memoRecord(sid, x, y, instId, endTimeMilli) {
+  var k = memoKey(sid, x, y);
+  if (!probeMemo.has(k) && probeMemo.size >= PROBE_MEMO_MAX) {
+    var oldest = probeMemo.keys().next().value;
+    if (oldest != null) probeMemo.delete(oldest);
+  }
+  probeMemo.set(k, { inst: instId, endSec: Number(endTimeMilli) / 1000 || 0 });
+}
+
+/**
+ * 重复卡探针短路：同一 (目标服,坐标) 上一轮已查到某场舞会，而那场**已定局**（已领或当日拉黑）且
+ * 仍在同一场窗口内时，再问一次 901 不可能换回不同结论——直接跳过这次探针。
+ * 放行条件从严（判据取不到就照常探针，宁可多查一次也不漏领）：
+ *   · 无记档，或记档那场已过 `endTimeMilli`（同一座城可以再开新一场）；
+ *   · 卡面 `extra.expireTime`（客户端写死的窗口末点，秒）与记档末点不等——那是另一场舞会；
+ *   · 记档实例既没拉黑也未已领（可能是上一轮查到但没发的，须重查）。
+ * @param {number} sid 目标服号
+ * @param {{x:number,y:number,exp:number}} cand 候选（exp = 卡面声明的窗口末点，0=未声明）
+ * @returns {string} 命中的已定局实例 id；空串 = 不短路，照常探针
+ */
+function memoHitSettled(sid, cand) {
+  var m = probeMemo.get(memoKey(sid, cand.x, cand.y));
+  if (!m) return '';
+  if (!(m.endSec > gameData.serverTime())) return '';
+  if (cand.exp > 0 && Math.abs(m.endSec - cand.exp) > 2) return '';
+  var claimed = claimedInstIds();
+  if (!blacklisted.has(m.inst) && !claimed.has(m.inst)) return '';
+  return m.inst;
 }
 
 /**
@@ -350,13 +432,30 @@ function claimedCount() {
 
 /**
  * 某个宝箱道具的今日上限（无面板选项，直读活动配置表 `mask_mystery_party[itemId].daily_limit`）；
- * 表未就绪/无行则兜底 DAILY_LIMIT_FALLBACK。
+ * 表未就绪/无行/字段为空则兜底 DAILY_LIMIT_FALLBACK。
+ * 来源（table / no-row / empty-field）每个道具每天各记一行：分母写成 20 时，
+ * 日志得能区分「表给的就是 20」与「兜底撑起的 20」（实录：全天分母恒 /20 且 `party seats` 零命中）。
  * @param {*} itemId 宝箱道具 id
  * @returns {number}
  */
 function dailyLimitOf(itemId) {
   var row = partyRow(itemId);
   var n = row ? Number(row.daily_limit) || 0 : 0;
+  var k = String(itemId);
+  var src = n > 0 ? 'table' : row ? 'empty-field' : 'no-row';
+  if (limitSourceSeen[k] !== src) {
+    limitSourceSeen[k] = src;
+    if (n > 0) {
+      log.debug('daily limit from table. itemId=%s;limit=%d', k, n);
+    } else {
+      log.warn(
+        'mask_mystery_party unusable, daily limit falls back. itemId=%s;src=%s;fallback=%d',
+        k,
+        src,
+        DAILY_LIMIT_FALLBACK,
+      );
+    }
+  }
   return n > 0 ? n : DAILY_LIMIT_FALLBACK;
 }
 
@@ -405,8 +504,9 @@ function dayRollDelay() {
  * @param {number} y 基地 game y
  * @param {string} src 来源标记（chat/tile，日志定位用）
  * @param {number} [sid=0] 卡片声明的目标服号（0=未声明）
+ * @param {number} [exp=0] 卡面声明的舞会窗口末点（秒，`extra.expireTime`；0=未声明），供探针短路判定「是不是同一场」
  */
-function enqueue(pid, x, y, src, sid) {
+function enqueue(pid, x, y, src, sid, exp) {
   pid = bits.int64Str(pid);
   if (pid && !/^\d{6,}$/.test(pid)) return;
   // 镜像读回前不入队：此刻 todayByItem 仍是空，「重启前已领 N 次」会被当作没领而超发。
@@ -429,6 +529,7 @@ function enqueue(pid, x, y, src, sid) {
     x: x | 0,
     y: y | 0,
     sid: Number(sid) || 0,
+    exp: Number(exp) || 0,
     src: src,
     attempts: 0,
   });
@@ -532,7 +633,7 @@ function onChatMsg(chat, raw, kind) {
   // 过期卡直弃：extra.expireTime 是分享时就写死的窗口末点（秒，Btn 取 endTimeMilli/1e3），省一次 901
   var exp = Number(extra.expireTime) || 0;
   if (exp > 0 && exp <= gameData.serverTime()) return;
-  enqueue(llm.pid != null ? String(llm.pid) : '', +p.x, +p.y, 'chat', cardServerId(p, extra));
+  enqueue(llm.pid != null ? String(llm.pid) : '', +p.x, +p.y, 'chat', cardServerId(p, extra), exp);
 }
 
 /**
@@ -584,34 +685,56 @@ function chatApiRef() {
  * @param {number} x 目标 game x
  * @param {number} y 目标 game y
  * @param {string} pid 目标开启者 pid；空串 = 卡片没给，改按坐标认城并反查 pid
- * @param {number} sid 901 请求体 k（本服服号）
+ * @param {number} sid 901 请求体 k（目标服号：卡片声明的 jumpServerId/p.z，无声明时为本服服号）
  * @returns {Promise<{kind:string, loc?:{cr:object,x:number,y:number,pid:string}}>}
  *   `kind`：`ok`（带 loc）| `probe`（901 未成功，抖动可翻转、该重试）|
  *   `absent`（窗内没有目标城，可能坐标偏差/对方迁城，可重试）|
  *   `no-reward`（城在场但不带 cityReward——当日确定结论，重试无意义）
  */
 async function locateCityReward(x, y, pid, sid) {
-  // 901 请求体 k 口径：UserData.ServerId（非镜头服号，见 core/map.js fetchWindow 注释）；
+  // 901 请求体 k 口径：本服用 `UserData.ServerId`（非镜头服号，见 core/map.js fetchWindow 注释）；
+  // 卡片声明了别的服就直接拿它当 k——实录实证跨服 901 可用（本服 4402 发 k=4301 完整换回目标城及其 cityReward）；
   // viewLevel 取 0 全量点，防聚合档把目标城精简掉（见 PROBE_VIEW_LEVEL 注释）
-  var r = await map.fetchWindow(net, x, y, { k: sid | 0, viewLevel: PROBE_VIEW_LEVEL });
+  var r = await map.fetchWindow(net, x, y, {
+    k: sid | 0,
+    viewLevel: PROBE_VIEW_LEVEL,
+    width: PROBE_WINDOW.width,
+    height: PROBE_WINDOW.height,
+  });
   if (!r.ok) {
-    log.debug('901 probe not ok. x=%d;y=%d;code=%s;data=%s', x, y, r.code, rejectText(r) || '-');
+    log.debug(
+      '901 probe not ok. x=%d;y=%d;k=%d;code=%s;data=%s',
+      x,
+      y,
+      sid | 0,
+      r.code,
+      rejectText(r) || '-',
+    );
     return { kind: 'probe' };
   }
+  var coordHit = null;
   for (var pt of r.points) {
     if (!pt || pt.pointType !== POINT_TYPE_CITY || !pt.p) continue;
     var ptPid = bits.int64Str(pt.p.pid);
-    // 有 pid 的卡按 pid 认（迁城后卡片坐标会失效，坐标不可信）；
-    // 无 pid 的卡只能按坐标认、pid 从点反查——实录实证卡片 p:{x,y} 与点位 x/y 逐等（352:474）
-    if (pid) {
-      if (ptPid !== pid) continue;
-    } else if ((pt.x | 0) !== (x | 0) || (pt.y | 0) !== (y | 0)) {
-      continue;
+    // 有 pid 的卡优先按 pid 认（同一坐标窗里 pid 比坐标硬）；
+    // 但「转发别人基地卡」的 pid 不肯定向于城主人（实录目标城 pid=15346158112973，卡面分享人是另一个玩家），
+    // 所以 pid 未命中不能直接定「那城没宝箱」，须回落按坐标认——卡片 p.{x,y} 与点位 x/y 逐等（实录 456:420）。
+    if (pid && ptPid === pid) {
+      if (!pt.p.cityReward) return { kind: 'no-reward' };
+      return { kind: 'ok', loc: { cr: pt.p.cityReward, x: pt.x | 0, y: pt.y | 0, pid: ptPid } };
     }
-    if (!pt.p.cityReward) return { kind: 'no-reward' };
+    if (!coordHit && (pt.x | 0) === (x | 0) && (pt.y | 0) === (y | 0)) coordHit = pt;
+  }
+  if (coordHit) {
+    if (!coordHit.p.cityReward) return { kind: 'no-reward' };
     return {
       kind: 'ok',
-      loc: { cr: pt.p.cityReward, x: pt.x | 0, y: pt.y | 0, pid: ptPid || pid || '' },
+      loc: {
+        cr: coordHit.p.cityReward,
+        x: coordHit.x | 0,
+        y: coordHit.y | 0,
+        pid: bits.int64Str(coordHit.p.pid) || pid || '',
+      },
     };
   }
   return { kind: 'absent' };
@@ -619,7 +742,7 @@ async function locateCityReward(x, y, pid, sid) {
 
 /**
  * 处理一个候选：闸门链 → 901 定位（必要时反查 pid）→ 2503 领取 → 记账。永不 reject。
- * @param {{key:string,pid:string,x:number,y:number,sid:number,src:string,attempts:number}} cand 候选
+ * @param {{key:string,pid:string,x:number,y:number,sid:number,exp:number,src:string,attempts:number}} cand 候选
  */
 async function claimOne(cand) {
   rollDayIfNeeded();
@@ -631,28 +754,42 @@ async function claimOne(cand) {
     log.debug('serverId unavailable, cannot address 901. x=%d;y=%d', cand.x, cand.y);
     return;
   }
-  // 卡片声明的目标服与本服不同：901 的 k 只能查本服图，硬查会在本服同坐标上领到一座无关的城
-  if (cand.sid > 0 && cand.sid !== own) {
+  // 卡片声明的目标服与本服不同：**照查**，把卡面服号直接当 901 的 k。
+  // 旧版在此直接跳过（假设「901 的 k 只能查本服图」），已被实录证伪：本服 4402 发
+  // {x:456,y:420,k:4301} 完整换回了 4301 那座城及其 cityReward（游戏自己点跳卡就是这条请求），
+  // 竞对B 同口径（卡片 z → getTile serverId → 901 k）。「本服同坐标领到一座无关的城」的担忧
+  // 不成立——错领只在 k 拿错时发生，这里 k 就是卡面声明的服号。
+  var dst = cand.sid > 0 ? cand.sid : own;
+  if (dst !== own) {
+    log.debug('cross-server scout. sid=%d;own=%d;x=%d;y=%d', cand.sid, own, cand.x, cand.y);
+  }
+  // 重复卡探针短路：同一座城短时间内被反复分享（实录：一天 62 次探针只覆盖 27 个唯一目标），
+  // 上一轮已查到那场舞会且它已定局（已领/已拉黑）时，再查也不会换回新结论。
+  // 判据与放行口径见 memoHitSettled。
+  var settledByMemo = memoHitSettled(dst, cand);
+  if (settledByMemo) {
     log.debug(
-      'card points to another server, out of reach. sid=%d;own=%d;x=%d;y=%d',
-      cand.sid,
-      own,
+      'probe skipped by memo, inst already settled. inst=%s;x=%d;y=%d;k=%d;src=%s',
+      settledByMemo,
       cand.x,
       cand.y,
+      dst,
+      cand.src,
     );
     return;
   }
-  var res = await locateCityReward(cand.x, cand.y, cand.pid, own);
+  var res = await locateCityReward(cand.x, cand.y, cand.pid, dst);
   if (!aliveFn()) return;
   if (res.kind !== 'ok') {
     // 只对「结论可翻转」的失败回填重试：`no-reward` 是确定结论（那城此刻就是没宝箱），
     // 它是噪声聊天卡的常态；若也重试，等于把无效 901 的成本放大 CLAIM_RETRY_MAX 倍
     if (res.kind !== 'no-reward' && requeue(cand)) return;
     log.debug(
-      'no live cityReward at target. pid=%s;x=%d;y=%d;kind=%s',
+      'no live cityReward at target. pid=%s;x=%d;y=%d;k=%d;kind=%s',
       cand.pid || '-',
       cand.x,
       cand.y,
+      dst,
       res.kind,
     );
     return;
@@ -665,7 +802,19 @@ async function claimOne(cand) {
     return;
   }
   var instId = String(cr.instanceId);
-  if (blacklisted.has(instId)) return;
+  // 记下本场结论供后续重复卡短路（按实查命中的点位坐标记，不是卡面坐标）
+  memoRecord(dst, res.loc.x, res.loc.y, instId, cr.endTimeMilli);
+  if (blacklisted.has(instId)) {
+    log.debug(
+      'inst blacklisted today, skip. inst=%s;pid=%s;x=%d;y=%d;k=%d',
+      instId,
+      pid,
+      res.loc.x,
+      res.loc.y,
+      dst,
+    );
+    return;
+  }
   // 道具白名单（与瓦片路径对称）：聊天路径绕过了 offerFromPoint，非舞会载体一律不发 2503
   if (!isMaskDanceItem(cr.itemId)) {
     markBlacklist(instId);
@@ -678,6 +827,12 @@ async function claimOne(cand) {
   }
   if (claimedInstIds().has(instId)) {
     markBlacklist(instId);
+    log.debug(
+      'inst already claimed, skip. inst=%s;pid=%s;itemId=%s',
+      instId,
+      pid,
+      String(cr.itemId),
+    );
     return;
   }
   var nowSec = gameData.serverTime();
@@ -697,13 +852,14 @@ async function claimOne(cand) {
     );
     return;
   }
-  // 每场舞会的共享名额（mask_mystery_party.reward_num - cityReward.num）：先到先得，领完即弃
+  // 本场共享名额（`reward_num - cityReward.num`）**只记日志不拦**：实录证伪了「num 是本场已领次数」
+  // 这一假设——同一实例 63s 内 num 从 482 跳到 740，而游戏按钮读的是 reward_num（典型量级几十），
+  // 拿它当闸门会把每一场舞会都判成「名额已满」——这正是「把不存在的规则写进判据」的误锁。
+  // 名额真用完由服务器拒（下面 claim rejected 分支会当日拉黑），一个实例只撞一次墙。
   var row = partyRow(cr.itemId);
   var cap = row ? Number(row.reward_num) || 0 : 0;
-  if (cap > 0 && Number(cr.num) >= cap) {
-    markBlacklist(instId);
-    log.info('party seats used up, skip. inst=%s;num=%d;cap=%d', instId, Number(cr.num) || 0, cap);
-    return;
+  if (cap > 0) {
+    log.debug('party seats (advisory). inst=%s;num=%d;cap=%d', instId, Number(cr.num) || 0, cap);
   }
   // 2503 在途（上一条领取还没回来）：回填本候选等下一拍，不能就地丢弃
   if (net.isSending(CMD_DANCE_GET_REWARD)) {
@@ -773,7 +929,7 @@ async function claimOne(cand) {
  * 只读探测失败后的回填重试（同一候选最多 CLAIM_RETRY_MAX 次）。
  * 只回填「结论可翻转」的早退（901 未成功 / 窗内未命中该城 / 2503 在途）；已领、过期、名额满、被拒、
  * 以及 `no-reward`（城在场就是没宝箱）这类当日确定结论不回填。
- * @param {{key:string,pid:string,x:number,y:number,sid:number,src:string,attempts:number}} cand 刚出队的候选
+ * @param {{key:string,pid:string,x:number,y:number,sid:number,exp:number,src:string,attempts:number}} cand 刚出队的候选
  * @returns {boolean} 是否已重新入队
  */
 function requeue(cand) {
@@ -788,7 +944,7 @@ function requeue(cand) {
 
 /**
  * 从队列取下一个仍有效的候选（已领/拉黑的就地丢弃）
- * @returns {{key:string,pid:string,x:number,y:number,sid:number,src:string,attempts:number}|null}
+ * @returns {{key:string,pid:string,x:number,y:number,sid:number,exp:number,src:string,attempts:number}|null}
  */
 function nextCandidate() {
   while (queue.length) {
@@ -897,7 +1053,8 @@ function pause() {
 
 /**
  * 向 reactor 注册本功能说明书：地图限定 base/world（901/2503 都在世界图语境）、
- * kinds 只放行本服（舞会是本联盟本服玩法）；不派兵但占网络，战斗模式让位。
+ * kinds 只放行 homeland（901 的 k 是请求体字段，从本服语境也能查别区图，跨服卡不需切图）；
+ * 不派兵但占网络，战斗模式让位。
  * 日常活动形态——面板出启用开关 + 一行只读当日进度（inlineStatus）：
  * 当日次数口径（定稿）：额度类读权威——分子=逐道具 max(danceRec 权威, 镜像) 求和（claimedCount，含手动）。
  * 无分母：游戏限额是逐道具口径（daily_limit 逐条独立），全局求和会编造总上限（用户否决 80 口径），
