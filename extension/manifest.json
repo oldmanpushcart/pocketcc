@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "口袋控制中心（开发版）",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAv88quauxH1VnnsrwjhVd0DoJ/bXkJJVHLx3VtzCBCo0uXVL6kd+ALWz2dpZpNonOox/N5pQL92fiQ/S7S9eP4hkPHJWIBCKuAxmeB6/TxDYbfc6xCyhEnQvBVBmeCOq5N0QC36wQLAzFvcVmQewKc27LOp1UeixJtUg5rSeZnnr4brvG+stRz3s1nMsg0FPXwuZj+r2AOn/6RaZJdA43EkNSVDZxcNo7X1+M17QXbTFFtrFe/7yjpdqZqOTIip8qrAtxpzNQIDZmn+Ikn6KnxL83AvYA30kBkKF1UAcLqj8Uu49g9vW89y0j4KwISpSAkg4m1hLhSAfWx8ePx1bO/wIDAQAB",
   "description": "口袋控制中心 (pocketcc) — 口袋奇兵 H5 页游辅助：免扫码自动登录、自动重连、芯片祝福、泰坦祝福、联盟帮助、领域寻宝",
   "icons": {
