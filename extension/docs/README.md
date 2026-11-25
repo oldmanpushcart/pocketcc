@@ -38,7 +38,8 @@
 > [`feat-机械制药.md`](feat-机械制药.md)（`src/feats/player/potion-craft/index.js`，制药 lane 单飞排产）、
 > [`feat-快速修理.md`](feat-快速修理.md)（`src/feats/player/quick-repair/index.js`，英雄免费快速修理 + 医院加速，含「只开免费线」灰度用法）、
 > [`feat-假面舞会.md`](feat-假面舞会.md)（`src/feats/activity/mask-dance/`，2026 万圣节基地宝箱领取，含「协议已实证 + 运行时缺口待探针」的取证状态表）、
-> [`feat-夺宝奇兵.md`](feat-夺宝奇兵.md)（`src/feats/activity/cs-hunt/`，事件/技能/组队/战斗装配四面板的逐行源码核验与方案定稿）。
+> [`feat-夺宝奇兵.md`](feat-夺宝奇兵.md)（`src/feats/activity/cs-hunt/`，事件/技能/组队/战斗装配四面板的逐行源码核验与方案定稿）、
+> [`快捷攻击-XL2钢铁战车.md`](快捷攻击-XL2钢铁战车.md)（`src/feats/battle/quick-attack/index.js` 注册表 `xl2` 场景，**不是独立 feat**：我方/敌方两个钢铁战车面板按 `_isEnemy` 分流 267/268，含录制逐键对过的载荷表与「未实证项」清单）。
 >
 > [`荒芜冰原-巨熊盛宴.md`](荒芜冰原-巨熊盛宴.md)（CQ26 **BWL 线**「巨熊盛宴」玩法说明，**纯逆向 + 录制实证、未实现 feat**）—— 阶段机（GATHER→FEED→SHOW，22032）+ 融冰 2103 / 小游戏 2129 / 礼盒 2106 / 密礼 2108·22064 / 能量喂养 22044 / **巨熊宝藏**（奖励宝箱 实体 315·2104/2105）逐条协议与实录数值；与采集线（NWL）互斥独立。
 >
