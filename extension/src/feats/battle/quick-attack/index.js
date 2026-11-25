@@ -1178,8 +1178,8 @@ function skinOptions() {
 
 /** @type {Array<{value:number, label:string}>} 「待机皮肤」两档（值即 skin-swap 的 IDLE_MODE，面板与决策层同源） */
 const IDLE_MODE_OPTIONS = [
-  { value: IDLE_MODE.BATTLE, label: '主战皮肤（攻击间隙防御 buff 最强）' },
-  { value: IDLE_MODE.MARCH, label: '出征皮肤（省掉每次出征前的预切）' },
+  { value: IDLE_MODE.BATTLE, label: '主战皮肤（防御加成最强）' },
+  { value: IDLE_MODE.MARCH, label: '出征皮肤（下次出征不用等）' },
 ];
 
 /**
@@ -1195,8 +1195,8 @@ const SKIN_SWAP_FIELDS = [
     type: 'note',
     section: '城皮切换',
     text:
-      '出征前穿「出征皮肤」（每格出征数↑，重算器据此算兵数），902 受理就立即穿回「主战皮肤」（部队到达时身上是主战 buff）；' +
-      '每次攻击多发 2 个切换包（实测 RT 49-128ms）。任一皮肤选「未选择」、或两皮相同 = 不切皮。',
+      '每次出征前自动换上「出征皮肤」多带兵，部队一出发就马上换回「主战皮肤」，加成按主战皮肤算。' +
+      '两张都挑好才会换：任一张留「未选择」、或两张挑成同一个，就一张也不换。',
   },
   {
     key: 'swapSkinMarch',
@@ -1223,7 +1223,9 @@ const SKIN_SWAP_FIELDS = [
     key: '_skinIdleNote',
     type: 'note',
     section: '城皮切换',
-    text: '待机皮肤 = 出征皮肤时不再预切（少发一个包），代价是攻击间隙的防御 buff 弱一档；两皮都需为已拥有的有效城皮。',
+    text:
+      '部队开始返程时把城换回「待机皮肤」：选「主战皮肤」防御最强，但下次出征要多等约 2 秒；' +
+      '选「出征皮肤」点了就走，防御弱一档。皮肤过期后自动不再换。',
   },
 ];
 
