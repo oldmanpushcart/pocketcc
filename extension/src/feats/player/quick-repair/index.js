@@ -141,7 +141,13 @@ import {
   csbOpen,
   csbClosingSoon,
 } from './model/gates.js';
-import { normalize, migrateConfig, defaultConfig, venueOptions, venueMatrixField } from './model/schema.js';
+import {
+  normalize,
+  migrateConfig,
+  defaultConfig,
+  venueOptions,
+  venueMatrixSelectField,
+} from './model/schema.js';
 import {
   avaEntries,
   baseRepairEntries,
@@ -1263,13 +1269,6 @@ function configure(partial) {
   return MCFG;
 }
 
-/** @type {Array<{value:string,label:string}>} 加速三态选项（不加速/钻石/道具，默认 none） */
-const SPEED_OPTS = [
-  { value: 'none', label: '不加速' },
-  { value: 'gold', label: '钻石' },
-  { value: 'item', label: '道具' },
-];
-
 /** @type {object} descriptor 默认配置（全场地所有加速默认不加速；基地/无双默认修普通兵） */
 const DEFAULT_CFG = defaultConfig();
 
@@ -1277,10 +1276,9 @@ const DEFAULT_CFG = defaultConfig();
  * 向 reactor 注册本功能说明书：战斗设置类，跟随战斗设置生效（不声明 offInCombat，战斗模式下照常修）。
  * kinds 覆盖本服 + 无双峡谷（AVA/TM/大师赛/传奇小队）+ 天梯三国 + 征服者 + 盟决，跨服战场图内持续自动修理；
  * 秘境（pab）由 world 门控隔离，不放行。places 限 base/world（医院 UI 所在场景）。
- * 面板按场地分三段：基地修理厂 / 战场抢修车间 / 无双修理厂——每段「修理范围（军种×类型多选）+ 加速方式」；
- * 基地与无双分普通档/雷神档加速，抢修车间只有雷神（单键）。「加速预算」段为钻石日上限（0=不限）。
- * 修理范围只按勾选集合过滤；材料按充足假设不做持有量预算（服务器超限会拒绝，日志可见）。
- * 存档版本 3：migrate 把 v1 三开关 / v2 四字段映射到三场地类型码集合与五键加速方式。
+ * 面板按场地分三段：基地修理厂 / 战场抢修车间 / 无双修理厂——每段「维修矩阵（每格 select: 不维修/普通/道具/钻石）」；
+ * 「加速预算」段为钻石日上限（0=不限）。
+ * 存档版本 5：migrate 把 v4 数组+速度键合并为每格 mode 对象。
  */
 reactor.register({
   id: 'quickRepair',
@@ -1290,76 +1288,36 @@ reactor.register({
   places: ['base', 'world'],
   kinds: ['homeland', 'wushuang', 'kvk', 'sphere', 'adp_war'],
   offInCombat: false,
-  version: 4,
+  version: 5,
   migrate: migrateConfig,
   defaults: Object.assign({ enabled: false }, DEFAULT_CFG),
   fields: [
     {
       key: 'repairBase',
-      label: '修理范围',
+      label: '维修矩阵',
       section: '基地修理厂',
-      type: 'multiopts',
-      options: venueMatrixField('base').options,
-      matrix: venueMatrixField('base').matrix,
-      hint: '勾选要修的军种×类型。普通兵优先扣每日英雄免费额度、超出扣材料；雷神兵直接扣材料。',
-    },
-    {
-      key: 'speedBaseNormal',
-      label: '普通档加速',
-      section: '基地修理厂',
-      type: 'select',
-      options: SPEED_OPTS,
-      hint: '普通兵在修队列。钻石按每分钟价估算、余额不足即跳过；道具按剩余时间折算枚数（时间池不浪费）。',
-    },
-    {
-      key: 'speedBaseThor',
-      label: '雷神档加速',
-      section: '基地修理厂',
-      type: 'select',
-      options: SPEED_OPTS,
-      hint: '雷神在修队列。与普通档方式不同时逐队列点名，避免把另一档也加速。',
+      type: 'matrixselect',
+      codes: venueMatrixSelectField('base').codes,
+      matrix: venueMatrixSelectField('base').matrix,
+      hint: '每格选「不维修/普通维修/道具维修/钻石维修」。普通兵优先扣免费额度、超出扣材料；雷神兵直接扣材料。',
     },
     {
       key: 'repairCsb',
-      label: '修理范围（仅雷神）',
+      label: '维修矩阵（仅雷神）',
       section: '战场抢修车间',
-      type: 'multiopts',
-      options: venueMatrixField('csb').options,
-      matrix: venueMatrixField('csb').matrix,
-      hint: '跨服天梯赛战场医院，只收雷神兵。赛事窗口内自动处理；关闸前 10 分钟优先加速本场地。',
-    },
-    {
-      key: 'speedCsb',
-      label: '加速方式',
-      section: '战场抢修车间',
-      type: 'select',
-      options: SPEED_OPTS,
-      hint: '跨服在修队列（1428 钻石 / 815 道具）。',
+      type: 'matrixselect',
+      codes: venueMatrixSelectField('csb').codes,
+      matrix: venueMatrixSelectField('csb').matrix,
+      hint: '跨服天梯赛战场医院，只收雷神。加速协议为全量，取各格最高档。',
     },
     {
       key: 'repairAva',
-      label: '修理范围',
+      label: '维修矩阵',
       section: '无双修理厂',
-      type: 'multiopts',
-      options: venueMatrixField('ava').options,
-      matrix: venueMatrixField('ava').matrix,
-      hint: '无双四模式（AVA/TM/大师赛/传奇小队）。修理免费、不耗材料，只按勾选集合排队。',
-    },
-    {
-      key: 'speedAvaNormal',
-      label: '普通档加速',
-      section: '无双修理厂',
-      type: 'select',
-      options: SPEED_OPTS,
-      hint: '普通兵在修队列。钻石按期估价（模式倍率）；道具用无双专行 15100046。',
-    },
-    {
-      key: 'speedAvaThor',
-      label: '雷神档加速',
-      section: '无双修理厂',
-      type: 'select',
-      options: SPEED_OPTS,
-      hint: '雷神在修队列。',
+      type: 'matrixselect',
+      codes: venueMatrixSelectField('ava').codes,
+      matrix: venueMatrixSelectField('ava').matrix,
+      hint: '无双四模式（AVA/TM/大师赛/传奇小队）。修理免费、不耗材料，只按档位排队。',
     },
     {
       key: 'goldDailyCap',
@@ -1386,7 +1344,7 @@ export {
   migrateConfig,
   defaultConfig,
   venueOptions,
-  venueMatrixField,
+  venueMatrixSelectField,
   quickFields,
   isParamErrorRet,
   isHealBatchCmd,
@@ -1453,7 +1411,13 @@ export {
   isThorTier,
   unitClassKey,
 } from './model/classify.js';
-export { classCodeOf, venueCodes, repairIncludes, speedModeFor } from './model/schema.js';
+export {
+  classCodeOf,
+  venueCodes,
+  repairIncludes,
+  cellMode,
+  cellSpeedMode,
+} from './model/schema.js';
 export {
   baseWaitEntries,
   baseRepairEntries,

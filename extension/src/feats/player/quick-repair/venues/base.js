@@ -17,7 +17,7 @@ import {
 } from '../constants.js';
 import { estimateGold } from '../model/cost.js';
 import { KIND } from '../model/kinds.js';
-import { repairIncludes, speedModeFor } from '../model/schema.js';
+import { repairIncludes, cellSpeedMode } from '../model/schema.js';
 import { goldShortReason, itemSpeedParam, takeItem } from './shared.js';
 
 /**
@@ -76,7 +76,7 @@ function planBaseSpeed(snap, cfg, budget, actions, reasons) {
   }
   const active = all
     .filter((e) => e.left > 0)
-    .map((e) => ({ id: e.id, left: e.left, mode: speedModeFor(cfg, 'base', e.tier) }));
+    .map((e) => ({ id: e.id, left: e.left, mode: cellSpeedMode(cfg, 'base', e.arm, e.tier) }));
   const modes = uniq(active.map((e) => e.mode));
   if (modes.length === 1) {
     planBaseWhole(all, active, modes[0], leftTotal, snap, budget, actions, reasons);

@@ -11,7 +11,7 @@
 import { estimateAvaGold } from '../model/cost.js';
 import { isThorBand, sumLeft } from '../model/entries.js';
 import { KIND } from '../model/kinds.js';
-import { repairIncludes, speedModeFor } from '../model/schema.js';
+import { repairIncludes, cellSpeedMode } from '../model/schema.js';
 import { goldShortReason, takeItem } from './shared.js';
 
 /**
@@ -91,7 +91,12 @@ function planAvaSpeed(snap, cfg, cmds, budget, actions, reasons) {
   }
   const active = all
     .filter((e) => e.left > 0)
-    .map((e) => ({ id: e.id, left: e.left, tier: e.tier, mode: speedModeFor(cfg, 'ava', e.tier) }));
+    .map((e) => ({
+      id: e.id,
+      left: e.left,
+      tier: e.tier,
+      mode: cellSpeedMode(cfg, 'ava', e.arm, e.tier),
+    }));
   if (!active.length) {
     reasons.push('ava: nothing under repair');
     return;

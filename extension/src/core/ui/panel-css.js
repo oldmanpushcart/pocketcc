@@ -367,6 +367,10 @@ export const PANEL_CSS = `
     .pc-mmtx thead th{border-bottom:1px solid rgba(255,255,255,.13);}
     .pc-mmtx-row{font-weight:500;opacity:.85;white-space:nowrap;}
     .pc-mmtx-cell .pc-mopt{justify-content:center;}
+    .pc-mmtx-sel{width:100%;max-width:80px;padding:2px 4px;border-radius:4px;font:inherit;font-size:11px;
+      background:rgba(255,255,255,.08);color:#cfe8ff;border:1px solid rgba(255,255,255,.2);cursor:pointer;}
+    /* 下拉展开列表由浏览器以浅色底渲染，option 需显式深色字，否则继承面板浅色字不可读 */
+    .pc-mmtx-sel option{color:#12233b;background:#fff;}
     .pc-rngadd{flex:0 0 auto;width:22px;height:20px;padding:0;border-radius:6px;cursor:pointer;
       border:1px dashed rgba(255,255,255,.4);background:transparent;color:#cfe8ff;font:inherit;font-size:14px;line-height:18px;}
     @media (hover:hover){.pc-rngadd:hover{background:rgba(255,255,255,.1);}}

@@ -1,20 +1,23 @@
 /**
- * quickRepair 配置 schema（v4）：场地 × 军种 × 类型 的修理范围 + 场地 × 类型档 的加速方式 + 钻石日上限。
+ * quickRepair 配置 schema（v5）：场地 × 军种 × 类型 的每格维修模式 + 钻石日上限。
  *
  * 场地（venue）：
  *   base = 基地修理厂（本地医院；普通兵免费额度、雷神吃材料）
  *   csb  = 战场抢修车间（跨服天梯赛；只收雷神、只在赛事窗口开）
  *   ava  = 无双修理厂（NewCAB/TM/Master/Legend；修理免费、只有加速计费）
  *
- * 修理范围用「类型码 1~6」表达（multiopts 字段只存 number[]）：军种×类型按 ARMS×TIERS 顺序编码，
- *   1 陆普通 / 2 陆雷神 / 3 海普通 / 4 海雷神 / 5 空普通 / 6 空雷神。
+ * 每格模式（mode）：类型码 1~6 对应 陆普通/陆雷神/海普通/海雷神/空普通/空雷神，
+ *   配置值 = {code: mode} 对象：
+ *     0 = 不维修
+ *     1 = 普通维修（不加速）
+ *     2 = 道具维修
+ *     3 = 钻石维修
  *   雷神与超级雷神在游戏中不会同时存在，已合并为单一「雷神」类型。
- * 加速方式按「场地 × 类型档」：普通档（normal）与雷神档（thor）各一个三态（none/gold/item）；
- *   加速只作用于已开启修理且已在修（state1）的队列，故不再单独配加速范围。
+ *
  * 钻石日上限 goldDailyCap：0 = 不限；由 storage.slot 的 {day,spent} 台账在运行期扣减（见 index.js）。
  *
- * 版本迁移：v1（freeRepair/speedGold/speedItem）→ v2（commonRepair/thorRepair/speedCommon/speedThor）→ v3（9码）→ v4（6码）：
- *   v3→v4 把「普通雷神」与「超级雷神」合并为单一「雷神」码。
+ * 版本迁移：v1→v2→v3→v4→v5：
+ *   v4→v5 把 repairX: number[] + speedXxx 合并为每格 mode 对象。
  */
 import { ARMS, TIERS, ARM_LABEL, TIER_LABEL } from './classify.js';
 
@@ -24,7 +27,7 @@ export const VENUES = ['base', 'csb', 'ava'];
 /** @type {Object<string, string>} 场地中文名 */
 export const VENUE_LABEL = { base: '基地修理厂', csb: '战场抢修车间', ava: '无双修理厂' };
 
-/** @type {Object<string, string>} 场地 → 修理范围配置键 */
+/** @type {Object<string, string>} 场地 → 修理模式配置键 */
 export const REPAIR_KEY = { base: 'repairBase', csb: 'repairCsb', ava: 'repairAva' };
 
 /**
@@ -50,8 +53,19 @@ for (const c of CLASS_CODES) CODE_BY_UNIT[c.arm + '.' + c.tier] = c.code;
 /** 战场抢修车间只收雷神（源码 csb_hospital_info 条款）：可用类型码 = 雷神（含超级） */
 export const CSB_CODES = CLASS_CODES.filter((c) => c.tier !== 'normal').map((c) => c.code);
 
-/** @type {number[]} 默认修理范围：普通兵三军种（承接旧 commonRepair 默认开） */
+/** @type {number[]} 默认修理模式：普通兵三军种 mode=1，其余 mode=0 */
 const NORMAL_CODES = CLASS_CODES.filter((c) => c.tier === 'normal').map((c) => c.code);
+
+/**
+ * 默认每格模式对象：普通兵三格 mode=1，其余 mode=0。
+ * @param {number[]} codes 可选码集
+ * @returns {Object<number,number>}
+ */
+function defaultModeMap(codes) {
+  const map = {};
+  for (const c of codes) map[c] = NORMAL_CODES.indexOf(c) >= 0 ? 1 : 0;
+  return map;
+}
 
 /**
  * 军种 × 类型 → 类型码。
@@ -91,28 +105,37 @@ const MATRIX_ROWS = ['普通', '雷神'];
 const MATRIX_ROWS_CSB = ['雷神'];
 
 /**
- * 某场地 panel 用矩阵选项（multiopts fd.matrix 布局，按行优先排列：每行 = 同类型跨三军种）。
+ * 矩阵下拉字段描述符数据（type:'matrixselect'）：每格 select。
  * @param {string} venue base/csb/ava
- * @returns {{options:Array<{value:number,label:string}>, matrix:{cols:string[],rows:string[]}}}
+ * @returns {{codes:number[], matrix:{cols:string[],rows:string[]}}}
  */
-export function venueMatrixField(venue) {
+export function venueMatrixSelectField(venue) {
   const allow = new Set(venueCodes(venue));
-  // 行优先：按 TIERS 外层、ARMS 内层遍历
-  const options = [];
+  const codes = [];
   for (const tier of TIERS) {
     for (const arm of ARMS) {
       const code = classCodeOf(arm, tier);
-      if (code && allow.has(code)) {
-        options.push({ value: code, label: ARM_LABEL[arm] + '·' + TIER_LABEL[tier] });
-      }
+      if (code && allow.has(code)) codes.push(code);
     }
   }
   const rows = venue === 'csb' ? MATRIX_ROWS_CSB : MATRIX_ROWS;
-  return { options, matrix: { cols: MATRIX_COLS, rows } };
+  return { codes, matrix: { cols: MATRIX_COLS, rows } };
 }
 
 /**
- * 修理范围是否包含该单位类型。
+ * 某格模式（0~3）。
+ * @param {object} cfg 归一后的配置
+ * @param {string} venue base/csb/ava
+ * @param {number} code 类型码
+ * @returns {number}
+ */
+export function cellMode(cfg, venue, code) {
+  const map = cfg[REPAIR_KEY[venue]];
+  return (map && map[code]) || 0;
+}
+
+/**
+ * 修理范围是否包含该单位类型（mode > 0）。
  * @param {object} cfg 归一后的配置
  * @param {string} venue base/csb/ava
  * @param {string} arm 军种
@@ -120,9 +143,23 @@ export function venueMatrixField(venue) {
  * @returns {boolean}
  */
 export function repairIncludes(cfg, venue, arm, tier) {
-  const sel = cfg[REPAIR_KEY[venue]];
   const code = classCodeOf(arm, tier);
-  return !!code && Array.isArray(sel) && sel.indexOf(code) >= 0;
+  return !!code && cellMode(cfg, venue, code) > 0;
+}
+
+/**
+ * 某格加速方式（从 mode 派生：mode 2→'item', 3→'gold', 其余→'none'）。
+ * @param {object} cfg 归一后的配置
+ * @param {string} venue base/csb/ava
+ * @param {string} arm 军种
+ * @param {string} tier 类型
+ * @returns {'none'|'gold'|'item'}
+ */
+export function cellSpeedMode(cfg, venue, arm, tier) {
+  const mode = cellMode(cfg, venue, classCodeOf(arm, tier));
+  if (mode === 3) return 'gold';
+  if (mode === 2) return 'item';
+  return 'none';
 }
 
 /**
@@ -135,7 +172,7 @@ export function speedModeOf(v) {
 }
 
 /**
- * 某场地某类型的加速方式配置键：csb 只有雷神队列，单键 speedCsb；base/ava 分普通档/雷神档。
+ * 加速方式配置键（v4 遗留，仅供迁移用）。
  * @param {string} venue base/csb/ava
  * @param {string} tier normal/thor
  * @returns {string}
@@ -145,36 +182,20 @@ export function speedKeyOf(venue, tier) {
   return tier === 'normal' ? 'speed' + cap(venue) + 'Normal' : 'speed' + cap(venue) + 'Thor';
 }
 
-/**
- * 某场地某类型的加速方式。
- * @param {object} cfg 归一后的配置
- * @param {string} venue base/csb/ava
- * @param {string} tier normal/thor
- * @returns {'none'|'gold'|'item'}
- */
-export function speedModeFor(cfg, venue, tier) {
-  return speedModeOf(cfg[speedKeyOf(venue, tier)]);
-}
-
 /** @param {string} s 场地名 @returns {string} 首字母大写 */
 function cap(s) {
   return s.charAt(0).toUpperCase() + s.slice(1);
 }
 
 /**
- * 默认配置（descriptor.defaults）：全部加速 none、钻石日上限 0（不限）、基地/无双默认修普通兵。
+ * 默认配置（descriptor.defaults）：全部格 mode=0、钻石日上限 0、基地/无双默认修普通兵 mode=1。
  * @returns {object}
  */
 export function defaultConfig() {
   return {
-    repairBase: NORMAL_CODES.slice(),
-    repairCsb: [],
-    repairAva: NORMAL_CODES.slice(),
-    speedBaseNormal: 'none',
-    speedBaseThor: 'none',
-    speedCsb: 'none',
-    speedAvaNormal: 'none',
-    speedAvaThor: 'none',
+    repairBase: defaultModeMap(CLASS_CODES.map((c) => c.code)),
+    repairCsb: defaultModeMap(CSB_CODES),
+    repairAva: defaultModeMap(CLASS_CODES.map((c) => c.code)),
     goldDailyCap: 0,
     pollIntervalSec: 60,
   };
@@ -225,9 +246,7 @@ function migrateCodes(codes) {
 }
 
 /**
- * 面板配置归一：类型码过滤到本场地可选集、加速三态、日上限/轮询钳制。
- * 旧键（commonRepair/thorRepair/speedCommon/speedThor/resourceRepair/…）不再读取——
- * 迁移由 migrateConfig 在版本升级时一次性完成；缺键回默认。
+ * 面板配置归一：每格模式过滤到本场地可选集、mode 限制 0~3、日上限/轮询钳制。
  * @param {object} raw 面板原始配置
  * @returns {object} 归一后的模块配置（默认值见 defaultConfig）
  */
@@ -238,21 +257,14 @@ export function normalize(raw) {
   for (const venue of VENUES) {
     const key = REPAIR_KEY[venue];
     const allow = new Set(venueCodes(venue));
-    const sel = Array.isArray(raw[key]) ? raw[key] : Array.isArray(d[key]) ? d[key] : [];
-    out[key] = [];
-    for (const v of sel) {
-      const code = Math.floor(Number(v));
-      if (allow.has(code) && out[key].indexOf(code) < 0) out[key].push(code);
+    const src =
+      raw[key] && typeof raw[key] === 'object' && !Array.isArray(raw[key]) ? raw[key] : d[key];
+    const map = {};
+    for (const code of allow) {
+      const mode = Math.floor(Number(src[code]));
+      map[code] = mode >= 0 && mode <= 3 ? mode : 0;
     }
-  }
-  for (const key of [
-    'speedBaseNormal',
-    'speedBaseThor',
-    'speedCsb',
-    'speedAvaNormal',
-    'speedAvaThor',
-  ]) {
-    out[key] = raw[key] === undefined ? d[key] : speedModeOf(raw[key]);
+    out[key] = map;
   }
   const cap = Math.floor(Number(raw.goldDailyCap));
   out.goldDailyCap = cap > 0 ? cap : 0;
@@ -263,20 +275,57 @@ export function normalize(raw) {
 }
 
 /**
+ * v4 格式（repairX: number[] + speedXxx 键）就地转 v5 每格 mode 对象。
+ * 勾选的码按该 venue×tier 的速度键映射：gold→3、item→2、none→1；未勾选→0。
+ * 转完删除全部遗留速度键。
+ * @param {object} c 合并后的配置（就地改写）
+ */
+function arrToModeMap(c) {
+  for (const venue of VENUES) {
+    const key = REPAIR_KEY[venue];
+    const oldArr = Array.isArray(c[key]) ? c[key] : [];
+    const allow = venueCodes(venue);
+    const map = {};
+    for (const code of allow) {
+      if (oldArr.indexOf(code) < 0) {
+        map[code] = 0;
+        continue;
+      }
+      const entry = CLASS_CODES.find((x) => x.code === code);
+      const tier = entry ? entry.tier : 'normal';
+      const spd = speedModeOf(c[speedKeyOf(venue, tier)]);
+      map[code] = spd === 'gold' ? 3 : spd === 'item' ? 2 : 1;
+    }
+    c[key] = map;
+  }
+  delete c.speedBaseNormal;
+  delete c.speedBaseThor;
+  delete c.speedCsb;
+  delete c.speedAvaNormal;
+  delete c.speedAvaThor;
+}
+
+/**
  * 存档迁移（descriptor.migrate，纯函数，就地改写并返回）。
  * 只在存档里确实存在旧键时才改写——fresh install（只有 defaults）保持默认值不被旧字段推断覆盖。
- * v3→v4：把 repairBase/repairCsb/repairAva 的 9 码映射为 6 码。
+ * 所有旧版本最终统一产出 v5 格式（{code: mode} 对象）。
  * @param {object} c 合并后的配置
  * @param {number} fromVersion 存量版本（缺 _v 视为 0）
  * @returns {object}
  */
 export function migrateConfig(c, fromVersion) {
-  // v3→v4：类型码 9→ 6（合并 super 到 thor）
+  // v4→v5：数组 + 速度键 → 每格 mode 对象
+  if (fromVersion === 4) {
+    arrToModeMap(c);
+    return c;
+  }
+  // v3→v4→v5：类型码 9→6 后转 mode
   if (fromVersion === 3) {
     for (const venue of VENUES) {
       const key = REPAIR_KEY[venue];
       if (Array.isArray(c[key])) c[key] = migrateCodes(c[key]);
     }
+    arrToModeMap(c);
     return c;
   }
   if (!(fromVersion < 3)) return c;
@@ -321,5 +370,6 @@ export function migrateConfig(c, fromVersion) {
   delete c.freeRepair;
   delete c.speedGold;
   delete c.speedItem;
+  arrToModeMap(c);
   return c;
 }

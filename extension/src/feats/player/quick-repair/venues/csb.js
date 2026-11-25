@@ -3,13 +3,13 @@
  *
  * 该场地只收雷神，修理范围 = 面板 repairCsb（类型码 2/4/6）；
  * 赛事窗口由 index.js 的 csbGate 判定（FunctionOn + HospitalEndTime），关闭时不发 1426、本场地整轮静默。
- * 队列粒度 = 单条伤兵（1426 id），加速方式单键 speedCsb（无普通/雷神分档）。
+ * 队列粒度 = 单条伤兵（1426 id），加速协议为全量（无法逐队列区分兵种）。
  * 关闸前（deadline 进入阈值）由 index.js 把本场地排到决策顺序最前，先加速再修其它场地。
  */
 import { CMD_ARMY_CROSS_HEAL, CMD_ITEM_USE, CMD_SPEEDUP_CROSS_GOLD } from '../constants.js';
 import { estimateGold } from '../model/cost.js';
 import { KIND } from '../model/kinds.js';
-import { repairIncludes, speedModeFor } from '../model/schema.js';
+import { repairIncludes, cellMode, CSB_CODES } from '../model/schema.js';
 import { goldShortReason, itemSpeedParam, takeItem } from './shared.js';
 
 /**
@@ -67,7 +67,13 @@ function planCsbSpeed(snap, cfg, budget, actions, reasons) {
     reasons.push('csb: nothing under repair');
     return;
   }
-  const mode = speedModeFor(cfg, 'csb', 'thor');
+  // CSB 加速协议为全量（1428/815），取各格最高速度模式
+  let maxMode = 0;
+  for (const code of CSB_CODES) {
+    const m = cellMode(cfg, 'csb', code);
+    if (m > maxMode) maxMode = m;
+  }
+  const mode = maxMode === 3 ? 'gold' : maxMode === 2 ? 'item' : 'none';
   if (mode === 'none') {
     reasons.push('csb: speed none');
     return;

@@ -40,7 +40,8 @@ const {
   classCodeOf,
   venueCodes,
   repairIncludes,
-  speedModeFor,
+  cellSpeedMode,
+  cellMode,
   classifyUnit,
   tierOf,
   unitClassKey,
@@ -136,17 +137,12 @@ test('classifyUnit：军种按 Data.type 101/201/301；类型按 thor_group/glor
   assert.equal(unitClassKey('base', 'navy', 'thor'), 'base.navy.thor');
 });
 
-// ─────────────────────────── 配置 schema（v4）───────────────────────────
-test('defaultConfig：基地/无双默认修三军种普通兵、抢修车间空、加速一律 none、日上限 0（不限）', () => {
+// ─────────────────────────── 配置 schema（v5）───────────────────────────
+test('defaultConfig：基地/无双默认修三军种普通兵 mode=1、抢修车间全 0、日上限 0（不限）', () => {
   assert.deepEqual(defaultConfig(), {
-    repairBase: [1, 3, 5],
-    repairCsb: [],
-    repairAva: [1, 3, 5],
-    speedBaseNormal: 'none',
-    speedBaseThor: 'none',
-    speedCsb: 'none',
-    speedAvaNormal: 'none',
-    speedAvaThor: 'none',
+    repairBase: { 1: 1, 2: 0, 3: 1, 4: 0, 5: 1, 6: 0 },
+    repairCsb: { 2: 0, 4: 0, 6: 0 },
+    repairAva: { 1: 1, 2: 0, 3: 1, 4: 0, 5: 1, 6: 0 },
     goldDailyCap: 0,
     pollIntervalSec: 60,
   });
@@ -169,19 +165,25 @@ test('类型码 1..6 按 军种×类型 排列；抢修车间只给雷神档码'
   assert.equal(venueOptions('csb')[0].label, '陆·雷神');
 });
 
-test('normalize：类型码过滤到场地可选集 + 去重；加速三态归一；日上限/轮询钳制；不读旧键', () => {
+test('normalize：每格 mode 过滤到场地可选集、mode 限制 0~3、日上限/轮询钳制；数组回默认', () => {
   const d = normalize({});
   assert.deepEqual(d, defaultConfig());
-  // 抢修车间过滤普通兵码（1/3/5）与越界码；重复去重
-  const csb = normalize({ repairCsb: [2, 2, 4, 3, 99] });
-  assert.deepEqual(csb.repairCsb, [2, 4]);
-  // 非数组回默认；空数组如实为空（用户清空 = 该场地不修）
-  assert.deepEqual(normalize({ repairBase: 'x' }).repairBase, [1, 3, 5]);
-  assert.deepEqual(normalize({ repairAva: [] }).repairAva, []);
-  // 加速三态：非法值回 none；缺键回默认
-  assert.equal(normalize({ speedBaseNormal: 'gold' }).speedBaseNormal, 'gold');
-  assert.equal(normalize({ speedBaseNormal: 'bogus' }).speedBaseNormal, 'none');
-  assert.equal(normalize({ speedCsb: 'item' }).speedCsb, 'item');
+  // 抢修车间过滤普通兵码（1/3/5）与越界码；mode 超范围回 0
+  const csb = normalize({ repairCsb: { 2: 3, 4: 1, 6: 0, 1: 2, 99: 3 } });
+  assert.deepEqual(csb.repairCsb, { 2: 3, 4: 1, 6: 0 });
+  // 数组回默认（v4 格式残留）
+  assert.deepEqual(normalize({ repairBase: [1, 3, 5] }).repairBase, {
+    1: 1,
+    2: 0,
+    3: 1,
+    4: 0,
+    5: 1,
+    6: 0,
+  });
+  // mode 非法值回 0
+  assert.equal(normalize({ repairBase: { 1: 9, 2: -1, 3: 'x' } }).repairBase[1], 0);
+  assert.equal(normalize({ repairBase: { 1: 9, 2: -1, 3: 'x' } }).repairBase[2], 0);
+  assert.equal(normalize({ repairBase: { 1: 9, 2: -1, 3: 'x' } }).repairBase[3], 0);
   // 日上限：<=0/非法 → 0（不限）；正数取整
   assert.equal(normalize({ goldDailyCap: -5 }).goldDailyCap, 0);
   assert.equal(normalize({ goldDailyCap: 'x' }).goldDailyCap, 0);
@@ -189,25 +191,27 @@ test('normalize：类型码过滤到场地可选集 + 去重；加速三态归�
   // 轮询：非法回 60；上界 3600
   assert.equal(normalize({ pollIntervalSec: 0 }).pollIntervalSec, 60);
   assert.equal(normalize({ pollIntervalSec: 999999 }).pollIntervalSec, 3600);
-  // 旧键不进归一产物（迁移是 migrateConfig 的一次性职责）
-  assert.equal(normalize({ commonRepair: false }).repairBase.length, 3);
-  assert.equal(normalize({ speedGold: true }).speedBaseNormal, 'none');
 });
 
-test('repairIncludes/speedModeFor：按场地类型码判选中；雷神档键 csb 单键、base/ava 分档', () => {
-  const c = normalize({ repairCsb: [2, 4, 6], speedBaseNormal: 'gold', speedCsb: 'item' });
-  assert.equal(repairIncludes(c, 'csb', 'land', 'thor'), true);
-  assert.equal(repairIncludes(c, 'csb', 'land', 'normal'), false);
-  assert.equal(repairIncludes(c, 'base', 'land', 'normal'), true);
-  assert.equal(repairIncludes(c, 'base', 'land', 'thor'), false);
-  assert.equal(speedModeFor(c, 'base', 'normal'), 'gold');
-  assert.equal(speedModeFor(c, 'base', 'thor'), 'none');
-  assert.equal(speedModeFor(c, 'csb', 'thor'), 'item'); // 抢修车间不区分档
-  assert.equal(speedModeFor(c, 'ava', 'thor'), 'none');
+test('repairIncludes/cellSpeedMode：按格 mode 判选中与加速档', () => {
+  const c = normalize({
+    repairBase: { 1: 3, 2: 2, 3: 1, 4: 0, 5: 0, 6: 0 },
+    repairCsb: { 2: 3, 4: 3, 6: 3 },
+  });
+  assert.equal(repairIncludes(c, 'base', 'land', 'normal'), true); // mode 3
+  assert.equal(repairIncludes(c, 'base', 'land', 'thor'), true); // mode 2
+  assert.equal(repairIncludes(c, 'base', 'navy', 'normal'), true); // mode 1
+  assert.equal(repairIncludes(c, 'base', 'navy', 'thor'), false); // mode 0
+  assert.equal(repairIncludes(c, 'base', 'air', 'normal'), false); // mode 0
+  assert.equal(cellSpeedMode(c, 'base', 'land', 'normal'), 'gold'); // mode 3
+  assert.equal(cellSpeedMode(c, 'base', 'land', 'thor'), 'item'); // mode 2
+  assert.equal(cellSpeedMode(c, 'base', 'navy', 'normal'), 'none'); // mode 1
+  assert.equal(cellSpeedMode(c, 'csb', 'land', 'thor'), 'gold'); // mode 3
+  assert.equal(cellMode(c, 'base', 4), 0);
 });
 
-test('migrateConfig：v1/v2 旧开关 → v4 六码集合；v3 九码 → v4 六码；fresh install 不动', () => {
-  // v1：freeRepair/speedGold/speedItem（钻石优先），thor 关
+test('migrateConfig：v1/v2 旧开关 + v3 九码 + v4 六码数组 → v5 每格 mode；fresh install 不动', () => {
+  // v1：freeRepair/speedGold/speedItem（钻石优先），thor 关 → 普通兵三格 gold=3
   const v1 = {
     freeRepair: true,
     speedGold: true,
@@ -215,21 +219,19 @@ test('migrateConfig：v1/v2 旧开关 → v4 六码集合；v3 九码 → v4 六
     pollIntervalSec: 60,
   };
   migrateConfig(v1, 1);
-  assert.deepEqual(v1.repairBase, [1, 3, 5]);
-  assert.deepEqual(v1.repairAva, [1, 3, 5]);
-  assert.deepEqual(v1.repairCsb, []);
-  assert.equal(v1.speedBaseNormal, 'gold');
-  assert.equal(v1.speedAvaNormal, 'gold');
-  assert.equal(v1.speedBaseThor, 'gold');
-  assert.equal(v1.speedCsb, 'gold');
+  assert.deepEqual(v1.repairBase, { 1: 3, 2: 0, 3: 3, 4: 0, 5: 3, 6: 0 });
+  assert.deepEqual(v1.repairAva, { 1: 3, 2: 0, 3: 3, 4: 0, 5: 3, 6: 0 });
+  assert.deepEqual(v1.repairCsb, { 2: 0, 4: 0, 6: 0 });
+  assert.equal(v1.speedBaseNormal, undefined);
+  assert.equal(v1.speedCsb, undefined);
   assert.equal(v1.freeRepair, undefined);
   assert.equal(v1.speedGold, undefined);
   assert.equal(v1.speedItem, undefined);
-  // v1 freeRepair=false → 不修普通兵
+  // v1 freeRepair=false → 全格不修 mode 0
   const v1off = { freeRepair: false };
   migrateConfig(v1off, 1);
-  assert.deepEqual(v1off.repairBase, []);
-  // v2：普通+雷神全开、方式 item/gold
+  assert.deepEqual(v1off.repairBase, { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0, 6: 0 });
+  // v2：普通+雷神全开、方式 item/gold → 普通 item=2、雷神 gold=3
   const v2 = {
     commonRepair: true,
     thorRepair: true,
@@ -237,24 +239,28 @@ test('migrateConfig：v1/v2 旧开关 → v4 六码集合；v3 九码 → v4 六
     speedThor: 'gold',
   };
   migrateConfig(v2, 2);
-  assert.deepEqual(v2.repairBase, [1, 2, 3, 4, 5, 6]);
-  assert.deepEqual(v2.repairCsb, [2, 4, 6]);
-  assert.equal(v2.speedBaseNormal, 'item');
-  assert.equal(v2.speedBaseThor, 'gold');
-  assert.equal(v2.speedCsb, 'gold');
-  assert.equal(v2.speedAvaThor, 'gold');
+  assert.deepEqual(v2.repairBase, { 1: 2, 2: 3, 3: 2, 4: 3, 5: 2, 6: 3 });
+  assert.deepEqual(v2.repairCsb, { 2: 3, 4: 3, 6: 3 });
+  assert.deepEqual(v2.repairAva, { 1: 2, 2: 3, 3: 2, 4: 3, 5: 2, 6: 3 });
+  assert.equal(v2.speedBaseThor, undefined);
   assert.equal(v2.commonRepair, undefined);
   assert.equal(v2.thorRepair, undefined);
-  // v3→v4：九码映射为六码（super合并到 thor）
+  // v3→v5：九码映射为六码（super合并到 thor），无速度键 → 选中档 mode 1
   const v3 = { repairBase: [1, 2, 3, 4, 5, 6, 7, 8, 9], repairCsb: [2, 3, 5, 6, 8, 9] };
   migrateConfig(v3, 3);
-  assert.deepEqual(v3.repairBase, [1, 2, 3, 4, 5, 6]);
-  assert.deepEqual(v3.repairCsb, [2, 4, 6]);
-  // v3 无修理数组不动
-  const v3no = { commonRepair: false };
-  migrateConfig(v3no, 3);
-  assert.equal(v3no.commonRepair, false);
-  // fresh install 不动
+  assert.deepEqual(v3.repairBase, { 1: 1, 2: 1, 3: 1, 4: 1, 5: 1, 6: 1 });
+  assert.deepEqual(v3.repairCsb, { 2: 1, 4: 1, 6: 1 });
+  // v4→v5：数组 + speedCsb gold → 雷神档 gold=3
+  const v4 = {
+    repairBase: [1, 3, 5],
+    repairCsb: [2, 4, 6],
+    speedBaseNormal: 'item',
+    speedCsb: 'gold',
+  };
+  migrateConfig(v4, 4);
+  assert.deepEqual(v4.repairBase, { 1: 2, 2: 0, 3: 2, 4: 0, 5: 2, 6: 0 });
+  assert.deepEqual(v4.repairCsb, { 2: 3, 4: 3, 6: 3 });
+  // fresh install（fromVersion 0 无旧键）不动
   const fresh = { repairBase: [1] };
   migrateConfig(fresh, 0);
   assert.deepEqual(fresh, { repairBase: [1] });
@@ -640,13 +646,25 @@ test('planBase heal：全不选 → 记 reason 不发包；雷神码选中 → �
   });
   const actions = [];
   const reasons = [];
-  planBase(snap, normalize({ repairBase: [] }), makeBudget(snap), actions, reasons);
+  planBase(
+    snap,
+    normalize({ repairBase: { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0, 6: 0 } }),
+    makeBudget(snap),
+    actions,
+    reasons,
+  );
   assert.equal(actions.length, 0);
   assert.ok(reasons.some((r) => /no selected class/.test(r)));
 
   const actions2 = [];
   const reasons2 = [];
-  planBase(snap, normalize({ repairBase: [2] }), makeBudget(snap), actions2, reasons2);
+  planBase(
+    snap,
+    normalize({ repairBase: { 1: 0, 2: 1, 3: 0, 4: 0, 5: 0, 6: 0 } }),
+    makeBudget(snap),
+    actions2,
+    reasons2,
+  );
   assert.deepEqual(actions2[0].body, { ids: ['22'] });
 });
 
@@ -660,7 +678,13 @@ test('planBase speed 钻石（同档一致）：一笔 151 全量，估价扣预
   });
   const actions = [];
   const reasons = [];
-  planBase(snap, normalize({ speedBaseNormal: 'gold' }), makeBudget(snap), actions, reasons);
+  planBase(
+    snap,
+    normalize({ repairBase: { 1: 3, 2: 0, 3: 3, 4: 0, 5: 3, 6: 0 } }),
+    makeBudget(snap),
+    actions,
+    reasons,
+  );
   const sp = actions.find((a) => a.kind === KIND.SPEED_GOLD_BASE);
   assert.ok(sp);
   assert.equal(sp.cmd, CMD_ORDER_QUEUE_ING_DONE);
@@ -678,7 +702,13 @@ test('planBase speed 钻石余额不足 → 记 reason 不发包；rate 不可�
   });
   const actions = [];
   const reasons = [];
-  planBase(snap, normalize({ speedBaseNormal: 'gold' }), makeBudget(snap), actions, reasons);
+  planBase(
+    snap,
+    normalize({ repairBase: { 1: 3, 2: 0, 3: 3, 4: 0, 5: 3, 6: 0 } }),
+    makeBudget(snap),
+    actions,
+    reasons,
+  );
   assert.equal(actions.length, 0);
   assert.ok(reasons.some((r) => /gold 1 < estimate 20/.test(r)));
 
@@ -690,7 +720,7 @@ test('planBase speed 钻石余额不足 → 记 reason 不发包；rate 不可�
       ratePerMin: 0,
       baseRepair: [{ id: '1', arm: 'land', tier: 'normal', left: 60 }],
     }),
-    normalize({ speedBaseNormal: 'gold' }),
+    normalize({ repairBase: { 1: 3, 2: 0, 3: 3, 4: 0, 5: 3, 6: 0 } }),
     makeBudget(snapOf({ gold: 999 })),
     actions2,
     reasons2,
@@ -710,7 +740,13 @@ test('planBase speed 道具（同档一致）：815 全量 param=null，枚数=c
   const budget = makeBudget(snap);
   const actions = [];
   const reasons = [];
-  planBase(snap, normalize({ speedBaseNormal: 'item' }), budget, actions, reasons);
+  planBase(
+    snap,
+    normalize({ repairBase: { 1: 2, 2: 0, 3: 2, 4: 0, 5: 2, 6: 0 } }),
+    budget,
+    actions,
+    reasons,
+  );
   const sp = actions.find((a) => a.kind === KIND.SPEED_ITEM_BASE);
   assert.ok(sp);
   assert.equal(sp.cmd, CMD_ITEM_USE);
@@ -733,7 +769,7 @@ test('planBase speed 方式混排：普通钻石逐队列 124、雷神道具逐�
   const reasons = [];
   planBase(
     snap,
-    normalize({ speedBaseNormal: 'gold', speedBaseThor: 'item' }),
+    normalize({ repairBase: { 1: 3, 2: 2, 3: 3, 4: 2, 5: 3, 6: 2 } }),
     makeBudget(snap),
     actions,
     reasons,
@@ -768,7 +804,7 @@ test('planCsb：门控跳过 → 只记 reason，不读不修不加速', () => {
   });
   const actions = [];
   const reasons = [];
-  planCsb(snap, normalize({ repairCsb: [2] }), makeBudget(snap), actions, reasons);
+  planCsb(snap, normalize({ repairCsb: { 2: 1, 4: 0, 6: 0 } }), makeBudget(snap), actions, reasons);
   assert.equal(actions.length, 0);
   assert.ok(reasons.some((r) => /gate closed/.test(r)));
 });
@@ -782,7 +818,7 @@ test('planCsb heal：按 repairCsb 过滤，一笔 1427（dedup=id#army#et）', 
   });
   const actions = [];
   const reasons = [];
-  planCsb(snap, normalize({ repairCsb: [4] }), makeBudget(snap), actions, reasons);
+  planCsb(snap, normalize({ repairCsb: { 2: 0, 4: 1, 6: 0 } }), makeBudget(snap), actions, reasons);
   const heal = actions.find((a) => a.kind === KIND.HEAL_CSB);
   assert.ok(heal);
   assert.equal(heal.cmd, CMD_ARMY_CROSS_HEAL);
@@ -798,7 +834,7 @@ test('planCsb speed 钻石：1428 全量 {}；道具：815 param="1|0"（跨服�
   });
   const a1 = [];
   const r1 = [];
-  planCsb(snap, normalize({ speedCsb: 'gold' }), makeBudget(snap), a1, r1);
+  planCsb(snap, normalize({ repairCsb: { 2: 3, 4: 3, 6: 3 } }), makeBudget(snap), a1, r1);
   const g = a1.find((a) => a.kind === KIND.SPEED_GOLD_CSB);
   assert.ok(g);
   assert.equal(g.cmd, CMD_SPEEDUP_CROSS_GOLD);
@@ -813,7 +849,7 @@ test('planCsb speed 钻石：1428 全量 {}；道具：815 param="1|0"（跨服�
   });
   const a2 = [];
   const r2 = [];
-  planCsb(snap2, normalize({ speedCsb: 'item' }), makeBudget(snap2), a2, r2);
+  planCsb(snap2, normalize({ repairCsb: { 2: 2, 4: 2, 6: 2 } }), makeBudget(snap2), a2, r2);
   const it = a2.find((a) => a.kind === KIND.SPEED_ITEM_CSB);
   assert.ok(it);
   assert.equal(it.cmd, CMD_ITEM_USE);
@@ -861,7 +897,7 @@ test('planAva heal 部分选择：按类型档分批（雷神子集走 heal-ava-
   const reasons = [];
   planAva(
     snap,
-    normalize({ repairAva: [2, 6] }),
+    normalize({ repairAva: { 1: 0, 2: 1, 3: 0, 4: 0, 5: 0, 6: 1 } }),
     AVA_MODE_CMDS.tm,
     makeBudget(snap),
     actions,
@@ -886,7 +922,7 @@ test('planAva speed 钻石：6312 {ids,useGold:1}，估价=基价×模式倍率�
   const reasons = [];
   planAva(
     snap,
-    normalize({ speedAvaNormal: 'gold' }),
+    normalize({ repairAva: { 1: 3, 2: 0, 3: 3, 4: 0, 5: 3, 6: 0 } }),
     AVA_MODE_CMDS.ava,
     makeBudget(snap),
     actions,
@@ -908,7 +944,14 @@ test('planAva speed 钻石：6312 {ids,useGold:1}，估价=基价×模式倍率�
     avaRepair: [{ id: 't1', arm: 'land', tier: 'thor', left: 60 }],
   });
   const a2 = [];
-  planAva(snap2, normalize({ speedAvaThor: 'gold' }), AVA_MODE_CMDS.ava, makeBudget(snap2), a2, []);
+  planAva(
+    snap2,
+    normalize({ repairAva: { 1: 0, 2: 3, 3: 0, 4: 3, 5: 0, 6: 3 } }),
+    AVA_MODE_CMDS.ava,
+    makeBudget(snap2),
+    a2,
+    [],
+  );
   assert.equal(a2[0].kind, KIND.SPEED_GOLD_AVA_THOR);
 });
 
@@ -921,7 +964,14 @@ test('planAva speed 道具：专行 15100046，枚数池级折算，atomic=true�
   });
   const budget = makeBudget(snap);
   const actions = [];
-  planAva(snap, normalize({ speedAvaNormal: 'item' }), AVA_MODE_CMDS.master, budget, actions, []);
+  planAva(
+    snap,
+    normalize({ repairAva: { 1: 2, 2: 0, 3: 2, 4: 0, 5: 2, 6: 0 } }),
+    AVA_MODE_CMDS.master,
+    budget,
+    actions,
+    [],
+  );
   const sp = actions.find((a) => a.kind === KIND.SPEED_ITEM_AVA);
   assert.ok(sp);
   assert.deepEqual(sp.body, { ids: ['x1'], itemId: 15100046, num: 2, useGold: 0 });
@@ -947,7 +997,7 @@ test('planAva speed 混排：普通钻石 / 雷神道具 各一笔；none 档记
   const reasons = [];
   planAva(
     snap,
-    normalize({ speedAvaNormal: 'gold', speedAvaThor: 'item' }),
+    normalize({ repairAva: { 1: 3, 2: 2, 3: 3, 4: 2, 5: 3, 6: 2 } }),
     AVA_MODE_CMDS.legend,
     makeBudget(snap),
     actions,
@@ -982,7 +1032,7 @@ test('planAva speed 混排：普通钻石 / 雷神道具 各一笔；none 档记
 // ─────────────────────────── planActions（三场地编排）───────────────────────────
 test('planActions：三场地同拍各出各道（220/1427/6311 互不串货），默认不加速', () => {
   const snap = snapOf({
-    mcfg: normalize({ repairCsb: [2], speedBaseNormal: 'none' }),
+    mcfg: normalize({ repairCsb: { 2: 1, 4: 0, 6: 0 } }),
     baseWait: [{ id: 'b1', key: 'b1#o#1', orderId: 'o', arm: 'land', tier: 'normal' }],
     csbWait: [{ id: 'c1', key: 'c1#a#0', arm: 'land', tier: 'thor' }],
     avaMode: 'ava',
@@ -1003,7 +1053,7 @@ test('planActions：三场地同拍各出各道（220/1427/6311 互不串货）�
 
 test('planActions：csb 关闸前优先 → reason + 抢修车间动作排最前', () => {
   const snap = snapOf({
-    mcfg: normalize({ repairCsb: [2] }),
+    mcfg: normalize({ repairCsb: { 2: 1, 4: 0, 6: 0 } }),
     csbClosingSoon: true,
     baseWait: [{ id: 'b1', key: 'b1#o#1', orderId: 'o', arm: 'land', tier: 'normal' }],
     csbWait: [{ id: 'c1', key: 'c1#a#0', arm: 'land', tier: 'thor' }],
@@ -1016,7 +1066,10 @@ test('planActions：csb 关闸前优先 → reason + 抢修车间动作排最前
 
 test('planActions：钻石预算三场地共享——基地先扣后抢修车间余额不足即静默', () => {
   const snap = snapOf({
-    mcfg: normalize({ speedBaseNormal: 'gold', speedCsb: 'gold', repairCsb: [] }),
+    mcfg: normalize({
+      repairBase: { 1: 3, 2: 0, 3: 0, 4: 0, 5: 0, 6: 0 },
+      repairCsb: { 2: 3, 4: 0, 6: 0 },
+    }),
     gold: 5,
     ratePerMin: 2,
     baseRepair: [{ id: 'b1', arm: 'land', tier: 'normal', left: 120 }],
