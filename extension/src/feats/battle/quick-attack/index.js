@@ -5,8 +5,9 @@
  *   [1]-[8]      以对应预设编队单次攻击；
  *   Shift+[1]-[8] 三连：第 1 发该预设，随后 2 发最小出征（Battle.plan().minimal()），次间固定间隔 TRIPLE_INTERVAL_MS。
  *
- * 目标区/坐标来自「方案2」：拦截面板 prototype.onShow，游戏原逻辑填好 this[spec.field]（tileInfo）后，
- * 我们读它拷成纯标量存进 activePanel。面板消失（prototype.onDisable）即清空 activePanel 并摘键盘监听。
+ * 目标区/坐标来自「方案2」：拦截面板 prototype.onShow，游戏原逻辑填好目标数据后我们读它拷成纯标量存进
+ * activePanel（默认读 this[spec.field] 的 tileX/tileY；坐标形状不同时由 spec.read 接管，如遗迹面板只有
+ * _siteData.X/Y）。面板消失（prototype.onDisable）即清空 activePanel 并摘键盘监听。
  *
  * 监听生命周期（机制B）：键盘事件只能挂 document（cc.Node 收不到 DOM keydown），故
  *   onShow（面板出现）→ 覆盖式挂 document keydown；onDisable（面板消失）→ 摘除。一次只展示一个面板，
@@ -27,7 +28,7 @@
 import { sleep } from '../../../core/util.js';
 import { createLog } from '../../../core/log.js';
 import { game } from '../../../core/game.js';
-import { march as marchApi, gameConf } from '../../../core/game-api.js';
+import { march as marchApi, gameConf, gameData } from '../../../core/game-api.js';
 import { reactor } from '../../../core/reactor.js';
 import { isTypingTarget } from '../../../core/hotkeys.js';
 import { Battle } from '../../../core/battle.js';
@@ -41,12 +42,15 @@ import { CMD_MARCH_WORLD_POINT } from './constants.js';
  * spec: { key 场景标识, label 日志展示, cls 面板类（game.get(cls).default）,
  *         field onShow 后 tileInfo 落在组件上的字段名,
  *         marchTypes.attack 本服基础 NMarchType（发包前由 marchApi.resolve 做跨服漂移换算）,
- *         marchTypes.attackV2 可选：同面板二期实体（按 tileInfo.type 分流）的行军类型（兜底值）,
+ *         marchTypes.attackV2 / .treasure / .alliance 可选：同面板其它实体（按 tileInfo.type 分流，见 pickBranch）
+ *           的行军类型兜底值（世界 BOSS 面板一 class 多吃：BOSS_V2→attackV2、宝藏守卫→treasure、联盟机甲→alliance）,
  *         marchMembers 可选：行军类型以游戏 MarchType 枚举成员名为权威源（marchApi.typeOf 运行时取名，
  *           成员名收在 core/game-api.js SYM.marchEnum），marchTypes 数值仅作符号漂移兜底,
- *         gate 可选：按键瞬间的面板态前置闸 (comp)=>string|null，返回串=拒绝原因（不发 902）、null=放行 };
+ *         gate 可选：按键瞬间的面板态前置闸 (comp)=>string|null，返回串=拒绝原因（不发 902）、null=放行,
+ *         read 可选：目标适配器 (comp)=>{x,y,siteId?,serverId?,entityType?}|null——面板把坐标存在非 tileInfo
+ *           形状时由它接管（见 readSiteTarget：遗迹面板只有 _siteData.X/Y）；缺省读 field 指向的 tileX/tileY };
  * NMarchType 见 WorldMapCommon 的 MarchType 枚举。
- * @type {Array<{key:string, label:string, cls:string, field:string, marchTypes:{attack:number, attackV2?:number}, marchMembers?:{attack:string, attackV2?:string}, gate?:function(object):(string|null)}>}
+ * @type {Array<{key:string, label:string, cls:string, field:string, marchTypes:{attack:number, attackV2?:number, treasure?:number, alliance?:number}, marchMembers?:{attack:string, attackV2?:string, treasure?:string, alliance?:string}, gate?:function(object):(string|null), read?:function(object):(object|null)}>}
  */
 const QUICK_ATTACK_TARGETS = [
   {
@@ -77,15 +81,24 @@ const QUICK_ATTACK_TARGETS = [
     field: 'tileInfo',
     marchTypes: { attack: 3 },
   }, // GATHER_RESOURCE 位
-  // 世界 BOSS：普通=ATTACK_WORLDBOSS(14)；BOSS_V2 实体=ATTACK_WORLD_BOSS_V2(298)，行军类型走游戏枚举成员名，
-  // 口径同游戏 WorldBossDetailPanel._onClickAttackBtn（tileInfo.type===WorldMapEntityType.BOSS_V2）。
+  // 世界 BOSS 面板（一 class 吃四实体，按 tileInfo.type 分流，口径同游戏 WorldBossDetailPanel._onClickAttackBtn）：
+  //   普通 Boss(11)=ATTACK_WORLDBOSS(14)；BOSS_V2 实体(298)=ATTACK_WORLD_BOSS_V2(298)；宝藏守卫（高级/低级，
+  //   实体 TREASURE_MAP_WORLD_BOSS=32）=ATTACK_TREASURE_MAP_WORLD_BOSS(36)；联盟机甲（老版，实体 ALLIANCE_BOSS=17）
+  //   =ALLIANCE_BOSS(18)。行军类型走游戏枚举成员名；18/298/36 均不参与跨服漂移（dealMarchTypeWithSpecialMarch
+  //   只改写 ATTACK_PLAYER/THRONE/WORLD_SITE）。V3 机甲是另一套实体与面板（NWorldMapAllianceBossV3），不会命中本钩子。
   {
     key: 'boss',
-    label: '世界BOSS',
+    label: '世界BOSS/守卫/机甲',
     cls: 'WorldBossDetailPanel',
     field: 'tileInfo',
-    marchTypes: { attack: 14, attackV2: 298 },
-    marchMembers: { attack: 'attackWorldBoss', attackV2: 'attackWorldBossV2' },
+    marchTypes: { attack: 14, attackV2: 298, treasure: 36, alliance: 18 },
+    marchMembers: {
+      attack: 'attackWorldBoss',
+      attackV2: 'attackWorldBossV2',
+      treasure: 'attackTreasureMapWorldBoss',
+      alliance: 'allianceBoss',
+    },
+    gate: bossGate,
   },
   // 夺宝飞船（截图中「XX小队的夺宝团」弹窗）：点世界地图 pointType=133 的点打开
   // NWorldMapCrossTreasure（NWorldMapTileClickUtils.clickCrossTreasure），「拦截」按钮走
@@ -100,6 +113,38 @@ const QUICK_ATTACK_TARGETS = [
     marchMembers: { attack: 'csAttackTreasure' },
     gate: csShipGate,
   },
+  // 王者遗迹（截图中「王者遗迹—守卫（西）」）：点世界地图遗迹点走 NWorldMapTileClickUtils.clickWorldSite，
+  // 开 UIDataInfo.WorldSitePanel（prefab WorldSitePanelNew，组件类即 WorldSitePanelV4；bundle __subpack）。
+  // 目标坐标不在 tileInfo 而在面板自己按 siteId 取回的 _siteData（X/Y，故需 read 适配器）；单人攻击链
+  // onAttackClick → canAttackFortress → GameTools.WorldSiteMarch → CommonTools.sureSendWorldSiteMarch → 902
+  // marchType=WORLD_SITE(17)，遗迹战时由游戏漂到 CONQUEROR_ATTACK(103)（故 resolve 要拿 siteId）。
+  // 同一个面板按归属是两个动作：别盟/无主→攻打（onAttackClick），己盟占领→增援（onReinforceFight /
+  // btnReinForce 进的详情面板），两者最终都调 WorldSiteMarch(siteData) → 同一包，差异由 siteGate 分闸承担。
+  // relicRuleVersion!==1 的新规则遗迹走 WorldRuinedbuildPanel（bundle activity/ActivityRuined，未逆向），本钩子不命中。
+  {
+    key: 'site',
+    label: '王者遗迹',
+    cls: 'WorldSitePanelV4',
+    field: '_siteData',
+    marchTypes: { attack: 17 },
+    marchMembers: { attack: 'worldSite' },
+    read: readSiteTarget,
+    gate: siteGate,
+  },
+  // 同一系列的「遗迹出兵详情」弹窗（WorldSiteDetailPanel.ViewType=1，由 V4 面板的 onCollect/onReinforce 调
+  // ShowWorldSiteView(PointId) 开）：onFightClick 同样走 GameTools.WorldSiteMarch(this.SiteData) → 902 WORLD_SITE。
+  // 该 class 还被王座(2)/盟军怪(3)/塔(4)/边境(11) 等其它 ViewType 复用（攻击函数各异，如 ThroneAttack），
+  // 故由 read 把非遗迹视图挡在门外（面板复用/对象池下 SiteData 可能是上一份残留，不能只靠它判型）。
+  {
+    key: 'siteDetail',
+    label: '遗迹出兵详情',
+    cls: 'WorldSiteDetailPanel',
+    field: 'SiteData',
+    marchTypes: { attack: 17 },
+    marchMembers: { attack: 'worldSite' },
+    read: readSiteDetailTarget,
+    gate: siteGate,
+  },
 ];
 
 /**
@@ -109,6 +154,114 @@ const QUICK_ATTACK_TARGETS = [
  * @type {number}
  */
 const CFG_CS_SHIP_ATTACK_LIMIT = 290022;
+
+/**
+ * DATACONFIG 配置号：每日可领取藏宝守卫（宝藏 BOSS）排名奖励的参战次数上限。源码实证
+ * WorldBossDetailPanel.onClickAttackBtn：`_tAttackCount >= getDataConfigData(130168)` 且
+ * `UserData.ConfirmAttackTreasure` 仍为真时游戏弹二次确认（treasure_guild_0001=继续攻击将无法获得排名奖励）。
+ * 取不到配置按 0（不设闸，交由服务器拒）。
+ * @type {number}
+ */
+const CFG_TREASURE_BOSS_REWARD_LIMIT = 130168;
+
+/**
+ * DATACONFIG 配置号：入盟后多久才能攻打联盟机甲（与 JoinTime/ServerTime 同单位，这里原样复刻游戏的
+ * 比较式，不假设单位）。源码实证 WorldBossDetailPanel._onClickAttackBtn：`JoinTime + 25009 > ServerTime`
+ * 时游戏只弹 allianceMachine038。取不到配置按 0（不设闸）。
+ * @type {number}
+ */
+const CFG_ALLIANCE_JOIN_LIMIT = 25009;
+
+/**
+ * DATACONFIG 配置号：打别人联盟机甲时的每日协助次数上限（源码实证同处：`UserData.AlBossHelpCount >= 25014`
+ * 时游戏弹 allianceMachine072）。取不到配置按 0（不设闸）。
+ * @type {number}
+ */
+const CFG_ALLIANCE_HELP_LIMIT = 25014;
+
+/**
+ * 世界 BOSS 面板前置闸（只读）：按地块实体类型分派，普通/二期世界 BOSS 无闸。
+ * 宝藏守卫见 treasureBossGate，联盟机甲见 allianceBossGate。符号缺失时两闸均按放行，交服务器裁决。
+ * @param {object} comp WorldBossDetailPanel 组件实例
+ * @returns {string|null} 拒绝原因；null=可发
+ */
+function bossGate(comp) {
+  var tile = comp.tileInfo;
+  if (!tile) return null;
+  if (marchApi.isTreasureBoss(tile.type)) return treasureBossGate(comp);
+  if (marchApi.isAllianceBoss(tile.type)) return allianceBossGate(comp);
+  return null;
+}
+
+/**
+ * 宝藏守卫前置闸：只对宝藏守卫生效——今日参战次数已达排名奖励上限、且用户本次登录还没在
+ * 面板上点过「继续攻击」（游戏侧 ConfirmAttackTreasure 仍为真，点一下就会被弹确认框）时不代发这个决定，
+ * 一行 info 收摊；用户已确认过（该位被游戏置 false）则照发。
+ * 面板自己的 _tAttackCount 来自 GET_JION_ALL_RCTIME 应答，未落地时为 undefined（按 0 放行）。
+ * @param {object} comp WorldBossDetailPanel 组件实例
+ * @returns {string|null} 拒绝原因；null=可发
+ */
+function treasureBossGate(comp) {
+  var limit = Number(gameConf.dataConfig(CFG_TREASURE_BOSS_REWARD_LIMIT)) || 0;
+  if (!limit) return null;
+  var used = comp._tAttackCount | 0;
+  if (used < limit) return null;
+  var ud = (dataCenter && dataCenter.UserData) || null;
+  // 游戏把「已确认继续」存在 UserData.ConfirmAttackTreasure（默认 true，确认后置 false）；取不到 UserData
+  // 时按已确认处理（宁可多发一波，也不因符号漂移把功能按死）。
+  if (ud && ud.ConfirmAttackTreasure === true) {
+    return 'treasure-reward-cap ' + used + '/' + limit;
+  }
+  return null;
+}
+
+/**
+ * 联盟机甲（老版）前置闸：逐条复刻游戏 _onClickAttackBtn 的自拦与面板按钮绘制条件。
+ *   1) 不在盟（游戏弹 allianceMachine079）；
+ *   2) 入盟时长不足 CFG_ALLIANCE_JOIN_LIMIT（游戏弹 allianceMachine038）；
+ *   3) 打别人机甲时：游戏只在「战斗期 abState=1 且已开放协助 help=1」才绘出攻击按钮，否则按钮根本不显示；
+ *      协助口径下再查今日已协助次数 CFG_ALLIANCE_HELP_LIMIT（游戏弹 allianceMachine072）；
+ *   4) 攻击 CD：onShow 先把 _attackCDEndTime 置 -1 再问 ALLIANCE_BOSS_CD，应答带 time 才回填——停在 -1
+ *      意味着 CD 未知（游戏此时点攻击按钮无任何反应），这里同样不发；_attackCDEndTime > ServerTime 是游戏
+ *      把按钮置灰的冷却期（cdLabel 显示 allianceMachine015）。体力不足（MONSTER_GROUP.cost_energy）不预校，
+ *      与其余场景一致，游戏会弹 BuyEnergyPanel、服务器会拒。
+ * 各闸只在对应符号/配置取得到时生效，读不到就放行（宁多发一个被拒的包，不因符号漂移把功能按死）。
+ * @param {object} comp WorldBossDetailPanel 组件实例
+ * @returns {string|null} 拒绝原因；null=可发
+ */
+function allianceBossGate(comp) {
+  var ud = (dataCenter && dataCenter.UserData) || null;
+  var al = ud && ud.Alliance;
+  if (!al || typeof al.isInAlliance !== 'function') return null;
+  var inAlliance;
+  try {
+    inAlliance = !!al.isInAlliance();
+  } catch (e) {
+    return null; // 判定器不可用：交服务器
+  }
+  if (!inAlliance) return 'not-in-alliance';
+  var now = (+dataCenter.ServerTime || 0) | 0;
+  var joinLimit = parseInt(String(gameConf.dataConfig(CFG_ALLIANCE_JOIN_LIMIT)), 10) || 0;
+  var joinTime = Number(al.JoinTime) || 0;
+  if (joinLimit && joinTime && now && joinTime + joinLimit > now) {
+    return 'join-cd ' + (joinTime + joinLimit - now) + 's';
+  }
+  var ext = (comp.tileInfo && comp.tileInfo.extData) || null;
+  if (ext && String(ext.allianceId) !== String(al.Aid)) {
+    // 别人的机甲：abState 非战斗期或未开放协助时游戏连攻击按钮都不绘出
+    var abState = Number(ext.abState);
+    var help = Number(ext.help);
+    if (!(abState === 1 && help === 1))
+      return 'not-attackable abState=' + ext.abState + ';help=' + ext.help;
+    var helpLimit = parseInt(String(gameConf.dataConfig(CFG_ALLIANCE_HELP_LIMIT)), 10) || 0;
+    var helped = Number(ud.AlBossHelpCount) | 0;
+    if (helpLimit && helped >= helpLimit) return 'help-limit ' + helped + '/' + helpLimit;
+  }
+  var cd = Number(comp._attackCDEndTime);
+  if (cd === -1) return 'cd-unknown';
+  if (cd > 0 && now && cd - now > 0) return 'in-cd ' + (cd - now) + 's';
+  return null;
+}
 
 /**
  * 夺宝飞船面板前置闸：逐条复刻游戏 onBtnClickAttck 的三道只读判定，命中即回拒绝原因串、放行回 null。
@@ -137,11 +290,151 @@ function csShipGate(comp) {
 }
 
 /**
+ * DATACONFIG 配置号：各等级遗迹的「本盟拥有数上限」（竖线分隔，段内第二项）。源码实证
+ * WorldSitePanelV4.canAttackFortress：取不到配置时默认 2；当前等级拥有数等于该上限时游戏弹
+ * server_schedule_tips_022（拥有当前等级遗迹达到上限，继续占领也不会获得此遗迹）并不发 902。
+ * @type {number}
+ */
+const CFG_SITE_OWNED_LIMIT = 133610;
+
+/**
+ * WorldSiteState 数值（GameDefine 枚举：CLOSE=0、FIGHT=1、PEACE=2）。与 radar-task 的 STAMINA_TYPE 同类：
+ * 只为面板态闸取值，不为其单独扩一层符号；漂移时闸失效放行（交服务器），不影响发包。
+ * @type {number}
+ */
+const WORLD_SITE_STATE_FIGHT = 1;
+/** @type {number} 同上：和平态（未开放攻打，游戏弹 wonder_041） */
+const WORLD_SITE_STATE_PEACE = 2;
+
+/** @type {string} FunctionKey 值串：遗迹之战玩法开关（增援按钮绘制条件之一，同游戏 isNewSiteOpen） */
+const FUNC_KEY_BATTLE_OF_RELICS = 'Battle_of_relics';
+
+/**
+ * 遗迹面板目标读取（read 适配器）：坐标不在 tileInfo.tileX/tileY，而在面板 onShow 里用
+ * `UserData.getWorldSitgeById(siteId, serverId)` 取回的 _siteData（字段名 X/Y，大写）；老版面板同名
+ * 数据挂在 SiteData（大写 S），一并兼容。siteId 取 PointId（游戏 sureSendWorldSiteMarch 同口径），
+ * 它是遗迹 marchType 17→103 漂移的唯一入参。
+ * @param {object} comp WorldSitePanelV4 组件实例
+ * @returns {object|null} {x,y,serverId,siteId}；数据未落地返回 null（面板不登记，快捷键自然失效）
+ */
+function readSiteTarget(comp) {
+  var site = comp._siteData || comp.SiteData;
+  if (!site || site.X == null || site.Y == null) return null;
+  var init = comp._initParams || null;
+  return {
+    x: site.X | 0,
+    y: site.Y | 0,
+    serverId: (init && init.serverId) || undefined,
+    siteId: site.PointId != null ? site.PointId : init && init.siteId,
+  };
+}
+
+/** @type {number} WorldSiteDetailPanel 的「遗迹」视图位（onShow 第一参：1=遗迹、2/9=王座、3=盟军怪、4=塔、11=边境） */
+const SITE_DETAIL_VIEW_TYPE = 1;
+
+/**
+ * 遗迹出兵详情面板的目标读取：只在 ViewType=1（遗迹）时把 SiteData 交给 readSiteTarget。
+ * 同一个 class 还吃王座/塔等多个视图且攻击函数不同，而面板复用/对象池下 SiteData 可能沿用上一份，
+ * 故不能只靠数据字段判型；其余视图返回 null 即不登记面板，快捷键自然让位。
+ * @param {object} comp WorldSiteDetailPanel 组件实例
+ * @returns {object|null} {x,y,siteId,...}；非遗迹视图或数据未落地返回 null
+ */
+function readSiteDetailTarget(comp) {
+  if ((comp._ViewType | 0) !== SITE_DETAIL_VIEW_TYPE) return null;
+  return readSiteTarget(comp);
+}
+
+/**
+ * 遗迹面板前置闸（按归属分派，口径同游戏自己的按钮绘制）：同一个面板在两种归属下是两个动作——
+ *   己盟占领 → 增援（btnReinForce，只校在盟 + 按钮可见条件）；
+ *   其它（别盟占领/无主）→ 攻打（btnAttack，逐条复刻 canAttackFortress）。
+ * 两路发包完全相同（WorldSiteMarch(siteData) → 902 marchType=17，服务器按归属自行判是增援还是攻打），
+ * 差异只在“游戏自己会不会拦 / 会不会绘出这个按钮”，故只需分闸、不需分行军类型分支。
+ * @param {object} comp WorldSitePanelV4 / WorldSiteDetailPanel（ViewType=1）组件实例
+ * @returns {string|null} 拒绝原因；null=可发
+ */
+function siteGate(comp) {
+  var site = comp._siteData || comp.SiteData;
+  if (!site) return 'no-site-data';
+  var ud = (dataCenter && dataCenter.UserData) || null;
+  var al = ud && ud.Alliance;
+  if (!al || typeof al.isInAlliance !== 'function') return null;
+  var inAlliance;
+  try {
+    inAlliance = !!al.isInAlliance();
+  } catch (e) {
+    return null; // 判定器不可用：交服务器
+  }
+  if (!inAlliance) return 'not-in-alliance';
+  // updateView：btnReinForce.active 仅在 Owner.Aid===本盟 Aid 时置 true，otherNodes（侦查/集结/攻打）只在异或时绘出
+  var mine = !!site.Owner && String(site.Owner.Aid) === String(al.Aid);
+  return mine ? siteReinforceGate(site) : siteAttackGate(site, ud, al);
+}
+
+/**
+ * 增援闸（己盟占领的遗迹）：游戏在 onReinforceClick 里只校在盟（wonder_037），再加按钮绘制条件
+ * `isNewSiteOpen() || State===FIGHT`。功能位走 functionOnValue 三态：读不到（null）按放行，
+ * 只有明确未开且不在战斗态（那时游戏根本不绘增援按钮）才拦。
+ * @param {object} site 遗迹数据
+ * @returns {string|null} 拒绝原因；null=可发
+ */
+function siteReinforceGate(site) {
+  var open = gameData.functionOnValue(FUNC_KEY_BATTLE_OF_RELICS);
+  if (open === false && site.State !== WORLD_SITE_STATE_FIGHT) return 'relics-off-not-fight';
+  return null;
+}
+
+/**
+ * 攻打闸（别盟占领/无主的遗迹）：逐条复刻游戏 canAttackFortress（体力与护盾确认不预校，口径同其余场景）。
+ *   1) 遗迹处于和平态且非本盟占领 → wonder_041；
+ *   2) 本盟在该 stronghold_level 上已拥有 CFG_SITE_OWNED_LIMIT 个遗迹 → server_schedule_tips_022
+ *      （该闸只对攻打量存在：给自己遗迹增援不经 canAttackFortress，误用会把满级占领的盟完全面板锁死）。
+ * 各闸只在对应配置/等级取得到时生效，读不到就放行（宁多发一个被拒的包，不因符号漂移把功能按死）。
+ * @param {object} site 遗迹数据
+ * @param {object} ud UserData
+ * @param {object} al 本盟数据
+ * @returns {string|null} 拒绝原因；null=可发
+ */
+function siteAttackGate(site, ud, al) {
+  if (
+    site.State === WORLD_SITE_STATE_PEACE &&
+    site.Owner &&
+    String(site.Owner.Aid) !== String(al.Aid)
+  ) {
+    return 'peace-not-ours';
+  }
+  var level = (site.DistrictData && site.DistrictData.stronghold_level) | 0;
+  var getNum =
+    typeof ud.getWorldSiteNumOwnedByLevel === 'function' ? ud.getWorldSiteNumOwnedByLevel : null;
+  if (!level || !getNum) return null;
+  // 段内第二项=该等级上限（游戏缺省 2）；配置或拥有数读不到时不设闸
+  var limit = 2;
+  var seg = String(gameConf.dataConfig(CFG_SITE_OWNED_LIMIT) || '').split('|')[level - 1];
+  var parts = seg ? seg.split(',') : null;
+  if (parts && parts.length > 1) limit = parseInt(parts[1], 10) || limit;
+  var owned;
+  try {
+    owned = getNum.call(ud, al.Aid, level);
+  } catch (e) {
+    return null;
+  }
+  if (owned != null && owned === limit) return 'owned-cap L' + level + '/' + owned;
+  return null;
+}
+
+/**
  * marchType 兜底数值表：只在游戏枚举/判定器符号漂移时兜底（主路径向游戏运行时取名值）。
  * 数值出处：WorldMapCommon.MarchType + WorldUtils.dealMarchTypeWithSpecialMarch 优先级链 AVA→TM→MASTER→TEAM_LEGEND。
- * @type {{attackPlayer:number, tm:number, master:number, ava:number, teamLegend:number}}
+ * @type {{attackPlayer:number, tm:number, master:number, ava:number, teamLegend:number, worldSite:number}}
  */
-const MARCH_FALLBACK = { attackPlayer: 13, tm: 150, master: 170, ava: 110, teamLegend: 181 };
+const MARCH_FALLBACK = {
+  attackPlayer: 13,
+  tm: 150,
+  master: 170,
+  ava: 110,
+  teamLegend: 181,
+  worldSite: 17,
+};
 
 /** @type {number} 三连次间间隔（毫秒，内置常量，不在面板配置） */
 const TRIPLE_INTERVAL_MS = 1000;
@@ -154,10 +447,7 @@ const TRIPLE_INTERVAL_MS = 1000;
 function buildModuleCfg() {
   var targets = {};
   QUICK_ATTACK_TARGETS.forEach(function (spec) {
-    targets[spec.key] = {
-      enabled: true,
-      marchTypes: { attack: spec.marchTypes.attack, attackV2: spec.marchTypes.attackV2 },
-    };
+    targets[spec.key] = { enabled: true, marchTypes: Object.assign({}, spec.marchTypes) };
   });
   return { tripleIntervalMs: TRIPLE_INTERVAL_MS, targets: targets };
 }
@@ -224,7 +514,7 @@ function detachKey() {
 
 // ── 面板 onShow / onDisable 包装（拦在面板自己身上）─────────────────────
 /**
- * 面板出现：让游戏原 onShow 先跑（填好 tileInfo），再把目标登记进 activePanel 并挂 keydown。
+ * 面板出现：让游戏原 onShow 先跑（填好 tileInfo / _siteData），再把目标登记进 activePanel 并挂 keydown。
  * 覆盖式：先摘上一个（一次只展示一个面板，新面板直接替换旧的）。
  * @param {object} spec 场景定义
  * @param {object} comp 面板组件实例（this）
@@ -234,27 +524,35 @@ function onPanelShow(spec, comp) {
   var t = cfg.targets[spec.key];
   if (!t || !t.enabled) return;
 
-  var tile = comp[spec.field];
-  if (!tile || tile.tileX == null || tile.tileY == null) {
+  // 默认适配器读 tileInfo.tileX/tileY；遗迹这类坐标不在地块信息上的面板由 spec.read 接管
+  var target = spec.read ? spec.read(comp) : readTileTarget(comp[spec.field]);
+  if (!target || target.x == null || target.y == null) {
     log.debug('panel shown without tile coords, skip. key=%s', spec.key);
     return;
   }
 
   detachKey();
-  activePanel = {
-    spec: spec,
-    comp: comp,
-    target: {
-      x: tile.tileX | 0,
-      y: tile.tileY | 0,
-      serverId: tile.serverId,
-      subMap: tile.subMap,
-      // 地块实体类型原值（boss 场景靠它区分普通/BOSS_V2，换算见 resolveMarchType）
-      entityType: tile.type,
-    },
-  };
+  activePanel = { spec: spec, comp: comp, target: target };
   attachKey();
   log.debug('panel active. key=%s;x=%d;y=%d', spec.key, activePanel.target.x, activePanel.target.y);
+}
+
+/**
+ * 默认目标适配器：从 onShow 已填好的地块信息（tileInfo/_tileInfo）拷出纯标量目标。
+ * entityType 一并带上，供同面板多实体分流（见 pickBranch）。
+ * @param {object} tile 面板上的地块信息对象
+ * @returns {object|null} {x,y,serverId,subMap,entityType}；坐标缺失返回 null
+ */
+function readTileTarget(tile) {
+  if (!tile || tile.tileX == null || tile.tileY == null) return null;
+  return {
+    x: tile.tileX | 0,
+    y: tile.tileY | 0,
+    serverId: tile.serverId,
+    subMap: tile.subMap,
+    // 地块实体类型原值（boss 场景靠它区分普通/BOSS_V2/宝藏守卫/联盟机甲）
+    entityType: tile.type,
+  };
 }
 
 /**
@@ -427,7 +725,8 @@ function onKeyDown(e) {
  * @param {object[]} planList 逐项 {kind:'preset'|'minimal', index?}
  */
 async function attackFlow(spec, target, planList) {
-  var base = (cfg.targets[spec.key] && cfg.targets[spec.key].marchTypes.attack) | 0;
+  var t = (cfg.targets[spec.key] && cfg.targets[spec.key].marchTypes) || {};
+  var base = t[pickBranch(spec, target)] | 0;
   if (!base) {
     log.warn('no marchType configured, abort. key=%s', spec.key);
     return;
@@ -492,26 +791,36 @@ async function attackFlow(spec, target, planList) {
 }
 
 /**
- * 本次出征的 marchType：先按地块实体类型分流（boss 二期），再做跨服战场漂移换算。
+ * 同面板多实体分流：一个面板类吃多种地块实体时，按地块实体类型挑注册表里的行军类型分支名。
+ * 判定序与游戏 WorldBossDetailPanel._onClickAttackBtn 一致：BOSS_V2 → attackV2、宝藏守卫 → treasure、
+ * 联盟机甲 → alliance、其余（普通世界 BOSS）→ attack。四型互斥，先后序不影响结果。
+ * 未声明该分支的 spec 不参与分流（恒 attack，行为与改前一致）。
  * @param {object} spec 场景定义
  * @param {object} target {x,y,entityType}
+ * @returns {string} marchTypes / marchMembers 里的分支键名
+ */
+function pickBranch(spec, target) {
+  var t = (cfg.targets[spec.key] && cfg.targets[spec.key].marchTypes) || {};
+  if (t.attackV2 && marchApi.isBossV2(target.entityType)) return 'attackV2';
+  if (t.treasure && marchApi.isTreasureBoss(target.entityType)) return 'treasure';
+  if (t.alliance && marchApi.isAllianceBoss(target.entityType)) return 'alliance';
+  return 'attack';
+}
+
+/**
+ * 本次出征的 marchType：先按地块实体类型分流（世界 BOSS 面板四型），再做跨服战场漂移换算。
+ * target 一并交给 resolve：遗迹的 17→103 要看 siteId（其余场景 resolve 不读它）。
+ * @param {object} spec 场景定义
+ * @param {object} target {x,y,entityType,siteId?}
  * @returns {number}
  */
 function resolveMarchType(spec, target) {
   var t = (cfg.targets[spec.key] && cfg.targets[spec.key].marchTypes) || {};
-  var v2 = !!(t.attackV2 && marchApi.isBossV2(target.entityType));
-  var base;
-  if (spec.marchMembers && spec.marchMembers.attack) {
-    // 注册表声明了枚举成员名的场景（世界 BOSS 两型）：以游戏 MarchType 运行时值为权威源，marchTypes 数值仅漂移兜底
-    base =
-      v2 && spec.marchMembers.attackV2
-        ? marchApi.typeOf(spec.marchMembers.attackV2, t.attackV2 | 0)
-        : marchApi.typeOf(spec.marchMembers.attack, t.attack | 0);
-  } else {
-    base = t.attack | 0;
-    if (v2) base = t.attackV2 | 0;
-  }
-  var resolved = marchApi.resolve(base, MARCH_FALLBACK);
+  var branch = pickBranch(spec, target);
+  // 声明了枚举成员名的分支（世界 BOSS 四型/遗迹）：以游戏 MarchType 运行时值为权威源，marchTypes 数值仅漂移兜底
+  var member = spec.marchMembers && spec.marchMembers[branch];
+  var base = member ? marchApi.typeOf(member, t[branch] | 0) : t[branch] | 0;
+  var resolved = marchApi.resolve(base, MARCH_FALLBACK, target);
   if (resolved !== base)
     log.warn(
       'marchType drift. key=%s;base=%d->%d;flags=%s',
@@ -541,10 +850,7 @@ function configure(partial) {
       if (!t) return;
       var cur =
         cfg.targets[spec.key] ||
-        (cfg.targets[spec.key] = {
-          enabled: true,
-          marchTypes: { attack: spec.marchTypes.attack, attackV2: spec.marchTypes.attackV2 },
-        });
+        (cfg.targets[spec.key] = { enabled: true, marchTypes: Object.assign({}, spec.marchTypes) });
       if (typeof t.enabled === 'boolean') cur.enabled = t.enabled;
       if (t.marchTypes && typeof t.marchTypes.attack === 'number' && t.marchTypes.attack > 0) {
         cur.marchTypes.attack = t.marchTypes.attack;

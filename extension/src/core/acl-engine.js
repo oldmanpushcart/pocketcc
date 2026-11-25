@@ -116,9 +116,21 @@ export const SYM = {
     teamLegendAttackPlayer: 'TEAM_LEGEND_ATTACK_PLAYER', // 181 无双峡谷-小队赛/传奇赛（legend_team_match_101）
     attackWorldBoss: 'ATTACK_WORLDBOSS', // 14 普通世界 boss（quick-attack/imperial-decree 经 typeOf 取名值）
     attackWorldBossV2: 'ATTACK_WORLD_BOSS_V2', // 298 bossV2 世界 boss（同上；source-of-war 本地写死 298 未走此）
+    attackTreasureMapWorldBoss: 'ATTACK_TREASURE_MAP_WORLD_BOSS', // 36 藏宝图世界 boss（高级/低级宝藏守卫），面板同 WorldBossDetailPanel，口径同游戏 start_TreasureMapBoss
+    allianceBoss: 'ALLIANCE_BOSS', // 18 联盟机甲（老版单人出征）；V3 只能集结、用另一套实体与面板，不走本值
     csAttackTreasure: 'CS_ATTACK_TREASURE', // 138 拦截夺宝飞船（quick-attack 经 typeOf 取名值；同块 CROSS_TREASURE_SHIP=160 是别的玩法，别混）
+    // 17 王者遗迹（守卫/据点）单人攻打。本值是 WorldUtils.dealMarchTypeWithSpecialMarch 的三个可漂移基值之一：
+    // 地块 WorldSiteState.FIGHT 且 isMapBuildingOpen(1,site.Id) 时游戏换成 CONQUEROR_ATTACK(103)，故 quick-attack
+    // 发它之前必须把 siteId 交给 resolve（换算在 acl/march.js）。与实体枚举 17（ALLIANCE_BOSS）同号不同枚举。
+    worldSite: 'WORLD_SITE',
   },
-  entityEnum: { obj: 'WorldMapEntityType', boss: 'BOSS', bossV2: 'BOSS_V2' },
+  entityEnum: {
+    obj: 'WorldMapEntityType',
+    boss: 'BOSS',
+    bossV2: 'BOSS_V2',
+    treasureBoss: 'TREASURE_MAP_WORLD_BOSS', // 32 宝藏守卫实体（低级/高级同类型，靠 bossId 分档）
+    allianceBoss: 'ALLIANCE_BOSS', // 17 联盟机甲地块实体（与 MarchType.ALLIANCE_BOSS=18 同号不同枚举）
+  },
   /** ProcedureManager.PROCE 单例上的场景程序成员名（各 Procedure 自带 sceneName，Run 时按 sceneName 判断是否切换） */
   procedures: { home: 'Home', newWorld: 'NewWorld' },
   /** 场景节点名（cc.director.getScene().name 口径，SceneName 枚举实证：HOME="Home"、NEWWORLD="NWorldMap"、WORLD="WorldMap"） */

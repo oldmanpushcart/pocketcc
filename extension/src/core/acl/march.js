@@ -93,23 +93,56 @@ export const march = {
     return !!(E && typeof v === 'number' && entityType != null && entityType === v);
   },
   /**
-   * 基础 marchType → 当前战场实际 marchType（等价游戏 WorldUtils.getMarchTypeByBattleData 的换算分支）。
+   * 地块实体类型是否藏宝图世界 boss（高级/低级宝藏守卫，行军类型 ATTACK_TREASURE_MAP_WORLD_BOSS=36）。
+   * 与它们同面板（WorldBossDetailPanel）的普通/二期世界 boss 靠本判据分开，成员缺失时恒 false。
+   * @param {*} entityType tileInfo.type / 901 pointType 原值
+   * @returns {boolean}
+   */
+  isTreasureBoss(entityType) {
+    var E = entityEnum();
+    var v = E && E[SYM.entityEnum.treasureBoss];
+    return !!(E && typeof v === 'number' && entityType != null && entityType === v);
+  },
+  /**
+   * 地块实体类型是否联盟机甲（老版，行军类型 ALLIANCE_BOSS=18）。
+   * 与宝藏守卫、世界 BOSS 同吃 WorldBossDetailPanel，靠本判据分开；成员缺失时恒 false。
+   * @param {*} entityType tileInfo.type / 901 pointType 原值
+   * @returns {boolean}
+   */
+  isAllianceBoss(entityType) {
+    var E = entityEnum();
+    var v = E && E[SYM.entityEnum.allianceBoss];
+    return !!(E && typeof v === 'number' && entityType != null && entityType === v);
+  },
+  /**
+   * 基础 marchType → 当前战场实际 marchType（等价游戏 WorldUtils.dealMarchTypeWithSpecialMarch 的换算分支）。
+   * 只有两个基值参与换算：攻玩家城（跨服战场四代不同号）、遗迹（地块战时→征服者攻击）；其余原样返回。
    * @param {number} base 基础 marchType（本服口径，如 ATTACK_PLAYER=13）
-   * @param {{attackPlayer?:number, tm?:number, master?:number, ava?:number, teamLegend?:number}} fb
+   * @param {{attackPlayer?:number, tm?:number, master?:number, ava?:number, teamLegend?:number, worldSite?:number}} fb
    *   游戏符号缺失时的本地兜底数值表（调用方传注册表常量，保证语义一致）
+   * @param {{siteId?:*}} [target] 遗迹目标需带 siteId（游戏换算器拿它取地块状态），其余场景可省
    * @returns {number} 换算结果；判定器全部不可用时原样返回 base（宁可少功能，不猜服务器契约）
    */
-  resolve(base, fb) {
+  resolve(base, fb, target) {
     base = base | 0;
     fb = fb || {};
-    if (base !== this.typeOf('attackPlayer', fb.attackPlayer)) return base; // 仅攻玩家城参与漂移换算
+    var worldSite = this.typeOf('worldSite', fb.worldSite);
+    if (base !== this.typeOf('attackPlayer', fb.attackPlayer) && base !== worldSite) return base; // 仅攻玩家城/遗迹参与漂移换算
     var W = worldMarchUtils();
     if (W) {
       try {
         // 游戏原生优先：服务器契约由游戏自己维护，改版自动跟随
-        var v = W.dealMarchTypeWithSpecialMarch(base, {});
+        var v = W.dealMarchTypeWithSpecialMarch(base, {
+          otherData: { siteId: target && target.siteId },
+        });
         if (v) return v | 0;
       } catch (e) {}
+    }
+    if (base === worldSite) {
+      // 遗迹的 17→103 全由地块自身状态决定（WorldSiteState.FIGHT + isMapBuildingOpen），本地无现成判定链可降级：
+      // 缺换算器时按基础值发（非战时本就该发 17，战时会被服务器拒），留一行可定位告警。
+      log.warn('march.resolve degraded: WorldUtils missing for worldSite marchType=%d', base);
+      return base;
     }
     var C = crossUtils();
     if (isNewCabServer()) return this.typeOf('avaAttackPlayer', fb.ava);
