@@ -126,6 +126,12 @@ export const SYM = {
     // 地块 WorldSiteState.FIGHT 且 isMapBuildingOpen(1,site.Id) 时游戏换成 CONQUEROR_ATTACK(103)，故 quick-attack
     // 发它之前必须把 siteId 交给 resolve（换算在 acl/march.js）。与实体枚举 17（ALLIANCE_BOSS）同号不同枚举。
     worldSite: 'WORLD_SITE',
+    // XL2 战区对决（「钢铁战车」系列皮肤共用 WorldDragonKingDuelPop）两条行军（quick-attack 注册表 xl2 场景经
+    // typeOf 取名值）：面板上「上阵」「进攻」两个按钮最终都走 RealNBattleModel.start_SH_FIRST_STAGE_DEFEND，
+    // 只换这个号。数值已由真人录制报文坐实（902 marchType=267 上阵）；268 为同函数另一分支，269 是同地块
+    // 的系统假行军（FAKE_MARCH，别混）。
+    xl2DuelJoin: 'XL2_DRAGONKING_DUEL_JOIN_MARCH', // 267 我方龙·上阵防御
+    xl2DuelBattle: 'XL2_DRAGONKING_DUEL_BATTLE_MARCH', // 268 敌方龙·进攻
   },
   entityEnum: {
     obj: 'WorldMapEntityType',
