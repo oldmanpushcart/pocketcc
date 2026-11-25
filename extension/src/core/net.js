@@ -600,14 +600,15 @@ export let netApi = null;
   function sendPB(cmd, data) {
     return withTimeout(
       new Promise((resolve, reject) => {
-        net.sendPB(cmd, data, null, (ret) => {
+        const ok = net.sendPB(cmd, data, null, (ret) => {
           try {
-            const header = ret.pbAck.header || {};
+            const ack = ret && ret.pbAck;
+            if (!ack) throw new Error('SendPB [' + cmd + '] missing pbAck.');
+            const header = ack.header || {};
             const s = header.s;
             // V1 PB 的业务数据是 pbAck 下的命名子字段（如 allianceBehemothDonate/allianceBehemothList），
             // 不像 V2 那样有统一的 .data 包装；故整体返回 pbAck，调用方按 cmd 取自己的子字段。
-            const d = ret.pbAck;
-            const r = Ret.from(s, d);
+            const r = Ret.from(s, ack);
             // 拒绝原因的多语言 key 落在 header.d（非子字段），s≠0 时保留供上层判读（口径同 sendPBV2，否则上层只看到 code 无从区分具体拒因）。
             if (s !== 0 && header.d != null) r.reason = header.d;
             resolve(r);
@@ -615,6 +616,8 @@ export let netApi = null;
             reject(e);
           }
         });
+        // 与 send/sendPBV2 一致：门禁/编码失败返回 false 时立刻 reject，不能挂满 15 秒等永不来的应答。
+        if (!ok) reject(new Error('SendPB [' + cmd + '] failed.'));
       }),
       cmd,
       'SendPB',
