@@ -58,12 +58,17 @@ import './feats/player/beast-breed/index.js';
 import './feats/player/secret-weapon-drop/index.js';
 import './feats/player/one-click-claim/index.js';
 import './feats/player/daily-deal/index.js';
+import './feats/player/shopping-cart/index.js';
+import './feats/player/vip-daily-gift/index.js';
+import './feats/player/decoration-free-gift/index.js';
+import './feats/player/sandbox-drill/index.js';
 import './feats/player/birthday-bless/index.js';
 import './feats/battle/quick-attack/index.js';
 import './feats/battle/imperial-decree/index.js';
 import './feats/battle/auto-defense/index.js';
 import './feats/system/chat/index.js';
 import './feats/system/daily-refresh/index.js';
+import './feats/system/weekly-refresh/index.js';
 import './feats/system/map/global-map.js';
 import './feats/system/map/quick-jump.js';
 // 游戏内快捷键：core/hotkeys.js 集中注册表，非 feat——import 即 hotkeys.bind 自激活，

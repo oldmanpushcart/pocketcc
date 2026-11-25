@@ -1,4 +1,4 @@
-// 月卡每日礼包 / 广告特权 x2 / 每日零点刷新回归测试。
+// 月卡每日礼包 / 广告特权 x2 / 每日与每周服务器日界刷新回归测试。
 // 使用公开客户端源码确认的协议形态，不连接游戏服务器；重点锁定跨日防重领与未发出重试。
 import { test, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
@@ -31,14 +31,17 @@ const { gameData, l10n } = await import('../../extension/src/core/game-api.js');
 const { storage } = await import('../../extension/src/core/storage.js');
 const { MENU, collectFeatureIds } = await import('../../extension/src/core/menu.js');
 const { reactor } = await import('../../extension/src/core/reactor.js');
+const reactorIsRunning = reactor.isRunning;
 const monthly = await import('../../extension/src/feats/player/monthly-card/index.js');
 const ad = await import('../../extension/src/feats/player/ad-privilege/index.js');
 const refresh = await import('../../extension/src/feats/system/daily-refresh/index.js');
+const weeklyRefresh = await import('../../extension/src/feats/system/weekly-refresh/index.js');
 const { CODE_NOT_SENT } = await import('../../extension/src/core/util.js');
 
 const orig = {
   serverTime: gameData.serverTime,
   nextDailyResetTs: gameData.nextDailyResetTs,
+  nextWeeklyResetTs: gameData.nextWeeklyResetTs,
   monthlyCard: gameData.monthlyCard,
   level: gameData.level,
   tableReady: l10n.tableReady,
@@ -70,9 +73,18 @@ function nextReset(from) {
   return t ? t - ((t - 57600) % 86400) + 86400 : 0;
 }
 
+function nextWeek(from) {
+  const t = from == null ? now : Number(from) || 0;
+  if (!t) return 0;
+  const day = Math.floor((t - 57600) / 86400);
+  const sinceMonday = (((day - 3) % 7) + 7) % 7;
+  return (day - sinceMonday) * 86400 + 57600 + 7 * 86400;
+}
+
 function applyStubs() {
   gameData.serverTime = () => now;
   gameData.nextDailyResetTs = nextReset;
+  gameData.nextWeeklyResetTs = nextWeek;
   gameData.monthlyCard = (id) => cards[String(id)] || null;
   gameData.level = () => 10;
   l10n.tableReady = () => true;
@@ -128,31 +140,35 @@ beforeEach(() => {
   monthly.resetForTest();
   ad.resetForTest();
   refresh.resetForTest();
+  weeklyRefresh.resetForTest();
+  reactor.isRunning = reactorIsRunning;
 });
 
 afterEach(() => {
   Object.assign(gameData, {
     serverTime: orig.serverTime,
     nextDailyResetTs: orig.nextDailyResetTs,
+    nextWeeklyResetTs: orig.nextWeeklyResetTs,
     monthlyCard: orig.monthlyCard,
     level: orig.level,
   });
   Object.assign(l10n, { tableReady: orig.tableReady, tableRows: orig.tableRows });
   storage.data.get = orig.dataGet;
   storage.data.set = orig.dataSet;
+  reactor.isRunning = reactorIsRunning;
 });
 
-test('面板集成：三个新功能均已注册且挂入对应菜单分组', () => {
+test('面板集成：四个新功能均已注册且挂入对应菜单分组', () => {
   const ids = new Set(collectFeatureIds({ children: MENU }));
   const specs = new Map(reactor.list().map((spec) => [spec.id, spec]));
-  for (const id of ['monthlyCard', 'adPrivilege', 'dailyRefresh']) {
+  for (const id of ['monthlyCard', 'adPrivilege', 'dailyRefresh', 'weeklyRefresh']) {
     assert.ok(ids.has(id), `${id} 未挂入菜单`);
     const spec = specs.get(id);
     assert.ok(spec, `${id} 未注册 reactor`);
     assert.equal(spec.defaults.enabled, false);
-    if (id === 'dailyRefresh') {
-      assert.equal(spec.places, undefined, '每日刷新不应被场景 places 门控挡住');
-      assert.equal(spec.kinds, undefined, '每日刷新不应被秘境等 kind 门控挡住');
+    if (id === 'dailyRefresh' || id === 'weeklyRefresh') {
+      assert.equal(spec.places, undefined, '定时刷新不应被场景 places 门控挡住');
+      assert.equal(spec.kinds, undefined, '定时刷新不应被秘境等 kind 门控挡住');
     }
     assert.equal(typeof spec.toModuleCfg, 'function');
     assert.deepEqual(spec.toModuleCfg({ enabled: true }), { enabled: true });
@@ -585,5 +601,66 @@ test('每日刷新：服务器时钟不可用时安全巡检', () => {
   );
   now = 0;
   assert.equal(refresh.cycleRun(), 15 * 60 * 1000);
+  assert.equal(reloads, 0);
+});
+
+test('每周刷新：未到服务器周一零点只排程，不刷新', () => {
+  let reloads = 0;
+  weeklyRefresh.resetForTest(
+    () => reloads++,
+    () => true,
+  );
+  const delay = weeklyRefresh.cycleRun();
+  assert.ok(delay > 0 && delay <= 2 * 60 * 60 * 1000);
+  assert.equal(reloads, 0);
+});
+
+test('每周刷新：周一缓冲到达后刷新一次，同拍不重复', () => {
+  let reloads = 0;
+  weeklyRefresh.resetForTest(
+    () => reloads++,
+    () => true,
+  );
+  weeklyRefresh.cycleRun(); // 锚定下周界，模拟已睡到周一 00:01
+  now = nextWeek() + 60;
+  assert.ok(weeklyRefresh.cycleRun() > 0);
+  assert.equal(reloads, 1);
+  assert.ok(weeklyRefresh.cycleRun() > 0);
+  assert.equal(reloads, 1);
+});
+
+test('每周刷新：暂停后到点不刷新', () => {
+  let reloads = 0;
+  weeklyRefresh.resetForTest(
+    () => reloads++,
+    () => false,
+  );
+  weeklyRefresh.cycleRun();
+  now = nextWeek() + 60;
+  assert.equal(weeklyRefresh.cycleRun(), 0);
+  assert.equal(reloads, 0);
+});
+
+test('每周刷新：每日刷新同拍运行时让位，不重复触发整页导航', () => {
+  let reloads = 0;
+  weeklyRefresh.resetForTest(
+    () => reloads++,
+    () => true,
+  );
+  reactor.isRunning = (id) => id === 'dailyRefresh';
+  weeklyRefresh.cycleRun();
+  now = nextWeek() + 60;
+  assert.ok(weeklyRefresh.cycleRun() > 0);
+  assert.equal(reloads, 0);
+});
+
+test('每周刷新：服务器时钟不可用时安全巡检', () => {
+  let reloads = 0;
+  weeklyRefresh.resetForTest(
+    () => reloads++,
+    () => true,
+  );
+  now = 0;
+  assert.equal(weeklyRefresh.cycleRun(), 15 * 60 * 1000);
   assert.equal(reloads, 0);
 });

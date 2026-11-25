@@ -115,6 +115,10 @@ function taskRelaxTypeOpen(type) {
  * @type {number}
  */
 const GAME_DAY_RESET_OFFSET = 57600;
+/** @type {number} 1970-01-01 为周四；以服务器本地日序推算周一零点 */
+const EPOCH_WEEKDAY = 3;
+/** @type {number} 一周秒数 */
+const WEEK_SECONDS = 7 * 86400;
 
 /**
  * @type {number} 排除捐赠的科技组 sid 10900（字典 alliance_tech_name10900=快速作战）：剩余捐赠次数走独立能量池
@@ -154,6 +158,138 @@ function diamondItemFaces() {
   return m;
 }
 
+/** @type {Object<number,string>} 金融中心购物车 tabType → 游戏配置表名（ ShoppingCollectTools.getShopCollectCfg 同口径） */
+const SHOPPING_CART_TABLES = {
+  2: 'SHOP',
+  3: 'VIP_SHOP',
+  4: 'LEGIONSHOP',
+  5: 'EXPEDITION_SHOP',
+  6: 'ISLAND_SHOP',
+  7: 'MINING',
+  12: 'csb_shop',
+  14: 'recovery_shop',
+  16: 'behemoth_shop',
+};
+
+/**
+ * 把购物车 4204 应答归一成纯规划输入；配置、货币、限购知识只留在 ACL。
+ * 不调用游戏 Update/init 方法，也不暴露 UserData 私有引用。type=13 联盟商城价格/限购由
+ * AllianceShopItemData 动态计算，缺少完整只读投影时 fail-closed 跳过，不能按静态价误兑。
+ * @param {*} singleShopData pbAck.shoppingCarInfo.singleShopData
+ * @returns {{items:Array<object>, skipped:Array<object>}|null} null=应答缺数组；items 保持游戏 Map 遍历顺序
+ */
+function normalizeShoppingCart(singleShopData) {
+  if (!Array.isArray(singleShopData)) return null;
+  var u = userData();
+  if (!u || !l10n.tableReady()) return null;
+  var items = [];
+  var skipped = [];
+  /** @type {Object<string,number>} 货币池快照；规划器按 items 顺序扣减 */
+  var balances = Object.create(null);
+  /** @type {Function} 读货币余额；Item 型按道具 ID，其余按 ShoppingCurrencyType */
+  function balanceOf(currencyType, currencyId) {
+    var key = currencyType + ':' + currencyId;
+    if (balances[key] != null) return balances[key];
+    var n = 0;
+    if (currencyType === 1) n = Number(u.Resource && u.Resource.Gold) || 0;
+    else if (currencyType === 2) n = Number(u.Resource && u.Resource.BountyMilitary) || 0;
+    else if (currencyType === 3) n = Number(u.Resource && u.Resource.AdventureCoin) || 0;
+    else if (currencyType === 4) n = Number(u.Resource && u.Resource.CsbRes) || 0;
+    else if (currencyType === 5) n = Number(u.IslandBattleData && u.IslandBattleData.points) || 0;
+    else if (currencyType === 7) n = Number(u.Resource && u.Resource.Honor) || 0;
+    else if (currencyType === 6) n = Number(callNumFn(u, 'getItemAmount', currencyId)) || 0;
+    balances[key] = n;
+    return n;
+  }
+  for (var i = 0; i < singleShopData.length; i++) {
+    var shop = singleShopData[i];
+    var shopType = Number(shop && shop.shopType) || 0;
+    var rows = shop && shop.productPurchasedData;
+    if (!Array.isArray(rows)) continue;
+    for (var j = 0; j < rows.length; j++) {
+      var row = rows[j];
+      var productId = bits.int64Str(row && row.productId);
+      if (!productId) continue;
+      if (shopType === 13) {
+        skipped.push({
+          shopType: shopType,
+          productId: productId,
+          reason: 'dynamic-alliance-price',
+        });
+        continue;
+      }
+      var table = SHOPPING_CART_TABLES[shopType];
+      var cfg = table ? l10n.tableRow(table, productId) : null;
+      if (!cfg) {
+        skipped.push({ shopType: shopType, productId: productId, reason: 'shop-config-missing' });
+        continue;
+      }
+      // ShoppingCurrencyType 与 FinancialCenterTabType 不同：2/3 都是 Gold(1)，4/5/6/12 分别为 2/3/5/4。
+      var currencyType = { 2: 1, 3: 1, 4: 2, 5: 3, 6: 5, 12: 4 }[shopType] || 0;
+      var currencyId = 0;
+      var price = Number(cfg.price_shop) || 0;
+      var limit = Number(cfg.buy_limit);
+      if (shopType === 14) {
+        currencyType = 6;
+        var recycleCfg = l10n.tableRow('DATACONFIG', 2181903);
+        currencyId = Number(recycleCfg && recycleCfg.value) || 0;
+      } else if (shopType === 16) {
+        currencyType = 6;
+        currencyId = Number(cfg.costItemId) || 0;
+        price = Number(cfg.costItemNum) || 0;
+        var timeLimit = cfg.timeBuyLimit ? String(cfg.timeBuyLimit).split(',') : [];
+        limit = timeLimit.length ? Number(timeLimit[1]) || 0 : Number(cfg.buy_limit) || 0;
+      } else if (shopType === 7) {
+        currencyType = 6;
+        limit = Number(cfg.limit) > 0 ? Number(cfg.limit) : -1;
+        var needs = cfg.needItem ? String(cfg.needItem).split(',') : [];
+        for (var k = 0; k < needs.length; k++) {
+          var pair = needs[k].split('|');
+          if (pair.length === 2) {
+            currencyId = Number(pair[0]) || 0;
+            price = Number(pair[1]) || 0;
+          }
+        }
+      } else if ((shopType === 2 || shopType === 3) && productId === '13') {
+        // 游戏 ItemShopCollect/VipShopCollect 对 shopId=13 叠加 ShopBuyGold buff。
+        var gd = probe(SYM.modules.gameDefine, () => ns(game.get(SYM.modules.gameDefine)));
+        var buffType = gd && gd.BuffType && gd.BuffType.ShopBuyGold;
+        var buffed = NaN;
+        try {
+          if (u.Buff && typeof u.Buff.getValueWithBuff === 'function')
+            buffed = Number(u.Buff.getValueWithBuff(limit, buffType, true));
+        } catch (e) {
+          buffed = NaN;
+        }
+        if (!Number.isFinite(Number(buffType)) || !Number.isFinite(buffed)) {
+          skipped.push({
+            shopType: shopType,
+            productId: productId,
+            reason: 'shop-buff-unavailable',
+          });
+          continue;
+        }
+        limit = buffed;
+      }
+      if (!Number.isFinite(limit) && limit !== -1) {
+        skipped.push({ shopType: shopType, productId: productId, reason: 'buy-limit-missing' });
+        continue;
+      }
+      items.push({
+        shopType: shopType,
+        productId: productId,
+        purchasedBuyNum: Number(row.purchasedBuyNum) || 0,
+        chooseNum: Number(row.chooseNum) || 0,
+        price: price,
+        buyLimit: limit,
+        currencyKey: currencyType + ':' + currencyId,
+        balance: balanceOf(currencyType, currencyId),
+      });
+    }
+  }
+  return { items: items, skipped: skipped };
+}
+
 export const gameData = {
   /** 当前服务器时间（秒），实时取值不缓存；取不到返回 0 */
   serverTime() {
@@ -174,6 +310,50 @@ export const gameData = {
     if (!t) return 0;
     var dayStart = t - ((t - GAME_DAY_RESET_OFFSET) % 86400);
     return dayStart + 86400;
+  },
+  /**
+   * 下一个服务器本地「周一 0 点」的绝对秒；与每日日界共用 UTC+8 偏移。
+   * 1970-01-01 为周四，因此 dayIndex 减 3 后对 7 取余即距本周一的天数。
+   * @param {number} [fromTs] 参考服务器秒（缺省取当前 ServerTime）
+   * @returns {number} 下一个周界秒；时钟不可用返回 0
+   */
+  nextWeeklyResetTs(fromTs) {
+    var t = fromTs == null ? gameData.serverTime() : Number(fromTs) || 0;
+    if (!t) return 0;
+    var dayIndex = Math.floor((t - GAME_DAY_RESET_OFFSET) / 86400);
+    var sinceMonday = (((dayIndex - EPOCH_WEEKDAY) % 7) + 7) % 7;
+    return (dayIndex - sinceMonday) * 86400 + GAME_DAY_RESET_OFFSET + WEEK_SECONDS;
+  },
+  /**
+   * 军级/VIP 每日免费礼包只读状态（UserData.VipLevel/VipRewardCdTime）。
+   * @returns {{level:number, cooldownTs:number}|null} level=0 是有效 VIP0；字段缺失才返回 null
+   */
+  vipDailyGift() {
+    var u = userData();
+    if (!u || u.VipLevel == null || u.VipRewardCdTime == null) return null;
+    return {
+      level: Number(u.VipLevel) || 0,
+      cooldownTs: Number(u.VipRewardCdTime) || 0,
+    };
+  },
+  /**
+   * 购物车 4204 应答的只读规划投影（配置/限购/货币均归一为标量）。
+   * @param {*} singleShopData pbAck.shoppingCarInfo.singleShopData
+   * @returns {{items:Array<object>, skipped:Array<object>}|null}
+   */
+  shoppingCart(singleShopData) {
+    return normalizeShoppingCart(singleShopData);
+  },
+  /**
+   * 套装金币 3963 应答的免费额度只读投影。
+   * @param {*} info pbAck.decorationContentShopGetInfo
+   * @returns {{canGetFreeNum:number}|null} 字段缺失返回 null，0 是服务端明确无免费额度
+   */
+  decorationFreeGift(info) {
+    if (!info || info.canGetFreeNum == null) return null;
+    var n = Number(info.canGetFreeNum);
+    if (!Number.isFinite(n)) return null;
+    return { canGetFreeNum: Math.max(0, Math.floor(n)) };
   },
   /**
    * 计时月卡状态（只读 UserData.TimeCards；游戏 updateTimeCards 的标量投影）。

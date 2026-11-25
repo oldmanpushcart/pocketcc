@@ -580,6 +580,34 @@ export default [
     ],
   },
   {
+    cmd: 1660,
+    dir: 'C2S',
+    note: '沙盘演习旧版普通挑战；由真实战斗 UI 生成当前阵容载荷',
+    src: '公开 H5 源码 subpack2.5c3c4.js：RealNBattleModel.start_ARENA_PVE_BATTLE',
+    fields: 'armyListNew,heroList,type,challenge,formation,formationV2,extraArmy?',
+    usages: [
+      {
+        name: 'CMD_SANDBOX_FIGHT',
+        feat: 'sandbox-drill',
+        file: 'feats/player/sandbox-drill/constants.js',
+      },
+    ],
+  },
+  {
+    cmd: 1661,
+    dir: 'C2S',
+    note: '沙盘演习剩余次数查询；time 为服务器权威余额',
+    src: '公开 H5 源码 script.f8db6.js/subpack.2b335.js：ARENA_PVE_MAIN_REQUEST',
+    fields: '{} → {time,type,...}',
+    usages: [
+      {
+        name: 'CMD_SANDBOX_INFO',
+        feat: 'sandbox-drill',
+        file: 'feats/player/sandbox-drill/constants.js',
+      },
+    ],
+  },
+  {
     cmd: 1752,
     dir: 'C2S',
     note: '拉城市皮肤技能冷却数据（{} → d.skinSkills[]）',
@@ -618,6 +646,34 @@ export default [
         name: 'CMD_GET_QUICK_REPARE',
         feat: 'quick-repair',
         file: 'feats/player/quick-repair/constants.js',
+      },
+    ],
+  },
+  {
+    cmd: 2002,
+    dir: 'C2S',
+    note: '领取当前军级/VIP 每日免费礼包',
+    src: '公开 H5 源码：GET_VIP_DAY_REWARD → UserData.updateVipRewardCdTime/CommonRewardPanel',
+    fields: '{} → {freeFlag,reward}',
+    usages: [
+      {
+        name: 'CMD_VIP_DAY_REWARD',
+        feat: 'vip-daily-gift',
+        file: 'feats/player/vip-daily-gift/constants.js',
+      },
+    ],
+  },
+  {
+    cmd: 3223,
+    dir: 'C2S',
+    note: '沙盘演习新版普通挑战；由真实战斗 UI 生成当前阵容载荷',
+    src: '公开 H5 源码 subpack2.5c3c4.js：NBATTLE_ARENA_PVE_NEW',
+    fields: 'armyListNew,heroList,type,challenge,formation,formationV2,extraArmy?',
+    usages: [
+      {
+        name: 'CMD_SANDBOX_FIGHT_NEW',
+        feat: 'sandbox-drill',
+        file: 'feats/player/sandbox-drill/constants.js',
       },
     ],
   },
@@ -722,6 +778,35 @@ export default [
     ],
   },
   {
+    cmd: 3963,
+    dir: 'C2S',
+    note: '套装金币商城信息查询；读取 canGetFreeNum 免费额度',
+    src: '公开 H5 源码：DECORATION_CONTENT_SHOP_GET_INFO',
+    fields:
+      '{header:{},decorationContentShopGetInfo:{reqType:1}} → decorationContentShopGetInfo.canGetFreeNum',
+    usages: [
+      {
+        name: 'CMD_DECORATION_SHOP_INFO',
+        feat: 'decoration-free-gift',
+        file: 'feats/player/decoration-free-gift/constants.js',
+      },
+    ],
+  },
+  {
+    cmd: 3965,
+    dir: 'C2S',
+    note: '领取套装金币商城每周免费额度；不处理付费商品',
+    src: '公开 H5 源码：DECORATION_CONTENT_SHOP_FREE_GET',
+    fields: '{header:{}}',
+    usages: [
+      {
+        name: 'CMD_DECORATION_SHOP_FREE_GET',
+        feat: 'decoration-free-gift',
+        file: 'feats/player/decoration-free-gift/constants.js',
+      },
+    ],
+  },
+  {
     cmd: 4168,
     dir: 'C2S',
     note: '收取空投建筑奖励（Get_Home_Air_Drop_Reward，旧 JSON V1，{targetId}）',
@@ -760,6 +845,34 @@ export default [
         name: 'CMD_USE_SKILL',
         feat: 'secret-weapon-drop',
         file: 'feats/player/secret-weapon-drop/constants.js',
+      },
+    ],
+  },
+  {
+    cmd: 4203,
+    dir: 'C2S',
+    note: '金融中心购物车一键兑换；productId 按 Int64 字符串传递',
+    src: '公开 H5 源码：金融中心 ShoppingCarBuy 请求',
+    fields: '{header:{},shoppingCarBuy:{shopData:[{shopType,productData:[{productId,buyNum}]}]}}',
+    usages: [
+      {
+        name: 'CMD_SHOPPING_CAR_BUY',
+        feat: 'shopping-cart',
+        file: 'feats/player/shopping-cart/constants.js',
+      },
+    ],
+  },
+  {
+    cmd: 4204,
+    dir: 'C2S',
+    note: '金融中心购物车信息查询；空 singleShopData 是可确认空车',
+    src: '公开 H5 源码：金融中心 ShoppingCarInfo 请求',
+    fields: '{header:{}} → singleShopData',
+    usages: [
+      {
+        name: 'CMD_SHOPPING_CAR_INFO',
+        feat: 'shopping-cart',
+        file: 'feats/player/shopping-cart/constants.js',
       },
     ],
   },
@@ -1458,6 +1571,20 @@ export default [
         name: 'PUSH_CROSS_QUEUE_ADD',
         feat: 'quick-repair',
         file: 'feats/player/quick-repair/constants.js',
+      },
+    ],
+  },
+  {
+    cmd: 20011,
+    dir: 'S2C',
+    note: '军级/VIP 每日免费礼包状态更新推送；仅用于刷新面板',
+    src: '公开 H5 源码：VIP_FREE_REWARD_UPDATE',
+    fields: '',
+    usages: [
+      {
+        name: 'PUSH_VIP_FREE_REWARD_UPDATE',
+        feat: 'vip-daily-gift',
+        file: 'feats/player/vip-daily-gift/constants.js',
       },
     ],
   },
