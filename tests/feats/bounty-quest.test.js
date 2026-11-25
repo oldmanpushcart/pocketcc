@@ -205,11 +205,47 @@ test('dailytask_one_click 未开启时逐箱走 304/{boxId}，成功后不重复
   assert.equal(sent.length, 2);
 });
 
+test('304 应答仍为可领态时不伪标已领，下一轮继续重试', async () => {
+  boxes = [1, 0, 0, 0];
+  respond = () => ({ ok: true, code: 0, data: JSON.stringify({ boxId: 1, status: 1 }) });
+  assert.equal(await bounty.cycleRun(), 30 * 1000);
+  await bounty.cycleRun();
+  assert.equal(sent.length, 2);
+  assert.ok(sent.every((item) => item.cmd === 304 && item.data.boxId === 1));
+});
+
+test('304 应答缺少 status 时不伪标已领，下一轮继续重试', async () => {
+  boxes = [1, 0, 0, 0];
+  respond = () => ({ ok: true, code: 0, data: JSON.stringify({ boxId: 1 }) });
+  assert.equal(await bounty.cycleRun(), 30 * 1000);
+  await bounty.cycleRun();
+  assert.equal(sent.length, 2);
+  assert.ok(sent.every((item) => item.cmd === 304 && item.data.boxId === 1));
+});
+
 test('315 部分删除应答只标记实际返回的任务，剩余任务下一拍继续领取', async () => {
   quests = [task(101), task(102)];
   respond = (cmd) =>
     cmd === 315 ? taskAck(['101']) : taskAck(quests.filter((q) => q.state === 1).map((q) => q.id));
   await bounty.cycleRun();
+  await bounty.cycleRun();
+  assert.equal(sent.length, 2);
+  assert.ok(sent.every((item) => item.cmd === 315));
+});
+
+test('315 成功但删除列表为空时不伪标已领，下一轮继续重试', async () => {
+  quests = [task(101)];
+  respond = () => taskAck([]);
+  assert.equal(await bounty.cycleRun(), 30 * 1000);
+  await bounty.cycleRun();
+  assert.equal(sent.length, 2);
+  assert.ok(sent.every((item) => item.cmd === 315));
+});
+
+test('315 应答缺少删除列表时不伪标已领，下一轮继续重试', async () => {
+  quests = [task(101)];
+  respond = () => ({ ok: true, code: 0, data: JSON.stringify({}) });
+  assert.equal(await bounty.cycleRun(), 30 * 1000);
   await bounty.cycleRun();
   assert.equal(sent.length, 2);
   assert.ok(sent.every((item) => item.cmd === 315));
@@ -283,6 +319,30 @@ test('316 成功但缺少 rewardInfos 时按发包快照抑制重复直发', asy
   await bounty.cycleRun();
   await bounty.cycleRun();
   assert.equal(sent.length, 1);
+});
+
+test('316 成功但 rewardInfos 为空时不伪标已领，下一轮继续重试', async () => {
+  boxes = [1, 0, 0, 0];
+  oneClick = true;
+  respond = () => ({ ok: true, code: 0, data: { rewardInfos: [] } });
+  assert.equal(await bounty.cycleRun(), 30 * 1000);
+  await bounty.cycleRun();
+  assert.equal(sent.length, 2);
+  assert.ok(sent.every((item) => item.cmd === 316));
+});
+
+test('316 应答仍为可领态时不伪标已领，下一轮继续重试', async () => {
+  boxes = [1, 0, 0, 0];
+  oneClick = true;
+  respond = () => ({
+    ok: true,
+    code: 0,
+    data: { rewardInfos: [{ boxId: 1, boxStatus: 1 }] },
+  });
+  assert.equal(await bounty.cycleRun(), 30 * 1000);
+  await bounty.cycleRun();
+  assert.equal(sent.length, 2);
+  assert.ok(sent.every((item) => item.cmd === 316));
 });
 
 test('315 在飞时暂停仍保存成功回执，但不继续领取应答暴露的宝箱', async () => {

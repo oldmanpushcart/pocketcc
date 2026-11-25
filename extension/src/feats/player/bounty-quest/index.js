@@ -12,6 +12,8 @@
  *
  * 直发防重领：上述请求不经游戏 UI 回调，UserData 不会由本功能回写。模块内按服务器日界/UID 保存
  *   已领任务 key（id:progress）与 boxId，并用应答里的新任务/box1..box4 状态补出本地盲区；
+ *   仅当应答明确删除任务或把宝箱推进到 FINISHED 才抑制，删除列表缺失/为空、状态仍为
+ *   CAN_REWARD 均留待重试；仅应答完全无法解析时按发包前快照兜底抑制。
  *   宝箱覆盖态与本地单向态取较大值，避免旧本地态造成重复直发。刷新扩展后以登录下发的服务端状态为准，
  *   不持久化“已领”集合，避免错误日戳压住新一天或换号漏领。
  *   CODE_NOT_SENT 短重试且不标记；真正业务拒绝按 info 记录并退避；跨午夜应答丢弃旧日结果。
@@ -165,7 +167,8 @@ function pendingBoxes() {
 }
 
 /**
- * 标记任务领取成功；应答未返回删除 ID 时按发包前快照兜底，避免同拍重复直发。
+ * 标记任务领取成功；仅按应答实际删除 ID 标记。字段缺失/空数组均视为本轮未领取到任务，
+ * 不标记、下一轮继续重试；仅应答完全无法解析时按发包前快照兜底抑制。
  * @param {{id:string,progress:number,state:number,key:string}[]} snapshot 发包前可领任务
  * @param {*} data 315 应答 data
  * @returns {number} 本次标记的任务数
@@ -180,19 +183,16 @@ function applyTaskAck(snapshot, data) {
   var byId = new Map();
   for (var j = 0; j < snapshot.length; j++) byId.set(snapshot[j].id, snapshot[j]);
   var marked = 0;
-  if (Array.isArray(d.dailyQuestDelIds) && d.dailyQuestDelIds.length) {
-    for (var k = 0; k < d.dailyQuestDelIds.length; k++) {
-      var q = byId.get(String(d.dailyQuestDelIds[k]));
-      if (!q || resolvedTasks.has(q.key)) continue;
-      resolvedTasks.add(q.key);
-      marked++;
-    }
-  } else {
-    for (var m = 0; m < snapshot.length; m++) {
-      if (resolvedTasks.has(snapshot[m].key)) continue;
-      resolvedTasks.add(snapshot[m].key);
-      marked++;
-    }
+  var delIds = Array.isArray(d.dailyQuestDelIds) ? d.dailyQuestDelIds : [];
+  for (var k = 0; k < delIds.length; k++) {
+    var q = byId.get(String(delIds[k]));
+    if (!q || resolvedTasks.has(q.key)) continue;
+    resolvedTasks.add(q.key);
+    marked++;
+  }
+  if (!marked && snapshot.length) {
+    // 游戏源码同样按 dailyQuestDelIds||[] 消费；字段缺失/空数组都表示本轮未领取到任务。
+    log.debug('cmd 315 ack deleted no snapshot task; retry later. snapshot=%d', snapshot.length);
   }
   if (Array.isArray(d.newDailyQuests)) {
     for (var n = 0; n < d.newDailyQuests.length; n++) {
@@ -279,18 +279,20 @@ async function claimBoxesAll(snapshot) {
     var info = infos[j] || {};
     var boxId = Number(info.boxId) || 0;
     if (!boxId) continue;
-    boxOverrides.set(boxId, Number(info.boxStatus) || 0);
+    var boxStatus = Number(info.boxStatus) || 0;
+    boxOverrides.set(boxId, boxStatus);
     if (!wanted.has(boxId) || resolvedBoxes.has(boxId)) continue;
+    // 只有服务端明确推进到 FINISHED 才算领取成功；空列表/仍为 CAN_REWARD 都留待下一轮。
+    if (boxStatus !== BOX_STATE_FINISHED) continue;
     resolvedBoxes.add(boxId);
     marked++;
   }
   if (!marked) {
-    for (var k = 0; k < snapshot.length; k++) {
-      if (resolvedBoxes.has(snapshot[k])) continue;
-      resolvedBoxes.add(snapshot[k]);
-      boxOverrides.set(snapshot[k], BOX_STATE_FINISHED);
-      marked++;
-    }
+    log.debug(
+      'cmd 316 ack claimed no snapshot box; retry later. snapshot=%d;infos=%d',
+      snapshot.length,
+      infos.length,
+    );
   }
   return { ok: true, claimed: marked, code: 0 };
 }
@@ -330,9 +332,21 @@ async function claimBoxesSingle(snapshot) {
       continue;
     }
     var d = parseData(ret.data);
-    if (!d) log.warn('cmd 304 boxId=%d ack malformed; suppress this box.', boxId);
+    if (!d) {
+      log.warn('cmd 304 boxId=%d ack unparseable; suppress this box.', boxId);
+      resolvedBoxes.add(boxId);
+      boxOverrides.set(boxId, BOX_STATE_FINISHED);
+      claimed++;
+      continue;
+    }
+    var status = d.status != null ? Number(d.status) : null;
+    // 成功应答但缺少状态或仍为 CAN_REWARD（或其它非 FINISHED 态）不代表已领，留待下一轮重试。
+    if (status == null || !isFinite(status) || status !== BOX_STATE_FINISHED) {
+      log.debug('cmd 304 boxId=%d not finished; retry later. status=%s', boxId, String(status));
+      continue;
+    }
     resolvedBoxes.add(boxId);
-    boxOverrides.set(boxId, d && d.status != null ? Number(d.status) || 0 : BOX_STATE_FINISHED);
+    boxOverrides.set(boxId, status);
     claimed++;
   }
   return { ok: true, claimed: claimed, code: 0, rejected: rejected };
