@@ -94,6 +94,9 @@ export const SYM = {
     allianceBehemoth: 'allianceBehemothData',
     worldCoord: 'WorldCoord',
     buffPool: 'Buff',
+    // 本人城外观（城市皮肤）表：skinId → {endTime, specialEndTime, cityConnection, …}；
+    // 口径同游戏 PlayerSkillCastleItem（endTime===-1 永久 / > ServerTime 在效期内）。
+    castleFace: 'MyCastleFace',
     // 假面舞会今日已领次数表 / 已领实例名单：10053 PUSH_USER_DATA_COMMON 的
     // danceRec / myReceiveDance 两键回写。UserData 上的落地字段名已由客户端源码坐实（非探针）：
     // UserItemCityRewardBtn 读 UserData.itemCityRewardReceivedNum[itemId] 与
