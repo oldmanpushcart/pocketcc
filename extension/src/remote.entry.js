@@ -43,6 +43,7 @@ import './feats/alliance/alliance-behemoth/index.js';
 import './feats/alliance/alliance-defender/index.js';
 import './feats/player/daily-supply/index.js';
 import './feats/player/ad-diamond/index.js';
+import './feats/player/bounty-quest/index.js';
 import './feats/player/auto-coin-collect/index.js';
 import './feats/player/city-skill/index.js';
 import './feats/player/quick-repair/index.js';

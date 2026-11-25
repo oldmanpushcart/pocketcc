@@ -78,6 +78,49 @@ export default [
     ],
   },
   {
+    cmd: 304,
+    dir: 'C2S',
+    note: '领取单个每日任务进度宝箱（V1 send；dailytask_one_click 未开启时游戏 UI 走此链路）',
+    src: 'game-source Script bundle: QuestController.requestGetDailyQuestBoxRewawrd',
+    fields: 'req {boxId:number}；resp d=JSON 串，含 boxId/status/reward',
+    usages: [
+      {
+        name: 'CMD_GET_DAILY_QUEST_BOX_REWARD',
+        feat: 'bounty-quest',
+        file: 'feats/player/bounty-quest/constants.js',
+      },
+    ],
+  },
+  {
+    cmd: 315,
+    dir: 'C2S',
+    note: '一键领取全部已完成每日任务奖励（V1 send；源码枚举名 GET_DAILY_QUEST_REWAR_ALL）',
+    src: 'game-source Script bundle: QuestController.requestGetDailyQuestRewardAll',
+    fields:
+      'req {}；resp d=JSON 串，含 dailyQuestDelIds/newDailyQuests/dailyQuestFinishCount/box1..box4/reward',
+    usages: [
+      {
+        name: 'CMD_GET_DAILY_QUEST_REWARD_ALL',
+        feat: 'bounty-quest',
+        file: 'feats/player/bounty-quest/constants.js',
+      },
+    ],
+  },
+  {
+    cmd: 316,
+    dir: 'C2S',
+    note: '一键领取全部可领每日任务宝箱（sendPBV2；dailytask_one_click 开启时游戏 UI 走此链路）',
+    src: 'game-source Script bundle: QuestController.requestGetDailyQuestBoxRewawrd',
+    fields: 'req {}；resp data.rewardInfos=[{boxId,boxStatus}]、rewardResult',
+    usages: [
+      {
+        name: 'CMD_GET_ALL_DAILY_QUEST_BOX_REWARD',
+        feat: 'bounty-quest',
+        file: 'feats/player/bounty-quest/constants.js',
+      },
+    ],
+  },
+  {
     cmd: 825,
     dir: 'C2S',
     note: '领取每日补给免费计时奖励（V1 send）',

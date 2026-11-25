@@ -1,8 +1,9 @@
 /**
  * ACL 域切片 · 玩家/游戏数据只读面 + 配置数据表（core/acl/game-data.js）
  * 原 core/game-api.js 的「玩家/游戏数据」区段（一键领取常量/helper + gameData 巨对象 + gameConf），
- * 按域拆分片7逐字迁出（行为零变化）。l10n 经同目录 import；本切片对外导出 gameData/gameConf，
- * 由 game-api re-export 保 69 处消费方路径不破，并继续在 game-api 尾部经 registerSharedValue 挂插槽。
+ * 按域拆分片7迁出；原迁移区段保持行为不变，后续能力在本切片内增量扩展。l10n 经同目录 import；
+ * 本切片对外导出 gameData/gameConf，由 game-api re-export 保 69 处消费方路径不破，
+ * 并继续在 game-api 尾部经 registerSharedValue 挂插槽。
  */
 import { game } from '../game.js';
 import { SYM, probe, ns, userData, setSharedCapsProbe } from '../acl-engine.js';
@@ -173,6 +174,53 @@ export const gameData = {
     if (!t) return 0;
     var dayStart = t - ((t - GAME_DAY_RESET_OFFSET) % 86400);
     return dayStart + 86400;
+  },
+  /**
+   * 每日悬赏任务只读投影（UserData.DailyQuests，登录下发 + 游戏侧 push 维护）。
+   * 只暴露标量，不把 QuestData 私有对象/引用交给玩法层；ID 按字符串读避免 64 位精度问题。
+   * @returns {{id:string, progress:number, state:number}[]}
+   */
+  dailyQuests() {
+    var u = userData();
+    var list = u && u.DailyQuests;
+    if (!Array.isArray(list)) return [];
+    var out = [];
+    for (var i = 0; i < list.length; i++) {
+      var q = list[i];
+      var id = bits.int64Str(q && q.Id);
+      if (!id) continue;
+      out.push({
+        id: id,
+        progress: Number(q && q.Num) || 0,
+        state: Number(q && q.State) || 0,
+      });
+    }
+    return out;
+  },
+  /**
+   * 每日任务完成数（UserData.getDailyQuestFinishCount）；不可读时返回 0。
+   * @returns {number}
+   */
+  dailyQuestFinishCount() {
+    var u = userData();
+    if (!u || typeof u.getDailyQuestFinishCount !== 'function') return 0;
+    try {
+      return Number(u.getDailyQuestFinishCount()) || 0;
+    } catch (e) {
+      return 0;
+    }
+  },
+  /**
+   * 每日任务宝箱状态只读投影（UserData.dailyQuestBoxStateArray，索引 0 对应 boxId=1）。
+   * @returns {number[]}
+   */
+  dailyQuestBoxStates() {
+    var u = userData();
+    var list = u && u.dailyQuestBoxStateArray;
+    if (!Array.isArray(list)) return [];
+    var out = [];
+    for (var i = 0; i < list.length; i++) out.push(Number(list[i]) || 0);
+    return out;
   },
   /** 本人 StrUid（快速登录模式下与数字 UID 不同）；取不到返回 '' */
   strUid() {
