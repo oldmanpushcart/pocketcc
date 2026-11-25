@@ -236,8 +236,10 @@ function filterHeroIds(heroIds) {
 
 /**
  * 校准：对整份 raw 完备集交游戏重算器实时算每格可派数（含可派兵池逐格消耗、英雄可派截断、补位容量）。
- * 预设 num 只是保存那一刻的上限快照，真实上限由 Buff 池+英雄统率+可派兵池逐格消耗动态决定，手写公式复现不出来。
- * 关键约束（详见 docs/core/battle.md §2.1/§6）：结果与预设 num 取小（重算器「发满」语义）、按 pos 升序喂入（兵池按数组序消耗）、只喂自建副本（重算器就地改写）。
+ * 预设 num 只是保存那一刻的容量快照，真实上限由 Buff 池+英雄统率+可派兵池逐格消耗动态决定，手写公式复现不出来。
+ * 关键约束（详见 docs/core/battle.md §2.1/§6）：每格直接采纳重算器实时值（与游戏出兵面板「发满」一致，
+ *   容量提升后出兵数随之上涨，不被预设快照封顶；超发防线在重算器内部：格容量∧持有数∧可派兵池逐只扣）、
+ *   按 pos 升序喂入（兵池按数组序消耗）、只喂自建副本（重算器就地改写）。
  * @param {object} d raw 完备集（{armyInfo(grid pos), heroIds, formationV2, extraRaw}）
  * @param {boolean} excludeMarched true=排除在途（普通）/ false=全量池（活动）
  * @returns {object|null} MarchData；重算能力不可用返回 null（调用方降级）
@@ -269,9 +271,7 @@ function recalcData(d, excludeMarched) {
   var armys = [];
   (entry.armyInfo || []).forEach(function (a) {
     var src = srcByPos[a.pos];
-    var live = a.num | 0;
-    // 发满语义 → 与预设取小；src 缺失（理论上不会）时直接采纳实时值
-    if (src && src.num != null) live = Math.min(live, src.num | 0);
+    var live = a.num | 0; // 发满语义：实时值直接采纳（可高于预设快照），src 只用于找回原条目带回 skinId/heroCap
     if (live <= 0) return;
     armys.push(
       toArmyEntry({
@@ -285,8 +285,7 @@ function recalcData(d, excludeMarched) {
   });
   var extraArmy = {};
   if (entry.extraArmy && entry.extraArmy.armyId) {
-    var liveExtra = entry.extraArmy.armyNum | 0; // 无补位容量时游戏已把 extraArmy 置 null
-    if ((extra.armyNum | 0) > 0) liveExtra = Math.min(liveExtra, extra.armyNum | 0);
+    var liveExtra = entry.extraArmy.armyNum | 0; // 无补位容量时游戏已把 extraArmy 置 null；有容量则直接发满
     if (liveExtra > 0) extraArmy = { armyId: entry.extraArmy.armyId, armyNum: liveExtra };
   }
   return {

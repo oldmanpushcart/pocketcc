@@ -31,8 +31,10 @@
 
 两条实证约束决定了接入细节（证据：游戏侧 `RealMarchStorageController` 源码）：
 
-- 重算器语义是「发满」（给 1 支也补到格上限）→ 结果与预设 `Num` **取小**，保住「预设故意少摆」的语义；
+- 重算器语义是「发满」（给 1 支也补到格上限）→ 结果**直接采纳实时值、不与预设 `Num` 取小**，与游戏出兵面板行为一致：预设 `Num` 只是保存那一刻的容量快照，出征容量提升（Buff/科技/英雄统率）后出兵数随之上涨，不被旧快照封顶；
 - 重算器**就地改写**传入对象 → 只喂自建副本，绝不传 PresetMarchData 本体。
+
+超发防线不靠预设 Num：重算器内部 `checkArmyNum` 三重钳制每格数（格容量 `getMaxCoutByPos` ∧ 持有数 `getArmyNumByArmyId` ∧ 可派兵池逐只消耗），单向下调不会超卖。「预设故意少摆」在实时口径下不再被尊重（2026-11-26 用户决策：保持一致优先于保留少摆语义）。
 
 ### 2.2 默认不校准 + `.adjust()` 显式校准（极性决策）
 
@@ -151,7 +153,7 @@ plan() 持有 raw 完备集 #data（armyInfo[grid pos]/heroIds/formationV2/extra
 ── build() 单点投影 ──
   #data 为 null（未选源 / 读失败）          → emptyMarchData() 派空
   source==minimal 或 无 #recalc             → projectRaw()：满编原样，此时才 toBattlePos 编码
-  preset + #recalc，battlePreset.ok()       → recalcData()：整份交重算器（checkMarch=excludeMarched），结果与预设 Num 取小、按 pos 找回原条目带回 skinId/heroCap
+  preset + #recalc，battlePreset.ok()       → recalcData()：整份交重算器（checkMarch=excludeMarched），每格直接采纳实时值（发满，不被预设 Num 封顶）、按 pos 找回原条目带回 skinId/heroCap
         └ 排除口径下本地兜：军阵在途置 0（重算器不纠正非法/在途军阵）
   preset + #recalc，重算不可用              → excludeMarched ? filterFallback()（手写过滤，容量用预设 Num） : projectRaw()（满编降级）
 ```
@@ -180,7 +182,7 @@ plan() 持有 raw 完备集 #data（armyInfo[grid pos]/heroIds/formationV2/extra
 5. **卡车 probeSelf 的同源分母**：999 战力评估的输入（`plan().preset(presetIdx).build()` 满编快照，不 `adjust` 不重算）必须与掠夺出征载荷、面板展示数值同源，否则战力预估与实际不符。truck 的 `buildTroop` 现在走 `plan().preset(idx).adjust().build()`（普通派兵口径）——掠夺若实为快照战斗，两者存在「分母满编 / 载荷已排除」的口径张力；如需统一，改 `buildTroop` 为 `adjust({ignoreMarched:true})` 即可（probeSelf 保留满编 raw 作分母不受影响）。此处按目标语义单独决策，别顺手改。
 6. **默认不校准 ≠ 安全**：`.preset(n).build()` 满编直发，兵全在途时会重复派已在外的兵（服务器侧按 armyId 额度拒绝或半接受）。除非目标不占真实行军池或有意发快照，否则普通出征一律 `adjust()`。
 7. **`recalc` 是本地同步调用**，不是网络请求。「快速派兵省开销」省的是游戏重算器的聚合计算与运行时依赖面，不是 RTT——别按网络语义给它加超时/重试。
-8. **`adjust()` 不是“超库存保险”，它只在重算器在场时成立**：正常路径下 `checkArmyNum` 会三重钳制每格数（格容量 `getMaxCoutByPos` ∧ 持有数 `getArmyNumByArmyId` ∧ 从按实例展开的可派池逐只扣，跨格共享，扣光即 `num<=0` 被剔），所以「预设比实际兵多」天然不会超发。但**一旦降级到满编，这层钳制就整体消失**（活动口径降级=原样发出），发出去的正是可能超库存的满编预设。排查“param error 类”被拒时先翻日志找上面那条降级 warn，再怀疑预设本身。
+8. **`adjust()` 不是“超库存保险”，它只在重算器在场时成立**：正常路径下 `checkArmyNum` 会三重钳制每格数（格容量 `getMaxCoutByPos` ∧ 持有数 `getArmyNumByArmyId` ∧ 从按实例展开的可派池逐只扣，跨格共享，扣光即 `num<=0` 被剔），所以「预设比实际兵多」天然不会超发。但**一旦降级到满编，这层钳制就整体消失**（活动口径降级=原样发出），发出去的正是可能超库存的满编预设。排查“param error 类”被拒时先翻日志找上面那条降级 warn，再怀疑预设本身。另注意发满口径下 live 可**高于**满编 raw（容量提升后），下游「满编闸」（如 auto-defense `presetDeviates`）都是 `<` 方向判据，不会误拦。
 
 ## 7. 调试面
 
@@ -192,6 +194,7 @@ battle.js 不再挂 `window.pocketcc.battle`（旧 `buildPresetRaw`/`liveRecalcO
 
 | 日期 | 变更 |
 |---|---|
+| 2026-11-26 | **移除重算结果与预设 `Num` 的取小钳制（含补位格）**：`recalcData` 每格直接采纳游戏重算器实时值，行为与游戏出兵面板「发满」一致；出征容量提升后出兵数随之上涨，不再被预设保存时的快照封顶（用户决策：该钳制没有意义）。副作用：「预设故意少摆」的语义不再被保留，所有 `preset().adjust()` 调用点（quick-attack/auto-farm/alliance-boss/source-of-war/imperial-decree/truck 等）统一变为发满口径。 |
 | 2026-11-11 | **降级加可见性（数值口径零变更）**：`build()` 重算不可用分支补 `noteDegrade` warn（一条/次异常，重算器恢复后复位）与 `recalcDegraded:true` 非报文位标记；预设本就无兵的派空不贴标。背景：雪原列车 2367 吃 `common_159995` 事后排查时，旧实现静默降级（`recalcData` 首句 `!ok()` 直接 return null 不打日志）无法从日志排除，全天 6045 行日志 GAMEAPI 零条才能确证重算器在场。未改任何降级行为（活动口径降级=满编是既定决策）。 |
 | 2026-10-05 | **删除函数式导出面 `export const battle`**：满编快照 truck `probeSelf` 迁到 `new Battle().plan().preset(presetIdx).build()`（与原 `buildPresetRaw(presetIdx-1,0)` 等价，去掉手动 `-1`；读失败由 `null` 变 `emptyMarchData()`，被调用点 `!raw.armyListNew.length` 守卫一并吃掉）；`toBattlePos`/`liveRecalcOk` 无 feat 消费仅调试用，连同 `buildPresetRaw` 与 `window.pocketcc.battle` 注入一起删除（`toBattlePos` 降为模块内私有）。对外只剩 `Battle` 类。构建通过（content.js 851.5kb）。 |
 | 2026-10-05 | **改为「raw 数据完备集 + 单点投影」模型**：`MarchPlan` 从「`#source`/`#adjust` flag + `build()` 四路分派 + 多个独立 builder」重构为持有 `#data`（完备集，存编码前 grid pos）+ `#recalc`（校准意图）；`preset()`/`minimal()` 变覆盖式装载（`loadPreset`/`loadMinimal`），`build()` 单点投影（`projectRaw`/`recalcData`/`filterFallback`），`toBattlePos` 编码统一推迟到投影时做；`adjust()` 改为只记意图、延迟到 `build` 执行（防顺序陷阱）。删除函数式入口 `buildFromPreset`/`buildMinimal`（收敛进 `MarchPlan`），`battle` 仅留 `toBattlePos`/`buildPresetRaw`/`liveRecalcOk`。行为不变，`Battle`+`plan` 链公开契约不变，9 个 feat 调用点零改动；同步 content.entry.js 调试注释。 |
