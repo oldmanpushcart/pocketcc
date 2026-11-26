@@ -11,6 +11,8 @@ import { NS } from '../../extension/src/core/constants.js';
 const messageHandlers = [];
 /** @type {Map<string,*>} fullKey（含 UID 前缀）-> 值，模拟 ISOLATED 侧 chrome.storage.local */
 const fakeStore = new Map();
+/** @type {Array<{op:string,key:string}>} 假 bridge 收到的操作流水（用于断言「不该碰盘时真的没碰」） */
+const bridgeOps = [];
 globalThis.window = globalThis.window || {
   addEventListener(type, fn) {
     if (type === 'message') messageHandlers.push(fn);
@@ -20,6 +22,7 @@ globalThis.window = globalThis.window || {
   document: {},
   postMessage(msg) {
     if (!msg || msg.__ns !== NS || msg.dir !== 'main->bridge') return;
+    bridgeOps.push({ op: msg.op, key: msg.key });
     queueMicrotask(() => {
       let result;
       if (msg.op === 'get') result = fakeStore.get(msg.key);
@@ -54,7 +57,7 @@ globalThis.setInterval = (fn, ms, ...rest) => {
 
 const { reactor } = await import('../../extension/src/core/reactor.js');
 const registry = await import('../../extension/src/core/registry.js');
-const { setNamespace } = await import('../../extension/src/core/storage.js');
+const { setNamespace, storage } = await import('../../extension/src/core/storage.js');
 const { bus, EVT } = await import('../../extension/src/core/bus.js');
 const { netApi } = await import('../../extension/src/core/net.js');
 const { eventApi } = await import('../../extension/src/core/event.js');
@@ -259,5 +262,35 @@ test('applyFeature：toModuleCfg 缺声明降级只透传 enabled（不抛、不
     seen,
     [{ enabled: true }],
     '未声明字段不透传，开关仍生效（异常靠日志定位而不是靠崩）',
+  );
+});
+
+test('dropOrphanDataKeys：只删已无读取方的键，同 blob 其他键与空盘都不碰写', async () => {
+  setNamespace('pocketcc.u-orphan.');
+  await storage.data.set('shoppingCart.day', { '2:28': 1 });
+  await storage.data.set('shoppingCart.resolved', 1794585900000);
+  await storage.data.set('allianceRally.day', { keep: 1 });
+  assert.notEqual(await storage.data.get('shoppingCart.day'), undefined, '播种生效');
+
+  bridgeOps.length = 0;
+  await registry.dropOrphanDataKeys();
+
+  assert.equal(await storage.data.get('shoppingCart.day'), undefined, '旧台账键已清');
+  assert.equal(await storage.data.get('shoppingCart.resolved'), undefined, '旧时间戳键已清');
+  assert.deepEqual(
+    await storage.data.get('allianceRally.day'),
+    { keep: 1 },
+    '同 blob 里其他功能的数据键不受牵连',
+  );
+  const writes = bridgeOps.filter((o) => o.op === 'set' && /\.pocketcc\.data$/.test(o.key));
+  assert.equal(writes.length, 2, '两个孤儿键各一次整块回写，不夹带额外写');
+
+  // 再跑一次：盘上已无孤儿键，应先读后判、一次写都不发
+  bridgeOps.length = 0;
+  await registry.dropOrphanDataKeys();
+  assert.equal(
+    bridgeOps.filter((o) => o.op === 'set').length,
+    0,
+    '无孤儿键时不落盘（免为一份空 blob 白写一次）',
   );
 });

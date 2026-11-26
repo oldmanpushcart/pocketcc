@@ -11,7 +11,11 @@ const user = {
   Resource: { Gold: 100, BountyMilitary: 20, AdventureCoin: 30, CsbRes: 40, Honor: 50 },
   IslandBattleData: { points: 60 },
   getItemAmount: (id) => ({ 900: 70, 901: 80, 902: 90 })[Number(id)] || 0,
-  Buff: { getValueWithBuff: (limit) => Number(limit) + 2 },
+  Buff: {
+    getValueWithBuff: (limit) => Number(limit) + 2,
+    // 游戏口径：AllianceShopData.getDiscount = 1e4 × Buff.getBuffPercentValue(BuffType.AllianceDiscount)
+    getBuffPercentValue: (type) => (Number(type) === 500 ? 0.1 : 0),
+  },
 };
 const rows = {
   SHOP: {
@@ -21,6 +25,11 @@ const rows = {
   MINING: { 1002: { needItem: '900|7', rewardItem: '1|2', limit: 2, price_shop: 999 } },
   recovery_shop: { 1003: { price_shop: 8, buy_limit: 4 } },
   behemoth_shop: { 1004: { costItemId: 902, costItemNum: 9, timeBuyLimit: 'x,3', buy_limit: 99 } },
+  ALLIANCE_SHOP: {
+    2001: { price_shop: 100, buy_limit: 0, timeBuyLimit: '86400,10' },
+    2002: { price_shop: 50, buy_limit: 4 },
+    2003: { price_shop: 30 },
+  },
   DATACONFIG: { 2181903: { value: '901' } },
 };
 const tableNames = {};
@@ -32,6 +41,7 @@ for (const name of [
   'ISLAND_SHOP',
   'MINING',
   'csb_shop',
+  'ALLIANCE_SHOP',
   'recovery_shop',
   'behemoth_shop',
   'DATACONFIG',
@@ -47,7 +57,7 @@ const modules = {
     },
   },
   TableName: { TableName: tableNames },
-  GameDefine: { BuffType: { ShopBuyGold: 88 } },
+  GameDefine: { BuffType: { ShopBuyGold: 88, AllianceDiscount: 500 } },
 };
 globalThis.__require = (name) => modules[name] || null;
 const { gameData } = await import('../../../extension/src/core/acl/game-data.js');
@@ -103,14 +113,64 @@ test('购物车投影：shopId=13 使用 ShopBuyGold buff 后的限购', () => {
   assert.equal(cart.items[0].buyLimit, 5);
 });
 
-test('购物车投影：联盟动态定价 fail-closed；缺配置不猜价', () => {
+test('购物车投影：联盟商店走荣誉货币、buff 折扣价与 timeBuyLimit/buy_limit 限购', () => {
   const cart = gameData.shoppingCart([
-    { shopType: 13, productPurchasedData: [{ productId: '9', purchasedBuyNum: 0, chooseNum: 1 }] },
+    {
+      shopType: 13,
+      productPurchasedData: [
+        { productId: '2001', purchasedBuyNum: 4, chooseNum: 10 },
+        { productId: '2002', purchasedBuyNum: 0, chooseNum: 2 },
+      ],
+    },
+  ]);
+  assert.deepEqual(
+    cart.items.map((x) => [x.productId, x.price, x.buyLimit, x.currencyKey, x.balance]),
+    [
+      ['2001', 90, 10, '7:0', 50], // floor(100 - 100×1000/1e4) = 90，限购取 timeBuyLimit 第二段
+      ['2002', 45, 4, '7:0', 50],
+    ],
+  );
+  assert.deepEqual(cart.skipped, []);
+});
+
+test('购物车投影：联盟非限购商品不代兑（游戏一键同样不买）', () => {
+  const cart = gameData.shoppingCart([
+    {
+      shopType: 13,
+      productPurchasedData: [{ productId: '2003', purchasedBuyNum: 0, chooseNum: 1 }],
+    },
+  ]);
+  assert.equal(cart.items.length, 0);
+  assert.deepEqual(cart.skipped, [
+    { shopType: 13, productId: '2003', reason: 'alliance-not-limit-commodity' },
+  ]);
+});
+
+test('购物车投影：联盟折扣读不到则 fail-closed，不按原价误兑', () => {
+  const saved = user.Buff.getBuffPercentValue;
+  delete user.Buff.getBuffPercentValue;
+  try {
+    const cart = gameData.shoppingCart([
+      {
+        shopType: 13,
+        productPurchasedData: [{ productId: '2001', purchasedBuyNum: 0, chooseNum: 1 }],
+      },
+    ]);
+    assert.equal(cart.items.length, 0);
+    assert.deepEqual(cart.skipped, [
+      { shopType: 13, productId: '2001', reason: 'alliance-discount-unavailable' },
+    ]);
+  } finally {
+    user.Buff.getBuffPercentValue = saved;
+  }
+});
+
+test('购物车投影：缺配置不猜价', () => {
+  const cart = gameData.shoppingCart([
     { shopType: 2, productPurchasedData: [{ productId: '404', purchasedBuyNum: 0, chooseNum: 1 }] },
   ]);
   assert.equal(cart.items.length, 0);
   assert.deepEqual(cart.skipped, [
-    { shopType: 13, productId: '9', reason: 'dynamic-alliance-price' },
     { shopType: 2, productId: '404', reason: 'shop-config-missing' },
   ]);
 });

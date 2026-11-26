@@ -15,7 +15,12 @@
 import { createLog } from './core/log.js';
 import { game } from './core/game.js';
 import { bus, EVT } from './core/bus.js';
-import { loadAllConfigs, startFeatures, migrateLegacyKeys } from './core/registry.js';
+import {
+  loadAllConfigs,
+  startFeatures,
+  migrateLegacyKeys,
+  dropOrphanDataKeys,
+} from './core/registry.js';
 import { startPlayerWatch, waitUid } from './core/player.js';
 import { installAutoLogin } from './core/auto-login.js';
 import { installReconnectHooks, installLaunchWatchdog, watchLoginSuccess } from './core/session.js';
@@ -100,8 +105,11 @@ import { installModeGate } from './core/mode.js';
         // uid 为 null 也要继续读盘：registry 检测 ns 未设时落默认配置并置 degraded，player.ready 后补读盘。
         // 场景口径告知降级性质：还停在登录/启动场景（未扫码）是常态走 info；已进过主城却拿不到 UID 才是 warn。
         const preLogin = READY_SCENES.indexOf(getCurrentScene()) === -1;
-        return Promise.resolve(uid ? migrateLegacyKeys(uid) : undefined).then(() =>
-          loadAllConfigs({ preLogin: preLogin }),
+        return (
+          Promise.resolve(uid ? migrateLegacyKeys(uid) : undefined)
+            .then(() => loadAllConfigs({ preLogin: preLogin }))
+            // 孤儿数据键清理排在读盘之后：只在 UID 拿得到时跑（命名空间未设时删不到目标键）
+            .then(() => (uid ? dropOrphanDataKeys() : undefined))
         );
       })
       .then(() => {

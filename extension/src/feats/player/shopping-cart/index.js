@@ -1,30 +1,35 @@
 /**
- * 金融中心购物车每日一键兑换（默认关闭，单链、只读查询 + 4203 写入）。
+ * 金融中心购物车每日一键兑换（默认关闭，单链：4204 查询 → 规划 → 4203 兑换）。
  *
- * 协议（官方公开 H5 源码 subpack2.5c3c4.js 实证）：
- *   4204 SHOPPING_CAR_INFO，NET.sendPB，{header:{}} →
- *     pbAck.shoppingCarInfo.singleShopData[]，每项 {shopType,productPurchasedData[]}；
- *     明细含 productId/purchasedBuyNum/chooseNum。
- *   4203 SHOPPING_CAR_BUY，NET.sendPB，
+ * 协议（报文实证 dashcam/store/rec/14179309129759/dashcam-rec-20261126T181710-购物车.ndjson）：
+ *   4204 SHOPPING_CAR_INFO，legacy sendPB，{header:{}} →
+ *     pbAck.shoppingCarInfo.singleShopData[]，每项 {shopType,productPurchasedData[]}，
+ *     明细 {productId,chooseNum,purchasedBuyNum}。
+ *   4203 SHOPPING_CAR_BUY，legacy sendPB，
  *     {header:{},shoppingCarBuy:{shopData:[{shopType,productData:[{productId,buyNum}]}]}} →
- *     pbAck.shoppingCarBuy.shopPurchasedInfo.singleShopData[] + reward。
+ *     pbAck.shoppingCarBuy{reward,shopPurchasedInfo}；实测回执的 shopPurchasedInfo 是**成交后的全量
+ *     购物车**（26 项与查询一一对应，只有被买项 purchasedBuyNum +1），可直接判收尾、省一次 4204。
  *
- * 规划口径与游戏 ShoppingCollectTools.openOneClickBuyPanel 一致：限购余量、chooseNum、货币余额
- * 按序扣减；ACL 只读投影配置和货币，无法可靠定价的联盟动态商品 fail-closed 跳过。
+ * 收敛判据（服务端计数是唯一真相，本地不留任何当日台账）：
+ *   chooseNum = 购物车勾选的应买数量；purchasedBuyNum = 限购周期内已买到数量（日刷新项 0 点归零，
+ *   周刷新项随周一日界归零，故日/周两种周期无需特判）。gap = chooseNum − purchasedBuyNum ≤ 0 即该项
+ *   今日已了结；成交只会让计数变大 → 重载/换号/漏拍都自愈，也不会重复成交
+ *   （旧「每项每天一批」台账口径下，11-26 10:08 那轮把 2:28 从 1 买到 2 就是这么来的）。
  *
- * 购买纪律（不区分商店与商品类型）：购物车里每一项每天最多成交一批（当日台账 `shopType:productId`）。
- *   任一项可买即发 4203（按购物车原序扣减/下发），成交后当天不再带；买不起的继续每 15 分钟巡检等
- *   余额增长。全部项成交或达限购后落「今日已解决」，睡到次日夜界再扫一轮，期间零发包。
- *   台账按 UID 隔离并带 resetTs，跨日自动作废。
+ * 择时：全部项了结（含只剩被限购天花板压死的项）→ 睡到下一日界 + 5 分钟，期间零发包；
+ *   仍欠但本轮买不起 → 15 分钟起步、每轮 +5 分钟、封顶 60 分钟，任何成交或跨日回到首档；
+ *   所有等待分支统一夹到日界，免得退避把新一天的首扫拖后一小时。
+ *   4203 允许任意 buyNum，故支持部分购买：某商店限购还够但货币不够时，按购物车原序能买几个买几个（见 plan.js）。
+ *   成交轮直接用 4203 回执判收尾；若回执里已买计数没涨（服务端口头成功），连踩两拍即转退避，不 5 秒一次打乒乓。
  *
- * 合规：不 OpenUI、不调用游戏 Update、不涉及任何真钱/充值分支；全程 base/world 常态本服可运行。
+ * 合规：不 OpenUI、不调用游戏 Update/Delete、不涉及任何真钱/充值分支；全程 base/world 常态本服可运行。
  */
 import { CODE_NOT_SENT } from '../../../core/util.js';
 import { createLog } from '../../../core/log.js';
 import { gameData } from '../../../core/game-api.js';
 import { reactor } from '../../../core/reactor.js';
 import { createCycle } from '../../../core/cycle.js';
-import { storage } from '../../../core/storage.js';
+import { dailyText } from '../../../core/daily-stats.js';
 import { bus, EVT } from '../../../core/bus.js';
 import { CMD_SHOPPING_CAR_INFO, CMD_SHOPPING_CAR_BUY } from './constants.js';
 import { planShoppingCart } from './plan.js';
@@ -32,39 +37,37 @@ import { planShoppingCart } from './plan.js';
 /** @type {ReturnType<createLog>} 模块日志器 */
 const log = createLog('SHOPPING-CART');
 
-/** @type {number} 数据未就绪/业务拒绝后的巡检间隔（毫秒） */
+/** @type {number} 等余额巡检退避首档（毫秒） */
 const IDLE_TICK_MS = 1000 * 60 * 15;
-/** @type {number[]} 等余额巡检退避序列（毫秒）：成交或跨日后回到首档 */
-const IDLE_BACKOFF_MS = [IDLE_TICK_MS, 1000 * 60 * 30, 1000 * 60 * 60];
-/** @type {number} 瞬态未发出/空成功应答的短重试（毫秒） */
+/** @type {number} 每轮空增步进（毫秒）：15 → 20 → 25 … */
+const IDLE_STEP_MS = 1000 * 60 * 5;
+/** @type {number} 等余额巡检退避封顶（毫秒） */
+const IDLE_MAX_MS = 1000 * 60 * 60;
+/** @type {number} 退避最高档下标：(60-15)/5 = 9 */
+const IDLE_MAX_STEP = (IDLE_MAX_MS - IDLE_TICK_MS) / IDLE_STEP_MS;
+/** @type {number} 瞬态未发出/应答不可解析后的短重试（毫秒） */
 const TRANSIENT_RETRY_MS = 1000 * 20;
-/** @type {number} 成交后的同轮复检间隔（毫秒）：回读 4204 判断是否还有未成交项 */
+/** @type {number} 成交后复检间隔（毫秒）：回执算不出收尾时回读一次 4204 */
 const AFTER_BUY_RECHECK_MS = 1000 * 5;
-/** @type {number} 睡过服务器 0 点后的缓冲（毫秒） */
-const DAILY_ANCHOR_BUFFER_MS = 1000 * 60;
-/** @type {string} UID 命名空间内的当日台账键（resetTs + 已成交项） */
-const DAY_KEY = 'shoppingCart.day';
-/** @type {string} 旧版「今日已解决」日戳键（升级当日只读兼容，避免重复兑换） */
-const LEGACY_STAMP_KEY = 'shoppingCart.resolved';
+/** @type {number} 睡过服务器 0 点后的缓冲（毫秒）：等日刷新推送落地再醒 */
+const DAILY_ANCHOR_BUFFER_MS = 1000 * 60 * 5;
+/** @type {number} 连续几轮「4203 说成功但已买计数没涨」即转退避，避免 5 秒一次打乒乓 */
+const MAX_STALL_ROUNDS = 2;
 
 /** @type {object|null} 网络底座 */
 var net;
 /** @type {object|null} reactor 上下文 */
 var ctxRef = null;
-/** @type {number} 台账归属的下一日界绝对秒；now >= 它即整份作废 */
-var ledgerResetTs = 0;
-/** @type {boolean} 今日全部项已成交/达限购，睡到次日 */
-var dayDone = false;
-/** @type {Object<string, 1>} 今日已成交商品键 */
-var soldMap = Object.create(null);
-/** @type {Set<string>} soldMap 的集合视图（规划器入参） */
-var soldSet = new Set();
 /** @type {object|null} 最近一轮规划结果（只用于面板状态文案） */
 var lastPlan = null;
-/** @type {Promise<void>|null} 首拍台账回读 */
-var stateLoad = null;
-/** @type {number} 等余额退避档位（IDLE_BACKOFF_MS 下标） */
+/** @type {number} 等余额退避档位（0..IDLE_MAX_STEP） */
 var idleStep = 0;
+/** @type {number} 本轮锚定的下一日界绝对秒；变化即视为跨日，退避与乒乓计数归零 */
+var anchorTs = 0;
+/** @type {number} 连续「成交回执无进展」轮数 */
+var stall = 0;
+/** @type {string} 上次已上报的面板文案，用于去重 UI_REFRESH */
+var lastText = '';
 
 /** @returns {boolean} 功能是否仍存活 */
 function aliveFn() {
@@ -80,36 +83,20 @@ function roundAlive(signal) {
 }
 
 /**
- * 4203 的成功凭证必须是实际购买明细或实际奖励项；空对象/空数组不算。
- * @param {*} bought pbAck.shoppingCarBuy
- * @returns {boolean}
+ * 购物车快照的已买总数（服务端计数的标量摘要）：只用于判定「这一轮 4203 是否真有进展」，
+ * 不参与任何购买决策——决策逐项看 gap，跨日归零也不会误判（跨日在锚点变化时已重置本状态）。
+ * @param {{items:Array<object>}|null} cart ACL 投影
+ * @returns {number}
  */
-function hasBuyReceipt(bought) {
-  var info = bought && bought.shopPurchasedInfo;
-  var groups = info && info.singleShopData;
-  if (Array.isArray(groups)) {
-    for (var i = 0; i < groups.length; i++) {
-      var products = groups[i] && groups[i].productPurchasedData;
-      if (!Array.isArray(products)) continue;
-      for (var j = 0; j < products.length; j++) {
-        var p = products[j];
-        if (p && p.productId != null && Number(p.purchasedBuyNum) > 0) return true;
-      }
-    }
-  }
-  var items = bought && bought.reward && bought.reward.items;
-  if (!Array.isArray(items)) return false;
-  for (var k = 0; k < items.length; k++) {
-    var item = items[k];
-    if (!item || (item.id == null && item.itemId == null)) continue;
-    var count = item.num != null ? item.num : item.itemCount != null ? item.itemCount : item.count;
-    if (count == null || Number(count) > 0) return true;
-  }
-  return false;
+function purchasedTotal(cart) {
+  if (!cart || !Array.isArray(cart.items)) return 0;
+  var sum = 0;
+  for (var i = 0; i < cart.items.length; i++) sum += Number(cart.items[i].purchasedBuyNum) || 0;
+  return sum;
 }
 
 /**
- * 睡到下一日界 + 缓冲；无日界时安全巡检。
+ * 睡到下一日界 + 缓冲。
  * @param {number} untilTs 下一日界绝对秒
  * @returns {number} 毫秒
  */
@@ -120,114 +107,76 @@ function sleepToTs(untilTs) {
 }
 
 /**
- * 等余额巡检的下一拍间隔：15 → 30 → 60 分钟封顶；任何成交或跨日都重置回 15 分钟。
+ * 等待类择时统一夹到日界：新一天的首扫最迟在 0 点 + 缓冲醒来，退避再长也拖不过它。
+ * @param {number} ms 候选睡眠
+ * @param {number} next 本轮锚定的下一日界绝对秒
+ * @returns {number} 毫秒
+ */
+function clampToDay(ms, next) {
+  return Math.min(ms, sleepToTs(next));
+}
+
+/**
+ * 等余额巡检的下一拍间隔：15 分钟起步，每轮 +5 分钟，60 分钟封顶；任何成交或跨日都回到首档。
  * @returns {number} 毫秒
  */
 function idleDelay() {
-  var d = IDLE_BACKOFF_MS[idleStep];
-  if (idleStep < IDLE_BACKOFF_MS.length - 1) idleStep++;
+  var d = IDLE_TICK_MS + idleStep * IDLE_STEP_MS;
+  if (idleStep < IDLE_MAX_STEP) idleStep++;
   return d;
 }
 
 /**
- * 落盘当日台账；写失败不影响内存当拍语义。
- * @returns {Promise<void>}
+ * 4204 应答 → 购物车投影。
+ * @param {*} data pbAck
+ * @returns {{items:Array<object>,skipped:Array<object>}|null} null=应答不可用或投影不可用
  */
-function persistLedger() {
-  var sold = Object.assign({}, soldMap);
-  return storage.data
-    .set(DAY_KEY, { resetTs: ledgerResetTs, done: dayDone, sold: sold })
-    .catch(function () {
-      log.warn('shopping-cart ledger persist failed; memory suppression remains.');
-    });
+function cartFromQuery(data) {
+  var ack = data && data.shoppingCarInfo;
+  return ack ? gameData.shoppingCart(ack.singleShopData) : null;
 }
 
 /**
- * 把本批商品登记为今日已成交。
- * @param {string[]} keys 请求里实际包含的台账键
- * @param {number} resetTs 发包前锚定的下一日界
+ * 4203 成功回执 → 成交后的全量购物车投影（报文实证与 4204 同构）。
+ * @param {*} data pbAck
+ * @returns {{items:Array<object>,skipped:Array<object>}|null} null=回执没带购物车快照
  */
-function markSold(keys, resetTs) {
-  ledgerResetTs = resetTs;
-  idleStep = 0;
-  for (var i = 0; i < keys.length; i++) {
-    soldMap[keys[i]] = 1;
-    soldSet.add(keys[i]);
+function cartFromBuy(data) {
+  var bought = data && data.shoppingCarBuy;
+  var info = bought && bought.shopPurchasedInfo;
+  return info ? gameData.shoppingCart(info.singleShopData) : null;
+}
+
+/**
+ * 逐项留痕：ACL 无法可靠定价/取限购的商品不代兑（联盟店折扣读不到、动态价、缺表行）。
+ * @param {{items:Array<object>,skipped:Array<object>}} cart
+ */
+function logSkipped(cart) {
+  var rows = cart && cart.skipped;
+  if (!rows || !rows.length) return;
+  for (var i = 0; i < rows.length; i++) {
+    log.debug(
+      'shopping-cart item not exchanged: shopType=%s productId=%s reason=%s.',
+      rows[i].shopType,
+      rows[i].productId,
+      rows[i].reason,
+    );
   }
-  persistLedger();
+}
+
+/**
+ * 记下面板文案，变化时才踢一次 UI_REFRESH（长静默期不该反复刷面板）。
+ */
+function publishStatus() {
+  var text = statusText();
+  if (text === lastText) return;
+  lastText = text;
   bus.emit(EVT.UI_REFRESH);
 }
 
-/**
- * 今日全部项已成交或达限购：落「今日已解决」并睡到次日。
- * @param {number} next 下一日界绝对秒
- */
-function finishDay(next) {
-  ledgerResetTs = next;
-  dayDone = true;
-  persistLedger();
-  bus.emit(EVT.UI_REFRESH);
-}
-
-/**
- * 跨日作废台账（内存态）；盘上旧数据由 resetTs 自然过期。
- */
-function resetDay() {
-  ledgerResetTs = 0;
-  dayDone = false;
-  idleStep = 0;
-  soldMap = Object.create(null);
-  soldSet.clear();
-  lastPlan = null;
-}
-
-/**
- * 回读当日台账；跨日自动作废。旧版日戳只表示「今天已处理」，升级当日不再重兑。
- * @returns {Promise<void>}
- */
-function loadState() {
-  return Promise.all([storage.data.get(DAY_KEY), storage.data.get(LEGACY_STAMP_KEY)])
-    .then(function (vals) {
-      var day = vals[0] || null;
-      var now = gameData.serverTime();
-      var resetTs = Number(day && day.resetTs) || 0;
-      if (resetTs > 0 && now > 0 && now < resetTs) {
-        ledgerResetTs = resetTs;
-        dayDone = !!day.done;
-        var sold = day.sold && typeof day.sold === 'object' ? day.sold : null;
-        if (sold) {
-          for (var key in sold) {
-            if (!sold[key]) continue;
-            soldMap[key] = 1;
-            soldSet.add(key);
-          }
-        }
-        bus.emit(EVT.UI_REFRESH);
-        log.debug(
-          'restored shopping-cart day ledger (%d sold), resetTs=%d.',
-          soldSet.size,
-          resetTs,
-        );
-        return;
-      }
-      var legacy = vals[1] || null;
-      var legacyTs = Number(legacy && legacy.resetTs) || 0;
-      if (legacyTs > 0 && now > 0 && now < legacyTs) {
-        ledgerResetTs = legacyTs;
-        dayDone = true;
-        bus.emit(EVT.UI_REFRESH);
-        log.debug('legacy day-stamp honored for upgrade day, resetTs=%d.', legacyTs);
-      }
-    })
-    .catch(function () {
-      log.warn('shopping-cart ledger load failed; query server on this round.');
-    });
-}
-
-/** cycle 单轮：读台账 → 4204 → 规划 → 4203 → 成功只记本批，全部结算后才落日戳。 */
+/** cycle 单轮：4204 → 规划 → （需要时）4203 → 由服务端计数决定下一拍。 */
 async function cycleRun() {
   var signal = ctxRef ? ctxRef.signal : null;
-  if (stateLoad) await stateLoad;
   if (!roundAlive(signal)) return 0;
   var now = gameData.serverTime();
   var next = gameData.nextDailyResetTs(now);
@@ -235,11 +184,14 @@ async function cycleRun() {
     log.debug('shopping-cart idle: server clock unavailable.');
     return IDLE_TICK_MS;
   }
-  if (ledgerResetTs && now >= ledgerResetTs) resetDay();
-  if (dayDone && ledgerResetTs) return sleepToTs(ledgerResetTs);
+  if (anchorTs !== next) {
+    anchorTs = next;
+    idleStep = 0;
+    stall = 0;
+  }
   if (!net) {
     log.warn('shopping-cart skipped: network base unavailable.');
-    return IDLE_TICK_MS;
+    return clampToDay(IDLE_TICK_MS, next);
   }
 
   var query = await net.sendGuarded(
@@ -258,57 +210,29 @@ async function cycleRun() {
     return 1000;
   }
   if (!query || !query.ok) {
-    var code = query ? query.code : CODE_NOT_SENT;
-    if (code === CODE_NOT_SENT) {
-      log.warn('cmd 4204 transient not-sent/in-flight (code=%s), retry soon.', code);
-      return TRANSIENT_RETRY_MS;
+    var qCode = query ? query.code : CODE_NOT_SENT;
+    if (qCode === CODE_NOT_SENT) {
+      log.warn('cmd 4204 transient not-sent/in-flight (code=%s), retry soon.', qCode);
+      return clampToDay(TRANSIENT_RETRY_MS, next);
     }
-    log.info('cmd 4204 query rejected, retry later. code=%s reason=%s', code, query.reason || '-');
-    return IDLE_TICK_MS;
+    log.info(
+      'cmd 4204 query rejected, retry later. code=%s reason=%s',
+      qCode,
+      (query && query.reason) || '-',
+    );
+    return clampToDay(IDLE_TICK_MS, next);
   }
-  var ack = query.data && query.data.shoppingCarInfo;
-  var cart = ack ? gameData.shoppingCart(ack.singleShopData) : null;
+  var cart = cartFromQuery(query.data);
   if (!cart) {
     log.warn('cmd 4204 malformed ack or cart projection unavailable; no buy sent.');
-    return IDLE_TICK_MS;
+    return clampToDay(IDLE_TICK_MS, next);
   }
-  var plan = planShoppingCart(cart, { sold: soldSet });
+  var total = purchasedTotal(cart);
+  var plan = planShoppingCart(cart);
   lastPlan = plan;
-  if (plan.skipped) {
-    for (var si = 0; si < cart.skipped.length; si++) {
-      var skip = cart.skipped[si];
-      log.debug(
-        'shopping-cart item skipped: shopType=%s productId=%s reason=%s.',
-        skip.shopType,
-        skip.productId,
-        skip.reason,
-      );
-    }
-  }
-  if (!plan.shopData.length) {
-    if (!cart.items.length) {
-      log.debug('shopping-cart empty on server; mark today resolved.');
-      finishDay(next);
-      return sleepToTs(next);
-    }
-    if (plan.pending === 0) {
-      log.debug(
-        'shopping-cart all items settled (sold=%d exhausted=%d); mark today resolved.',
-        plan.sold,
-        plan.exhausted,
-      );
-      finishDay(next);
-      return sleepToTs(next);
-    }
-    log.debug(
-      'shopping-cart nothing affordable yet: exhausted=%d sold=%d pending=%d; retry later.',
-      plan.exhausted,
-      plan.sold,
-      plan.pending,
-    );
-    // 退避照旧，但最晚夹到次日夜界醒来，避免 60 分钟档把新一天首扫拖到 1 小时后。
-    return Math.min(idleDelay(), sleepToTs(next));
-  }
+  publishStatus();
+  logSkipped(cart);
+  if (!plan.shopData.length) return settle(plan, next);
 
   // 写请求前再次核验激活代次和日界，避免在飞暂停恢复/跨日应答后继续兑换。
   if (!roundAlive(signal)) return 0;
@@ -326,39 +250,89 @@ async function cycleRun() {
       },
     },
   );
-  var buyCode = buy ? buy.code : CODE_NOT_SENT;
-  // 成交/尝试记录跨 pause 也要保存，避免恢复后重兑；随后由 alive 决定是否继续调度。
-  if (buy && buy.ok) {
-    var bought = buy.data && buy.data.shoppingCarBuy;
-    var confirmed = hasBuyReceipt(bought);
-    // 跨午夜旧回执不能压制新一天：仅当发包前锚点仍等于当前下一日界才落账。
-    if (gameData.nextDailyResetTs(gameData.serverTime()) !== next) {
-      log.debug('shopping-cart buy confirmed after midnight; old day ledger discarded.');
-      return 1000;
-    }
-    // ok 即视为成交：每项每天只允许一批，宁可少买也不重复买。
-    markSold(plan.entries, next);
-    if (confirmed) {
+  if (!buy || !buy.ok) {
+    var bCode = buy ? buy.code : CODE_NOT_SENT;
+    if (bCode !== CODE_NOT_SENT) {
+      // 业务拒绝 = 什么都没买：服务端计数没动，下一轮按新余额重算，本地无需任何补偿。
       log.info(
-        'shopping-cart exchange confirmed: items=%d; continue same-day replan.',
-        plan.entries.length,
+        'cmd 4203 buy rejected; nothing exchanged. code=%s reason=%s',
+        bCode,
+        (buy && buy.reason) || '-',
       );
-      return aliveFn() ? AFTER_BUY_RECHECK_MS : 0;
+      return clampToDay(idleDelay(), next);
     }
-    log.warn('cmd 4203 ok but no actual purchased detail/reward; batch held, re-query soon.');
-    return aliveFn() ? TRANSIENT_RETRY_MS : 0;
+    log.warn('cmd 4203 transient not-sent/in-flight/unknown; re-query before any retry.');
+    return clampToDay(TRANSIENT_RETRY_MS, next);
   }
-  if (buyCode !== CODE_NOT_SENT) {
-    // 业务拒绝 = 什么都没买：不记账，余额/时序变化后仍可补买。
-    log.info(
-      'cmd 4203 buy rejected; no marks. code=%s reason=%s',
-      buyCode,
-      (buy && buy.reason) || '-',
+  if (gameData.nextDailyResetTs(gameData.serverTime()) !== next) {
+    log.debug('cmd 4203 ok after midnight; receipt belongs to yesterday, re-scan next round.');
+    return 1000;
+  }
+  var receipt = cartFromBuy(buy.data);
+  if (!receipt) {
+    // 没带全量购物车快照就无从判进展：不动退避档，5 秒后回读 4204 由服务端计数定性。
+    log.warn(
+      'cmd 4203 ok without shopPurchasedInfo snapshot (items=%d); re-query soon.',
+      plan.entries.length,
     );
-    return aliveFn() ? IDLE_TICK_MS : 0;
+    return clampToDay(AFTER_BUY_RECHECK_MS, next);
   }
-  log.warn('cmd 4203 transient not-sent/in-flight/unknown; re-query before any retry.');
-  return aliveFn() ? TRANSIENT_RETRY_MS : 0;
+  if (purchasedTotal(receipt) > total) {
+    // 只有服务端计数真涨了才算成交：退避回首档、乒乓计数清零。
+    stall = 0;
+    idleStep = 0;
+  } else {
+    // 服务端说成功、已买计数却没涨：不认账；连踩几轮就转退避，别 5 秒一次打乒乓。
+    stall++;
+    if (stall >= MAX_STALL_ROUNDS) {
+      log.warn(
+        'cmd 4203 ok but purchasedBuyNum unchanged for %d rounds; back off instead of re-querying.',
+        stall,
+      );
+      return clampToDay(idleDelay(), next);
+    }
+  }
+  var after = planShoppingCart(receipt);
+  lastPlan = after;
+  publishStatus();
+  log.info(
+    'cmd 4203 exchange confirmed: sent=%d partial=%d; still owing pending=%d.',
+    plan.planned,
+    plan.partial,
+    after.pending,
+  );
+  if (!after.shopData.length) return settle(after, next);
+  // 还有欠账（多为服务端只成交了一部分）：余额要等推送落地，5 秒后重查 4204 再规划。
+  return clampToDay(AFTER_BUY_RECHECK_MS, next);
+}
+
+/**
+ * 本轮无包可发的收尾择时：全了结就睡到日界，还欠则按退避等余额。
+ * @param {object} plan 最近一轮规划
+ * @param {number} next 本轮锚定的下一日界绝对秒
+ * @returns {number} 毫秒
+ */
+function settle(plan, next) {
+  if (!plan.items) {
+    log.debug('shopping-cart empty on server; sleep to next day boundary.');
+    return sleepToTs(next);
+  }
+  if (!plan.pending) {
+    log.debug(
+      'shopping-cart nothing left today (done=%d capped=%d skipped=%d); sleep to next day boundary.',
+      plan.done,
+      plan.capped,
+      plan.skipped,
+    );
+    return sleepToTs(next);
+  }
+  log.debug(
+    'shopping-cart still owing %d item(s) (done=%d capped=%d); wait for balance.',
+    plan.pending,
+    plan.done,
+    plan.capped,
+  );
+  return clampToDay(idleDelay(), next);
 }
 
 const cycle = createCycle({ log: log, alive: aliveFn, run: cycleRun, fallback: IDLE_TICK_MS });
@@ -383,22 +357,30 @@ function install(ctx) {
 /** @param {object} ctx reactor 上下文 */
 function run(ctx) {
   ctxRef = ctx;
-  resetDay();
-  stateLoad = loadState();
+  lastPlan = null;
+  lastText = '';
+  idleStep = 0;
+  stall = 0;
+  anchorTs = 0;
   log.info('started.');
   cycle.kick();
 }
 
 /**
- * 面板状态文案：今日已兑换 / 已兑换 N 项 / 等待兑换 N 项 / 等待兑换。
+ * 面板状态文案：额度类统一「已完成 x/y」口径（core/daily-stats.dailyText 收口），
+ * 分子 = 服务端已买够数的项 + 被限购天花板压住的项（今日都无需再动）。
  * @returns {string}
  */
 function statusText() {
-  var now = gameData.serverTime();
-  if (dayDone && ledgerResetTs > 0 && now > 0 && now < ledgerResetTs) return '今日已兑换';
-  if (soldSet.size > 0) return '已兑换 ' + soldSet.size + ' 项，等待补买';
-  if (lastPlan && lastPlan.items > 0) return '等待兑换 ' + lastPlan.items + ' 项';
-  return '等待兑换';
+  var plan = lastPlan;
+  if (!plan) return '等待检测';
+  if (!plan.items) return '购物车为空';
+  var settled = plan.done + plan.capped;
+  if (settled >= plan.items) return '今日已完成';
+  var text = dailyText(settled, plan.items);
+  if (plan.pending) text += '，' + plan.pending + ' 项等余额';
+  if (plan.skipped) text += '（' + plan.skipped + ' 项不代兑）';
+  return text;
 }
 
 reactor.register({
@@ -425,14 +407,12 @@ reactor.register({
   run: run,
 });
 
-export { cycleRun, planShoppingCart, install as installForTest };
-/** 单测专用：复位在飞态与台账，不 kick cycle。 */
+export { cycleRun, planShoppingCart, install as installForTest, statusText };
+/** 单测专用：复位在飞态与择时状态（本 feat 已无落盘台账）。 */
 export function resetForTest() {
-  resetDay();
-  stateLoad = null;
-}
-/** 单测专用：发起台账回读。 */
-export function loadStateForTest() {
-  stateLoad = loadState();
-  return stateLoad;
+  lastPlan = null;
+  lastText = '';
+  idleStep = 0;
+  stall = 0;
+  anchorTs = 0;
 }

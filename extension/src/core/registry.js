@@ -365,6 +365,40 @@ export async function migrateLegacyKeys(uid) {
 }
 
 /**
+ * 已无读取方的 data blob 孤儿键（UID 命名空间下）：启动时清一次。
+ * 只登记「全仓 grep 确认新代码零引用」的键——留着不是无害，data blob 每次写入都是整块
+ * read-modify-write，这些死键会一直被连带搬来搬去，而且后来者无从判断它们还有没有用。
+ * 购物车：旧构建的本地当日台账（收敛已改成只看 4204 应答的 purchasedBuyNum）。
+ * @type {string[]}
+ */
+const ORPHAN_DATA_KEYS = ['shoppingCart.day', 'shoppingCart.resolved'];
+
+/**
+ * 抹掉孤儿数据键：先读后删（不存在就不碰盘，免得为一块空 blob 白写一次）。
+ * 删失败静默降级：新口径从不读这些键，残留只多占点空间，不影响任何功能。
+ * @returns {Promise<void>}
+ */
+export async function dropOrphanDataKeys() {
+  let dropped = 0;
+  for (const key of ORPHAN_DATA_KEYS) {
+    let val;
+    try {
+      val = await storage.data.get(key);
+    } catch (e) {
+      val = undefined;
+    }
+    if (val === undefined) continue;
+    try {
+      await storage.data.remove(key);
+      dropped++;
+    } catch (e) {
+      /* 删不掉就留给下次启动 */
+    }
+  }
+  if (dropped) log.info('orphan data keys dropped (count=%d)', dropped);
+}
+
+/**
  * 已声明的配置键集合：defaults 键 ∪ 面板 fields[].key ∪ 元键（enabled/intentEnabled）。
  * strictConfig 功能读盘时用于剔除历史残留键。_v 是版本元键，单独处理不入内存 config。
  * @param {object} f descriptor

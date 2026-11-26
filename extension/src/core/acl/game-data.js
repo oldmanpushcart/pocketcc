@@ -182,14 +182,39 @@ const SHOPPING_CART_TABLES = {
   6: 'ISLAND_SHOP',
   7: 'MINING',
   12: 'csb_shop',
+  13: 'ALLIANCE_SHOP',
   14: 'recovery_shop',
   16: 'behemoth_shop',
 };
 
 /**
+ * 联盟商店折扣（万分比，只读）：游戏 AllianceShopData.getDiscount = 1e4 ×
+ * Buff.getBuffPercentValue(BuffType.AllianceDiscount)，再由 AllianceShopItemData.getBuyCommodityPrice
+ * 折进 price_shop 并向下取整。折扣本身是联盟 buff，不依赖联盟商店面板是否拉过数据。
+ * Buff 门面缺失/符号漂移返回 null：调用方必须 fail-closed——按原价误判余额会比少兑一项更糟。
+ * @returns {number|null} 万分比折扣（0 = 无折扣，属合法读数）；null = 读不到
+ */
+function allianceDiscountBps() {
+  var u = userData();
+  var B = u && u.Buff;
+  if (!B || typeof B.getBuffPercentValue !== 'function') return null;
+  var gd = probe(SYM.modules.gameDefine, () => ns(game.get(SYM.modules.gameDefine)));
+  var buffType = gd && gd.BuffType && gd.BuffType.AllianceDiscount;
+  if (!Number.isFinite(Number(buffType))) return null;
+  var pct;
+  try {
+    pct = Number(B.getBuffPercentValue(buffType));
+  } catch (e) {
+    return null;
+  }
+  return Number.isFinite(pct) ? 1e4 * pct : null;
+}
+
+/**
  * 把购物车 4204 应答归一成纯规划输入；配置、货币、限购知识只留在 ACL。
- * 不调用游戏 Update/init 方法，也不暴露 UserData 私有引用。type=13 联盟商城价格/限购由
- * AllianceShopItemData 动态计算，缺少完整只读投影时 fail-closed 跳过，不能按静态价误兑。
+ * 不调用游戏 Update/init 方法，也不暴露 UserData 私有引用。type=13 联盟商店按游戏口径取
+ * 「限购商品 + buff 折扣价」：非限购商品游戏一键同样不买（getBuyLimit 回 -99），折扣读不到则
+ * fail-closed 跳过，不能按原价误兑。
  * @param {*} singleShopData pbAck.shoppingCarInfo.singleShopData
  * @returns {{items:Array<object>, skipped:Array<object>}|null} null=应答缺数组；items 保持游戏 Map 遍历顺序
  */
@@ -225,22 +250,14 @@ function normalizeShoppingCart(singleShopData) {
       var row = rows[j];
       var productId = bits.int64Str(row && row.productId);
       if (!productId) continue;
-      if (shopType === 13) {
-        skipped.push({
-          shopType: shopType,
-          productId: productId,
-          reason: 'dynamic-alliance-price',
-        });
-        continue;
-      }
       var table = SHOPPING_CART_TABLES[shopType];
       var cfg = table ? l10n.tableRow(table, productId) : null;
       if (!cfg) {
         skipped.push({ shopType: shopType, productId: productId, reason: 'shop-config-missing' });
         continue;
       }
-      // ShoppingCurrencyType 与 FinancialCenterTabType 不同：2/3 都是 Gold(1)，4/5/6/12 分别为 2/3/5/4。
-      var currencyType = { 2: 1, 3: 1, 4: 2, 5: 3, 6: 5, 12: 4 }[shopType] || 0;
+      // ShoppingCurrencyType 与 FinancialCenterTabType 不同：2/3 都是 Gold(1)，4/5/6/12 分别为 2/3/5/4，13 为 Honor(7)。
+      var currencyType = { 2: 1, 3: 1, 4: 2, 5: 3, 6: 5, 12: 4, 13: 7 }[shopType] || 0;
       var currencyId = 0;
       var price = Number(cfg.price_shop) || 0;
       var limit = Number(cfg.buy_limit);
@@ -265,6 +282,32 @@ function normalizeShoppingCart(singleShopData) {
             price = Number(pair[1]) || 0;
           }
         }
+      } else if (shopType === 13) {
+        // 联盟商店只读口径：限购额度取 timeBuyLimit 第二段（与 buy_limit 二选一，同 AllianceShopItemData）；
+        // 非限购商品游戏一键同样不买（getBuyLimit 回 -99 → 余量恒负），这里直接归入 skipped 留痕。
+        var allianceTimeLimit = cfg.timeBuyLimit ? String(cfg.timeBuyLimit).split(',') : [];
+        if (!(Number(cfg.buy_limit) > 0) && !allianceTimeLimit.length) {
+          skipped.push({
+            shopType: shopType,
+            productId: productId,
+            reason: 'alliance-not-limit-commodity',
+          });
+          continue;
+        }
+        limit = allianceTimeLimit.length
+          ? Number(allianceTimeLimit[1]) || 0
+          : Number(cfg.buy_limit);
+        var discountBps = allianceDiscountBps();
+        if (discountBps == null) {
+          skipped.push({
+            shopType: shopType,
+            productId: productId,
+            reason: 'alliance-discount-unavailable',
+          });
+          continue;
+        }
+        // 逐字复刻 getBuyCommodityPrice 的算式与取整方向，保证面板价与规划价同源。
+        price = discountBps > 0 ? Math.floor(price - price * (discountBps / 1e4)) : price;
       } else if ((shopType === 2 || shopType === 3) && productId === '13') {
         // 游戏 ItemShopCollect/VipShopCollect 对 shopId=13 叠加 ShopBuyGold buff。
         var gd = probe(SYM.modules.gameDefine, () => ns(game.get(SYM.modules.gameDefine)));
