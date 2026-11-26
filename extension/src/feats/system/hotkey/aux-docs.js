@@ -18,5 +18,5 @@ doc({ id: 'toggleCombat', display: 'F8', label: '日常 ↔ 战斗模式', where
 doc({ id: 'chatOverlay', display: 'Ctrl+K', label: '聊天浮层开关', where: '全域' });
 doc({ id: 'mapOverlay', display: 'Ctrl+M', label: '全局地图浮层开关', where: '全域' });
 doc({ id: 'jumpOverlay', display: 'Ctrl+G', label: '镜头跳转浮层开关', where: '全域' });
-doc({ id: 'quickAttack', display: '1-8', label: '快捷出征/增援', where: '大世界' });
-doc({ id: 'quickAttackTriple', display: 'Shift+1-8', label: '一键三连', where: '大世界' });
+doc({ id: 'quickAttack', display: '1-8', label: '快捷出征/增援', where: '基地/大世界' });
+doc({ id: 'quickAttackTriple', display: 'Shift+1-8', label: '一键三连', where: '基地/大世界' });

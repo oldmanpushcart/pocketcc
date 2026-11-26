@@ -5,15 +5,18 @@
  * 用键盘快捷键点击面板上的原生按钮（等价用户点击，不改写游戏数据）：
  *   [1]-[8]  点击 presetList 的第 1~8 个预设队伍按钮；
  *   [G]      点击 BattlePanel.button 出征按钮。
- * 面板节点路径（相对场景根）：
- *   NWorldMap/UICanvas/PopLayer/NBattleMain/ui/BattlePanel[/Bottom/New Layout/presetList/<i>] [/button]
+ * 面板节点路径（相对场景根，基地城市与大世界同构）：
+ *   UICanvas/PopLayer/NBattleMain/ui/BattlePanel[/Bottom/New Layout/presetList/<i>] [/button]
+ * UICanvas 是游戏 UIManager 的持久根节点（cc.game.addPersistRootNode），切场景后挂到当前场景根下，
+ * 故 Home / NWorldMap 两个场景的段名链一致——基地里排兵（上卡车、出征等）同一面板同样命中。
  *
  * 「仅面板在场才生效」用面板节点 activeInHierarchy 实时判定（面板是动态 prefab，hook 其组件类不稳）：
  * 面板不在场 / 目标节点缺失时 handler 返回 false（不消费），按键透传给游戏与「快捷战斗」(quick-attack，
  * 目标弹窗上用 1-8 直发 902)——注册表 window 捕获先于 quick-attack 的 document 捕获，命中面板消费即拦截。
  *
- * 打字让位 / 修饰键放行 / 场景门控（scenes:['NWorldMap']，对齐旧 ctx.alive() 早退）/ preventDefault 由
- * core/hotkeys.js 注册表统一处理；本文件只声明「绑定（含自定义 match 解 1-8/G）+ 动作」。
+ * 打字让位 / 修饰键放行 / 场景门控（scenes:['NWorldMap','Home']，面板是持久 UICanvas 下的弹窗，
+ * 只在这两张主场景出现）/ preventDefault 由 core/hotkeys.js 注册表统一处理；本文件只声明
+ * 「绑定（含自定义 match 解 1-8/G）+ 动作」。
  * 属「战斗辅助」，战斗模式下照常生效（热键层不受 mode 门控）。
  */
 import { createLog } from '../../../core/log.js';
@@ -22,8 +25,8 @@ import { bind } from '../../../core/hotkeys.js';
 /** @type {ReturnType<createLog>} 模块日志器（tag=BATTLE_HOTKEY） */
 const log = createLog('BATTLE_HOTKEY');
 
-/** @type {string[]} 场景根到 BattlePanel 的段名链 */
-const PANEL_PATH = ['NWorldMap', 'UICanvas', 'PopLayer', 'NBattleMain', 'ui', 'BattlePanel'];
+/** @type {string[]} 场景根到 BattlePanel 的段名链（UICanvas 是持久节点，Home/NWorldMap 同构） */
+const PANEL_PATH = ['UICanvas', 'PopLayer', 'NBattleMain', 'ui', 'BattlePanel'];
 /** @type {string[]} BattlePanel 下预设列表容器的段名链（末级子节点按索引取） */
 const PRESET_LIST_PATH = ['Bottom', 'New Layout', 'presetList'];
 /** @type {string[]} BattlePanel 下出征按钮节点名 */
@@ -53,17 +56,15 @@ function resolveNode(root, segments) {
 
 /**
  * 取在场且激活的 BattlePanel 节点；面板未加载/未激活返回 null。
- * 场景根（cc.director.getScene()）本身的 name 即 "NWorldMap"（scene-watcher 门控同源），
- * 故用户路径的 "cc.Scene.NWorldMap" 里 cc.Scene 是引擎根对象、NWorldMap 是场景节点：
- * 若首段等于场景名则从场景子级续解（去掉首段），否则整条按子节点解析（兜底场景内确有同名子节点）。
+ * 从场景根（cc.director.getScene()）直接按子级解析：UICanvas 是持久根节点，
+ * 每次切场景都被引擎挂到当前场景根下（runSceneImmediate 的 persist root 迁移），
+ * 所以基地（Home）与大世界（NWorldMap）共用同一条段名链。
  * @returns {object|null}
  */
 function activePanel() {
   var scene = cc.director.getScene();
   if (!scene) return null;
-  var segs = scene.name === PANEL_PATH[0] ? PANEL_PATH.slice(1) : PANEL_PATH;
-  var panel = resolveNode(scene, segs);
-  if (!panel) panel = resolveNode(scene, PANEL_PATH);
+  var panel = resolveNode(scene, PANEL_PATH);
   if (!panel || panel.activeInHierarchy === false) return null;
   return panel;
 }
@@ -223,7 +224,7 @@ bind({
   match: match,
   display: '1-8/G',
   label: '战斗面板 预设/出征',
-  where: '大世界',
-  scenes: ['NWorldMap'],
+  where: '基地/大世界',
+  scenes: ['NWorldMap', 'Home'],
   handler: handler,
 });

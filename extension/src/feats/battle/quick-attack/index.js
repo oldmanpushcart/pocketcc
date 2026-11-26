@@ -18,7 +18,8 @@
  * 依赖游戏运行时只「读 + 发包」，不调任何 Update/Delete 改写类方法（遵守 feat 只读+发包约束）。
  * 部分场景带面板态前置闸（spec.gate，按键瞬间只读复查）：游戏自己会拦的（如夺宝飞船「今日次数已用完」）
  * 不白发包，命中即一行 info 收摊，不发 902。
- * 门控（B 档，可行性报告 §7.2）：places:['world']（NWorldMap 场景）+ kinds:['homeland','wushuang','kvk']——跨服战场图里
+ * 门控（B 档，可行性报告 §7.2）：places:['base','world']（Home/NWorldMap 场景）+ kinds:['homeland','wushuang','kvk']——
+ * 基地内同样放行（面板卡片不置灰、在基地打开目标面板/从聊天链接跳到目标时同样可发兵）；跨服战场图里
  * 照样要打（marchApi.resolve 已按战场换算 marchType），秘境由 world 门的 kind===pab 隔离自动拦、征服者球体/盟决不在场。
  * 属「战斗设置」：快捷战斗只在目标面板开着时按快捷键才发一波，是战斗时的手动辅助，
  * 故不声明 offInCombat（与日常行军自动化相反：战斗模式下仍照常生效）。挂钩对称可还原，功能停用即摘净。
@@ -648,11 +649,17 @@ var ctxRef = null;
  */
 var cfg = buildModuleCfg();
 
-/** @type {Object<string,object|null>} spec.cls -> 解析到的面板类（install 时填充；解析失败为 null，跳过该场景不阻断其它） */
+/** @type {Object<string,object|null>} spec.cls -> 解析到的面板类（首次解析失败为 null，hookSpec 惰性重解析） */
 var classOf = {};
 
 /** @type {Map<string,Array<function():void>>} spec.cls -> 该面板当前已挂的还原函数数组（onShow/onDisable）；非空即已 hook */
 var hooks = new Map();
+
+/** @type {number} 面板类缺失时的重试周期（毫秒）：世界地图子包可能晚于启用时机加载 */
+const CLASS_RETRY_MS = 5000;
+
+/** @type {number} 类重试托管定时器句柄（ctx.setInterval；-1=未启动；挂满即自停） */
+var retryTimer = -1;
 
 /** @type {{spec:object, comp:object, target:object}|null} 当前在场面板；一次只展示一个，故单引用 */
 var activePanel = null;
@@ -784,13 +791,20 @@ function wrapProto(proto, name, after) {
 
 /**
  * 挂一个场景的面板钩子（幂等：已 hook 的 cls 跳过）。
+ * 面板类首次解析不到不阻断（典型：基地里首次启用时世界地图子包尚未加载）：
+ * 保留 classOf=null，由 retryHooks 在运行期周期重试，挂满即停。
  * @param {object} spec 场景定义
  */
 function hookSpec(spec) {
   if (hooks.has(spec.cls)) return;
   var Klass = classOf[spec.cls];
+  if (!Klass) {
+    var mod = game.get(spec.cls);
+    Klass = (mod && mod.default) || null;
+    classOf[spec.cls] = Klass;
+  }
   if (!Klass || !Klass.prototype) {
-    log.warn('panel class unavailable, skip hook. cls=%s', spec.cls);
+    log.debug('panel class not loaded yet. cls=%s', spec.cls);
     return;
   }
   var proto = Klass.prototype;
@@ -803,6 +817,32 @@ function hookSpec(spec) {
     }),
   ];
   hooks.set(spec.cls, restores);
+}
+
+/**
+ * 重试挂载尚未就绪的面板类；全部挂满（hooks 数 == 注册表条数）即停掉定时器。
+ */
+function retryHooks() {
+  if (!aliveFn()) return;
+  QUICK_ATTACK_TARGETS.forEach(hookSpec);
+  if (hooks.size >= QUICK_ATTACK_TARGETS.length) stopClassRetry();
+}
+
+/**
+ * 启动类重试轮询（幂等；托管定时器，pause 自动清，句柄复位由 stopClassRetry 负责）。
+ */
+function startClassRetry() {
+  if (retryTimer >= 0 || !ctxRef) return;
+  retryTimer = ctxRef.setInterval(retryHooks, CLASS_RETRY_MS);
+}
+
+/**
+ * 停止类重试轮询并复位句柄（resume 后 run 重新评估是否再启）。
+ */
+function stopClassRetry() {
+  if (retryTimer < 0) return;
+  if (ctxRef) ctxRef.clearInterval(retryTimer);
+  retryTimer = -1;
 }
 
 /**
@@ -1225,7 +1265,9 @@ function install(ctx) {
   QUICK_ATTACK_TARGETS.forEach(function (spec) {
     var mod = game.get(spec.cls);
     classOf[spec.cls] = (mod && mod.default) || null;
-    if (!classOf[spec.cls]) log.warn('panel class not found. cls=%s', spec.cls);
+    // 类未加载属可预期时序（基地内首次启用时世界地图子包未就绪），不记 warn；
+    // run 里未挂满会启动 retryHooks 周期重试，挂满后 hooks.size 体现真实可hook 数。
+    if (!classOf[spec.cls]) log.debug('panel class not loaded yet. cls=%s', spec.cls);
   });
 
   if (missing.length) {
@@ -1249,6 +1291,8 @@ function run(ctx) {
   activePanel = null;
   detachKey();
   QUICK_ATTACK_TARGETS.forEach(hookSpec);
+  // 未挂满（面板类晚加载 / 首启在基地）：启动周期重试，进世界地图子包就绪后自动补齐，挂满即停。
+  if (hooks.size < QUICK_ATTACK_TARGETS.length) startClassRetry();
   // 相位 D（部队一开始返程就归位待机皮）的订阅是 feat 自持的 march.onStateChange，不在 reactor 触发器清单里：
   //   run 挂（arm 内部先摘再挂，resume 重跑不会重复注册）、pause 摘。
   armSkinSwap(swapHost());
@@ -1270,6 +1314,7 @@ function run(ctx) {
  */
 function pause() {
   disarmSkinSwap();
+  stopClassRetry();
 }
 
 // ── 面板 descriptor（「城皮切换」区段）───────────────────────────────────
@@ -1343,7 +1388,8 @@ const SKIN_SWAP_FIELDS = [
 ];
 
 /**
- * 向 reactor 注册本功能说明书：places:['world'] + kinds:['homeland','wushuang','kvk']（B 档），不声明 offInCombat（战斗设置本就是战斗时的手动辅助）。
+ * 向 reactor 注册本功能说明书：places:['base','world'] + kinds:['homeland','wushuang','kvk']（B 档，基地与大世界都放行），
+ * 不声明 offInCombat（战斗设置本就是战斗时的手动辅助）。
  */
 reactor.register({
   id: 'quickAttack',
@@ -1360,9 +1406,10 @@ reactor.register({
     'marchStorage',
   ],
   // B 档（可行性报告 §7.2）：本服/无双峡谷/天梯战场图都要能快捷攻击；秘境由 world 门 kind===pab 隔离、
-  // 征服者球体（place=sphere）与盟决（adp_war）不在本表放行范围。
+  // 征服者球体（place=sphere）与盟决（adp_war）不在本表放行范围。base 放行：基地内卡片不置灰，
+  // 基地里打开目标面板时同样可用（世界地图面板类晚加载由 retryHooks 惰性补齐）。
   kinds: ['homeland', 'wushuang', 'kvk'],
-  places: ['world'],
+  places: ['base', 'world'],
   // 战斗设置类：不声明 offInCombat，战斗模式下依然生效（快捷战斗本就是战斗时的手动辅）
   defaults: {
     enabled: false,
