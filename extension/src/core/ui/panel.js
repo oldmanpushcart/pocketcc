@@ -11,6 +11,7 @@ import { escAttr, findFieldDescriptor } from './dom.js';
 import { cardHead, buildFieldsHTML, refreshFieldBox } from './fields.js';
 import { getTypeModule, assembleTypeModules, syncTypeModules } from './field-types/index.js';
 import { assembleCtx } from './field-types/ctx.js';
+import { availabilityOf } from './availability.js';
 
 /**
  * 左 TAB 的活动闸门注册表：menu.js 类别节点的 `gate` 名 -> 判据（返回假则该 TAB 不可点）。
@@ -527,6 +528,24 @@ export function refreshTabGates(panel) {
   if (!activeDisabled) return;
   const fallback = panel.querySelector('.pc-tab:not([disabled])');
   if (fallback) activateTab(panel, fallback.dataset.tab);
+}
+
+/**
+ * 重算功能卡片 / 组内子项的可用性：当前跑不起来的 feat 整卡置灰，悬停 title 说明原因。
+ * 判据口径见 ui/availability.js（feat 自有 available + world/mode 门控同源镜像）。
+ * **纯视觉提示，不禁用任何控件**：活动没开也可以先启用、先把参数配好，活动开启后自动生效
+ * （reactor 侧的 world/mode 门控与 feat 自身运行期闸门照常把关，提前启用不会越权发写请求）。
+ * 行级定位优先 `.pc-row`（组内子项），否则回退 `.pc-sec`（独立功能卡）。
+ * @param {Element} panel 面板根
+ */
+export function refreshFeatureAvailability(panel) {
+  panel.querySelectorAll('.pc-en').forEach((cb) => {
+    const a = availabilityOf(findFeature(cb.dataset.id));
+    const host = cb.closest('.pc-row') || cb.closest('.pc-sec');
+    if (!host) return;
+    host.classList.toggle('pc-off', a.off);
+    host.title = a.off ? `${a.reason}（仍可启用并提前配置，开启后自动生效）` : '';
+  });
 }
 
 /**

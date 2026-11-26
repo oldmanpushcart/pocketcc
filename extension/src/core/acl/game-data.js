@@ -1269,6 +1269,38 @@ export const gameData = {
     }
   },
   /**
+   * 活动是否开启（只读）：ActivityController.Instance.getActivityList() 里找匹配项，并用 checkActivityIsOpen(id) 复核在期。
+   * 口径与活动型 feat 自己的筛法同源（海上夺宝/重装母舰按 showUiType、领域寻宝按 type）；只读，不调任何 send/update 方法。
+   * 面板可用性（core/ui/availability.js）经 feat 的 spec.available 消费本方法做「活动未开启 → 置灰」。
+   * @param {'showUiType'|'type'} field 活动对象的匹配字段
+   * @param {string|number} value 字段期望值
+   * @returns {boolean|null} true=有在期活动 / false=明确没有 / null=控制器或方法缺失（无从判定，调用方按放行处理）
+   */
+  activityIsOpen(field, value) {
+    var ctrl = probe('ActivityController.Instance', () => {
+      var m = game.get('ActivityController');
+      return (m && m.ActivityController && m.ActivityController.Instance) || null;
+    });
+    if (
+      !ctrl ||
+      typeof ctrl.getActivityList !== 'function' ||
+      typeof ctrl.checkActivityIsOpen !== 'function'
+    ) {
+      return null;
+    }
+    try {
+      var list = ctrl.getActivityList();
+      if (!Array.isArray(list)) return null;
+      for (var i = 0; i < list.length; i++) {
+        var a = list[i];
+        if (a && a[field] === value && ctrl.checkActivityIsOpen(a.id) === true) return true;
+      }
+      return false;
+    } catch (e) {
+      return null;
+    }
+  },
+  /**
    * 异能兽培育玩法开启闸只读查询（源码锚点 RealEnigmaBeastController 的 isOpenFunc(BeastOpenType.BREED, false)）：
    *   FunctionOn(enigma_beast_breeding) && openState ≥ BeastServerStatus.BREED —— suppressTips 传 false，纯查询不弹提示。
    * 「活动未开始/未解锁」时服务器对 1570/1582/1583/1585 干脆不回包（15s 超时），调用方据此整轮闭嘴；

@@ -717,6 +717,8 @@ reactor.register({
   // 发现腿走 2111 全分区快照（活动面板/内存即可得）⇒ 不必身处冰原图，base/world 皆可自动打（用户①）
   places: ['base', 'world'],
   kinds: ['homeland'],
+  // 面板可用性：活动未开启时整卡置灰（只影响面板观感，运行期仍由 run 内的活动闸把关）
+  available: () => (gameData.cq26IsOpen() ? true : { ok: false, reason: 'CQ26 印石活动未开启' }),
   // 2125 占一个行军队列名额、动用真实空闲兵力（虽不发 902 行军包），语义同派兵类玩法 → 战斗模式强制下线
   offInCombat: true,
   defaults: buildDefaults(),

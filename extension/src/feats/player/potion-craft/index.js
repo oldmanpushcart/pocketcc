@@ -873,6 +873,10 @@ reactor.register({
   symbols: ['dataCenter', 'tableManager', 'tableName', 'gameDefine'],
   places: ['base', 'world'],
   kinds: ['homeland'],
+  // 面板可用性：功能位未开启时整卡置灰（functionOn 读不到按未开处理，与 feat 自身的 functionOpen 同口径）
+  available: function () {
+    return functionOpen() ? true : { ok: false, reason: '制药功能未开启' };
+  },
   offInCombat: true,
   defaults: { enabled: false, formula: 0 },
   fields: [

@@ -1412,6 +1412,10 @@ reactor.register({
   ],
   places: ['base', 'world'],
   kinds: ['homeland'],
+  // 面板可用性：培育玩法未开放时整卡置灰（beastBreedOpen 为 boolean：控制器未就绪也算未开放）
+  available: function () {
+    return gameData.beastBreedOpen() ? true : { ok: false, reason: '异能兽培育玩法未开放' };
+  },
   offInCombat: true,
   defaults: {
     enabled: false,

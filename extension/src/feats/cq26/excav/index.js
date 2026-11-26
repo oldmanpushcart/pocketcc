@@ -512,6 +512,8 @@ reactor.register({
   symbols: ['dataCenter', 'cq26NeutralCtrl?'],
   places: ['base', 'world'],
   kinds: ['homeland'],
+  // 面板可用性：活动未开启时整卡置灰（只影响面板观感，运行期仍由 run 内的活动闸把关）
+  available: () => (gameData.cq26IsOpen() ? true : { ok: false, reason: 'CQ26 印石活动未开启' }),
   // 发掘不派兵、不占行军名额（marchType 332 为幽灵行军，实测 856 列表零命中），战斗态无需下线
   offInCombat: false,
   defaults: buildDefaults(),

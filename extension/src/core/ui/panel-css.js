@@ -107,6 +107,9 @@ export const PANEL_CSS = `
     .pc-sec.open > .pc-sec-head .pc-chev{transform:rotate(90deg);}
     .pc-sec-title{flex:1;font-weight:600;font-size:13px;}
     .pc-en,.pc-gen{width:16px;height:16px;cursor:pointer;flex:0 0 auto;}
+    /* 当前跑不起来的功能（活动未开 / 场景不适用 / 战斗模式停用）：整卡置灰提示；
+       纯视觉，不禁用控件——活动没开也能先启用、先把参数配好，开启后自动生效 */
+    .pc-sec.pc-off,.pc-row.pc-off{opacity:.5;}
     /* 窄视口（320px）下面板收窄，固定列数据表 min-content 会超出卡片：body 横向可滚使被裁控件仍可达（1.4.10 二维表豁免，但须可滚达） */
     .pc-sec-body{padding:4px 12px 10px;overflow-x:auto;overscroll-behavior-x:contain;}
     .pc-sec-body[hidden]{display:none;}

@@ -704,6 +704,8 @@ reactor.register({
   // 与 cq26 家族同口径：靠 22007 push + 902 定向出网，不依赖人真站在印石图里
   places: ['base', 'world'],
   kinds: ['homeland'],
+  // 面板可用性：活动未开启时整卡置灰（只影响面板观感，运行期仍由 run 内的活动闸把关）
+  available: () => (gameData.cq26IsOpen() ? true : { ok: false, reason: 'CQ26 印石活动未开启' }),
   // 306 部队数秒到家（报文实证 15 秒）、不长期占用行军队列 ⇒ 无需战斗模式强制下线
   //   （与 mammoth「驻防真实占队列 ⇒ offInCombat:true」的口径差异正来自这条实录）
   offInCombat: false,

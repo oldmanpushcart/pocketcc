@@ -1636,6 +1636,8 @@ reactor.register({
   ],
   places: ['base', 'world'],
   kinds: ['homeland'],
+  // 面板可用性：活动未开启时整卡置灰（只影响面板观感，运行期仍由 run 内的活动闸把关）
+  available: () => (gameData.cq26IsOpen() ? true : { ok: false, reason: 'CQ26 印石活动未开启' }),
   offInCombat: true,
   defaults: buildDefaults(),
   fields: buildFields(),

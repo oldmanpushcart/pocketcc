@@ -76,29 +76,28 @@ function subscribeGameEvents() {
  *   仍保持纯判据，本层的 pab 隔离是门控策略、不下沉 world-state（热键层不经此闸门、不需要这道拦）。
  */
 function installGates() {
-  reactor.registerGate({
-    id: 'world',
-    /**
-     * world 门控判定：Kind × Place，并对秘境态做隔离收口。
-     * @param {object} spec 功能注册说明书
-     * @returns {boolean} 是否放行
-     */
-    ok: function (spec) {
-      const st = worldState.current();
-      if (st.kind === worldState.KIND.pab) {
-        // 秘境隔离：仅显式把 'pab' 写进 kinds 且 places 也放行的 feat 才过（不放行组名间接含 pab 的 'cross'）
-        return (
-          Array.isArray(spec.kinds) &&
-          spec.kinds.indexOf(worldState.KIND.pab) !== -1 &&
-          worldState.matchesPlace(spec.places, st.place)
-        );
-      }
-      return (
-        worldState.matchesKind(spec.kinds, st.kind) &&
-        worldState.matchesPlace(spec.places, st.place)
-      );
-    },
-  });
+  reactor.registerGate({ id: 'world', ok: worldAllows });
+}
+
+/**
+ * world 门控纯判据：Kind × Place，并对秘境态做隔离收口。
+ * reactor 门控与面板可用性（core/ui/availability.js）共用本函数，避免「门控拦了但面板不灰」两套口径。
+ * @param {object} spec 功能注册说明书
+ * @returns {boolean} 是否放行
+ */
+export function worldAllows(spec) {
+  const st = worldState.current();
+  if (st.kind === worldState.KIND.pab) {
+    // 秘境隔离：仅显式把 'pab' 写进 kinds 且 places 也放行的 feat 才过（不放行组名间接含 pab 的 'cross'）
+    return (
+      Array.isArray(spec.kinds) &&
+      spec.kinds.indexOf(worldState.KIND.pab) !== -1 &&
+      worldState.matchesPlace(spec.places, st.place)
+    );
+  }
+  return (
+    worldState.matchesKind(spec.kinds, st.kind) && worldState.matchesPlace(spec.places, st.place)
+  );
 }
 
 /**

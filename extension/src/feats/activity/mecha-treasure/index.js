@@ -583,6 +583,12 @@ reactor.register({
   symbols: ['activityController', 'dataCenter?'],
   places: ['base', 'world'],
   kinds: ['homeland'],
+  // 面板可用性：活动不在期时整卡置灰（null=控制器未就绪无从判定，按可用放行，不误灰）
+  available: function () {
+    return gameData.activityIsOpen('showUiType', SHOW_UI_TYPE_MECHA_TREASURE) === false
+      ? { ok: false, reason: '重装母舰活动未开启' }
+      : true;
+  },
   offInCombat: true,
   // 面板仅出启用开关 + 一行只读当日到账进度（inlineStatus）；扫描/攻打间隔均为 cfg 内置常量。
   defaults: { enabled: false },

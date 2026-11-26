@@ -19,6 +19,7 @@ import {
   buildUpdateBanner,
   refreshFieldVisibility,
   refreshTabGates,
+  refreshFeatureAvailability,
   refreshTexts,
   rerenderFeatureCard,
   rerenderUpdateSys,
@@ -90,11 +91,13 @@ export async function mountUI() {
   wirePanel(panel);
   refreshFieldVisibility(panel); // 条件字段（fd.showIf）初始态：按当前配置把不该出现的行收起
   refreshTabGates(panel); // 活动型 TAB（CQ26印石）初始可点态；游戏符号未就绪时下面开面板还会再核一次
+  refreshFeatureAvailability(panel); // 功能卡片/子项的可用性（场景/战斗模式/活动闸）初始置灰态
 
   // 战斗模式复选框随模式广播同步（含下面的 F8 热键切换，避免图标翻了但面板未跟着变）
   bus.on(EVT.MODE_CHANGE, () => {
     const cb = panel.querySelector('#pc-combat');
     if (cb) cb.checked = isCombat();
+    if (!panel.hidden) refreshFeatureAvailability(panel); // 战斗态翻转会暂停 offInCombat 功能，卡片跟着置灰
   });
 
   // 世界态胶囊：展示当前 Kind(场景)·Place(地图)。world.change 只在四维翻转才广播（常驻 2s 兜底轮询本就在跑，
@@ -109,6 +112,10 @@ export async function mountUI() {
   }
   renderWorldStatus();
   bus.on(EVT.WORLD_CHANGE, renderWorldStatus);
+  // 世界态翻转同时改变 feat 的可用性（场景/地图不匹配即被 world 门控暂停），面板开着就地重算置灰态
+  bus.on(EVT.WORLD_CHANGE, () => {
+    if (!panel.hidden) refreshFeatureAvailability(panel);
+  });
 
   // 钻石胶囊：纯本地读（余额 + 背包钻石道具货值），零网络请求。数值变化无广播源，
   // 故展开期间 2s 轻刷（与世界态兜底轮询同频），收起零轮询；展开/世界态翻转时立即现读兜底。
@@ -197,6 +204,7 @@ export async function mountUI() {
     if (panel.hidden) return;
     refreshTexts(panel);
     refreshTabGates(panel); // 功能侧推面板时顺带核一次活动闸门（cq26 家族任何一拍 pokePanel 都能把 TAB 灰/亮带回实时态）
+    refreshFeatureAvailability(panel); // 活动开/关也常由功能侧 pokePanel 播报，卡片置灰态同拍跟上
   });
 
   let pos = await readIconPos();
@@ -265,6 +273,7 @@ export async function mountUI() {
     flushRebuild(); // 收起期间播报过的行集变化，此时才真能重渲染（展开本身不动 DOM 结构）
     refreshTexts(panel);
     refreshTabGates(panel); // 活动开/退常在面板收起期间发生，展开时按实时判据回算左 TAB 可点态
+    refreshFeatureAvailability(panel); // 同上：收起期间场景/战斗态/活动闸可能已翻，展开时补核卡片置灰态
     renderWorldStatus(); // 展开时再核一次世界态（订阅已常驻，此处兜住极早期 world.change 先于挂订阅的窗口）
     renderDiamonds();
     // 升级读数向后台现要一次（4h 一轮的 alarms 之间面板可能已开着）；回执经镜像广播 → renderUpdateUI 自动跟上

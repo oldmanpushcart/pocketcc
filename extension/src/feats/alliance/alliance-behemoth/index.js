@@ -358,6 +358,11 @@ reactor.register({
   symbols: ['dataCenter', 'gameDefine', 'tableManager'],
   places: ['base', 'world'],
   kinds: ['homeland'],
+  // 面板可用性：未入盟/联盟巨兽未开启时置灰；快照为 null（UserData/Alliance 不可用=无从判定）按可用放行
+  available: function () {
+    var bh = gameData.allianceBehemoth();
+    return bh && bh.open === false ? { ok: false, reason: '未加入联盟或联盟巨兽未开启' } : true;
+  },
   offInCombat: false,
   defaults: { enabled: false },
   fields: [

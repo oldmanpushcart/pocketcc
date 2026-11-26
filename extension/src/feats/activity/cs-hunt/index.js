@@ -505,6 +505,11 @@ reactor.register({
   ],
   places: ['base', 'world'],
   kinds: ['homeland'],
+  // 面板可用性：控制器不在场（未进玩法子包/活动未开）或不在开赛期（ctrl.open≠1）时整卡置灰
+  available: function () {
+    if (!csHunt.present()) return { ok: false, reason: '夺宝奇兵尚未开放' };
+    return csHunt.openFlag() === 1 ? true : { ok: false, reason: '夺宝奇兵当前未在开赛期' };
+  },
   offInCombat: true, // 出征由 7519 满编行军承载，战斗演出模式让位（与发射井/打野同侧）
   defaults: {
     enabled: false,

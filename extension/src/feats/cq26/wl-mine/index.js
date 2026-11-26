@@ -1479,6 +1479,8 @@ reactor.register({
   //   服务器是否校验「视野/房间归属」未实证（零拒绝样本）；首跑若出现稳定 code≠0 即收紧到「须在冰原图内」。
   places: ['base', 'world'],
   kinds: ['homeland'],
+  // 面板可用性：活动未开启时整卡置灰（只影响面板观感，运行期仍由 run 内的活动闸把关）
+  available: () => (gameData.cq26IsOpen() ? true : { ok: false, reason: 'CQ26 印石活动未开启' }),
   // 采集腿派兵占行军队列，战斗模式必须下线（同 auto-farm 一族口径）
   offInCombat: true,
   defaults: buildDefaults(),

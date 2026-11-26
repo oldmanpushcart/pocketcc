@@ -898,6 +898,8 @@ reactor.register({
   //   未实证（零拒绝样本），首跑若出现稳定 code≠0 即回灌 ACL §3.1 并把本 feat 收紧到「须在冰原图内」。
   places: ['base', 'world'],
   kinds: ['homeland'],
+  // 面板可用性：活动未开启时整卡置灰（只影响面板观感，运行期仍由 run 内的活动闸把关）
+  available: () => (gameData.cq26IsOpen() ? true : { ok: false, reason: 'CQ26 印石活动未开启' }),
   // 开箱不派兵、不占行军名额（328 是纯表演行军，实测 11s 连开 5 箱），战斗态无需下线
   offInCombat: false,
   defaults: buildDefaults(),

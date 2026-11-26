@@ -148,9 +148,12 @@ bus.on(EVT.WORLD_CHANGE, recomputeAll);
  *   但除 enabled 以外的面板字段会永远停在默认值（下方加载期 warn 点名）。
  * symbols：本功能依赖的游戏 bundle 符号（能力语义名，解析表见 core/game-api.js CAPS；'?' 后缀=软依赖），
  * setConfig 首次 install 前由框架统一校验，缺则不跑 install 直接记安装失败。
- * @param {object} spec { id, label, storageKey, defaults, toModuleCfg, fields?, kinds?, places?, symbols?, install?(ctx), configure?(cfg), run?(ctx), pause?(ctx) }
+ * @param {object} spec { id, label, storageKey, defaults, toModuleCfg, fields?, kinds?, places?, symbols?, available?, install?(ctx), configure?(cfg), run?(ctx), pause?(ctx) }
  *   // 配置字段演化（由 core/registry.js 消费，均可缺省）：version?:number 当前配置版本号；
  *   // migrate?:(cfg,fromVersion)=>cfg 旧版落后时的迁移纯函数；strictConfig?:boolean 读盘剔除未声明的历史残留键。
+ *   // available?:()=>boolean|{ok:boolean,reason?:string} feat 自有可用性闸（活动未开/玩法未开放等），
+ *   //   仅供面板置灰提示（core/ui/availability.js 消费），不禁用启用开关与参数编辑、不参与 reactor 启停——
+ *   //   用户可提前启用并配好参数，运行期闸门仍由 run/install 自己把关，活动开启后自动生效。
  */
 function register(spec) {
   if (!spec || typeof spec.id !== 'string') {

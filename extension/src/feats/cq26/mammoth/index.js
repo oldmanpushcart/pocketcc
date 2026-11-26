@@ -853,6 +853,8 @@ reactor.register({
   // 与 cq26 家族同口径：靠 2171 权威读 + 902 定向出网，不依赖人真站在印石图里
   places: ['base', 'world'],
   kinds: ['homeland'],
+  // 面板可用性：活动未开启时整卡置灰（只影响面板观感，运行期仍由 run 内的活动闸把关）
+  available: () => (gameData.cq26IsOpen() ? true : { ok: false, reason: 'CQ26 印石活动未开启' }),
   // 驻防真实占用行军队列 ⇒ 战斗模式强制下线（同 wl-mine 采集腿口径）
   offInCombat: true,
   defaults: buildDefaults(),

@@ -36,6 +36,7 @@ reactor.register({
   id, label, storageKey, defaults,      // 必填（label/storageKey/defaults 是面板 descriptor 的一部分，缺则拒绝注册）
   fields?, toModuleCfg?,                // 面板字段与配置换算（registry 消费）
   kinds?, places?, symbols?,            // 门控与安装前依赖自检
+  available?() -> boolean|{ok,reason},  // feat 自有可用性闸（活动未开等）：纯视觉置灰提示，不禁用启用/参数，不参与启停
   install?(ctx) -> boolean|void,        // 返回 false 视为安装失败
   configure?(cfg), run?(ctx), pause?(ctx),
   // 配置字段演化（由 registry 消费，均可缺省）：version? / migrate?(cfg, fromVersion) / strictConfig?
