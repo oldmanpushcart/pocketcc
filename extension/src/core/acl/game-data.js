@@ -395,7 +395,7 @@ export const gameData = {
   },
   /**
    * 按 ID 查一张计时月卡（只读，timeCards 的字符串精确匹配）。
-   * @param {number|string} cardId 商店档位 ID（如高级月卡 15001、广告月卡 5003）
+   * @param {number|string} cardId 商店档位 ID（如当前计时月卡 5003）
    * @returns {{cardId:string, endTime:number, nextRewardTime:number}|null}
    */
   monthlyCard(cardId) {

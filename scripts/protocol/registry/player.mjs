@@ -123,9 +123,9 @@ export default [
   {
     cmd: 750,
     dir: 'C2S',
-    note: '领取计时月卡当日礼包（V1 send；公开客户端 PrefabMonthlyAdvanceCard 源码）',
-    src: 'game-source Script bundle: PrefabMonthlyAdvanceCard.monthlyCardGetRewardBtnClick',
-    fields: 'req {cardId:number}；resp d=JSON 串（游戏回调 JSON_PARSE）',
+    note: '领取当前至尊月卡当日礼包（V1 send；公开客户端 PrefabMonthlyCardNewCell 源码）',
+    src: '公开 H5 源码 subpack2.5c3c4.js：PrefabMonthlyCardNewCell.monthlyCardGetRewardBtnClick；Script bundle：MONTHLYCARD_SHIT_ID_NEW=5003',
+    fields: 'req {cardId:number}（当前至尊月卡 5003）；resp d=JSON 串（游戏回调 JSON_PARSE）',
     usages: [
       {
         name: 'CMD_GET_TIMECARD_REWARD',
@@ -580,34 +580,6 @@ export default [
     ],
   },
   {
-    cmd: 1660,
-    dir: 'C2S',
-    note: '沙盘演习旧版普通挑战；由真实战斗 UI 生成当前阵容载荷',
-    src: '公开 H5 源码 subpack2.5c3c4.js：RealNBattleModel.start_ARENA_PVE_BATTLE',
-    fields: 'armyListNew,heroList,type,challenge,formation,formationV2,extraArmy?',
-    usages: [
-      {
-        name: 'CMD_SANDBOX_FIGHT',
-        feat: 'sandbox-drill',
-        file: 'feats/player/sandbox-drill/constants.js',
-      },
-    ],
-  },
-  {
-    cmd: 1661,
-    dir: 'C2S',
-    note: '沙盘演习剩余次数查询；time 为服务器权威余额',
-    src: '公开 H5 源码 script.f8db6.js/subpack.2b335.js：ARENA_PVE_MAIN_REQUEST',
-    fields: '{} → {time,type,...}',
-    usages: [
-      {
-        name: 'CMD_SANDBOX_INFO',
-        feat: 'sandbox-drill',
-        file: 'feats/player/sandbox-drill/constants.js',
-      },
-    ],
-  },
-  {
     cmd: 1752,
     dir: 'C2S',
     note: '拉城市皮肤技能冷却数据（{} → d.skinSkills[]）',
@@ -660,20 +632,6 @@ export default [
         name: 'CMD_VIP_DAY_REWARD',
         feat: 'vip-daily-gift',
         file: 'feats/player/vip-daily-gift/constants.js',
-      },
-    ],
-  },
-  {
-    cmd: 3223,
-    dir: 'C2S',
-    note: '沙盘演习新版普通挑战；由真实战斗 UI 生成当前阵容载荷',
-    src: '公开 H5 源码 subpack2.5c3c4.js：NBATTLE_ARENA_PVE_NEW',
-    fields: 'armyListNew,heroList,type,challenge,formation,formationV2,extraArmy?',
-    usages: [
-      {
-        name: 'CMD_SANDBOX_FIGHT_NEW',
-        feat: 'sandbox-drill',
-        file: 'feats/player/sandbox-drill/constants.js',
       },
     ],
   },

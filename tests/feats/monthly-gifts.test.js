@@ -52,8 +52,7 @@ const orig = {
 
 const DAY_START = 1794585600; // 2026-11-14 00:00:00 服务器秒（UTC+8）
 const NOW = DAY_START + 300;
-const ADVANCE = { cardId: '15001', endTime: DAY_START + 30 * 86400, nextRewardTime: DAY_START };
-const AD_CARD = { cardId: '5003', endTime: DAY_START + 30 * 86400, nextRewardTime: 0 };
+const MONTHLY_CARD = { cardId: '5003', endTime: DAY_START + 30 * 86400, nextRewardTime: DAY_START };
 const ROWS = [
   { id: 1, times: 2, cd: 60, level: 1 },
   { id: 2, times: 1, cd: 600, level: 1 },
@@ -121,7 +120,7 @@ function cappedInfo() {
 beforeEach(() => {
   applyStubs();
   now = NOW;
-  cards = { 15001: { ...ADVANCE }, 5003: { ...AD_CARD } };
+  cards = { 5003: { ...MONTHLY_CARD } };
   sent = [];
   stampMap = new Map();
   alive = true;
@@ -179,16 +178,47 @@ test('面板集成：四个新功能均已注册且挂入对应菜单分组', ()
 test('至尊月卡：active+ready 发送 750/{cardId}，成功落日戳后同日不重发', async () => {
   const delay = await monthly.cycleRun();
   assert.ok(delay > 0);
-  assert.deepEqual(sent, [{ cmd: 750, data: { cardId: 15001 }, protocol: 'send' }]);
+  assert.deepEqual(sent, [{ cmd: 750, data: { cardId: 5003 }, protocol: 'send' }]);
+  assert.equal(stampMap.get('monthlyCard.resolved').cardId, 5003);
   await monthly.cycleRun();
   assert.equal(sent.length, 1);
 });
 
+test('至尊月卡：空/畸形成功回执不落日戳，20 秒后重试', async () => {
+  respond = () => ({ ok: true, code: 0, data: '{}' });
+  assert.equal(await monthly.cycleRun(), 20000);
+  assert.equal(stampMap.size, 0);
+  respond = () => ({ ok: true, code: 0, data: 'not-json' });
+  assert.equal(await monthly.cycleRun(), 20000);
+  assert.equal(stampMap.size, 0);
+  respond = () => ({ ok: true, code: 0, data: JSON.stringify({ reward: {} }) });
+  await monthly.cycleRun();
+  assert.equal(sent.length, 3);
+  assert.equal(stampMap.get('monthlyCard.resolved').claimed, true);
+});
+
+test('至尊月卡：旧 cardId 或缺失 cardId 的日戳不抑制当前 5003 领取', async () => {
+  const legacyStamps = [
+    { resetTs: nextReset(), cardId: 15001, claimed: true },
+    { resetTs: nextReset(), claimed: true },
+  ];
+  for (const legacy of legacyStamps) {
+    monthly.resetForTest();
+    stampMap.set('monthlyCard.resolved', legacy);
+    await monthly.loadStampForTest();
+    await monthly.cycleRun();
+  }
+  assert.deepEqual(
+    sent.map((item) => item.data),
+    [{ cardId: 5003 }, { cardId: 5003 }],
+  );
+});
+
 test('至尊月卡：过期或 nextRewardTime 未到都不发包', async () => {
-  cards['15001'].endTime = now;
+  cards['5003'].endTime = now;
   assert.ok((await monthly.cycleRun()) > 0);
-  cards['15001'].endTime = now + 86400;
-  cards['15001'].nextRewardTime = now + 60;
+  cards['5003'].endTime = now + 86400;
+  cards['5003'].nextRewardTime = now + 60;
   assert.ok((await monthly.cycleRun()) > 0);
   assert.equal(sent.length, 0);
 });
@@ -210,7 +240,7 @@ test('至尊月卡：真正业务拒绝落日戳，避免当天反复敲门', as
 });
 
 test('至尊月卡：刷新后回读今日日戳可抑制首拍发包', async () => {
-  stampMap.set('monthlyCard.resolved', { resetTs: nextReset(), claimed: true });
+  stampMap.set('monthlyCard.resolved', { resetTs: nextReset(), cardId: 5003, claimed: true });
   await monthly.loadStampForTest();
   await monthly.cycleRun();
   assert.equal(sent.length, 0);
@@ -219,7 +249,7 @@ test('至尊月卡：刷新后回读今日日戳可抑制首拍发包', async ()
 test('至尊月卡：跨日日戳自动解禁', async () => {
   await monthly.cycleRun();
   now = nextReset() + 120;
-  cards['15001'].nextRewardTime = now - 10;
+  cards['5003'].nextRewardTime = now - 10;
   await monthly.cycleRun();
   assert.equal(sent.length, 2);
 });
@@ -255,7 +285,7 @@ test('至尊月卡：成功回执跨午夜时旧日戳不压制次日领取', as
   respond = (cmd) => {
     if (cmd === 750) {
       now = roundReset + 120;
-      cards['15001'].nextRewardTime = now - 10;
+      cards['5003'].nextRewardTime = now - 10;
     }
     return { ok: true, code: 0, data: JSON.stringify({ reward: {} }) };
   };

@@ -61,7 +61,6 @@ import './feats/player/daily-deal/index.js';
 import './feats/player/shopping-cart/index.js';
 import './feats/player/vip-daily-gift/index.js';
 import './feats/player/decoration-free-gift/index.js';
-import './feats/player/sandbox-drill/index.js';
 import './feats/player/birthday-bless/index.js';
 import './feats/battle/quick-attack/index.js';
 import './feats/battle/imperial-decree/index.js';

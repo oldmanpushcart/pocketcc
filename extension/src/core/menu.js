@@ -78,7 +78,6 @@ export const MENU = [
             label: '每周免费套装金币',
             inlineStatus: true,
           },
-          { id: 'sandboxDrill', kind: 'feature', label: '沙盘演习每日挑战', inlineStatus: true },
           { id: 'birthdayBless', kind: 'feature', label: '生日祝福', inlineStatus: true },
         ],
       },

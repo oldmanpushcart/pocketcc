@@ -1,9 +1,9 @@
 /**
- * 至尊月卡每日礼包（高级计时月卡，reactor 说明书形态，玩家基础设置，单链）
+ * 至尊月卡每日礼包（当前新版计时月卡，reactor 说明书形态，玩家基础设置，单链）
  *
  * 状态与协议（公开游戏客户端源码；未做账号登录抓包）：
  *   UserData.TimeCards 由 UserData.updateTimeCards 维护，元素含 cardId/endTime/nextRewardTime。
- *   PrefabMonthlyAdvanceCard._advanceShitId=15001；游戏仅在 ServerTime<endTime 且
+ *   ExchangeController.MONTHLYCARD_SHIT_ID_NEW=5003；游戏仅在 ServerTime<endTime 且
  *   ServerTime>nextRewardTime 时显示领取按钮，点击发送：
  *     750 GET_TIMECARD_REWARD，V1 send，载荷 {cardId} → 应答 d 为 JSON 串（游戏回调 JSON_PARSE(resp.d)）。
  *   本功能只发免费领取请求，不购买月卡、不调用游戏 Update/回写、不 OpenUI。
@@ -24,7 +24,7 @@ import { dailyText } from '../../../core/daily-stats.js';
 import { storage } from '../../../core/storage.js';
 import { bus, EVT } from '../../../core/bus.js';
 
-import { CARD_ID_ADVANCE, CMD_GET_TIMECARD_REWARD } from './constants.js';
+import { CARD_ID_MONTHLY, CMD_GET_TIMECARD_REWARD } from './constants.js';
 
 /** @type {ReturnType<createLog>} 模块日志器 */
 const log = createLog('MONTHLY-CARD');
@@ -75,7 +75,16 @@ function sleepToTs(untilTs) {
 }
 
 /**
- * 直发 750 领取高级月卡当日礼包；V1 应答 data 可能是 JSON 串。永不 reject。
+ * 游戏 UI 只在 JSON_PARSE(e.d) 得到非空对象后展示奖励；空对象/空串不构成领取凭证。
+ * @param {*} d 已解析的 750 应答业务体
+ * @returns {boolean}
+ */
+function hasRewardPayload(d) {
+  return !!d && typeof d === 'object' && !Array.isArray(d) && Object.keys(d).length > 0;
+}
+
+/**
+ * 直发 750 领取当前至尊月卡当日礼包；V1 应答 data 可能是 JSON 串。永不 reject。
  * @returns {Promise<{ok:boolean, code:number, claimed:boolean, reason?:string}>}
  */
 async function claimOnce() {
@@ -83,7 +92,7 @@ async function claimOnce() {
   var ret = await net.sendGuarded(
     CMD_GET_TIMECARD_REWARD,
     // 商店档位是已知小整数；ACL 用字符串精确匹配，这里保持游戏 UI 的数值载荷形态。
-    { cardId: CARD_ID_ADVANCE },
+    { cardId: CARD_ID_MONTHLY },
     {
       protocol: 'send',
       onError: function (err) {
@@ -100,8 +109,9 @@ async function claimOnce() {
     };
   }
   var d = parseData(ret.data);
-  if (!d) log.warn('cmd 750 claimed but reward payload is malformed; suppress same-day retry.');
-  return { ok: true, claimed: true, code: 0 };
+  var claimed = hasRewardPayload(d);
+  if (!claimed) log.warn('cmd 750 ok but reward payload is empty; retry soon.');
+  return { ok: true, claimed: claimed, code: 0 };
 }
 
 /**
@@ -122,9 +132,9 @@ async function cycleRun() {
     return sleepToTs(resolvedResetTs);
   }
   claimedToday = false;
-  var card = gameData.monthlyCard(CARD_ID_ADVANCE);
+  var card = gameData.monthlyCard(CARD_ID_MONTHLY);
   if (!card || now >= card.endTime) {
-    log.debug('cmd 750 skipped: cardId=%d inactive or expired.', CARD_ID_ADVANCE);
+    log.debug('cmd 750 skipped: cardId=%d inactive or expired.', CARD_ID_MONTHLY);
     return IDLE_TICK_MS;
   }
   if (now <= card.nextRewardTime) {
@@ -143,6 +153,11 @@ async function cycleRun() {
   if (!ret.ok && ret.code === CODE_NOT_SENT) {
     if (!roundAlive(signal)) return 0;
     log.warn('cmd 750 transient (not sent/in-flight), retry soon.');
+    return TRANSIENT_RETRY_MS;
+  }
+  if (ret.ok && !ret.claimed) {
+    if (!roundAlive(signal)) return 0;
+    log.warn('cmd 750 ok but no reward payload; do not mark today resolved.');
     return TRANSIENT_RETRY_MS;
   }
   resolvedResetTs = roundResetTs;
@@ -174,10 +189,12 @@ function loadStamp() {
     .then(function (v) {
       var ts = Number(v && v.resetTs) || 0;
       var now = gameData.serverTime();
-      if (ts > now && now > 0) {
+      if (ts > now && now > 0 && String(v && v.cardId) === String(CARD_ID_MONTHLY)) {
         resolvedResetTs = ts;
         claimedToday = !!(v && v.claimed);
         bus.emit(EVT.UI_REFRESH);
+      } else if (ts > now && now > 0) {
+        log.debug('cmd 750 ignored day-stamp from another cardId=%s.', v && v.cardId);
       }
     })
     .catch(function (err) {
@@ -191,7 +208,11 @@ function loadStamp() {
  */
 function saveStamp(claimed) {
   storage.data
-    .set(STAMP_KEY, { resetTs: resolvedResetTs, claimed: !!claimed })
+    .set(STAMP_KEY, {
+      resetTs: resolvedResetTs,
+      cardId: CARD_ID_MONTHLY,
+      claimed: !!claimed,
+    })
     .catch(function (err) {
       log.warn('monthly-card day-stamp save failed: %s', err && err.message);
     });
@@ -244,7 +265,7 @@ reactor.register({
       label: '今日',
       get: function () {
         var now = gameData.serverTime();
-        var card = gameData.monthlyCard(CARD_ID_ADVANCE);
+        var card = gameData.monthlyCard(CARD_ID_MONTHLY);
         if (!now || !card || now >= card.endTime) return '未生效';
         if (claimedToday || now <= card.nextRewardTime) return dailyText(1, 1);
         return dailyText(0, 1);
