@@ -133,22 +133,26 @@ afterEach(() => {
 
 // ---------- 纯规划 ----------
 
-test('纯规划：道具商店整店 + 无界商品都是搭车项，不单独触发', () => {
+test('纯规划：道具商店整店与无界商品都按天买一次，不单独排除', () => {
   const onlyShop2 = planShoppingCart({
     items: [item({ shopType: 2, productId: 'a', buyLimit: 5 })],
     skipped: [],
   });
   assert.equal(onlyShop2.riders, 1);
-  assert.equal(onlyShop2.trigger, false);
-  assert.equal(onlyShop2.driverSeen, 0);
+  assert.equal(onlyShop2.drivers, 0);
+  assert.deepEqual(onlyShop2.shopData, [
+    { shopType: 2, productData: [{ productId: 'a', buyNum: 3 }] },
+  ]);
 
   const onlyUnbounded = planShoppingCart({
     items: [item({ shopType: 3, productId: 'b', buyLimit: -1 })],
     skipped: [],
   });
   assert.equal(onlyUnbounded.riders, 1);
-  assert.equal(onlyUnbounded.trigger, false);
-  assert.equal(onlyUnbounded.driverSeen, 0);
+  assert.equal(onlyUnbounded.drivers, 0);
+  assert.deepEqual(onlyUnbounded.shopData, [
+    { shopType: 3, productData: [{ productId: 'b', buyNum: 3 }] },
+  ]);
 });
 
 test('纯规划：驱动项 + 搭车项同批，驱动组在前；搭车项不抢同货币额度', () => {
@@ -166,8 +170,8 @@ test('纯规划：驱动项 + 搭车项同批，驱动组在前；搭车项不�
   assert.equal(plan.drivers, 1);
   assert.equal(plan.riders, 0);
   assert.equal(plan.driverPending, 0);
+  assert.equal(plan.riderPending, 1);
   assert.equal(plan.insufficient, 1);
-  assert.equal(plan.trigger, true);
 });
 
 test('纯规划：限购余量、chooseNum 与逐项余额扣减', () => {
@@ -289,8 +293,56 @@ test('首轮买不起的驱动项：余额增长后同日补买，全部成交�
   assert.equal(stored.get(DAY_KEY).done, true);
 });
 
-test('只有搭车项可买：不发 4203、不落日戳、15 分钟后重看', async () => {
+test('只有搭车项可买：当天买一次后落日戳，下一拍不再发包', async () => {
   normalized = { items: [rider()], skipped: [] };
+  respond = (cmd) => (cmd === 4204 ? okCart(normalized.items) : okBuy(2, 'rose'));
+  assert.equal(await cartFeat.cycleRun(), 5000);
+  assert.deepEqual(
+    sent.map((s) => s.cmd),
+    [4204, 4203],
+  );
+  assert.deepEqual(stored.get(DAY_KEY).sold, { '2:rose': 1 });
+  assert.equal(stored.get(DAY_KEY).done, false);
+  sent = [];
+  assert.ok((await cartFeat.cycleRun()) > 0);
+  assert.deepEqual(
+    sent.map((s) => s.cmd),
+    [4204],
+  );
+  assert.equal(stored.get(DAY_KEY).done, true);
+});
+
+test('搭车项先成交后，驱动项补买批次不再带上它', async () => {
+  normalized = {
+    items: [rider(), item({ productId: 'vip', balance: 0, currencyKey: '2:0' })],
+    skipped: [],
+  };
+  respond = (cmd) => (cmd === 4204 ? okCart(normalized.items) : okBuy(2, 'rose'));
+  assert.equal(await cartFeat.cycleRun(), 5000);
+  assert.deepEqual(sent[1].data.shoppingCarBuy.shopData, [
+    { shopType: 2, productData: [{ productId: 'rose', buyNum: 1 }] },
+  ]);
+  normalized = {
+    items: [rider(), item({ productId: 'vip', balance: 100, currencyKey: '2:0' })],
+    skipped: [],
+  };
+  sent = [];
+  respond = (cmd) => (cmd === 4204 ? okCart(normalized.items) : okBuy(3, 'vip'));
+  assert.equal(await cartFeat.cycleRun(), 5000);
+  assert.deepEqual(sent[1].data.shoppingCarBuy.shopData, [
+    { shopType: 3, productData: [{ productId: 'vip', buyNum: 3 }] },
+  ]);
+  sent = [];
+  assert.ok((await cartFeat.cycleRun()) > 0);
+  assert.deepEqual(
+    sent.map((s) => s.cmd),
+    [4204],
+  );
+  assert.equal(stored.get(DAY_KEY).done, true);
+});
+
+test('搭车项买不起：不发 4203、不落日戳，等余额增长', async () => {
+  normalized = { items: [rider({ balance: 9 })], skipped: [] };
   assert.equal(await cartFeat.cycleRun(), 15 * 60 * 1000);
   assert.deepEqual(
     sent.map((s) => s.cmd),

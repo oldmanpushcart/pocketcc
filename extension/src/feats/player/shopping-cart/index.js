@@ -13,12 +13,10 @@
  * 按序扣减；ACL 只读投影配置和货币，无法可靠定价的联盟动态商品 fail-closed 跳过。
  *
  * 触发与日戳语义（与游戏「一键购买全量购物车」不同）：
- *   道具商店（shopType=2）不限购/千次限购货架（玫瑰等）只作搭车项，必须有至少一个驱动项
- *   同时买得起才发 4203；只有搭车项可买时不发包、不落日戳、15 分钟后重看。
- *   每项每天最多成交一批（当日台账 `shopType:productId`），因此当日余额增长后的补买轮次
- *   不会把玫瑰等无界商品重复带上；首轮买不起的驱动项会在后续巡检中补买。
- *   日戳只在「今日无待购驱动项」时落：空车、驱动项全部成交/达限购；仅剩未成交搭车项也视为
- *   今天不可能再触发。台账按 UID 隔离并带 resetTs，跨日自动作废。
+ *   购物车里每一项每天最多成交一批（当日台账 `shopType:productId`）：道具商店（shopType=2）整店与
+ *   无界商品每天都主动买一次，但排在驱动项之后扣减/下发，买过即不再带；驱动项买不起时继续巡检等余额。
+ *   日戳只在「今日没有可买、也没有待补的项」时落：空车、全部成交或全部达限购。台账按 UID 隔离并带
+ *   resetTs，跨日自动作废。
  *
  * 合规：不 OpenUI、不调用游戏 Update、不涉及任何真钱/充值分支；全程 base/world 常态本服可运行。
  */
@@ -292,36 +290,29 @@ async function cycleRun() {
       finishDay(next);
       return sleepToTs(next);
     }
-    if (plan.driverSeen > 0 && plan.driverPending === 0) {
+    if (plan.driverPending + plan.riderPending === 0) {
       log.debug(
-        'shopping-cart drivers all sold/limit-exhausted (sold=%d exhausted=%d); mark today resolved.',
+        'shopping-cart all items settled (sold=%d exhausted=%d); mark today resolved.',
         plan.sold,
         plan.exhausted,
       );
       finishDay(next);
       return sleepToTs(next);
     }
-    if (plan.driverSeen === 0) {
-      log.debug(
-        'shopping-cart only rider (shopType=2/unbounded) items in cart; wait for cart changes.',
-      );
-      return IDLE_TICK_MS;
-    }
     log.debug(
-      'shopping-cart no affordable driver: exhausted=%d insufficient=%d pending=%d sold=%d; retry later.',
+      'shopping-cart nothing affordable yet: exhausted=%d sold=%d driverPending=%d riderPending=%d; retry later.',
       plan.exhausted,
-      plan.insufficient,
-      plan.driverPending,
       plan.sold,
+      plan.driverPending,
+      plan.riderPending,
     );
     return IDLE_TICK_MS;
   }
-  if (!plan.trigger) {
+  if (plan.drivers === 0) {
     log.debug(
-      'shopping-cart only riders affordable (%d); not enough to trigger a buy.',
-      plan.riders,
+      'shopping-cart no affordable driver this round (driverSeen=%d); buy rider items once for today.',
+      plan.driverSeen,
     );
-    return IDLE_TICK_MS;
   }
 
   // 写请求前再次核验激活代次和日界，避免在飞暂停恢复/跨日应答后继续兑换。
@@ -406,14 +397,14 @@ function run(ctx) {
 }
 
 /**
- * 面板状态文案：今日已兑换 / 已兑换 N 项 / 仅有道具商店商品 / 等待兑换。
+ * 面板状态文案：今日已兑换 / 已兑换 N 项 / 等待购买 / 等待兑换。
  * @returns {string}
  */
 function statusText() {
   var now = gameData.serverTime();
   if (dayDone && ledgerResetTs > 0 && now > 0 && now < ledgerResetTs) return '今日已兑换';
   if (soldSet.size > 0) return '已兑换 ' + soldSet.size + ' 项，等待补买';
-  if (lastPlan && lastPlan.items > 0 && lastPlan.driverSeen === 0) return '仅有道具商店商品';
+  if (lastPlan && lastPlan.items > 0) return '等待购买 ' + lastPlan.items + ' 项';
   return '等待兑换';
 }
 

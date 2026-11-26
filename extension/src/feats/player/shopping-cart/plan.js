@@ -1,11 +1,11 @@
 /**
  * 购物车一键兑换纯规划器：复刻 ShoppingCollectTools.openOneClickBuyPanel 的数量/限购/余额口径，
- * 但触发语义不同——本玩法要求本轮至少有一个「驱动项」买得起才发 4203。
+ * 但购买节奏不同——调用方维护当日台账，购物车里每一项每天最多成交一批。
  *
  * 驱动项 vs 搭车项：
  * - 搭车项 = 道具商店（SHOP_TYPE_ITEM=2）或 buyLimit=-1 的商品。真机截图实证（2026-11-26 道具商店货架）：
  *   同店混着不限购（玫瑰、麦克风）、每日 1000 次（图纸）与 20 次（金币）三种量级，
- *   数量判据不可用；整店按「不稀缺」处理，只随驱动项同批购买，不足以单独触发。
+ *   数量判据不可用；整店按「不稀缺」处理，但同样每天主动买一次，买过即不再买。
  * - 驱动项 = 其余商品（军级商店周刷新 1~数次、军团/冒险/CSB/海岛/道具币等有限购货架）。
  *
  * 其他有意取舍：
@@ -13,7 +13,7 @@
  *   游戏的 openOneClickBuyPanel 严格按购物车遍历顺序扣减，这里刻意偏离。
  * - sold：调用方按日界维护的「今日已成交」键集合；命中即排除，保证每项每天最多成交一批，
  *   避免当日余额增长后的补买轮次把无界商品重复带上。
- * - 买不起的驱动项计入 driverPending，调用方据此决定「继续巡检等余额」而不是落日戳。
+ * - 买不起的项分别计入 driverPending / riderPending，调用方据此决定「继续巡检等余额」而不是落日戳。
  *
  * @param {{items:Array<object>, skipped?:Array<object>}|null} cart ACL 规划投影
  * @param {{sold?: Set<string>}} [state] 今日已成交键集合（`shopType:productId`）
@@ -22,16 +22,16 @@
  *   affordable: number,
  *   drivers: number,
  *   riders: number,
- *   trigger: boolean,
  *   items: number,
  *   driverSeen: number,
  *   driverPending: number,
+ *   riderPending: number,
  *   insufficient: number,
  *   exhausted: number,
  *   sold: number,
  *   skipped: number,
  *   entries: Array<{key: string, rider: boolean}>,
- * }} shopData 保持「驱动组在前、搭车组在后」的分组序；trigger=本轮是否存在可买驱动项；
+ * }} shopData 保持「驱动组在前、搭车组在后」的分组序，非空即应发包；
  *    entries 是本次写请求将包含的商品键（成交/尝试台账用）
  */
 import { SHOP_TYPE_ITEM } from './constants.js';
@@ -47,6 +47,7 @@ export function shoppingCartKey(item) {
 
 /**
  * 搭车项判定：道具商店整店 + 任何商店的无界（buyLimit=-1）商品。
+ * 搭车项仍每天主动买一次，只是在扣减/下发顺序上让位于驱动项。
  * @param {object} item ACL 投影项
  * @returns {boolean}
  */
@@ -70,10 +71,10 @@ export function planShoppingCart(cart, state) {
     affordable: 0,
     drivers: 0,
     riders: 0,
-    trigger: false,
     items: 0,
     driverSeen: 0,
     driverPending: 0,
+    riderPending: 0,
     insufficient: 0,
     exhausted: 0,
     sold: 0,
@@ -122,7 +123,8 @@ export function planShoppingCart(cart, state) {
       var cost = (Number(item.price) || 0) * qty;
       if (cost > balances[key]) {
         out.insufficient++;
-        if (!bucket[k].rider) out.driverPending++;
+        if (bucket[k].rider) out.riderPending++;
+        else out.driverPending++;
         continue;
       }
       balances[key] -= cost;
@@ -139,6 +141,5 @@ export function planShoppingCart(cart, state) {
       else out.drivers++;
     }
   }
-  out.trigger = out.drivers > 0;
   return out;
 }
