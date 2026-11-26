@@ -4,6 +4,8 @@
  * 世界地图打开目标面板时，用键盘快捷键对面板目标发起行军（902 MARCH_WORLD_POINT）：
  *   [1]-[8]      以对应预设编队单次攻击；
  *   Shift+[1]-[8] 三连：第 1 发该预设，随后 2 发最小出征（Battle.plan().minimal()），次间固定间隔 TRIPLE_INTERVAL_MS。
+ * 一个面板吃两个动作时（钢铁战车「上阵 / 进攻」）不额外占键位：[1]-[8] 仍是预设号，具体发哪个行军类型由
+ * spec.branchOf 按面板态分流，Shift 的三连语义在该场景让位（spec.noTriple），见注册表 xl2 条目。
  *
  * 目标区/坐标来自「方案2」：拦截面板 prototype.onShow，游戏原逻辑填好目标数据后我们读它拷成纯标量存进
  * activePanel（默认读 this[spec.field] 的 tileX/tileY；坐标形状不同时由 spec.read 接管，如遗迹面板只有
@@ -24,8 +26,25 @@
  * marchType 跨服漂移（无双峡谷等跨服战场实测）：注册表里存的是「本服基础值」，发包前经
  * core/game-api.js 的 march.resolve() 按当前战场换算（游戏原生 WorldUtils.dealMarchTypeWithSpecialMarch
  * 优先，符号漂移时降级本地兜底表 MARCH_FALLBACK）——跨服服下直接拿 13 打玩家城会被服务器拒。
+ *
+ * 出征自动切城皮（可选，默认关）：城皮 buff 收敛到 BattleArmyAddNum(153) → 每格出征上限 → 官方重算器算出膨胀兵数，
+ * 而服务器按「发出时刻的上限」收兵、按「到达时刻的皮肤」结算。故面板开启后每满编波走四相位：
+ *   A 预切出征皮（重算器吃到高上限）→ B 902 出征 → C 受理立即切回主战皮（部队带着主战 buff 到达）
+ *   → D 开始返程按面板「待机皮肤」归位（比到家早 6–15s）；协议、RT 实测与全部取舍见同目录 skin-swap.js 头注释（报文实证）。
+ * 三连只有波1 是满编有效战力（走 A→D 并入在途账本），波2/波3 的 minimal 陪次数不切皮；
+ * 未启用/未选皮/两皮相同/皮未拥有 → 整条链短路（一个 855 也不发），行为与开关不存在时逐字节一致。
+ * 节奏（报文实证 dashcam 20261126T025211 / 031109 / 034023 / 035440-城皮切换）：服务器把 855 换皮也计入 902 那条
+ * `march_time_control_info001`（“操作过快”）全局节奏，且是**一条全局时钟**：距上一发被受理的 855 ≤1.863s 的 902 全拒、
+ * ≥2.012s 的全过（15 样本零重叠）。反向：855→855 实测 2.05s / 4.16s 均 ret=0（四场 21 发零被拒），
+ * 即切皮自身并不占用一道独立 CD（客户端那道 133310 CD 只装在 CastleSkinChangeView 里，直发 855 不经它）。
+ * 因此：每波 902 前都要凑满距**任何一相位**最后一发 855
+ * 的 SKIN_MARCH_GAP_MS（不只是本波 A 相——待机归位/在途回切那两发一样占节奏；退避重发也一样再过一道）；三连次间 TRIPLE_INTERVAL_MS；
+ * 两个间隔定档 2000（五场 15 样本按结果分隔干净：≤1.863s 全拒、≥2.012s 全过；探测档 1800 已被 dashcam
+ * 20261126T035440 证伪：since855 1.37/1.82/1.86s 三发全限流）；每波 902 上线时
+ * 把实际间隔记成 `since855` 进日志，日后想再压档直接按「间隔 → 过/拒」对表；仍撞限流 → 同一载荷退避重发（不限流类拒绝依旧“被拒即中止”，不拿空兵白打）；
+ * 本波确定没打出去 → 按待机档归位（revertSkinOnAbort），不让皮整场停在出征皮。
  */
-import { sleep } from '../../../core/util.js';
+import { sleep, parseData } from '../../../core/util.js';
 import { createLog } from '../../../core/log.js';
 import { game } from '../../../core/game.js';
 import { march as marchApi, gameConf, gameData } from '../../../core/game-api.js';
@@ -35,6 +54,20 @@ import { Battle } from '../../../core/battle.js';
 import { march } from '../../../core/march.js';
 
 import { CMD_MARCH_WORLD_POINT } from './constants.js';
+import {
+  IDLE_MODE,
+  SKIN_UNSET,
+  REASON,
+  normalizeSkinSwapCfg,
+  preMarchSwap,
+  afterMarchSwap,
+  restoreIdleSkin,
+  loadOf,
+  arm as armSkinSwap,
+  disarm as disarmSkinSwap,
+  selfHeal as selfHealSkinSwap,
+  msSinceLastSkinSend,
+} from './skin-swap.js';
 
 /**
  * 可攻击面板注册表（可扩展的唯一入口）：新增一个可攻击面板 = 往此数组追加一条 spec，
@@ -46,11 +79,16 @@ import { CMD_MARCH_WORLD_POINT } from './constants.js';
  *           的行军类型兜底值（世界 BOSS 面板一 class 多吃：BOSS_V2→attackV2、宝藏守卫→treasure、联盟机甲→alliance）,
  *         marchMembers 可选：行军类型以游戏 MarchType 枚举成员名为权威源（marchApi.typeOf 运行时取名，
  *           成员名收在 core/game-api.js SYM.marchEnum），marchTypes 数值仅作符号漂移兜底,
- *         gate 可选：按键瞬间的面板态前置闸 (comp)=>string|null，返回串=拒绝原因（不发 902）、null=放行,
+ *         gate 可选：按键瞬间的面板态前置闸 (comp, branch)=>string|null，返回串=拒绝原因（不发 902）、null=放行,
+ *         branchOf 可选：一个面板吃两个动作时（区别不在地块实体类型，而在面板此刻的状态）由它决定本轮走 marchTypes
+ *           的哪个分支键：(comp)=>分支键|null，返回 null=面板没有可做的动作（不发）；缺省走 pickBranch 的实体类型分流,
+ *         noTriple 可选：true 时 Shift+[1-8] 不追加 minimal 波（一键一包、重复打同地块必被游戏自拦的场景）,
+ *         uniqueTarget 可选：true 时每一波上线前查「该地块是否已有本人在途行军」（gate 是同步的，这条要 await march
+ *           快照，故落在 attackFlow 里），命中即中止本串，不发也不切皮,
  *         read 可选：目标适配器 (comp)=>{x,y,siteId?,serverId?,entityType?}|null——面板把坐标存在非 tileInfo
  *           形状时由它接管（见 readSiteTarget：遗迹面板只有 _siteData.X/Y）；缺省读 field 指向的 tileX/tileY };
  * NMarchType 见 WorldMapCommon 的 MarchType 枚举。
- * @type {Array<{key:string, label:string, cls:string, field:string, marchTypes:{attack:number, attackV2?:number, treasure?:number, alliance?:number}, marchMembers?:{attack:string, attackV2?:string, treasure?:string, alliance?:string}, gate?:function(object):(string|null), read?:function(object):(object|null)}>}
+ * @type {Array<{key:string, label:string, cls:string, field:string, marchTypes:object, marchMembers?:object, gate?:function(object,string):(string|null), read?:function(object):(object|null), branchOf?:function(object):string, noTriple?:boolean, uniqueTarget?:boolean}>}
  */
 const QUICK_ATTACK_TARGETS = [
   {
@@ -144,6 +182,26 @@ const QUICK_ATTACK_TARGETS = [
     marchMembers: { attack: 'worldSite' },
     read: readSiteDetailTarget,
     gate: siteGate,
+  },
+  // 钢铁战车（XL2 战区对决）：我方龙与敌方龙共用一个面板 WorldDragonKingDuelPop（subpack2，点地块由
+  // NWorldMapTileClickUtils 开），「上阵」与「进攻」是两个行军类型。两个按钮在游戏 refreshUI 里互斥绘制
+  // （joinBtn 仅「我方龙 + MATCH_DAY」、battleBtn 仅「敌方龙 + FIGHT_DAY」），故 [1]-[8] 由 xl2Branch 看面板态
+  // 分流即可，不需额外键位。载荷已由真人录制逐键对过（dashcam 20261126T050256-钢铁战车 seq=2147，应答成功）：
+  //   marchType=267、armyList===armyListNew（条目只 pos/armyId/armyNum）、break=0、formation=0、
+  //   formationV2=预设军阵号、extraArmy={}、**无 ext 键**；应答为单条行军（9 个兵格共用一个 marchId）。
+  // 268 与 267 同出面板 joinBattleClick → start_SH_FIRST_STAGE_DEFEND，只换行军类型号（未录到，同构外推）；
+  // 269 FAKE_MARCH 是同地块上的系统假行军，勿混。行军类型以游戏 MarchType 成员名为权威源，数值仅漂移兜底。
+  {
+    key: 'xl2',
+    label: '钢铁战车',
+    cls: 'WorldDragonKingDuelPop',
+    field: '_tileInfo',
+    marchTypes: { join: 267, battle: 268 },
+    marchMembers: { join: 'xl2DuelJoin', battle: 'xl2DuelBattle' },
+    branchOf: xl2Branch,
+    gate: xl2Gate,
+    noTriple: true,
+    uniqueTarget: true,
   },
 ];
 
@@ -285,6 +343,59 @@ function csShipGate(comp) {
   var limit = Number(gameConf.dataConfig(CFG_CS_SHIP_ATTACK_LIMIT)) || 0;
   if (limit && (info.fightNum | 0) >= limit) {
     return 'daily-limit ' + (info.fightNum | 0) + '/' + limit;
+  }
+  return null;
+}
+
+/**
+ * 钢铁战车面板的动作分流（spec.branchOf）：同一个 class 靠「我方龙 / 敌方龙」分两个动作，判据直接读面板
+ * 自己算好的 `_isEnemy`（onShow：`Number(_tileInfo.extData.childType)===EDragonKingType.ENEMY`），不重造枚举。
+ * 敌龙→进攻（battle）、我方龙→上阵（join）；该阶段能不能真发由 xl2Gate 复查按钮绘制态。
+ * @param {object} comp WorldDragonKingDuelPop 组件实例
+ * @returns {string} marchTypes / marchMembers 里的分支键名
+ */
+function xl2Branch(comp) {
+  return comp._isEnemy ? 'battle' : 'join';
+}
+
+/**
+ * 钢铁战车前置闸：逐条复刻 refreshUI 绘制两个按钮的条件与 joinBattleClick 里的自拦，不另造规则。
+ *   battle（敌方龙·进攻 268）：battleBtn 只在 `_isEnemy && state===FIGHT_DAY` 绘制，`interactable` 还要
+ *     `_fightStateInfo.state===EDuelFightState.FIGHT`（布防期按钮是灰的，游戏自己不给点）；今日剩余次数
+ *     `_canFightNum<=0` 时游戏 ShowTips("xl_fight_error_04") 且不发。
+ *   join（我方龙·上阵 267）：joinBtn 只在 `!_isEnemy && state===MATCH_DAY` 绘制，其余阶段（开战后/结算/未开）
+ *     根本不显示这个按钮。
+ * 与其余闸「读不到就放行」相反：这里读的是面板 onShow 已填好的字段，缺了就是没落地，放行只会把一个
+ * 游戏一定不会发的包丢给服务器，故按钮取不到时按「不在场」拦，表现为一行 info 日志。
+ * @param {object} comp WorldDragonKingDuelPop 组件实例
+ * @param {string} branch xl2Branch 给出的分支键
+ * @returns {string|null} 拒绝原因；null=可发
+ */
+function xl2Gate(comp, branch) {
+  if (branch === 'battle') {
+    var b = comp.battleBtn;
+    if (!b || !b.node || b.node.active === false) return 'battle-btn-hidden';
+    if (b.interactable === false) return 'battle-btn-disabled';
+    if ((comp._canFightNum | 0) <= 0) return 'no-fight-times';
+    return null;
+  }
+  var j = comp.joinBtn;
+  if (!j || !j.node || j.node.active === false) return 'join-btn-hidden';
+  return null;
+}
+
+/**
+ * 该地块是否已有本人在途行军（等价面板的第一道闸：`getAllMyMarches()` 比 `target_tx/ty` → ShowTips("xl_fight_error_03")
+ * 且不发）。数据源是 march 的内存快照（856 播种 + 10019 边沿维护，稳态零网络），读不到回空数组即「未知不拦」。
+ * @param {object} target {x,y}
+ * @returns {Promise<string|null>} 占用中的行军 id；无则 null
+ */
+async function busyMarchAt(target) {
+  var ms = await march.list({ cache: true });
+  for (var i = 0; i < ms.length; i++) {
+    var m = ms[i];
+    if (!m || !m.target || m.target.x !== target.x || m.target.y !== target.y) continue;
+    if (march.isOccupying(m)) return m.id;
   }
   return null;
 }
@@ -436,20 +547,87 @@ const MARCH_FALLBACK = {
   worldSite: 17,
 };
 
-/** @type {number} 三连次间间隔（毫秒，内置常量，不在面板配置） */
-const TRIPLE_INTERVAL_MS = 1000;
+/** @type {number} 三连次间间隔（毫秒，内置常量，不在面板配置）；与节奏闸同属一条服务器窗，取同档 2000 */
+const TRIPLE_INTERVAL_MS = 2000;
 
 /**
- * 生成模块 cfg：全部为内置常量——各场景默认启用、行军类型取自注册表，三连间隔用 TRIPLE_INTERVAL_MS。
- * 不从面板读取（面板只出 enabled 一个开关）。
- * @returns {object} { tripleIntervalMs, targets: { <key>: { enabled, marchTypes } } }
+ * 902 拒绝载荷里的「操作过快」限流键（报文实证 dashcam 20261126T025211-城皮切换：`code=3`、
+ * 载荷裸串 `march_time_control_info001`）：服务器对行军类操作的全局节奏控制，**瞬时可恢复信号**，
+ * 与「目标被抢/失效」不同类——不能当成终拒直接掉整串三连（同口径先例：floatcar、auto-farm）。
  */
-function buildModuleCfg() {
+const ERR_RATE_LIMIT = 'march_time_control_info001';
+
+/** @type {number} 撞限流后同一波的重试次数上限（超过才放弃本波） */
+const RATE_RETRY_MAX = 2;
+
+/**
+ * 撞限流后的重试等待（毫秒）。报文实证：上一发 902 后 1.1s 再发必拒，隔 2.5s 与 7.2s 的都过。
+ * 取 2500 而非与 SKIN_MARCH_GAP_MS 同值：退避落点必须已越过实测过档（2012ms）并留量，否则“Retry 又白打一发”。
+ * 重发前的节奏闸只补剩余差额，最坏两段等待相接 ≈ 4.5s，仅当退避窗内又发过 855 才会发生。
+ */
+const RATE_RETRY_MS = 2500;
+
+/**
+ * 发 902 前必须凑满的「距上一发真上线的 855」间隔（毫秒）。五场录制共 15 个可用样本（全为 855→902 对），
+ * 按结果完美分隔：≤1863ms 的全拒（58/62/1062/1373/1569/1570/1820/1863）、≥2012ms 的全过（2012/2541/2555/2557/2579/2583）
+ * ⇒ 阈值落在 (1.863, 2.012] 之间，取上界内侧的 2000。
+ * （1800 曾作探测档上过真机，dashcam 20261126T035440：三发 902 全以 since855=1373/1820/1863 撞限流，当场否掉。）
+ * 上一发 855 由 skin-swap.js 记账（A/C/D/revert 四个出口共用一条时钟）：从未发过 = Infinity = 零等待。
+ */
+const SKIN_MARCH_GAP_MS = 2000;
+
+/**
+ * 902 上线瞬间「距上一发真上线的 855」已过多少毫秒（节奏常量定档用的探针读数）。
+ * @returns {number} 毫秒；-1 = 本场从未发过 855（零等待基准）
+ */
+function gapSinceSkinSend() {
+  var v = msSinceLastSkinSend();
+  return Number.isFinite(v) ? Math.round(v) : -1;
+}
+
+/**
+ * 行军节奏闸：距「最后一发真上线的 855」不足 SKIN_MARCH_GAP_MS 就补足差值再放行。
+ * **每一次 902 上线前都要过一遍**（首发与退避重发同等）：重发等待窗内相位 D/C 可能又发了 855
+ * 把全局时钟重置（报文实证 dashcam 20261126T035440：D 相归位落在两次重发之间，第二次重发时 since855 只剩 1.373s，必拒）。
+ * @param {string} key 目标键（日志定位）
+ * @param {number} stepNo 本串三连的第几波（1 起）
+ * @returns {Promise<boolean>} false = 等待期间被停用，调用方直接收流
+ */
+async function waitMarchRhythm(key, stepNo) {
+  var rhythm = SKIN_MARCH_GAP_MS - msSinceLastSkinSend();
+  if (rhythm <= 0) return true;
+  log.debug('wait march rhythm before 902. key=%s;step=%d;wait=%dms', key, stepNo, rhythm);
+  await sleep(rhythm, ctxRef && ctxRef.signal);
+  return aliveFn();
+}
+
+/**
+ * 从 902 拒绝应答里取文案键（与 floatcar 同口径）：被拒应答的 data 本就是文本，首个逗号前即语言键。
+ * @param {*} data net.Ret.data
+ * @returns {string|null} 键名；非串/空回 null
+ */
+function rejectErrKey(data) {
+  if (typeof data !== 'string' || !data) return null;
+  var comma = data.indexOf(',');
+  return comma >= 0 ? data.slice(0, comma) : data;
+}
+
+/**
+ * 生成模块 cfg：内置常量（各场景默认启用、行军类型取自注册表、三连间隔）+ 面板「城皮切换」区段归一。
+ * @param {object} [c] 面板 cfg（registry.applyFeature 推入）；缺省时切皮区段回落「未启用 + 未选择」，
+ *   与旧版无面板字段时的行为逐字节一致（零回归）。
+ * @returns {object} { tripleIntervalMs, targets: { <key>: { enabled, marchTypes } }, skinSwap }
+ */
+function buildModuleCfg(c) {
   var targets = {};
   QUICK_ATTACK_TARGETS.forEach(function (spec) {
     targets[spec.key] = { enabled: true, marchTypes: Object.assign({}, spec.marchTypes) };
   });
-  return { tripleIntervalMs: TRIPLE_INTERVAL_MS, targets: targets };
+  return {
+    tripleIntervalMs: TRIPLE_INTERVAL_MS,
+    targets: targets,
+    skinSwap: normalizeSkinSwapCfg(c || {}),
+  };
 }
 
 /** @type {ReturnType<createLog>} 模块日志器（tag=QUICK_ATTACK） */
@@ -491,6 +669,15 @@ var installed = false;
  */
 function aliveFn() {
   return ctxRef ? ctxRef.alive() : false;
+}
+
+/**
+ * 切皮宿主面（skin-swap 相位 D 收尾链 / 看门狗 / 自愈的唯一依赖入口）。
+ * cfg 取闭包现值（面板热更即时生效，不必重挂），net/ctx 同样现读（install 前为 null 则由对侧短路）。
+ * @returns {{net:object|null, ctx:object|null, cfg:function():object, alive:function():boolean}}
+ */
+function swapHost() {
+  return { net: net, ctx: ctxRef, cfg: () => cfg.skinSwap, alive: aliveFn };
 }
 
 // ── 键盘监听挂/摘 ──────────────────────────────────────────────────────
@@ -686,19 +873,36 @@ function onKeyDown(e) {
   e.preventDefault();
   e.stopPropagation();
 
-  // 面板态前置闸（可选 spec.gate）：游戏自己就会拦的场景（次数用完/黑名单/非本服飞船）不白发 902。
+  // 面板态分支（可选 spec.branchOf）：一个面板吃两个动作时先定本轮发哪个行军类型（如钢铁战车上阵/进攻），
+  // 再连同分支一起交给前置闸与发包链。判据抛错/无动作时直接收摊：发错动作比不发难查得多。
+  var branch = null;
+  if (spec.branchOf) {
+    try {
+      branch = spec.branchOf(comp) || null;
+    } catch (err) {
+      log.warn('branch resolver threw, skip. key=%s', spec.key, err);
+      return;
+    }
+    if (!branch) {
+      log.info('panel offers no action, skip. key=%s', spec.key);
+      return;
+    }
+  }
+
+  // 面板态前置闸（可选 spec.gate，收 branch）：游戏自己就会拦的场景（次数用完/黑名单/非本服飞船）不白发 902。
   // 闸内只读面板已有数据，抛错时按放行处理（宁被服务器拒也不因判据异常而静默失灵）。
   if (spec.gate) {
     var why = null;
     try {
-      why = spec.gate(comp);
+      why = spec.gate(comp, branch);
     } catch (err) {
       log.warn('panel gate threw, send anyway. key=%s', spec.key, err);
     }
     if (why) {
       log.info(
-        'attack blocked by panel gate. key=%s;reason=%s;x=%d;y=%d',
+        'attack blocked by panel gate. key=%s;branch=%s;reason=%s;x=%d;y=%d',
         spec.key,
+        branch || 'attack',
         why,
         target.x,
         target.y,
@@ -708,30 +912,62 @@ function onKeyDown(e) {
   }
 
   var planList = [{ kind: 'preset', index: hk.digit }];
-  if (hk.triple) {
+  // Shift = 三连；一键一包的场景（spec.noTriple，如钢铁战车同地块重复派必被游戏自拦）让位，不白掉两波队列名额
+  if (hk.triple && !spec.noTriple) {
     planList.push({ kind: 'minimal' }, { kind: 'minimal' });
   }
 
-  attackFlow(spec, target, planList).catch(function (err) {
+  attackFlow(spec, target, planList, branch).catch(function (err) {
     log.warn('attack flow threw!', err);
   });
 }
 
 /**
+ * 本波确定没打出去时的收尾：A 相真切过出征皮就把皮按待机档归位。
+ * 报文实证 dashcam 20261126T025211：902 被拒时相位 C（只在回包 ok 时跑）不执行，皮整场停在出征皮
+ * ——下一波只能拿一行 `pre skip already-on-target` 兼说“其实上一波没打”。
+ * 账本里还有在途波次时 restoreIdleSkin 自己会让位给相位 D，不抢切。
+ * @param {boolean} full 本波是否满编（只有满编波才会走 A 相）
+ * @param {object|null} swap preMarchSwap 产物
+ * @returns {Promise<void>}
+ */
+async function revertSkinOnAbort(full, swap) {
+  if (!full || !swap || swap.skipped || swap.reason !== REASON.SWITCH) return;
+  var r = await restoreIdleSkin({
+    cfg: cfg.skinSwap,
+    net: net,
+    signal: ctxRef && ctxRef.signal,
+  });
+  // 真发了包（切成果/被拒）才 info；链不在场、已在目标皮、账本非空（交相位 D）都是循环态 no-op
+  var emit = r.reason === REASON.SWITCH || r.reason === REASON.REJECTED ? log.info : log.debug;
+  emit(
+    'skin revert after abort. reason=%s;landed=%s;code=%d;rt=%dms',
+    r.reason,
+    r.landed,
+    r.code,
+    r.rtMs,
+  );
+}
+
+/**
  * 一串行军流程：串行逐发、同步等待回包，永不 reject。每发前复查闸门（存活/行军槽/902 在途/兵量），
- * 发空兵或被拒即中止后续（不派空兵打世界目标）；本发回包后 sleep(tripleIntervalMs) 再发下一发。
+ * 发空兵或被拒即中止后续（不派空兵打世界目标）；**例外**：`march_time_control_info001` 是服务器瞬时限流，
+ * 同一载荷退避重发最多 RATE_RETRY_MAX 次（不拉黑、不掉整串三连）；本发回包后 sleep(tripleIntervalMs) 再发下一发。
  * @param {object} spec 场景定义
  * @param {object} target {x,y,entityType}
  * @param {object[]} planList 逐项 {kind:'preset'|'minimal', index?}
+ * @param {string} [branch] 面板态分支键（spec.branchOf 给出）；缺省时按地块实体类型分流
  */
-async function attackFlow(spec, target, planList) {
+async function attackFlow(spec, target, planList, branch) {
   var t = (cfg.targets[spec.key] && cfg.targets[spec.key].marchTypes) || {};
-  var base = t[pickBranch(spec, target)] | 0;
+  var key = branch || pickBranch(spec, target);
+  var base = t[key] | 0;
   if (!base) {
-    log.warn('no marchType configured, abort. key=%s', spec.key);
+    log.warn('no marchType configured, abort. key=%s;branch=%s', spec.key, key);
     return;
   }
-  var marchType = resolveMarchType(spec, target);
+  var marchType = resolveMarchType(spec, target, key);
+  var swapCfg = cfg.skinSwap;
 
   for (var i = 0; i < planList.length; i++) {
     if (!aliveFn()) return;
@@ -744,24 +980,104 @@ async function attackFlow(spec, target, planList) {
       log.info('902 in flight, abort. key=%s;step=%d', spec.key, i + 1);
       return;
     }
+    // 同地块唯一闸（spec.uniqueTarget）：面板自己的第一道闸就是「该点已有本人行军」→ xl_fight_error_03 且不发。
+    // 放在切皮之前查，免得白切一趟城皮；gate 是同步的，这条要 await march 快照，故落在流程里。
+    if (spec.uniqueTarget && (await busyMarchAt(target))) {
+      log.info(
+        'own march already on this tile, abort. key=%s;step=%d;x=%d;y=%d',
+        spec.key,
+        i + 1,
+        target.x,
+        target.y,
+      );
+      return;
+    }
 
     var step = planList[i];
+    // 三连只有波1 是满编预设（有效战力）：切皮只跟满编波走，陪次数的 minimal 波照发不切、不入账
+    var full = step.kind === 'preset';
+
+    // ── 相位 A 预切（仅满编波）：切出征皮 → 等兵数重算膨胀；未落地一律照常出征。
+    // 未启用/未选皮/两皮相同/未拥有时 preMarchSwap 自己短路（零发包），这里只留一行 debug 原因。
+    var swap = null;
+    if (full) {
+      swap = await preMarchSwap({
+        cfg: swapCfg,
+        net: net,
+        signal: ctxRef && ctxRef.signal,
+        presetIndex: step.index,
+      });
+      if (!aliveFn()) return;
+      if (swap.skipped) {
+        log.debug('skin swap pre skip. key=%s;step=%d;reason=%s', spec.key, i + 1, swap.reason);
+      } else {
+        log.info(
+          'skin swap pre. key=%s;step=%d;reason=%s;landed=%s;code=%d;rt=%dms;base=%s;load=%s',
+          spec.key,
+          i + 1,
+          swap.reason,
+          swap.landed,
+          swap.code,
+          swap.rtMs,
+          swap.base,
+          swap.load,
+        );
+      }
+    }
+
+    // 行军节奏闸：902 必须距「我们最后一发真上线的 855」凑满 SKIN_MARCH_GAP_MS（实测分隔带 (1.863s, 2.012s]，定档 2000）。
+    // 不区分是哪一相位发的：待机归位(D) / 在途回切(C) / 放弃回切(revert) 占同一条全局时钟——
+    // 「待机=出征皮」时 A 相 no-op，玩家一见部队返程就按键，撞的正是 D 相刚发的那发，只看本波 A 相兜不住。
+    // 从未发过 855（未启用/未选皮）= Infinity → 零等待，与无切皮功能时逐字节一致。
+    if (!(await waitMarchRhythm(spec.key, i + 1))) return;
+
     var plan = new Battle().plan();
-    if (step.kind === 'preset') plan.preset(step.index).adjust();
+    if (full) plan.preset(step.index).adjust();
     else plan.minimal();
     var marchData = plan.build();
 
     if (!marchData.armyListNew.length) {
       log.warn('no army to dispatch, abort. key=%s;step=%d;kind=%s', spec.key, i + 1, step.kind);
+      await revertSkinOnAbort(full, swap);
       return;
     }
+    var sentLoad = loadOf(marchData);
 
+    // since855：902 上线时距上一发 855 的真实毫秒数（-1 = 本场未切过皮），节奏常量定档用的读数
+    var sentGap855 = gapSinceSkinSend();
     var ret = await march.attack({ marchType: marchType, target: target, data: marchData });
     if (!aliveFn()) return;
 
+    // 限流（操作过快）不是“这波不能打”，只是“这一刻不给打”：同一载荷退避重发，最多 RATE_RETRY_MAX 次。
+    // 不拉黑目标、不中止整串三连（目标仍然有效）；非限流拒 / 退避耗尽才落到下面的终拒分支。
+    for (var attempt = 0; !ret.ok && attempt < RATE_RETRY_MAX; attempt++) {
+      if (rejectErrKey(ret.data) !== ERR_RATE_LIMIT) break;
+      log.info(
+        '902 rate limited, retry same wave. key=%s;step=%d;attempt=%d;wait=%dms;since855=%d;data=%s',
+        spec.key,
+        i + 1,
+        attempt + 1,
+        RATE_RETRY_MS,
+        sentGap855,
+        ret.data,
+      );
+      await sleep(RATE_RETRY_MS, ctxRef && ctxRef.signal);
+      if (!aliveFn()) return;
+      if (!march.canMarch()) {
+        log.info('no free march slot before retry, abort. key=%s;step=%d', spec.key, i + 1);
+        await revertSkinOnAbort(full, swap);
+        return;
+      }
+      // 退避窗内又发过 855（相位 D 归位/C 相回切落在睡眠里）→ 时钟已被重置，重发前重新凑满间隔，否则这一发照样限流
+      if (!(await waitMarchRhythm(spec.key, i + 1))) return;
+      sentGap855 = gapSinceSkinSend();
+      ret = await march.attack({ marchType: marchType, target: target, data: marchData });
+      if (!aliveFn()) return;
+    }
+
     if (ret.ok) {
       log.info(
-        'attack ok. key=%s;step=%d/%d;marchType=%d(base=%d);x=%d;y=%d',
+        'attack ok. key=%s;step=%d/%d;marchType=%d(base=%d);x=%d;y=%d;load=%d;preSwapBase=%s;since855=%d',
         spec.key,
         i + 1,
         planList.length,
@@ -769,18 +1085,39 @@ async function attackFlow(spec, target, planList) {
         base,
         target.x,
         target.y,
+        sentLoad,
+        swap && swap.base != null ? swap.base : '-',
+        sentGap855,
       );
+      // ── 相位 C 在途回切：902 一回包就穿回主战皮（不等落地），并把本波登记进在途账本等相位 D ──
+      if (full) {
+        var d902 = parseData(ret.data);
+        var c = await afterMarchSwap({
+          cfg: swapCfg,
+          net: net,
+          signal: ctxRef && ctxRef.signal,
+          marchId: (d902 && d902.marchInfo && d902.marchInfo.marchId) || null,
+        });
+        var line = 'skin swap post. key=%s;step=%d;reason=%s;landed=%s;code=%d;rt=%dms;tracked=%s';
+        // 真发了包（切成果 / 被服务器拒）才 info；链不在场与零发包 no-op 走 debug（循环态降噪）
+        var emit =
+          c.reason === REASON.SWITCH || c.reason === REASON.REJECTED ? log.info : log.debug;
+        emit(line, spec.key, i + 1, c.reason, c.landed, c.code, c.rtMs, c.tracked);
+        if (!aliveFn()) return;
+      }
     } else {
       log.info(
-        'attack rejected, abort combo. key=%s;step=%d;code=%d;marchType=%d;base=%d;flags=%s;data=%s',
+        'attack rejected, abort combo. key=%s;step=%d;code=%d;marchType=%d;base=%d;flags=%s;since855=%d;data=%s',
         spec.key,
         i + 1,
         ret.code,
         marchType,
         base,
         JSON.stringify(marchApi.flags()),
+        sentGap855,
         ret.data,
       );
+      await revertSkinOnAbort(full, swap);
       return;
     }
 
@@ -808,18 +1145,19 @@ function pickBranch(spec, target) {
 }
 
 /**
- * 本次出征的 marchType：先按地块实体类型分流（世界 BOSS 面板四型），再做跨服战场漂移换算。
+ * 本次出征的 marchType：先定分支（面板态 branchOf 优先，否则按地块实体类型分流），再做跨服战场漂移换算。
  * target 一并交给 resolve：遗迹的 17→103 要看 siteId（其余场景 resolve 不读它）。
  * @param {object} spec 场景定义
  * @param {object} target {x,y,entityType,siteId?}
+ * @param {string} [branch] 已定分支键（attackFlow 传入）
  * @returns {number}
  */
-function resolveMarchType(spec, target) {
+function resolveMarchType(spec, target, branch) {
   var t = (cfg.targets[spec.key] && cfg.targets[spec.key].marchTypes) || {};
-  var branch = pickBranch(spec, target);
-  // 声明了枚举成员名的分支（世界 BOSS 四型/遗迹）：以游戏 MarchType 运行时值为权威源，marchTypes 数值仅漂移兜底
-  var member = spec.marchMembers && spec.marchMembers[branch];
-  var base = member ? marchApi.typeOf(member, t[branch] | 0) : t[branch] | 0;
+  var bkey = branch || pickBranch(spec, target);
+  // 声明了枚举成员名的分支（世界 BOSS 四型/遗迹/钢铁战车）：以游戏 MarchType 运行时值为权威源，marchTypes 数值仅漂移兜底
+  var member = spec.marchMembers && spec.marchMembers[bkey];
+  var base = member ? marchApi.typeOf(member, t[bkey] | 0) : t[bkey] | 0;
   var resolved = marchApi.resolve(base, MARCH_FALLBACK, target);
   if (resolved !== base)
     log.warn(
@@ -833,9 +1171,10 @@ function resolveMarchType(spec, target) {
 }
 
 /**
- * 注入模块配置（toModuleCfg 产出的是内置常量，非面板可调项：面板仅出 enabled 开关）。
+ * 注入模块配置：`tripleIntervalMs`/`targets` 是内置常量（面板不出这两项，随 toModuleCfg 原样推入），
+ * `skinSwap` 是面板「城皮切换」区段的可调项 —— 热更后下一波攻击即生效（相位 D 的宿主面现读 cfg()，无需重挂订阅）。
  * enabled=false 时顺带摘净钩子（reactor 稍后会 pause；此处保证停用不留常驻包装）。
- * @param {object} partial { enabled, tripleIntervalMs, targets:{ <key>:{enabled,marchTypes} } }
+ * @param {object} partial { enabled, tripleIntervalMs, targets:{ <key>:{enabled,marchTypes} }, skinSwap }
  * @returns {object} 当前 cfg
  */
 function configure(partial) {
@@ -857,6 +1196,8 @@ function configure(partial) {
       }
     });
   }
+  // 城皮切换：只认归一后的区段（normalizeSkinSwapCfg 幂等，面板键形态与已归一形态都吃得下）
+  if (partial.skinSwap) cfg.skinSwap = normalizeSkinSwapCfg(partial.skinSwap);
   if (partial.enabled === false) unhookAll();
   return cfg;
 }
@@ -908,8 +1249,98 @@ function run(ctx) {
   activePanel = null;
   detachKey();
   QUICK_ATTACK_TARGETS.forEach(hookSpec);
-  log.info('started, hooks=%d; battlefield=%s', hooks.size, JSON.stringify(marchApi.flags()));
+  // 相位 D（部队一开始返程就归位待机皮）的订阅是 feat 自持的 march.onStateChange，不在 reactor 触发器清单里：
+  //   run 挂（arm 内部先摘再挂，resume 重跑不会重复注册）、pause 摘。
+  armSkinSwap(swapHost());
+  log.info(
+    'started, hooks=%d;skinSwap=%s;battlefield=%s',
+    hooks.size,
+    cfg.skinSwap && cfg.skinSwap.enabled ? 'on' : 'off',
+    JSON.stringify(marchApi.flags()),
+  );
+  // 自愈一次（不 await：它带一次 855 往返，不能拖住快捷键挂载）；抛错只 warn，切皮失败绝不影响打靶
+  selfHealSkinSwap(swapHost()).catch(function (err) {
+    log.warn('855 self-heal threw.', err);
+  });
 }
+
+/**
+ * 停用：摘掉切皮链（march.onStateChange 订阅 + 在途账本 + 看门狗句柄引用）。
+ * 不摘就会在功能停用后仍按陈旧配置切皮肤（reactor 的触发器摘除管不到这条自持订阅）。
+ */
+function pause() {
+  disarmSkinSwap();
+}
+
+// ── 面板 descriptor（「城皮切换」区段）───────────────────────────────────
+/**
+ * 「出征皮肤 / 主战皮肤」下拉数据源：哨兵项（未选择 = 整条切皮链短路）+ gameData.castleFaces() 逐项。
+ * 同步求值、**不发包**（它是 buildPanelHTML 求值链上的一环，口径同 potion-craft 的 formulaOptions）；
+ * 清单为空（本场还没同步过 854/10905、或符号漂移）只给一条提示项，不出空下拉。
+ * @returns {Array<{value:number, label:string}>}
+ */
+function skinOptions() {
+  var faces = gameData.castleFaces() || [];
+  if (!faces.length) return [{ value: SKIN_UNSET, label: '无有效城皮（不自动切皮）' }];
+  return [{ value: SKIN_UNSET, label: '未选择（不自动切皮）' }].concat(
+    faces.map(function (f) {
+      return { value: f.skinId, label: f.name };
+    }),
+  );
+}
+
+/** @type {Array<{value:number, label:string}>} 「待机皮肤」两档（值即 skin-swap 的 IDLE_MODE，面板与决策层同源） */
+const IDLE_MODE_OPTIONS = [
+  { value: IDLE_MODE.BATTLE, label: '主战皮肤（防御加成最强）' },
+  { value: IDLE_MODE.MARCH, label: '出征皮肤（下次出征不用等）' },
+];
+
+/**
+ * 面板字段：开关 + 两张皮 + 待机档 + 两行说明。
+ * 说明文字用 type:'note'（renderCheckbox 不消费 hint，挂在开关上会静默不渲染）。
+ * 三张皮的选择**不做 showIf 收起**：玩家要在翻开关之前就能先把皮挑好（选项表同步读本地数据，不发包）。
+ * @type {Array<object>}
+ */
+const SKIN_SWAP_FIELDS = [
+  { key: 'skinSwapEnabled', type: 'checkbox', label: '出征自动切城皮', section: '城皮切换' },
+  {
+    key: '_skinSwapNote',
+    type: 'note',
+    section: '城皮切换',
+    text:
+      '每次出征前自动换上「出征皮肤」多带兵，部队一出发就马上换回「主战皮肤」，加成按主战皮肤算。' +
+      '两张都挑好才会换：任一张留「未选择」、或两张挑成同一个，就一张也不换。',
+  },
+  {
+    key: 'swapSkinMarch',
+    type: 'select',
+    label: '出征皮肤',
+    section: '城皮切换',
+    options: skinOptions,
+  },
+  {
+    key: 'swapSkinBattle',
+    type: 'select',
+    label: '主战皮肤',
+    section: '城皮切换',
+    options: skinOptions,
+  },
+  {
+    key: 'swapIdleMode',
+    type: 'select',
+    label: '待机皮肤',
+    section: '城皮切换',
+    options: IDLE_MODE_OPTIONS,
+  },
+  {
+    key: '_skinIdleNote',
+    type: 'note',
+    section: '城皮切换',
+    text:
+      '部队开始返程时把城换回「待机皮肤」：选「主战皮肤」防御最强，但下次出征要多等约 2 秒；' +
+      '选「出征皮肤」点了就走，防御弱一档。皮肤过期后自动不再换。',
+  },
+];
 
 /**
  * 向 reactor 注册本功能说明书：places:['world'] + kinds:['homeland','wushuang','kvk']（B 档），不声明 offInCombat（战斗设置本就是战斗时的手动辅助）。
@@ -933,10 +1364,18 @@ reactor.register({
   kinds: ['homeland', 'wushuang', 'kvk'],
   places: ['world'],
   // 战斗设置类：不声明 offInCombat，战斗模式下依然生效（快捷战斗本就是战斗时的手动辅）
-  defaults: { enabled: false },
-  fields: [],
+  defaults: {
+    enabled: false,
+    // 城皮切换：默认关 + 两皮未选（哨兵）+ 待机回主战皮——未动面板时行为与改前逐字节一致
+    skinSwapEnabled: false,
+    swapSkinMarch: SKIN_UNSET,
+    swapSkinBattle: SKIN_UNSET,
+    swapIdleMode: IDLE_MODE.BATTLE,
+  },
+  fields: SKIN_SWAP_FIELDS,
   toModuleCfg: buildModuleCfg,
   install: install,
   configure: configure,
   run: run,
+  pause: pause,
 });

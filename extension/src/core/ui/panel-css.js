@@ -398,7 +398,7 @@ export const PANEL_CSS = `
        行内负外边距 + padding 让 hover 高亮能铺到卡片内边沿；键帽立体（渐变+底边阴影）、键名列右对齐贴齐功能名、场景做小胶囊 */
     .pc-hkrow{display:flex;align-items:center;gap:10px;margin:0 -6px;padding:5px 6px;border-radius:6px;transition:background .12s;}
     @media (hover:hover){.pc-hkrow:hover{background:rgba(255,255,255,.06);}}
-    .pc-hkrow .pc-hkk{flex:0 0 62px;text-align:right;}
+    .pc-hkrow .pc-hkk{flex:0 0 80px;text-align:right;}
     .pc-hkrow .pc-hkk kbd{display:inline-block;padding:2px 7px;border-radius:6px;font:inherit;font-size:12px;white-space:nowrap;color:#dcefff;
       background:linear-gradient(180deg,rgba(255,255,255,.18),rgba(255,255,255,.05));
       border:1px solid rgba(255,255,255,.24);border-bottom-width:2px;box-shadow:0 1px 0 rgba(0,0,0,.35);}

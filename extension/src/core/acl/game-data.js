@@ -67,6 +67,21 @@ function mechaTowerOpen() {
 }
 
 /**
+ * 城外观（城市皮肤）显示名（只读、查表）：SKIN 表行的 name 是 loc 键（形如 skin_name_1719000），经 l10n.text 译文。
+ * skinId 0 = 默认城皮（游戏侧不建行）；表行缺失/无 name/译文回落到键本身一律兜底「皮肤 <skinId>」，保证面板选项永不空标签。
+ * @param {number} skinId 城外观 id
+ * @returns {string} 显示名
+ */
+function castleFaceName(skinId) {
+  if (!(skinId > 0)) return '默认城皮';
+  var row = l10n.tableRow('SKIN', skinId);
+  var key = row && (row.name != null ? row.name : row.Name);
+  if (!key) return '皮肤 ' + skinId;
+  var t = l10n.text(String(key));
+  return t && t !== String(key) ? t : '皮肤 ' + skinId;
+}
+
+/**
  * 一键领取子玩法解锁只读判定（复刻 TaskRelaxTool.getIsShowQuickSweepByType 的 switch）。
  * @param {number|string} type task_relax 行的 type（TaskRelaxType 数值）
  * @returns {boolean}
@@ -714,6 +729,34 @@ export const gameData = {
   usingCastleFace() {
     var u = userData();
     return u && u.UsingCastleFace != null ? u.UsingCastleFace : null;
+  },
+  /**
+   * 本人有效城外观（城市皮肤）清单（只读、同步、**不发包**）：逐项读 UserData.MyCastleFace，只留「仍在有效期内」的 skinId。
+   * 拥有口径同游戏 PlayerSkillCastleItem（报文实证 dashcam 20261126T011550-城皮切换：854 应答 list[] 同字段）：
+   * `endTime === -1`（永久）或 `endTime > ServerTime`。名称取 SKIN 表行的 loc 键（形如 skin_name_1719000）经 l10n 译文。
+   * 之所以不读 854 GET_MY_CASTLE_FACE：它是面板 options 求值链上的一环（buildPanelHTML 同步跑），在这里发包等于每个页面会话无条件多发一发。
+   * @returns {Array<{skinId:number, name:string, endTime:number}>} 按 skinId 升序；数据源缺失返回 []（含 skinId 0 默认城皮，若下发）
+   */
+  castleFaces() {
+    var u = userData();
+    var map = u && u[SYM.dataProps.castleFace];
+    if (!map || typeof map !== 'object') return [];
+    var now = gameData.serverTime() | 0;
+    var out = [];
+    for (var k in map) {
+      var d = map[k];
+      if (!d || typeof d !== 'object') continue;
+      var skinId = Number(k);
+      if (!isFinite(skinId) || skinId < 0) continue;
+      var end = Number(d.endTime != null ? d.endTime : d.EndTime);
+      if (!isFinite(end)) end = 0;
+      if (!(end === -1 || (end > 0 && now > 0 && end > now))) continue;
+      out.push({ skinId: skinId | 0, name: castleFaceName(skinId | 0), endTime: end });
+    }
+    out.sort(function (a, b) {
+      return a.skinId - b.skinId;
+    });
+    return out;
   },
   /**
    * 联盟堡垒领地（禁迁区）原始条目只读快照：NWorldMapTerritoryModel 单例的 AllianceTerritory（随视口加载、出视口被 purge，故易失）。
