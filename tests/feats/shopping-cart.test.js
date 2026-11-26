@@ -334,6 +334,32 @@ test('买不起：不发 4203、不落日戳，15 分钟后等余额增长', asy
   assert.equal(stored.size, 0);
 });
 
+test('等余额巡检指数退避：15 → 30 → 60 分钟封顶，成交后重置', async () => {
+  const MIN = 60 * 1000;
+  normalized = {
+    items: [
+      item({ productId: 'a', chooseNum: 1, price: 10, balance: 0 }),
+      item({ productId: 'b', chooseNum: 1, price: 10, balance: 0 }),
+    ],
+    skipped: [],
+  };
+  assert.equal(await cartFeat.cycleRun(), 15 * MIN);
+  assert.equal(await cartFeat.cycleRun(), 30 * MIN);
+  assert.equal(await cartFeat.cycleRun(), 60 * MIN);
+  assert.equal(await cartFeat.cycleRun(), 60 * MIN);
+  // 余额只够买 a：成交后 b 仍待补，退避重置回首档
+  normalized = {
+    items: [
+      item({ productId: 'a', chooseNum: 1, price: 10, balance: 10 }),
+      item({ productId: 'b', chooseNum: 1, price: 10, balance: 0, currencyKey: '2:0' }),
+    ],
+    skipped: [],
+  };
+  respond = (cmd) => (cmd === 4204 ? okCart(normalized.items) : okBuy(3, 'a'));
+  assert.equal(await cartFeat.cycleRun(), 5000);
+  assert.equal(await cartFeat.cycleRun(), 15 * MIN);
+});
+
 test('服务端空车：落今日已解决，重载后首拍不再查询', async () => {
   normalized = { items: [], skipped: [] };
   await cartFeat.cycleRun();

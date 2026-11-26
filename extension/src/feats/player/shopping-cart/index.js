@@ -32,8 +32,10 @@ import { planShoppingCart } from './plan.js';
 /** @type {ReturnType<createLog>} 模块日志器 */
 const log = createLog('SHOPPING-CART');
 
-/** @type {number} 数据未就绪/等待余额/业务拒绝后的巡检间隔（毫秒） */
+/** @type {number} 数据未就绪/业务拒绝后的巡检间隔（毫秒） */
 const IDLE_TICK_MS = 1000 * 60 * 15;
+/** @type {number[]} 等余额巡检退避序列（毫秒）：成交或跨日后回到首档 */
+const IDLE_BACKOFF_MS = [IDLE_TICK_MS, 1000 * 60 * 30, 1000 * 60 * 60];
 /** @type {number} 瞬态未发出/空成功应答的短重试（毫秒） */
 const TRANSIENT_RETRY_MS = 1000 * 20;
 /** @type {number} 成交后的同轮复检间隔（毫秒）：回读 4204 判断是否还有未成交项 */
@@ -61,6 +63,8 @@ var soldSet = new Set();
 var lastPlan = null;
 /** @type {Promise<void>|null} 首拍台账回读 */
 var stateLoad = null;
+/** @type {number} 等余额退避档位（IDLE_BACKOFF_MS 下标） */
+var idleStep = 0;
 
 /** @returns {boolean} 功能是否仍存活 */
 function aliveFn() {
@@ -116,6 +120,16 @@ function sleepToTs(untilTs) {
 }
 
 /**
+ * 等余额巡检的下一拍间隔：15 → 30 → 60 分钟封顶；任何成交或跨日都重置回 15 分钟。
+ * @returns {number} 毫秒
+ */
+function idleDelay() {
+  var d = IDLE_BACKOFF_MS[idleStep];
+  if (idleStep < IDLE_BACKOFF_MS.length - 1) idleStep++;
+  return d;
+}
+
+/**
  * 落盘当日台账；写失败不影响内存当拍语义。
  * @returns {Promise<void>}
  */
@@ -135,6 +149,7 @@ function persistLedger() {
  */
 function markSold(keys, resetTs) {
   ledgerResetTs = resetTs;
+  idleStep = 0;
   for (var i = 0; i < keys.length; i++) {
     soldMap[keys[i]] = 1;
     soldSet.add(keys[i]);
@@ -160,6 +175,7 @@ function finishDay(next) {
 function resetDay() {
   ledgerResetTs = 0;
   dayDone = false;
+  idleStep = 0;
   soldMap = Object.create(null);
   soldSet.clear();
   lastPlan = null;
@@ -290,7 +306,7 @@ async function cycleRun() {
       plan.sold,
       plan.pending,
     );
-    return IDLE_TICK_MS;
+    return idleDelay();
   }
 
   // 写请求前再次核验激活代次和日界，避免在飞暂停恢复/跨日应答后继续兑换。
