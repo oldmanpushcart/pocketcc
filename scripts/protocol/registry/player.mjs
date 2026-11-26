@@ -624,9 +624,9 @@ export default [
   {
     cmd: 2002,
     dir: 'C2S',
-    note: '领取当前军级/VIP 每日免费礼包',
-    src: '公开 H5 源码：GET_VIP_DAY_REWARD → UserData.updateVipRewardCdTime/CommonRewardPanel',
-    fields: '{} → {freeFlag,reward}',
+    note: '领取军级宝箱（当前军级/VIP 每日免费礼包，日界刷新）',
+    src: '公开 H5 源码：GET_VIP_DAY_REWARD → UserData.updateVipRewardCdTime/CommonRewardPanel；实录 dashcam-rec-20261127T005909-军级宝箱领取：req:send {} → d={reward,freeFlag}',
+    fields: '{} → {freeFlag,reward.items[{itemId,itemCount}]}（V1 字符串 d）',
     usages: [
       {
         name: 'CMD_VIP_DAY_REWARD',

@@ -1,15 +1,28 @@
 /**
- * 当前军级每日免费礼包（默认关闭，单链，只发免费领取协议）。
+ * 军级宝箱（当前军级每日免费礼包，默认关闭，单链，只发免费领取协议）。
  *
- * 协议（公开 H5 客户端源码实证）：
+ * 协议（游戏客户端源码 + 实录双证）：
  *   RequestId.GET_VIP_DAY_REWARD=2002，V1 NET.send，空载荷 {}；
  *   应答 d 为 JSON 串，含 freeFlag 与 reward，游戏回调 JSON_PARSE(resp.d)。
  *   UserData.VipRewardCdTime-ServerTime<=0 时可领；20011 推送更新免费礼包状态。
+ *   军级面板 vipUpItem 的宝箱按钮按 _realLevel||1 / _curSelectedLevel||1 归一，
+ *   VIP0 同样可领（展示 1 级奖励），故本 feat 不以军级 0 作为跳过判据。
  *   本功能不调用 chargeClick/shopChargeClick，不购买、不升级、不模拟切换军级。
  *
- * 防重领：直发 2002 不执行游戏 UI 回调，发包前锚定服务器下一日界；只有明确 freeFlag
- * 或非空 reward 的成功应答才落 claimed 日戳。空应答不谎报成功，CODE_NOT_SENT 短重试；
- * 真业务拒绝按当日已解决抑制并记 info。跨午夜旧回执不落旧日戳，暂停不吞已发回执。
+ * 报文实证 dashcam-rec-20261127T005909-军级宝箱领取.ndjson：
+ *   req:send 2002 {} → resp d={reward:{items:[{itemId,itemCount}…]},freeFlag:<下一日界>}，
+ *   同批 10401 PUSH_TOOL / 10001 PUSH_RESOURCE / 10031 PUSH_REWARD 到账。
+ *
+ * 防重领：直发 2002 不执行游戏 UI 回调，成功应答按服务器 freeFlag 锚定冷却（缺失才退
+ * 下一日界）；只有明确 freeFlag 或非空 reward 的成功应答才落 claimed 日戳。空应答不谎报
+ * 成功，CODE_NOT_SENT 短重试；跨午夜旧回执不落旧日戳，暂停不吞已发回执。
+ *
+ * 日界静置（实证 dashcam-log-20261127）：服务器 2002 判据是 ServerTime > VipRewardCdTime
+ * （严格大于、秒粒度），客户端 serverTime 也是整秒，于是 0 点整同一秒内 VipRewardCdTime -
+ * ServerTime <= 0 在客户端已成立、服务器却仍判不成立。本 feat 在 00:00:00.592 发车被
+ * code=3 拒（用户 00:59 手工领取成功），故睡到冷却锚点后再静置 RESET_SETTLE_MS 才发车。
+ * 业务拒绝不再一次即整日抑制：先按 REJECT_RETRY_MS 阶梯重试（日界附近被拒多为服务器
+ * 秒数尚未越过锚点），阶梯耗尽才落 claimed=false 日戳抑制到下一日界。
  */
 import { CODE_NOT_SENT, parseData, rejectText } from '../../../core/util.js';
 import { createLog } from '../../../core/log.js';
@@ -27,6 +40,16 @@ const log = createLog('VIP-DAILY-GIFT');
 const IDLE_TICK_MS = 1000 * 60 * 15;
 /** @type {number} 未发出/空成功应答的短重试间隔（毫秒） */
 const TRANSIENT_RETRY_MS = 1000 * 20;
+/**
+ * @type {number} 冷却锚点/日界后的静置毫秒：服务器判据 ServerTime > VipRewardCdTime 是严格
+ * 大于且秒粒度，锚点同一秒内发车必被 code=3 拒（实证 2026-11-27 00:00:00.592 level=13
+ * code=3，同日 00:59 手工领取成功）。静置 10 秒同时覆盖客户端 ServerTime 的少量漂移。
+ */
+const RESET_SETTLE_MS = 1000 * 10;
+/** @type {number[]} 业务拒绝后的重试阶梯（毫秒）；耗尽才按当日已解决抑制 */
+const REJECT_RETRY_MS = [1000 * 60, 1000 * 60 * 5, 1000 * 60 * 15, 1000 * 60 * 30];
+/** @type {number} 一天秒数（与 gameData.nextDailyResetTs 的日界口径一致） */
+const DAY_SEC = 86400;
 /** @type {string} UID 隔离运行数据中的当日已解决日戳键 */
 const STAMP_KEY = 'vipDailyGift.resolved';
 
@@ -38,6 +61,10 @@ var ctxRef = null;
 var resolvedResetTs = 0;
 /** @type {boolean} 今日是否明确领成 */
 var claimedToday = false;
+/** @type {number} 本日业务拒绝已重试次数 */
+var rejectTries = 0;
+/** @type {number} rejectTries 所属的游戏日起点（换日归零） */
+var rejectDayStart = 0;
 /** @type {Promise<void>|null} 首拍等待的日戳回读 */
 var stampLoad = null;
 
@@ -56,13 +83,15 @@ function roundAlive(signal) {
 }
 
 /**
- * 睡到下一日界；时钟不可用退巡检。
- * @param {number} resetTs 下一服务器日界秒
+ * 睡到冷却锚点后再静置，避开服务器严格大于判据的边界同秒；时钟不可用退巡检。
+ * @param {number} resetTs 冷却锚点秒（服务器 freeFlag，缺失时退下一日界）
  * @returns {number} 毫秒
  */
 function sleepToReset(resetTs) {
   var now = gameData.serverTime();
-  return resetTs && now ? Math.max((resetTs - now) * 1000, 1000) : IDLE_TICK_MS;
+  return resetTs && now
+    ? Math.max((resetTs - now) * 1000 + RESET_SETTLE_MS, RESET_SETTLE_MS)
+    : IDLE_TICK_MS;
 }
 
 /**
@@ -110,7 +139,7 @@ function loadStamp() {
 
 /**
  * 发起落盘；即使 pause 也先保存，避免恢复后重领。
- * @param {number} resetTs 发包前锚定的下一日界
+ * @param {number} resetTs 冷却锚点秒（服务器 freeFlag，缺失时退下一日界）
  * @param {boolean} claimed 是否明确领成
  */
 function saveStamp(resetTs, claimed) {
@@ -124,7 +153,8 @@ function saveStamp(resetTs, claimed) {
 
 /**
  * 直发当前军级每日免费礼包。
- * @returns {Promise<{ok:boolean,claimed:boolean,code:number,reason?:string}>}
+ * @returns {Promise<{ok:boolean,claimed:boolean,code:number,reason?:string,nextTs?:number}>}
+ *   成功时 nextTs = 应答 freeFlag（服务器权威冷却），缺失为 0。
  */
 async function claimOnce() {
   if (!net) return { ok: false, claimed: false, code: CODE_NOT_SENT };
@@ -151,7 +181,8 @@ async function claimOnce() {
     log.warn('cmd 2002 ok but no freeFlag/reward receipt; do not mark resolved.');
     return { ok: false, claimed: false, code: -2 };
   }
-  return { ok: true, claimed: true, code: 0 };
+  // 游戏 updateVipRewardCdTime(resp.freeFlag)：freeFlag 即服务器权威冷却锚点。
+  return { ok: true, claimed: true, code: 0, nextTs: Number(d.freeFlag) || 0 };
 }
 
 /**
@@ -180,11 +211,9 @@ async function cycleRun() {
     log.debug('cmd 2002 idle: UserData VIP/free-gift state unavailable.');
     return IDLE_TICK_MS;
   }
-  if (vip.level <= 0) {
-    log.debug('cmd 2002 skipped: no active military rank, level=%d.', vip.level);
-    return IDLE_TICK_MS;
-  }
   if (vip.cooldownTs > now) {
+    // 冷却已推进到未来（本 feat 已领/换设备领取/20011 推送回写），本日无重试必要。
+    rejectTries = 0;
     log.debug('cmd 2002 waiting: level=%d cooldownTs=%d.', vip.level, vip.cooldownTs);
     return sleepToReset(Math.min(vip.cooldownTs, gameData.nextDailyResetTs(now)));
   }
@@ -192,6 +221,19 @@ async function cycleRun() {
   if (!roundResetTs) {
     log.debug('cmd 2002 idle: next daily reset unavailable, level=%d.', vip.level);
     return IDLE_TICK_MS;
+  }
+  var dayStart = roundResetTs - DAY_SEC;
+  if (dayStart !== rejectDayStart) {
+    rejectDayStart = dayStart;
+    rejectTries = 0;
+  }
+  // 日界静置：0 点整同一秒内发车必被服务器严格大于判据拒（实证 00:00:00.592 code=3），
+  // 睡醒落点或页面加载恰在日界头几秒时，先补齐静置再发。
+  var intoDay = now - dayStart;
+  if (intoDay < RESET_SETTLE_MS / 1000) {
+    var settleMs = (RESET_SETTLE_MS / 1000 - intoDay) * 1000 + 200;
+    log.debug('cmd 2002 boundary settle %dms after daily reset, level=%d.', settleMs, vip.level);
+    return settleMs;
   }
   var ret = await claimOnce();
   var paused = !roundAlive(signal);
@@ -206,24 +248,47 @@ async function cycleRun() {
       return paused ? 0 : 1000;
     }
     if (ret.code === -2) return paused ? 0 : TRANSIENT_RETRY_MS;
+    // 业务拒绝先按阶梯重试：一次拒绝不等于当日无望（日界同秒被拒即此类）。
+    if (rejectTries < REJECT_RETRY_MS.length) {
+      var retryMs = REJECT_RETRY_MS[rejectTries++];
+      if (paused) return 0;
+      log.info(
+        'cmd 2002 vip daily gift rejected; retry in %ds (try %d/%d). level=%d code=%s;data=%s',
+        retryMs / 1000,
+        rejectTries,
+        REJECT_RETRY_MS.length + 1,
+        vip.level,
+        ret.code,
+        rejectText(ret) || '-',
+      );
+      return retryMs;
+    }
     saveStamp(roundResetTs, false);
     if (paused) return 0;
     log.info(
-      'cmd 2002 vip daily gift rejected; suppress until midnight. level=%d code=%s;data=%s',
+      'cmd 2002 vip daily gift rejected; give up for today after %d tries. level=%d code=%s;data=%s',
+      REJECT_RETRY_MS.length + 1,
       vip.level,
       ret.code,
       rejectText(ret) || '-',
     );
     return sleepToReset(roundResetTs);
   }
+  rejectTries = 0;
   if (gameData.nextDailyResetTs() !== roundResetTs) {
     log.debug('cmd 2002 claim response crossed midnight; old day-stamp discarded.');
     return paused ? 0 : 1000;
   }
-  saveStamp(roundResetTs, true);
+  // 服务器 freeFlag 是权威冷却；合法时按它锚定，缺失/异常才退下一日界。
+  var nextTs = ret.nextTs > now ? ret.nextTs : roundResetTs;
+  saveStamp(nextTs, true);
   if (paused) return 0;
-  log.info('vip daily gift claimed for current military rank (level=%d).', vip.level);
-  return sleepToReset(roundResetTs);
+  log.info(
+    'vip daily gift claimed for current military rank (level=%d nextTs=%d).',
+    vip.level,
+    nextTs,
+  );
+  return sleepToReset(nextTs);
 }
 
 const cycle = createCycle({ log: log, alive: aliveFn, run: cycleRun, fallback: IDLE_TICK_MS });
@@ -250,9 +315,11 @@ function install(ctx) {
  * @param {object} ctx reactor 上下文
  */
 function subscribe(ctx) {
-  // 推送只触发面板刷新；冷却态仍从 UserData 读取，不缓存第二份真相。
+  // 推送只触发面板刷新与一拍重读；冷却态仍以 UserData/本次回执为准，不缓存第二份真相。
+  // 换设备领取或服务器提前放开冷却时，kick 让引擎立刻重读而不是傻等到旧锚点。
   ctx.on.push(PUSH_VIP_FREE_REWARD_UPDATE, function () {
     bus.emit(EVT.UI_REFRESH);
+    cycle.kick();
   });
 }
 
@@ -261,6 +328,8 @@ function run(ctx) {
   ctxRef = ctx;
   resolvedResetTs = 0;
   claimedToday = false;
+  rejectTries = 0;
+  rejectDayStart = 0;
   stampLoad = loadStamp();
   subscribe(ctx);
   log.info('started.');
@@ -269,7 +338,7 @@ function run(ctx) {
 
 reactor.register({
   id: 'vipDailyGift',
-  label: '军级每日礼包',
+  label: '军级宝箱',
   storageKey: 'pocketcc.feat.vipDailyGift',
   symbols: ['dataCenter'],
   places: ['base', 'world'],
@@ -283,7 +352,7 @@ reactor.register({
       label: '今日',
       get: function () {
         var vip = gameData.vipDailyGift();
-        if (!vip || vip.level <= 0) return '无军级';
+        if (!vip) return '—';
         if (claimedToday || vip.cooldownTs > gameData.serverTime()) return dailyText(1, 1);
         return dailyText(0, 1);
       },
@@ -297,10 +366,12 @@ reactor.register({
 });
 
 export { cycleRun, install as installForTest, subscribe as subscribeForTest };
-/** 单测专用：复位内存日戳，不启动 cycle。 */
+/** 单测专用：复位内存日戳与拒绝重试计数，不启动 cycle。 */
 export function resetForTest() {
   resolvedResetTs = 0;
   claimedToday = false;
+  rejectTries = 0;
+  rejectDayStart = 0;
   stampLoad = null;
 }
 /** 单测专用：发起日戳回读。 */

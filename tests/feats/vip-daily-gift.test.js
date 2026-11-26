@@ -1,4 +1,4 @@
-// 军级每日免费礼包离线回归：当前真实军级、冷却判据、V1 字符串应答、明确回执防重领。
+// 军级宝箱（每日免费礼包）离线回归：军级/冷却判据、V1 字符串应答、freeFlag 锚点与防重领。
 import { test, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 
@@ -100,22 +100,32 @@ test('面板集成：注册、玩家基础设置、默认关闭、每次激活�
   assert.deepEqual(subscribed, [20011]);
 });
 
-test('2002：V1 空载荷、字符串应答解析成功，落日戳且同日不再发包', async () => {
+test('2002：V1 空载荷、字符串应答解析成功，按服务器 freeFlag 落日戳且同日不再发包', async () => {
   assert.ok((await feat.cycleRun()) > 0);
   assert.deepEqual(sent, [{ cmd: 2002, data: {}, protocol: 'send' }]);
-  assert.deepEqual(stamps.get('vipDailyGift.resolved'), { resetTs: nextReset(), claimed: true });
+  // freeFlag 是服务器权威冷却（游戏 updateVipRewardCdTime），优先于本地日界。
+  assert.deepEqual(stamps.get('vipDailyGift.resolved'), { resetTs: 1794672300, claimed: true });
   await feat.cycleRun();
   assert.equal(sent.length, 1);
 });
 
-test('冷却中/无军级/状态未就绪：不发 2002', async () => {
+test('冷却中/状态未就绪：不发 2002', async () => {
   vip = { level: 8, cooldownTs: now + 60 };
-  assert.equal(await feat.cycleRun(), 60000);
-  vip = { level: 0, cooldownTs: 0 };
-  assert.equal(await feat.cycleRun(), 15 * 60 * 1000);
+  // 60s 冷却 + 10s 日界静置（sleepToReset 统一加 RESET_SETTLE_MS）
+  assert.equal(await feat.cycleRun(), 70000);
   vip = null;
   assert.equal(await feat.cycleRun(), 15 * 60 * 1000);
   assert.equal(sent.length, 0);
+});
+
+test('军级 0（VIP0）不断链：游戏宝箱按钮按 1 级归一，仍发 2002', async () => {
+  vip = { level: 0, cooldownTs: 0 };
+  assert.ok((await feat.cycleRun()) > 0);
+  assert.deepEqual(
+    sent.map((s) => s.cmd),
+    [2002],
+  );
+  assert.equal(stamps.get('vipDailyGift.resolved').claimed, true);
 });
 
 test('CODE_NOT_SENT：20 秒短重试且不落日戳', async () => {
@@ -152,12 +162,28 @@ test('freeFlag=0 或空/零数量奖励：均无实际领取凭证，不落 clai
   }
 });
 
-test('真业务拒绝：记 info 所需上下文并按日抑制，不反复发包', async () => {
-  respond = () => ({ ok: false, code: 2001, data: '<not_ready>' });
+test('日界同秒（0 点整）先静置 10 秒再发：实证 00:00:00.592 被 code=3 拒', async () => {
+  const dayStart = nextReset() - 86400;
+  now = dayStart; // 恰在日界整秒，上一日 freeFlag 锚点正是此刻
+  vip = { level: 13, cooldownTs: dayStart };
+  assert.equal(await feat.cycleRun(), 10200);
+  assert.equal(sent.length, 0);
+  now = dayStart + 10; // 服务器秒数已严格越过锚点
+  respond = () => ({ ok: true, code: 0, data: { freeFlag: dayStart + 86400 } });
   assert.ok((await feat.cycleRun()) > 0);
+  assert.equal(sent.length, 1);
+  assert.equal(stamps.get('vipDailyGift.resolved').claimed, true);
+});
+
+test('真业务拒绝：按 1/5/15/30 分钟阶梯重试，耗尽才按日抑制', async () => {
+  respond = () => ({ ok: false, code: 2001, data: '<not_ready>' });
+  const waits = [];
+  for (let i = 0; i < 5; i++) waits.push(await feat.cycleRun());
+  assert.deepEqual(waits, [60000, 300000, 900000, 1800000, 86110000]);
+  assert.equal(sent.length, 5);
   assert.deepEqual(stamps.get('vipDailyGift.resolved'), { resetTs: nextReset(), claimed: false });
   await feat.cycleRun();
-  assert.equal(sent.length, 1);
+  assert.equal(sent.length, 5);
 });
 
 test('跨午夜成功回执不落旧日戳，次日照新状态领取', async () => {

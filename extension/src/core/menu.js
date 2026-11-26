@@ -70,7 +70,7 @@ export const MENU = [
           { id: 'oneClickClaim', kind: 'feature', label: '一键领取', inlineStatus: true },
           { id: 'dailyDeal', kind: 'feature', label: '每日特惠', inlineStatus: true },
           { id: 'shoppingCart', kind: 'feature', label: '购物车每日一键兑换', inlineStatus: true },
-          { id: 'vipDailyGift', kind: 'feature', label: '军级每日礼包', inlineStatus: true },
+          { id: 'vipDailyGift', kind: 'feature', label: '军级宝箱', inlineStatus: true },
           {
             id: 'decorationFreeGift',
             kind: 'feature',
