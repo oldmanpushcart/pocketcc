@@ -10,10 +10,15 @@
  *     pbAck.shoppingCarBuy.shopPurchasedInfo.singleShopData[] + reward。
  *
  * 规划口径与游戏 ShoppingCollectTools.openOneClickBuyPanel 一致：限购余量、chooseNum、货币余额
- * 均按游戏遍历顺序扣减；ACL 只读投影配置和货币，无法可靠定价的联盟动态商品 fail-closed 跳过。
- * 4203 成功但应答未明确携带 purchased 明细或 reward 时不落「今日已解决」日戳，下一轮重新查询，
- * 避免空应答假成功（悬赏领取同款事故的跨玩法防线）。真业务拒绝不落日戳，15 分钟后再读；
- * 货币不足同样不睡整天，等资源变化。空车/全部达限购才落 UID 隔离日戳到次日。
+ * 按序扣减；ACL 只读投影配置和货币，无法可靠定价的联盟动态商品 fail-closed 跳过。
+ *
+ * 触发与日戳语义（与游戏「一键购买全量购物车」不同）：
+ *   道具商店（shopType=2）不限购/千次限购货架（玫瑰等）只作搭车项，必须有至少一个驱动项
+ *   同时买得起才发 4203；只有搭车项可买时不发包、不落日戳、15 分钟后重看。
+ *   每项每天最多成交一批（当日台账 `shopType:productId`），因此当日余额增长后的补买轮次
+ *   不会把玫瑰等无界商品重复带上；首轮买不起的驱动项会在后续巡检中补买。
+ *   日戳只在「今日无待购驱动项」时落：空车、驱动项全部成交/达限购；仅剩未成交搭车项也视为
+ *   今天不可能再触发。台账按 UID 隔离并带 resetTs，跨日自动作废。
  *
  * 合规：不 OpenUI、不调用游戏 Update、不涉及任何真钱/充值分支；全程 base/world 常态本服可运行。
  */
@@ -30,23 +35,35 @@ import { planShoppingCart } from './plan.js';
 /** @type {ReturnType<createLog>} 模块日志器 */
 const log = createLog('SHOPPING-CART');
 
-/** @type {number} 数据未就绪/货币不足/业务拒绝后的巡检间隔（毫秒） */
+/** @type {number} 数据未就绪/等待余额/业务拒绝后的巡检间隔（毫秒） */
 const IDLE_TICK_MS = 1000 * 60 * 15;
 /** @type {number} 瞬态未发出/空成功应答的短重试（毫秒） */
 const TRANSIENT_RETRY_MS = 1000 * 20;
+/** @type {number} 成交后的同轮复检间隔（毫秒）：回读 4204 判断是否还有待补驱动项 */
+const AFTER_BUY_RECHECK_MS = 1000 * 5;
 /** @type {number} 睡过服务器 0 点后的缓冲（毫秒） */
 const DAILY_ANCHOR_BUFFER_MS = 1000 * 60;
-/** @type {string} UID 命名空间内的每日已解决日戳键 */
-const STAMP_KEY = 'shoppingCart.resolved';
+/** @type {string} UID 命名空间内的当日台账键（resetTs + 已成交项） */
+const DAY_KEY = 'shoppingCart.day';
+/** @type {string} 旧版「今日已解决」日戳键（升级当日只读兼容，避免重复兑换） */
+const LEGACY_STAMP_KEY = 'shoppingCart.resolved';
 
 /** @type {object|null} 网络底座 */
 var net;
 /** @type {object|null} reactor 上下文 */
 var ctxRef = null;
-/** @type {number} 今日已解决对应的下一日界绝对秒 */
-var resolvedResetTs = 0;
-/** @type {Promise<void>|null} 首拍日戳回读 */
-var stampLoad = null;
+/** @type {number} 台账归属的下一日界绝对秒；now >= 它即整份作废 */
+var ledgerResetTs = 0;
+/** @type {boolean} 今日无待购驱动项，睡到次日 */
+var dayDone = false;
+/** @type {Object<string, 1>} 今日已成交商品键 */
+var soldMap = Object.create(null);
+/** @type {Set<string>} soldMap 的集合视图（规划器入参） */
+var soldSet = new Set();
+/** @type {object|null} 最近一轮规划结果（只用于面板状态文案） */
+var lastPlan = null;
+/** @type {Promise<void>|null} 首拍台账回读 */
+var stateLoad = null;
 
 /** @returns {boolean} 功能是否仍存活 */
 function aliveFn() {
@@ -102,42 +119,116 @@ function sleepToTs(untilTs) {
 }
 
 /**
- * 回读今日日戳；跨日自动作废。
+ * 落盘当日台账；写失败不影响内存当拍语义。
  * @returns {Promise<void>}
  */
-function loadStamp() {
+function persistLedger() {
+  var sold = Object.assign({}, soldMap);
   return storage.data
-    .get(STAMP_KEY)
-    .then(function (v) {
-      var ts = Number(v && v.resetTs) || 0;
-      var now = gameData.serverTime();
-      if (ts > 0 && now > 0 && now < ts) {
-        resolvedResetTs = ts;
-        bus.emit(EVT.UI_REFRESH);
-        log.debug('restored shopping-cart day-stamp, resetTs=%d.', ts);
-      }
-    })
+    .set(DAY_KEY, { resetTs: ledgerResetTs, done: dayDone, sold: sold })
     .catch(function () {
-      log.warn('shopping-cart stamp load failed; query server on this round.');
+      log.warn('shopping-cart ledger persist failed; memory suppression remains.');
     });
 }
 
 /**
- * 落今日已解决日戳；写失败不影响内存当拍抑制。
+ * 把本批商品登记为今日已成交。
+ * @param {Array<{key: string}>} entries 请求里实际包含的商品
  * @param {number} resetTs 发包前锚定的下一日界
  */
-function saveStamp(resetTs) {
-  resolvedResetTs = resetTs;
-  storage.data.set(STAMP_KEY, { resetTs: resetTs }).catch(function () {
-    log.warn('shopping-cart stamp persist failed; memory suppression remains.');
-  });
+function markSold(entries, resetTs) {
+  ledgerResetTs = resetTs;
+  for (var i = 0; i < entries.length; i++) {
+    soldMap[entries[i].key] = 1;
+    soldSet.add(entries[i].key);
+  }
+  persistLedger();
   bus.emit(EVT.UI_REFRESH);
 }
 
-/** cycle 单轮：读日戳 → 4204 → 规划 → 4203 → 明确成功才落日戳。 */
+/**
+ * 只登记搭车项：4203 成功但回执无明细，或请求已上线但业务拒绝时，钻石货架不再重试，
+ * 驱动项留给下一轮 4204 用服务端 purchasedBuyNum 复核。
+ * @param {Array<{key: string, rider: boolean}>} entries 规划条目
+ * @param {number} resetTs 发包前锚定的下一日界
+ */
+function markRiders(entries, resetTs) {
+  var riders = [];
+  for (var i = 0; i < entries.length; i++) {
+    if (entries[i].rider) riders.push(entries[i]);
+  }
+  if (riders.length) markSold(riders, resetTs);
+}
+
+/**
+ * 今日无待购驱动项：落「今日已解决」并睡到次日。
+ * @param {number} next 下一日界绝对秒
+ */
+function finishDay(next) {
+  ledgerResetTs = next;
+  dayDone = true;
+  persistLedger();
+  bus.emit(EVT.UI_REFRESH);
+}
+
+/**
+ * 跨日作废台账（内存态）；盘上旧数据由 resetTs 自然过期。
+ */
+function resetDay() {
+  ledgerResetTs = 0;
+  dayDone = false;
+  soldMap = Object.create(null);
+  soldSet.clear();
+  lastPlan = null;
+}
+
+/**
+ * 回读当日台账；跨日自动作废。旧版日戳只表示「今天已处理」，升级当日不再重兑。
+ * @returns {Promise<void>}
+ */
+function loadState() {
+  return Promise.all([storage.data.get(DAY_KEY), storage.data.get(LEGACY_STAMP_KEY)])
+    .then(function (vals) {
+      var day = vals[0] || null;
+      var now = gameData.serverTime();
+      var resetTs = Number(day && day.resetTs) || 0;
+      if (resetTs > 0 && now > 0 && now < resetTs) {
+        ledgerResetTs = resetTs;
+        dayDone = !!day.done;
+        var sold = day.sold && typeof day.sold === 'object' ? day.sold : null;
+        if (sold) {
+          for (var key in sold) {
+            if (!sold[key]) continue;
+            soldMap[key] = 1;
+            soldSet.add(key);
+          }
+        }
+        bus.emit(EVT.UI_REFRESH);
+        log.debug(
+          'restored shopping-cart day ledger (%d sold), resetTs=%d.',
+          soldSet.size,
+          resetTs,
+        );
+        return;
+      }
+      var legacy = vals[1] || null;
+      var legacyTs = Number(legacy && legacy.resetTs) || 0;
+      if (legacyTs > 0 && now > 0 && now < legacyTs) {
+        ledgerResetTs = legacyTs;
+        dayDone = true;
+        bus.emit(EVT.UI_REFRESH);
+        log.debug('legacy day-stamp honored for upgrade day, resetTs=%d.', legacyTs);
+      }
+    })
+    .catch(function () {
+      log.warn('shopping-cart ledger load failed; query server on this round.');
+    });
+}
+
+/** cycle 单轮：读台账 → 4204 → 规划（驱动/搭车）→ 4203 → 明确成功只记本批，不落日戳。 */
 async function cycleRun() {
   var signal = ctxRef ? ctxRef.signal : null;
-  if (stampLoad) await stampLoad;
+  if (stateLoad) await stateLoad;
   if (!roundAlive(signal)) return 0;
   var now = gameData.serverTime();
   var next = gameData.nextDailyResetTs(now);
@@ -145,7 +236,8 @@ async function cycleRun() {
     log.debug('shopping-cart idle: server clock unavailable.');
     return IDLE_TICK_MS;
   }
-  if (resolvedResetTs && now < resolvedResetTs) return sleepToTs(resolvedResetTs);
+  if (ledgerResetTs && now >= ledgerResetTs) resetDay();
+  if (dayDone && ledgerResetTs) return sleepToTs(ledgerResetTs);
   if (!net) {
     log.warn('shopping-cart skipped: network base unavailable.');
     return IDLE_TICK_MS;
@@ -181,7 +273,8 @@ async function cycleRun() {
     log.warn('cmd 4204 malformed ack or cart projection unavailable; no buy sent.');
     return IDLE_TICK_MS;
   }
-  var plan = planShoppingCart(cart);
+  var plan = planShoppingCart(cart, { sold: soldSet });
+  lastPlan = plan;
   if (plan.skipped) {
     for (var si = 0; si < cart.skipped.length; si++) {
       var skip = cart.skipped[si];
@@ -194,21 +287,39 @@ async function cycleRun() {
     }
   }
   if (!plan.shopData.length) {
-    if (!cart.items.length && !plan.skipped) {
+    if (!cart.items.length) {
       log.debug('shopping-cart empty on server; mark today resolved.');
-      saveStamp(next);
+      finishDay(next);
       return sleepToTs(next);
     }
-    if (cart.items.length && plan.exhausted === cart.items.length && !plan.skipped) {
-      log.debug('shopping-cart all items exhausted by purchase limits; mark today resolved.');
-      saveStamp(next);
+    if (plan.driverSeen > 0 && plan.driverPending === 0) {
+      log.debug(
+        'shopping-cart drivers all sold/limit-exhausted (sold=%d exhausted=%d); mark today resolved.',
+        plan.sold,
+        plan.exhausted,
+      );
+      finishDay(next);
       return sleepToTs(next);
+    }
+    if (plan.driverSeen === 0) {
+      log.debug(
+        'shopping-cart only rider (shopType=2/unbounded) items in cart; wait for cart changes.',
+      );
+      return IDLE_TICK_MS;
     }
     log.debug(
-      'shopping-cart no affordable item: exhausted=%d insufficient=%d skipped=%d; retry later.',
+      'shopping-cart no affordable driver: exhausted=%d insufficient=%d pending=%d sold=%d; retry later.',
       plan.exhausted,
       plan.insufficient,
-      plan.skipped,
+      plan.driverPending,
+      plan.sold,
+    );
+    return IDLE_TICK_MS;
+  }
+  if (!plan.trigger) {
+    log.debug(
+      'shopping-cart only riders affordable (%d); not enough to trigger a buy.',
+      plan.riders,
     );
     return IDLE_TICK_MS;
   }
@@ -229,32 +340,41 @@ async function cycleRun() {
       },
     },
   );
-  // 成功回执跨 pause 也要保存，避免恢复后重兑；随后由 alive 决定是否继续调度。
+  var buyCode = buy ? buy.code : CODE_NOT_SENT;
+  // 成交/尝试记录跨 pause 也要保存，避免恢复后重兑；随后由 alive 决定是否继续调度。
   if (buy && buy.ok) {
     var bought = buy.data && buy.data.shoppingCarBuy;
     var confirmed = hasBuyReceipt(bought);
-    if (confirmed) {
-      // 跨午夜旧回执不能压制新一天：仅当发包前锚点仍等于当前下一日界才落盘。
-      if (gameData.nextDailyResetTs(gameData.serverTime()) === next) {
-        saveStamp(next);
-        log.info('shopping-cart one-click exchange confirmed (%d product(s)).', plan.affordable);
-      } else {
-        log.debug('shopping-cart buy confirmed after midnight; old day-stamp discarded.');
-        return 1000;
-      }
-    } else {
-      log.warn('cmd 4203 ok but no actual purchased detail/reward item; re-query soon.');
-      return aliveFn() ? TRANSIENT_RETRY_MS : 0;
+    // 跨午夜旧回执不能压制新一天：仅当发包前锚点仍等于当前下一日界才落账。
+    if (gameData.nextDailyResetTs(gameData.serverTime()) !== next) {
+      log.debug('shopping-cart buy confirmed after midnight; old day ledger discarded.');
+      return 1000;
     }
-  } else if (buy && buy.code !== CODE_NOT_SENT) {
-    log.info('cmd 4203 buy rejected; no day-stamp. code=%s reason=%s', buy.code, buy.reason || '-');
-    return aliveFn() ? IDLE_TICK_MS : 0;
-  } else {
-    log.warn('cmd 4203 transient not-sent/in-flight/unknown; re-query before any retry.');
+    if (confirmed) {
+      markSold(plan.entries, next);
+      log.info(
+        'shopping-cart exchange confirmed: drivers=%d riders=%d; continue same-day replan.',
+        plan.drivers,
+        plan.riders,
+      );
+      return aliveFn() ? AFTER_BUY_RECHECK_MS : 0;
+    }
+    // 空壳成功：搭车项保守记今日已尝试（钻石货架不重复买），驱动项留待 4204 复核。
+    markRiders(plan.entries, next);
+    log.warn('cmd 4203 ok but no actual purchased detail/reward; riders held, re-query soon.');
     return aliveFn() ? TRANSIENT_RETRY_MS : 0;
   }
-  if (!aliveFn()) return 0;
-  return sleepToTs(next);
+  if (buyCode !== CODE_NOT_SENT) {
+    // 业务拒绝 = 什么都没买：搭车项也不记账，余额/时序变化后仍可补买。
+    log.info(
+      'cmd 4203 buy rejected; no marks. code=%s reason=%s',
+      buyCode,
+      (buy && buy.reason) || '-',
+    );
+    return aliveFn() ? IDLE_TICK_MS : 0;
+  }
+  log.warn('cmd 4203 transient not-sent/in-flight/unknown; re-query before any retry.');
+  return aliveFn() ? TRANSIENT_RETRY_MS : 0;
 }
 
 const cycle = createCycle({ log: log, alive: aliveFn, run: cycleRun, fallback: IDLE_TICK_MS });
@@ -279,10 +399,22 @@ function install(ctx) {
 /** @param {object} ctx reactor 上下文 */
 function run(ctx) {
   ctxRef = ctx;
-  resolvedResetTs = 0;
-  stampLoad = loadStamp();
+  resetDay();
+  stateLoad = loadState();
   log.info('started.');
   cycle.kick();
+}
+
+/**
+ * 面板状态文案：今日已兑换 / 已兑换 N 项 / 仅有道具商店商品 / 等待兑换。
+ * @returns {string}
+ */
+function statusText() {
+  var now = gameData.serverTime();
+  if (dayDone && ledgerResetTs > 0 && now > 0 && now < ledgerResetTs) return '今日已兑换';
+  if (soldSet.size > 0) return '已兑换 ' + soldSet.size + ' 项，等待补买';
+  if (lastPlan && lastPlan.items > 0 && lastPlan.driverSeen === 0) return '仅有道具商店商品';
+  return '等待兑换';
 }
 
 reactor.register({
@@ -299,10 +431,7 @@ reactor.register({
       key: '_cartInfo',
       type: 'text',
       label: '今日',
-      get: function () {
-        var now = gameData.serverTime();
-        return resolvedResetTs > 0 && now > 0 && now < resolvedResetTs ? '今日已兑换' : '等待兑换';
-      },
+      get: statusText,
     },
   ],
   toModuleCfg: function (c) {
@@ -313,13 +442,13 @@ reactor.register({
 });
 
 export { cycleRun, planShoppingCart, install as installForTest };
-/** 单测专用：复位在飞态，不 kick cycle。 */
+/** 单测专用：复位在飞态与台账，不 kick cycle。 */
 export function resetForTest() {
-  resolvedResetTs = 0;
-  stampLoad = null;
+  resetDay();
+  stateLoad = null;
 }
-/** 单测专用：发起日戳回读。 */
-export function loadStampForTest() {
-  stampLoad = loadStamp();
-  return stampLoad;
+/** 单测专用：发起台账回读。 */
+export function loadStateForTest() {
+  stateLoad = loadState();
+  return stateLoad;
 }
