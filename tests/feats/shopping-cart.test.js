@@ -360,6 +360,15 @@ test('等余额巡检指数退避：15 → 30 → 60 分钟封顶，成交后重
   assert.equal(await cartFeat.cycleRun(), 15 * MIN);
 });
 
+test('等余额退避不跨日：最晚 0 点 + 60 秒醒一次', async () => {
+  normalized = { items: [rose({ balance: 0 })], skipped: [] };
+  const reset = nextReset();
+  now = reset - 3600;
+  assert.equal(await cartFeat.cycleRun(), 15 * 60 * 1000);
+  now = reset - 300;
+  assert.equal(await cartFeat.cycleRun(), 6 * 60 * 1000);
+});
+
 test('服务端空车：落今日已解决，重载后首拍不再查询', async () => {
   normalized = { items: [], skipped: [] };
   await cartFeat.cycleRun();

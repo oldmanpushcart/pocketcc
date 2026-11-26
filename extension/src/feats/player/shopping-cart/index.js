@@ -306,7 +306,8 @@ async function cycleRun() {
       plan.sold,
       plan.pending,
     );
-    return idleDelay();
+    // 退避照旧，但最晚夹到次日夜界醒来，避免 60 分钟档把新一天首扫拖到 1 小时后。
+    return Math.min(idleDelay(), sleepToTs(next));
   }
 
   // 写请求前再次核验激活代次和日界，避免在飞暂停恢复/跨日应答后继续兑换。
