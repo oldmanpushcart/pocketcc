@@ -439,7 +439,9 @@ reactor.register({
       key: '_adInfo',
       type: 'text',
       label: '今日',
-      get: function () {
+      get: function (c) {
+        // 关闭态没有任何 9706 读数，用「未开启」区别于「开启但尚未读回」的 '—'。
+        if (c && !c.enabled) return '未开启';
         if (!infoReady) return '—';
         var list = slots().list;
         if (!list.length) return '—';
