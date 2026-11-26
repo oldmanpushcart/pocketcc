@@ -19,6 +19,11 @@
  *   CODE_NOT_SENT 短重试且不标记；真正业务拒绝按 info 记录并退避；跨午夜应答丢弃旧日结果。
  *
  * 调度：createCycle 单飞；每 30 秒检查本地只读态，有可领项立即发，成功后 1 秒内复扫 newly-ready。
+ *
+ * 面板口径（inlineStatus）：「任务 x/N · 奖励 y/4」。
+ *   x=今日已领取任务数（服务端 dailyQuestFinishCount，含手动领取，钳进 [0,N]），
+ *     N=当天任务条数（UserData.DailyQuests 长度，随账号/版本变化，不写死）；
+ *   y=已领宝箱数（dailyQuestBoxStateArray 与领取应答覆盖取 max 后计 FINISHED），分母=宝箱数（当前 4）。
  */
 import { CODE_NOT_SENT, parseData, rejectText } from '../../../core/util.js';
 import { createLog } from '../../../core/log.js';
@@ -89,6 +94,41 @@ function roundAlive(signal) {
  */
 function taskKey(quest) {
   return quest.id + ':' + quest.progress;
+}
+
+/**
+ * 今日已领取任务数：取服务端权威值与本功能应答覆盖的较大值（直发不驱动游戏 UserData 自更新）。
+ * @returns {number}
+ */
+function claimedCount() {
+  return Math.max(gameData.dailyQuestFinishCount(), finishCountOverride);
+}
+
+/**
+ * 今日已领取宝箱数：本地态与领取应答覆盖取较大值后计 FINISHED（宝箱状态 0→1→2 单向推进）。
+ * @returns {{claimed:number,total:number}}
+ */
+function boxProgress() {
+  var states = gameData.dailyQuestBoxStates();
+  var claimed = 0;
+  for (var i = 0; i < states.length; i++) {
+    var state = Math.max(Number(states[i]) || 0, boxOverrides.get(i + 1) || 0);
+    if (state === BOX_STATE_FINISHED) claimed++;
+  }
+  return { claimed: claimed, total: states.length };
+}
+
+/**
+ * 面板内联状态文案：任务 已领/当天任务数 · 奖励 已领宝箱/宝箱数；两边都读不到回 '—'。
+ * @returns {string}
+ */
+function todayText() {
+  var total = gameData.dailyQuests().length;
+  var boxes = boxProgress();
+  if (!total && !boxes.total) return '—';
+  var taskText = total > 0 ? '任务 ' + Math.min(total, claimedCount()) + '/' + total : '任务 —';
+  var boxText = boxes.total > 0 ? '奖励 ' + boxes.claimed + '/' + boxes.total : '奖励 —';
+  return taskText + ' · ' + boxText;
 }
 
 /**
@@ -477,6 +517,9 @@ function run(ctx) {
   cycle.kick();
 }
 
+/**
+ * 向 reactor 注册本功能说明书：玩家基础设置子项（无 places/kinds 限定）。
+ */
 reactor.register({
   id: 'bountyQuest',
   label: '悬赏任务自动领取',
@@ -490,16 +533,7 @@ reactor.register({
       type: 'text',
       label: '今日',
       get: function () {
-        var tasks = pendingTasks();
-        var boxes = pendingBoxes();
-        return (
-          '已完成 ' +
-          Math.max(gameData.dailyQuestFinishCount(), finishCountOverride) +
-          ' · 待领任务 ' +
-          tasks.length +
-          ' · 宝箱 ' +
-          boxes.length
-        );
+        return todayText();
       },
     },
   ],

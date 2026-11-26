@@ -157,6 +157,28 @@ test('面板集成：悬赏任务自动领取已注册并挂入玩家基础设�
   assert.deepEqual(spec.toModuleCfg({ enabled: true }), { enabled: true });
 });
 
+test('面板内联状态按「任务 已领/当天任务数 · 奖励 已领宝箱/宝箱数」展示', () => {
+  quests = Array.from({ length: 13 }, (_, i) => task(4001 + i, 0, 0));
+  boxes = [2, 2, 0, 0];
+  const spec = reactor.list().find((item) => item.id === 'bountyQuest');
+  assert.equal(spec.fields[0].get({}), '任务 10/13 · 奖励 2/4');
+});
+
+test('已领任务数超过当天任务数时钳到上限，不冒出 15/13', () => {
+  quests = Array.from({ length: 13 }, (_, i) => task(4001 + i, 0, 0));
+  boxes = [2, 2, 2, 2];
+  gameData.dailyQuestFinishCount = () => 15;
+  const spec = reactor.list().find((item) => item.id === 'bountyQuest');
+  assert.equal(spec.fields[0].get({}), '任务 13/13 · 奖励 4/4');
+});
+
+test('任务与宝箱数据都读不到时回 —', () => {
+  quests = [];
+  boxes = [];
+  const spec = reactor.list().find((item) => item.id === 'bountyQuest');
+  assert.equal(spec.fields[0].get({}), '—');
+});
+
 test('没有可领任务或宝箱时不发包', async () => {
   quests = [task(101, 0, 0), task(102, 1, 2)];
   assert.equal(await bounty.cycleRun(), 30 * 1000);
