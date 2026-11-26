@@ -59,6 +59,35 @@ export default [
     ],
   },
   {
+    cmd: 2507,
+    dir: 'C2S',
+    note: '宝藏幸运机抽一台（摇摇机孪生号，与 9628 同形；resultId>0 即中，奖励直接到账无后续领奖）',
+    src: '',
+    fields: 'req {activityId,instanceIdStr} → resp {resultId,reward{items[{itemId,itemCount}]}}',
+    usages: [
+      {
+        name: 'CMD_EXCAVATE_TIGER_DRAW',
+        feat: 'aureole-slot',
+        file: 'feats/activity/aureole-slot/constants.js',
+      },
+    ],
+  },
+  {
+    cmd: 2509,
+    dir: 'C2S',
+    note: '宝藏幸运机世界页机器列表（摇摇机孪生号，与 9630 同形）',
+    src: '',
+    fields:
+      'req {activityId} → resp {worldList:[{instanceIdStr,expireTimeMilli:Int64(毫秒),triggerUser{uid,playerInfo,serverId,frameId},x,y}]}',
+    usages: [
+      {
+        name: 'CMD_EXCAVATE_WORLD_LIST',
+        feat: 'aureole-slot',
+        file: 'feats/activity/aureole-slot/constants.js',
+      },
+    ],
+  },
+  {
     cmd: 3756,
     dir: 'C2S',
     note: '查询当前可攻打世界 boss（海上夺宝，{activityId} → {bossInfos}）',
@@ -482,6 +511,35 @@ export default [
     ],
   },
   {
+    cmd: 9628,
+    dir: 'C2S',
+    note: '情报摇摇机抽一台（本 feat 唯一出网动作；实测 resultId=8 → 稀有技能宝箱 2540002 ×1）',
+    src: '',
+    fields: 'req {activityId,instanceIdStr} → resp {resultId,reward{items[{itemId,itemCount}]}}',
+    usages: [
+      {
+        name: 'CMD_AUREOLE_DRAW',
+        feat: 'aureole-slot',
+        file: 'feats/activity/aureole-slot/constants.js',
+      },
+    ],
+  },
+  {
+    cmd: 9630,
+    dir: 'C2S',
+    note: '情报摇摇机世界页机器列表（只下发同分组；孪生号 2509）',
+    src: '',
+    fields:
+      'req {activityId} → resp {worldList:[{instanceIdStr,expireTimeMilli:Int64(毫秒),triggerUser{uid,playerInfo,serverId,frameId},x,y}]}',
+    usages: [
+      {
+        name: 'CMD_AUREOLE_WORLD_LIST',
+        feat: 'aureole-slot',
+        file: 'feats/activity/aureole-slot/constants.js',
+      },
+    ],
+  },
+  {
     cmd: 10029,
     dir: 'S2C',
     note: 'push 发射井个人积分/已领档位刷新',
@@ -516,6 +574,11 @@ export default [
     src: '',
     fields: '',
     usages: [
+      {
+        name: 'CMD_PUSH_ONE_ACTIVITY_EXTRA',
+        feat: 'aureole-slot',
+        file: 'feats/activity/aureole-slot/constants.js',
+      },
       {
         name: 'CMD_PUSH_ONE_ACTIVITY_EXTRA',
         feat: 'domain-treasure',
