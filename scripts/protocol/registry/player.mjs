@@ -1297,8 +1297,8 @@ export default [
       },
       {
         name: 'CMD_GET_AD_MONTH_CARD_WATCH_INFO',
-        feat: 'ad-privilege',
-        file: 'feats/player/ad-privilege/constants.js',
+        feat: 'monthly-card',
+        file: 'feats/player/monthly-card/constants.js',
       },
     ],
   },
@@ -1325,8 +1325,8 @@ export default [
     usages: [
       {
         name: 'CMD_GET_ALL_AD_MONTH_CARD_REWARD',
-        feat: 'ad-privilege',
-        file: 'feats/player/ad-privilege/constants.js',
+        feat: 'monthly-card',
+        file: 'feats/player/monthly-card/constants.js',
       },
     ],
   },

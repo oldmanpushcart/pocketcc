@@ -1,5 +1,5 @@
 /**
- * 广告特权每日 x2（广告月卡有效期内全领，reactor 说明书形态，玩家基础设置，单链）
+ * 至尊月卡广告特权 x2 子链（广告月卡 cardId=5003 有效期内全领，玩家基础设置）
  *
  * 状态与协议（公开游戏客户端源码；未做账号登录抓包）：
  *   UserData.TimeCards 中 cardId=5003 为广告月卡，endTime>ServerTime 才在 ADRewardItem 中启用
@@ -7,7 +7,7 @@
  *     9708 GET_ALL_AD_MONTH_CARD_REWARD，PBV2，空载荷 {}，一次领取当前全部 ready 奖励；
  *     应答 data={adMonthCardWatchInfos:[{adNewId,viewCount,lastViewTime}],reward:{items,resource}}。
  *   9706 GET_AD_MONTH_CARD_WATCH_INFO，PBV2，{} 读取服务器权威每日进度。
- *   与「广告领钻石」9707 逐槽领取不同，本功能刻意不按奖励种类过滤，覆盖钻石/体力/英雄/强化等全部 x2 档。
+ *   与「广告领钻石」9707 逐槽领取不同，本子链刻意不按奖励种类过滤，覆盖钻石/体力/英雄/强化等全部 x2 档。
  *
  * 可领判据：公开客户端 MonthCardController.getAdRewardCount 以 times-viewCount 计算剩余次数，
  *   getAdRewardList 只按 level 过滤可见行；vip_level 仅用于月卡失效时的入口兜底，有效月卡不额外筛它。
@@ -17,24 +17,24 @@
  * 防重领：9708 成功后用应答 adMonthCardWatchInfos 合并本地态；仅全部 capped 才落服务器日界日戳，
  *   仍有冷却槽时继续按 cd 排程，不能漏领后续档。真正业务拒绝落日戳避免逐拍敲门；
  *   CODE_NOT_SENT 短重试且不落日戳。日戳存 storage.data（UID 隔离），同日刷新后零发包；日界后自动解禁。
+ *   合并进「至尊月卡」feat 后日戳改存 monthlyCard.adResolved，同时兼容读取合并前的
+ *   adPrivilege.resolved（升级当天不重复查询/全领）；由 index.js 的 run() 统一 kick。
  */
 import { CODE_NOT_SENT, rejectText } from '../../../core/util.js';
 import { createLog } from '../../../core/log.js';
 import { bits, gameData, l10n } from '../../../core/game-api.js';
-import { reactor } from '../../../core/reactor.js';
 import { createCycle } from '../../../core/cycle.js';
-import { dailyText } from '../../../core/daily-stats.js';
 import { storage } from '../../../core/storage.js';
 import { bus, EVT } from '../../../core/bus.js';
 
 import {
-  CARD_ID_AD_MONTH_CARD,
+  CARD_ID_MONTHLY,
   CMD_GET_AD_MONTH_CARD_WATCH_INFO,
   CMD_GET_ALL_AD_MONTH_CARD_REWARD,
 } from './constants.js';
 
 /** @type {ReturnType<createLog>} 模块日志器 */
-const log = createLog('AD-PRIVILEGE');
+const log = createLog('MONTHLY-AD');
 /** @type {string} AD_NEW 奖励配置表 */
 const TABLE_AD_NEW = 'AD_NEW';
 /** @type {number} 未生效/数据未就绪/业务拒绝巡检间隔（毫秒） */
@@ -50,7 +50,9 @@ const MIN_WAKE_MS = 1000 * 5;
 /** @type {number} 日界缓冲（毫秒） */
 const DAY_ROLL_BUFFER_MS = 1000 * 60;
 /** @type {string} UID 隔离运行数据中的当日已解决日戳键 */
-const STAMP_KEY = 'adPrivilege.resolved';
+const STAMP_KEY = 'monthlyCard.adResolved';
+/** @type {string} 合并前 adPrivilege feat 的日戳键（只读兼容，新写入不再使用） */
+const LEGACY_STAMP_KEY = 'adPrivilege.resolved';
 /** @type {number} 本地哨兵：9706 应答畸形，区别于服务器业务拒绝 */
 const MALFORMED_RESPONSE = -2;
 
@@ -277,6 +279,22 @@ async function claimAll() {
 }
 
 /**
+ * 已解决日戳下的一次性只读补读：刷新面板权威进度，不发领取、不改日戳。
+ * 仅在本次启动尚未读回（infoReady=false）时执行；前置不足或查询失败就留在 '—'，
+ * 不影响睡到日界的排程（日戳只抑制领取，不抑制这一次只读查询）。
+ * @param {number} now 服务器秒
+ * @returns {Promise<void>}
+ */
+async function refreshInfoForStatus(now) {
+  if (infoReady) return;
+  var card = gameData.monthlyCard(CARD_ID_MONTHLY);
+  if (!card || now >= card.endTime || !l10n.tableReady()) return;
+  if (!slots().length) return;
+  var info = await fetchInfo();
+  if (!info.ok) log.debug('cmd 9706 status refresh failed. code=%s', info.code);
+}
+
+/**
  * cycle 单轮：日戳 → 广告月卡有效期 → 表/9706 → 有 ready 发 9708 → 落日戳择时。
  * @returns {Promise<number>}
  */
@@ -290,12 +308,15 @@ async function cycleRun() {
     return IDLE_TICK_MS;
   }
   if (resolvedResetTs > now) {
+    // 日戳只抑制领取，不抑制一次只读补读：刷新页面后面板仍要有权威进度可显示。
+    await refreshInfoForStatus(now);
+    if (!roundAlive(signal)) return 0;
     log.debug('cmd 9706/9708 skipped: today resolved until resetTs=%d.', resolvedResetTs);
     return dayRollDelay();
   }
-  var card = gameData.monthlyCard(CARD_ID_AD_MONTH_CARD);
+  var card = gameData.monthlyCard(CARD_ID_MONTHLY);
   if (!card || now >= card.endTime) {
-    log.debug('cmd 9706/9708 skipped: cardId=%d inactive or expired.', CARD_ID_AD_MONTH_CARD);
+    log.debug('cmd 9706/9708 skipped: cardId=%d inactive or expired.', CARD_ID_MONTHLY);
     return IDLE_TICK_MS;
   }
   if (!l10n.tableReady()) {
@@ -327,7 +348,7 @@ async function cycleRun() {
     }
     if (info.code === MALFORMED_RESPONSE) return IDLE_TICK_MS;
     log.info(
-      'cmd 9706 ad-privilege info rejected, poll later. code=%s;data=%s',
+      'cmd 9706 ad x2 info rejected, poll later. code=%s;data=%s',
       info.code,
       rejectText(info) || '-',
     );
@@ -359,7 +380,7 @@ async function cycleRun() {
     saveStamp(false);
     if (paused) return 0;
     log.info(
-      'cmd 9708 ad-privilege claim rejected, retry after midnight. code=%s;data=%s',
+      'cmd 9708 ad x2 claim rejected, retry after midnight. code=%s;data=%s',
       ret.code,
       rejectText(ret) || '-',
     );
@@ -383,22 +404,48 @@ async function cycleRun() {
 const cycle = createCycle({ log: log, alive: aliveFn, run: cycleRun, fallback: IDLE_TICK_MS });
 
 /**
- * 回读当日日戳。
+ * 面板状态值：未生效 / — / done/total（由 index.js 拼成至尊月卡合并状态行）。
+ * @returns {string}
+ */
+function statusText() {
+  var now = gameData.serverTime();
+  var card = gameData.monthlyCard(CARD_ID_MONTHLY);
+  if (!now || !card || now >= card.endTime) return '未生效';
+  if (!infoReady) return '—';
+  var p = progress(slots());
+  if (!p.total) return '—';
+  return p.done + '/' + p.total;
+}
+
+/**
+ * 应用一条日戳：仅当前服务器日界内有效。
+ * @param {{resetTs?:number,claimed?:boolean}|undefined} v 已落盘日戳
+ * @returns {boolean} 是否生效
+ */
+function applyStamp(v) {
+  var ts = Number(v && v.resetTs) || 0;
+  var now = gameData.serverTime();
+  if (now > 0 && ts > now) {
+    resolvedResetTs = ts;
+    bus.emit(EVT.UI_REFRESH);
+    return true;
+  }
+  return false;
+}
+
+/**
+ * 回读当日日戳：优先新键，未命中时兼容合并前的 adPrivilege.resolved。
  * @returns {Promise<void>}
  */
 function loadStamp() {
   return storage.data
     .get(STAMP_KEY)
     .then(function (v) {
-      var ts = Number(v && v.resetTs) || 0;
-      var now = gameData.serverTime();
-      if (now > 0 && ts > now) {
-        resolvedResetTs = ts;
-        bus.emit(EVT.UI_REFRESH);
-      }
+      if (applyStamp(v)) return;
+      return storage.data.get(LEGACY_STAMP_KEY).then(applyStamp);
     })
     .catch(function (err) {
-      log.warn('ad-privilege day-stamp load failed: %s', err && err.message);
+      log.warn('monthly-card ad day-stamp load failed: %s', err && err.message);
     });
 }
 
@@ -410,73 +457,35 @@ function saveStamp(claimed) {
   storage.data
     .set(STAMP_KEY, { resetTs: resolvedResetTs, claimed: !!claimed })
     .catch(function (err) {
-      log.warn('ad-privilege day-stamp save failed: %s', err && err.message);
+      log.warn('monthly-card ad day-stamp save failed: %s', err && err.message);
     });
   bus.emit(EVT.UI_REFRESH);
 }
 
 /**
+ * 绑定 reactor 上下文与网络底座（net.install 由 index.js 统一执行，子链不重复装）。
  * @param {object} ctx reactor 上下文
- * @returns {boolean}
  */
-function install(ctx) {
+function attach(ctx) {
   ctxRef = ctx;
-  net = ctx.net;
-  if (!net || !net.install()) {
-    net = null;
-    log.warn('install failed: pocketcc.net unavailable');
-    return false;
-  }
-  log.info('installed.');
-  return true;
+  net = ctx.net || null;
 }
 
 /**
+ * 启动：复位槽位态与日戳，随后立即判断一次。
  * @param {object} ctx reactor 上下文
  */
-function run(ctx) {
-  ctxRef = ctx;
+function start(ctx) {
+  attach(ctx);
   stateById = new Map();
   infoReady = false;
   resolvedResetTs = 0;
   stampLoad = loadStamp();
-  log.info('started.');
+  log.info('monthly-card ad privilege chain started.');
   cycle.kick();
 }
 
-reactor.register({
-  id: 'adPrivilege',
-  label: '广告特权每日x2',
-  storageKey: 'pocketcc.feat.adPrivilege',
-  symbols: ['dataCenter', 'tableManager', 'tableName'],
-  places: ['base', 'world'],
-  kinds: ['homeland'],
-  offInCombat: false,
-  defaults: { enabled: false },
-  fields: [
-    {
-      key: '_adPrivilegeInfo',
-      type: 'text',
-      label: '今日',
-      get: function () {
-        var now = gameData.serverTime();
-        var card = gameData.monthlyCard(CARD_ID_AD_MONTH_CARD);
-        if (!now || !card || now >= card.endTime) return '未生效';
-        if (!infoReady) return '—';
-        var p = progress(slots());
-        if (!p.total) return '—';
-        return dailyText(p.done, p.total);
-      },
-    },
-  ],
-  toModuleCfg: function (c) {
-    return { enabled: !!(c && c.enabled) };
-  },
-  install: install,
-  run: run,
-});
-
-export { cycleRun, install as installForTest };
+export { attach, start, cycleRun, statusText };
 /** 单测专用：复位内存态，不启动 cycle。 */
 export function resetForTest() {
   stateById = new Map();
