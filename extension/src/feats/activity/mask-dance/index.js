@@ -129,12 +129,20 @@ const QUEUE_MAX = 60;
 const BLACKLIST_MAX = 300;
 
 /**
- * 探针短路记档上界（FIFO 淘汰），键为「目标服:坐标」。
- * 实录口径：一天 62 次 901 探针只覆盖 27 个唯一目标——同一座城被反复分享时，拉黑键是 instanceId、
- * 只有查完 901 才拿得到，于是每次重复都白送一次 901。记档按坐标前置拦截，把这个浪费吃掉。
+ * 探针结果缓存上界（LRU 淘汰），键为「目标服:坐标」。
+ * 实录口径（20261126）：一天 125 次真实 901 只覆盖 80 个唯一坐标，其中 68 个被查过两次以上；
+ * 没宝箱的坐标从不重复出现（negative 重复=0），故只缓存「查到宝箱」的正向结果即可吃掉全部浪费。
  * @type {number}
  */
-const PROBE_MEMO_MAX = 200;
+const PROBE_CACHE_MAX = 100;
+
+/**
+ * 探针结果缓存有效期（秒）。
+ * 间隔分布实证（20261126）：相邻重复 901 的 p50≈146s、主峰落在 120-300s（占 35%），
+ * TTL=5min 覆盖 52%（vs 2min 仅 4%），且宝箱窗口约 30min，5min 内同点位不会换场。
+ * @type {number}
+ */
+const PROBE_CACHE_TTL = 300;
 
 /** @type {number} 同一候选的重试上界（只重试只读 901，不重发写请求），防网络抖动导致一次性聊天卡候选永久漏领 */
 const CLAIM_RETRY_MAX = 3;
@@ -157,8 +165,8 @@ var queuedKeys = new Set();
 /** @type {Set<string>} 当日拉黑的舞会实例 id（已领/过期/名额满） */
 var blacklisted = new Set();
 
-/** @type {Map<string,{inst:string,endSec:number}>} 「目标服:坐标」→ 上一轮 901 查到的舞会实例与窗口末点（当日有效，供重复卡短路探针） */
-var probeMemo = new Map();
+/** @type {Map<string,{inst:string,endSec:number,pid:string,itemId:string,at:number}>} 「坐标:目标服」→ 上一轮 901 查到的正向结论（实例 id、窗口末点、城 pid、载体道具）与记录时刻（服务器秒） */
+var probeCache = new Map();
 
 /** @type {Object<string,string>} 逐道具限额来源（table/fallback）的一次性记日志标记，防每次判定都刷一行 */
 var limitSourceSeen = {};
@@ -251,7 +259,7 @@ function rollDayIfNeeded() {
   todayByItem = {};
   mirrorInstIds = [];
   blacklisted.clear();
-  probeMemo.clear();
+  probeCache.clear();
   limitSourceSeen = {};
   queue = [];
   queuedKeys.clear();
@@ -272,52 +280,72 @@ function markBlacklist(instId) {
 }
 
 /**
- * 探针记档键：目标服号 + 坐标（同一坐标在不同服上是两场舞会，必须分开记）
+ * 探针缓存键：坐标 + 目标服号（同一坐标在不同服上是两场舞会，必须分开记）
  * @param {number} sid 901 请求体 k（目标服号）
  * @param {number} x 基地 game x
  * @param {number} y 基地 game y
  * @returns {string}
  */
 function memoKey(sid, x, y) {
-  return (sid | 0) + ':' + (x | 0) + ':' + (y | 0);
+  return (x | 0) + ':' + (y | 0) + ':' + (sid | 0);
 }
 
 /**
- * 记下一次 901 实查结论：该坐标上这场舞会的实例 id 与窗口末点（服务器秒）
+ * 记下一次 901 的正向实查结论（只在查到 live cityReward 时调用；`no-reward` 等负向结论不入缓存）。
+ * 实录依据（20261126）：负向坐标当日从不重复出现，缓存它们零收益；正向结论（实例/末点/pid/道具）
+ * 既供已定局短路，也供未定局时直接复用跳过探针。
+ * LRU 淘汰：同键重写先摘旧位落到队尾；满员淘汰最久未用的一条。
  * @param {number} sid 目标服号
  * @param {number} x 命中点位 game x
  * @param {number} y 命中点位 game y
  * @param {string} instId 舞会实例 id
  * @param {*} endTimeMilli 该实例窗口末点（毫秒）
+ * @param {string} pid 城主人 pid（2503 寻址用）
+ * @param {*} itemId 宝箱载体道具 id
  */
-function memoRecord(sid, x, y, instId, endTimeMilli) {
+function memoRecord(sid, x, y, instId, endTimeMilli, pid, itemId) {
   var k = memoKey(sid, x, y);
-  if (!probeMemo.has(k) && probeMemo.size >= PROBE_MEMO_MAX) {
-    var oldest = probeMemo.keys().next().value;
-    if (oldest != null) probeMemo.delete(oldest);
+  probeCache.delete(k);
+  if (probeCache.size >= PROBE_CACHE_MAX) {
+    var oldest = probeCache.keys().next().value;
+    if (oldest != null) probeCache.delete(oldest);
   }
-  probeMemo.set(k, { inst: instId, endSec: Number(endTimeMilli) / 1000 || 0 });
+  probeCache.set(k, {
+    inst: instId,
+    endSec: Number(endTimeMilli) / 1000 || 0,
+    pid: pid || '',
+    itemId: itemId == null ? '' : String(itemId),
+    at: gameData.serverTime(),
+  });
 }
 
 /**
- * 重复卡探针短路：同一 (目标服,坐标) 上一轮已查到某场舞会，而那场**已定局**（已领或当日拉黑）且
- * 仍在同一场窗口内时，再问一次 901 不可能换回不同结论——直接跳过这次探针。
+ * 探针缓存命中判定：同一 (坐标,目标服) 上一轮查到过某场舞会，且记录在 PROBE_CACHE_TTL 内、
+ * 那场仍 live、卡面末点与记档末点不是另一场时，再问一次 901 不可能换回更新的结论——跳过探针。
+ * 命中分两支：该场**已定局**（已领/当日拉黑）→ 候选直接丢弃；**未定局** → 调用方用 entry 合成
+ * 探针结果续走领取链（省一次 901，2503 照发）。
  * 放行条件从严（判据取不到就照常探针，宁可多查一次也不漏领）：
- *   · 无记档，或记档那场已过 `endTimeMilli`（同一座城可以再开新一场）；
- *   · 卡面 `extra.expireTime`（客户端写死的窗口末点，秒）与记档末点不等——那是另一场舞会；
- *   · 记档实例既没拉黑也未已领（可能是上一轮查到但没发的，须重查）。
+ *   · 无记档，或记录已超 TTL / 已过 `endSec`（同一座城可以再开新一场）；
+ *   · 卡面 `extra.expireTime`（客户端写死的窗口末点，秒）与记档末点差 >2s——那是另一场舞会。
  * @param {number} sid 目标服号
  * @param {{x:number,y:number,exp:number}} cand 候选（exp = 卡面声明的窗口末点，0=未声明）
- * @returns {string} 命中的已定局实例 id；空串 = 不短路，照常探针
+ * @returns {{hit:boolean, settled:boolean, entry:object|null}} hit=跳过探针；settled=已定局丢弃；
+ *   未定局时 entry 为记档值（含 inst/pid/itemId/endSec）
  */
-function memoHitSettled(sid, cand) {
-  var m = probeMemo.get(memoKey(sid, cand.x, cand.y));
-  if (!m) return '';
-  if (!(m.endSec > gameData.serverTime())) return '';
-  if (cand.exp > 0 && Math.abs(m.endSec - cand.exp) > 2) return '';
+function memoHit(sid, cand) {
+  var k = memoKey(sid, cand.x, cand.y);
+  var m = probeCache.get(k);
+  if (!m) return { hit: false, settled: false, entry: null };
+  // LRU：命中即刷新位置（delete+set 落到队尾）
+  probeCache.delete(k);
+  probeCache.set(k, m);
+  var now = gameData.serverTime();
+  if (!(m.at + PROBE_CACHE_TTL > now)) return { hit: false, settled: false, entry: null };
+  if (!(m.endSec > now)) return { hit: false, settled: false, entry: null };
+  if (cand.exp > 0 && Math.abs(m.endSec - cand.exp) > 2)
+    return { hit: false, settled: false, entry: null };
   var claimed = claimedInstIds();
-  if (!blacklisted.has(m.inst) && !claimed.has(m.inst)) return '';
-  return m.inst;
+  return { hit: true, settled: blacklisted.has(m.inst) || claimed.has(m.inst), entry: m };
 }
 
 /**
@@ -763,14 +791,15 @@ async function claimOne(cand) {
   if (dst !== own) {
     log.debug('cross-server scout. sid=%d;own=%d;x=%d;y=%d', cand.sid, own, cand.x, cand.y);
   }
-  // 重复卡探针短路：同一座城短时间内被反复分享（实录：一天 62 次探针只覆盖 27 个唯一目标），
-  // 上一轮已查到那场舞会且它已定局（已领/已拉黑）时，再查也不会换回新结论。
-  // 判据与放行口径见 memoHitSettled。
-  var settledByMemo = memoHitSettled(dst, cand);
-  if (settledByMemo) {
+  // 重复卡探针缓存：同一座城短时间内被多人反复分享（实录：一天 125 次探针只覆盖 80 个唯一坐标），
+  // 上一轮已查到那场舞会且仍在 5min 有效期内时，再查也不会换回更新的结论。
+  // 已定局（已领/拉黑）直接丢弃；未定局则用记档的 pid/实例合成探针结果续走领取链。
+  // 判据与放行口径见 memoHit。
+  var memo = memoHit(dst, cand);
+  if (memo.hit && memo.settled) {
     log.debug(
-      'probe skipped by memo, inst already settled. inst=%s;x=%d;y=%d;k=%d;src=%s',
-      settledByMemo,
+      'probe skipped by cache, inst already settled. inst=%s;x=%d;y=%d;k=%d;src=%s',
+      memo.entry.inst,
       cand.x,
       cand.y,
       dst,
@@ -778,8 +807,22 @@ async function claimOne(cand) {
     );
     return;
   }
-  var res = await locateCityReward(cand.x, cand.y, cand.pid, dst);
-  if (!aliveFn()) return;
+  var res = memo.hit
+    ? {
+        kind: 'ok',
+        loc: {
+          cr: {
+            instanceId: memo.entry.inst,
+            endTimeMilli: memo.entry.endSec * 1000,
+            itemId: memo.entry.itemId,
+          },
+          x: cand.x | 0,
+          y: cand.y | 0,
+          pid: memo.entry.pid,
+        },
+      }
+    : await locateCityReward(cand.x, cand.y, cand.pid, dst);
+  if (!memo.hit && !aliveFn()) return;
   if (res.kind !== 'ok') {
     // 只对「结论可翻转」的失败回填重试：`no-reward` 是确定结论（那城此刻就是没宝箱），
     // 它是噪声聊天卡的常态；若也重试，等于把无效 901 的成本放大 CLAIM_RETRY_MAX 倍
@@ -802,8 +845,9 @@ async function claimOne(cand) {
     return;
   }
   var instId = String(cr.instanceId);
-  // 记下本场结论供后续重复卡短路（按实查命中的点位坐标记，不是卡面坐标）
-  memoRecord(dst, res.loc.x, res.loc.y, instId, cr.endTimeMilli);
+  // 正向结论入缓存（坐标以实查命中的点位为准，不是卡面坐标），供后续重复卡短路探针/续领；
+  // 命中缓存的续领路径不重写（记档键是实查点位坐标，卡面坐标可能偏一格，重写会键漂移）
+  if (!memo.hit) memoRecord(dst, res.loc.x, res.loc.y, instId, cr.endTimeMilli, pid, cr.itemId);
   if (blacklisted.has(instId)) {
     log.debug(
       'inst blacklisted today, skip. inst=%s;pid=%s;x=%d;y=%d;k=%d',
