@@ -812,3 +812,66 @@ net.send(RequestId.CROSS_TREASURE_TEAM_MARCH=7519, {
 **收益账**：稳态下 8 人池一圈 = 8 × 20s = 160s（旧为 40s），7530 频率降到首档的 1/4；同时保留逐成员轮转，新开车队伍最迟 160s 内会被搜到（另受 21371/21373 推送即时 `#wake` 补扫加速）。
 
 **日志**：升档时 info 一行 `join-team: pool swept N round(s) with no joinable team, back off next search to Xs (cap 20s)`；真机按 `pool swept` 关键字即可核对退避是否按档上行。
+
+## 25. 队伍失联自愈与启动时序（真机事故修复，2026-11-27）
+
+**事故一（僵尸队刷屏）**：凌晨场陪跑入队后被踢（21373 type=2 移除本人），引擎不认"服务器已无本队"，对死队每 15s 空打 7519，拒因 `update_0013=team not exist or not leader`；11:00 开赛时同一实例继续打，游戏 UI 持续报错。**事故二（启动竞态）**：停启 feat 后 `#slots` 尚未落地时 7501 resp 先 `#wake()` 重入 tick，`#cfg()` 按"时段未知"兜底主设置 → 陪跑被识别成主跑发了 7521 建队。
+
+**修复一：队伍失联双通道清队**（`engine-team.js`）：
+
+- 21373 `type=2` 且 `member.uid===myUid` 且 teamId 匹配 → `#onTeamChange({team:null})` 清队（与游戏客户端 `updateTeamMemberChange` 移除本人即清 team 同律，type 语义见 `constants.TEAM_MEMBER_OP`）；type=1/3 只 wake 不清。
+- 7501 应答无 `team` 而本地有队 → 按服务器快照清队。**在途防护**：新增 `#infoSentAt`（refreshInfo 实际发出时才记），仅当 `#infoSentAt>=#teamSince`（该次请求晚于本端看到队伍）才采信"无队"，防建队应答与在途 7501 交错误清刚建的队。
+
+**修复二：启动时序与 stale cfg**：
+
+- 7501 resp 改为**先**落 `#openFlag/#slots` **再** `#wake()`（`open` 变化或时段表首落时），wake 同步重入 tick 时 `#cfg()` 已能解析正确场次。
+- tick 顶部不再预取 cfg：无队分支在 gate 放行**之后**、有队分支在 `#team` 确定之后才 `#cfg()`——gate/await 期间落地的 slots 与首队都能赶上同拍解析，按局锁存也在该点完成。
+
+**修复三：7519 拒后退避 + 自愈**：
+
+- `#marchRetryAt`：被拒后 `ACTIVE_TICK_MS`（15s）内 `#marchFull` 直接返回，挡 21373 密集推送 wake 抖动造成的同秒连发（实录 04:44:43 同秒 3 发）；成功/换队/清队/stop 复位。
+- 拒因命中 `TEAM_STALE_REASONS={update_0013, ava_team_tips_011}` → `#lastInfoAt=0`，下一拍立即强拉 7501 走清队通道；7521 被拒 `ava_team_tips_011` 置回城闸时同样置 0，不必等 5 分钟超时。
+
+**验证**：mock 仿真（21373 type=2 清队 / type=3 不清 / 7501 无 team 在途防护与清队 / wake 时 session 已可解析）全过；`arch`、`lint`（本次文件 0 告警）、979 单测、`build`、`verify:cs-hunt` 对拍（含引擎装配冒烟）全绿。日志关键字：`removed from team`（被踢清队）、`absent from 7501 snapshot`（快照清队）、`full march rejected ... (retry in 15s)`（拒后退避）。
+
+## 27. eventSpecId 换赛季前缀 400xxx 致场景全不执行（真机事故修复，2026-11-27）
+
+**事故现象**：玩家 `16115296833878` 2026-11-27 19:21 场「密码大爆炸」全程没有输入密码（未发 7537）；同一场第 2 回合「这次我最大」也没掷骰（未发 7535），但建队/出征/选场景/开技能背包全部正常。
+
+**录制证据**（`dashcam/store/rec/16115296833878/dashcam-rec-20261127T191810-*.part.ndjson`）：
+
+- `21376 status=2 eventSpecId=400301 eventCodeBoxInfo.codeNum=[1,-1,9,7,8]`，177s `phase=play` → 237s `phase=show` → 243s 转 `status=3 FIGHT`，约 66s 窗口内本端 **0 笔 7537**；
+- 第 2 回合代码为 `400201`（rollDice，本人轮值），同样 **0 笔 7535**；
+- 全部 cs-hunt 写动作只有 `7501/7523/7527/7528/7531/7532/7550/7578`，没有任何场景动作；日志 CSHUNT 只有 `next check`，无场景分支留痕。
+
+**根因**：`cross_treasure_event.eventSpecId` 编码为 `<套装><族><序号>`（6 位），本场活动换到第 4 套 → `400301`。旧分派表 `SCENES[Math.floor(eventSpecId/100)]` 只认 `1001..1006`，`4003` 查不到 → `#handleEvent` 静默 `return`，六个场景（codeBox/rollDice/pickReward/pickSkill/defPVE/nothing）全部不执行。同口径失配还波及：
+
+- `chooseProphet/chooseFromFull/fallbackIndex` 的族比较（`1002/1004/1006`）→ 选场景策略退化成纯随机；
+- `api.readRewardPool` 的奖励池族标记（幸运池面板勾选失效）。
+
+**修复**：
+
+- `constants.js` 新增 `eventFam(specId) = Math.floor(id/100) % 10`（族号 1..6，`1003xx` 与 `4003xx` 同键），族判定统一走它；
+- `engine-flow.js` 执行阶段改为**按 eventInfo 载荷槽分派**（`eventCodeBoxInfo` / `eventRollDiceInfo` / …，槽名与编号解耦、换前缀不受影响），槽名缺失才按 `eventFam` 族号兜底；择场景三个函数的 prefer 表改族号 `[2,4] / [2,4,1,3,5]`、nothing 比较 `6`；
+- `api.js readRewardPool` 用 `%10` 取族；
+- 场景模块头注释补 `1003xx/4003xx` 双前缀说明；
+- `#handleEvent` 两者皆不中时留一次 `event: no scene for spec=... round=... keys=[...]` info 告警（round:spec 去重），换季再遇新前缀可直接从日志定位，不再静默零动作。
+
+**全链路核对（不只密码大爆炸）**：本场录制 8 回合共 8 个事件（`400301`×2 / `400201`×3 / `400302` / `400401` / `400101`），本端 **0 笔场景动作**（7534/7535/7537/7538 全缺）、**0 笔 7551**；`7550` 三次应答 `skillBackpack` 三表皆空——因 pickSkill 场景不执行，科技从无来源，WAIT 转换/复制、DECIDE 先知、FIGHT 保命/急救、末回合清空全部无料可烧。核对结论：所有科技路径都汇聚到同一根因（场景不执行），修复分派后逐项恢复：
+
+| 路径                               | 触发条件                | 受 400xxx 影响                   | 修复后               |
+| ---------------------------------- | ----------------------- | -------------------------------- | -------------------- |
+| EVENT 六场景分派                   | `event*Info` 槽 / 族号  | 全 miss 静默 return              | 槽名优先 + 族号兜底  |
+| DECIDE show 择场景                 | 族 prefer `[2,4,1,3,5]` | prefer 全 miss（仅随机兜底存活） | 恢复优先族           |
+| DECIDE play 先知揭示择场景         | 族 prefer `[2,4]`       | 全 miss                          | 恢复                 |
+| WAIT 数据转换 24 / 完美镜像 22     | 背包持有                | 背包空（pickSkill 不执行）       | pickSkill 供包后恢复 |
+| DECIDE 先知 9                      | 背包 + 队长             | 同上                             | 同上                 |
+| rollDice 幸运 18 / codeBox 幸运 18 | 场景执行 + 勾选池       | 场景不执行                       | 恢复                 |
+| pickSkill 刷新 23                  | 场景执行                | 不执行                           | 恢复                 |
+| FIGHT 保命/急救/增益               | 背包持有                | 无料                             | 恢复                 |
+| 末回合清空 / 溢出烧                | 背包持有                | 无料                             | 恢复                 |
+| 面板幸运池 scenes                  | `readRewardPool` 族     | 400xxx 无 scenes                 | `%10` 修正           |
+
+**验证**：新增 `tests/feats/cs-hunt-event-fam.test.js`（旧前缀/新前缀/非法值 3 组断言）；以本场真实 eventInfo 做离线仿真（mock FlowEngine host，不连游戏）：`400301→7537`（等 15s 穷举首候选 `[1,0,9,7,8]`）、`400201→7535`、`400401→7538 pos=3`（池序命中先知 9）、`400101→7534`，四类场景全部发动作；非事件态 `round1 WAIT` 探索技能 0 写动作（空背包合理）。本次录制跑 `verify:cs-hunt` 全绿（写动作 6 笔配对 6/6）；`eslint` 0 problem、`prettier` 通过、`arch` 无违规（314 modules）、`build` OK、982 单测全过。
+
+**排查提示**：场景不动作时先 grep 录制的 `eventSpecId` 与 `event*Info` 槽——只要槽名存在，修复后的引擎必进对应 scene；若日志出现 `event: no scene for spec=...`，说明又换了不认识的槽/族，按告警里的 `keys=[...]` 补映射即可。
