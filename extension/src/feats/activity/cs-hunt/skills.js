@@ -188,7 +188,7 @@ export function isTeamSkill(specId) {
 /**
  * 阶段闸门：科技是否可在当前生命周期位使用（纯查询，不含背包持有/队长判定，那些由引擎 #canUse 负责）。
  *   - 预料先知(9，type=5)：仅 DECIDE 阶段（提前揭示候选）；
- *   - 全量刷新(23，type=13)：仅事件执行态（且调用方另判当前场景=fam 1004 pickSkill）；
+ *   - 全量刷新(23，type=13)：仅事件执行态（且调用方另判当前场景=族号 4 pickSkill）；
  *   - 其余科技：阶段不限。
  * @param {number} specId 科技 id
  * @param {number} status 本跑状态（HUNT_STATUS，DECIDE/EVENT 均属 EVENT=2；保留入参供扩展）

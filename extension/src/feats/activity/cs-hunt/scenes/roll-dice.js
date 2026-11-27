@@ -1,5 +1,5 @@
 /**
- * feats/activity/cs-hunt/scenes/roll-dice.js —— 「这次我最大」(rollDice, eventSpecId 1002xx) 场景执行。
+ * feats/activity/cs-hunt/scenes/roll-dice.js —— 「这次我最大」(rollDice, eventSpecId 1002xx/4002xx) 场景执行。
  *
  * 交互（§9.4 报文）：掷骰 `7535 {treasureId, round}`；放弃 `7536` 四趟皆 0，故恒掷、不实现。
  * 幸运：掷骰中奖奖励 `eventRollDiceInfo.winRewardResult`（实录报文实证：该字段在触发掷骰的同一 21376 push 里即明文可见），

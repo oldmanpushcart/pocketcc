@@ -100,6 +100,12 @@ export const FIELD_READY_CHANGE = 'crossTreasureTeamReadyChange';
 /** @type {number} 成员增删改，载荷 `{teamId:Long, type:number, member:{uid,playerInfo,power,level,aTag,help,marchId}}` */
 export const PUSH_MEMBER_CHANGE = 21373;
 export const FIELD_MEMBER_CHANGE = 'crossTreasureTeamMemberChange';
+/**
+ * 21373 成员变更的 type 语义（逆向报告实证 updateTeamMemberChange：1=加入/2=移除/3=更新；
+ *   移除的是本人时游戏客户端自己清空 team 并弹 cs_treasure274——引擎须同律收口，否则对已散队空打写包）。
+ * @type {{JOIN:number, LEAVE:number, UPDATE:number}}
+ */
+export const TEAM_MEMBER_OP = { JOIN: 1, LEAVE: 2, UPDATE: 3 };
 /** @type {number} 入队申请变更，载荷 `{teamId,uid,op,apply:{uid,teamId,playerInfo,power}}` */
 export const PUSH_APPLY_CHANGE = 21374;
 export const FIELD_APPLY_CHANGE = 'crossTreasureTeamApplyChange';
@@ -232,8 +238,9 @@ export const EVENT_SHOW_PHASE = { NONE: 'none', PLAY: 'play', SHOW: 'show' };
 
 /**
  * 随机事件类型（cross_treasure_event[eventSpecId].type；CSHuntEventType 线值，6 族）。
- * eventSpecId 词表实值：1001xx=pickReward / 1002xx=rollDice / 1003xx=codeBox /
- *   1004xx=pickSkill / 1005xx=defPVE / 1006xx=nothing（§9.4）。
+ * eventSpecId 编码为 `<套装><族><序号>`（6 位）：族号在**百位**，前缀随活动套装换表——
+ *   实测 1001xx/1002xx/1003xx/1004xx/1005xx/1006xx，2026-11 赛季换为 4001xx/4002xx/…（400301=codeBox）。
+ *   族判定一律走 `eventFam()`，不得硬编码 1001..1006 整段前缀。
  * @type {{PICK_REWARD:string,ROLL_DICE:string,DEF_PVE:string,CODE_BOX:string,PICK_SKILL:string,NOTHING:string}}
  */
 export const EVENT_TYPE = {
@@ -244,6 +251,18 @@ export const EVENT_TYPE = {
   PICK_SKILL: 'pickSkill',
   NOTHING: 'nothing',
 };
+
+/**
+ * eventSpecId → 事件族号（1..6）。
+ * 取百位（`Math.floor(id/100) % 10`），对 1003xx 与 4003xx 两代前缀都成立：
+ *   1=pickReward / 2=rollDice / 3=codeBox / 4=pickSkill / 5=defPVE / 6=nothing。
+ * @param {number|string} specId 事件 specId
+ * @returns {number} 族号；0=非法
+ */
+export function eventFam(specId) {
+  var n = Number(specId) || 0;
+  return n > 0 ? Math.floor(n / 100) % 10 : 0;
+}
 
 // ─────────────────────── 配置表名与道具 id ───────────────────────
 

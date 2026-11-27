@@ -1,5 +1,5 @@
 /**
- * feats/activity/cs-hunt/scenes/pick-reward.js —— 「先下手为强」(pickReward, eventSpecId 1001xx) 场景执行。
+ * feats/activity/cs-hunt/scenes/pick-reward.js —— 「先下手为强」(pickReward, eventSpecId 1001xx/4001xx) 场景执行。
  *
  * 交互（用户口径 + §9.4 报文）：**随机点 5 宝箱之一**（各期待遇揭示不全，无固定择优依据），发
  *   `7534 {treasureId, round, pos}`（pos 1-based）。幸运降临不在本场景常规用（用户口径 2026-10-17：幸运只服务 rollDice，

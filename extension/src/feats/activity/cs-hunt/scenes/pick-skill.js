@@ -1,5 +1,5 @@
 /**
- * feats/activity/cs-hunt/scenes/pick-skill.js —— 「奇妙新科技」(pickSkill, eventSpecId 1004xx) 场景执行。
+ * feats/activity/cs-hunt/scenes/pick-skill.js —— 「奇妙新科技」(pickSkill, eventSpecId 1004xx/4004xx) 场景执行。
  *
  * 交互（用户口径 + §9.2 + 借鉴竞对 eventPickSkill/skillPrioritys）：本场景 `eventPickSkillInfo.skillSpecIdList` 是若干候选科技，玩家选一个入背包。
  *   1. **③ 回合剪枝**：先知(specId9)/幸运(specId18) 若「背包持有 + 当前回合 > ROUND_MAX(10)」——剩余回合已消化不完（=溢出，与

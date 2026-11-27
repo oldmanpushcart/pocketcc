@@ -9,7 +9,8 @@
  *     每用一发即 7550 刷新背包再判下一项；均本回合一次性去重。复制目标含队伍技能（22/24 皆 group=2 个人技，陪跑成员可用）。
  *   - `DECIDE.play`：队长且有先知(9)→7551{9} 提前揭示（先知 group=1 队长专属、type5 游戏强制仅 DECIDE，故留此阶段）。
  *   - `DECIDE.show`/剩余倒计时≤ DECIDE_ACT_MS(10s)：先知感知选法发 7532{indexDecide}（详见「选场景」段）。
- *   - `EVENT`（场景进入+交互）：按 `Math.floor(eventSpecId/100)` 命中 6 族分派给 `./scenes/*`，调 `scene.handle(ctx)`。
+ *   - `EVENT`（场景进入+交互）：按 eventInfo 载荷槽（eventCodeBoxInfo 等）命中 6 族分派给 `./scenes/*`，
+ *     槽名缺失时按 `eventFam(eventSpecId)` 族号兜底，调 `scene.handle(ctx)`。
  *   - 结束：无动作（交 TeamEngine/游戏）。
  *
  * 横切自动项（默认开、无 UI）：
@@ -36,7 +37,7 @@
  *
  * 选场景（indexDecide=1-based）——先知感知（**emit 前置：`uidDecide === 我方 uid` 轮值闸**）：
  *   - revealed = play 态 eventSpecIdList 非 0 位（先知揭示集）、hidden = 仍为 0 位；
- *   - revealed 非空 → 在 revealed 里按 [1002 rollDice,1004 pickSkill] 优先取（同族多位命中随机择位）；两者都不在 → 从 hidden 随机取一（revealed 的 1006 永不选）；
+ *   - revealed 非空 → 在 revealed 里按 [2 rollDice,4 pickSkill] 族号优先取（同族多位命中随机择位）；两者都不在 → 从 hidden 随机取一（revealed 的 6 nothing 永不选）；
  *   - revealed 空且轮值到我 → 满 DECIDE_MIN_MS 即按 `fallbackIndex` 在非 nothing 位里随机立选（不再硬撞 20s 上限，避开服务器抢先自决 → s:3 cs_treasure371 迟交被拒）；SHOW 到点仍未发则用 `chooseFromFull`；
  *   - 非我轮值 → 整段跳过（服务器只对 `uidDecide` 那个 uid 放行 7532，其他人发一律 s:3 拒）；
  *   - 硬约束：以 21376 eventDecideInfo.timePhaseEnd 为权威倒计时，剩余 ≤ DECIDE_ACT_MS(10s) 即自主决（较旧「观测起 10s」提前落地、避开服务器 auto-decide 抢窗）；无 timePhaseEnd 异常形态才退回「进 DECIDE 起 elapsed≥DECIDE_MIN_MS」观测兜底。
@@ -80,6 +81,7 @@ import {
   SKILL_STEALTH,
   SKILL_TRANSFER,
   SKILL_TYPE_LIMIT,
+  eventFam,
 } from './constants.js';
 import {
   isFullyKnown,
@@ -154,16 +156,30 @@ const FIGHT_RATIO_LIGHT = 1.5;
 const DIGEST_OVERFLOW_SKILLS = [SKILL_LUCKY, SKILL_FLASH, 1, 25, SKILL_SHIELD_ROUND];
 
 /**
- * eventSpecId 六族 → scene 模块分派表（`Math.floor(eventSpecId/100)` 命中）。
+ * eventInfo 载荷槽名 → scene 模块分派表：执行阶段（status=event）以**载荷槽**为准，与 eventSpecId 编号解耦——
+ *   游戏换赛季会把前缀 1003xx 换成 4003xx（2026-11 实测），槽名不变。
+ * @type {Object<string, (ctx:object) => Promise<void>>}
+ */
+const SCENES_BY_SLOT = {
+  eventPickRewardInfo: scenePickReward,
+  eventRollDiceInfo: sceneRollDice,
+  eventCodeBoxInfo: sceneCodeBox,
+  eventPickSkillInfo: scenePickSkill,
+  eventDefPVEInfo: sceneDefPve,
+  eventNothingInfo: sceneNothing,
+};
+
+/**
+ * 事件族号（eventFam 返回 1..6）→ scene 模块兜底表：载荷槽缺失时才按编号分派。
  * @type {Object<number, (ctx:object) => Promise<void>>}
  */
-const SCENES = {
-  1001: scenePickReward,
-  1002: sceneRollDice,
-  1003: sceneCodeBox,
-  1004: scenePickSkill,
-  1005: sceneDefPve,
-  1006: sceneNothing,
+const SCENES_BY_FAM = {
+  1: scenePickReward,
+  2: sceneRollDice,
+  3: sceneCodeBox,
+  4: scenePickSkill,
+  5: sceneDefPve,
+  6: sceneNothing,
 };
 
 /**
@@ -236,6 +252,8 @@ export class FlowEngine {
   #codeBcast = {};
   /** @type {Object<string,number>} 每回合 codeBox 首次触发时刻（用于等待队友视图超时判定） */
   #codeBoxEnterAt = {};
+  /** @type {Set<string>} 已告警「事件无场景可派」的 round:spec（换季前缀/新玩法失配留痕，每键一次防刷屏） */
+  #sceneMiss = new Set();
 
   /**
    * @param {FlowHost} host TeamEngine 提供的运行底座
@@ -530,16 +548,36 @@ export class FlowEngine {
   // ── EVENT：按族分派场景模块 ─────────────────────────────────────────
 
   /**
-   * 事件执行阶段分派（按 eventSpecId 族号命中 scenes/）。
+   * 事件执行阶段分派：**先按 eventInfo 载荷槽命中 scenes/**（槽名 eventCodeBoxInfo 等跨赛季稳定，与编号前缀解耦），
+   *   槽名都不识别时再按 eventSpecId 族号（eventFam）兜底；两者皆不中留一次 info 告警（round:spec 去重），
+   *   避免换季换前缀（如 100xxx→400xxx）时静默零动作、只能靠报文反推。
    * @param {string|number} treasureId 本跑 id
    * @param {object} ei eventInfo（status=event）
    * @param {object} cfg 模块配置
    */
   async #handleEvent(treasureId, ei, cfg) {
-    var specId = Number(ei.eventSpecId) || 0;
-    var fam = Math.floor(specId / 100);
-    var scene = SCENES[fam];
-    if (!scene) return;
+    var scene = null;
+    var slots = Object.keys(SCENES_BY_SLOT);
+    for (var i = 0; i < slots.length; i++) {
+      if (ei[slots[i]]) {
+        scene = SCENES_BY_SLOT[slots[i]];
+        break;
+      }
+    }
+    if (!scene) scene = SCENES_BY_FAM[eventFam(ei.eventSpecId)] || null;
+    if (!scene) {
+      var mk = (Number(ei.round) || 0) + ':' + (Number(ei.eventSpecId) || 0);
+      if (!this.#sceneMiss.has(mk)) {
+        this.#sceneMiss.add(mk);
+        log.info(
+          'event: no scene for spec=%s round=%s, keys=[%s]',
+          String(ei.eventSpecId || 0),
+          String(ei.round || 0),
+          Object.keys(ei).join(','),
+        );
+      }
+      return;
+    }
     await scene(this.#sceneCtx(treasureId, ei, cfg));
   }
 
@@ -1450,6 +1488,7 @@ export class FlowEngine {
     this.#peerViews = {};
     this.#codeBcast = {};
     this.#codeBoxEnterAt = {};
+    this.#sceneMiss.clear();
   }
 
   /**
@@ -1492,17 +1531,15 @@ function pickRandomHit(hits) {
 }
 
 /**
- * 先知感知择法：revealed 里按 [1002 rollDice,1004 pickSkill] 优先（同族多位随机择一）；都不在 → hidden 随机（1006 永不选）；
+ * 先知感知择法：revealed 里按 [2 rollDice,4 pickSkill] 族号优先（同族多位随机择一）；都不在 → hidden 随机（6 nothing 永不选）；
  *   无 hidden → revealed 里随机取一个非 nothing。
  * @param {Array<number>} list 候选 eventSpecId
  * @param {number[]} rev revealed 0-based 下标
  * @returns {number} 1-based indexDecide（0=不选）
  */
 function chooseProphet(list, rev) {
-  var fams = list.map(function (id) {
-    return Math.floor(Number(id) / 100);
-  });
-  var prefer = [1002, 1004];
+  var fams = list.map(eventFam);
+  var prefer = [2, 4];
   for (var p = 0; p < prefer.length; p++) {
     var hits = rev.filter(function (ix) {
       return fams[ix] === prefer[p];
@@ -1513,22 +1550,20 @@ function chooseProphet(list, rev) {
   for (var h = 0; h < list.length; h++) if (Number(list[h]) === 0) hidden.push(h);
   if (hidden.length) return hidden[Math.floor(Math.random() * hidden.length)] + 1;
   var nonNothing = rev.filter(function (ix) {
-    return fams[ix] && fams[ix] !== 1006;
+    return fams[ix] && fams[ix] !== 6;
   });
   if (nonNothing.length) return nonNothing[Math.floor(Math.random() * nonNothing.length)] + 1;
   return 0;
 }
 
 /**
- * show 态（全 6 位明文）择法：按 [1002,1004,1001,1003,1005] 取命中的优先族、跳过 1006，同族多位命中随机择一。
+ * show 态（全 6 位明文）择法：按 [2,4,1,3,5] 族号取命中的优先族、跳过 6 nothing，同族多位命中随机择一。
  * @param {Array<number>} list 候选 eventSpecId
  * @returns {number} 1-based indexDecide（无命中退兜底随机）
  */
 function chooseFromFull(list) {
-  var fams = list.map(function (id) {
-    return Math.floor(Number(id) / 100);
-  });
-  var prefer = [1002, 1004, 1001, 1003, 1005];
+  var fams = list.map(eventFam);
+  var prefer = [2, 4, 1, 3, 5];
   for (var p = 0; p < prefer.length; p++) {
     var hits = [];
     for (var i = 0; i < fams.length; i++) if (fams[i] === prefer[p]) hits.push(i);
@@ -1544,14 +1579,12 @@ function chooseFromFull(list) {
  * @returns {number} 1-based indexDecide
  */
 function fallbackIndex(list) {
-  var fams = list.map(function (id) {
-    return Math.floor(Number(id) / 100);
-  });
+  var fams = list.map(eventFam);
   var hits = [];
-  for (var i = 0; i < fams.length; i++) if (fams[i] && fams[i] !== 1006) hits.push(i);
+  for (var i = 0; i < fams.length; i++) if (fams[i] && fams[i] !== 6) hits.push(i);
   if (hits.length) return pickRandomHit(hits);
   var firstNotNothing = fams.findIndex(function (f) {
-    return f !== 1006;
+    return f !== 6;
   });
   return firstNotNothing >= 0 ? firstNotNothing + 1 : 1;
 }

@@ -1,5 +1,5 @@
 /**
- * feats/activity/cs-hunt/scenes/def-pve.js —— 「最后幸存者」(defPVE, eventSpecId 1005xx) 场景执行。
+ * feats/activity/cs-hunt/scenes/def-pve.js —— 「最后幸存者」(defPVE, eventSpecId 1005xx/4005xx) 场景执行。
  *
  * 交互：怪物 PVE 自动战斗（marchType CROSS_TREASURE_EVENT_PVE），**无玩家写动作**——保命由 21383 真人来袭分支
  *   承载（见 engine-flow `#autoStrategies`）。幸运降临也不在本场景用（用户口径 2026-10-17：幸运只服务 rollDice，

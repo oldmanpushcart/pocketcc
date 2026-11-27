@@ -1,5 +1,5 @@
 /**
- * feats/activity/cs-hunt/codebox.js —— 「密码大爆炸」(codeBox, eventSpecId 1003xx) 求解纯函数。
+ * feats/activity/cs-hunt/codebox.js —— 「密码大爆炸」(codeBox, eventSpecId 1003xx/4003xx) 求解纯函数。
  *
  * 数据模型（报文实证四趟夺宝实录，§9.4/§4.1 关闭）：
  *   `eventCodeBoxInfo.codeNum[5]`：本端直读，每位是 `0..9` 明文或 `-1`（掩码）。

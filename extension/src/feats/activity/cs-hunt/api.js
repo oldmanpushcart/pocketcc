@@ -297,9 +297,10 @@ export const csHunt = {
     // 奖励列名以真机 dump 定稿（docs §9）：幸运只翻倍中奖奖励，故**只取 win 列**（多备同义列容错）；
     //   fail_reward（未中奖保底）与 grail_reward（神器，幸运明确除外）引擎永不喂给 #tryLucky，列进来是死勾选，不收。
     var rewardCols = ['win_reward', 'reward', 'winReward', 'show_reward'];
-    // 事件族主键前缀 → 场景 key（Math.floor(eventSpecId/100)：1001 pickReward/1002 rollDice/1003 codeBox/1005 defPVE；
-    //   1004 pickSkill 发科技、1006 nothing 空过，均不产可翻倍道具，不入池）
-    var famScene = { 1001: 'pickReward', 1002: 'rollDice', 1003: 'codeBox', 1005: 'defPVE' };
+    // 事件族号取百位（`Math.floor(id/100) % 10`）：eventSpecId 编码 `<套装><族><序号>`，前缀随赛季换表
+    //   （1003xx/4003xx 均为 codeBox，2026-11 实测），不得硬编码 1001..1006 整段；1 pickReward/2 rollDice/3 codeBox/5 defPVE；
+    //   4 pickSkill 发科技、6 nothing 空过，均不产可翻倍道具，不入池）
+    var famScene = { 1: 'pickReward', 2: 'rollDice', 3: 'codeBox', 5: 'defPVE' };
     var order = ['pickReward', 'rollDice', 'codeBox', 'defPVE'];
     var byId = Object.create(null);
     var out = [];
@@ -320,7 +321,7 @@ export const csHunt = {
     };
     for (var i = 0; i < rows.length; i++) {
       var r = rows[i] || {};
-      var scene = famScene[Math.floor(Number(r.id) / 100)] || '';
+      var scene = famScene[Math.floor(Number(r.id) / 100) % 10] || '';
       for (var j = 0; j < rewardCols.length; j++) {
         var rid = r[rewardCols[j]];
         if (rid == null) continue;

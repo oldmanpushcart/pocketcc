@@ -1,5 +1,5 @@
 /**
- * feats/activity/cs-hunt/scenes/code-box.js —— 「密码大爆炸」(codeBox, eventSpecId 1003xx) 场景执行。
+ * feats/activity/cs-hunt/scenes/code-box.js —— 「密码大爆炸」(codeBox, eventSpecId 1003xx/4003xx) 场景执行。
  *
  * 交互（源码 CSHuntEventCodeBox + §9.4 + 用户口径）：本端 `eventCodeBoxInfo.codeNum[5]` 只见自己那一层视图
  *   （每位 `0..9` 明文、`-1`=掩码），满编 5 人各见 1 位、余为掩码，游戏内无跨玩家聚合，**靠频道 17 聊天汇总**：
