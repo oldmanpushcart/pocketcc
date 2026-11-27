@@ -28,6 +28,7 @@ import './feats/cq26/mammoth/index.js';
 import './feats/cq26/ark-energy/index.js';
 import './feats/cq26/wl-beast/index.js';
 import './feats/activity/mask-dance/index.js';
+import './feats/activity/super-value-gift/index.js';
 import './feats/player/auto-farm/index.js';
 import './feats/player/auto-hunt/index.js';
 import './feats/player/fear-star-rally/index.js';
