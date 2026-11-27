@@ -79,6 +79,7 @@ import {
   REQ_FIELD,
   REQ_TEAM_MARCH,
   REQ_TEAM_USE_ITEM,
+  TEAM_MEMBER_OP,
   TEAM_STATUS,
 } from './constants.js';
 
@@ -135,6 +136,12 @@ export const DEFAULT_WAIT_MIN = 3;
  *   命中即停止对已消亡 treasureId 的空拉（否则游戏会一直弹「小队不存在」），清队转下一轮。
  */
 const HUNT_OVER_REASONS = new Set(['cs_treasure294']);
+/**
+ * @type {Set<string>} 7519/7521 拒因中指向「本地队伍快照已失效」的键（多语言键）：
+ *   update_0013=team not exist or not leader（僵尸队权威拒因，实录 11:00 场连拒 13 次）、
+ *   ava_team_tips_011=已加入其他队伍（旧队未散）。命中即下拍强拉 7501 校验，无 team 由 resp 通道清队重建。
+ */
+const TEAM_STALE_REASONS = new Set(['update_0013', 'ava_team_tips_011']);
 
 // ── ⑤ 每日夺宝局数上限（借鉴竞对 state.counter + setting.team.count + dayInit）──────────
 //   竞对口径：每次真开跑（非陪跑）计数 +1、跳日归零、到上限当日停跑（createTeam/joinTeam 同闸）。
@@ -354,6 +361,17 @@ export class TeamEngine {
   /** @type {number} 上次 7501 拉态的墙上时刻（毫秒），兜底周期闸 */
   #lastInfoAt = 0;
   /**
+   * @type {number} 7501 最近一次「真正发出」的墙上时刻（毫秒）：应答可能是请求发出时的旧快照，
+   *   仅当请求晚于本端看到队伍（#infoSentAt>=#teamSince）时才允许用「应答无 team」清队，
+   *   防建队应答与在途 7501 交错时把刚建的队误清。
+   */
+  #infoSentAt = 0;
+  /**
+   * @type {number} 7519 被拒后的重试退避截止（毫秒）：拒后 ACTIVE_TICK_MS 内不再重发，挡推送 wake 抖动
+   *   造成的秒级连发（实录 21373 密集推送期同秒 3 发）；成功/换队/清队/stop 即复位。
+   */
+  #marchRetryAt = 0;
+  /**
    * @type {number} 当前队就位（本端首次看到该 teamId）的墙上时刻（毫秒）——「凑人超时」基准（借鉴竞对 `_ctWait`/`waitmin`）。
    *   换队/散队/收引擎时与 #marchStartTeamId 一并复位；用本端观察时刻而非服务器 createTime（字典未见该字段，不臆造）。
    */
@@ -500,13 +518,25 @@ export class TeamEngine {
       // 活动开关态 + 每日时段表（报文实证 7501 crossTreasureInfo 的 open / openTime[]）：控制器缺席时这是建队/找队前判「进行中 + 到点」的唯一真相
       var sched = csHunt.parseSchedule(ack);
       if (sched) {
-        if (sched.open !== this.#openFlag) {
-          this.#openFlag = sched.open;
-          this.#wake(); // 开关态变化（如开赛/休赛）立即重评，不等下一拍
-        }
+        // 先落地再唤醒：#wake 同步重入 tick，若 slots 尚未赋值，tick 顶部的 #cfg() 会按「时段未知」兜底主设置
+        //   （启动瞬间陪跑被误判 main 建队的竞态根因）；时段表首落同样唤醒重评场次。
+        var slotsFirst = this.#slots == null;
+        var opened = sched.open !== this.#openFlag;
+        this.#openFlag = sched.open;
         this.#slots = sched.slots;
+        if (opened || slotsFirst) this.#wake(); // 开关态/时段表变化（如开赛/休赛）立即重评，不等下一拍
       }
-      if (ack.team) this.#onTeamChange({ team: ack.team });
+      if (ack.team) {
+        this.#onTeamChange({ team: ack.team });
+      } else if (this.#team && this.#infoSentAt >= this.#teamSince) {
+        // 服务器权威快照已无本队（被踢/主动退队/散队漏推）：按快照清队自愈，否则会对死队空打 7519（update_0013 刷屏）。
+        //   在途防护：本次 7501 若发出于本端看到队伍之前，应答可能是建队前的旧快照，不采信其「无队」。
+        log.info(
+          'team %s absent from 7501 snapshot (server-side disbanded), clearing local team',
+          this.#team.id,
+        );
+        this.#onTeamChange({ team: null });
+      }
     });
     // 7531 应答是「本跑详情」的另一条落地通道（游戏面板与我们的 tick 都可能拉）：只取状态机快照，不重复驱动
     ctx.on.resp(REQ_HUNT_INFO, (ev) => this.#onHuntInfo(this.#ack(ev, ACK_HUNT_INFO)));
@@ -537,7 +567,9 @@ export class TeamEngine {
     this.#noArmyLoggedTeamId = '';
     this.#blockedLoggedReason = '';
     this.#lastInfoAt = 0;
+    this.#infoSentAt = 0;
     this.#teamSince = 0;
+    this.#marchRetryAt = 0;
     this.#lastJoinAt = 0;
     this.#joinCursor = 0;
     this.#joinIdleRounds = 0;
@@ -578,7 +610,9 @@ export class TeamEngine {
     var now = Date.now();
     if (!force && now - this.#lastInfoAt < INFO_REFRESH_MS) return;
     this.#lastInfoAt = now;
-    await this.#sendPB(REQ_INFO, {}, 'fetch-activity-overview');
+    var ret = await this.#sendPB(REQ_INFO, {}, 'fetch-activity-overview');
+    // 仅记录「真正发出」的时刻（在途去重/发送异常不算）：其应答才可能携带不早于此刻的队伍快照
+    if (ret && ret.code !== CODE_NOT_SENT) this.#infoSentAt = Date.now();
   }
 
   /**
@@ -647,6 +681,7 @@ export class TeamEngine {
       this.#noArmyLoggedTeamId = '';
       this.#appliedTeamId = ''; // 已入队，清找队申请记账
       this.#teamSince = Date.now(); // 凑人超时基准：从本端看到新队起算
+      this.#marchRetryAt = 0; // 换队：上一队 7519 的拒后还未到期的退避不再适用
       log.info('team %s ready (cfg=%d, members %d)', team.id, team.cfg, team.memberCount);
     }
     this.#team = team;
@@ -671,6 +706,7 @@ export class TeamEngine {
     this.#joinIdleRounds = 0; // 新一轮找队从首档 5s 重新起步（不沿用上局的 20s 封顶）
     this.#joinRoundMark = -1;
     this.#teamSince = 0;
+    this.#marchRetryAt = 0;
     this.#wake();
   }
 
@@ -758,6 +794,21 @@ export class TeamEngine {
     if (!payload) return;
     var teamId = bits.int64Str(payload.teamId);
     if (this.#team && teamId && this.#team.id !== teamId) return;
+    // type=2 移除的是本人（被踢/主动退队）：游戏客户端自己会清空 team，引擎必须同律收口——
+    //   否则对已散队继续发 7519 只会换来 update_0013=team not exist/not leader 的持续报错（实录事故根因）。
+    if (
+      Number(payload.type) === TEAM_MEMBER_OP.LEAVE &&
+      this.#team &&
+      payload.member &&
+      bits.int64Str(payload.member.uid) === gameData.myUidStr()
+    ) {
+      log.info(
+        'this player removed from team %s (kicked/left), clearing local team',
+        this.#team.id,
+      );
+      this.#onTeamChange({ team: null });
+      return;
+    }
     // 成员增减不再触发拉申请池（申请由 21374 推送主路处理 + 7528 节流兜底）；仅唤醒重算凑人/召集电平
     this.#wake();
   }
@@ -907,7 +958,6 @@ export class TeamEngine {
         'daily cs-hunt runs no longer in full-quota forced state, ending auto side-run mode, back to main run',
       );
     }
-    var cfg = this.#cfg();
 
     // 控制器不在场（子包未接管）时 readState 恒 null，队伍/开关态只能靠 7501 应答补齐：按兜底周期拉一次（漏推自愈）
     if (!csHunt.present()) await this.refreshInfo(false);
@@ -926,6 +976,7 @@ export class TeamEngine {
           this.#marchStartTeamId = '';
           this.#selfReadySeen = false;
           this.#teamSince = Date.now();
+          this.#marchRetryAt = 0; // 控制器回填换队：上一队 7519 的拒后退避不再适用
         }
         this.#team = st.team;
       }
@@ -940,10 +991,15 @@ export class TeamEngine {
       if (waitSleep > 0) return waitSleep;
       var gate = await this.#gateActivity(st);
       if (!gate.proceed) return gate.sleep;
-      return this.#noTeam(cfg, st);
+      // gate 含 await（7501 强拉/短睡判定期），期间 7501 resp 可能刚落 slots——放行后按最新电平重解析
+      //   （启动竞态：slots 未落时 #cfg 兜底 main，会把陪跑误判成主跑建队）。
+      return this.#noTeam(this.#cfg(), st);
     }
 
     var t = this.#team;
+    // 此处才解析 cfg：无队/有队都要等本地电平（7501 resp/21371/控制器回填）在 await 期间落地后再取，
+    //   且首见队伍时 #cfg 在此完成按局锁存（否则本拍 7520 表态会按陈旧模式选要奖励/陪跑）。
+    var cfg = this.#cfg();
     if (t.status >= TEAM_STATUS.MARCHING) {
       // 已开跑：把场景决策/事件执行/技能交流程引擎驱动（运行即全自动，内部含只读自愈）
       //   活动闸不拦已开跑的一局（服务端权威且一跑仅数分钟），让其跑完
@@ -1200,6 +1256,7 @@ export class TeamEngine {
       ret && !ret.ok && ret.payload && ret.payload.header ? String(ret.payload.header.d || '') : '';
     if (rsn === 'ava_team_tips_011' && !this.#waitHome) {
       this.#waitHome = { marchId: '', deadline: Date.now() + WAIT_HOME_MAX_MS };
+      this.#lastInfoAt = 0; // 下拍立即强拉 7501 校验：旧队若已散，resp 通道直接清队，不必等回城闸 5 分钟超时
       log.info(
         'team build rejected ava_team_tips_011=already in another team (old disband not landed), waiting for ship return-home before retry',
       );
@@ -1470,6 +1527,9 @@ export class TeamEngine {
       this.#marchedTeamId = t.id;
       return true;
     }
+    // 被拒退避：7519 业务拒后 ACTIVE_TICK_MS 内不再重发——21373 成员推送密集时每推都 wake，
+    //   上一发已被服务器秒拒、在途闸已释放，无退避就会同秒连发（实录 04:44:43 同秒 3 发刷屏）。
+    if (Date.now() < this.#marchRetryAt) return false;
     var cfg = this.#env.cfg();
     var plan = buildPlanFromPool(cfg.presetPool || []);
     if (!plan) {
@@ -1506,6 +1566,7 @@ export class TeamEngine {
     if (ret && ret.ok) {
       this.#marchedTeamId = t.id;
       this.#noArmyLoggedTeamId = '';
+      this.#marchRetryAt = 0;
       log.info(
         'full march ok (armyId=%d, squads %d, heroes %d)',
         plan.armyListNew[0].armyId,
@@ -1514,11 +1575,16 @@ export class TeamEngine {
       );
       return true;
     }
+    var rsn = rejectText(ret) || '';
+    this.#marchRetryAt = Date.now() + ACTIVE_TICK_MS;
     log.info(
-      'full march rejected code=%s;data=%s',
+      'full march rejected code=%s;data=%s (retry in %ds)',
       ret ? ret.code : CODE_NOT_SENT,
-      rejectText(ret) || '-',
+      rsn || '-',
+      ACTIVE_TICK_MS / 1000,
     );
+    // 拒因指向「本地队伍快照已失效」（僵尸队/已散未收）：下拍立即强拉 7501 校验，无 team 即由 resp 通道清队重建
+    if (TEAM_STALE_REASONS.has(rsn)) this.#lastInfoAt = 0;
     return false;
   }
 
