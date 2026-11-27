@@ -137,6 +137,12 @@ export const MENU = [
           { id: 'mechaTreasure', kind: 'feature', label: '重装母舰', inlineStatus: true },
           { id: 'domainTreasure', kind: 'feature', label: '领域寻宝', inlineStatus: true },
           { id: 'maskDance', kind: 'feature', label: '假面舞会', inlineStatus: true },
+          {
+            id: 'superValueGift',
+            kind: 'feature',
+            label: '超值活动一键领取',
+            inlineStatus: true,
+          },
           { id: 'aureoleSlot', kind: 'feature', label: '摇摇机', inlineStatus: true },
         ],
       },

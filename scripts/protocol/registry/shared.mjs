@@ -70,6 +70,11 @@ export default [
       },
       {
         name: 'CMD_GET_ACTIVITY_DATA',
+        feat: 'super-value-gift',
+        file: 'feats/activity/super-value-gift/constants.js',
+      },
+      {
+        name: 'CMD_GET_ACTIVITY_DATA',
         feat: 'titan-blessing',
         file: 'feats/activity/titan-blessing/constants.js',
       },

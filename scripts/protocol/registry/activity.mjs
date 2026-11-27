@@ -3,6 +3,21 @@
 // 条目键 = 协议号；名字是 feat 局部别名（同名异号是局部命名，非漂移）。src 为人工标注的出处说明，渐进补充。
 export default [
   {
+    cmd: 842,
+    dir: 'C2S',
+    note: '领取活动单个已完成任务（GET_ACTIVITY_REWARD，V1 send，{aid,tid}）',
+    src: '公开 H5 客户端 script.f8db6.js / subpack2.5c3c4.js RealActivityController.getActivityReward',
+    fields:
+      'req {aid,tid}（ID 保留快照原始数字/字符串类型） → resp 奖励与更新后的活动状态（是否领完须 3103 重查）',
+    usages: [
+      {
+        name: 'CMD_GET_ACTIVITY_REWARD',
+        feat: 'super-value-gift',
+        file: 'feats/activity/super-value-gift/constants.js',
+      },
+    ],
+  },
+  {
     cmd: 1055,
     dir: 'C2S',
     note: '占领发射井活动信息 + 4 井归属（JSON send，{}）',
@@ -41,6 +56,20 @@ export default [
         name: 'CMD_GET_GUN_FIGHT_USER_REWARD',
         feat: 'launch-silo',
         file: 'feats/activity/launch-silo/constants.js',
+      },
+    ],
+  },
+  {
+    cmd: 1777,
+    dir: 'C2S',
+    note: '超值活动积分档一键领取（ACTIVITY_GET_ALL_SCORE_REWARD，V1 send，{id}；无 adv 参数）',
+    src: '公开 H5 客户端 subpack.2b335.js / subpack2.5c3c4.js',
+    fields: 'req {id} → resp 奖励对象（是否领完须 3103 重查）',
+    usages: [
+      {
+        name: 'CMD_GET_ALL_SCORE_REWARD',
+        feat: 'super-value-gift',
+        file: 'feats/activity/super-value-gift/constants.js',
       },
     ],
   },
@@ -88,6 +117,49 @@ export default [
     ],
   },
   {
+    cmd: 3103,
+    dir: 'C2S',
+    note: '重查单个活动（ACTIVITY_GET_SINGLE_INFO，V1 send，{id}）',
+    src: '公开 H5 客户端 subpack2.5c3c4.js RealActivityController.reqUpdateActivityDataById',
+    fields: 'req {id} → resp 单个活动对象',
+    usages: [
+      {
+        name: 'CMD_GET_ACTIVITY_SINGLE_INFO',
+        feat: 'super-value-gift',
+        file: 'feats/activity/super-value-gift/constants.js',
+      },
+    ],
+  },
+  {
+    cmd: 3135,
+    dir: 'C2S',
+    note: '应急背包全部待领奖励（MAKESHIFTBAG_RECEIVE，V1 send，rewardAid:-1）',
+    src: '公开 H5 客户端 subpack.2b335.js ActivityMakeshiftBag.onReceiveAllClick',
+    fields: 'req {rewardCenterAid,rewardAid:-1} → resp serverReward（是否领完须 3103 重查）',
+    usages: [
+      {
+        name: 'CMD_MAKESHIFTBAG_RECEIVE_ALL',
+        feat: 'super-value-gift',
+        file: 'feats/activity/super-value-gift/constants.js',
+      },
+    ],
+  },
+  {
+    cmd: 3140,
+    dir: 'C2S',
+    note: '联盟 BP 任务页一键领取（ACTIVITY_GET_ALL_TASK_REWARD，V1 send）',
+    src: '公开 H5 客户端 subpack.2b335.js ActivityAllianceBP.onAllRewardClick',
+    fields:
+      'req {activityId,targetIds:[已完成任务ID，保留原始类型]} → resp {targetArr:[{id,num,state}],aid}',
+    usages: [
+      {
+        name: 'CMD_GET_ALL_TASK_REWARD',
+        feat: 'super-value-gift',
+        file: 'feats/activity/super-value-gift/constants.js',
+      },
+    ],
+  },
+  {
     cmd: 3756,
     dir: 'C2S',
     note: '查询当前可攻打世界 boss（海上夺宝，{activityId} → {bossInfos}）',
@@ -98,6 +170,21 @@ export default [
         name: 'CMD_QUERY_WORLD_BOSS',
         feat: 'sea-treasure',
         file: 'feats/activity/sea-treasure/constants.js',
+      },
+    ],
+  },
+  {
+    cmd: 4790,
+    dir: 'C2S',
+    note: '元旦弹珠循环积分奖励一键领取（PIN_BALL_ACTIVITY_GET_SCORE_REWARD，V1 PB，index:-1）',
+    src: '公开 H5 客户端 subpack.2b335.js / subpack2.5c3c4.js ActivityPinballGame_NY',
+    fields:
+      'req {header:{},pinBallActivityGetScoreReward:{activityId,index:-1}} → resp pbAck.pinBallActivityGetScoreReward.reward',
+    usages: [
+      {
+        name: 'CMD_PIN_BALL_GET_ALL_LOOP_REWARD',
+        feat: 'super-value-gift',
+        file: 'feats/activity/super-value-gift/constants.js',
       },
     ],
   },
@@ -469,6 +556,34 @@ export default [
     ],
   },
   {
+    cmd: 8768,
+    dir: 'C2S',
+    note: '大富翁联盟首领循环伤害奖励一键领取（V2 PB，index:-1；需在盟且 a_reward_num<act_paras.bullet_boss_reward_limit[2]）',
+    src: '公开 H5 客户端 subpack2.5c3c4.js adventure_richman_UI',
+    fields: 'req {activityId,index:-1} → resp {header:{s},rewardResult}',
+    usages: [
+      {
+        name: 'CMD_RICH_MAN_GET_ALL_LOOP_REWARD',
+        feat: 'super-value-gift',
+        file: 'feats/activity/super-value-gift/constants.js',
+      },
+    ],
+  },
+  {
+    cmd: 8795,
+    dir: 'C2S',
+    note: '联盟远征循环积分奖励一键领取（LKM_BP_GET_PROGRESS_REWARD，V2 PB，index:-1）',
+    src: '公开 H5 客户端 subpack2.5c3c4.js teamExpedition',
+    fields: 'req {activityId,index:-1} → resp {header:{s},rewardResult}',
+    usages: [
+      {
+        name: 'CMD_TEAM_EXPEDITION_GET_ALL_LOOP_REWARD',
+        feat: 'super-value-gift',
+        file: 'feats/activity/super-value-gift/constants.js',
+      },
+    ],
+  },
+  {
     cmd: 8802,
     dir: 'C2S',
     note: '查询使徒列表（PINK_MECHA_MONSTER_LIST，{aid,type}）',
@@ -479,6 +594,20 @@ export default [
         name: 'CMD_MONSTER_LIST',
         feat: 'mecha-treasure',
         file: 'feats/activity/mecha-treasure/constants.js',
+      },
+    ],
+  },
+  {
+    cmd: 8833,
+    dir: 'C2S',
+    note: '新春舞狮循环火力奖励一键领取（LION_FIGHT_GET_FIRE_REWARD，V2 PB，index:-1）',
+    src: '公开 H5 客户端 subpack.2b335.js ActivityNewYear_WS',
+    fields: 'req {activityId,index:-1} → resp {header:{s},reward}',
+    usages: [
+      {
+        name: 'CMD_LION_FIGHT_GET_ALL_LOOP_REWARD',
+        feat: 'super-value-gift',
+        file: 'feats/activity/super-value-gift/constants.js',
       },
     ],
   },
@@ -562,6 +691,11 @@ export default [
     usages: [
       {
         name: 'CMD_PUSH_ONE_ACTIVITY',
+        feat: 'super-value-gift',
+        file: 'feats/activity/super-value-gift/constants.js',
+      },
+      {
+        name: 'CMD_PUSH_ONE_ACTIVITY',
         feat: 'titan-blessing',
         file: 'feats/activity/titan-blessing/constants.js',
       },
@@ -593,6 +727,11 @@ export default [
         name: 'CMD_PUSH_ONE_ACTIVITY_EXTRA',
         feat: 'sea-treasure',
         file: 'feats/activity/sea-treasure/constants.js',
+      },
+      {
+        name: 'CMD_PUSH_ONE_ACTIVITY_EXTRA',
+        feat: 'super-value-gift',
+        file: 'feats/activity/super-value-gift/constants.js',
       },
     ],
   },
