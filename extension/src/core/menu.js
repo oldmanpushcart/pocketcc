@@ -144,6 +144,7 @@ export const MENU = [
             inlineStatus: true,
           },
           { id: 'aureoleSlot', kind: 'feature', label: '摇摇机', inlineStatus: true },
+          { id: 'cityAward', kind: 'feature', label: '城市庆典宝箱', inlineStatus: true },
         ],
       },
       { id: 'titanBlessing', kind: 'feature', label: '泰坦祝福', showFields: true },

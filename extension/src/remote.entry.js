@@ -36,6 +36,7 @@ import './feats/player/radar-task/index.js';
 import './feats/activity/sea-treasure/index.js';
 import './feats/activity/mecha-treasure/index.js';
 import './feats/activity/aureole-slot/index.js';
+import './feats/activity/city-award/index.js';
 import './feats/alliance/alliance-gift/index.js';
 import './feats/alliance/alliance-rally/index.js';
 import './feats/player/source-of-war/index.js';

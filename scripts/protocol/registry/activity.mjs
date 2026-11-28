@@ -655,6 +655,20 @@ export default [
     ],
   },
   {
+    cmd: 9657,
+    dir: 'C2S',
+    note: '城市庆典宝箱领取（sendPBV2，{activityId, targetUidStr}；钢铁对决/军事演习/势力检阅共用）',
+    src: 'dashcam-rec-20261127T235644（真人点击城市气泡）',
+    fields: 'req {activityId, targetUidStr} → resp {reward:{...}}',
+    usages: [
+      {
+        name: 'CMD_CITY_GET_REWARD',
+        feat: 'city-award',
+        file: 'feats/activity/city-award/constants.js',
+      },
+    ],
+  },
+  {
     cmd: 10029,
     dir: 'S2C',
     note: 'push 发射井个人积分/已领档位刷新',
