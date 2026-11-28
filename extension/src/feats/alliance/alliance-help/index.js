@@ -718,9 +718,31 @@ function install(ctx) {
  * 不解析 push 载荷（10446 语义未验证），只把“到达”当作“立即重跑一轮生产”的信号：
  * cycle.kick() 非在飞即起一轮、在飞置 pending 本轮后补扫——既避开在游戏入站回调里同步发包的重入，
  * 又靠单飞闸门自然合并频繁 push（多条连到也只抢跑一次）。轮询仍是兜底。
+ * idle 期（荣誉分与申请次数都已打满、无在途自助帮助）推送只会空扫一轮，直接忽略；
+ * 次日重置后 600s 兜底轮询自会把档位拉回 busy。
  */
 function onHelpUpdate() {
+  if (isIdleNow()) {
+    log.debug('help push in idle window, skip kick.');
+    return;
+  }
   cycle.kick();
+}
+
+/**
+ * 当前是否处于 idle 窗口（与 nextInterval 的档位判定同口径）。
+ * 保守面：data 未就绪、未入盟、计数通道未同步一律返回 false（继续 kick），行为与旧版一致。
+ * @returns {boolean}
+ */
+function isIdleNow() {
+  try {
+    var alliance = data.UserData.Alliance;
+    if (!alliance.isInAlliance()) return false;
+    if (!alliance.UpdatedSelfHelp || !isHelpCountSynced(alliance)) return false;
+    return nextInterval() === cfg.idleInterval;
+  } catch (e) {
+    return false;
+  }
 }
 
 /**

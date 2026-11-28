@@ -401,11 +401,9 @@ function nextTickDelay() {
   var working =
     (snap && snap.state === STATE.DONATING && hasDonateWork(snap.bossId)) ||
     (snap && isAttackable(snap.state) && cfg.preset > 0 && !hasAttacked(snap.bossId));
-  var ms = working
+  return working
     ? BUSY_TICK_MS
     : flipDelayMs() || (coldMisses >= 3 ? COLD_BACKOFF_MS : IDLE_TICK_MS);
-  log.debug('next check in %d s', Math.round(ms / 1000));
-  return ms;
 }
 
 /**
