@@ -48,15 +48,14 @@
  */
 import { CODE_NOT_SENT, sleep, parseData } from '../../../core/util.js';
 import { createLog } from '../../../core/log.js';
-import { game } from '../../../core/game.js';
 import { gameData } from '../../../core/game-api.js';
 import { reactor } from '../../../core/reactor.js';
 import { march } from '../../../core/march.js';
 import { createCycle } from '../../../core/cycle.js';
 import { createDailyLedger, dailyText } from '../../../core/daily-stats.js';
+import { activityHub } from '../../../core/activity-hub.js';
 
 import {
-  CMD_PUSH_ONE_ACTIVITY_EXTRA,
   CMD_MONSTER_LIST,
   CMD_MARCH_WORLD_POINT,
   CMD_USER_MARCH_INFO,
@@ -122,11 +121,13 @@ const PUSH_SCAN_MIN_GAP = 1000 * 3;
 
 /** @type {object|null} 网络底座（promise 封装 pocketcc.net） */
 var net;
-/** @type {object|null} 活动控制器（aid 反查活动、活动列表/开启判定） */
-var activityCtl;
 
 /** @type {object|null} reactor 注入的上下文；alive() 反映运行态，pause 后置否让定时器与在飞流程自然退出 */
 var ctxRef = null;
+/** @type {function():void|null} hub 引用计数 detach（pause 释放） */
+var detachHub = null;
+/** @type {function():void|null} hub 活动变化退订（pause 释放） */
+var unwatchHub = null;
 
 /** @type {object[]} 本轮扫描过滤出的可攻打使徒（[{uuid,x,y,uid,expireAt}]），consume 逐条 shift */
 var queue = [];
@@ -425,25 +426,18 @@ async function marchAttack(item) {
 }
 
 /**
- * 10912 推送入口：aid 反查重装母舰、且 extra.worldUIRed >= 1（确认世界有可打使徒）才触发扫描，listener 本身永不 throw。
- * 10912 任何活动的 extra 更新都会推它，故必先按 aid 认出本活动，再验红点位
- * @param {object} ev net.on 事件 {cmd, status, data, ord, ts, raw}
+ * hub 订阅回调：重装母舰的 extra 变化、且 worldUIRed >= 1（确认世界有可打使徒）才触发扫描。
+ * 10912 任何活动的 extra 更新都会进 hub，故先由 watch 的 match 认出本活动，再验红点位。
+ * @param {object} activity hub 合并后的活动对象
  */
-function onActivityExtraPush(ev) {
+function onActivityChange(activity) {
   if (!aliveFn()) return;
-
-  var aid = ev && ev.data && ev.data.aid;
-  if (!isMechaTreasureAid(aid)) {
-    return;
-  }
-
-  var extra = ev.data && ev.data.extra;
+  var extra = activity && activity.extra;
   var hasMonster = extra && extra.worldUIRed && extra.worldUIRed >= 1;
   if (!hasMonster) {
     return;
   }
-
-  log.info('activity extra push received, trigger scan. aid=%d', aid);
+  log.info('activity extra push received, trigger scan. aid=%s', activity.id);
   cycle.kick();
 }
 
@@ -484,31 +478,21 @@ function onRewardMailPush(ev) {
 }
 
 /**
- * aid 是否指向一个重装母舰宝藏活动
- * @param {number} aid 推送载荷里的活动 id
- * @returns {boolean}
- */
-function isMechaTreasureAid(aid) {
-  if (!aid) return false;
-  var activity = activityCtl.getActivityByActivityId(aid);
-  return !!activity && activity.showUiType === SHOW_UI_TYPE_MECHA_TREASURE;
-}
-
-/**
- * 获取重装母舰宝藏活动信息（要求仍在开启期——对已结束的活动发 8802/902 只会被拒）
+ * 从 hub 快照获取重装母舰宝藏活动（要求仍在开启期——对已结束的活动发 8802/902 只会被拒）。
+ * 在期判定用快照自带的 begintime/endtime（841 权威）与服务器时间；时间不可用则放行（被拒无害）。
  * @returns {object|undefined}
  */
 function getMechaTreasureActivity() {
-  return activityCtl.getActivityList().find(function (activity) {
-    return (
-      activity.showUiType === SHOW_UI_TYPE_MECHA_TREASURE &&
-      activityCtl.checkActivityIsOpen(activity.id) === true
-    );
-  });
+  var activity = activityHub.getByUiType(SHOW_UI_TYPE_MECHA_TREASURE);
+  if (!activity) return undefined;
+  var now = gameData.serverTime();
+  if (now && activity.begintime && activity.begintime > now) return undefined;
+  if (now && activity.endtime && activity.endtime <= now) return undefined;
+  return activity;
 }
 
 /**
- * 安装：取网络底座 + 活动控制器。任一依赖缺失即失败（reactor 不会激活）。
+ * 安装：只验证网络底座可用（活动快照归 activity-hub，游戏侧符号依赖由 symbols 在 install 前自检）。
  * @param {object} ctx reactor 上下文
  * @returns {boolean}
  */
@@ -518,26 +502,10 @@ function install(ctx) {
     return true;
   }
 
-  var missing = [];
-
   net = ctx.net;
   if (!net.install()) {
-    missing.push('pocketcc.net');
     net = null;
-  }
-
-  var mods = game.requireAll(['ActivityController']);
-
-  activityCtl =
-    (mods.ActivityController &&
-      mods.ActivityController.ActivityController &&
-      mods.ActivityController.ActivityController.Instance) ||
-    missing.push('ActivityController');
-
-  if (missing.length) {
-    net = null;
-    activityCtl = null;
-    log.warn('install failed. missing=%d;deps=%s', missing.length, missing.join(';'));
+    log.warn('install failed: pocketcc.net unavailable.');
     return false;
   }
 
@@ -548,8 +516,9 @@ function install(ctx) {
 }
 
 /**
- * 运行：复位调度状态，挂 10912 / 10019 监听，主动扫一次（之后由推送 / 兜底定时驱动）。
- * reactor pause 置 alive=false 后定时器自然停摆；resume 重新复位点火（cycle.kick 内部先清旧定时器，不会重复）。
+ * 运行：复位调度状态，attach hub（引用计数，首扫 841 + 订阅活动推送），订阅 10019 到家与奖励邮件，主动扫一次。
+ * reactor pause 置 alive=false 后定时器自然停摆，并在 spec.pause 里释放 hub 引用与 watch；
+ * resume 重新复位点火（cycle.kick 内部先清旧定时器，不会重复）。
  * dispatched/rejected 不在此清空：使徒「每人只能打一次」是当日硬约束，清空会让 resume 后重复攻打同一目标被拒刷屏。
  * @param {object} ctx reactor 上下文
  */
@@ -559,17 +528,38 @@ function run(ctx) {
   queue = [];
   lastPushScanAt = 0;
   rewardLedger.ensureLoaded();
-  ctx.on.push(CMD_PUSH_ONE_ACTIVITY_EXTRA, onActivityExtraPush);
+  if (unwatchHub) unwatchHub();
+  if (detachHub) detachHub();
+  detachHub = activityHub.attach({
+    label: 'mecha-treasure',
+    scanIntervalMs: cfg.idleScanInterval,
+  });
+  unwatchHub = activityHub.watch(
+    function (activity) {
+      return activity.showUiType === SHOW_UI_TYPE_MECHA_TREASURE;
+    },
+    onActivityChange,
+    { label: 'mecha-treasure' },
+  );
   ctx.on.push(CMD_USER_MARCH_INFO, onMarchUpdate);
   ctx.on.push(PUSH_SINGLE_MAIL, onRewardMailPush);
-  log.info(
-    'started, listening push cmd=%d;mail=%d;marchType=%d.',
-    CMD_PUSH_ONE_ACTIVITY_EXTRA,
-    PUSH_SINGLE_MAIL,
-    MARCH_TYPE,
-  );
+  log.info('started; mail=%d;marchType=%d.', PUSH_SINGLE_MAIL, MARCH_TYPE);
   // 启动即主动查一次；本轮结束后 cycle 会武装兜底定时
   cycle.kick();
+}
+
+/**
+ * 暂停：释放 hub 引用与活动订阅（reactor 的 triggers 管不到 hub 的内部订阅）。
+ */
+function pause() {
+  if (unwatchHub) {
+    unwatchHub();
+    unwatchHub = null;
+  }
+  if (detachHub) {
+    detachHub();
+    detachHub = null;
+  }
 }
 
 /**
@@ -608,4 +598,5 @@ reactor.register({
   },
   install: install,
   run: run,
+  pause: pause,
 });

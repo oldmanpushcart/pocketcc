@@ -17,6 +17,8 @@
 | [core/item.md](core/item.md)               | `src/core/item.js`        | 物品查询/标识薄工具层（持有量/中文名/奖励解析），收口 4 个 feat                           |
 | [core/map.md](core/map.md)                 | `src/core/map.js`         | 世界地图常量真相+三系坐标转换+单窗 901 只读查询底座，收口 map-meta/coord 与 3 处 901 探针 |
 | [core/cycle.md](core/cycle.md)             | `src/core/cycle.js`       | A 原语：电平调和循环驱动器（单飞/合并/绝不停摆），已收口 P0 四 feat                       |
+| [core/activity-hub.md](core/activity-hub.md) | `src/core/activity-hub.js` | B 原语：活动感知总线（841 快照 + 10904/10912 合并 + 3103 重查），已收口 7 feat + city-award |
+| [core/claim-runner.md](core/claim-runner.md) | `src/core/claim-runner.js` | C 原语：活动领取执行器（协议分派/节奏/退避/回执分类），收口 feat 自建退避               |
 | [core/snapshot-pool.md](core/snapshot-pool.md) | `src/core/snapshot-pool.js` | D 原语：快照观测池（边沿推送即事实、无重放读通道时的入池/键控去重/延迟消耗）              |
 | [core/resource.md](core/resource.md)       | `src/core/resource.js`    | 资源田编号真相+只读查询薄底座（groupType/族级天花板/`RESOURCE_MAX_LEVEL`）                |
 | [core/world-state.md](core/world-state.md) | `src/core/world/state.js` | 世界态归一层（Kind/Place/Phase/Gen），为 `world` 门控与跨服图降级提供单一真相             |

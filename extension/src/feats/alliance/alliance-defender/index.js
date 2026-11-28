@@ -17,7 +17,7 @@
  *   1353 GET_ALLIANCE_DISPLAY_TIME req `{}` resp `{st,et,det,siegeStatus,actSpec,redDot}`
  *        —— st 活动开始 / et 活动展示结束（**非战斗结束**）/ det 领奖截止；actSpec 是 POJO 枚举读不到 id；
  *        redDot[42]=个人可领档数（领后归 0），**redDot[47] 实证全程不出现**（联盟奖不能以红点为闸）。
- *   841  GET_ACTIVITY_DATA req `{}` resp `{alist:[…]}`，取 type26 条目：`.id`=活动 aid、`.alMonsterSiege`=战斗快照。
+ *   841  GET_ACTIVITY_DATA —— 活动感知归 core/activity-hub（全仓共享快照）：取 type26 条目：`.id`=活动 aid、`.alMonsterSiege`=战斗快照。
  *        startTime 开战前数小时即暴露（实证提前 1838s），派兵窗口据此提前锚定。
  *   1792 ACTIVITY_GET_REWARD req `{aid,type}` —— type42 个人 / type47 联盟，均**批量**一次领完该组全部可领行。
  *   1355 AWARD_AL_MONSTER_SIEGE_RANK req `{}` —— 排行奖（联盟积分排名），活动结束后放出，redDot[43]>0 为闸。
@@ -26,7 +26,7 @@
  *   902  MARCH_WORLD_POINT marchType30 —— 走 core/march.attack() 组 canonical body（minimal 单兵）。
  *
  * 关键纠错（实录对拍定稿，详见 .reviewtmp/adp/probe-rec*.cjs）：
- *   1 1353/841 只有 NetMgr 内联回调、无全局 handler → pocketcc.net 自发查询不刷游戏内存，feat 自查询自解析维护本地 SNAP；
+ *   1 1353/841 只有 NetMgr 内联回调、无全局 handler → 自查询不刷游戏内存，feat 自查询自解析维护本地 SNAP（841 现由 activity-hub 代发共享）；
  *   2 aid 只能从 841 type26.id 取（1353 actSpec 读不到、11104 的 aid 是联盟 ID 非活动 ID）；
  *   3 战斗结束判据 = siege.isEnd==1 || siege.endTime>0（et 是展示结束，晚于战斗结束数小时，仅作兜底）；
  *   4 派兵锚点 = siege.startTime − 300（不是活动 st）；
@@ -49,12 +49,12 @@ import { Battle } from '../../../core/battle.js';
 import { march } from '../../../core/march.js';
 import { createCycle } from '../../../core/cycle.js';
 import { createDailyLedger } from '../../../core/daily-stats.js';
+import { activityHub } from '../../../core/activity-hub.js';
 import { CODE_NOT_SENT, parseData, rejectText } from '../../../core/util.js';
 
 import { defenderApi } from './api.js';
 import {
   CMD_GET_ALLIANCE_DISPLAY_TIME,
-  CMD_GET_ACTIVITY_DATA,
   CMD_ACTIVITY_GET_REWARD,
   CMD_AWARD_SIEGE_RANK,
   CMD_PUSH_ALLIANCE_MONSTER_SIEGE,
@@ -67,7 +67,7 @@ const log = createLog('ALLIANCE_DEFENDER');
 /** @type {string} reactor 功能 id（面板挂载见 core/menu.js 联盟基础设置组） */
 const FEAT_ID = 'allianceDefender';
 
-/** @type {number} 841 alist 里联盟保卫战的活动 type（实证 type26） */
+/** @type {number} 活动 type（实证 841 alist / hub 快照 type26） */
 const ACTIVITY_TYPE = 26;
 /** @type {number} 902 的 marchType：保卫战驻防（实证 marchType30） */
 const MARCH_TYPE_DEFEND = 30;
@@ -86,7 +86,7 @@ const MAX_DISPATCH = 5;
 const MAX_CLAIM_TRIES = 3;
 /** @type {number} 派兵/领奖被拒后的冷却毫秒 */
 const REJECT_COOL_MS = 60 * 1000;
-/** @type {number} 两次 1353/841 读的最小间隔毫秒（领奖相强制每拍刷 redDot，不受此闸） */
+/** @type {number} 两次 1353 读 / hub 补扫 841 的最小间隔毫秒（领奖相强制每拍刷 redDot，不受此闸） */
 const READ_GAP_MS = 60 * 1000;
 
 // ── 模块态 ────────────────────────────────────────────────────────────
@@ -96,6 +96,8 @@ var MCFG = { enabled: false };
 var net = null;
 /** @type {boolean} 安装标志 */
 var installed = false;
+/** @type {function():void|null} hub 引用计数 detach（pause 释放） */
+var detachHub = null;
 
 /**
  * @typedef {object} AdpSnap
@@ -113,7 +115,7 @@ var installed = false;
 var SNAP = null;
 /** @type {number} 上次成功读达 1353 的本地毫秒 */
 var lastRead1353 = 0;
-/** @type {number} 上次读 841 的本地毫秒（失败也推进，兑住重试频率） */
+/** @type {number} 上次因快照缺 type26 而请求 hub 补扫 841 的本地毫秒（失败也推进，兜住重试频率） */
 var lastRead841 = 0;
 
 /** @type {string} 当前场次键（siege.startTime）；换场即复位派兵/领奖记账 */
@@ -183,6 +185,9 @@ function configure(partial) {
  * @param {object} ctx reactor 上下文
  */
 function run(ctx) {
+  if (detachHub) detachHub();
+  // 841 感知归 activity-hub：本 feat 无周期刷新需求，scanIntervalMs=0 只声明共享引用
+  detachHub = activityHub.attach({ label: FEAT_ID, scanIntervalMs: 0 });
   ctx.on.push(CMD_PUSH_ALLIANCE_MONSTER_SIEGE, onSiegePush);
   ctx.on.push(CMD_PUSH_MARCH_INFO, onMarchInfoPush);
   dailyLedger.ensureLoaded();
@@ -195,6 +200,10 @@ function run(ctx) {
  *   避免 resume 后拿上一场的 startTime/aid 去发写请求。日账保留。
  */
 function pause() {
+  if (detachHub) {
+    detachHub();
+    detachHub = null;
+  }
   SNAP = null;
   lastRead1353 = 0;
   lastRead841 = 0;
@@ -391,46 +400,26 @@ function applyDisplay(d) {
 }
 
 /**
- * 读一次 841 补 aid + siege（仅当缺失/未排期时调；受 READ_GAP_MS 闸）。
+ * 从 activity-hub 快照补 aid + siege（仅当缺失/未排期时调）。
+ * 841 由 hub 代发并全仓共享（单飞 + 2s 最小间隔）；本函数只在快照缺 type26 条目时才请求补扫，
+ * 且本地保留 READ_GAP_MS 闸，避免活动未上线期间每拍白打 841。
+ * type26 条目字段：`.id`=活动 aid（1792 用）、`.alMonsterSiege`=战斗快照（startTime 开战前数小时即暴露）。
+ * 10904 等推送可能只带 extra 而不含 alMonsterSiege，故快照命中但缺战斗态时保留 SNAP.siege 旧值，等 11104 推送合并。
  * @returns {Promise<boolean>} true=aid/siege 已就绪
  */
 async function readActivityData() {
-  if (!net) return false;
   var ready = !!(SNAP && SNAP.aid > 0 && SNAP.siege && SNAP.siege.startTime > 0);
-  if (Date.now() - lastRead841 < READ_GAP_MS) return ready;
-  if (net.isSending(CMD_GET_ACTIVITY_DATA)) return ready;
-  var sendErr = '';
-  var ret = await net.sendGuarded(
-    CMD_GET_ACTIVITY_DATA,
-    {},
-    {
-      onError: function (err) {
-        sendErr = (err && err.message) || String(err);
-      },
-    },
-  );
-  if (!aliveFn()) return false;
-  lastRead841 = Date.now();
-  if (ret && ret.code === CODE_NOT_SENT) {
-    log.warn('841 not sent%s.', sendErr ? ' (threw: ' + sendErr + ')' : ' (gate/timeout)');
-    return false;
-  }
-  if (!ret || !ret.ok) {
-    log.info('841 rejected. code=%s reason=%s', ret ? ret.code : '?', rejectText(ret));
-    return false;
-  }
-  var d = parseData(ret.data);
-  var list = d && Array.isArray(d.alist) ? d.alist : [];
-  var hit = null;
-  for (var i = 0; i < list.length; i++) {
-    if (Number(list[i].type) === ACTIVITY_TYPE) {
-      hit = list[i];
-      break;
-    }
+  var hit = activityHub.getByType(ACTIVITY_TYPE);
+  if (!hit) {
+    if (Date.now() - lastRead841 < READ_GAP_MS) return ready;
+    lastRead841 = Date.now();
+    await activityHub.scan();
+    if (!aliveFn()) return false;
+    hit = activityHub.getByType(ACTIVITY_TYPE);
   }
   if (!hit) {
-    log.debug('841 no type26 entry (defender not in activity list).');
-    return false;
+    log.debug('activity snapshot has no type26 entry (defender not in activity list).');
+    return ready;
   }
   if (!SNAP) {
     SNAP = {

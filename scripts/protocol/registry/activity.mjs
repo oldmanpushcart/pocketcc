@@ -117,20 +117,6 @@ export default [
     ],
   },
   {
-    cmd: 3103,
-    dir: 'C2S',
-    note: '重查单个活动（ACTIVITY_GET_SINGLE_INFO，V1 send，{id}）',
-    src: '公开 H5 客户端 subpack2.5c3c4.js RealActivityController.reqUpdateActivityDataById',
-    fields: 'req {id} → resp 单个活动对象',
-    usages: [
-      {
-        name: 'CMD_GET_ACTIVITY_SINGLE_INFO',
-        feat: 'super-value-gift',
-        file: 'feats/activity/super-value-gift/constants.js',
-      },
-    ],
-  },
-  {
     cmd: 3135,
     dir: 'C2S',
     note: '应急背包全部待领奖励（MAKESHIFTBAG_RECEIVE，V1 send，rewardAid:-1）',
@@ -679,59 +665,6 @@ export default [
         name: 'PUSH_GUN_FIGHT_REWARD_INFO',
         feat: 'launch-silo',
         file: 'feats/activity/launch-silo/constants.js',
-      },
-    ],
-  },
-  {
-    cmd: 10904,
-    dir: 'S2C',
-    note: 'push 整条活动（PUSH_ONE_ACTIVITY，载荷含 type/extra/id）',
-    src: '',
-    fields: '',
-    usages: [
-      {
-        name: 'CMD_PUSH_ONE_ACTIVITY',
-        feat: 'super-value-gift',
-        file: 'feats/activity/super-value-gift/constants.js',
-      },
-      {
-        name: 'CMD_PUSH_ONE_ACTIVITY',
-        feat: 'titan-blessing',
-        file: 'feats/activity/titan-blessing/constants.js',
-      },
-    ],
-  },
-  {
-    cmd: 10912,
-    dir: 'S2C',
-    note: 'push 活动 extra 更新（{aid,extra}；新矿脉诞生时推它）',
-    src: '',
-    fields: '',
-    usages: [
-      {
-        name: 'CMD_PUSH_ONE_ACTIVITY_EXTRA',
-        feat: 'aureole-slot',
-        file: 'feats/activity/aureole-slot/constants.js',
-      },
-      {
-        name: 'CMD_PUSH_ONE_ACTIVITY_EXTRA',
-        feat: 'domain-treasure',
-        file: 'feats/activity/domain-treasure/constants.js',
-      },
-      {
-        name: 'CMD_PUSH_ONE_ACTIVITY_EXTRA',
-        feat: 'mecha-treasure',
-        file: 'feats/activity/mecha-treasure/constants.js',
-      },
-      {
-        name: 'CMD_PUSH_ONE_ACTIVITY_EXTRA',
-        feat: 'sea-treasure',
-        file: 'feats/activity/sea-treasure/constants.js',
-      },
-      {
-        name: 'CMD_PUSH_ONE_ACTIVITY_EXTRA',
-        feat: 'super-value-gift',
-        file: 'feats/activity/super-value-gift/constants.js',
       },
     ],
   },

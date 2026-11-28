@@ -4,8 +4,6 @@
  * 注册表：scripts/protocol/（开发期单一真相）；改动后须重跑 npm run protocol:extract。
  */
 
-/** @type {number} ResponseId.PUSH_ONE_ACTIVITYEXTRA，活动 extra 更新推送，载荷 {aid,extra}；新使徒刷出等会推它 */
-export const CMD_PUSH_ONE_ACTIVITY_EXTRA = 10912;
 /** @type {number} NRequestIdV2.PINK_MECHA_MONSTER_LIST，查询使徒列表，req {aid,type} */
 export const CMD_MONSTER_LIST = 8802;
 /** @type {number} RequestId.MARCH_WORLD_POINT，世界地图行军；攻打使徒用 marchType=189，仅用于在途闸门 */

@@ -279,6 +279,6 @@ test('⑥ 状态行：只显「今日 N 次」，两套皮求和，两者皆无�
   assert.equal(spec.fields.length, 1, '只一条状态行，不带「可抽/无可抽」后缀');
   assert.equal(spec.fields[0].type, 'text');
   assert.equal(spec.fields[0].key, '_drawInfo');
-  // 未 install（activityCtl 为 null）时字段读回 '—'，不抛
+  // 未安装（hub 快照为空）时字段读回 '—'，不抛
   assert.equal(spec.fields[0].get(), '—');
 });

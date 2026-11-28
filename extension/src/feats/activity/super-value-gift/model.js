@@ -429,26 +429,3 @@ export function claimableSpecialRewards(activity, inAlliance = null) {
 
   return [];
 }
-
-/**
- * 提取 841 业务体中的活动列表；空列表是合法快照，缺失/畸形则不是。
- * @param {*} data net 归一后的应答 data
- * @returns {object[]|null}
- */
-export function activityListFromAck(data) {
-  if (!data || typeof data !== 'object' || !Array.isArray(data.alist)) return null;
-  return data.alist;
-}
-
-/**
- * 验证 3103 返回的是 requested id 对应的活动，避免错配旧应答。
- * @param {*} data net 归一后的应答 data
- * @param {string|number} requestedId 请求的活动 ID
- * @returns {object|null}
- */
-export function activityFromAck(data, requestedId) {
-  if (!data || typeof data !== 'object' || Array.isArray(data)) return null;
-  if (!isValidId(data.id) || !isValidId(requestedId)) return null;
-  if (String(data.id) !== String(requestedId)) return null;
-  return data;
-}

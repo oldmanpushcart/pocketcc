@@ -39,7 +39,7 @@
  *   自己的机器：游戏列表照常显示自己的机器（selfBgNode）且面板不禁用 ⇒ 默认不剔除，被拒走拒绝码拉黑。
  *
  * 调度（A 模式单层调和循环，同重装母舰口径但去掉行军消费段）：
- *   三个触发源汇入 cycle.kick：① 推送 10912（按 aid 反查 showUiType ∈ SLOT_FAMILIES，再验 extra.worldUIRed>=1）；
+ *   三个触发源汇入 cycle.kick：① activity-hub 订阅（watch match: showUiType ∈ SLOT_FAMILIES，再验 extra.worldUIRed>=1）；
  *   ② run() 启动即主动扫一次；③ 兜底定时（active/idle 两档，连续 EMPTY_STREAK_IDLE 次空扫降频）防漏推。
  *   **不订阅 10019**：本 feat 零行军，到家补扫无意义。
  *   生产 doScan：找活动（两套皮同期开启则在同一轮内串行各扫一次，不并发）→ 红点闸 → 拉世界列表
@@ -72,18 +72,18 @@
  *   回落本地日账（core/daily-stats，按 showUiType 分键）兜冷启动窗口；两者皆无显示 '—'，不拿 0 冒充进度。
  *   无分母形态经 dailyText 产出（同假面舞会/每日补给口径）。
  *
- * 生命周期由 reactor 托管：install/run 两个钩子，places 门控限定 base/world，战斗模式强制下线。
+ * 生命周期由 reactor 托管：install/run/pause 三个钩子，places 门控限定 base/world，战斗模式强制下线。
  *   drawn/rejected 不随 run 清空（「每台只能抽 cap 次」是当日硬约束，清空会让 resume 后重复撞同一台被拒刷屏）。
  */
 import { CODE_NOT_SENT, sleep, rejectText } from '../../../core/util.js';
 import { createLog } from '../../../core/log.js';
-import { game } from '../../../core/game.js';
 import { gameData } from '../../../core/game-api.js';
 import { reactor } from '../../../core/reactor.js';
 import { createCycle } from '../../../core/cycle.js';
 import { createDailyLedger, dailyText } from '../../../core/daily-stats.js';
+import { activityHub } from '../../../core/activity-hub.js';
 
-import { SLOT_FAMILIES, CMD_PUSH_ONE_ACTIVITY_EXTRA } from './constants.js';
+import { SLOT_FAMILIES } from './constants.js';
 
 /** @type {ReturnType<createLog>} 模块日志器（tag=AUREOLE-SLOT） */
 const log = createLog('AUREOLE-SLOT');
@@ -117,7 +117,7 @@ const cfg = {
 
   /**
    * 空转扫描间隔：默认 10 分钟。连续 EMPTY_STREAK_IDLE 次空扫后降到这档，少刷世界列表。
-   * 推送 10912 仍是主触发源，新机器一落地即被推醒，不必等这档定时
+   * hub 订阅仍是主触发源，新机器一落地即被推醒，不必等这档定时
    */
   idleScanInterval: 1000 * 60 * 10,
 
@@ -127,11 +127,13 @@ const cfg = {
 
 /** @type {object|null} 网络底座（promise 封装 pocketcc.net） */
 var net;
-/** @type {object|null} 活动控制器（活动列表、开启判定、aid 反查） */
-var activityCtl;
 
 /** @type {object|null} reactor 上下文；alive() 反映运行态，pause 后置否让定时器与在飞流程自然退出 */
 var ctxRef = null;
+/** @type {function():void|null} hub 引用计数 detach（pause 释放） */
+var detachHub = null;
+/** @type {function():void|null} hub 活动变化退订（pause 释放） */
+var unwatchHub = null;
 
 /** @type {object[]} 本轮扫出的可抽机器（[{fam,activity,item}]），consume 逐条 shift */
 var queue = [];
@@ -289,7 +291,7 @@ export function slotRedDotOpen(extra) {
 /**
  * 皮 ↔ 活动实例入选判定（纯函数，把「同 showUiType」与「支路开关」两条闸门收在一处）：
  * - showUiType 必须命中该皮；
- * - openFn（= activityCtl.checkActivityIsOpen 的包装）必须回 true —— 限时活动已结束还发列表只会被拒；
+ * - openFn（= hub 快照 begintime/endtime 包装的在期判定）必须回 true —— 限时活动已结束还发列表只会被拒；
  *   传 null 表示不校验开启（单测只验支路开关时用）；
  * - fam.requireField 缺位/空串 = 本期活动没挂摇摇机支路（印石挖掘无 para6 时挂的是传说宝藏），整条不入选。
  * @param {object} fam 皮描述符
@@ -306,15 +308,21 @@ export function isSlotActivity(fam, activity, openFn) {
 
 /**
  * 当前开启且挂有摇摇机支路的活动（按皮 × 按活动实例展开，同期两套皮会得到两条）。
+ * 活动来源为 activity-hub 快照（841 权威 + 10912 extra 合并）；在期判定用快照自带时间与服务时间，
+ * 时间不可用则放行（被拒无害）。
  * @returns {Array<{fam: object, activity: object}>}
  */
 function findSlotActivities() {
   var out = [];
-  var list = (activityCtl && activityCtl.getActivityList()) || [];
-  var openFn =
-    activityCtl && activityCtl.checkActivityIsOpen
-      ? activityCtl.checkActivityIsOpen.bind(activityCtl)
-      : null;
+  var list = activityHub.list();
+  var now = gameData.serverTime();
+  var openFn = function (aid) {
+    var a = activityHub.get(aid);
+    if (!a) return false;
+    if (now && a.begintime && a.begintime > now) return false;
+    if (now && a.endtime && a.endtime <= now) return false;
+    return true;
+  };
   for (var i = 0; i < SLOT_FAMILIES.length; i++) {
     var fam = SLOT_FAMILIES[i];
     for (var j = 0; j < list.length; j++) {
@@ -532,17 +540,12 @@ function rewardBrief(reward) {
 }
 
 /**
- * 10912 推送入口：aid 反查到某套皮、且 extra.worldUIRed >= 1（确认世界有可抽机器）才触发扫描。
- * 10912 任何活动的 extra 更新都会推它，故必先按 aid 认皮。listener 本身永不 throw。
- * @param {object} ev net.on 事件 {cmd, data:{aid, extra}}
+ * hub 订阅回调：某套皮的 extra 变化、且 worldUIRed >= 1（确认世界有可抽机器）才触发扫描。
+ * 10912 任何活动的 extra 更新都会进 hub，故先由 watch 的 match 按 showUiType 认皮。
+ * @param {object} activity hub 合并后的活动对象
  */
-function onActivityExtraPush(ev) {
+function onActivityChange(activity) {
   if (!aliveFn()) return;
-  var data = ev && ev.data;
-  var aid = data && data.aid;
-  if (!aid) return;
-  var activity = activityCtl.getActivityByActivityId(aid);
-  if (!activity) return;
   var fam = null;
   for (var i = 0; i < SLOT_FAMILIES.length; i++) {
     if (SLOT_FAMILIES[i].showUiType === activity.showUiType) {
@@ -551,14 +554,14 @@ function onActivityExtraPush(ev) {
     }
   }
   if (!fam) return;
-  var extra = data.extra;
+  var extra = activity.extra;
   if (!extra || !(extra.worldUIRed >= 1)) return;
-  log.info('%s extra push with red dot, trigger scan. aid=%d', fam.label, aid);
+  log.info('%s extra push with red dot, trigger scan. aid=%s', fam.label, activity.id);
   cycle.kick();
 }
 
 /**
- * 安装：取网络底座 + 活动控制器。任一依赖缺失即失败（reactor 不会激活）。
+ * 安装：只验证网络底座可用（活动快照归 activity-hub，游戏侧符号依赖由 symbols 在 install 前自检）。
  * @param {object} ctx reactor 上下文
  * @returns {boolean}
  */
@@ -568,26 +571,10 @@ function install(ctx) {
     return true;
   }
 
-  var missing = [];
-
   net = ctx.net;
   if (!net.install()) {
-    missing.push('pocketcc.net');
     net = null;
-  }
-
-  var mods = game.requireAll(['ActivityController']);
-
-  activityCtl =
-    (mods.ActivityController &&
-      mods.ActivityController.ActivityController &&
-      mods.ActivityController.ActivityController.Instance) ||
-    missing.push('ActivityController');
-
-  if (missing.length) {
-    net = null;
-    activityCtl = null;
-    log.warn('install failed. missing=%d;deps=%s', missing.length, missing.join(';'));
+    log.warn('install failed: pocketcc.net unavailable.');
     return false;
   }
 
@@ -598,8 +585,9 @@ function install(ctx) {
 }
 
 /**
- * 运行：复位调度状态，挂 10912 监听，主动扫一次（之后由推送 / 兜底定时驱动）。
- * reactor pause 置 alive=false 后定时器自然停摆；resume 重新复位点火（cycle.kick 内部先清旧定时器，不会重复）。
+ * 运行：复位调度状态，attach hub（引用计数，首扫 841 + 订阅活动推送），主动扫一次。
+ * reactor pause 置 alive=false 后定时器自然停摆，并在 spec.pause 里释放 hub 引用与 watch；
+ * resume 重新复位点火（cycle.kick 内部先清旧定时器，不会重复）。
  * drawn/rejected 不在此清空：「每台只能抽 cap 次」是当日硬约束，清空会让 resume 后重复撞同一台被拒刷屏。
  * @param {object} ctx reactor 上下文
  */
@@ -608,10 +596,39 @@ function run(ctx) {
   emptyStreak = 0;
   queue = [];
   drawLedger.ensureLoaded();
-  ctx.on.push(CMD_PUSH_ONE_ACTIVITY_EXTRA, onActivityExtraPush);
-  log.info('started, listening push cmd=%d.', CMD_PUSH_ONE_ACTIVITY_EXTRA);
+  if (unwatchHub) unwatchHub();
+  if (detachHub) detachHub();
+  detachHub = activityHub.attach({
+    label: 'aureole-slot',
+    scanIntervalMs: cfg.idleScanInterval,
+  });
+  unwatchHub = activityHub.watch(
+    function (activity) {
+      for (var i = 0; i < SLOT_FAMILIES.length; i++) {
+        if (SLOT_FAMILIES[i].showUiType === activity.showUiType) return true;
+      }
+      return false;
+    },
+    onActivityChange,
+    { label: 'aureole-slot' },
+  );
+  log.info('started; hub attached.');
   // 启动即主动查一次；本轮结束后 cycle 会武装兜底定时
   cycle.kick();
+}
+
+/**
+ * 暂停：释放 hub 引用与活动订阅（reactor 的 triggers 管不到 hub 的内部订阅）。
+ */
+function pause() {
+  if (unwatchHub) {
+    unwatchHub();
+    unwatchHub = null;
+  }
+  if (detachHub) {
+    detachHub();
+    detachHub = null;
+  }
 }
 
 /**
@@ -653,4 +670,5 @@ reactor.register({
   },
   install: install,
   run: run,
+  pause: pause,
 });

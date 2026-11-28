@@ -2,10 +2,8 @@
  * 超值活动一键领取（默认关闭，活动设置 → 基础设置）。
  *
  * 源码实证（公开 H5 客户端 subpack.2b335.js / subpack2.5c3c4.js；未做账号登录抓包）：
- *   841 GET_ACTIVITY_DATA，V1 send，{} → {alist:[活动对象]}。
  *   842 GET_ACTIVITY_REWARD，V1 send，{aid,tid}；ActivityController.getActivityReward 的通用任务领取。
  *     覆盖超值活动各分支 task[]/atarget[].state=1 的已完成任务；保留快照原始 ID 类型，联盟 BP 走 3140。
- *   3103 ACTIVITY_GET_SINGLE_INFO，V1 send，{id} → 单个活动对象。
  *   1777 ACTIVITY_GET_ALL_SCORE_REWARD，V1 send，{id}；截图“异能兽征程”和“蛋糕等级奖励”
  *     的绿色一键领取都走该协议。请求体没有 adv，故只在本模块确认可领档后发包。
  *   3140 ACTIVITY_GET_ALL_TASK_REWARD，V1 send，{activityId,targetIds}；仅联盟 BP 任务页使用。
@@ -15,36 +13,42 @@
  *   8768 额外要求在盟且未达 bullet_boss_reward_limit[2] 的领取上限。
  *
  * 安全边界：只领 task[]/atarget[].state=1 的已完成任务、普通积分档、已解锁高级免费档，
- * 以及 841/3103 自带状态可证明的专用免费奖励；联盟 BP 与大富翁在明确退盟时跳过；
+ * 以及活动快照自带状态可证明的专用免费奖励；联盟 BP 与大富翁在明确退盟时跳过；
  * 未知联盟态沿用 ACL 三态放行惯例。
  * 不调用 1674 解锁高级奖励，不翻牌、不开箱、不兑换、不购买、不消耗道具。需要独立状态查询、
  * 本地配置表或账号道具余额的专用按钮未接入，不能仅凭按钮文案猜测可领状态。
  *
- * 闭环与防重：841 动态扫描全部开放活动 → 按 model.js 判据领取 → 3103 重查确认。
+ * 感知：全部走 core/activity-hub（841 快照 + 10904/10912 合并 + 3103 重查）；本文件不再订阅推送、
+ * 不再发 841/3103。attach 声明 30s 周期档，连续 IDLE_ROUNDS 轮无待领后把档位放宽到 IDLE_SCAN_MS
+ * （3min）并在出现可领项时立即恢复；watch 命中任意活动变化即 cycle.kick（推送唤醒不受睡眠影响，
+ * 可领判据本身就按 showUiType/分支白名单收敛在 model.js，订阅侧不做二次过滤）。
+ * 领取：全部走 core/claim-runner（在途闸门/业务拒绝 15 分钟/无进展 20s–5min 指数退避）；
+ * 本文件只提供可领判据（model.js）、协议载荷与阶段顺序。
+ *
+ * 闭环与防重：hub 快照 → 按 model.js 判据领取 → hub.refresh(aid, {force:true}) 权威确认。
  * 通用任务逐个领取并在每次重查后继续权威剩余任务；聚合/专用奖励每类每轮最多尝试一次，
  * 重查仍有可领项则下轮再试，不把 ok 回执当成“已全部领完”。
- * 10904 整活动推送/10912 extra 推送只触发 kick，在飞时合并；30 秒兜底扫描解决不刷新不领取。
  * CODE_NOT_SENT 短重试且停止本轮后续写请求；业务拒绝按任务/活动退避后继续其它可领项。
  * 所有 await 后校验本轮 signal，pause/resume 或跨活动结束后的旧回执不会继续发包。
  */
-import { CODE_NOT_SENT, parseData, rejectText } from '../../../core/util.js';
 import { createLog } from '../../../core/log.js';
 import { gameData } from '../../../core/game-api.js';
 import { reactor } from '../../../core/reactor.js';
 import { createCycle } from '../../../core/cycle.js';
+import { activityHub } from '../../../core/activity-hub.js';
+import { createClaimRunner } from '../../../core/claim-runner.js';
 import { bus, EVT } from '../../../core/bus.js';
 import {
-  CMD_GET_ACTIVITY_DATA,
   CMD_GET_ACTIVITY_REWARD,
-  CMD_GET_ACTIVITY_SINGLE_INFO,
   CMD_GET_ALL_SCORE_REWARD,
   CMD_GET_ALL_TASK_REWARD,
-  CMD_PUSH_ONE_ACTIVITY,
-  CMD_PUSH_ONE_ACTIVITY_EXTRA,
+  CMD_LION_FIGHT_GET_ALL_LOOP_REWARD,
+  CMD_MAKESHIFTBAG_RECEIVE_ALL,
+  CMD_PIN_BALL_GET_ALL_LOOP_REWARD,
+  CMD_RICH_MAN_GET_ALL_LOOP_REWARD,
+  CMD_TEAM_EXPEDITION_GET_ALL_LOOP_REWARD,
 } from './constants.js';
 import {
-  activityFromAck,
-  activityListFromAck,
   claimableAllianceTaskIds,
   claimableAllianceTaskTargets,
   claimableGenericTaskIds,
@@ -56,107 +60,135 @@ import {
 
 /** @type {ReturnType<createLog>} 模块日志器 */
 const log = createLog('SUPER-VALUE-GIFT');
-/** @type {number} 无待领项时的兜底扫描间隔（毫秒） */
+/** @type {string} hub 订阅标识（attach/watch/tune 共用的引用标签） */
+const TAG = 'super-value-gift';
+/** @type {number} 活跃态的周期 841 档位与休息拍（毫秒） */
 const SCAN_TICK_MS = 1000 * 30;
+/** @type {number} 连续无待领达到该轮次后放宽周期 841 档位（空闲退避） */
+const IDLE_ROUNDS = 3;
+/** @type {number} 空闲期周期 841 档位（毫秒）；推送唤醒不受影响 */
+const IDLE_SCAN_MS = 1000 * 60 * 3;
 /** @type {number} 未发出、拒绝或重查无进展后的短重试（毫秒） */
 const RETRY_TICK_MS = 1000 * 20;
 /** @type {number} 服务器时钟不可用时的巡检间隔（毫秒） */
 const IDLE_TICK_MS = 1000 * 60 * 15;
 /** @type {number} 确认领取后的快速复扫间隔（毫秒） */
 const RESCAN_MS = 1000;
-/** @type {number} 确定性业务拒绝的会话退避（秒） */
-const BUSINESS_RETRY_SEC = 15 * 60;
-/** @type {number} 成功回执但重查无进展的基础退避（秒） */
-const NO_PROGRESS_BASE_SEC = 20;
-/** @type {number} 重查无进展退避上限（秒），避免活动结束前永久不再尝试 */
-const NO_PROGRESS_MAX_SEC = 5 * 60;
+/** @type {number} 两次领取的最小间隔；runner 统一节奏，防服务端写频控 */
+const CLAIM_GAP_MS = 1500;
+/** @type {number} 确定性业务拒绝的会话退避（毫秒），与 runner 默认值显式对齐 */
+const BUSINESS_RETRY_MS = 1000 * 60 * 15;
+/** @type {number} 成功回执但权威重查无进展的基础退避（毫秒） */
+const NO_PROGRESS_BASE_MS = 1000 * 20;
+/** @type {number} 重查无进展退避上限（毫秒），避免活动结束前永久不再尝试 */
+const NO_PROGRESS_MAX_MS = 1000 * 60 * 5;
 
-/** @type {object|null} pocketcc.net 网络底座 */
-var net = null;
 /** @type {object|null} reactor 上下文 */
 var ctxRef = null;
-/** @type {number} 本轮已由 3103 确认推进的领取批次数 */
+/** @type {function():void|null} hub attach 的 detach */
+var detachHub = null;
+/** @type {function():void|null} hub watch 的退订 */
+var unwatchHub = null;
+/** @type {object|null} 领取执行器（install 时创建；测试可注入时钟与节奏） */
+var runner = null;
+/** @type {number} 本轮已由权威重查确认推进的领取批次数 */
 var lastClaimed = 0;
 /** @type {boolean} 最近一轮是否存在需要重试的瞬态/拒绝/无进展 */
 var lastRetry = false;
 /** @type {number} 最近一次扫描发现的待领活动数 */
 var pendingCount = 0;
-/** @type {Map<string,{until:number,streak:number}>} 会话级领取退避；键为 cmd:activityId[:targetId]，不持久化 */
-var claimCooldowns = new Map();
+/** @type {number} 连续无待领轮次（达到 IDLE_ROUNDS 后放宽 841 档位） */
+var idleStreak = 0;
+/** @type {number} 当前向 hub 声明的周期 841 档位（毫秒） */
+var scanTierMs = SCAN_TICK_MS;
+/** @type {string} 上次 UI_REFRESH 时的面板状态签名（去抖：状态未变不重复通知） */
+var lastUiState = '';
 
 /**
  * 领取退避键；活动 ID 始终按字符串拼接，避免 Int64 精度碰撞。
+ * 与迁移前 `cmd:activityId[:targetId]` 完全一致，prune 解析口径不变。
  * 通用任务 842 使用 targetId 后缀，避免单个任务拒绝冻结同活动其它任务。
  * @param {number} cmd 协议号
  * @param {string|number} aid 活动 ID
  * @param {string|number|null} [targetId] 可选任务 ID
  * @returns {string}
  */
-function cooldownKey(cmd, aid, targetId = null) {
+function cooldownKey(cmd, aid, targetId) {
   const base = cmd + ':' + String(aid);
   return targetId == null ? base : base + ':' + String(targetId);
 }
 
 /**
- * 业务拒绝退避；仅在服务器明确拒绝成形请求时调用。
- * @param {number} cmd 协议号
- * @param {string|number} aid 活动 ID
- * @param {number} now 服务器时间（秒）
- * @param {string|number|null} [targetId] 可选任务 ID
+ * 创建领取执行器并注册全部协议 handler（每进程一次）。
+ * @param {object} [opt] runner 覆盖项（单测注入 actionGapMs=0 与假时钟）
  */
-function suppressBusinessClaim(cmd, aid, now, targetId = null) {
-  claimCooldowns.set(cooldownKey(cmd, aid, targetId), {
-    until: now + BUSINESS_RETRY_SEC,
-    streak: 0,
-  });
-}
-
-/**
- * 成功回执但权威重查无进展：指数退避，避免每 20 秒重复直发与刷日志。
- * @param {number} cmd 协议号
- * @param {string|number} aid 活动 ID
- * @param {number} now 服务器时间（秒）
- * @param {string|number|null} [targetId] 可选任务 ID
- */
-function suppressNoProgress(cmd, aid, now, targetId = null) {
-  const key = cooldownKey(cmd, aid, targetId);
-  const prev = claimCooldowns.get(key);
-  const streak = prev ? prev.streak + 1 : 1;
-  const delay = Math.min(NO_PROGRESS_BASE_SEC * 2 ** (streak - 1), NO_PROGRESS_MAX_SEC);
-  claimCooldowns.set(key, { until: now + delay, streak: streak });
-}
-
-/**
- * 领取是否处于会话退避中；过期条目不立即删除，以保留无进展的指数退避轮次，
- * 待权威快照确认无可领项、活动结束或功能重置时再由 prune/clear 清理。
- * @param {number} cmd 协议号
- * @param {string|number} aid 活动 ID
- * @param {number} now 服务器时间（秒）
- * @param {string|number|null} [targetId] 可选任务 ID
- * @returns {boolean}
- */
-function claimSuppressed(cmd, aid, now, targetId = null) {
-  const key = cooldownKey(cmd, aid, targetId);
-  const entry = claimCooldowns.get(key);
-  if (!entry || entry.until <= now) return false;
-  log.debug(
-    'cmd %d claim skipped by cooldown. activityId=%s;targetId=%s;retryAfter=%ds',
-    cmd,
-    aid,
-    targetId == null ? '-' : targetId,
-    entry.until - now,
+function ensureRunner(opt) {
+  if (runner) return;
+  runner = createClaimRunner(
+    Object.assign(
+      {
+        log: log,
+        actionGapMs: CLAIM_GAP_MS,
+        businessBackoffMs: BUSINESS_RETRY_MS,
+        noProgressBaseMs: NO_PROGRESS_BASE_MS,
+        noProgressMaxMs: NO_PROGRESS_MAX_MS,
+      },
+      opt || {},
+    ),
   );
-  return true;
-}
-
-/**
- * 权威状态确认已无该项后解除退避；活动关闭/消失的条目由 prune 清理。
- * @param {number} cmd 协议号
- * @param {string|number} aid 活动 ID
- * @param {string|number|null} [targetId] 可选任务 ID
- */
-function clearClaimCooldown(cmd, aid, targetId = null) {
-  claimCooldowns.delete(cooldownKey(cmd, aid, targetId));
+  runner.register(CMD_GET_ALL_SCORE_REWARD, {
+    label: 'score-rewards',
+    protocol: 'send',
+    body: function (item) {
+      return { id: item.aid };
+    },
+    key: function (item) {
+      return cooldownKey(CMD_GET_ALL_SCORE_REWARD, item.aid);
+    },
+  });
+  runner.register(CMD_GET_ALL_TASK_REWARD, {
+    label: 'alliance-tasks',
+    protocol: 'send',
+    body: function (item) {
+      return { activityId: item.aid, targetIds: item.targetIds };
+    },
+    key: function (item) {
+      return cooldownKey(CMD_GET_ALL_TASK_REWARD, item.aid);
+    },
+  });
+  runner.register(CMD_GET_ACTIVITY_REWARD, {
+    label: 'task',
+    protocol: 'send',
+    body: function (item) {
+      return { aid: item.aid, tid: item.tid };
+    },
+    key: function (item) {
+      return cooldownKey(CMD_GET_ACTIVITY_REWARD, item.aid, item.targetId);
+    },
+  });
+  const specials = [
+    { cmd: CMD_MAKESHIFTBAG_RECEIVE_ALL, label: 'makeshift-bag', protocol: 'send' },
+    { cmd: CMD_PIN_BALL_GET_ALL_LOOP_REWARD, label: 'pin-ball', protocol: 'sendPB' },
+    { cmd: CMD_RICH_MAN_GET_ALL_LOOP_REWARD, label: 'rich-man', protocol: 'sendPBV2' },
+    {
+      cmd: CMD_TEAM_EXPEDITION_GET_ALL_LOOP_REWARD,
+      label: 'team-expedition',
+      protocol: 'sendPBV2',
+    },
+    { cmd: CMD_LION_FIGHT_GET_ALL_LOOP_REWARD, label: 'lion-fight', protocol: 'sendPBV2' },
+  ];
+  for (const special of specials) {
+    runner.register(special.cmd, {
+      label: special.label,
+      protocol: special.protocol,
+      body: function (item) {
+        return item.body || {};
+      },
+      key: function (item) {
+        return cooldownKey(special.cmd, item.aid);
+      },
+    });
+  }
 }
 
 /**
@@ -165,8 +197,8 @@ function clearClaimCooldown(cmd, aid, targetId = null) {
  * @param {boolean|null} inAlliance 当前联盟状态
  */
 function pruneClaimCooldowns(open, inAlliance) {
-  if (!claimCooldowns.size) return;
-  for (const key of claimCooldowns.keys()) {
+  if (!runner) return;
+  runner.prune(function (key) {
     const parts = key.split(':');
     const cmd = Number(parts[0]);
     const aid = parts[1];
@@ -188,13 +220,36 @@ function pruneClaimCooldowns(open, inAlliance) {
         }).length;
       }
     }
-    if (!pending) claimCooldowns.delete(key);
-  }
+    return pending > 0;
+  });
 }
 
 /** @returns {boolean} 当前 reactor 功能是否存活 */
 function aliveFn() {
   return ctxRef ? ctxRef.alive() : false;
+}
+
+/**
+ * 切换向 hub 声明的周期 841 档位（实际周期仍取全订阅者最小非零值）。
+ * 只在档位变化时调 hub.tune：空闲期把全量 841 从 30s 放宽到 3min，减少大包空转。
+ * @param {number} ms 目标档位（毫秒）
+ */
+function applyScanTier(ms) {
+  if (scanTierMs === ms) return;
+  scanTierMs = ms;
+  const hit = activityHub.tune(TAG, ms);
+  log.info('periodic scan tier -> %d sec. hubRefs=%d', ms / 1000, hit);
+}
+
+/**
+ * 面板状态去抖：文案三要素（最近领取/等待重试/待领数）未变时不重复 emit。
+ * 空闲期每轮都 emit 会触发面板 refreshTexts / 闸门重算等 DOM 刷新（实测约 180 次/小时）。
+ */
+function emitUiIfChanged() {
+  const state = lastClaimed + '|' + (lastRetry ? 1 : 0) + '|' + pendingCount;
+  if (state === lastUiState) return;
+  lastUiState = state;
+  bus.emit(EVT.UI_REFRESH);
 }
 
 /**
@@ -207,102 +262,23 @@ function roundAlive(signal) {
 }
 
 /**
- * 发送查询；读取可重放，绕过在途闸门，避免游戏面板正在查询时本功能永久饥饿。
- * @param {number} cmd 协议号
- * @param {object} body 请求体
- * @returns {Promise<{ok:boolean,code:number,data:*,reason?:string}>}
- */
-async function query(cmd, body) {
-  if (!net) return { ok: false, code: CODE_NOT_SENT, data: null };
-  try {
-    const ret = await net.sendGuarded(cmd, body, {
-      protocol: 'send',
-      gate: false,
-      onError: function (err) {
-        log.warn('cmd %d query threw: %s', cmd, err && err.message);
-      },
-    });
-    return ret || { ok: false, code: CODE_NOT_SENT, data: null };
-  } catch (err) {
-    log.warn('cmd %d query threw outside net guard: %s', cmd, err && err.message);
-    return { ok: false, code: CODE_NOT_SENT, data: null };
-  }
-}
-
-/**
- * 发送领取；保留在途闸门，避免与游戏 UI 或上一轮重复直发。
- * @param {number} cmd 协议号
- * @param {object} body 请求体
- * @param {'send'|'sendPB'|'sendPBV2'} [protocol] 客户端真实按钮使用的发送通道
- * @returns {Promise<{ok:boolean,code:number,data:*,reason?:string}>}
- */
-async function claim(cmd, body, protocol = 'send') {
-  if (!net) return { ok: false, code: CODE_NOT_SENT, data: null };
-  try {
-    const ret = await net.sendGuarded(cmd, body, {
-      protocol: protocol,
-      onError: function (err) {
-        log.warn('cmd %d claim threw: %s', cmd, err && err.message);
-      },
-    });
-    return ret || { ok: false, code: CODE_NOT_SENT, data: null };
-  } catch (err) {
-    log.warn('cmd %d claim threw outside net guard: %s', cmd, err && err.message);
-    return { ok: false, code: CODE_NOT_SENT, data: null };
-  }
-}
-
-/**
- * 领取失败分类；真正业务拒绝与未发出分开，日志带活动与协议上下文。
- * @param {number} cmd 协议号
+ * 领取受理后的权威确认：3103 单查走 hub（force 跳过 3s 节流，单飞不动）。
+ * fresh=false 表示没拿到可信的权威应答（未发出/被拒/畸形/节流），调用方按验证失败处理：
+ * 仅下轮重试，不记无进展退避；fresh=true 才按权威剩余可领项判定「确认领取」或「无进展」。
  * @param {string|number} aid 活动 ID
- * @param {{ok:boolean,code:number,reason?:string}} ret 网络结果
- * @param {string|number|null} [targetId] 可选任务 ID
- * @returns {'transient'|'rejected'} 调度分类
- */
-function classifyClaimFailure(cmd, aid, ret, targetId = null) {
-  if (ret.code === CODE_NOT_SENT) {
-    log.warn(
-      'cmd %d transient (not sent/in-flight), retry soon. activityId=%s;targetId=%s',
-      cmd,
-      aid,
-      targetId == null ? '-' : targetId,
-    );
-    return 'transient';
-  }
-  log.info(
-    'cmd %d claim rejected, poll later. activityId=%s;targetId=%s;code=%s;data=%s',
-    cmd,
-    aid,
-    targetId == null ? '-' : targetId,
-    ret.code,
-    rejectText(ret) || '-',
-  );
-  return 'rejected';
-}
-
-/**
- * 3103 重查单个活动；无进展也返回权威快照，由调用方决定是否下轮再试。
- * @param {string|number} aid 活动 ID
- * @returns {Promise<{ok:boolean,activity?:object,code:number,reason?:string}>}
+ * @returns {Promise<{ok:boolean,activity:object|null}>}
  */
 async function refreshActivity(aid) {
-  const ret = await query(CMD_GET_ACTIVITY_SINGLE_INFO, { id: aid });
-  if (!ret.ok) return { ok: false, code: ret.code, reason: ret.reason };
-  const data = parseData(ret.data);
-  const activity = activityFromAck(data, aid);
-  if (!activity) {
-    log.warn('cmd 3103 ack malformed or id mismatch. requestedId=%s', aid);
-    return { ok: false, code: -2 };
-  }
-  return { ok: true, activity: activity, code: 0 };
+  const result = await activityHub.refreshEx(aid, { force: true });
+  if (!result.fresh) log.warn('cmd 3103 verification unavailable. requestedId=%s', aid);
+  return { ok: result.fresh, activity: result.activity };
 }
 
 /**
  * 处理一个活动：积分档 1777、联盟 BP 3140、通用任务 842、专用全部/循环全部领取逐项执行。
- * 每个写请求前重读服务器时间与联盟态；每次成功后用 3103 权威重查，不以回执认定全部领完。
+ * 每个写请求前重读服务器时间与联盟态；每次成功后用 hub.refresh 权威重查，不以回执认定全部领完。
  * 通用任务按权威剩余列表逐个领取；聚合奖励同一活动同一轮不重复，重查仍有待领项时下轮再试。
- * @param {object} activity 841 快照中的活动
+ * @param {object} activity hub 快照中的活动
  * @param {AbortSignal|null} signal 本轮取消信号
  * @returns {Promise<{claimed:number,retry:boolean,stop:boolean}>}
  */
@@ -326,62 +302,58 @@ async function processActivity(activity, signal) {
   }
 
   const scores = claimableScoreTiers(current, gameData.inAlliance());
-  if (scores.length && claimSuppressed(CMD_GET_ALL_SCORE_REWARD, aid, actionNow)) {
-    result.retry = true;
-  } else if (scores.length) {
+  if (scores.length) {
+    const item = { cmd: CMD_GET_ALL_SCORE_REWARD, aid: aid };
     log.debug('cmd 1777 claimable score tiers. activityId=%s;tiers=%s', aid, scores.join(','));
-    const ret = await claim(CMD_GET_ALL_SCORE_REWARD, { id: aid });
+    const ret = await runner.claim(Object.assign({}, item, { signal: signal }));
     if (!roundAlive(signal)) {
       result.stop = true;
       return result;
     }
-    if (!ret.ok) {
+    if (ret.status === 'suppressed') {
       result.retry = true;
-      const failure = classifyClaimFailure(CMD_GET_ALL_SCORE_REWARD, aid, ret);
-      if (failure === 'rejected') {
-        suppressBusinessClaim(CMD_GET_ALL_SCORE_REWARD, aid, gameData.serverTime());
+    } else if (ret.status !== 'ok') {
+      result.retry = true;
+      if (ret.status === 'rejected') {
+        runner.suppress(item);
+      } else {
+        result.stop = true;
       }
-      result.stop = failure === 'transient';
       return result;
-    }
-    const after = await refreshActivity(aid);
-    if (!roundAlive(signal)) {
-      result.stop = true;
-      return result;
-    }
-    if (!after.ok) {
-      log.warn(
-        'cmd 3103 post-1777 verification failed. activityId=%s;code=%s;reason=%s',
-        aid,
-        after.code,
-        after.reason || '-',
-      );
-      result.retry = true;
-      return result;
-    }
-    current = after.activity;
-    actionNow = gameData.serverTime();
-    if (!actionNow) {
-      result.stop = true;
-      return result;
-    }
-    if (!isActivityOpen(current, actionNow)) {
-      log.debug('cmd 1777 accepted; activity closed before verification. activityId=%s', aid);
-      return result;
-    }
-    const remaining = claimableScoreTiers(current, gameData.inAlliance()).length;
-    if (remaining === 0) {
-      result.claimed++;
-      clearClaimCooldown(CMD_GET_ALL_SCORE_REWARD, aid);
-      log.info('cmd 1777 score rewards confirmed. activityId=%s', aid);
     } else {
-      suppressNoProgress(CMD_GET_ALL_SCORE_REWARD, aid, actionNow);
-      log.debug(
-        'cmd 1777 accepted but score tiers remain=%d; re-scan before retry. activityId=%s',
-        remaining,
-        aid,
-      );
-      result.retry = true;
+      const after = await refreshActivity(aid);
+      if (!roundAlive(signal)) {
+        result.stop = true;
+        return result;
+      }
+      if (!after.ok) {
+        result.retry = true;
+        return result;
+      }
+      current = after.activity;
+      actionNow = gameData.serverTime();
+      if (!actionNow) {
+        result.stop = true;
+        return result;
+      }
+      if (!isActivityOpen(current, actionNow)) {
+        log.debug('cmd 1777 accepted; activity closed before verification. activityId=%s', aid);
+        return result;
+      }
+      const remaining = claimableScoreTiers(current, gameData.inAlliance()).length;
+      if (remaining === 0) {
+        result.claimed++;
+        runner.confirm(item);
+        log.info('cmd 1777 score rewards confirmed. activityId=%s', aid);
+      } else {
+        runner.noProgress(item);
+        log.debug(
+          'cmd 1777 accepted but score tiers remain=%d; re-scan before retry. activityId=%s',
+          remaining,
+          aid,
+        );
+        result.retry = true;
+      }
     }
   }
 
@@ -393,43 +365,34 @@ async function processActivity(activity, signal) {
   }
   const taskTargets = claimableAllianceTaskTargets(current, gameData.inAlliance());
   if (taskTargets.length) {
-    if (claimSuppressed(CMD_GET_ALL_TASK_REWARD, aid, actionNow)) {
+    const item = { cmd: CMD_GET_ALL_TASK_REWARD, aid: aid, targetIds: taskTargets };
+    log.debug('cmd 3140 claimable tasks. activityId=%s;count=%d', aid, taskTargets.length);
+    const ret = await runner.claim(Object.assign({}, item, { signal: signal }));
+    if (!roundAlive(signal)) {
+      result.stop = true;
+      return result;
+    }
+    if (ret.status === 'suppressed') {
       result.retry = true;
+    } else if (ret.status !== 'ok') {
+      result.retry = true;
+      if (ret.status === 'rejected') {
+        runner.suppress(item);
+      } else {
+        result.stop = true;
+      }
+      return result;
     } else {
-      log.debug('cmd 3140 claimable tasks. activityId=%s;count=%d', aid, taskTargets.length);
-      const taskRet = await claim(CMD_GET_ALL_TASK_REWARD, {
-        activityId: aid,
-        targetIds: taskTargets,
-      });
+      const after = await refreshActivity(aid);
       if (!roundAlive(signal)) {
         result.stop = true;
         return result;
       }
-      if (!taskRet.ok) {
-        result.retry = true;
-        const failure = classifyClaimFailure(CMD_GET_ALL_TASK_REWARD, aid, taskRet);
-        if (failure === 'rejected') {
-          suppressBusinessClaim(CMD_GET_ALL_TASK_REWARD, aid, gameData.serverTime());
-        }
-        result.stop = failure === 'transient';
-        return result;
-      }
-      const afterTasks = await refreshActivity(aid);
-      if (!roundAlive(signal)) {
-        result.stop = true;
-        return result;
-      }
-      if (!afterTasks.ok) {
-        log.warn(
-          'cmd 3103 post-3140 verification failed. activityId=%s;code=%s;reason=%s',
-          aid,
-          afterTasks.code,
-          afterTasks.reason || '-',
-        );
+      if (!after.ok) {
         result.retry = true;
         return result;
       }
-      current = afterTasks.activity;
+      current = after.activity;
       actionNow = gameData.serverTime();
       if (!actionNow) {
         result.stop = true;
@@ -442,14 +405,14 @@ async function processActivity(activity, signal) {
       const remaining = claimableAllianceTaskIds(current, gameData.inAlliance()).length;
       if (remaining === 0) {
         result.claimed++;
-        clearClaimCooldown(CMD_GET_ALL_TASK_REWARD, aid);
+        runner.confirm(item);
         log.info(
           'cmd 3140 alliance BP tasks confirmed. activityId=%s;tasks=%d',
           aid,
           taskTargets.length,
         );
       } else {
-        suppressNoProgress(CMD_GET_ALL_TASK_REWARD, aid, actionNow);
+        runner.noProgress(item);
         log.debug(
           'cmd 3140 accepted but tasks remain=%d; re-scan before retry. activityId=%s',
           remaining,
@@ -475,31 +438,33 @@ async function processActivity(activity, signal) {
     }
     const tid = genericTaskTargets[0];
     const tidKey = String(tid);
-    if (claimSuppressed(CMD_GET_ACTIVITY_REWARD, aid, actionNow, tidKey)) {
+    if (skippedTaskKeys.has(tidKey)) {
+      genericTaskTargets = genericTaskTargets.filter((id) => String(id) !== tidKey);
+      continue;
+    }
+    const item = { cmd: CMD_GET_ACTIVITY_REWARD, aid: aid, targetId: tidKey, tid: tid };
+    const pendingBefore = claimableGenericTaskIds(current).length;
+    log.debug('cmd 842 claimable generic task. activityId=%s;targetId=%s', aid, tid);
+    const ret = await runner.claim(Object.assign({}, item, { signal: signal }));
+    if (!roundAlive(signal)) {
+      result.stop = true;
+      return result;
+    }
+    if (ret.status === 'suppressed') {
       skippedTaskKeys.add(tidKey);
       genericTaskTargets = genericTaskTargets.filter((id) => String(id) !== tidKey);
       result.retry = true;
       continue;
     }
-    const pendingBefore = claimableGenericTaskIds(current).length;
-    log.debug('cmd 842 claimable generic task. activityId=%s;targetId=%s', aid, tid);
-    const genericRet = await claim(CMD_GET_ACTIVITY_REWARD, { aid: aid, tid: tid });
-    if (!roundAlive(signal)) {
-      result.stop = true;
-      return result;
-    }
-    if (!genericRet.ok) {
+    if (ret.status === 'rejected') {
       result.retry = true;
-      const failure = classifyClaimFailure(CMD_GET_ACTIVITY_REWARD, aid, genericRet, tid);
-      if (failure === 'rejected') {
-        const rejectedAt = gameData.serverTime();
-        if (rejectedAt) {
-          suppressBusinessClaim(CMD_GET_ACTIVITY_REWARD, aid, rejectedAt, tidKey);
-        }
-        skippedTaskKeys.add(tidKey);
-        genericTaskTargets = genericTaskTargets.filter((id) => String(id) !== tidKey);
-        continue;
-      }
+      runner.suppress(item);
+      skippedTaskKeys.add(tidKey);
+      genericTaskTargets = genericTaskTargets.filter((id) => String(id) !== tidKey);
+      continue;
+    }
+    if (ret.status !== 'ok') {
+      result.retry = true;
       result.stop = true;
       return result;
     }
@@ -509,17 +474,9 @@ async function processActivity(activity, signal) {
       return result;
     }
     if (!afterGeneric.ok) {
-      const verificationNow = gameData.serverTime();
-      if (verificationNow) {
-        suppressNoProgress(CMD_GET_ACTIVITY_REWARD, aid, verificationNow, tidKey);
-      }
-      log.warn(
-        'cmd 3103 post-842 verification failed. activityId=%s;targetId=%s;code=%s;reason=%s',
-        aid,
-        tid,
-        afterGeneric.code,
-        afterGeneric.reason || '-',
-      );
+      // 842 是逐个任务领取：确认失败时只退避该任务，避免下轮对同一任务连发。
+      runner.noProgress(item);
+      log.warn('cmd 3103 post-842 verification unavailable. activityId=%s;targetId=%s', aid, tid);
       result.retry = true;
       return result;
     }
@@ -536,7 +493,7 @@ async function processActivity(activity, signal) {
     const remainingTaskIds = claimableGenericTaskIds(current);
     if (remainingTaskIds.length < pendingBefore && !remainingTaskIds.includes(tidKey)) {
       result.claimed++;
-      clearClaimCooldown(CMD_GET_ACTIVITY_REWARD, aid, tidKey);
+      runner.confirm(item);
       genericTaskTargets = claimableGenericTaskTargets(current).filter(function (id) {
         return !skippedTaskKeys.has(String(id));
       });
@@ -552,7 +509,7 @@ async function processActivity(activity, signal) {
       }
       continue;
     }
-    suppressNoProgress(CMD_GET_ACTIVITY_REWARD, aid, actionNow, tidKey);
+    runner.noProgress(item);
     log.debug(
       'cmd 842 accepted but requested task claim not confirmed. activityId=%s;targetId=%s;remaining=%d',
       aid,
@@ -575,23 +532,24 @@ async function processActivity(activity, signal) {
       else log.debug('cmd %d skipped: activity closed. activityId=%s', plan.cmd, aid);
       return result;
     }
-    if (claimSuppressed(plan.cmd, aid, actionNow)) {
-      result.retry = true;
-      continue;
-    }
+    const item = { cmd: plan.cmd, aid: aid, body: plan.body };
     log.debug('cmd %d special rewards claimable. activityId=%s', plan.cmd, aid);
-    const specialRet = await claim(plan.cmd, plan.body, plan.protocol);
+    const ret = await runner.claim(Object.assign({}, item, { signal: signal }));
     if (!roundAlive(signal)) {
       result.stop = true;
       return result;
     }
-    if (!specialRet.ok) {
+    if (ret.status === 'suppressed') {
       result.retry = true;
-      const failure = classifyClaimFailure(plan.cmd, aid, specialRet);
-      if (failure === 'rejected') {
-        suppressBusinessClaim(plan.cmd, aid, gameData.serverTime());
+      continue;
+    }
+    if (ret.status !== 'ok') {
+      result.retry = true;
+      if (ret.status === 'rejected') {
+        runner.suppress(item);
+      } else {
+        result.stop = true;
       }
-      result.stop = failure === 'transient';
       return result;
     }
     const afterSpecial = await refreshActivity(aid);
@@ -600,13 +558,7 @@ async function processActivity(activity, signal) {
       return result;
     }
     if (!afterSpecial.ok) {
-      log.warn(
-        'cmd 3103 post-%d verification failed. activityId=%s;code=%s;reason=%s',
-        plan.cmd,
-        aid,
-        afterSpecial.code,
-        afterSpecial.reason || '-',
-      );
+      log.warn('cmd 3103 post-%d verification unavailable. activityId=%s', plan.cmd, aid);
       result.retry = true;
       return result;
     }
@@ -624,15 +576,17 @@ async function processActivity(activity, signal) {
       );
       return result;
     }
-    const remaining = claimableSpecialRewards(current, gameData.inAlliance()).some(function (item) {
-      return item.key === plan.key;
-    });
+    const remaining = claimableSpecialRewards(current, gameData.inAlliance()).some(
+      function (entry) {
+        return entry.key === plan.key;
+      },
+    );
     if (!remaining) {
       result.claimed++;
-      clearClaimCooldown(plan.cmd, aid);
+      runner.confirm(item);
       log.info('cmd %d special rewards confirmed. activityId=%s', plan.cmd, aid);
     } else {
-      suppressNoProgress(plan.cmd, aid, actionNow);
+      runner.noProgress(item);
       log.debug(
         'cmd %d accepted but rewards remain; re-scan before retry. activityId=%s',
         plan.cmd,
@@ -645,46 +599,26 @@ async function processActivity(activity, signal) {
 }
 
 /**
- * cycle 单轮：全量活动查询 → 逐活动领取 →  authoritative 重查 → 动态择时。
+ * cycle 单轮：读 hub 快照 → 逐活动领取 → hub.refresh 权威确认 → 动态择时。
+ * 全量 841 不再由本文件发出：hub attach(30s) 周期扫描 + 10904/10912 推送合并共同维护快照。
  * @returns {Promise<number>} 下次唤醒毫秒
  */
 async function cycleRun() {
   const signal = ctxRef ? ctxRef.signal : null;
   const now = gameData.serverTime();
   if (!now) {
-    log.debug('cmd 841 idle: server time unavailable.');
+    log.debug('claim idle: server time unavailable.');
     return IDLE_TICK_MS;
   }
   lastClaimed = 0;
   lastRetry = false;
-  const listRet = await query(CMD_GET_ACTIVITY_DATA, {});
-  if (!roundAlive(signal)) return 0;
-  if (!listRet.ok) {
-    lastRetry = true;
-    if (listRet.code === CODE_NOT_SENT) {
-      log.warn('cmd 841 transient (not sent/in-flight), retry soon.');
-    } else {
-      log.info(
-        'cmd 841 query rejected, poll later. code=%s;data=%s',
-        listRet.code,
-        rejectText(listRet) || '-',
-      );
-    }
-    return cycle.pending ? RESCAN_MS : RETRY_TICK_MS;
-  }
-  const list = activityListFromAck(parseData(listRet.data));
-  if (!list) {
-    lastRetry = true;
-    log.warn('cmd 841 ack missing alist array; retry later.');
-    return cycle.pending ? RESCAN_MS : RETRY_TICK_MS;
-  }
-  const allianceState = gameData.inAlliance();
   const snapshotNow = gameData.serverTime();
   if (!snapshotNow) {
-    log.debug('cmd 841 idle: server time unavailable after query.');
+    log.debug('claim idle: server time unavailable after snapshot.');
     return IDLE_TICK_MS;
   }
-  const open = list.filter(function (activity) {
+  const allianceState = gameData.inAlliance();
+  const open = activityHub.list().filter(function (activity) {
     return isActivityOpen(activity, snapshotNow);
   });
   pruneClaimCooldowns(open, allianceState);
@@ -697,13 +631,18 @@ async function cycleRun() {
     );
   }).length;
   if (!pendingCount) {
+    idleStreak++;
+    if (idleStreak >= IDLE_ROUNDS) applyScanTier(IDLE_SCAN_MS);
     log.debug(
-      'cmd 841 claim scan skipped: no claimable reward in open activities. open=%d',
+      'claim scan skipped: no claimable reward in open activities. open=%d;idleStreak=%d',
       open.length,
+      idleStreak,
     );
-    bus.emit(EVT.UI_REFRESH);
-    return cycle.pending ? RESCAN_MS : SCAN_TICK_MS;
+    emitUiIfChanged();
+    return cycle.pending ? RESCAN_MS : scanTierMs;
   }
+  idleStreak = 0;
+  applyScanTier(SCAN_TICK_MS);
   let stop = false;
   for (const activity of open) {
     if (!roundAlive(signal)) return 0;
@@ -728,10 +667,10 @@ async function cycleRun() {
   if (stop) return cycle.pending ? RESCAN_MS : RETRY_TICK_MS;
   if (lastClaimed) {
     log.info('super-value rewards confirmed. batches=%d', lastClaimed);
-    bus.emit(EVT.UI_REFRESH);
+    emitUiIfChanged();
     return RESCAN_MS;
   }
-  bus.emit(EVT.UI_REFRESH);
+  emitUiIfChanged();
   if (cycle.pending) return RESCAN_MS;
   return lastRetry ? RETRY_TICK_MS : SCAN_TICK_MS;
 }
@@ -739,35 +678,46 @@ async function cycleRun() {
 const cycle = createCycle({ log: log, alive: aliveFn, run: cycleRun, fallback: RETRY_TICK_MS });
 
 /**
- * 活动推送仅唤醒扫描；具体可领状态仍以 841/3103 为准。
- * @param {object} ev 网络推送事件
+ * hub 订阅回调：任意活动变化（841 首扫/周期扫描、10904/10912 推送、3103 重查）只负责唤醒；
+ * 可领状态仍以 cycleRun 里对 hub 快照的 model 判定为准。
+ * @param {object} activity 变化的活动
+ * @param {string} reason 变化来源
  */
-function onActivityPush(ev) {
+function onActivityChange(activity, reason) {
   if (!aliveFn()) return;
-  const aid = ev && ev.data && (ev.data.id != null ? ev.data.id : ev.data.aid);
-  log.debug('activity push received, trigger scan. activityId=%s', aid == null ? '-' : aid);
+  // 841 首扫/周期扫描会把快照里每个活动各回调一次（30+ 条/轮），watch 首挂同理：
+  // 二者都不逐条打点，只对真正的推送/重查留痕；kick 在飞时只置 pending，本就无需逐活动记录。
+  if (reason !== 'scan' && reason !== 'watch') {
+    log.debug(
+      'activity push woke scan. activityId=%s;reason=%s',
+      activity && activity.id != null ? activity.id : '-',
+      reason || '-',
+    );
+  }
   cycle.kick();
 }
 
 /**
- * 安装网络底座与服务器时间能力。
+ * 安装网络底座并创建领取执行器（协议注册只需一次）。
  * @param {object} ctx reactor 上下文
+ * @param {object} [opt] runner 覆盖项（单测专用：注入时钟与零节奏）
  * @returns {boolean}
  */
-function install(ctx) {
+function install(ctx, opt) {
   ctxRef = ctx;
-  net = ctx.net;
+  const net = ctx.net;
   if (!net || !net.install()) {
-    net = null;
     log.warn('install failed: pocketcc.net unavailable.');
     return false;
   }
+  ensureRunner(opt);
   log.info('installed.');
   return true;
 }
 
 /**
- * 每次激活重置展示状态、挂推送并立即扫描；pause 后旧轮由 signal 拦截。
+ * 每次激活复位展示状态、attach hub（30s 兜底档）+ watch 全活动，立即扫描；
+ * pause 后旧轮由 signal 拦截。
  * @param {object} ctx reactor 上下文
  */
 function run(ctx) {
@@ -775,11 +725,38 @@ function run(ctx) {
   lastClaimed = 0;
   lastRetry = false;
   pendingCount = 0;
-  claimCooldowns.clear();
-  ctx.on.push(CMD_PUSH_ONE_ACTIVITY, onActivityPush);
-  ctx.on.push(CMD_PUSH_ONE_ACTIVITY_EXTRA, onActivityPush);
+  idleStreak = 0;
+  scanTierMs = SCAN_TICK_MS;
+  lastUiState = '';
+  // 每次激活清空会话退避与节奏时间戳（重新开启不应被旧拉黑压制）
+  if (runner) runner.reset();
+  if (detachHub) detachHub();
+  if (unwatchHub) unwatchHub();
+  detachHub = activityHub.attach({ label: TAG, scanIntervalMs: SCAN_TICK_MS });
+  unwatchHub = activityHub.watch(
+    function () {
+      return true; // 分支白名单在 model.js，订阅侧不做二次过滤
+    },
+    onActivityChange,
+    { label: TAG },
+  );
   log.info('started; scan all open activities every %d sec.', SCAN_TICK_MS / 1000);
   cycle.kick();
+}
+
+/**
+ * 暂停：释放 hub 引用与订阅；cycle 在 alive 检查处自然停摆。
+ */
+function pause() {
+  if (unwatchHub) {
+    unwatchHub();
+    unwatchHub = null;
+  }
+  if (detachHub) {
+    detachHub();
+    detachHub = null;
+  }
+  log.info('paused.');
 }
 
 reactor.register({
@@ -807,13 +784,17 @@ reactor.register({
   },
   install: install,
   run: run,
+  pause: pause,
 });
 
 export { cycleRun, install as installForTest };
-/** 单测专用：复位展示状态，不启动 cycle。 */
+/** 单测专用：复位展示状态并清空会话退避，不启动 cycle。 */
 export function resetForTest() {
   lastClaimed = 0;
   lastRetry = false;
   pendingCount = 0;
-  claimCooldowns.clear();
+  idleStreak = 0;
+  scanTierMs = SCAN_TICK_MS;
+  lastUiState = '';
+  if (runner) runner.reset();
 }

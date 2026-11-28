@@ -4,12 +4,8 @@
  * 仅包含查询、领取；不含高级奖励解锁、翻牌、开箱、兑换或消耗道具协议。
  */
 
-/** @type {number} GET_ACTIVITY_DATA：V1 send，{} → {alist:活动对象[]} */
-export const CMD_GET_ACTIVITY_DATA = 841;
 /** @type {number} GET_ACTIVITY_REWARD：V1 send，{aid,tid} → 单个已完成任务奖励与更新后的任务；ID 保留快照原始类型 */
 export const CMD_GET_ACTIVITY_REWARD = 842;
-/** @type {number} ACTIVITY_GET_SINGLE_INFO：V1 send，{id} → 单个活动对象 */
-export const CMD_GET_ACTIVITY_SINGLE_INFO = 3103;
 /** @type {number} ACTIVITY_GET_ALL_SCORE_REWARD：V1 send，{id}，聚合本活动已达成的积分档 */
 export const CMD_GET_ALL_SCORE_REWARD = 1777;
 /** @type {number} ACTIVITY_GET_ALL_TASK_REWARD：V1 send，{activityId,targetIds}，联盟 BP 已完成任务；targetIds 保留原始类型 */
@@ -39,8 +35,3 @@ export const RICH_MAN_UI_TYPE = 'adventure_richman_UI';
 export const TEAM_EXPEDITION_UI_TYPE = 'teamExpedition';
 /** @type {string} 新春舞狮视图；循环火力奖励一键领取走 8833 */
 export const LION_FIGHT_UI_TYPE = 'ActivityNewYear_WS';
-
-/** @type {number} PUSH_ONE_ACTIVITY：整活动推送，仅作扫描唤醒源 */
-export const CMD_PUSH_ONE_ACTIVITY = 10904;
-/** @type {number} PUSH_ONE_ACTIVITY_EXTRA：活动 extra 推送，仅作扫描唤醒源 */
-export const CMD_PUSH_ONE_ACTIVITY_EXTRA = 10912;

@@ -32,19 +32,14 @@
  */
 import { CODE_NOT_SENT, sleep, parseData } from '../../../core/util.js';
 import { createLog } from '../../../core/log.js';
-import { game } from '../../../core/game.js';
 import { gameData } from '../../../core/game-api.js';
 import { reactor } from '../../../core/reactor.js';
 import { march } from '../../../core/march.js';
 import { createCycle } from '../../../core/cycle.js';
 import { createDailyLedger, dailyText } from '../../../core/daily-stats.js';
+import { activityHub } from '../../../core/activity-hub.js';
 
-import {
-  CMD_PUSH_ONE_ACTIVITY_EXTRA,
-  CMD_QUERY_WORLD_BOSS,
-  CMD_MARCH_WORLD_POINT,
-  PUSH_SINGLE_MAIL,
-} from './constants.js';
+import { CMD_QUERY_WORLD_BOSS, CMD_MARCH_WORLD_POINT, PUSH_SINGLE_MAIL } from './constants.js';
 
 /** @type {ReturnType<createLog>} 模块日志器（tag=SEA-TREASURE） */
 const log = createLog('SEA-TREASURE');
@@ -99,11 +94,13 @@ const EMPTY_STREAK_IDLE = 2;
 
 /** @type {object|null} 网络底座（promise 封装 pocketcc.net） */
 var net;
-/** @type {object|null} 活动控制器（aid 反查活动、活动列表/开启判定） */
-var activityCtl;
 
 /** @type {object|null} reactor 注入的上下文；alive() 反映运行态，pause 后置否让定时器与在飞流程自然退出 */
 var ctxRef = null;
+/** @type {function():void|null} hub 引用计数 detach（pause 释放） */
+var detachHub = null;
+/** @type {function():void|null} hub 活动变化退订（pause 释放） */
+var unwatchHub = null;
 
 /** @type {object[]} 本轮扫描过滤出的可攻打 boss（[{x,y,bossId,left}]），consume 逐条 shift */
 var queue = [];
@@ -211,26 +208,20 @@ function nextScanInterval() {
 }
 
 /**
- * 10912 推送入口：aid 反查是海上夺宝、且 extra.worldUIRed >= 1（确认有 boss 可打）才触发扫描，listener 本身永不 throw。
- * 10912 任何活动的 extra 更新都会推它，故必先按 aid 认出海上夺宝
- * @param {object} ev net.on 事件 {cmd, status, data, ord, ts, raw}
+ * hub 订阅回调：海上夺宝的 extra 变化、且 worldUIRed >= 1（确认有 boss 可打）才触发扫描。
+ * 10912 任何活动的 extra 更新都会进 hub，故先由 watch 的 match 认出本活动，再验红点位。
+ * @param {object} activity hub 合并后的活动对象
  */
-function onActivityExtraPush(ev) {
+function onActivityChange(activity) {
   if (!aliveFn()) return;
 
-  var aid = ev && ev.data && ev.data.aid;
-  if (!isSeaTreasureAid(aid)) {
-    return;
-  }
-
-  // 如果有BOSS，extra.worldUIRed 大于等于1，这样判断能过滤掉一些脏数据（推送载荷里 extra 挂在 ev.data.extra 下）
-  var extra = ev.data && ev.data.extra;
+  var extra = activity && activity.extra;
   var hasBoss = extra && extra.worldUIRed && extra.worldUIRed >= 1;
   if (!hasBoss) {
     return;
   }
 
-  log.info('activity extra push received, trigger scan. aid=%d', aid);
+  log.info('activity extra push received, trigger scan. aid=%s', activity.id);
   cycle.kick();
 }
 
@@ -256,14 +247,17 @@ function onRewardMailPush(ev) {
 }
 
 /**
- * aid 是否指向一个海上夺宝活动
- * @param {number} aid 推送载荷里的活动 id
- * @returns {boolean}
+ * 从 hub 快照获取海上夺宝活动信息（要求仍在开启期——对已结束的活动发 3756/902 只会被拒）。
+ * 在期判定用快照自带的 begintime/endtime（841 权威）与服务器时间；时间不可用则放行（被拒无害）。
+ * @returns {object|undefined}
  */
-function isSeaTreasureAid(aid) {
-  if (!aid) return false;
-  var activity = activityCtl.getActivityByActivityId(aid);
-  return !!activity && activity.showUiType === SHOW_UI_TYPE_SEA_TREASURE;
+function getSeaTreasureActivity() {
+  var activity = activityHub.getByUiType(SHOW_UI_TYPE_SEA_TREASURE);
+  if (!activity) return undefined;
+  var now = gameData.serverTime();
+  if (now && activity.begintime && activity.begintime > now) return undefined;
+  if (now && activity.endtime && activity.endtime <= now) return undefined;
+  return activity;
 }
 
 /**
@@ -314,19 +308,6 @@ async function hasMarchAtTarget(x, y) {
   var marches = await march.list();
   return marches.some(function (m) {
     return m.type === MARCH_TYPE && m.target.x === x && m.target.y === y;
-  });
-}
-
-/**
- * 获取海上夺宝活动信息（要求仍在开启期——对已结束的活动发 3756/902 只会被拒）
- * @returns {object|undefined}
- */
-function getSeaTreasureActivity() {
-  return activityCtl.getActivityList().find(function (activity) {
-    return (
-      activity.showUiType === SHOW_UI_TYPE_SEA_TREASURE &&
-      activityCtl.checkActivityIsOpen(activity.id) === true
-    );
   });
 }
 
@@ -400,7 +381,7 @@ async function marchAttack(boss) {
 }
 
 /**
- * 安装：取网络底座 + 活动控制器 + 地图数据 + 数据中心。任一依赖缺失即失败（reactor 不会激活）。
+ * 安装：只验证网络底座可用（活动快照归 activity-hub，游戏侧符号依赖由 symbols 在 install 前自检）。
  * @param {object} ctx reactor 上下文
  * @returns {boolean}
  */
@@ -410,26 +391,10 @@ function install(ctx) {
     return true;
   }
 
-  var missing = [];
-
   net = ctx.net;
   if (!net.install()) {
-    missing.push('pocketcc.net');
     net = null;
-  }
-
-  var mods = game.requireAll(['ActivityController']);
-
-  activityCtl =
-    (mods.ActivityController &&
-      mods.ActivityController.ActivityController &&
-      mods.ActivityController.ActivityController.Instance) ||
-    missing.push('ActivityController');
-
-  if (missing.length) {
-    net = null;
-    activityCtl = null;
-    log.warn('install failed. missing=%d;deps=%s', missing.length, missing.join(';'));
+    log.warn('install failed: pocketcc.net unavailable.');
     return false;
   }
 
@@ -440,8 +405,9 @@ function install(ctx) {
 }
 
 /**
- * 运行：复位调度状态，挂 10912 监听，主动扫一次（之后由推送 / 兜底定时驱动）。
- * reactor pause 置 alive=false 后定时器自然停摆；resume 重新复位点火（cycle.kick 内部先清旧定时器，不会重复）。
+ * 运行：复位调度状态，attach hub（引用计数，首扫 841 + 订阅活动推送），订阅奖励邮件，主动扫一次。
+ * reactor pause 置 alive=false 后定时器自然停摆，并在 spec.pause 里释放 hub 引用与 watch；
+ * resume 重新复位点火（cycle.kick 内部先清旧定时器，不会重复）。
  * @param {object} ctx reactor 上下文
  */
 function run(ctx) {
@@ -449,15 +415,37 @@ function run(ctx) {
   emptyStreak = 0;
   queue = [];
   rewardLedger.ensureLoaded();
-  ctx.on.push(CMD_PUSH_ONE_ACTIVITY_EXTRA, onActivityExtraPush);
-  ctx.on.push(PUSH_SINGLE_MAIL, onRewardMailPush);
-  log.info(
-    'started, listening push cmd=%d;mail=%d.',
-    CMD_PUSH_ONE_ACTIVITY_EXTRA,
-    PUSH_SINGLE_MAIL,
+  if (unwatchHub) unwatchHub();
+  if (detachHub) detachHub();
+  detachHub = activityHub.attach({
+    label: 'sea-treasure',
+    scanIntervalMs: cfg.idleScanInterval,
+  });
+  unwatchHub = activityHub.watch(
+    function (activity) {
+      return activity.showUiType === SHOW_UI_TYPE_SEA_TREASURE;
+    },
+    onActivityChange,
+    { label: 'sea-treasure' },
   );
+  ctx.on.push(PUSH_SINGLE_MAIL, onRewardMailPush);
+  log.info('started; mail=%d.', PUSH_SINGLE_MAIL);
   // 启动即主动查一次；本轮结束后 cycle 会武装兜底定时
   cycle.kick();
+}
+
+/**
+ * 暂停：释放 hub 引用与活动订阅（reactor 的 triggers 管不到 hub 的内部订阅）。
+ */
+function pause() {
+  if (unwatchHub) {
+    unwatchHub();
+    unwatchHub = null;
+  }
+  if (detachHub) {
+    detachHub();
+    detachHub = null;
+  }
 }
 
 /**
@@ -496,4 +484,5 @@ reactor.register({
   },
   install: install,
   run: run,
+  pause: pause,
 });

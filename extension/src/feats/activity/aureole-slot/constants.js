@@ -15,8 +15,6 @@ export const CMD_AUREOLE_DRAW = 9628;
 export const CMD_EXCAVATE_WORLD_LIST = 2509;
 /** CQ_MINE_TIGER_DRAW：孪生支路的抽取，req/resp 与 9628 同形 */
 export const CMD_EXCAVATE_TIGER_DRAW = 2507;
-/** PUSH_ONE_ACTIVITYEXTRA：两套皮共用的活动 extra 更新（worldUIRed / buildDrawNumMap 权威位） */
-export const CMD_PUSH_ONE_ACTIVITY_EXTRA = 10912;
 
 /**
  * 两套皮共用同一份游戏面板代码（AureoleWorldSlotMachinePanel / AureoleSlotListPanel），

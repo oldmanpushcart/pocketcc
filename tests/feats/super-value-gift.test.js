@@ -29,6 +29,8 @@ globalThis.setInterval = (fn, ms, ...rest) => {
 const { gameData } = await import('../../extension/src/core/game-api.js');
 const { MENU, collectFeatureIds } = await import('../../extension/src/core/menu.js');
 const { reactor } = await import('../../extension/src/core/reactor.js');
+const { netApi } = await import('../../extension/src/core/net.js');
+const { activityHub } = await import('../../extension/src/core/activity-hub.js');
 const gift = await import('../../extension/src/feats/activity/super-value-gift/index.js');
 const model = await import('../../extension/src/feats/activity/super-value-gift/model.js');
 const { CODE_NOT_SENT } = await import('../../extension/src/core/util.js');
@@ -81,10 +83,10 @@ async function assertSpecialClaim(a, cmd, protocol, body, mutate) {
     if (requestCmd === 3103) return ret(structuredClone(a));
     return ret({});
   };
-  assert.equal(await gift.cycleRun(), 1000);
+  assert.equal(await runRound(), 1000);
   assert.deepEqual(sent, [
     { cmd: 841, data: {}, protocol: 'send', gate: false },
-    { cmd, data: body, protocol, gate: undefined },
+    { cmd, data: body, protocol, gate: true },
     { cmd: 3103, data: { id: String(a.id) }, protocol: 'send', gate: false },
   ]);
 }
@@ -98,6 +100,9 @@ const fakeNet = {
     return respond(cmd, data);
   },
 };
+// hub 单例的 getNet 默认读 core/net.js 的 netApi；覆盖其 sendGuarded，
+// 让 hub 的 841/3103 与 feat 的 runner 共用同一套 sent/respond 记录。
+netApi.sendGuarded = fakeNet.sendGuarded;
 const fakeCtx = {
   alive: () => alive,
   get signal() {
@@ -106,7 +111,31 @@ const fakeCtx = {
   net: fakeNet,
   on: { push() {} },
 };
-gift.installForTest(fakeCtx);
+// runner 注入零节奏与假时钟（退避毫秒 = 服务器秒 * 1000），避免单测真实等待。
+gift.installForTest(fakeCtx, { actionGapMs: 0, now: () => now * 1000 });
+
+/** @type {function():void|null} 当前用例的 hub 引用 */
+let detachHub = null;
+
+/**
+ * 重启 hub 并等待 841 落地：模拟迁移前每轮 cycleRun 的全量刷新。
+ * detach 会 stop（清快照与 2s 扫描节流），再 attach 首扫，等价于旧版每轮 841。
+ * @returns {Promise<void>}
+ */
+async function scanHub() {
+  if (detachHub) detachHub();
+  detachHub = activityHub.attach({ label: 'super-value-gift-test', scanIntervalMs: 0 });
+  await activityHub.scan();
+}
+
+/**
+ * 一次完整轮次：hub 841 全量刷新 + feat cycleRun。
+ * @returns {Promise<number>} cycleRun 返回的下次唤醒毫秒
+ */
+async function runRound() {
+  await scanHub();
+  return gift.cycleRun();
+}
 
 beforeEach(() => {
   gameData.serverTime = () => now;
@@ -126,6 +155,10 @@ beforeEach(() => {
     }
     return ret({});
   };
+  if (detachHub) {
+    detachHub();
+    detachHub = null;
+  }
   gift.resetForTest();
 });
 
@@ -463,7 +496,7 @@ test('3135 按真实按钮形态领取，3103 确认全部完成后不再发送'
     },
   );
   sent = [];
-  await gift.cycleRun();
+  await runRound();
   assert.deepEqual(
     sent.map((entry) => entry.cmd),
     [841],
@@ -532,21 +565,21 @@ test('专用领取成功但 3103 无进展时按 20/40 秒退避，不把回执�
     extra: { 0: { rewarded: false } },
   });
   activities = [a];
-  assert.equal(await gift.cycleRun(), 20 * 1000);
+  assert.equal(await runRound(), 20 * 1000);
   assert.deepEqual(
     sent.map((entry) => entry.cmd),
     [841, 3135, 3103],
   );
   sent = [];
   now += 21;
-  assert.equal(await gift.cycleRun(), 20 * 1000);
+  assert.equal(await runRound(), 20 * 1000);
   assert.deepEqual(
     sent.map((entry) => entry.cmd),
     [841, 3135, 3103],
   );
   sent = [];
   now += 21;
-  assert.equal(await gift.cycleRun(), 20 * 1000);
+  assert.equal(await runRound(), 20 * 1000);
   assert.deepEqual(
     sent.map((entry) => entry.cmd),
     [841],
@@ -560,7 +593,7 @@ test('专用领取 CODE_NOT_SENT 不重查且停止本轮后续活动', async ()
   ];
   respond = (cmd) =>
     cmd === 841 ? ret({ alist: activities }) : cmd === 3135 ? ret(null, CODE_NOT_SENT) : ret({});
-  assert.equal(await gift.cycleRun(), 20 * 1000);
+  assert.equal(await runRound(), 20 * 1000);
   assert.deepEqual(
     sent.map((entry) => entry.cmd),
     [841, 3135],
@@ -578,7 +611,7 @@ test('无待领、未开放或畸形活动时不发领取请求', async () => {
     activity(-1, { point: [tier(1)], extra: { sc: 1 } }),
     activity(Number.MAX_SAFE_INTEGER + 1, { point: [tier(1)], extra: { sc: 1 } }),
   ];
-  assert.equal(await gift.cycleRun(), 30 * 1000);
+  assert.equal(await runRound(), 30 * 1000);
   assert.deepEqual(sent, [{ cmd: 841, data: {}, protocol: 'send', gate: false }]);
 });
 
@@ -594,14 +627,14 @@ test('普通积分档按 1777/{id} 领取，并用 3103 重查确认后不重复
     if (cmd === 3103) return ret(structuredClone(a));
     return ret({});
   };
-  assert.equal(await gift.cycleRun(), 1000);
+  assert.equal(await runRound(), 1000);
   assert.deepEqual(sent, [
     { cmd: 841, data: {}, protocol: 'send', gate: false },
-    { cmd: 1777, data: { id: '101' }, protocol: 'send', gate: undefined },
+    { cmd: 1777, data: { id: '101' }, protocol: 'send', gate: true },
     { cmd: 3103, data: { id: '101' }, protocol: 'send', gate: false },
   ]);
   sent = [];
-  assert.equal(await gift.cycleRun(), 30 * 1000);
+  assert.equal(await runRound(), 30 * 1000);
   assert.deepEqual(
     sent.map((item) => item.cmd),
     [841],
@@ -610,14 +643,14 @@ test('普通积分档按 1777/{id} 领取，并用 3103 重查确认后不重复
 
 test('1777 成功但重查仍有可领档时不当场连发，20 秒后重新扫描', async () => {
   activities = [activity('101', { point: [tier(10)], extra: { sc: 10 } })];
-  assert.equal(await gift.cycleRun(), 20 * 1000);
+  assert.equal(await runRound(), 20 * 1000);
   assert.deepEqual(
     sent.map((item) => item.cmd),
     [841, 1777, 3103],
   );
   sent = [];
   now += 21;
-  assert.equal(await gift.cycleRun(), 20 * 1000);
+  assert.equal(await runRound(), 20 * 1000);
   assert.deepEqual(
     sent.map((item) => item.cmd),
     [841, 1777, 3103],
@@ -636,10 +669,10 @@ test('3103 确认部分领取后下一轮只继续领取剩余档位', async () 
     if (cmd === 3103) return ret(structuredClone(a));
     return ret({});
   };
-  await gift.cycleRun();
+  await runRound();
   sent = [];
   now += 21;
-  await gift.cycleRun();
+  await runRound();
   assert.deepEqual(
     sent.map((item) => item.cmd),
     [841, 1777, 3103],
@@ -660,23 +693,23 @@ test('841/3103 兼容 JSON 字符串应答，活动 ID 保持字符串精度', a
     if (cmd === 3103) return ret(JSON.stringify(a));
     return ret({});
   };
-  await gift.cycleRun();
+  await runRound();
   assert.deepEqual(sent.find((item) => item.cmd === 1777).data, { id });
   assert.deepEqual(sent.find((item) => item.cmd === 3103).data, { id });
 });
 
-test('841 缺少 alist 时告警退避，不把空成功误当无可领', async () => {
+test('841 缺少 alist 时 hub 保留空快照，本轮不发送领取', async () => {
   respond = () => ret({});
-  assert.equal(await gift.cycleRun(), 20 * 1000);
+  assert.equal(await runRound(), 30 * 1000);
   assert.deepEqual(
     sent.map((item) => item.cmd),
     [841],
   );
 });
 
-test('841 CODE_NOT_SENT 短重试且不发送领取', async () => {
+test('841 CODE_NOT_SENT 时 hub 保留空快照，本轮不发送领取', async () => {
   respond = () => ret(null, CODE_NOT_SENT);
-  assert.equal(await gift.cycleRun(), 20 * 1000);
+  assert.equal(await runRound(), 30 * 1000);
   assert.deepEqual(
     sent.map((item) => item.cmd),
     [841],
@@ -689,7 +722,7 @@ test('1777 CODE_NOT_SENT 停止本轮后续活动，不伪标成功', async () =
     activity('2', { point: [tier(1)], extra: { sc: 1 } }),
   ];
   respond = (cmd) => (cmd === 1777 ? ret(null, CODE_NOT_SENT) : ret({ alist: activities }));
-  assert.equal(await gift.cycleRun(), 20 * 1000);
+  assert.equal(await runRound(), 20 * 1000);
   assert.deepEqual(
     sent.map((item) => item.cmd),
     [841, 1777],
@@ -711,7 +744,7 @@ test('单个活动业务拒绝不阻断其它活动，且拒绝活动不做 3103
     }
     return ret({});
   };
-  assert.equal(await gift.cycleRun(), 1000);
+  assert.equal(await runRound(), 1000);
   assert.deepEqual(
     sent.map((item) => [item.cmd, item.data.id]),
     [
@@ -737,7 +770,7 @@ test('3103 返回错误活动 ID 时不继续该活动任务领取', async () =>
     if (cmd === 3103) return ret(activity('wrong'));
     return ret({});
   };
-  assert.equal(await gift.cycleRun(), 20 * 1000);
+  assert.equal(await runRound(), 20 * 1000);
   assert.deepEqual(
     sent.map((item) => item.cmd),
     [841, 1777, 3103],
@@ -762,7 +795,7 @@ test('1777 重查显示活动已关闭时不再发送联盟 BP 领取', async ()
     if (cmd === 3103) return ret(a);
     return ret({});
   };
-  await gift.cycleRun();
+  await runRound();
   assert.deepEqual(
     sent.map((entry) => entry.cmd),
     [841, 1777, 3103],
@@ -785,19 +818,19 @@ test('任意分支的 task-only 活动按 842/{aid,tid} 领取并重查，不依
     if (cmd === 3103) return ret(structuredClone(a));
     return ret({});
   };
-  assert.equal(await gift.cycleRun(), 1000);
+  assert.equal(await runRound(), 1000);
   assert.deepEqual(sent, [
     { cmd: 841, data: {}, protocol: 'send', gate: false },
     {
       cmd: 842,
       data: { aid: '9007199254740993', tid: '9007199254740993' },
       protocol: 'send',
-      gate: undefined,
+      gate: true,
     },
     { cmd: 3103, data: { id: '9007199254740993' }, protocol: 'send', gate: false },
   ]);
   sent = [];
-  assert.equal(await gift.cycleRun(), 30 * 1000);
+  assert.equal(await runRound(), 30 * 1000);
   assert.deepEqual(
     sent.map((item) => item.cmd),
     [841],
@@ -818,10 +851,10 @@ test('842 保留快照中的数字 aid/tid，避免数字 ID 转字符串触发�
     if (cmd === 3103) return ret(structuredClone(a));
     return ret({});
   };
-  assert.equal(await gift.cycleRun(), 1000);
+  assert.equal(await runRound(), 1000);
   assert.deepEqual(sent, [
     { cmd: 841, data: {}, protocol: 'send', gate: false },
-    { cmd: 842, data: { aid: 101, tid: 9001 }, protocol: 'send', gate: undefined },
+    { cmd: 842, data: { aid: 101, tid: 9001 }, protocol: 'send', gate: true },
     { cmd: 3103, data: { id: 101 }, protocol: 'send', gate: false },
   ]);
 });
@@ -846,7 +879,7 @@ test('旧版分支 atarget 中的完成任务也按 842 逐个领取', async () 
     if (cmd === 3103) return ret(structuredClone(a));
     return ret({});
   };
-  assert.equal(await gift.cycleRun(), 1000);
+  assert.equal(await runRound(), 1000);
   assert.deepEqual(
     sent.filter((item) => item.cmd === 842).map((item) => item.data),
     [
@@ -882,7 +915,7 @@ test('同一分支多个已完成任务逐个领取，每次按 3103 权威剩�
     if (cmd === 3103) return ret(structuredClone(a));
     return ret({});
   };
-  assert.equal(await gift.cycleRun(), 1000);
+  assert.equal(await runRound(), 1000);
   assert.deepEqual(
     sent.map((item) => item.cmd),
     [841, 842, 3103, 842, 3103, 842, 3103],
@@ -896,7 +929,7 @@ test('同一分支多个已完成任务逐个领取，每次按 3103 权威剩�
     ],
   );
   sent = [];
-  await gift.cycleRun();
+  await runRound();
   assert.deepEqual(
     sent.map((item) => item.cmd),
     [841],
@@ -905,21 +938,21 @@ test('同一分支多个已完成任务逐个领取，每次按 3103 权威剩�
 
 test('842 成功但重查无进展时按 20/40 秒退避，不连续重发同一任务', async () => {
   activities = [activity('101', { task: [{ id: 't1', state: 1 }] })];
-  assert.equal(await gift.cycleRun(), 20 * 1000);
+  assert.equal(await runRound(), 20 * 1000);
   assert.deepEqual(
     sent.map((item) => item.cmd),
     [841, 842, 3103],
   );
   sent = [];
   now += 21;
-  assert.equal(await gift.cycleRun(), 20 * 1000);
+  assert.equal(await runRound(), 20 * 1000);
   assert.deepEqual(
     sent.map((item) => item.cmd),
     [841, 842, 3103],
   );
   sent = [];
   now += 21;
-  assert.equal(await gift.cycleRun(), 20 * 1000);
+  assert.equal(await runRound(), 20 * 1000);
   assert.deepEqual(
     sent.map((item) => item.cmd),
     [841],
@@ -943,7 +976,7 @@ test('842 回执未确认目标任务时不把其它任务减少误当本轮领�
     if (cmd === 3103) return ret(structuredClone(a));
     return ret({});
   };
-  assert.equal(await gift.cycleRun(), 20 * 1000);
+  assert.equal(await runRound(), 20 * 1000);
   assert.deepEqual(
     sent.map((item) => item.cmd),
     [841, 842, 3103],
@@ -966,7 +999,7 @@ test('842 业务拒绝退避 15 分钟且不阻断其它分支任务', async () 
     if (cmd === 3103) return ret(structuredClone(activities.find((a) => a.id === data.id)));
     return ret({});
   };
-  assert.equal(await gift.cycleRun(), 1000);
+  assert.equal(await runRound(), 1000);
   assert.deepEqual(
     sent.map((item) => [item.cmd, item.cmd === 3103 ? item.data.id : item.data.aid]),
     [
@@ -978,14 +1011,14 @@ test('842 业务拒绝退避 15 分钟且不阻断其它分支任务', async () 
   );
   sent = [];
   now += 21;
-  await gift.cycleRun();
+  await runRound();
   assert.deepEqual(
     sent.map((item) => item.cmd),
     [841],
   );
   sent = [];
   now += 15 * 60;
-  await gift.cycleRun();
+  await runRound();
   assert.ok(sent.some((item) => item.cmd === 842 && item.data.aid === '101'));
 });
 
@@ -1007,7 +1040,7 @@ test('842 单任务业务拒绝只退避该任务，同活动其它任务继续�
     if (cmd === 3103) return ret(structuredClone(a));
     return ret({});
   };
-  assert.equal(await gift.cycleRun(), 1000);
+  assert.equal(await runRound(), 1000);
   assert.deepEqual(
     sent.filter((item) => item.cmd === 842).map((item) => item.data.tid),
     ['t1', 't2'],
@@ -1018,14 +1051,14 @@ test('842 单任务业务拒绝只退避该任务，同活动其它任务继续�
   );
   sent = [];
   now += 21;
-  await gift.cycleRun();
+  await runRound();
   assert.deepEqual(
     sent.map((item) => item.cmd),
     [841],
   );
   sent = [];
   now += 15 * 60;
-  await gift.cycleRun();
+  await runRound();
   assert.ok(sent.some((item) => item.cmd === 842 && item.data.tid === 't1'));
 });
 
@@ -1043,14 +1076,14 @@ test('842 无进展只退避目标任务，下一轮仍领取同活动其它任�
     if (cmd === 3103) return ret(structuredClone(a));
     return ret({});
   };
-  assert.equal(await gift.cycleRun(), 20 * 1000);
+  assert.equal(await runRound(), 20 * 1000);
   assert.deepEqual(
     sent.filter((item) => item.cmd === 842).map((item) => item.data.tid),
     ['t1'],
   );
   sent = [];
   now += 1;
-  assert.equal(await gift.cycleRun(), 1000);
+  assert.equal(await runRound(), 1000);
   assert.deepEqual(
     sent.filter((item) => item.cmd === 842).map((item) => item.data.tid),
     ['t2'],
@@ -1068,7 +1101,7 @@ test('842 CODE_NOT_SENT 不重查、不伪标完成且停止本轮后续活动',
   ];
   respond = (cmd) =>
     cmd === 841 ? ret({ alist: activities }) : cmd === 842 ? ret(null, CODE_NOT_SENT) : ret({});
-  assert.equal(await gift.cycleRun(), 20 * 1000);
+  assert.equal(await runRound(), 20 * 1000);
   assert.deepEqual(
     sent.map((item) => item.cmd),
     [841, 842],
@@ -1092,7 +1125,7 @@ test('1777 聚合领取后的 3103 快照若任务已完成则不再重复发送
     if (cmd === 3103) return ret(structuredClone(a));
     return ret({});
   };
-  assert.equal(await gift.cycleRun(), 1000);
+  assert.equal(await runRound(), 1000);
   assert.deepEqual(
     sent.map((item) => item.cmd),
     [841, 1777, 3103],
@@ -1115,14 +1148,14 @@ test('842 后 3103 活动 ID 错配时当前任务退避，下一轮不错领且
     if (cmd === 3103) return ret(activity('wrong'));
     return ret({});
   };
-  assert.equal(await gift.cycleRun(), 20 * 1000);
+  assert.equal(await runRound(), 20 * 1000);
   assert.deepEqual(
     sent.map((item) => item.cmd),
     [841, 842, 3103],
   );
   sent = [];
   now += 1;
-  await gift.cycleRun();
+  await runRound();
   assert.deepEqual(
     sent.map((item) => item.cmd),
     [841, 842, 3103],
@@ -1144,7 +1177,7 @@ test('通用任务确认后继续领取同一分支的专用全部奖励', async
     if (cmd === 3103) return ret(structuredClone(a));
     return ret({});
   };
-  assert.equal(await gift.cycleRun(), 1000);
+  assert.equal(await runRound(), 1000);
   assert.deepEqual(
     sent.map((item) => item.cmd),
     [841, 842, 3103, 3135, 3103],
@@ -1172,7 +1205,7 @@ test('842 在飞时关闭再开启，旧轮回执不继续重查或领取下一�
     }
     return ret({});
   };
-  assert.equal(await gift.cycleRun(), 0);
+  assert.equal(await runRound(), 0);
   assert.deepEqual(
     sent.map((item) => item.cmd),
     [841, 842],
@@ -1199,19 +1232,19 @@ test('联盟 BP 仅对完成任务发 3140，重查确认后不重复', async ()
     if (cmd === 3103) return ret(structuredClone(a));
     return ret({});
   };
-  assert.equal(await gift.cycleRun(), 1000);
+  assert.equal(await runRound(), 1000);
   assert.deepEqual(sent, [
     { cmd: 841, data: {}, protocol: 'send', gate: false },
     {
       cmd: 3140,
       data: { activityId: '201', targetIds: ['9007199254740993', 7, 't2'] },
       protocol: 'send',
-      gate: undefined,
+      gate: true,
     },
     { cmd: 3103, data: { id: '201' }, protocol: 'send', gate: false },
   ]);
   sent = [];
-  await gift.cycleRun();
+  await runRound();
   assert.deepEqual(
     sent.map((item) => item.cmd),
     [841],
@@ -1240,7 +1273,7 @@ test('1777 后按 3103 新快照领取联盟 BP 新完成任务', async () => {
     if (cmd === 3103) return ret(structuredClone(a));
     return ret({});
   };
-  assert.equal(await gift.cycleRun(), 1000);
+  assert.equal(await runRound(), 1000);
   assert.deepEqual(
     sent.map((item) => item.cmd),
     [841, 1777, 3103, 3140, 3103],
@@ -1261,7 +1294,7 @@ test('841 返回后已退盟时不发送联盟 BP 积分档', async () => {
   onSend = (cmd) => {
     if (cmd === 841) inAlliance = false;
   };
-  await gift.cycleRun();
+  await runRound();
   assert.deepEqual(
     sent.map((entry) => entry.cmd),
     [841],
@@ -1286,7 +1319,7 @@ test('1777 等待期间退盟后不继续发送联盟 BP 领取', async () => {
     if (cmd === 3103) return ret(a);
     return ret({});
   };
-  await gift.cycleRun();
+  await runRound();
   assert.deepEqual(
     sent.map((entry) => entry.cmd),
     [841, 1777, 3103],
@@ -1302,7 +1335,7 @@ test('3140 CODE_NOT_SENT 不重查、不伪标完成', async () => {
   ];
   respond = (cmd) =>
     cmd === 841 ? ret({ alist: activities }) : cmd === 3140 ? ret(null, CODE_NOT_SENT) : ret({});
-  assert.equal(await gift.cycleRun(), 20 * 1000);
+  assert.equal(await runRound(), 20 * 1000);
   assert.deepEqual(
     sent.map((item) => item.cmd),
     [841, 3140],
@@ -1322,7 +1355,7 @@ test('领取在飞时 pause 不再重查或继续其它活动', async () => {
     }
     return ret({});
   };
-  assert.equal(await gift.cycleRun(), 0);
+  assert.equal(await runRound(), 0);
   assert.deepEqual(
     sent.map((item) => item.cmd),
     [841, 1777],
@@ -1343,7 +1376,7 @@ test('领取在飞时关闭再开启，旧轮回执不继续重查', async () =>
     }
     return ret({});
   };
-  assert.equal(await gift.cycleRun(), 0);
+  assert.equal(await runRound(), 0);
   assert.deepEqual(
     sent.map((item) => item.cmd),
     [841, 1777],
@@ -1352,6 +1385,7 @@ test('领取在飞时关闭再开启，旧轮回执不继续重查', async () =>
 
 test('服务器时钟不可用时不发包', async () => {
   now = 0;
+  // 不用 runRound：hub 的 841 不依赖服务器时钟，而本用例要验证 feat 在时钟缺失时零请求。
   assert.equal(await gift.cycleRun(), 15 * 60 * 1000);
   assert.equal(sent.length, 0);
 });
@@ -1364,7 +1398,7 @@ test('明确不在联盟时不请求联盟 BP 奖励，未知状态仍允许请�
     }),
   ];
   inAlliance = false;
-  assert.equal(await gift.cycleRun(), 30 * 1000);
+  assert.equal(await runRound(), 30 * 1000);
   assert.deepEqual(
     sent.map((item) => item.cmd),
     [841],
@@ -1378,7 +1412,7 @@ test('明确不在联盟时不请求联盟 BP 奖励，未知状态仍允许请�
     if (cmd === 3103) return ret(activities[0]);
     return ret({});
   };
-  assert.equal(await gift.cycleRun(), 1000);
+  assert.equal(await runRound(), 1000);
   assert.deepEqual(
     sent.map((item) => item.cmd),
     [841, 3140, 3103],
@@ -1399,10 +1433,10 @@ test('业务拒绝活动退避 15 分钟，不阻断其它活动', async () => {
     if (cmd === 3103) return ret(activities.find((item) => item.id === data.id));
     return ret({});
   };
-  assert.equal(await gift.cycleRun(), 1000);
+  assert.equal(await runRound(), 1000);
   sent = [];
   now += 21;
-  await gift.cycleRun();
+  await runRound();
   assert.deepEqual(
     sent.map((item) => item.cmd),
     [841],
@@ -1410,7 +1444,7 @@ test('业务拒绝活动退避 15 分钟，不阻断其它活动', async () => {
 
   sent = [];
   now += 15 * 60;
-  await gift.cycleRun();
+  await runRound();
   assert.ok(sent.some((item) => item.cmd === 1777 && item.data.id === '1'));
 });
 
@@ -1429,10 +1463,10 @@ test('业务拒绝退避从拒绝到达时的服务器时钟起算，不被长�
     }
     return ret({});
   };
-  await gift.cycleRun();
+  await runRound();
   now = NOW + 901;
   sent = [];
-  await gift.cycleRun();
+  await runRound();
   assert.deepEqual(
     sent.map((entry) => entry.cmd),
     [841],
@@ -1455,10 +1489,10 @@ test('无进展退避从权威重查到达时的服务器时钟起算', async ()
     if (cmd === 3103) return ret(a);
     return ret({});
   };
-  await gift.cycleRun();
+  await runRound();
   now = NOW + 101;
   sent = [];
-  await gift.cycleRun();
+  await runRound();
   assert.deepEqual(
     sent.map((entry) => entry.cmd),
     [841],
@@ -1467,25 +1501,25 @@ test('无进展退避从权威重查到达时的服务器时钟起算', async ()
 
 test('重查无进展按 20/40 秒指数退避，权威完成后解除', async () => {
   activities = [activity('101', { point: [tier(10)], extra: { sc: 10 } })];
-  await gift.cycleRun();
+  await runRound();
   sent = [];
   now += 21;
-  await gift.cycleRun();
+  await runRound();
   assert.equal(sent.filter((item) => item.cmd === 1777).length, 1);
   sent = [];
   now += 21;
-  await gift.cycleRun();
+  await runRound();
   assert.deepEqual(
     sent.map((item) => item.cmd),
     [841],
   );
   sent = [];
   now += 21;
-  await gift.cycleRun();
+  await runRound();
   assert.equal(sent.filter((item) => item.cmd === 1777).length, 1);
   sent = [];
   now += 41;
-  await gift.cycleRun();
+  await runRound();
   assert.deepEqual(
     sent.map((item) => item.cmd),
     [841],
@@ -1493,7 +1527,7 @@ test('重查无进展按 20/40 秒指数退避，权威完成后解除', async (
 
   activities[0].extra.rp = [10];
   sent = [];
-  await gift.cycleRun();
+  await runRound();
   assert.deepEqual(
     sent.map((item) => item.cmd),
     [841],
@@ -1502,11 +1536,11 @@ test('重查无进展按 20/40 秒指数退避，权威完成后解除', async (
 
 test('无进展指数退避增长到 300 秒后封顶', async () => {
   activities = [activity('101', { point: [tier(10)], extra: { sc: 10 } })];
-  await gift.cycleRun();
+  await runRound();
   for (const advance of [21, 41, 81, 161, 301]) {
     now += advance;
     sent = [];
-    await gift.cycleRun();
+    await runRound();
     assert.equal(sent.filter((entry) => entry.cmd === 1777).length, 1);
   }
 });
@@ -1515,10 +1549,10 @@ test('活动从权威列表消失后清理拒绝退避', async () => {
   activities = [activity('101', { point: [tier(10)], extra: { sc: 10 } })];
   respond = (cmd) =>
     cmd === 841 ? ret({ alist: activities }) : cmd === 1777 ? ret(null, 2001) : ret({});
-  await gift.cycleRun();
+  await runRound();
   activities = [];
   sent = [];
-  await gift.cycleRun();
+  await runRound();
   assert.deepEqual(
     sent.map((item) => item.cmd),
     [841],
@@ -1532,7 +1566,7 @@ test('活动从权威列表消失后清理拒绝退避', async () => {
     return ret({});
   };
   sent = [];
-  assert.equal(await gift.cycleRun(), 1000);
+  assert.equal(await runRound(), 1000);
   assert.ok(sent.some((item) => item.cmd === 1777));
 });
 
@@ -1540,9 +1574,45 @@ test('测试复位清理会话退避，避免跨用例泄露', async () => {
   activities = [activity('101', { point: [tier(10)], extra: { sc: 10 } })];
   respond = (cmd) =>
     cmd === 841 ? ret({ alist: activities }) : cmd === 1777 ? ret(null, 2001) : ret({});
-  await gift.cycleRun();
+  await runRound();
   gift.resetForTest();
   sent = [];
-  await gift.cycleRun();
+  await runRound();
   assert.ok(sent.some((item) => item.cmd === 1777));
+});
+
+test('空闲退避：连续 3 轮无待领放宽到 3 分钟，出现可领项立即恢复 30 秒', async () => {
+  activities = [];
+  assert.equal(await runRound(), 30 * 1000);
+  assert.equal(await runRound(), 30 * 1000);
+  assert.equal(await runRound(), 3 * 60 * 1000);
+  assert.equal(await runRound(), 3 * 60 * 1000);
+  const a = activity('101', { point: [tier(10)], extra: { sc: 10 } });
+  activities = [a];
+  respond = (cmd) => {
+    if (cmd === 841) return ret({ alist: structuredClone(activities) });
+    if (cmd === 1777) {
+      a.extra.rp = [10];
+      return ret({});
+    }
+    if (cmd === 3103) return ret(structuredClone(a));
+    return ret({});
+  };
+  assert.equal(await runRound(), 1000);
+  assert.equal(await runRound(), 30 * 1000);
+  assert.equal(await runRound(), 30 * 1000);
+  assert.equal(await runRound(), 3 * 60 * 1000);
+});
+
+test('空闲退避经 hub.tune 落到共享周期', async () => {
+  const featRef = activityHub.attach({ label: 'super-value-gift', scanIntervalMs: 30 * 1000 });
+  try {
+    activities = [];
+    assert.equal(await gift.cycleRun(), 30 * 1000);
+    assert.equal(await gift.cycleRun(), 30 * 1000);
+    assert.equal(await gift.cycleRun(), 3 * 60 * 1000);
+    assert.equal(activityHub.stats().scanEveryMs, 3 * 60 * 1000);
+  } finally {
+    featRef();
+  }
 });

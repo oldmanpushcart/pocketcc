@@ -12,8 +12,8 @@
  *   10904 PUSH_ONE_ACTIVITY = 整条活动推送，extra 是对象（非字符串），含 hasRed/left/totalNum/rec_other_record{uuid:领取ms}。
  *     rec_other_record 是「本人」领取台账（含手动领取，uuid 与 13227 逐条对应、条数恒等于 totalNum），非他人记录。
  *   9595 HERO_EQUIP_WISH_FIND_BOX = 查一只可领箱，应答仅 {serverId,x,y}，不带归属信息 → 单靠它无法滤掉自己的箱。
- *   841 GET_ACTIVITY_DATA = 全量活动查询（旧 JSON 主通道、空体 {}），应答 {alist:[活动对象…]}；泰坦祝福条目 type=271，
- *     extra.left 与 10904 推送同口径。启动时补查一次作面板「本期剩余」状态行种子（只刷展示值，不动兜底链 activityId）。
+ *   841/10904/10912 等活动感知统一走 core/activity-hub：841 全量快照 + 推送合并，feat 只订阅 type=271 的变化。
+ *     extra.left 与 10904 推送同口径；快照首回调作面板「本期剩余」状态行种子，activityId 也从快照锁存。
  *   三条推送的字段互斥（uuid 与坐标从不同时出现），因此「哪只箱领过了」只能由本模块按 "x,y" 自建台账。
  *   时间线实证：每簇「13226×3 → 902×3」中 902 的坐标与 13226 逐条相等（主链无需 9595）；
  *   且同一簇会伴随 3 条 10904 hasRed=true（活动推送按箱计数），故兜底链必须自带去重与冷却，否则每簇白打 3 次 9595。
@@ -27,8 +27,8 @@
  *
  * 两链驱动：
  *   主链：13226 → 判本人/判台账/判拉黑 → 坐标现成，直接 902（不再发 9595）；入队即记台账。
- *   兜底链：10904 且 extra.hasRed → 单槽去重 + 冷却 → 入队 → 9595 查坐标 → 过台账闸 → 902。
- *     保留只为覆盖「脚本启动前联盟已有的箱」；activityId 从 10904 载荷里锁存（实录 81200400，9595 必需）。
+ *   兜底链：hub 推送且 extra.hasRed → 单槽去重 + 冷却 → 入队 → 9595 查坐标 → 过台账闸 → 902。
+ *     保留只为覆盖「脚本启动前联盟已有的箱」；activityId 从 hub 快照锁存（实录 81200400，9595 必需）。
  *   台账清理：13228（箱子消失）推来时按 uuid 精确出队、无 uuid 时按派兵顺序 FIFO 出一条，
  *     兜底 TTL 用 13226 的 endTime 到期自动剔除。这样即便 9595 反复报同一只不可领的箱，也不会重复派。
  *
@@ -38,8 +38,8 @@
  *   面板状态行「本期剩余」只读展示 extra.left（启动 841 补查种子 + 10904 推送刷新；未读到显示 '—'，0=已领满），与触顶闸门同源独立。
  *   面板「今日」到账数按同 extra 的 rec_other_record 日界过滤聚合（含手动），与 left 同批锁存 + 原子刷面板，两行天然对账。
  * 队列 + 消费间隔：902 过快会被服务器限流（code=3, data="march_time_control_info001"），逐条之间休眠规避。
- * 生命周期由 reactor 托管：install/configure/run 三个钩子，places 门控限定 base/world（Home/NWorldMap）。
- *   run 挂 10904/13226/13227/13228 监听；reactor pause 时摘监听、置 alive=false，队列保留，恢复后续跑。
+ * 生命周期由 reactor 托管：install/configure/run/pause 四个钩子，places 门控限定 base/world（Home/NWorldMap）。
+ *   run attach hub 并挂 13226/13227/13228 监听；reactor pause 时摘监听并释放 hub，置 alive=false，队列保留，恢复后续跑。
  *
  * 当日次数口径（定稿，1116 对账修正）：到账读服务器权威 rec_other_record 按日界过滤（含手动/脚本窗外到账），
  *   与 left 同源可对账（首日 到账+left=200）；13227 日账计数仅作台账读回前兜底；
@@ -56,15 +56,14 @@ import { payloadOf } from '../../../core/net-payload.js';
 import { march } from '../../../core/march.js';
 import { item } from '../../../core/item.js';
 import { createDailyLedger } from '../../../core/daily-stats.js';
+import { activityHub } from '../../../core/activity-hub.js';
 import { bus, EVT } from '../../../core/bus.js';
 
 import {
-  CMD_PUSH_ONE_ACTIVITY,
   CMD_PUSH_GIFT,
   CMD_PUSH_REWARD_GET,
   CMD_PUSH_GIFT_CLEAR,
   CMD_HERO_EQUIP_WISH_FIND_BOX,
-  CMD_GET_ACTIVITY_DATA,
 } from './constants.js';
 
 /** @type {ReturnType<createLog>} 模块日志器（tag=TITAN_BLESSING） */
@@ -108,6 +107,10 @@ var net;
 
 /** @type {object|null} reactor 注入的上下文；alive() 反映运行态，pause 后置否让在飞流程自然退出 */
 var ctxRef = null;
+/** @type {function():void|null} hub 引用计数 detach（pause 释放） */
+var detachHub = null;
+/** @type {function():void|null} hub 活动变化退订（pause 释放） */
+var unwatchHub = null;
 
 /** @type {object[]} 待消费的拾取事件队列（pause 保留、恢复续跑）：{src:'gift'|'activity', x?, y?, activityId?} */
 var queue = [];
@@ -137,6 +140,12 @@ var fallbackPending = false;
 
 /** @type {number} 兜底链上次实际查箱的时刻（ms），配合 FALLBACK_SCAN_COOLDOWN_MS 限频 */
 var fallbackScanAt = 0;
+
+/**
+ * @type {boolean} 兜底链启动种子是否已消费：周期 841 快照的通知只在启动后首次入队一次
+ * （覆盖脚本启动前已有的箱）；之后新箱必有实时推送，重复入队只会白打 9595。
+ */
+var fallbackSeedDone = false;
 
 /**
  * 本期领取额度是否已触顶（由 10904 的 extra.left 驱动：<=0 置真、>0 复位）。
@@ -273,21 +282,21 @@ function clearByUuid(uuid) {
 }
 
 /**
- * 10904 推送入口（兜底链 + 额度信号源）：同步过滤 + 入队，listener 本身永不 throw。
- * 注意 10904 是 PUSH_ONE_ACTIVITY，任何活动都会推它，故必先按 type 认出泰坦祝福再判其余字段。
- * 分支：非泰坦祝福→静默忽略；锁存 activityId；用 extra.left 刷新额度闸门（触顶清队列、只在 false→true 转变打一行日志）；
- * hasRed=false＝本人领取到账通知，忽略；hasRed=true 且额度未满 → 单槽 + 冷却后入队（实录一簇推 3 条，不去重就白打 3 次 9595）。
- * @param {object} ev net.on 事件 {cmd, status, data, ord, ts, raw}
+ * hub 订阅回调（兜底链 + 额度信号源）：watch 已按 type=271 认出泰坦祝福，这里只判字段。
+ * 分支：锁存 activityId；用 extra.left 刷新额度闸门（触顶清队列、只在 false→true 转变打一行日志）；
+ * hasRed=false＝本人领取到账通知，忽略；hasRed=true 且额度未满 → 单槽 + 冷却后入队
+ * （实录一簇推 3 条，不去重就白打 3 次 9595）。
+ * 兜底链只由实时推送触发；周期 841 快照的通知只在启动后首次作种子（覆盖脚本启动前已有的箱），
+ * 之后不再重复入队——新箱必有推送，重复入队只会白打 9595。
+ * @param {object} activity hub 合并后的活动对象
+ * @param {string} reason 变化来源（scan/push-activity/push-extra/refresh/watch）
  */
-function onActivityPush(ev) {
-  if (!aliveFn()) return;
+function onActivityChange(activity, reason) {
+  if (!aliveFn() || !activity) return;
 
-  var data = ev && ev.data;
-  if (!data || data.type !== ACTIVITY_TYPE_TITAN_BLESSING) return;
+  if (activity.id) activityId = activity.id;
 
-  if (data.id) activityId = data.id;
-
-  var extra = data.extra || {};
+  var extra = activity.extra || {};
 
   // 本期剩余展示值：left 为有限数即锁存（含 0=已领满）；推送是活动期内的新鲜度来源
   var leftChanged =
@@ -317,6 +326,12 @@ function onActivityPush(ev) {
   }
   if (reached) return;
 
+  var isPush = reason === 'push-activity' || reason === 'push-extra';
+  if (!isPush) {
+    if (fallbackSeedDone) return;
+    fallbackSeedDone = true;
+  }
+
   // hasRed == false，表示这是一条领取完成的通知，可以忽略。
   if (!extra.hasRed) {
     return;
@@ -325,7 +340,7 @@ function onActivityPush(ev) {
   if (fallbackPending || Date.now() - fallbackScanAt < FALLBACK_SCAN_COOLDOWN_MS) return;
   fallbackPending = true;
 
-  log.debug('activity push (fallback), enqueue. id=%d;left=%s', data.id, extra.left);
+  log.debug('activity fallback, enqueue. id=%d;left=%s;reason=%s', activityId, extra.left, reason);
   queue.push({ src: 'activity' });
   kick();
 }
@@ -594,46 +609,7 @@ function todayArrive() {
 }
 
 /**
- * 启动补查本期剩余（面板状态行种子）：841 GET_ACTIVITY_DATA 空体查全量活动，从 alist 认 type=271
- * 泰坦祝福条目锁存 extra.left。只刷展示值，不动 activityId/兜底链（兜底链 activityId 仍只从 10904 锁存，
- * 保持 run() 既有「不做启动补查 9595」语义）。旧 JSON 链路 Ret.data 是整包文本，须 payloadOf 归一化再取 alist。
- * 报文实证 dashcam dashcam-rec-20261105T103923-我的日常.ndjson：req api=send data={}，resp {alist:[…type:271…extra.left]}。
- * 永不 reject：sendGuarded 壳 + 异常就地 warn；活动未开（alist 无泰坦祝福）留 null 显示 '—'。
- * @returns {Promise<void>}
- */
-async function queryPeriodLeft() {
-  var ret = await net.sendGuarded(
-    CMD_GET_ACTIVITY_DATA,
-    {},
-    {
-      gate: false,
-      protocol: 'send',
-      onError: function (err) {
-        log.warn('query activity data error!', err);
-      },
-    },
-  );
-  if (!aliveFn() || !ret.ok) return;
-  var alist = (payloadOf(ret) || {}).alist || [];
-  for (var i = 0; i < alist.length; i++) {
-    var a = alist[i];
-    if (a && a.type === ACTIVITY_TYPE_TITAN_BLESSING) {
-      var x = a.extra || {};
-      var changed = false;
-      if (typeof x.left === 'number' && isFinite(x.left)) {
-        changed = x.left !== periodLeft;
-        periodLeft = x.left;
-        log.debug('period left seeded from query. left=%s;id=%s', x.left, a.id);
-      }
-      if (latchRec(x) || changed) bus.emit(EVT.UI_REFRESH);
-      return;
-    }
-  }
-  log.debug('period left query: titan blessing absent. alist=%d', alist.length);
-}
-
-/**
- * 派拾取行军（零部队九键 body，含 ext:{}）→ 走 core/march.pickUp；永不 reject（异常回 Ret(NOT_SENT)）
+ * 拍拾取行军（零部队九键 body，含 ext:{}）→ 走 core/march.pickUp；永不 reject（异常回 Ret(NOT_SENT)）
  * @param {number} x 箱子坐标
  * @param {number} y 箱子坐标
  * @returns {Promise<Ret>} code=902 状态码
@@ -789,19 +765,15 @@ function install(ctx) {
 }
 
 /**
- * 运行：挂 13226（主链）+ 10904（兜底）+ 13227/13228（到账日志与台账清理）监听。
- * 不做启动补查：9595 需要 activityId（只从 10904 载荷锁存），而联盟已有箱必然伴随 hasRed=true 的活动推送，
- * 兜底链会在那条推送上自动跑一次——所覆盖的正是「脚本启动前联盟已有的箱」。
- * reactor pause 会自动摘除此处登记的触发器。
+ * 运行：attach hub（活动快照与推送合并归 core/activity-hub），挂 13226（主链）+ 13227/13228（到账日志与台账清理）监听。
+ * 不做启动补查 9595：9595 需要 activityId，hub 快照首回调会锁存；联盟已有箱由快照种子/实时推送自动跑一次兜底链
+ * ——所覆盖的正是「脚本启动前联盟已有的箱」。
+ * reactor pause 会自动摘除此处登记的触发器，并在 spec.pause 里释放 hub 引用与 watch。
  * @param {object} ctx reactor 上下文
  */
 function run(ctx) {
   ctxRef = ctx;
   dailyLedger.ensureLoaded();
-  ctx.on.push(CMD_PUSH_GIFT, onGiftPush);
-  ctx.on.push(CMD_PUSH_ONE_ACTIVITY, onActivityPush);
-  ctx.on.push(CMD_PUSH_REWARD_GET, onRewardPush);
-  ctx.on.push(CMD_PUSH_GIFT_CLEAR, onGiftClearPush);
 
   ledger = new Map();
   pendingKeys = [];
@@ -809,22 +781,47 @@ function run(ctx) {
   rejected = {};
   fallbackPending = false;
   fallbackScanAt = 0;
+  fallbackSeedDone = false;
   claimLimitReached = false;
   periodLeft = null;
   periodRec = null;
 
-  // 启动补查本期剩余种子（fire-and-forget，不阻领取主流程）；活动期内再由 10904 推送刷新
-  queryPeriodLeft().catch(function (err) {
-    log.warn('query period left threw!', err);
-  });
+  if (unwatchHub) unwatchHub();
+  if (detachHub) detachHub();
+  // 本 feat 不需要周期 841（额度/红点由实时推送驱动）；scanIntervalMs=0 只共用他人档位与首扫
+  detachHub = activityHub.attach({ label: 'titan-blessing', scanIntervalMs: 0 });
+  unwatchHub = activityHub.watch(
+    function (activity) {
+      return activity.type === ACTIVITY_TYPE_TITAN_BLESSING;
+    },
+    onActivityChange,
+    { label: 'titan-blessing' },
+  );
+
+  ctx.on.push(CMD_PUSH_GIFT, onGiftPush);
+  ctx.on.push(CMD_PUSH_REWARD_GET, onRewardPush);
+  ctx.on.push(CMD_PUSH_GIFT_CLEAR, onGiftClearPush);
 
   log.info(
-    'started, listening push cmd=%d(main);%d(fallback);%d;%d(ledger).',
+    'started, listening push cmd=%d(main);%d;%d(ledger);activity via hub.',
     CMD_PUSH_GIFT,
-    CMD_PUSH_ONE_ACTIVITY,
     CMD_PUSH_REWARD_GET,
     CMD_PUSH_GIFT_CLEAR,
   );
+}
+
+/**
+ * 暂停：释放 hub 引用与活动订阅（reactor 的 triggers 管不到 hub 的内部订阅）。
+ */
+function pause() {
+  if (unwatchHub) {
+    unwatchHub();
+    unwatchHub = null;
+  }
+  if (detachHub) {
+    detachHub();
+    detachHub = null;
+  }
 }
 
 /**
@@ -893,4 +890,5 @@ reactor.register({
   install: install,
   configure: configure,
   run: run,
+  pause: pause,
 });

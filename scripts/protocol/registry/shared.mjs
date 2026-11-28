@@ -65,18 +65,8 @@ export default [
     usages: [
       {
         name: 'CMD_GET_ACTIVITY_DATA',
-        feat: 'alliance-defender',
-        file: 'feats/alliance/alliance-defender/constants.js',
-      },
-      {
-        name: 'CMD_GET_ACTIVITY_DATA',
-        feat: 'super-value-gift',
-        file: 'feats/activity/super-value-gift/constants.js',
-      },
-      {
-        name: 'CMD_GET_ACTIVITY_DATA',
-        feat: 'titan-blessing',
-        file: 'feats/activity/titan-blessing/constants.js',
+        feat: 'activity-hub',
+        file: 'core/activity-hub.js',
       },
     ],
   },
@@ -242,6 +232,20 @@ export default [
     ],
   },
   {
+    cmd: 3103,
+    dir: 'C2S',
+    note: '重查单个活动（ACTIVITY_GET_SINGLE_INFO，V1 send，{id}）',
+    src: '公开 H5 客户端 subpack2.5c3c4.js RealActivityController.reqUpdateActivityDataById',
+    fields: 'req {id} → resp 单个活动对象',
+    usages: [
+      {
+        name: 'CMD_GET_ACTIVITY_SINGLE_INFO',
+        feat: 'activity-hub',
+        file: 'core/activity-hub.js',
+      },
+    ],
+  },
+  {
     cmd: 10007,
     dir: 'S2C',
     note: 'push 行军信息（state 1 行军/2 到达/12 交战；marchId 字符串，target.targetType=目标 pointType）',
@@ -393,6 +397,34 @@ export default [
         name: 'PUSH_SINGLE_MAIL',
         feat: 'sea-treasure',
         file: 'feats/activity/sea-treasure/constants.js',
+      },
+    ],
+  },
+  {
+    cmd: 10904,
+    dir: 'S2C',
+    note: 'push 整条活动（PUSH_ONE_ACTIVITY，载荷含 type/extra/id）',
+    src: '',
+    fields: '',
+    usages: [
+      {
+        name: 'CMD_PUSH_ONE_ACTIVITY',
+        feat: 'activity-hub',
+        file: 'core/activity-hub.js',
+      },
+    ],
+  },
+  {
+    cmd: 10912,
+    dir: 'S2C',
+    note: 'push 活动 extra 更新（{aid,extra}；新矿脉诞生时推它）',
+    src: '',
+    fields: '',
+    usages: [
+      {
+        name: 'CMD_PUSH_ONE_ACTIVITY_EXTRA',
+        feat: 'activity-hub',
+        file: 'core/activity-hub.js',
       },
     ],
   },

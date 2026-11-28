@@ -1,6 +1,6 @@
 ---
 name: pocketcc-extension
-description: pocketcc Chrome MV3 扩展侧工程规范，覆盖 feat 新增/修改、reactor 生命周期、网络层与推送订阅、日志分级、UID 隔离存储、调度原语 createCycle、壳/远程体两层分发与升级通道、JSDoc 与私有成员代码风格。当在 extension/ 目录下新增或修改玩法（feat）、核心模块（core）、菜单、面板 UI、升级通道，或用户提到 reactor、sendPBV2、ctx.on.push、createCycle、manifest、发版时使用。
+description: pocketcc Chrome MV3 扩展侧工程规范，覆盖 feat 新增/修改、reactor 生命周期、网络层与推送订阅、活动感知总线 activity-hub、领取执行器 claim-runner、日志分级、UID 隔离存储、调度原语 createCycle、壳/远程体两层分发与升级通道、JSDoc 与私有成员代码风格。当在 extension/ 目录下新增或修改玩法（feat）、核心模块（core）、菜单、面板 UI、升级通道，或用户提到 reactor、sendPBV2、ctx.on.push、createCycle、activity-hub、claim-runner、841/10904/10912/3103、manifest、发版时使用。
 ---
 
 # pocketcc 扩展工程规范
@@ -67,6 +67,28 @@ background.js(SW) = 唯一出网口：dashcam fetch 转发 + 升级状态机
 - 不要在 feat 里手写 `scheduleCycle/triggerCycle/doCycle` 样板；间隔决策（退避曲线、idle 降频）留在调用方 `run()` 返回值里。
 - 一次性任务/无周期重排需求不套 createCycle。
 
+## 活动感知与领取（hub + runner 双原语）
+
+活动类 feat（任何需要活动实例状态的玩法）的感知与领取必须走两条 core 总线，**feat 内不得再出现 841 发送、10904/10912 订阅、aid 反查、3103 发送**（grep 门槛：`grep -rn "10904\|10912\|841\|3103" extension/src/feats` 仅剩注释）。设计取舍与迁移台账见 `extension/docs/core/activity-hub.md`、`extension/docs/core/claim-runner.md`。
+
+**感知：`core/activity-hub.js`（共享快照）**
+
+- `install` 只取依赖；`run(ctx)` 里 `attach({label, scanIntervalMs})` + `watch(match, onChange, {label})`，`pause` 里**手动**调 `unwatch/detach`（hub 引用不归 reactor 托管，漏放会带病常驻）。
+- `scanIntervalMs` 是兜底档位而非主触发：声明 `0`=只搭车他人周期 + 首扫；`30s`=推送不稳时的兜底（super-value-gift）；`5min`=低频对账（city-award）。hub 取订阅者最小非零值。
+- `watch` 的 `match` 只做「是不是本玩法活动」的认出（showUiType/type），`onChange` 只做业务判定 + `cycle.kick()`；红点/可领判据留在 feat，不进 core。
+- hub 回调是 per-activity 的（一次 841 首扫/周期扫描 = 快照内每个活动各回调一次，`reason=scan`；watch 首挂 `reason=watch`）：`onChange` 对这两类不打逐条日志，只在 `push-activity/push-extra/refresh` 时留痕，否则 30s 档位每轮刷 30+ 行。
+- 读活动用 `get/getByType/getByUiType/list`；快照是整表替换，不保留已结束活动。
+
+**领取：`core/claim-runner.js`（动作管线）**
+
+- `createClaimRunner({log, actionGapMs, ...})` 每 feat 一个实例；`install` 里 `register(cmd, {protocol, body, key, label})` 覆盖全部领取协议。
+- `claim({cmd, aid, targetId, body, signal})` 返回 `status`: `ok/rejected/transient/suppressed/unregistered/aborted`；分流：`rejected`→`suppress`（业务拒绝固定退避）、`transient/aborted`→停止本轮、`suppressed`→跳过。
+- 权威确认：`refreshEx(aid, {force:true})` 的 **`fresh` 区分两件事**——`fresh=false`（3103 失败/被拒/畸形）只 retry 不计退避；`fresh=true` 但仍有可领项才 `noProgress`（20s×2^n 封顶 5min）。`refresh` 单看对象无法区分，确认链一律用 `refreshEx`。
+- 确认推进后 `confirm` 清退避；`run()` 每次 activate 先 `reset()`；`cycleRun` 开头用 `prune` 按「活动仍开放且仍有可领项」裁剪。
+- 退避键保持 `cmd:aid[:targetId]` 稳定格式（prune 按此解析）；842/3140 的 body 保留原始 ID 类型（数字 aid/tid 不转串）。
+
+**单测范式（node:test）**：hub 是单例——patch `netApi.sendGuarded` 让 hub 走测试的 sent/respond；每轮用 `detach→attach→await scan()` 重启绕过 2s 扫描节流（等价旧版每轮 841）；runner 注入 `{actionGapMs: 0, now: () => 服务器秒*1000}`，禁止真实 sleep（跨用例时间回退曾触发 21s 挂起，`reset()` 已兜底）。参考 `tests/core/activity-hub.test.js`、`tests/feats/super-value-gift.test.js`。
+
 ## 日志规范
 
 分级判据按顺序走（完整契约见 `core/log.js` 顶部注释）：
@@ -107,5 +129,6 @@ debug 故障可诊断条款：
 - [ ] 新 feat 在面板出现且开关生效（install/run/pause 走 reactor）
 - [ ] 未直接触碰游戏符号名/`game.get`（走了 ACL）
 - [ ] 报文订阅经 `ctx.on.push/resp/req`，退订由 reactor 托管；req↔resp 配对按 `Event.reqTime` 而非顺序猜测
+- [ ] 活动类 feat 的感知/领取全部走 hub + runner：无自建 841/3103/10904/10912、无自建退避，hub attach/watch 在 pause 已释放，runner 在 run 时 reset
 - [ ] 生命周期定时器走 `ctx.setTimeout/setInterval` 托管、在飞休眠传 `ctx.signal`；`run()` 里新建的引擎实例/裸定时器已存引用，并有 `pause` 钩子收尾
 - [ ] 关键决策与协议形态在文件头注释标注了报文实证来源
