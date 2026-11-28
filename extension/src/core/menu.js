@@ -205,8 +205,8 @@ export const MENU = [
       { id: 'globalMap', kind: 'feature', label: '全局地图', showFields: true },
       { id: 'quickJump', kind: 'feature', label: '镜头跳转', showFields: true },
       { id: 'reconnect', kind: 'feature', label: '自动重连', showFields: true },
-      { id: 'dailyRefresh', kind: 'feature', label: '每日零点刷新' },
-      { id: 'weeklyRefresh', kind: 'feature', label: '每周一刷新' },
+      // 定时刷新：单 feat 两档勾选（每日零点 / 每周一），共用一条 cycle，周一同刻只刷新一次
+      { id: 'scheduledRefresh', kind: 'feature', label: '定时刷新', showFields: true },
       { id: 'keepAlive', kind: 'feature', label: '后台保活', showFields: true },
       { id: 'netLog', kind: 'feature', label: '网络日志' },
       { id: 'eventLog', kind: 'feature', label: '事件日志' },

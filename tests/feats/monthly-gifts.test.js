@@ -1,4 +1,4 @@
-// 至尊月卡（每日礼包 + 广告特权 x2 双链）/ 每日与每周服务器日界刷新回归测试。
+// 至尊月卡（每日礼包 + 广告特权 x2 双链）/ 定时刷新（每日零点 + 每周一）回归测试。
 // 使用公开客户端源码确认的协议形态，不连接游戏服务器；重点锁定跨日防重领与未发出重试。
 import { test, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
@@ -33,8 +33,7 @@ const { MENU, collectFeatureIds } = await import('../../extension/src/core/menu.
 const { reactor } = await import('../../extension/src/core/reactor.js');
 const reactorIsRunning = reactor.isRunning;
 const monthly = await import('../../extension/src/feats/player/monthly-card/index.js');
-const refresh = await import('../../extension/src/feats/system/daily-refresh/index.js');
-const weeklyRefresh = await import('../../extension/src/feats/system/weekly-refresh/index.js');
+const refresh = await import('../../extension/src/feats/system/scheduled-refresh/index.js');
 const { CODE_NOT_SENT } = await import('../../extension/src/core/util.js');
 
 const orig = {
@@ -136,7 +135,6 @@ beforeEach(() => {
   };
   monthly.resetForTest();
   refresh.resetForTest();
-  weeklyRefresh.resetForTest();
   reactor.isRunning = reactorIsRunning;
 });
 
@@ -154,24 +152,36 @@ afterEach(() => {
   reactor.isRunning = reactorIsRunning;
 });
 
-test('面板集成：至尊月卡与两个日界刷新已注册且挂入对应菜单分组', () => {
+test('面板集成：至尊月卡与定时刷新已注册且挂入对应菜单分组', () => {
   const ids = new Set(collectFeatureIds({ children: MENU }));
   const specs = new Map(reactor.list().map((spec) => [spec.id, spec]));
   assert.ok(!ids.has('adPrivilege'), '广告特权应并入至尊月卡，不再独立挂菜单');
   assert.ok(!specs.has('adPrivilege'), '广告特权应并入至尊月卡，不再独立注册');
-  for (const id of ['monthlyCard', 'dailyRefresh', 'weeklyRefresh']) {
+  assert.ok(!ids.has('dailyRefresh'), '每日零点刷新应并入定时刷新，不再独立挂菜单');
+  assert.ok(!ids.has('weeklyRefresh'), '每周一刷新应并入定时刷新，不再独立挂菜单');
+  for (const id of ['monthlyCard', 'scheduledRefresh']) {
     assert.ok(ids.has(id), `${id} 未挂入菜单`);
     const spec = specs.get(id);
     assert.ok(spec, `${id} 未注册 reactor`);
     assert.equal(spec.defaults.enabled, false);
-    if (id === 'dailyRefresh' || id === 'weeklyRefresh') {
-      assert.equal(spec.places, undefined, '定时刷新不应被场景 places 门控挡住');
-      assert.equal(spec.kinds, undefined, '定时刷新不应被秘境等 kind 门控挡住');
-    }
     assert.equal(typeof spec.toModuleCfg, 'function');
-    assert.deepEqual(spec.toModuleCfg({ enabled: true }), { enabled: true });
-    assert.deepEqual(spec.toModuleCfg({ enabled: false }), { enabled: false });
   }
+  const scheduled = specs.get('scheduledRefresh');
+  assert.equal(scheduled.places, undefined, '定时刷新不应被场景 places 门控挡住');
+  assert.equal(scheduled.kinds, undefined, '定时刷新不应被秘境等 kind 门控挡住');
+  assert.deepEqual(scheduled.toModuleCfg({ enabled: true }), {
+    enabled: true,
+    daily: true,
+    weekly: true,
+  });
+  assert.deepEqual(scheduled.toModuleCfg({ enabled: true, daily: false, weekly: true }), {
+    enabled: true,
+    daily: false,
+    weekly: true,
+  });
+  const monthlySpec = specs.get('monthlyCard');
+  assert.deepEqual(monthlySpec.toModuleCfg({ enabled: true }), { enabled: true });
+  assert.deepEqual(monthlySpec.toModuleCfg({ enabled: false }), { enabled: false });
 });
 
 test('面板状态行：礼包与广告进度合并为一行，双未生效收敛', () => {
@@ -622,22 +632,24 @@ test('广告特权：9708 业务拒绝跨午夜时不把旧日拒领取记成次
   );
 });
 
-test('每日刷新：未到服务器零点只排程，不刷新', () => {
+test('定时刷新：未到服务器零点只排程，不刷新', () => {
   let reloads = 0;
   refresh.resetForTest(
     () => reloads++,
     () => true,
+    { daily: true, weekly: false },
   );
   const delay = refresh.cycleRun();
   assert.ok(delay > 0 && delay <= 2 * 60 * 60 * 1000);
   assert.equal(reloads, 0);
 });
 
-test('每日刷新：零点缓冲到达后刷新一次，同拍不重复', () => {
+test('定时刷新：零点缓冲到达后刷新一次，同拍不重复', () => {
   let reloads = 0;
   refresh.resetForTest(
     () => reloads++,
     () => true,
+    { daily: true, weekly: false },
   );
   refresh.cycleRun(); // 先锚定今日日界，模拟 cycle 已睡到 00:01
   now = nextReset() + 60;
@@ -647,11 +659,12 @@ test('每日刷新：零点缓冲到达后刷新一次，同拍不重复', () =>
   assert.equal(reloads, 1);
 });
 
-test('每日刷新：pause 后到点不刷新', () => {
+test('定时刷新：暂停后到点不刷新', () => {
   let reloads = 0;
   refresh.resetForTest(
     () => reloads++,
     () => false,
+    { daily: true, weekly: false },
   );
   refresh.cycleRun();
   now = nextReset() + 60;
@@ -659,74 +672,70 @@ test('每日刷新：pause 后到点不刷新', () => {
   assert.equal(reloads, 0);
 });
 
-test('每日刷新：服务器时钟不可用时安全巡检', () => {
+test('定时刷新：服务器时钟不可用时安全巡检', () => {
   let reloads = 0;
   refresh.resetForTest(
     () => reloads++,
     () => true,
+    { daily: true, weekly: false },
   );
   now = 0;
   assert.equal(refresh.cycleRun(), 15 * 60 * 1000);
   assert.equal(reloads, 0);
 });
 
-test('每周刷新：未到服务器周一零点只排程，不刷新', () => {
+test('定时刷新：只勾每周时零点不触发', () => {
   let reloads = 0;
-  weeklyRefresh.resetForTest(
+  refresh.resetForTest(
     () => reloads++,
     () => true,
+    { daily: false, weekly: true },
   );
-  const delay = weeklyRefresh.cycleRun();
-  assert.ok(delay > 0 && delay <= 2 * 60 * 60 * 1000);
+  refresh.cycleRun();
+  now = nextReset() + 60;
+  assert.ok(refresh.cycleRun() > 0);
   assert.equal(reloads, 0);
 });
 
-test('每周刷新：周一缓冲到达后刷新一次，同拍不重复', () => {
+test('定时刷新：周一缓冲到达后刷新一次，同拍不重复', () => {
   let reloads = 0;
-  weeklyRefresh.resetForTest(
+  refresh.resetForTest(
     () => reloads++,
     () => true,
+    { daily: false, weekly: true },
   );
-  weeklyRefresh.cycleRun(); // 锚定下周界，模拟已睡到周一 00:01
+  refresh.cycleRun(); // 锚定下周界，模拟已睡到周一 00:01
   now = nextWeek() + 60;
-  assert.ok(weeklyRefresh.cycleRun() > 0);
+  assert.ok(refresh.cycleRun() > 0);
   assert.equal(reloads, 1);
-  assert.ok(weeklyRefresh.cycleRun() > 0);
+  assert.ok(refresh.cycleRun() > 0);
   assert.equal(reloads, 1);
 });
 
-test('每周刷新：暂停后到点不刷新', () => {
+test('定时刷新：周一每日与每周同刻到期只刷新一次', () => {
   let reloads = 0;
-  weeklyRefresh.resetForTest(
-    () => reloads++,
-    () => false,
-  );
-  weeklyRefresh.cycleRun();
-  now = nextWeek() + 60;
-  assert.equal(weeklyRefresh.cycleRun(), 0);
-  assert.equal(reloads, 0);
-});
-
-test('每周刷新：每日刷新同拍运行时让位，不重复触发整页导航', () => {
-  let reloads = 0;
-  weeklyRefresh.resetForTest(
+  refresh.resetForTest(
     () => reloads++,
     () => true,
+    { daily: true, weekly: true },
   );
-  reactor.isRunning = (id) => id === 'dailyRefresh';
-  weeklyRefresh.cycleRun();
-  now = nextWeek() + 60;
-  assert.ok(weeklyRefresh.cycleRun() > 0);
-  assert.equal(reloads, 0);
+  now = nextWeek() - 60; // 周日 23:59，两档都锚定到同一个周一 00:00
+  const monday = nextWeek();
+  refresh.cycleRun();
+  now = monday + 60; // 周一 00:01
+  assert.ok(refresh.cycleRun() > 0);
+  assert.equal(reloads, 1);
+  assert.ok(refresh.cycleRun() > 0);
+  assert.equal(reloads, 1);
 });
 
-test('每周刷新：服务器时钟不可用时安全巡检', () => {
+test('定时刷新：两档全关时只巡检，不刷新', () => {
   let reloads = 0;
-  weeklyRefresh.resetForTest(
+  refresh.resetForTest(
     () => reloads++,
     () => true,
+    { daily: false, weekly: false },
   );
-  now = 0;
-  assert.equal(weeklyRefresh.cycleRun(), 15 * 60 * 1000);
+  assert.equal(refresh.cycleRun(), 15 * 60 * 1000);
   assert.equal(reloads, 0);
 });

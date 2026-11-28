@@ -67,8 +67,7 @@ import './feats/battle/quick-attack/index.js';
 import './feats/battle/imperial-decree/index.js';
 import './feats/battle/auto-defense/index.js';
 import './feats/system/chat/index.js';
-import './feats/system/daily-refresh/index.js';
-import './feats/system/weekly-refresh/index.js';
+import './feats/system/scheduled-refresh/index.js';
 import './feats/system/map/global-map.js';
 import './feats/system/map/quick-jump.js';
 // 游戏内快捷键：core/hotkeys.js 集中注册表，非 feat——import 即 hotkeys.bind 自激活，
