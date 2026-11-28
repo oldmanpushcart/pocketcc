@@ -33,7 +33,7 @@ export const KIND = {
   cnc: 'cnc',
   /** 征服者·CQ25（mapType=cnc_25/cnc_high_25） */
   cnc25: 'cnc25',
-  /** 盟决战场（mapType=adp_war；写入点未在静态源码定位，靠 mapType 反查兜住） */
+  /** 盟决战场：换服重连登录态（ServerId≠OriginServerId 且 crossType=7）或 mapType=adp_war 反查 */
   adp_war: 'adp_war',
   /** 信号在场但落不进任何已知档（版本漂移警报位） */
   unknown: 'unknown',

@@ -282,6 +282,55 @@ export const worldSignals = {
   serverStateName() {
     return enumNameOf(serverStateEnum(), this.serverState());
   },
+  /**
+   * 当前连接服号（UserData.ServerId = 登录包 currk）：换服重连型跨服（盟决 7631）后为目标服号。
+   * 与 worldMap.serverId() 的区别：后者是多候选字段兜底（给 901 请求体用），本函数只认权威字段。
+   * @returns {number} 取不到返回 0
+   */
+  serverId() {
+    try {
+      var u = userData();
+      return u && u.ServerId != null ? Number(u.ServerId) || 0 : 0;
+    } catch (e) {
+      return 0;
+    }
+  },
+  /**
+   * 原籍/注册服号（UserData.OriginServerId = 登录包 k）：跨服重连后仍钉原服。
+   * @returns {number} 取不到返回 0
+   */
+  originServerId() {
+    try {
+      var u = userData();
+      return u && u.OriginServerId != null ? Number(u.OriginServerId) || 0 : 0;
+    } catch (e) {
+      return 0;
+    }
+  },
+  /**
+   * 跨服登录态：当前连接服 ≠ 原籍服。盟决等「换服重连」型跨服在登录包把 currk 改为目标服，
+   * 但 CrossUtils.setMapTmxData 没有 crossType=7 分支，mapType 仍是本服图变体（真机实证 202），
+   * 场景归类无法从 mapType 看出跨服——本判据是这类形态的唯一可靠入口。
+   * @returns {boolean}
+   */
+  crossLogin() {
+    var sid = this.serverId();
+    var oid = this.originServerId();
+    return !!(sid && oid && sid !== oid);
+  },
+  /**
+   * 跨服形态号（CrossUtils.crossType，登录包 e.crossType 原值）：-1=非跨服登录；
+   * 7=盟决战场（真机实证 ServerId=4397/OriginServerId=4402/crossType=7）；
+   * 5/6/8/9 等为峡谷/大师/传奇/征服者形态（各有独立谓词，归类优先走谓词链）。
+   * @returns {number} 取不到返回 0
+   */
+  crossType() {
+    try {
+      return Number(crossUtils().crossType) || 0;
+    } catch (e) {
+      return 0;
+    }
+  },
   /** 战区形态位域原值（UserData.eightServerType，CrossUtils.judgeKVK 按 (1|n)-1 匹配赛事） */
   eightServerType() {
     try {

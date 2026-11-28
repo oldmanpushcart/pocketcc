@@ -1,6 +1,7 @@
 /**
- * 世界态归一层（纯只读）：把游戏四路正交信号——cc 场景名、NWorldMapCoreBiz.mapType、
- * CrossUtils 跨服形态谓词、WatchingBattleType 观战态——归一成三个正交维度：
+ * 世界态归一层（纯只读）：把游戏多路正交信号——cc 场景名、NWorldMapCoreBiz.mapType、
+ * CrossUtils 跨服形态谓词、WatchingBattleType 观战态、跨服登录态（ServerId vs OriginServerId）
+ * ——归一成三个正交维度：
  *
  *   Kind  「你在哪一种场景」：homeland / wushuang(无双峡谷) / kvk_c4(四国) / kvk_c8(八国) /
  *         kvk_c8s2 / pab(异能秘境) / cnc / cnc25 / adp_war(盟决) / unknown —— 互斥单值。
@@ -95,7 +96,8 @@ function genOfCanyon(sig) {
 
 /**
  * 场景归类：谓词链优先（服务器形态位是「你的城在哪一族战场」的权威），
- * 落空才用 mapType 反查（它只说明「此刻渲染的是哪张图」，但 adp_war 只有这一路可辨）。
+ * 落空才看跨服登录态（换服重连型跨服，如盟决：mapType 不标记），最后反查 mapType
+ * （它只说明「此刻渲染的是哪张图」）。
  * @param {object} sig worldSignals
  * @returns {{kind:string, gen:string, reason:string}} 归一结果与落档依据
  */
@@ -118,7 +120,17 @@ function kindOf(sig) {
   if (sig.cross.cabMap()) {
     return { kind: KIND.wushuang, gen: genOfCanyon(sig), reason: 'cross-cabmap' };
   }
-  // ⑥ 反查 mapType
+  // ⑥ 跨服登录态（换服重连）：盟决 7631 在登录包把 ServerId 改成目标服，但
+  //    CrossUtils.setMapTmxData 没有 crossType=7 分支，mapType 仍是本服图变体（真机实证 202），
+  //    地图反查永远看不出跨服——只能靠连接服号。crossType=7=盟决；其余未知形态落 unknown
+  //    （保守档：homeland-only feat 自动 pause，不让未知形态冒充本服全放行）。
+  if (sig.crossLogin()) {
+    if (sig.crossType() === 7) {
+      return { kind: KIND.adp_war, gen: GEN.none, reason: 'cross-login-adp' };
+    }
+    return { kind: KIND.unknown, gen: GEN.none, reason: 'cross-login-type-' + sig.crossType() };
+  }
+  // ⑦ 反查 mapType
   var mt = sig.mapTypeName();
   if (KIND_OF_MAPTYPE[mt]) {
     return {
@@ -127,7 +139,7 @@ function kindOf(sig) {
       reason: 'maptype-' + mt,
     };
   }
-  // ⑦ 信号就绪却认不出来：本服常态之外的一切新形态（版本漂移首遇，值得响一次）
+  // ⑧ 信号就绪却认不出来：本服常态之外的一切新形态（版本漂移首遇，值得响一次）
   if (mt) return { kind: KIND.unknown, gen: GEN.none, reason: 'maptype-' + mt };
   return { kind: KIND.unknown, gen: GEN.none, reason: 'no-signal' };
 }
@@ -163,6 +175,10 @@ function collect() {
     watchingTypeName: sig.watchingTypeName(),
     serverState: sig.serverState(),
     serverStateName: sig.serverStateName(),
+    serverId: sig.serverId(),
+    originServerId: sig.originServerId(),
+    crossLogin: sig.crossLogin(),
+    crossType: sig.crossType(),
     tmServerType: sig.tmServerType(),
     eightServerType: sig.eightServerType(),
     cross: {
@@ -199,6 +215,8 @@ function collect() {
   // crossMap：mapType 反查出来的档不是本服图——即「你的视角此刻真在跨服战场图上」。
   // kind 用的是形态位（跨服赛季整季为真），两者相差一个「赛季中回了原战区」的时间窗，
   // 需要严判「此刻真在战场图」的 feat（如破坏性动作）读 crossMap，不要读 kind。
+  // 跨服登录态（换服重连）必须兜底为 true：此时 mapType 仍是本服图变体（盟决实证 202），
+  // 只看 mapType 会把敌对战服误判成本服图。
   var mapKind = KIND_OF_MAPTYPE[raw.mapTypeName];
   // 谓词链与 mapType 反查不一致时不打 warn（两者本就可不同时为真：赛季中你在家，
   // 形态位为真而 mapType 仍是本服图），原始两侧值都在 raw 里，dump() 供诊断对照。
@@ -208,7 +226,7 @@ function collect() {
     phase: phaseOf(sig),
     gen: k.gen,
     watching: watching,
-    crossMap: !!(mapKind && mapKind !== KIND.homeland),
+    crossMap: !!sig.crossLogin() || !!(mapKind && mapKind !== KIND.homeland),
     ready: true,
     reason: k.reason,
     raw: raw,
