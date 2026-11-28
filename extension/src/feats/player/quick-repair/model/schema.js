@@ -24,9 +24,6 @@ import { ARMS, TIERS, ARM_LABEL, TIER_LABEL } from './classify.js';
 /** @type {string[]} 场地枚举顺序（面板卡片顺序） */
 export const VENUES = ['base', 'csb', 'ava'];
 
-/** @type {Object<string, string>} 场地中文名 */
-export const VENUE_LABEL = { base: '基地修理厂', csb: '战场抢修车间', ava: '无双修理厂' };
-
 /** @type {Object<string, string>} 场地 → 修理模式配置键 */
 export const REPAIR_KEY = { base: 'repairBase', csb: 'repairCsb', ava: 'repairAva' };
 

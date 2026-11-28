@@ -1402,15 +1402,7 @@ export {
   CMD_ORDER_QUEUE_SPEED_UP,
 };
 // 领域模型直出（场地适配器与纯判据，供单测与对拍引用）
-export {
-  classifyUnit,
-  tierOf,
-  ARMS,
-  TIERS,
-  armOf,
-  isThorTier,
-  unitClassKey,
-} from './model/classify.js';
+export { classifyUnit, tierOf, unitClassKey } from './model/classify.js';
 export {
   classCodeOf,
   venueCodes,
@@ -1427,7 +1419,7 @@ export {
   sumLeft,
   isThorBand,
 } from './model/entries.js';
-export { KIND, ITEM_SPEED_KINDS } from './model/kinds.js';
+export { KIND } from './model/kinds.js';
 export { csbDeadlineSec, csbOpen, csbClosingSoon } from './model/gates.js';
 export { makeBudget, takeItem } from './venues/shared.js';
 export { planBase } from './venues/base.js';

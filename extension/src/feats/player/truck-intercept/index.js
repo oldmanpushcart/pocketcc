@@ -204,6 +204,8 @@ var skipRound = new Set();
  * @type {{power:number, branch:number, raw:object|null, ready:boolean, tried:boolean}}
  */
 var my = { power: 0, branch: 0, raw: null, ready: false, tried: false };
+/** @type {{power:number, branch:number}} 上次打过的探测值：战力/军种未变时 self probe 不重复打点（5s 轮次会刷屏） */
+var lastProbe = { power: 0, branch: 0 };
 /** 上次 configure 生效的攻击预设号（面板换预设时据此唤醒一次探测，供展示） */
 var prevPreset = -1;
 /** 战力缓存：上次 999 探到的 battlePowerVal（0=未探到/已失效，下一轮仍会重试） */
@@ -702,7 +704,11 @@ async function probeSelf(force) {
   my.power = powerFp === fp && powerCache > 0 ? powerCache : 0; // 只认同源战力：旧编成的缓存对新编成一律当作未探到
   my.ready = my.power > 0;
   my.tried = true;
-  if (my.ready) log.debug('self probe: power=%d branch=%d.', my.power, my.branch);
+  if (my.ready && (my.power !== lastProbe.power || my.branch !== lastProbe.branch)) {
+    log.debug('self probe: power=%d branch=%d.', my.power, my.branch);
+    lastProbe.power = my.power;
+    lastProbe.branch = my.branch;
+  }
   bus.emit(EVT.UI_REFRESH); // 刷新面板“我方战力/军种 + 三军种可打上限”展示
 }
 

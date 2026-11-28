@@ -37,5 +37,8 @@ export const CMD_CHANGE_HERO_SKILLS_INDEX = 1345;
 /** @type {number} push PUSH_HERO_INFO：英雄数据全量推送（897/898/1345 受理后 <100ms，hero 含 firstSkills/subSkills/skillsIndex）
  * ——装配/切组的确认通道，实测 66~104ms，事件驱动替代盲等 */
 export const PUSH_HERO_INFO = 10906;
-/** @type {number} push PUSH_TOOL：背包物品数量推送 {itemId,amount}（897 新登记扣账 / 898 最后注销还账的回写） */
+/**
+ * @public 协议字典出口：scripts/verify-manifests 以动态 import 读取，静态分析不可见。
+ * @type {number} push PUSH_TOOL：背包物品数量推送 {itemId,amount}（897 新登记扣账 / 898 最后注销还账的回写）
+ */
 export const PUSH_TOOL = 10401;
