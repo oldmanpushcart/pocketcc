@@ -44,12 +44,18 @@
 两者互相覆盖 ⇒ **AVA 峡谷图内 `mapType` 可能是 `new_cab(7)`，也可能是 `world(1)`**。
 
 结论：`mapType==='world'` **不能反证**「你在本服」。所以 `kindOf()` 必须先跑形态位谓词链（第 ② 步），
-`mapType` 反查只能当兜底（第 ⑥ 步）。这条顺序是被游戏实现逼出来的，不是风格选择。
+再跑跨服登录态（第 ⑥ 步），`mapType` 反查只能当兜底（第 ⑦ 步）。这条顺序是被游戏实现逼出来的，不是风格选择。
+
+另外，**换服重连型跨服**（盟决 `7631 CROSS_ALLIANCE_MOVE_TO_OTHER_SERVER`）登录包把 `currk`
+改成目标服，但 `CrossUtils.setMapTmxData` 没有 `crossType=7` 分支，`mapType` 仍是本服图变体
+（2026-11-28 真机：敌对战服 4397 内 `mapType=202`、`kind` 若只靠反查会误判 homeland）。
+这类形态只有 `ServerId !== OriginServerId` 可辨，mapType 反查永远等不到 `adp_war(12)`。
 
 ### 2.3 `kind` 与 `crossMap` 双口径（同一份快照里两个字段）
 
 - `kind` 用形态位：跨服赛季**整季为真**（你的身份在这族战场），哪怕你此刻回了原战区看家；
-- `crossMap` 用 `mapType`：**此刻视角真在跨服战场图上**。
+- `crossMap` 用 `mapType` + 跨服登录态：**此刻你的世界图不在本服**（`mapType` 反查出非本服图，
+  或 `ServerId !== OriginServerId` 的换服重连态——后者 `mapType` 仍是本服图变体，只看反查会把敌对战服误判成本服）。
 
 游戏自己就有这种分裂：`TMWatchNetMgr` 允许「人在 `kvk` 图上、`watchingType=PAB` 观战」同时成立。
 ⇒ **破坏性动作（开盾/迁城/发行军）的严判要读 `crossMap()`，不要读 `kind()`**，否则会误伤
@@ -240,9 +246,11 @@ reactor 侧（如 `chatWindow`）同理加 `places`。两点例外口径：①�
 4. **秘境一路的 `mapType`/`watchingType` 都不能单看**：`mapType` 会被 `PabController.getPabMapType()`
    覆写，所以 `pab` 判定走 `watchingType===PAB` 且排在链首；反过来 `watchingType` 是**接管位而非观战位**
    （PAB 也占它），故 `watching` 显式排除 PAB。
-5. **盟决（`adp_war`）没有形态位**：`_tmServerType` 没给它分配值、静态源码零写入点，
-   只能靠 `mapType===12` 反查 ⇒ `isInAnyServer()` 在盟决图内**可能为 false**，
-   凡按 `cross` 组停摆的 feat 会漏掉盟决，需要时显式列 `'adp_war'`。
+5. **盟决（`adp_war`）判据**：主判据是跨服登录态（`ServerId !== OriginServerId` 且 `crossType=7`，
+   2026-11-28 真机 4397/4402 实证）；`mapType===12` 反查只当兜底（换服重连后 `mapType` 实测仍是 202，
+   `CrossUtils.setMapTmxData` 无形态 7 分支）。另注意：盟决下 `isInAnyServer()` 可能因
+   `ServerState!=Normal` 才为 true，别把它当跨服信号；`cross.*` 峡谷/征服者谓词全 false。
+   未识别的跨服形态号一律落 `unknown`（保守暂停），不许冒充 homeland。
 6. **传奇小队无观战态**：`isTeamLegendServer()` 无 watching 分支、枚举无 `LEGEND_WATCHING`。
    若 dump 出现 `watching:true && gen:'legend'`，说明游戏改版，需要重新核对判据。
 7. **旧 `thunder`（雷神峡谷）是历史档**：`CrossUtils.isCAB()` 恒 false，`gen:'thunder'` 仅为
@@ -261,6 +269,8 @@ pocketcc.worldState.dump(); // 现采 + 打印完整快照（含 raw 四路原�
 pocketcc.worldState.kind(); // 'homeland' | 'wushuang' | 'kvk_c8' | ...
 pocketcc.worldState.current(); // 上一帧缓存（不重算）
 pocketcc.worldSignals.mapTypeName(); // 原始 mapType 名，核对 §2.2 双态
+pocketcc.worldSignals.crossLogin(); // 跨服登录态（ServerId ≠ OriginServerId；盟决/换服重连）
+pocketcc.worldSignals.crossType(); // 登录包形态号：7=盟决，-1/0=非跨服登录
 pocketcc.worldSignals.tmServerType(); // 5=TM 6=Master 8=TeamLegend 9=征服者/CQ25
 pocketcc.worldSignals.cross.anyServer(); // 官方 isInAnyServer() 同义，交叉验证
 ```
@@ -297,6 +307,7 @@ pocketcc.worldSignals.cross.anyServer(); // 官方 isInAnyServer() 同义，交�
 | 2026-10-11 | P3 第 1 刀落地：24 个 A 档 feat 加 `kinds:['homeland']`（含本来无 `scenes` 的 `allianceGift`/`allianceHelp`/`globalMap`），`scenes` 全部保留 ⇒ 进峡谷/天梯/秘境图时这 24 个走 pause，回本服图自动 resume 并补扫。另订正一处统计口径：34 个功能力里只有 29 个是 reactor feat，其余 5 个（closePopup/openBag/sceneToggle/battlePanelHotkeys/flyHome）是 `core/hotkeys.js` 的 `bind()` 热键，**不经 reactor 门控**——它们接 Place/Kind 需先改 hotkeys 本体（第 3 刀）。                                                                                                                                                                                                                                                                                                                                                                                                      |
 | 2026-10-11 | P3 第 2 刀落地：`autoDefense` 进 B 档（`kinds:['homeland','wushuang','kvk','adp_war']`，刻意不含 pab/cnc/cnc25 ⇒ 进秘境/征服者时整个 feat pause，回图自动 resume），并在 `strategyShield` 开头接 §4.3 那两道降级闸（②③④ 不降级）。附带把 `core/defense.js` 的两处游戏符号口径换成本层：`gameData.isKVK()` → `matchesKind(['kvk'])`、`serverStateIsFight()` → `phase()!=='fight'`（取证：`GameTools.isKVK`@34412 三支全走 `judgeKVK(eightServerType)`，与 `CrossUtils`@1651 同名谓词同源 ⇒ 语义不变）；`game-api.js` 里那个把 `isKVK()` 说成「判跨服战场图」的注释同步订正为形态位。                                                                                                                                                                                                                                                                                      |
 | 2026-10-11 | P3 第 3 刀落地：本层新增 `matchesPlace()` 纯判据（`scene-watcher` 的 world 门改为复用，不再内联）；`core/hotkeys.js` 接上本层，`bind()` 新支持 `kinds`/`places`（与 scenes 取交集，拿不到世界态时退回旧口径）。声明侧：C 档的 `closePopup`/`openBag`/`sceneToggle`（热键）与 `chatWindow`（reactor）只加 `places`（不看 Kind），B 档的 `flyHome` 加 `kinds`（排掉 pab）——详见 §4.6。`battlePanelHotkeys`/`secretRealm` 保持 D 档不动。                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| 2026-11-28 | 盟决换服重连归类修复（真机 dump：敌对战服 4397 内 `ServerId=4397`/`OriginServerId=4402`/`crossType=7`/`mapType=202`，旧逻辑误报 `kind:homeland`/`crossMap:false`）。`worldSignals` 新增 `serverId`/`originServerId`/`crossLogin`/`crossType` 四路信号；`kindOf()` 新增第 ⑥ 步跨服登录态分支（`crossType=7`→`adp_war`，其余形态号→`unknown` 保守档）；`crossMap` 加 `crossLogin` 兜底。真机回归样本进 `tests/core/world-cross-login.test.js`。§2.2/§2.3/§6/§7 同步。 |
 | 2026-10-11 | P3 第 4 刀落地：①`quickAttack`/`imperialDecree` 补 B 档 `kinds:['homeland','wushuang','kvk']`（真收窄：盟决不再触发）；②`pab-watcher` 并入世界态——删 `core/pab-watcher.js`（1s 轮询+`pab` 门+`pab.change`），秘境检测改由 `world-state` 的 `kind===pab`（scene-watcher 事件+2s 兜底）承担，其默认全拦折进 `scene-watcher` 的 world 门（`kind===pab` 只放行 `kinds` 含 `'pab'`），`secretRealm` 声明 `kinds:['pab']`；`reactor.js` 摘掉 `scene.change`/`pab.change` 两条 recompute 订阅；③`scenes` 声明退役：全部 reactor feat 的 `scenes` 等价迁移为 `places`（Home→base、NWorldMap→world），`scene-watcher` 删 `scene` 门，`hotkeys.js` 的 5 个 `bind()` 仍留 `scenes`；④`launchSilo` 经静态复核发现两个「发射井」概念（天梯核心建筑 vs 每周二联盟活动）、本 feat 属后者且图属 kind 静态不可判 ⇒ 保持 `kinds:['homeland']` 未升 B，待真机 `dump()`。§1/§3.3/§4.1 同步。 |
 | 2026-10-11 | 第 4 刀审查回改：①world 门秘境分支补上 `matchesPlace`（此前 `kind===pab` 时 places 被单方面短路，与「kinds×places 是与关系」契约不符）；②确认不声明 kinds 的 feat 在秘境被拦（默认全拦的副作用），§4.6 补秘境例外口径、`chatWindow` 注释同步；③三个热键 C 档的 `places` 去掉与 `scenes` 不等价的 `base_other`（scenes 仍是必要条件，多给部分是死声明）；④secret-realm 拍宠物引擎 `stop()` 补引擎存活位 `#active`（cycle 睡眠期的定时器不会被撤，只清引用拦不住 pause→resume 后的孤儿循环）。                                                                                                                                                                                                                                                                                                                                                                             |
 | 2026-11-26 | 快捷战斗扩基地：`quickAttack` `places:['world']` → `['base','world']`（基地内卡片不置灰、基地里打开目标面板同样可用；世界地图面板类晚加载由 run 期 5s 重试补齐，挂满即停）。`battlePanelHotkeys` 热键 `scenes` 增 `Home`（现为 `['NWorldMap','Home']`），路径改为从场景根直挂 `UICanvas/PopLayer/NBattleMain/ui/BattlePanel`（UICanvas 为 UIManager 持久根节点，Home/NWorldMap 同构），基地内排兵（上卡车/出征）的 1-8/G 生效。 |
