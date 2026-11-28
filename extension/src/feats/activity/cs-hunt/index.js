@@ -30,7 +30,7 @@ import { createCycle } from '../../../core/cycle.js';
 import { createLog } from '../../../core/log.js';
 import { bits } from '../../../core/game-api.js';
 import { csHunt } from './api.js';
-import { TeamEngine, getDailyRuns, DEFAULT_WAIT_MIN } from './engine-team.js';
+import { TeamEngine, DEFAULT_WAIT_MIN } from './engine-team.js';
 import { SKILL_GROUP_IDS, groupName, skillGroupRep } from './skills.js';
 import {
   SESSION_KEYS,
@@ -60,7 +60,7 @@ var engine = null;
  *   modeBySession=「按场次设置模式」开关（默认关）：关=有效模式恒等 mode 主设置（矩阵隐藏且引擎忽略）；
  *   开=附 9 个场次键 modeFri1..modeSun3（'main'|'helper'，见 session-mode.js SESSION_KEYS）按场覆盖，
  *   follow 仅作未定制标记（开启瞬间播种为当时主设置）；引擎 #cfg() 按当前场次解析有效模式并按局锁存。
- * @type {{mode:'main'|'helper', modeBySession:boolean, targetMemberNum:number, waitMin:number, rolePool:Array<{uid:string,name:string}>, rejectOutsidePool:boolean, useBeaconWhenShort:boolean, dailyRuns:number, autoSwitchToHelper:boolean, presetPool:number[], skillPool:number[], luckyRewards:Object<string,number[]>}}
+ * @type {{mode:'main'|'helper', modeBySession:boolean, targetMemberNum:number, waitMin:number, rolePool:Array<{uid:string,name:string}>, rejectOutsidePool:boolean, useBeaconWhenShort:boolean, autoSwitchToHelper:boolean, presetPool:number[], skillPool:number[], luckyRewards:Object<string,number[]>}}
  *   presetPool = 单元素数组（面板单选一个预设 1~8）；skillPool = 族代表 id 的优先级序（见 skills.js SKILL_GROUPS）。
  */
 var modCfg = normalize({});
@@ -286,10 +286,9 @@ function normalize(raw) {
     rolePool: sanitizePool(raw.rolePool),
     rejectOutsidePool: !!raw.rejectOutsidePool,
     useBeaconWhenShort: !!raw.useBeaconWhenShort,
-    // ⑤ 每日夺宝局数上限（借鉴竞对 setting.team.count）：0=不限；主跑每完成一局计 1、跳日归零、到上限当日停跑
-    dailyRuns: Math.max(0, Number(raw.dailyRuns) || 0),
-    // ⑥ 每日局数满后自动转陪跑（借鉴竞对 autoSwitchToHelp）：默认关=到上限停跑（旧口径）；开=主跑跑满当日上限后自动转陪跑找跟队
-    autoSwitchToHelper: !!raw.autoSwitchToHelper,
+    // 自动转陪跑（用户口径 2026-11-28）：主跑次数耗尽且无法信标补次数时转陪跑找队；
+    //   旧存档（带已删除的 dailyRuns 键）升级后默认开，新版按显式值（缺省开）保留用户关闭
+    autoSwitchToHelper: raw.dailyRuns != null ? true : raw.autoSwitchToHelper !== false,
     // 面板单选一个预设，但引擎（buildPlanFromPool）仍收数组：包成单元素保持出兵语义链路不变
     presetPool: (function () {
       var p = sanitizePreset(
@@ -333,16 +332,8 @@ function statusText() {
       ? '｜本场 ' + eng.session.label + ' → ' + (eff === 'helper' ? '陪跑' : '主跑')
       : '｜未在场次（到点按对应格子运行）';
   }
+  if (eng && eng.helperFallback) modeLine += '｜次数耗尽且无法补信标，已自动转陪跑';
   var lines = ['剩余次数：' + count + '（未知显示 0）', '玩法开关：' + st.open, modeLine];
-  if (eff !== 'helper') {
-    var ran = getDailyRuns(); // -1=当日计数尚未读回
-    var lim = modCfg.dailyRuns | 0;
-    lines.push(
-      '今日已跑：' +
-        (ran < 0 ? '?' : ran) +
-        (lim > 0 ? ' / ' + lim + ' 局上限' : ' 局（未设上限）'),
-    );
-  }
   if (!team) return lines.join('\n') + '\n当前无队';
   lines.push(
     '队伍 ' +
@@ -531,8 +522,7 @@ reactor.register({
     rolePool: [],
     rejectOutsidePool: false,
     useBeaconWhenShort: false,
-    dailyRuns: 0,
-    autoSwitchToHelper: false,
+    autoSwitchToHelper: true,
     preset: 1,
     skillPool: SKILL_GROUP_IDS.slice(),
     // 幸运池只留 rollDice 一组勾选（键与 luckyFieldKey(rollDice) 对应）；旧 luckyPickReward/luckyCodeBox/luckyDefPVE 及全量勾选存档已废弃、不再读
@@ -614,29 +604,19 @@ reactor.register({
       hint: '勾选=拒绝池外入队申请；不勾=忽略（留着等其他队友好）。',
     },
     {
-      key: 'dailyRuns',
-      type: 'number',
-      label: '每日局数上限',
-      section: '组队',
-      min: 0,
-      step: 1,
-      showIf: isMain,
-      hint: '0=不限；主跑每完成一局计 1（持久跨页、明日自动归零），到上限当日不再建队/加入，陪跑不计数不受此限',
-    },
-    {
-      key: 'autoSwitchToHelper',
-      type: 'checkbox',
-      label: '满次自动转陪跑',
-      section: '组队',
-      showIf: (cfg) => isMain(cfg) && Number(cfg.dailyRuns) > 0,
-      hint: '需「每日局数上限」>0：主跑跑满后自动转陪跑（不耗次数、不主动要奖励）继续跟队；明日归零或调高上限自动回主跑。不勾=到上限当日停跑。',
-    },
-    {
       key: 'useBeaconWhenShort',
       type: 'checkbox',
       label: '次数不足用信标补',
       section: '组队',
       hint: '勾选且背包有定位信标时，建队前/要奖励前自动消耗 1 个补次数；库存不足或未勾选则照旧。',
+    },
+    {
+      key: 'autoSwitchToHelper',
+      type: 'checkbox',
+      label: '自动转陪跑',
+      section: '组队',
+      showIf: isMain,
+      hint: '主跑次数耗尽、且无法用信标补（未勾选上方「次数不足用信标补」或信标已耗尽）时，自动转陪跑继续跟队（不耗次数）；次数恢复或信标可补后自动回主跑。',
     },
     {
       key: 'preset',

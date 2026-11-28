@@ -2,8 +2,8 @@
  * 当日次数统计公共原语（14 feat 日账口径定稿的下沉件）：
  *   createDailyLedger(name, opts) —— 每 feat 一本「当日日账」{date, counts, seen}，
  *   懒加载 + 跳日归零 + loaded 闸门防内存 0 覆盘 + 读回前增量补算（范式收口自
- *   auto-hunt dailyState / cs-hunt dailyRuns，落盘单飞/看门狗不再自建——
- *   storage.data.set 已按 blob 串行队列落盘，队列尾那笔即最终值，同 cs-hunt ⑤#8 口径）。
+ *   auto-hunt dailyState / ally-rally dailyState，落盘单飞/看门狗不再自建——
+ *   storage.data.set 已按 blob 串行队列落盘，队列尾那笔即最终值）。
  *
  * 口径（与用户定稿一致）：
  *   - 额度类 feat 读服务器权威值（含手动），不进日账；日账只服务「动作类计脚本 / 行军类计奖励到账」。

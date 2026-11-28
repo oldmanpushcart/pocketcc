@@ -38,7 +38,7 @@
  *     每拍只搜 1 个成员，整池空转一圈升一档退避 5→10→15→20s 封顶（#joinGap，用户口径 2026-11-22；申请到队/散队即回落首档）；
  *   - 次数不足且勾了 useBeaconWhenShort → 走通用使用物品 815 消耗定位信标(47001001) 补次数（§7-6 已报文关闭）。
  */
-import { CODE_NOT_SENT, todayStr, rejectText } from '../../../core/util.js';
+import { CODE_NOT_SENT, rejectText } from '../../../core/util.js';
 import { Battle } from '../../../core/battle.js';
 import { march } from '../../../core/march.js';
 import { CMD_GET_WORLD_INFO } from '../../../core/map.js';
@@ -46,7 +46,6 @@ import { bits, gameData } from '../../../core/game-api.js';
 import { csHunt } from './api.js';
 import { resolveMode, sessionAt } from './session-mode.js';
 import { createLog } from '../../../core/log.js';
-import { storage } from '../../../core/storage.js';
 import { chatApi } from '../../../core/chat.js';
 import { FlowEngine } from './engine-flow.js';
 import {
@@ -143,108 +142,6 @@ const HUNT_OVER_REASONS = new Set(['cs_treasure294']);
  */
 const TEAM_STALE_REASONS = new Set(['update_0013', 'ava_team_tips_011']);
 
-// ── ⑤ 每日夺宝局数上限（借鉴竞对 state.counter + setting.team.count + dayInit）──────────
-//   竞对口径：每次真开跑（非陪跑）计数 +1、跳日归零、到上限当日停跑（createTeam/joinTeam 同闸）。
-//   我方口径：一局严格串行（终局→等回城散队→才建下一队），故在 #finishHunt 统一收口处 +1（每完成一局计一次），
-//   与竞对「开局 +1」在串行语义下等价；陪跑不耗次数、不计数、不触上限。计数持久跨页（storage.data、与配置分离）。
-/** @type {string} storage.data 逻辑键：当日已跑局数、日期戳与最近计数局 id */
-const DAILY_RUNS_NAME = 'csHunt.daily';
-/**
- * @type {{loaded:boolean, loading:boolean, date:string, runs:number, lastId:string}} 当日局数持久态内存镜像。
- *   模块级（跨引擎重建/pause→resume/换页保留）：lastId 为**跨实例去重键**，随快照落盘，防同一局多路收敛或
- *   战斗演出导致的 pause→resume→重建引擎后对同一 treasureId 重复 +1。
- */
-const dailyRuns = { loaded: false, loading: false, date: '', runs: 0, lastId: '' };
-
-/** 跳日归零：已读回且日期非今日则重置 runs/lastId 并落盘（未读回不动，避免把内存 0 覆盘上真值）。
- */
-function rollDailyDate() {
-  if (!dailyRuns.loaded) return;
-  var today = todayStr();
-  if (dailyRuns.date !== today) {
-    dailyRuns.date = today;
-    dailyRuns.runs = 0;
-    dailyRuns.lastId = ''; // 换日：上一局的 id 不再参与去重
-    persistDailyRuns();
-  }
-}
-
-/** 异步读回当日局数（首调完成前按 0 处理；读失败不置 loaded——读不到 ≠ 盘上没数据，留待下次重试）。
- *   ⑤#3 在途读单飞：未 loaded 期间多路调用只踢一笔 get，避免多个 then 反复覆写；读回时刻以**当前内存 runs**
- *   为「已发生但尚未落盘的 bump」补算（loaded 前置闸门使读回前永不写盘，故内存增量必不在盘上，相加不重复），
- *   防读回前若已完成的 bump 被盘值覆盖而少计。
- */
-function ensureDailyLoaded() {
-  if (dailyRuns.loaded) {
-    rollDailyDate();
-    return;
-  }
-  if (dailyRuns.loading) return;
-  dailyRuns.loading = true;
-  Promise.resolve(storage.data.get(DAILY_RUNS_NAME))
-    .then(function (saved) {
-      dailyRuns.loaded = true;
-      dailyRuns.loading = false;
-      var preBumps = dailyRuns.runs; // 读回前已 bump、未落盘的增量（正常恒 0）
-      dailyRuns.runs = 0;
-      if (saved && typeof saved === 'object' && typeof saved.date === 'string') {
-        dailyRuns.date = saved.date;
-        dailyRuns.runs = Number(saved.runs) || 0;
-        if (!dailyRuns.lastId) dailyRuns.lastId = saved.lastId ? String(saved.lastId) : '';
-      }
-      rollDailyDate(); // 非今日则归零（含 date/lastId 更新）
-      if (preBumps > 0) dailyRuns.runs += preBumps; // ⑤#3 补回读回前已发生的一局
-      persistDailyRuns();
-    })
-    .catch(function (err) {
-      dailyRuns.loading = false; // 读失败复位在途闸门，loaded 仍 false 留待下次重试
-      log.warn('daily runs load failed, retry next. %s', err && err.message);
-    });
-}
-
-/** 落盘当日局数：未 loaded 绝不写盘（否则把内存 0 覆掉盘上真值）。
- *   ⑤#8 不再自建单飞闸门/看门狗——storage.data.set 已按 blob 串行队列落盘（core/storage.js enqueue），
- *   每次都以**当前最新态**入队，队列尾那笔即最终值，在途写不会丢最新快照。
- */
-function persistDailyRuns() {
-  if (!dailyRuns.loaded) return;
-  Promise.resolve(
-    storage.data.set(DAILY_RUNS_NAME, {
-      date: dailyRuns.date,
-      runs: dailyRuns.runs,
-      lastId: dailyRuns.lastId,
-    }),
-  ).catch(function () {});
-}
-
-/** 跑完一局 +1 并落盘（仅主跑调用；陪跑不计数、也不触发上限）。
- * @param {string} runId 本局 treasureId（⑤#2 去重键：与 dailyRuns.lastId 相同则不重复计）
- */
-function bumpDailyRun(runId) {
-  ensureDailyLoaded();
-  rollDailyDate();
-  if (runId && runId === dailyRuns.lastId) return; // ⑤#2 跨实例/跨页去重（模块级 + 持久化）
-  if (runId) dailyRuns.lastId = runId;
-  dailyRuns.runs = (dailyRuns.runs | 0) + 1;
-  persistDailyRuns();
-}
-
-/** 今日是否已达夺宝局数上限（limit=0/未读回视为不限、放行）。
- * @param {number} limit 面板配置的每日上限（0=不限）
- * @returns {boolean} */
-function isDailyLimitReached(limit) {
-  if (!(limit > 0)) return false;
-  ensureDailyLoaded();
-  rollDailyDate();
-  return dailyRuns.runs >= limit;
-}
-
-/** 面板展示用：今日已跑局数（读回前回 -1 占位）。
- * @returns {number} */
-export function getDailyRuns() {
-  return dailyRuns.loaded ? dailyRuns.runs : -1;
-}
-
 /**
  * @typedef {object} TeamEnv 引擎的外部依赖（由 index.js 注入，避免引擎直接摸 reactor/core 单例造成环）
  * @property {() => boolean} alive feat 是否仍激活（在飞 await 回来后的唯一退出判据）
@@ -300,10 +197,10 @@ export class TeamEngine {
   /** @type {number|null} 剩余夺宝次数（唯一来源是推送 21375，null=本会话还没收到过，即「未知」） */
   #count = null;
   /**
-   * ⑥ 每日局数满后「自动转陪跑」运行时开关位（借鉴竞对 autoSwitchToHelp，面板 cfg.autoSwitchToHelper 默认关）：
-   *   主跑跑满 cfg.dailyRuns 后，若开了本开关则本引擎内部把有效模式视为 'helper'（不改面板 modCfg、不动 UID 存档），
-   *   走陪跑找队/表态 op:2/不计数/不发 7534-7535 全套 helper 语义；未达上限（跳日归零或调高上限）即自动复位回主跑。
-   *   与面板 mode 独立：仅当 rawCfg.mode==='main' 且达上限且开关开时才置真，故开关关（默认）时行为与本字段引入前完全一致（到上限停跑）。
+   * 自动转陪跑运行时开关位（用户口径 2026-11-28，面板 cfg.autoSwitchToHelper 默认开）：
+   *   主跑次数已明确耗尽（#count===0）且无法信标补次数（未勾 useBeaconWhenShort 或信标库存为 0）时置真，
+   *   本引擎内部把有效模式视为 'helper'（不改面板 modCfg、不动 UID 存档），走陪跑找队/表态 op:2/不发 7534-7535；
+   *   次数恢复（21375 >0）/信标可补/关了开关/本场模式本就是陪跑 → tick 顶部自动复位回主跑。
    * @type {boolean}
    */
   #helperForced = false;
@@ -311,7 +208,7 @@ export class TeamEngine {
    * 各场模式矩阵按局锁存（用户口径 2026-11-19）：有效模式经 session-mode.resolveMode 解析
    *   （当前场次格钉 main/helper 则覆盖，否则跟随主设置），并在「首次见到队伍」时按 team.id 锁存——
    *   一局可能跨场次边界（如 12:55 开跑 13:10 结束）、跑中改面板也不得漂移；队伍清空（null）即解锁，
-   *   无队期每拍实时解析。END 计数 bumpDailyRun 用当局锁存模式，语义正确。
+   *   无队期每拍实时解析。
    * @type {string}
    */
   #modeTeamId = '';
@@ -419,10 +316,10 @@ export class TeamEngine {
   }
 
   /**
-   * 有效模块配置：mode 经「各场解析 + 按局锁存 + ⑥ 满次强制」三层叠加注入——
+   * 有效模块配置：mode 经「各场解析 + 按局锁存 + 自动转陪跑强制」三层叠加注入——
    *   base = session-mode.resolveMode（当前场次格钉 main/helper 则覆盖，否则跟随面板主设置）；
    *   有队时按 team.id 锁存（跨场次边界/跑中改面板不漂移），队伍清空解锁；
-   *   #helperForced 置位时再叠 'helper'（满次自动转陪跑语义不变）。
+   *   #helperForced 置位时再叠 'helper'（自动转陪跑）。
    *   返回浅拷贝，绝不改指 env.cfg() 的面板 modCfg 引用。
    *   引擎内所有「依赖 mode 的行为分叉」（tick 表态 wantReward / 计次 / FlowEngine.isMain 门 7534-7535）一律读本方法，
    *   而非裸读 env.cfg()，使各场覆盖/自动转陪跑的运行语义与面板手选完全一致。
@@ -492,7 +389,6 @@ export class TeamEngine {
    */
   start(ctx) {
     this.#lastApplyListAt = 0; // 冷启动：首个 tick 即拉一次 7528 兜底补漏（此后按 APPLY_LIST_POLL_MS 节流）
-    ensureDailyLoaded(); // ⑤ 预热当日局数计数（异步读回，读回前按 0 放行；跳日由 rollDailyDate 归零）
     ctx.on.push(21371, (ev) => this.#onTeamChange(this.#ack(ev, FIELD_TEAM_CHANGE)));
     ctx.on.push(21372, (ev) => this.#onReadyChange(this.#ack(ev, FIELD_READY_CHANGE)));
     ctx.on.push(21373, (ev) => this.#onMemberChange(this.#ack(ev, FIELD_MEMBER_CHANGE)));
@@ -617,8 +513,9 @@ export class TeamEngine {
 
   /**
    * 面板只读快照（供 fields 的 text.get 直接展示，不做任何 IO）。
-   *   session/mode 供状态行展示当前场次与有效模式（mode 与 #cfg() 同源：含按局锁存/满次强制叠加）。
-   * @returns {{count:number|null, team:object|null, ctrl:object|null, session:object|null, mode:string}}
+   *   session/mode 供状态行展示当前场次与有效模式（mode 与 #cfg() 同源：含按局锁存/自动转陪跑叠加）；
+   *   helperFallback=「自动转陪跑」当前是否生效（状态行据此加提示）。
+   * @returns {{count:number|null, team:object|null, ctrl:object|null, session:object|null, mode:string, helperFallback:boolean}}
    */
   snapshot() {
     return {
@@ -627,6 +524,7 @@ export class TeamEngine {
       ctrl: csHunt.readState(),
       session: sessionAt(this.#slots, csHunt.serverMs()),
       mode: this.#cfg().mode,
+      helperFallback: this.#helperForced,
     };
   }
 
@@ -721,10 +619,6 @@ export class TeamEngine {
     var t = this.#team;
     var deadId = String((t && (t.treasureId || t.id)) || '');
     if (deadId) this.#endedTreasureId = deadId;
-    // ⑤ 主跑每完成一局计一次（陪跑不耗次数、不计数）：去重闸下沉到模块级 dailyRuns.lastId（⑤#2），
-    //   既挡同实例内状态机 END / 21371 到家 / 7531 拒因多路收敛重计，也挡战斗演出 pause→resume→重建引擎后
-    //   对同一 treasureId 的跨实例重计（lastId 随快照持久化，跨页亦生效）。
-    if (deadId && this.#cfg().mode !== 'helper') bumpDailyRun(deadId);
     // 终局≠散队：飞船还在返程，到家才散（实证 END@+986s → 散队@+1063s）；窗口内 7521/7522 会被拒
     //   ava_team_tips_011=已加入其他队伍 → 置回城等待闸门，由 10019 到家推/21371 清空推/轮询+超时解除
     var waitMarchId = t && t.selfMarchId && t.selfMarchId !== '0' ? String(t.selfMarchId) : '';
@@ -945,19 +839,6 @@ export class TeamEngine {
   async tick() {
     var env = this.#env;
     if (!env.alive()) return 0;
-    // ⑥ 自动转陪跑复位：已因「局数满」强制转陪跑，但当前已不达上限（跳日归零/调高上限）或关了该开关 → 复位回主跑
-    var rawCfg = env.cfg();
-    if (
-      this.#helperForced &&
-      (!isDailyLimitReached(rawCfg.dailyRuns) ||
-        !rawCfg.autoSwitchToHelper ||
-        resolveMode(rawCfg, this.#slots, csHunt.serverMs()) === 'helper')
-    ) {
-      this.#helperForced = false;
-      log.info(
-        'daily cs-hunt runs no longer in full-quota forced state, ending auto side-run mode, back to main run',
-      );
-    }
 
     // 控制器不在场（子包未接管）时 readState 恒 null，队伍/开关态只能靠 7501 应答补齐：按兜底周期拉一次（漏推自愈）
     if (!csHunt.present()) await this.refreshInfo(false);
@@ -983,6 +864,22 @@ export class TeamEngine {
       if (this.#count == null && st.huntCount > 0) {
         this.#count = st.huntCount; // 控制器 huntCount 只作回填下限：推送 21375 才是权威（它没来才借这个值）
       }
+    }
+
+    // 自动转陪跑复位：次数已恢复（>0；#count 未知时借控制器快照）/信标可用于补次数/关了开关/本场模式本就是陪跑 → 复位回主跑
+    var rawCfg = env.cfg();
+    var curCnt = this.#count != null ? this.#count : st ? st.huntCount : null;
+    if (
+      this.#helperForced &&
+      (!rawCfg.autoSwitchToHelper ||
+        resolveMode(rawCfg, this.#slots, csHunt.serverMs()) === 'helper' ||
+        (curCnt != null && curCnt > 0) ||
+        (rawCfg.useBeaconWhenShort && gameData.itemAmount(ITEM_BEACON) > 0))
+    ) {
+      this.#helperForced = false;
+      log.info(
+        'cs-hunt count available or beacon can refill again, ending helper fallback mode, back to main run',
+      );
     }
 
     if (!this.#team) {
@@ -1199,31 +1096,33 @@ export class TeamEngine {
    * @returns {Promise<number>} 下一拍间隔
    */
   async #noTeam(cfg, st) {
-    // ⑤ 每日局数上限（借鉴竞对 setting.team.count）：仅主跑受闸——到上限当日停跑，跳日自动归零；0/未配=不限。
-    //   #1 不能放在 mode 分叉前共用：dailyRuns.runs 为模块级+持久化、跨实例共享，而字段 showIf:isMain（切陪跑只隐藏不清值），
-    //   若主跑跑满额度后切陪跑会整日被误挡（面板看不到该项、statusText 也不显示），与「陪跑不计数不受此限」契约相悖。
-    if (cfg.mode !== 'helper' && isDailyLimitReached(cfg.dailyRuns)) {
-      // ⑥ 面板开了「满次自动转陪跑」：置强制位（下拍起 #cfg() 把有效 mode 视为 helper），立即转找队链路
-      if (cfg.autoSwitchToHelper) {
-        if (!this.#helperForced) {
-          this.#helperForced = true;
-          log.info(
-            'daily cs-hunt runs reached cap (%d), auto switching to helper team-finding (panel switch; resets to main run on day roll / cap raise)',
-            cfg.dailyRuns,
-          );
-        }
-        return this.#joinTeam(cfg);
+    // 自动转陪跑（用户口径）：主跑次数耗尽且无法信标补次数 → 置强制位（下拍起 #cfg() 视为 helper）
+    //   并立即转找队链路；未置位时主跑仍走建队（#tryCreate 内含补信标/拦日志原逻辑）。
+    var cnt = this.#count != null ? this.#count : st ? st.huntCount : null;
+    if (cfg.mode !== 'helper' && this.#shouldHelperFallback(cfg, cnt)) {
+      if (!this.#helperForced) {
+        this.#helperForced = true;
+        log.info(
+          'cs-hunt count exhausted (0) and no beacon to refill, auto switching to helper team-finding (auto recovers when count returns / beacon available / switch off)',
+        );
       }
-      this.#blockOnce(
-        'daily',
-        'daily cs-hunt runs reached cap (' +
-          cfg.dailyRuns +
-          '), skip team build/join (auto recovers next day)',
-      );
-      return IDLE_TICK_MS;
+      return this.#joinTeam(this.#cfg());
     }
     if (cfg.mode === 'main') return this.#tryCreate(cfg, st);
     return this.#joinTeam(cfg);
+  }
+
+  /**
+   * 自动转陪跑判据（用户口径）：开关开 + 次数已明确耗尽（0；null=未知不切）
+   *   + 无法信标补次数（未勾 useBeaconWhenShort，或信标库存为 0）。
+   * @param {object} cfg 模块配置
+   * @param {number|null} cnt 剩余次数（推送/控制器回填，null=未知）
+   * @returns {boolean}
+   */
+  #shouldHelperFallback(cfg, cnt) {
+    if (!cfg.autoSwitchToHelper || cnt !== 0) return false;
+    if (cfg.useBeaconWhenShort && gameData.itemAmount(ITEM_BEACON) > 0) return false;
+    return true;
   }
 
   /**

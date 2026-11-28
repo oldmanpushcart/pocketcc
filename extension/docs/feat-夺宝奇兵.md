@@ -765,15 +765,16 @@ net.send(RequestId.CROSS_TREASURE_TEAM_MARCH=7519, {
 
 ### 22.3 引擎注入：单点 #cfg() + 按局锁存
 
-- `TeamEngine.#cfg()` 是有效 mode 的**唯一注入点**：base=resolveMode；有队时按 team.id 锁存（`#modeTeamId/#modeVal`，首次见队解析一次），队伍清空解锁、无队期每拍实时解析；`#helperForced`（满次自动转陪跑）再叠其上。返回浅拷贝不改面板引用。
-- **按局锁存的必要性**：一局可跨场次边界（如 12:55 开跑 13:10 结束）、跑中改面板也不得漂移——否则 flow 的 isMain/7534-7535 闸会在局中翻转。END 计数 `bumpDailyRun` 用当局锁存模式，语义正确。stop() 复位 `#modeTeamId`。
-- 下游零改动：`#noTeam` 建队/找队分叉、7520 op:1/op:2 表态、每日上限闸、`engine-flow.js`（isMain/护奖/幸运/末回合陪跑排除项）全经 `#cfg()`（flow 经 `#flowHost().cfg()`）自动跟随。
+- `TeamEngine.#cfg()` 是有效 mode 的**唯一注入点**：base=resolveMode；有队时按 team.id 锁存（`#modeTeamId/#modeVal`，首次见队解析一次），队伍清空解锁、无队期每拍实时解析；`#helperForced`（自动转陪跑）再叠其上。返回浅拷贝不改面板引用。
+- **按局锁存的必要性**：一局可跨场次边界（如 12:55 开跑 13:10 结束）、跑中改面板也不得漂移——否则 flow 的 isMain/7534-7535 闸会在局中翻转。stop() 复位 `#modeTeamId`。
+- **自动转陪跑（用户口径 2026-11-28）**：面板勾选「自动转陪跑」（位于「次数不足用信标补」下方）后，主跑次数已明确耗尽（`#count===0`；null=未知不切）且无法信标补次数（未勾 `useBeaconWhenShort` 或信标库存为 0）→ 无队期置 `#helperForced` 转陪跑找队；次数恢复（21375 >0）/信标可补/开关关/本场模式本就是陪跑 → tick 顶自动复位回主跑。旧「每日局数上限」配置与计数（`csHunt.daily`）已删除。
+- 下游零改动：`#noTeam` 建队/找队分叉、7520 op:1/op:2 表态、自动转陪跑闸、`engine-flow.js`（isMain/护奖/幸运/末回合陪跑排除项）全经 `#cfg()`（flow 经 `#flowHost().cfg()`）自动跟随。
 - tick 顶 `#helperForced` 复位条件的「主设置陪跑」判据同步改为 resolveMode 有效 base（场次切到陪跑格时强制位正确复位）。
 - `snapshot()` 增补 `session`（当前场次）与 `mode`（有效模式，与 #cfg() 同源）；面板状态行：统一模式「玩法模式：主跑（要奖励）」，矩阵模式「玩法模式：按场次矩阵（主设置兜底：主跑）｜本场 周五·第二场 → 陪跑」，未在场次时提示「到点按对应格子运行」。run() 日志追加 `bySession=on/off` 与 sessionModes 矩阵摘要；首次锁存留 info `session mode latched for team <id>: <mode> (session=<label>)`。
 
 ### 22.4 叠加顺序与兜底
 
-有效模式 = `满次强制(helper) > 场次格覆盖(main/helper，仅开关开) > 主设置(cfg.mode)`。开关关、格子=follow（未播种残留）、时段表未知、窗外、非活动星期、同日超 3 场 → 沿用主设置（窗外写包本就被 §14/§15 双闸拦截，兜底只影响展示与决策语义）。
+有效模式 = `自动转陪跑强制(helper) > 场次格覆盖(main/helper，仅开关开) > 主设置(cfg.mode)`。开关关、格子=follow（未播种残留）、时段表未知、窗外、非活动星期、同日超 3 场 → 沿用主设置（窗外写包本就被 §14/§15 双闸拦截，兜底只影响展示与决策语义）。
 
 ## 23. 幸运降临补上「场景无关」的溢出消耗路（用户口径，2026-11-22）
 
