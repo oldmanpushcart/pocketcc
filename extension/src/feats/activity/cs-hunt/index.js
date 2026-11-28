@@ -275,8 +275,8 @@ function normalize(raw) {
   var mode = raw.mode === 'helper' ? 'helper' : 'main'; // 兼容旧存档：无 mode 字段一律按主跑（旧 needRewardAsMember 语义并入 mode）
   var n = Number(raw.targetMemberNum) || 0;
   if (n < 2) n = 2;
-  if (n > 5) n = 5; // 主表 max_ppl_num=5（§9.1 实测），下限 2 由服务器校验（2 人可开整局，§9.3 实样）
-  var wm = Number(raw.waitMin); // 竞对口径 waitmin 默认 3；显式 0=关（不超时、等人齐），非法/负值亦回默认
+  if (n > 5) n = 5; // 主表 max_ppl_num=5（§9.1 实测）；<2 由服务器拒（2 人可开整局，§9.3 实样），引擎按达标才发起
+  var wm = Number(raw.waitMin); // 凑人超时留痕默认 3（借鉴竞对 waitmin）；显式 0=关提示、静默等人齐，非法/负值亦回默认
   if (!(wm >= 0)) wm = DEFAULT_WAIT_MIN;
   var out = {
     mode: mode,
@@ -582,17 +582,17 @@ reactor.register({
       min: 2,
       step: 1,
       showIf: isMain,
-      hint: '2 人即可开完整局（人数下限由服务器校验）。',
+      hint: '人数达到此值且全员派兵后才召集出发；不足（含仅队长 1 人）不发起。2 人即可开完整局。',
     },
     {
       key: 'waitMin',
       type: 'number',
-      label: '凑人超时发车（分钟）',
+      label: '凑人超时提示（分钟）',
       section: '组队',
       min: 0,
       step: 1,
       showIf: isMain,
-      hint: '人数未凑齐但已到位成员都派兵成功时，等满本分钟数即召集出发（避免永久等待）；0=死等人数到齐。',
+      hint: '人数未凑齐时，等满本分钟数记录一条等待提示（不会发起出发）；0=不提示。',
     },
     {
       key: 'rolePool',

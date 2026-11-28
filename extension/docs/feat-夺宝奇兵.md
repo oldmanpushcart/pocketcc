@@ -141,7 +141,7 @@ createCycle 兜底档：活动进行中 `active` 短间隔仅做**只读状态�
 
 ```
 mode            : 'auto'            // 角色自动判定：isTeamLeader()→队长，否则队员
-targetMemberNum : 5                 // 凑够此人数队长即开车（≤ max_ppl_num，下限由服务器判）
+targetMemberNum : 5                 // 凑够此人数且全员派兵队长才开车（≤ max_ppl_num；不足（含仅队长 1 人）绝不发起）
 rolePool        : [ {uid, name, prefer:'leader'|'member'|'both'} ]   // 队员池
 needRewardAsMember : false          // 队员默认是否要奖励（false=陪跑，省次数；true 仅在 huntCount>0 生效）
 useBeaconWhenShort : false           // 勾选：次数不足(huntCount<=0)时自动消耗定位信标(itemId 47001001)补次数；适用两处：队长建队前、队员切「要奖励」前。未勾选则照旧跳过并 info 一次
@@ -201,7 +201,7 @@ net.send(RequestId.CROSS_TREASURE_TEAM_MARCH=7519, {
 
 > **selfMarchId 零值守卫**（报头实证实录报文）：`bits.int64Str(Long(0,0))` 返回字符串 `'0'` 是 JS truthy，旧版误判为「已在行军」导致跳过 7519。修复后加 `&& t.selfMarchId !== '0'` 排除零值。仅非零 marchId 才代表游戏侧有在途行军。
 
-> **队长召集出发的硬条件（用户口径）**：7527 由队长主动发起需**同时**满足①等待人数到齐（`memberCount >= targetMemberNum`）②全员完成出兵（每个成员 `marchId` 非零，即都派兵到集结点）；任一角色收到 21372 召集（或已在 ready 名单）后表态同意。旧「队长自己派完兵即召集、人数交服务端裁决」的口径已作废——它会在人未齐/队员未出兵时过早发 7527。
+> **队长召集出发的硬条件（用户口径）**：7527 由队长主动发起需**同时**满足①等待人数到齐（`memberCount >= targetMemberNum`）②全员完成出兵（每个成员 `marchId` 非零，即都派兵到集结点）；任一角色收到 21372 召集（或已在 ready 名单）后表态同意。旧「队长自己派完兵即召集、人数交服务端裁决」的口径已作废——它会在人未齐/队员未出兵时过早发 7527。凑人超时（面板 `waitMin`）只打等待留痕，不再放宽人数发起：1 人队发 7527 会被服务器回 `system_131840`（游戏侧误显「次数不足」，实为人数低于 `min_ppl_num=2`）。
 >
 > **服务器实证（实录报文）**：真人队长在**自己尚未发 7519 派兵**时过早发 7527，被回 `code=3 d=common_159995`（约 +38.5s 失败）；直到 +133s 补发 7519 派兵后，+154.9s 再发 7527 才 `code=0` 受理。即 **7527 须待本队（含队长自身）7519 派兵落地后方可成功**——引擎 `tick` 步 4 的 `allMarched`（`marchedCount === memberCount`，其值来自 7519 经 21373/21371 回填的 marchId）闸天然满足此前置，规避了真人这个过早召集被拒。
 

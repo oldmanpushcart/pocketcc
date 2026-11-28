@@ -5,7 +5,7 @@
  *   1. 队长无队 → 7521 建队（`{cfg:1}`，实录报文实证）；
  *   2. 队长审批 → 21374 置脏 → 7528 复核申请池 → 池内 7523 `{uid,op:1}`（池外按配置忽略/拒绝）；
  *   3. 队长凑够 targetMemberNum 且全员派兵到位（每人 marchId 非零）→ 7527 `{op:1}` 发起出发召集（服务端随后派 21372 给全队）；
- *      凑人超时（借鉴竞对 waitmin，面板 waitMin 默认 3 分钟）：人数未达标但已到位成员皆已派兵 → 也直接召集，不永久等；
+ *      人数不达标（含仅队长 1 人，服务器 min_ppl_num=2）绝不发起；凑人超时（面板 waitMin）只留等待日志；
  *   4. 两角色共用：入队后表态要奖励/陪跑 7520 `{op:1|2}`（队长恒要奖励，不发此包）；
  *      本人满编出征 7519（NET.send，`{marchType:137,...}`，体内无 treasureId）；
  *      收 21372 召集 → 7527 `{op:1}` 同意出发。
@@ -124,9 +124,9 @@ const WAIT_HOME_MAX_MS = 300000;
 /** @type {number} 回城等待期快照轮询重查间隔（毫秒）：行军不在队列表即判已到家 */
 const HOME_POLL_MS = 10000;
 /**
- * @type {number} 队长凑人超时强制发车的默认分钟数（借鉴竞对 setting.team.waitmin 默认 3）：
- *   人数未达 targetMemberNum 但已到位成员都已派兵成功，等满本分钟数即直接 7527 召集发车，
- *   杜绝「目标人数高于实时来人数」时永久等下去；0 表示在面板里显式关闭。
+ * @type {number} 队长凑人超时留痕的默认分钟数（借鉴竞对 setting.team.waitmin 默认 3）：
+ *   人数未达 targetMemberNum 时等满本分钟数打一条等待日志；不发 7527——人数不达标发车必被服务器拒
+ *   （min_ppl_num=2 主表实测）；0 表示在面板里显式关闭留痕。
  *   【导出】面板 index.js 的 defaults/normalize 与此共用同一默认值，防两处口径漂移。
  */
 export const DEFAULT_WAIT_MIN = 3;
@@ -372,7 +372,7 @@ export class TeamEngine {
    */
   #marchRetryAt = 0;
   /**
-   * @type {number} 当前队就位（本端首次看到该 teamId）的墙上时刻（毫秒）——「凑人超时」基准（借鉴竞对 `_ctWait`/`waitmin`）。
+   * @type {number} 当前队就位（本端首次看到该 teamId）的墙上时刻（毫秒）——「凑人超时留痕」基准（借鉴竞对 `_ctWait`/`waitmin`）。
    *   换队/散队/收引擎时与 #marchStartTeamId 一并复位；用本端观察时刻而非服务器 createTime（字典未见该字段，不臆造）。
    */
   #teamSince = 0;
@@ -1051,13 +1051,13 @@ export class TeamEngine {
       if (!sent) return ACTIVE_TICK_MS; // 本轮无兵/未发成，下一拍重试（info 已按队留痕一次）
     }
 
-    // 4) 召集出发（用户口径硬条件）：队长在「等待人数到齐」且「全员都已完成出兵」时主动发起 7527；
+    // 4) 召集出发（用户口径硬条件）：队长在「人数达到设置目标」且「全员都已完成出兵」时才主动发起 7527；
     //    任一角色收到 21372 召集（readyMember 含本人）后表态同意。
     //    闸门语义是「当前召集窗口内本人未表态」而非「本队终身一次」：窗口重开时 #onReadyChange 会重武装
     //    #marchStartTeamId；快照 readyUids/#selfReadySeen 已含本人则不重发（7527 若是切换语义会误取消准备）。
-    // 凑人超时（借鉴竞对 waitmin）：人数未达目标但已到位成员皆派兵成功，等满 waitMin 分钟也发车，
-    //    否则 targetMemberNum 调高（最大 5）而现场只来 2~3 人时会永久等待；仍守住 allMarched（服务器对未派兵者会拒
-    //    common_159995，拒后回滚闸门交下拍重试，故超时只放宽「人数」不放宽「出兵」）。
+    // 人数闸（用户口径）：memberCount 未达 targetMemberNum（含仅队长 1 人，服务器 min_ppl_num=2）绝不发起——
+    //    旧「凑人超时放宽人数」会让 1 人队发 7527 被拒（system_131840 误显「次数不足」）并逐拍重试；
+    //    waitMin 到点只打等待留痕。allMarched 仍须成立（未派兵者会被拒 common_159995）。
     var selfReady =
       this.#selfReadySeen ||
       (Array.isArray(t.readyUids) && t.readyUids.indexOf(gameData.myUidStr()) >= 0);
@@ -1073,17 +1073,10 @@ export class TeamEngine {
         waitMin > 0 &&
         !!this.#teamSince &&
         Date.now() - this.#teamSince >= waitMin * 60000;
-      if (called || (full && allMarched) || (waitedOut && allMarched)) {
+      if (called || (full && allMarched)) {
         var wasCalled = this.#called;
         this.#marchStartTeamId = t.id;
         this.#called = false;
-        if (!full && waitedOut)
-          log.info(
-            'people-gathering timed out after %d min, members %d/%d, launching directly (all present members have dispatched)',
-            waitMin,
-            t.memberCount,
-            targetMembers(cfg),
-          );
         var ret = await this.#sendPB(REQ_MARCH_START, { op: 1 }, 'agree-depart');
         var code = ret ? ret.code : CODE_NOT_SENT;
         // 闸门只能在 7527 真正受理后提交：过早召集被拒（common_159995=有人 7519 尚未落地）或未真正发出时回滚，
@@ -1094,10 +1087,14 @@ export class TeamEngine {
         }
       } else if (full || waitedOut) {
         // 召集闸未开的静默期留痕（对齐调度决策日志规范）：页外 21372 不可达时卡点只能靠本行事后归因。
-        //   full（人已达目标）或 waitedOut（凑人超时）时打——前者是「人齐了却不发车」的真卡点，后者是「差出兵」的超时卡点
+        //   full（人已达目标）是「差出兵」卡点；waitedOut 且未满员是「凑人未达标」卡点（只留痕，永不发起）
         log.info(
           'waiting for rally depart reason=%s; members=%d/%d; marched=%d; selfMarch=%s; waited=%ds (re-checked with 7501 polling roughly every %ds)',
-          t.marchedCount === 0 ? 'nobody dispatched' : 'some members failed to dispatch',
+          !full
+            ? 'not enough members for configured target (launch withheld)'
+            : t.marchedCount === 0
+              ? 'nobody dispatched'
+              : 'some members failed to dispatch',
           t.memberCount,
           targetMembers(cfg),
           t.marchedCount,
@@ -1657,7 +1654,8 @@ export class TeamEngine {
 }
 
 /**
- * 凑够多少人就召集出发（≤ 主表 max_ppl_num=5；2 人也能开完整局，§9.3 实样，故下限交服务器判）。
+ * 凑够多少人才召集出发（≤ 主表 max_ppl_num=5）：人数未达此值绝不发起（含仅队长 1 人——
+ *   服务器 min_ppl_num=2 会拒，1 人发 7527 被回 system_131840 误显「次数不足」）。
  * @param {object} cfg 模块配置
  * @returns {number}
  */
