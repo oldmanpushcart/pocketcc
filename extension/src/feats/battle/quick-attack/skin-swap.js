@@ -46,8 +46,6 @@ import { march as realMarch } from '../../../core/march.js';
 
 /** @type {number} RequestId.USE_CASTLE_FACE：切换本人城外观（写动作，本模块唯一的切皮发包口） */
 export const CMD_USE_CASTLE_FACE = 855;
-/** @type {number} RequestId.GET_MY_CASTLE_FACE：拉本人城外观清单（本模块只读参考，实际清单走 UserData 快照） */
-export const CMD_GET_MY_CASTLE_FACE = 854;
 
 /**
  * 相位标识（planSwaps 的决策入参）：

@@ -47,7 +47,12 @@ function withStub(opt) {
     NWorldMapCoreBiz: {
       __esModule: true,
       default: { mapType, watchingType: 0 },
-      NWorldMapType: { 1: 'world', 12: 'adp_war', 201: 'world_NTerrain', 202: 'world_NTerrain_border' },
+      NWorldMapType: {
+        1: 'world',
+        12: 'adp_war',
+        201: 'world_NTerrain',
+        202: 'world_NTerrain_border',
+      },
       WatchingBattleType: { 0: 'NONE' },
     },
     GameDefine: { ServerState: { 0: 'Normal', 1: 'Donate', 2: 'Ready', 3: 'Fight' } },
